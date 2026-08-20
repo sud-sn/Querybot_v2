@@ -2080,6 +2080,13 @@ def reused_plan_is_stale_for_graph(sql: str, graph_ctx: dict | None, db_type: st
     from real tables. Any error leaves existing reuse behavior unchanged.
     """
     graph_ctx = graph_ctx or {}
+    if graph_ctx.get("resolution_error"):
+        # Resolution raised rather than reporting "no graph", so there is no
+        # current detection to compare a cached plan against. Reading that as
+        # "nothing to object to" is how a plan whose joins the current resolver
+        # would reject gets reused precisely when governance is down. Fresh
+        # generation still runs, and still has to pass the validator.
+        return True
     if graph_ctx.get("review_only"):
         # No unreviewed edge may become executable indirectly through an old
         # cached plan. Fresh generation can still use the governed KB and

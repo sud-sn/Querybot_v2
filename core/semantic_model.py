@@ -1628,6 +1628,44 @@ def _in_schema_scope(table: dict[str, Any], selected_schema: str = "") -> bool:
     return not schema or schema == selected_schema.upper()
 
 
+def _model_source(model: dict[str, Any] | None, kb_dir: str) -> dict[str, Any]:
+    """Resolve which semantic model the runtime should read.
+
+    The pipeline passes the compiled contract's model section so runtime
+    semantics come from the single versioned artifact. That section is only
+    authoritative when it has something in it.
+
+    ``_compile_contract_internal`` compiles every source fail-soft: if the
+    model file cannot be read, or kb_dir is unset at compile time, the model
+    section compiles to ``{}`` and the contract is published anyway. Testing
+    that with ``is not None`` accepted the empty section as authoritative, so
+    one bad compile silently withdrew every approved field meaning, date role
+    and join requirement from every subsequent question — build_runtime_
+    semantic_plan returning ``enabled: False`` while the admin console kept
+    showing the approvals as saved, and the answers reverting to whatever the
+    model chose from raw prose.
+
+    An empty model states nothing, so there is nothing for it to override.
+    Fall back to the file and say so: the contract has lost its model section
+    and needs recompiling, which is not a condition to discover from wrong
+    answers weeks later.
+    """
+    if model:
+        return model
+    if model is None:
+        return load_semantic_model(kb_dir)
+    fallback = load_semantic_model(kb_dir) if kb_dir else {}
+    if fallback:
+        log.warning(
+            "The compiled semantic contract carries an empty model section; "
+            "reading the semantic model from %s instead. Recompile the "
+            "contract — until then its version no longer describes the "
+            "semantics actually in force.",
+            kb_dir,
+        )
+    return fallback
+
+
 def build_runtime_semantic_context(
     kb_dir: str,
     *,
@@ -1643,7 +1681,7 @@ def build_runtime_semantic_context(
     flooding the prompt with the full JSON model. `model` overrides the file
     read (the pipeline passes the compiled semantic contract's model section).
     """
-    model = model if model is not None else load_semantic_model(kb_dir)
+    model = _model_source(model, kb_dir)
     if not model:
         return ""
 
@@ -2230,7 +2268,7 @@ def build_runtime_semantic_plan(
     `model` overrides the file read — the query pipeline passes the compiled
     semantic contract's model section so runtime semantics always come from
     the single versioned artifact."""
-    model = model if model is not None else load_semantic_model(kb_dir)
+    model = _model_source(model, kb_dir)
     if not model:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no semantic model"}
 
@@ -3117,7 +3155,7 @@ def find_default_date_roles(
     the user means would be wrong, so it is left to the reactive
     surrogate-date-misuse validator catch instead.
     """
-    model = model if model is not None else load_semantic_model(kb_dir)
+    model = _model_source(model, kb_dir)
     if not model:
         return []
 

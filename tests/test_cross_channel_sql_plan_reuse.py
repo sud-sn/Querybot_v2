@@ -441,5 +441,102 @@ class ReusedPlanSemanticContractGuardTests(unittest.TestCase):
             source,
         )
 
+
+class ReusedPlanPinnedAnchorLiteralTests(unittest.TestCase):
+    """A cached plan may pin the business date as a literal instead of deriving
+    it with an in-query MAX(). That is legitimate — core/date_anchor.py resolves
+    the anchor once from the fact's own rows, and the validator accepts the
+    resolved literal in place of the MAX(). It also means the plan is only
+    correct for as long as that literal IS the anchor.
+
+    This is the reported field scenario: a dev warehouse had its range moved
+    from 2025-04-17 back to 2024-08-11, and the same answer kept coming back.
+    The reuse layer's protection against that is entirely implicit — it falls
+    out of the anchor literal no longer matching — so nothing failed if the
+    protection was removed. These tests make it explicit.
+    """
+
+    TABLE = "QBOT_LIVE_TEST.F_SALES_INVOICE"
+    COLUMNS = {TABLE: {"INVOICE_DATE": "date", "NET_REVENUE_AMOUNT": "decimal"}}
+    POLICY = {
+        "kind": "today",
+        "anchor_policy": "latest_available",
+        "fact_table": TABLE,
+        "fact_column": "INVOICE_DATE",
+        "date_column": "INVOICE_DATE",
+    }
+
+    def _code(self, sql, anchor_value):
+        from core.pipeline_helpers import reused_plan_semantic_staleness_code
+
+        return reused_plan_semantic_staleness_code(
+            sql,
+            set(self.COLUMNS),
+            "azure_sql",
+            set(self.COLUMNS),
+            self.COLUMNS,
+            {
+                "semantic_plan": {"enabled": True, "temporal_policies": [self.POLICY]},
+                "resolved_date_anchor": {
+                    "value": anchor_value,
+                    "fact_table": self.TABLE,
+                    "fact_column": "INVOICE_DATE",
+                },
+            },
+            {"kind": "today", "amount": 0, "unit": "day",
+             "anchor_policy": "latest_available"},
+        )
+
+    def _sql(self, day):
+        return (
+            "SELECT SUM(NET_REVENUE_AMOUNT) AS TOTAL "
+            f"FROM {self.TABLE} WHERE INVOICE_DATE = '{day}'"
+        )
+
+    def test_a_plan_pinned_to_the_current_anchor_is_reusable(self):
+        self.assertEqual(self._code(self._sql("2025-04-17"), "2025-04-17"), "")
+
+    def test_a_plan_pinned_to_a_superseded_anchor_is_refused(self):
+        """The warehouse moved and the cached plan did not. Reusing it returns
+        the previous period's number as though it were today's."""
+        self.assertEqual(
+            self._code(self._sql("2025-04-17"), "2024-08-11"),
+            "temporal_anchor_missing",
+        )
+
+    def test_the_anchor_moving_backwards_is_caught_too(self):
+        """A reload can move the range earlier, not only later. Nothing here
+        may assume data only ever advances."""
+        self.assertEqual(
+            self._code(self._sql("2024-08-11"), "2025-04-17"),
+            "temporal_anchor_missing",
+        )
+
+    def test_an_anchor_probed_for_a_different_fact_does_not_license_the_literal(self):
+        """anchor_for_policy() exists so an anchor probed from one fact cannot
+        validate a plan over another. Without it, any date string matching some
+        other fact's anchor would pass."""
+        from core.pipeline_helpers import reused_plan_semantic_staleness_code
+
+        code = reused_plan_semantic_staleness_code(
+            self._sql("2025-04-17"),
+            set(self.COLUMNS),
+            "azure_sql",
+            set(self.COLUMNS),
+            self.COLUMNS,
+            {
+                "semantic_plan": {"enabled": True, "temporal_policies": [self.POLICY]},
+                "resolved_date_anchor": {
+                    "value": "2025-04-17",
+                    "fact_table": "QBOT_LIVE_TEST.F_OTHER_FACT",
+                    "fact_column": "POSTED_DATE",
+                },
+            },
+            {"kind": "today", "amount": 0, "unit": "day",
+             "anchor_policy": "latest_available"},
+        )
+        self.assertEqual(code, "temporal_anchor_missing")
+
+
 if __name__ == "__main__":
     unittest.main()

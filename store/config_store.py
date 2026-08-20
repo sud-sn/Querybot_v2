@@ -1524,6 +1524,36 @@ def validate_metric_refs(account_id: str, formula: str) -> list[str]:
         return [str(exc)]
 
 
+def _metric_covers_temporal_scope(phrase: str, question_window: dict, question_is_dated: bool) -> bool:
+    """Does the metric wording that matched carry the question's own time scope?
+
+    A stored template is a fixed string. It answers exactly one question: the
+    one its SQL expresses. Synonym matching ignores every qualifier the user
+    adds around that synonym, so "revenue", "revenue today" and "revenue last
+    month" all match a metric named "revenue" and all receive the same SQL —
+    the same number for three different questions, and the same number again
+    tomorrow. Grouping qualifiers were already guarded against for exactly this
+    reason; time qualifiers were not.
+
+    The one case where a time-qualified question IS answerable from a template
+    is when the admin authored the metric FOR that window — "MTD Revenue" with
+    the synonym "revenue this month". Then the matched wording carries the same
+    relative window the question does, and the template was written to express
+    it. Anything else falls through to the governed pipeline, which resolves the
+    window against the business-date anchor rather than assuming one.
+
+    An absolute date ("revenue in March 2026") never qualifies: a synonym does
+    not name a specific month, so a match there means the date was dropped.
+    """
+    from core.contextual_dates import detect_temporal_window
+
+    if question_is_dated:
+        return False
+    if not question_window:
+        return True
+    return detect_temporal_window(phrase).get("kind") == question_window.get("kind")
+
+
 def match_metric(account_id: str, question: str) -> dict | None:
     """
     Check if the question matches any trusted full-SQL metric by synonym lookup.
@@ -1533,6 +1563,10 @@ def match_metric(account_id: str, question: str) -> dict | None:
     Skips metric registry when the question contains grouping/dimension keywords
     (by, per, grouped by, breakdown, each) — those need the LLM to generate a
     GROUP BY query, not a simple aggregate from the stored template SQL.
+
+    Skips it likewise when the question scopes a time window the matched wording
+    does not itself carry — see _metric_covers_temporal_scope. Both guards are
+    the same rule: a fixed template only answers the question it was written for.
     """
     import re
     q_lower = question.lower()
@@ -1552,6 +1586,32 @@ def match_metric(account_id: str, question: str) -> dict | None:
         if re.search(pat, q_lower):
             return None  # Fall through to LLM for GROUP BY queries
 
+    # Resolved once: the question's time scope, if it states one at all. Read
+    # from the user's own sentence, not the augmented prompt text — a
+    # clarification label ("Synonyms: order month, ship month") is administrative
+    # metadata and must not read as the user scoping a window. The parent
+    # question and any follow-up request are both kept, so "and for today?"
+    # against an earlier result still counts as scoped.
+    try:
+        from core.clarification import extract_original_question
+        from core.contextual_dates import (
+            detect_temporal_window,
+            question_has_explicit_date_filter,
+        )
+        asked = extract_original_question(question)
+        question_window = detect_temporal_window(asked) or {}
+        question_is_dated = question_has_explicit_date_filter(asked)
+    except Exception:
+        # Never fail open here. If the temporal detectors cannot be consulted we
+        # cannot tell a scoped question from a bare one, and answering a scoped
+        # one from a fixed template is the failure this guard exists to stop.
+        log.warning(
+            "Temporal scope detection unavailable in match_metric — declining "
+            "the deterministic registry route so the question is planned instead",
+            exc_info=True,
+        )
+        return None
+
     for metric in list_metrics(account_id):
         if (metric.get("formula_type") or "query").lower() != "query":
             continue
@@ -1562,6 +1622,15 @@ def match_metric(account_id: str, question: str) -> dict | None:
         for syn in synonyms:
             pattern = r"\b" + re.escape(syn) + r"\b"
             if re.search(pattern, q_lower):
+                if not _metric_covers_temporal_scope(syn, question_window, question_is_dated):
+                    log.info(
+                        "Metric %r matched %r but does not carry its time scope "
+                        "(%s) — planning the question instead of returning the "
+                        "stored template",
+                        metric.get("name"), question,
+                        question_window.get("kind") or "explicit date",
+                    )
+                    continue
                 return metric
     return None
 

@@ -2344,7 +2344,29 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     },
                 )
     except Exception as _gex:
-        log.debug("Graph resolution skipped: %s", _gex)
+        # Not a skip — a failure, and one that removes join governance from the
+        # rest of this request. Every downstream graph check reads _graph_ctx,
+        # so an empty one is indistinguishable from "this workspace has no
+        # entity graph": the validator stops checking joins, the reuse guard
+        # stops rejecting stale plans, and the LLM's own joins execute with
+        # nothing to compare them against. At debug level none of that was
+        # visible; the answer just came back looking normal.
+        log.error(
+            "Entity-graph resolution FAILED for %s (%s) — join governance is "
+            "not in force for this request; any joins in the answer are the "
+            "model's own",
+            account_id, question[:200], exc_info=True,
+        )
+        if not _graph_ctx.get("enabled"):
+            _graph_ctx = {"enabled": False, "resolution_error": type(_gex).__name__}
+        _trace_step(
+            trace_id,
+            "entity_graph_resolution",
+            input_summary={"question": question, "schema": schema_hint or "all"},
+            output_summary=str(_gex)[:500],
+            status="error",
+            metadata={"join_governance": "not_enforced"},
+        )
 
     # ── Table coverage guarantee ──────────────────────────────────────────────
     # After graph resolution we know which tables are required (from detected
@@ -5955,6 +5977,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "rows_truncated": _rows_truncated,
         "has_semantic_plan": bool((_semantic_plan or {}).get("enabled")),
         "has_graph_context": bool((_graph_ctx or {}).get("enabled") or (_graph_ctx or {}).get("detected")),
+        # Resolution raised rather than returning "no graph". The difference
+        # matters to the reader: a single-table answer needs no join governance,
+        # but a multi-table one built while governance was down has joins
+        # nothing checked.
+        "graph_resolution_failed": bool((_graph_ctx or {}).get("resolution_error")),
         "tables_used": extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
         # "open order quantity" with no approved formula anywhere = the LLM
         # could only SUM a raw column; surface that as a confidence warning

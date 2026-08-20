@@ -33,6 +33,7 @@ def build_answer_confidence(
     weak_retrieval: bool = False,
     zero_match_result: bool = False,
     graph_scope: str = "",
+    graph_resolution_failed: bool = False,
     fanout_risk: bool = False,
     result_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -125,6 +126,18 @@ def build_answer_confidence(
         else:
             score += 5
             reasons.append("Configured entity relationships were used.")
+    elif graph_resolution_failed and len(set(used_tables)) > 1:
+        # Entity-graph resolution raised instead of returning "no graph", so
+        # nothing checked the joins in this SQL against the approved ones. A
+        # single-table answer has no joins to check and is unaffected; a
+        # multi-table one is the model's own join plan, executed. Without this
+        # the answer scored identically to a query that needed no governance.
+        score -= 35
+        warnings.append(
+            "Relationship checks could not run for this question, so the joins "
+            "between tables in this answer were not verified against your "
+            "approved relationships. Treat the result as unconfirmed."
+        )
 
     if fanout_risk:
         score -= 35

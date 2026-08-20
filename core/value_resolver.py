@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import re
+from difflib import SequenceMatcher
 
 from core.value_index import (
     FUZZY_CANDIDATE, FUZZY_VERIFIED,
@@ -200,6 +201,74 @@ def extract_candidate_phrases(question: str, known_terms: set[str] | None = None
     return (kept_spans + kept_grams + tokens)[:_MAX_PHRASES]
 
 
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+# Two tokens mean the same word at or above this similarity ("industry" /
+# "industries" = 0.89). Abbreviations score far below it and are handled by the
+# prefix rule instead ("corp" / "corporation").
+_TOKEN_SAME = 0.82
+_TOKEN_PREFIX_MIN = 3
+
+
+def _common_prefix(left: str, right: str) -> str:
+    limit = min(len(left), len(right))
+    index = 0
+    while index < limit and left[index] == right[index]:
+        index += 1
+    return left[:index]
+
+
+def uncovered_phrase_tokens(phrase: str, value: str) -> list[str]:
+    """Words in the user's phrase that the matched value does not account for.
+
+    A fuzzy match rewrites what the user typed. That is right when the phrase
+    is a misspelling or an abbreviation of the value — "emco corp" means "EMCO
+    Corporation", and nothing is lost. It is wrong when the phrase carries a
+    qualifier the value does not have: "Acme Industries East" against an
+    indexed "Acme Industries" scores highly for exactly the reason it must not
+    be accepted — the shared prefix — and substituting it drops the word the
+    user chose to narrow by.
+
+    That case is not rare, because the value index is a snapshot. A value added
+    to the warehouse after the index was built cannot be matched, so a genuinely
+    new, more specific value looks precisely like a near-miss on the old one.
+
+    Coverage is deliberately generous, since a false "uncovered" costs a
+    resolution the product used to make correctly:
+      * identical or near-identical words (plural, tense, small typo), or
+      * one word is a prefix of the other and at least three characters long.
+    """
+    from core.value_index import normalize_value
+
+    phrase_tokens = _TOKEN_RE.findall(normalize_value(phrase))
+    value_tokens = _TOKEN_RE.findall(normalize_value(value))
+    if not phrase_tokens or not value_tokens:
+        return []
+
+    def covered(token: str) -> bool:
+        for other in value_tokens:
+            if token == other:
+                return True
+            # Abbreviation: "corp" of "corporation".
+            if (
+                min(len(token), len(other)) >= _TOKEN_PREFIX_MIN
+                and (token.startswith(other) or other.startswith(token))
+            ):
+                return True
+            # Same word, different ending: "industry" / "industries". Requiring
+            # the shared prefix to reach within two characters of the shorter
+            # word is what separates that from "10mm" / "12mm", where the
+            # difference is the whole point of the word.
+            shared = len(_common_prefix(token, other))
+            if shared >= 4 and shared >= min(len(token), len(other)) - 2:
+                return True
+            # Typo: "corportion" / "corporation".
+            if SequenceMatcher(None, token, other).ratio() >= _TOKEN_SAME:
+                return True
+        return False
+
+    return [token for token in phrase_tokens if not covered(token)]
+
+
 def resolve_literals(
     account_id: str,
     question: str,
@@ -210,17 +279,40 @@ def resolve_literals(
     """
     Resolve candidate phrases from the question against the value index.
 
-    Returns {"verified": [...], "in_lists": [...], "clarify": [...]} where
-    each verified entry is {phrase, table_fqn, column, business_name, value,
-    method, score}, each in_lists entry is {phrase, table_fqn, column,
-    business_name, values: [...]}, and each clarify entry is
-    {phrase, options: [{table_fqn, column, business_name, value}]}.
+    Returns {"verified": [...], "in_lists": [...], "clarify": [...],
+    "narrowed": [...]} where each verified entry is {phrase, table_fqn, column,
+    business_name, value, method, score}, each in_lists entry is {phrase,
+    table_fqn, column, business_name, values: [...]}, each clarify entry is
+    {phrase, options: [{table_fqn, column, business_name, value}]}, and each
+    narrowed entry is a near-miss the resolver refuses to substitute —
+    {phrase, table_fqn, column, business_name, value, dropped: [words]}.
     """
-    empty = {"verified": [], "in_lists": [], "clarify": []}
+    empty = {"verified": [], "in_lists": [], "clarify": [], "narrowed": []}
     if not index_exists(account_id, base_dir=base_dir):
         return empty
 
-    result = {"verified": [], "in_lists": [], "clarify": []}
+    result = {"verified": [], "in_lists": [], "clarify": [], "narrowed": []}
+
+    def accept_fuzzy(phrase: str, match: dict) -> None:
+        """Verify a fuzzy match, unless it would discard the user's own words."""
+        dropped = uncovered_phrase_tokens(phrase, str(match.get("value") or ""))
+        if not dropped:
+            result["verified"].append({"phrase": phrase, **match})
+            return
+        log.info(
+            "Refusing to resolve %r to %r: %s not accounted for in the indexed "
+            "value. Filtering on the closest known value would answer a "
+            "different question, and the index may simply predate the real one.",
+            phrase, match.get("value"), ", ".join(repr(d) for d in dropped),
+        )
+        result["narrowed"].append({
+            "phrase": phrase,
+            "table_fqn": match.get("table_fqn"),
+            "column": match.get("column"),
+            "business_name": match.get("business_name"),
+            "value": match.get("value"),
+            "dropped": dropped,
+        })
     for phrase in extract_candidate_phrases(question, known_terms):
         exact = lookup_exact(account_id, phrase, allowed_tables, base_dir=base_dir)
         if exact:
@@ -241,12 +333,14 @@ def resolve_literals(
         columns = {(m["table_fqn"], m["column"]) for m in fuzzy}
 
         if top["score"] >= FUZZY_VERIFIED and (len(fuzzy) == 1 or top["score"] - runner >= _FUZZY_SOLO_GAP):
-            result["verified"].append({"phrase": phrase, **top})
+            accept_fuzzy(phrase, top)
         elif len(fuzzy) == 1 and top["score"] >= 0.80:
-            # A lone strong candidate has nothing to be confused with —
-            # "acme industry" -> "Acme Industries" (0.86) is the resolution,
-            # not an ambiguity.
-            result["verified"].append({"phrase": phrase, **top})
+            # A lone strong candidate has nothing IN THE INDEX to be confused
+            # with — "acme industry" -> "Acme Industries" (0.86) is the
+            # resolution, not an ambiguity. What the index does not hold is a
+            # different matter, which is why accept_fuzzy still checks that the
+            # user's own words survive the substitution.
+            accept_fuzzy(phrase, top)
         elif len(columns) == 1 and 2 <= len(fuzzy) <= 5:
             first = fuzzy[0]
             result["in_lists"].append({
@@ -337,7 +431,7 @@ def filter_resolved_for_compliance(account_id: str, resolved: dict) -> tuple[dic
             # compliance setup is incomplete.
             evidence["reason"] = "no_policy_pack"
             dropped = dict(resolved)
-            for bucket in ("verified", "in_lists"):
+            for bucket in ("verified", "in_lists", "narrowed"):
                 items = resolved.get(bucket) or []
                 evidence["dropped"] += len(items)
                 for item in items:
@@ -361,7 +455,7 @@ def filter_resolved_for_compliance(account_id: str, resolved: dict) -> tuple[dic
             return not (tags & sensitive)
 
         filtered: dict = dict(resolved)
-        for bucket in ("verified", "in_lists"):
+        for bucket in ("verified", "in_lists", "narrowed"):
             kept_items = []
             for item in (resolved.get(bucket) or []):
                 if _cleared(item.get("table_fqn", ""), item.get("column", "")):
@@ -392,6 +486,10 @@ def filter_resolved_for_compliance(account_id: str, resolved: dict) -> tuple[dic
         blocked = dict(resolved)
         blocked["verified"] = []
         blocked["in_lists"] = []
+        # narrowed entries carry a real cell value too — the block that renders
+        # them names it so the model is told what NOT to substitute. Same
+        # egress, same suppression.
+        blocked["narrowed"] = []
         return blocked, evidence
 
 
@@ -399,7 +497,8 @@ def build_verified_values_injection(resolved: dict) -> str:
     """Prompt block for verified + in-list resolutions. Empty string if none."""
     verified = (resolved or {}).get("verified") or []
     in_lists = (resolved or {}).get("in_lists") or []
-    if not verified and not in_lists:
+    narrowed = (resolved or {}).get("narrowed") or []
+    if not verified and not in_lists and not narrowed:
         return ""
 
     lines = [
@@ -423,6 +522,18 @@ def build_verified_values_injection(resolved: dict) -> str:
             f"- user text '{item['phrase']}' matches several {item['column']} values{label}: "
             f"use {item['table_fqn']}.{item['column']} IN ({vals}) unless the "
             f"question clearly selects one of them"
+        )
+    for item in narrowed:
+        label = f" [{item['business_name']}]" if item.get("business_name") else ""
+        dropped = ", ".join(f"'{w}'" for w in (item.get("dropped") or []))
+        lines.append(
+            f"- user text '{item['phrase']}' has NO verified match. The nearest "
+            f"indexed value is {item['table_fqn']}.{item['column']} = "
+            f"'{_sanitize(item['value'])}'{label}, which does not account for "
+            f"{dropped}. Filter on what the user asked for, NOT on that value: "
+            f"it answers a different question, and the more specific value may "
+            f"exist in the database without being indexed yet. An empty result "
+            f"is the correct answer here and will be explained to the user."
         )
     block = "\n".join(lines) + "\n"
     if len(block) > _MAX_INJECTION_CHARS:

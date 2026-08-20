@@ -119,11 +119,82 @@ class ResolutionTierTests(unittest.TestCase):
     def test_weak_typo_dropped_silently(self):
         r = resolve_literals("acct", "sales for 'Emko Corpp'", base_dir=self.base)
         self.assertEqual({k: len(v) for k, v in r.items()},
-                         {"verified": 0, "in_lists": 0, "clarify": 0})
+                         {"verified": 0, "in_lists": 0, "clarify": 0, "narrowed": 0})
 
     def test_no_index_returns_empty(self):
         r = resolve_literals("ghost", "sales for Acme Industries", base_dir=self.base)
-        self.assertEqual(r, {"verified": [], "in_lists": [], "clarify": []})
+        self.assertEqual(r, {"verified": [], "in_lists": [], "clarify": [], "narrowed": []})
+
+
+class NarrowerPhraseIsNotAVerificationTests(unittest.TestCase):
+    """The value index is a snapshot. A value added to the warehouse after it
+    was built cannot be matched — so a genuinely new, more specific value looks
+    exactly like a near-miss on the old one, and scores highly for the very
+    reason it must be refused: the shared prefix.
+
+    'Acme Industries East' resolved to 'Acme Industries' at 0.86 as a lone
+    strong candidate, was written into the prompt as verified-to-exist, and
+    came back as a plausible number for a different customer. Nothing in the
+    answer said a substitution had happened."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        _make_index(self.base)
+
+    def test_a_phrase_that_adds_a_qualifier_is_not_verified(self):
+        r = resolve_literals(
+            "acct", "sales for 'Acme Industries East'", base_dir=self.base,
+        )
+        self.assertEqual(
+            [v["value"] for v in r["verified"]], [],
+            "the user's qualifier was dropped and the older value substituted",
+        )
+
+    def test_the_near_miss_is_reported_rather_than_thrown_away(self):
+        r = resolve_literals(
+            "acct", "sales for 'Acme Industries East'", base_dir=self.base,
+        )
+        self.assertEqual(len(r["narrowed"]), 1)
+        entry = r["narrowed"][0]
+        self.assertEqual(entry["value"], "Acme Industries")
+        self.assertEqual(entry["dropped"], ["east"])
+
+    def test_the_prompt_tells_the_model_not_to_substitute(self):
+        r = resolve_literals(
+            "acct", "sales for 'Acme Industries East'", base_dir=self.base,
+        )
+        block = build_verified_values_injection(r)
+        self.assertIn("has NO verified match", block)
+        self.assertIn("Acme Industries", block)
+        self.assertIn("Filter on what the user asked for", block)
+
+    def test_a_misspelling_is_still_resolved(self):
+        """The guard must cost nothing on the cases the resolver exists for.
+        A typo or abbreviation carries no extra word, so nothing is lost by
+        substituting the real value."""
+        for phrase in ("acme industry", "'Acme Industrie'"):
+            with self.subTest(phrase=phrase):
+                r = resolve_literals(
+                    "acct", f"sales for {phrase}", base_dir=self.base,
+                )
+                self.assertEqual(
+                    [v["value"] for v in r["verified"]], ["Acme Industries"],
+                    f"{phrase!r} should still resolve",
+                )
+
+    def test_a_narrowed_value_is_still_a_database_value_for_compliance(self):
+        """The refusal names the real value in the prompt, so it is egress and
+        has to pass the same regulated-tenant filter as a verified one."""
+        import inspect
+
+        from core.value_resolver import filter_resolved_for_compliance
+
+        source = inspect.getsource(filter_resolved_for_compliance)
+        self.assertNotIn(
+            '("verified", "in_lists")', source,
+            "the narrowed bucket bypasses the compliance filter",
+        )
+        self.assertIn('blocked["narrowed"] = []', source)
 
 
 class InjectionBlockTests(unittest.TestCase):

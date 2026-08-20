@@ -761,13 +761,86 @@ class TestMainWiring(unittest.TestCase):
         src = QUERY_PIPELINE.read_text(encoding="utf-8")
         self.assertIn("store.get_full_graph", src)
 
-    def test_graph_failure_is_non_fatal(self):
-        """Graph errors must be caught and fall back gracefully."""
-        # Logic lives in core/query_pipeline.py after the main.py split
+    def test_graph_failure_is_non_fatal_but_never_silent(self):
+        """Graph errors must be caught — the request still has to answer — but
+        catching them used to mean logging "Graph resolution skipped" at DEBUG
+        and leaving _graph_ctx empty. An empty context is how the pipeline says
+        "this workspace has no entity graph", so every downstream join check
+        turned itself off and the answer came back looking ordinary. The
+        failure has to be recorded, not merely survived."""
         src = QUERY_PIPELINE.read_text(encoding="utf-8")
-        # The exception block for graph resolution
         self.assertIn("except Exception as _gex", src)
-        self.assertIn("Graph resolution skipped", src)
+        self.assertNotIn(
+            'log.debug("Graph resolution skipped', src,
+            "a graph-resolution failure is logged at debug level, where it is "
+            "indistinguishable from a workspace with no graph",
+        )
+        self.assertIn('"resolution_error": type(_gex).__name__', src)
+
+    def test_a_resolution_failure_stops_cached_plan_reuse(self):
+        """With no current detection to compare against, a cached plan cannot
+        be shown to still be governed. Reuse would otherwise be permitted
+        exactly when governance is down."""
+        from core.pipeline_helpers import reused_plan_is_stale_for_graph
+
+        sql = "SELECT 1 FROM A JOIN B ON A.ID = B.ID"
+        self.assertTrue(
+            reused_plan_is_stale_for_graph(
+                sql, {"enabled": False, "resolution_error": "TimeoutError"}, "azure_sql",
+            ),
+            "a cached plan was reused while entity-graph resolution was failing",
+        )
+        # A workspace that genuinely has no graph is unchanged.
+        self.assertFalse(
+            reused_plan_is_stale_for_graph(sql, {"enabled": False}, "azure_sql"),
+        )
+
+    def test_a_multi_table_answer_built_without_governance_is_marked_down(self):
+        """The joins in that SQL are the model's own and nothing compared them
+        to the approved relationships. Previously this scored identically to a
+        query that needed no relationships at all."""
+        from core.answer_confidence import build_answer_confidence
+
+        joined = build_answer_confidence(
+            validation_code="ok", row_count=10,
+            tables_used=["DW.F_SALES", "DW.D_CUSTOMER"],
+            graph_resolution_failed=True,
+        )
+        governed = build_answer_confidence(
+            validation_code="ok", row_count=10,
+            tables_used=["DW.F_SALES", "DW.D_CUSTOMER"],
+        )
+        self.assertLess(joined["score"], governed["score"])
+        self.assertTrue(
+            any("not verified against your approved relationships" in w
+                for w in joined["warnings"]),
+            "the answer carried no warning that its joins were unchecked",
+        )
+
+    def test_a_single_table_answer_is_not_penalised_for_the_same_failure(self):
+        """There are no joins to check, so nothing was missed."""
+        from core.answer_confidence import build_answer_confidence
+
+        one = build_answer_confidence(
+            validation_code="ok", row_count=10,
+            tables_used=["DW.F_SALES"], graph_resolution_failed=True,
+        )
+        baseline = build_answer_confidence(
+            validation_code="ok", row_count=10, tables_used=["DW.F_SALES"],
+        )
+        self.assertEqual(one["score"], baseline["score"])
+
+    def test_the_pipeline_hands_the_failure_to_the_confidence_scorer(self):
+        """The penalty above is only reachable if the flag is plumbed."""
+        src = QUERY_PIPELINE.read_text(encoding="utf-8")
+        self.assertIn('"graph_resolution_failed": bool(', src)
+
+        from pathlib import Path
+        renderer = Path("core/result_renderer.py").read_text(encoding="utf-8")
+        self.assertIn(
+            'graph_resolution_failed=bool(confidence_context.get("graph_resolution_failed"))',
+            renderer,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
