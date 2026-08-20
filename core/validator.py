@@ -1873,6 +1873,27 @@ def _top_n_shape_error(tree, semantic_context: dict | None) -> dict | None:
     }
 
 
+def _question_scopes_a_relative_window(semantic_context: dict | None) -> bool:
+    """Did the user ask about a period relative to 'now'?
+
+    Read from the request state the pipeline already assembled — the detected
+    temporal window, falling back to re-detecting from the question text — so
+    this holds even when no approved date role resolved, which is exactly the
+    case where nothing else is watching.
+    """
+    context = semantic_context or {}
+    if context.get("temporal_window"):
+        return True
+    question = str(context.get("question") or "")
+    if not question:
+        return False
+    try:
+        from core.contextual_dates import detect_temporal_window
+        return bool(detect_temporal_window(question))
+    except Exception:
+        return False
+
+
 def _temporal_anchor_errors(
     tree, sql: str, policies: list[dict],
     semantic_context: dict | None = None,
@@ -1882,15 +1903,40 @@ def _temporal_anchor_errors(
         policy for policy in policies or []
         if str(policy.get("anchor_policy") or "") == "latest_available"
     ]
-    if not governed:
-        return []
 
-    errors: list[dict] = []
     clock_match = re.search(
         r"\b(?:GETDATE\s*\(|CURRENT_DATE\b|CURRENT_TIMESTAMP\b|SYSDATE\b|NOW\s*\()",
         _strip_literals_and_comments(sql),
         re.IGNORECASE,
     )
+
+    if not governed:
+        # No approved date role resolved, so there is no policy to enforce and
+        # nothing below applies. The clock rule still does: this product answers
+        # against a warehouse whose "now" is the newest date it has loaded, and
+        # a question that says "today" means that date. Returning early here let
+        # the absence of governance become permission — the model wrote
+        # GETDATE() and, on a warehouse loaded to some months ago, the answer
+        # was an empty result or a confidently wrong one for a day with no data.
+        # Oracle already rejected GETDATE as a dialect error; Azure SQL accepted
+        # it, so the same question was governed on one warehouse and not on
+        # another.
+        if clock_match and _question_scopes_a_relative_window(semantic_context):
+            return [{
+                "code": "temporal_anchor_ungoverned",
+                "message": (
+                    "This question asks about a relative period, but no approved "
+                    "date role resolved for it — so the database clock was used. "
+                    "The clock is not this data's calendar: anchor the period to "
+                    "MAX() over the governed business date, or ask an "
+                    "administrator to approve a date role for this table."
+                ),
+                "forbidden": clock_match.group(0),
+                "required_anchor": "MAX(governed_business_date)",
+            }]
+        return []
+
+    errors: list[dict] = []
     if clock_match:
         errors.append({
             "code": "temporal_anchor_mismatch",

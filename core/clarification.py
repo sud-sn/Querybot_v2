@@ -774,10 +774,31 @@ def _schema_dir_for_account(account_id: str) -> str:
     return str(state_data.get("schema_dir") or "").strip()
 
 
+def _schema_dir_fingerprint(schema_dir: str) -> float:
+    """Newest modification time under the schema directory.
+
+    The cache below is keyed on the directory PATH, and a re-Discover rewrites
+    the files in place without changing it — so the cached values, which the
+    prompt presents to the model as the authoritative set of real values for a
+    column, survived every rediscovery for the life of the process. A value
+    added to the warehouse after start-up could not appear, and one removed
+    from it kept being offered.
+    """
+    newest = 0.0
+    try:
+        for path in Path(schema_dir).glob("*"):
+            if path.is_file():
+                newest = max(newest, path.stat().st_mtime)
+    except Exception:
+        return 0.0
+    return newest
+
+
 @lru_cache(maxsize=64)
 def _load_schema_distinct_value_candidates(
     schema_dir: str,
     allowed_tables_key: tuple[str, ...],
+    schema_fingerprint: float = 0.0,
 ) -> tuple[str, ...]:
     if not schema_dir:
         return ()
@@ -835,7 +856,9 @@ def _schema_distinct_value_candidates(
 ) -> list[str]:
     schema_dir = _schema_dir_for_account(account_id)
     allowed_key = tuple(sorted((allowed_tables or set())))
-    return list(_load_schema_distinct_value_candidates(schema_dir, allowed_key))
+    return list(_load_schema_distinct_value_candidates(
+        schema_dir, allowed_key, _schema_dir_fingerprint(schema_dir),
+    ))
 
 
 def _find_exact_value_hits(question: str, candidate_phrases: list[str], max_items: int = 6) -> list[str]:

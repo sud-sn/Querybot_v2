@@ -31,6 +31,7 @@ def build_answer_confidence(
     null_metric_issue: bool = False,
     derived_metric_gap: str = "",
     weak_retrieval: bool = False,
+    retrieval_unscored: bool = False,
     zero_match_result: bool = False,
     graph_scope: str = "",
     graph_resolution_failed: bool = False,
@@ -113,6 +114,15 @@ def build_answer_confidence(
             "The question matched the knowledge base only weakly — the answer may "
             "use the wrong table. Naming the metric or table explicitly usually fixes this."
         )
+    elif retrieval_unscored:
+        # The re-ranker produced no scores, so the relevance floor never ran and
+        # weak_retrieval could not be raised. Retrieval was unfiltered — which
+        # is not the same as relevant, and used to be indistinguishable from it.
+        score -= 10
+        warnings.append(
+            "Knowledge-base relevance could not be scored for this question, so "
+            "the tables used were not filtered for relevance."
+        )
 
     if has_semantic_plan:
         score += 5
@@ -160,7 +170,17 @@ def build_answer_confidence(
 
     verification = result_verification or {}
     verification_status = str(verification.get("status") or "").lower()
-    if verification_status == "pass":
+    if verification_status == "unavailable":
+        # The shape check could not run. Absent verification used to cost
+        # nothing, so a failed check scored identically to a passed one — the
+        # defence against a schema-valid but business-wrong answer reporting
+        # "no issues found" precisely because it never looked.
+        score -= 15
+        warnings.append(
+            "The result could not be checked against the shape of the question, "
+            "so nothing confirms it answers what was asked."
+        )
+    elif verification_status == "pass":
         score += 5
         reasons.append("The returned result shape matched the analytical request.")
     elif verification_status in {"warning", "fail"}:

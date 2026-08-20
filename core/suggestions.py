@@ -102,6 +102,48 @@ def build_suggestion_cache(kb_dir: str) -> int:
     return len(entries)
 
 
+def prune_suggestion_cache(kb_dir: str, valid_questions: set[str]) -> int:
+    """Drop cached suggestions whose SQL did not survive Stage-2 validation.
+
+    The cache is written from every Q:/SQL: pair in the Stage-2 files at KB
+    build time — BEFORE validation runs — and nothing ever revisited it with
+    the results. A question whose SQL failed to compile against the real
+    database stayed in the panel indefinitely, and clicking it put the user
+    through the pipeline for a question the product had already established it
+    could not answer.
+
+    Returns the number of entries removed.
+    """
+    kb_path = Path(kb_dir)
+    cache_path = kb_path / _CACHE_FILENAME
+    if not valid_questions or not cache_path.exists():
+        return 0
+    try:
+        entries = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("Suggestion cache could not be pruned (%s)", exc)
+        return 0
+
+    keep_keys = {str(q or "").strip().lower() for q in valid_questions}
+    kept = [
+        entry for entry in entries
+        if str(entry.get("question") or "").strip().lower() in keep_keys
+    ]
+    removed = len(entries) - len(kept)
+    if not removed:
+        return 0
+    try:
+        cache_path.write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        log.warning("Suggestion cache could not be rewritten after pruning (%s)", exc)
+        return 0
+    log.info(
+        "Suggestion cache pruned for %s: %d question(s) removed whose SQL did "
+        "not validate, %d kept", kb_dir, removed, len(kept),
+    )
+    return removed
+
+
 def _fqn_from_kb_header(content: str) -> str | None:
     """
     Extract FQN from the first heading of a KB markdown file.
@@ -219,6 +261,48 @@ def _cache_indexes(cached: list[dict]) -> tuple[dict[str, dict], dict[str, dict]
             for variant in _name_variants(ref):
                 by_table.setdefault(variant, entry)
     return by_question, by_table
+
+
+def _date_scope_check(kb_dir: str):
+    """Withhold a date-scoped suggestion when no approved date role exists.
+
+    "Revenue last month" only has a governed answer if some fact carries an
+    admin-approved date role — that is what resolves the window against the
+    business-date anchor. With none, the question either gets refused or falls
+    through to a wall-clock date, and either way clicking the chip is a dead
+    end. Nothing checked this at suggestion time: a workspace mid-onboarding
+    offered date questions its own metadata could not answer.
+
+    Cheap by construction — it reads the compiled model already on disk and
+    makes no database call, so it can run per candidate during a page render.
+    Fails OPEN like the reachability gate: it can only ever remove questions
+    we can prove are dead ends.
+    """
+    try:
+        from core.contextual_dates import detect_temporal_window
+        from core.semantic_model import find_default_date_roles
+
+        has_role = bool(find_default_date_roles(kb_dir))
+    except Exception as exc:
+        log.debug("Suggestion date-scope check unavailable: %s", exc)
+        return lambda _question: True
+
+    if has_role:
+        return lambda _question: True
+
+    def _check(question: str) -> bool:
+        try:
+            if not detect_temporal_window(question or ""):
+                return True
+        except Exception:
+            return True
+        log.debug(
+            "Withholding date-scoped suggestion %r — no approved date role "
+            "exists to resolve the period against", question,
+        )
+        return False
+
+    return _check
 
 
 # ── Main public function ──────────────────────────────────────────────────────
@@ -355,19 +439,26 @@ def get_suggestions(
     # Loaded once and shared by tiers 1 and 3. Pure and in-memory — no LLM, no
     # warehouse round-trip — so every candidate is free to test.
     _reachable = _graph_reachability_check(account_id)
+    _date_scope_is_answerable = _date_scope_check(kb_dir)
 
-    # Tier 1: validated examples. Their SQL has executed successfully, which is
-    # why they rank first — but that is a weaker guarantee than it sounds. Most
-    # of them are Q:/SQL: pairs the LLM wrote during the KB build, banked by
-    # core.examples as soon as the hand-written SQL ran. Executing authored SQL
-    # says nothing about whether the NL pipeline can re-plan the question from
-    # the text, so a question naming an entity the graph cannot reach still
-    # dead-ends on "Missing governed path" after the user clicks it. Gate them
-    # on the same reachability check as tier 3.
+    # Tier 1: validated examples. "Validated" is two different guarantees
+    # wearing one name, and the weaker one was ranked as if it were the
+    # stronger. A kb_stage2 example is SQL the LLM authored during the KB build
+    # and core.examples COMPILE-checked (sp_describe_first_result_set and its
+    # equivalents) — that proves the tables, columns and syntax resolve, and
+    # nothing whatever about whether the question returns anything. A query_log
+    # example is a question a user actually asked that actually came back with
+    # rows. Proven-answerable ones go first.
+    #
+    # Neither says the NL pipeline can re-plan the sentence from its text, so
+    # both still pass through the same reachability gate as tier 3.
     try:
         import store
         examples = store.get_validated_examples(account_id, limit=80)
         random.shuffle(examples)
+        examples.sort(
+            key=lambda ex: 0 if str(ex.get("source") or "") == "query_log" else 1
+        )
         for ex in examples:
             q = (ex.get("question") or "").strip()
             if not q:
@@ -376,6 +467,8 @@ def get_suggestions(
             if not _table_allowed(entry) or not _entry_matches_schema(entry):
                 continue
             if not _reachable(q):
+                continue
+            if not _date_scope_is_answerable(q):
                 continue
             _add(q, entry.get("fqn", ""))
             if len(suggestions) >= n:
@@ -402,7 +495,7 @@ def get_suggestions(
                 # spanning entities the graph cannot join dead-ends on the same
                 # "Missing governed path" the user sees from a typed question.
                 # This tier was the one source offered unchecked.
-                if not _reachable(q):
+                if not _reachable(q) or not _date_scope_is_answerable(q):
                     continue
                 _add(q, "")
                 if len(suggestions) >= n:
@@ -427,6 +520,8 @@ def get_suggestions(
         for e in scoped:
             question_text = str(e.get("question") or "").strip()
             if not question_text or not _reachable(question_text):
+                continue
+            if not _date_scope_is_answerable(question_text):
                 continue
             _add(question_text, e.get("fqn", ""))
             if len(suggestions) >= n:
@@ -508,8 +603,29 @@ def _graph_reachability_check(account_id: str):
     # twin the predicate returned True for every question and reported itself
     # verified — the gate looked like it was working precisely when it was
     # doing nothing.
+    # Built from the SAME subgraph the pipeline will plan on, not from every
+    # row in the graph. The pipeline narrows to admin-confirmed entities and
+    # relationships unless the client has explicitly opted into unreviewed
+    # ones, so a question joinable only through a suggested edge passed this
+    # gate and was then refused with "Missing governed path" after the user
+    # clicked the chip — the gate vouching for a path the planner would not
+    # use. Broken edges are excluded here for the same reason the pathfinder
+    # excludes them.
+    try:
+        from core.graph_resolver import (
+            _client_allows_suggested, _confirmed_subgraph,
+        )
+        planning_graph = (
+            graph if _client_allows_suggested(account_id) else _confirmed_subgraph(graph)
+        )
+    except Exception as exc:
+        log.debug("Suggestion gate could not narrow to the planning subgraph: %s", exc)
+        planning_graph = graph
+
     _adjacency: dict[str, set[str]] = {}
-    for rel in graph.get("relationships") or []:
+    for rel in planning_graph.get("relationships") or []:
+        if str(rel.get("validation_status") or "").lower() == "broken":
+            continue
         a, b = str(rel.get("from_entity") or ""), str(rel.get("to_entity") or "")
         if a and b:
             _adjacency.setdefault(a, set()).add(b)

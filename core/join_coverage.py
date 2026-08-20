@@ -27,6 +27,7 @@ against, not a gap in this module's logic.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 log = logging.getLogger("querybot.join_coverage")
 
@@ -35,6 +36,12 @@ log = logging.getLogger("querybot.join_coverage")
 # number the Entity Graph review UI already considers questionable, not a new
 # one invented for this caveat.
 _ORPHAN_RATE_WARNING_THRESHOLD = 5.0
+
+# Past this, the measured percentage is reported as historical rather than as
+# a present-tense fact about the join. A month of loads is enough for an
+# orphan rate to have moved; quoting a precise figure from before them states
+# more than the evidence supports.
+_STALE_PROFILE_DAYS = 30
 
 
 def check_join_coverage(account_id: str, graph_edges: list[dict]) -> list[str]:
@@ -73,9 +80,61 @@ def check_join_coverage(account_id: str, graph_edges: list[dict]) -> list[str]:
 
         from_entity = str(edge.get("from_entity") or rel.get("from_entity") or "the source table")
         to_entity = str(edge.get("to_entity") or rel.get("to_entity") or "the joined table")
-        messages.append(
-            f"The join from {from_entity} to {to_entity} excludes about "
-            f"{orphan_rate:.0f}% of rows with no match — some data may not be counted."
-        )
+        messages.append(_coverage_message(
+            from_entity, to_entity, orphan_rate,
+            str(rel.get("last_profiled_at") or ""),
+        ))
 
     return messages
+
+
+def _measured_age_days(last_profiled_at: str) -> int | None:
+    """Days since the orphan rate was measured, or None if never/unreadable."""
+    raw = str(last_profiled_at or "").strip().replace("Z", "")
+    if not raw:
+        return None
+    for parse in (
+        lambda t: datetime.fromisoformat(t),
+        lambda t: datetime.strptime(t[:19], "%Y-%m-%d %H:%M:%S"),
+        lambda t: datetime.strptime(t[:10], "%Y-%m-%d"),
+    ):
+        try:
+            return max(0, (datetime.now() - parse(raw)).days)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _coverage_message(
+    from_entity: str, to_entity: str, orphan_rate: float, last_profiled_at: str,
+) -> str:
+    """State the exclusion, and state when it was measured.
+
+    The percentage comes from a profiling run at some past admin click. It was
+    quoted to the user as a present-tense fact — "excludes about 23% of rows" —
+    with no age check and no expiry, so a figure measured before a year of
+    loads described a join it may no longer describe at all. The number is
+    still the best evidence available; what was missing is that it is evidence
+    from a point in time.
+    """
+    lead = f"The join from {from_entity} to {to_entity}"
+    age_days = _measured_age_days(last_profiled_at)
+
+    if age_days is None:
+        return (
+            f"{lead} was measured as excluding about {orphan_rate:.0f}% of rows "
+            "with no match. That measurement is undated, so it may not reflect "
+            "the current data — some rows may not be counted."
+        )
+    if age_days > _STALE_PROFILE_DAYS:
+        return (
+            f"{lead} excluded about {orphan_rate:.0f}% of rows with no match "
+            f"when it was last profiled {age_days} days ago. Re-profile the "
+            "relationship to confirm the current figure — some rows may not be "
+            "counted."
+        )
+    measured = "today" if age_days == 0 else f"{age_days} day{'s' if age_days != 1 else ''} ago"
+    return (
+        f"{lead} excludes about {orphan_rate:.0f}% of rows with no match "
+        f"(measured {measured}) — some data may not be counted."
+    )

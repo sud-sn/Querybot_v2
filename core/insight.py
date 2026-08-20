@@ -1342,6 +1342,7 @@ async def generate_followup_suggestions(
     account_id: str,
     audit_enabled: bool = False,
     audit_request_id: str = "",
+    signals: list[dict] | None = None,
 ) -> list[str]:
     """
     Generate 3 result-aware follow-up questions from brief metadata.
@@ -1393,8 +1394,25 @@ async def generate_followup_suggestions(
             top_vals_ctx = f"Top {label_col} values: {', '.join(str(l) for l in safe_labels[:5])}\n"
 
     # ── Tier 1: Statistical signals → instant template suggestions ───────────
+    #
+    # `signals` used to be initialised empty here and never filled, so this
+    # whole tier was dead: every chip came from the LLM below, ungrounded,
+    # while the comments and the prompt described statistical grounding that
+    # never happened. The cause was structural — compute_signals() needs the
+    # result ROWS, and rows deliberately stop at the PII boundary before this
+    # function. Signals carry no raw values by construction, so the caller
+    # computes them where the rows are and passes them in.
+    signals = list(signals or [])
     suggestions: list[str] = []
-    signals: list[dict]    = []
+    if signals:
+        try:
+            from core.stat_signals import template_suggestions
+            suggestions = [q for q in template_suggestions(signals, col_names) if q]
+        except Exception as exc:
+            log.warning(
+                "Statistical follow-up templates unavailable (%s) — falling back "
+                "to model-written suggestions with signal context", exc,
+            )
 
     if len(suggestions) >= 3:
         return [s for s in suggestions if s][:3]

@@ -45,6 +45,12 @@ class CoverageGap:
     actual_days: int
     message: str
     metric_active_days: int | None = None
+    # The newest business date the data actually holds, as this check read it
+    # from the database on this request. It was being read and discarded: the
+    # window was derived from it and then it was never mentioned again, so a
+    # user shown "the result reflects the available data" was not told which
+    # dates that meant.
+    observed_through: str = ""
 
 
 def _safe_metric_formula(value: object) -> str:
@@ -121,11 +127,13 @@ def check_date_coverage(
     """
     from core.contextual_dates import format_required_anchor
 
-    # Day-coverage diagnostics count distinct days. A monthly encoded snapshot
-    # is valid for month-level analysis but cannot be evaluated by this check
-    # without producing a false "missing days" warning.
-    if str(policy.get("temporal_grain") or "").lower() not in {"", "day"}:
-        return None
+    # Day-coverage diagnostics count distinct days. A period-grained source is
+    # valid for month-level analysis but cannot be evaluated by a distinct-day
+    # count without producing a false "missing days" warning — so the COUNT is
+    # skipped for it. The anchor read is not: which period the data actually
+    # runs through is exactly what a "this month" question needs to know, and
+    # returning early here skipped that too.
+    counts_days = str(policy.get("temporal_grain") or "").lower() in {"", "day"}
 
     requested_days = _window_to_days(policy.get("amount"), policy.get("unit"))
     if requested_days <= 0:
@@ -165,6 +173,22 @@ def check_date_coverage(
 
         window_start = anchor_date - timedelta(days=requested_days - 1)
         start_iso, end_iso = window_start.isoformat(), anchor_date.isoformat()
+
+        if not counts_days:
+            # No day count to make, but the read already happened and the
+            # answer is about a period the user has not been told the identity
+            # of. Say which date the data runs through and stop.
+            grain = str(policy.get("temporal_grain") or "period").strip().lower()
+            return CoverageGap(
+                requested_days=requested_days,
+                actual_days=0,
+                observed_through=end_iso,
+                message=(
+                    f"This source is recorded by {grain}. The most recent data "
+                    f"it holds is dated {end_iso}, and the result covers the "
+                    f"requested period up to that point."
+                ),
+            )
 
         coverage_from = ""
         coverage_where = ""
@@ -219,10 +243,23 @@ def check_date_coverage(
                 # This extra probe is advisory.  Formula shapes that need more
                 # joins or dialect-specific handling must not erase the basic
                 # row-date coverage result that was already obtained above.
-                log.debug("Metric activity coverage skipped: %s", exc)
+                log.info(
+                    "Metric-activity coverage probe unavailable for %r (%s) — "
+                    "falling back to row-date coverage, which is still reported",
+                    metric_name or "the selected metric", exc,
+                )
                 metric_active_days = None
     except Exception as exc:
-        log.debug("Date coverage check skipped: %s", exc)
+        # This is the only live read of the true current data date on the
+        # answer path. Swallowed at debug, a failed probe was indistinguishable
+        # from a confirmed-fresh answer: both produce no caveat at all.
+        log.warning(
+            "Date coverage check FAILED for %s.%s (%s) — this answer carries no "
+            "freshness caveat, and that is because the check could not run, not "
+            "because the window is covered",
+            policy.get("fact_table"), policy.get("fact_column"), exc,
+            exc_info=True,
+        )
         return None
 
     # A partial current day is still represented by one distinct date, so an
@@ -257,22 +294,22 @@ def check_date_coverage(
         message = (
             f"You asked for the last {requested_amount} days. Records existed "
             f"on {actual_days} {date_label}, but {metric_label} was nonzero on "
-            f"only {metric_active_days} {available_label}. The result reflects "
-            "the available metric values."
+            f"only {metric_active_days} {available_label}, through {end_iso}. "
+            "The result reflects the available metric values."
         )
     elif requested_unit == "day":
         available_label = "day" if actual_days == 1 else "days"
         message = (
             f"You asked for the last {requested_amount} days, but "
             f"{metric_subject.lower()} were found on only {actual_days} "
-            f"{date_label} ({actual_days} {available_label} with data). "
-            "The result reflects the available data."
+            f"{date_label} ({actual_days} {available_label} with data), "
+            f"through {end_iso}. The result reflects the available data."
         )
     else:
         message = (
             f"{metric_subject} were available on {actual_days} distinct "
             f"{date_label} within the requested {requested_amount}-{requested_unit} "
-            "period. The result reflects those available records."
+            f"period, through {end_iso}. The result reflects those available records."
         )
 
     return CoverageGap(
@@ -280,4 +317,5 @@ def check_date_coverage(
         actual_days=actual_days,
         message=message,
         metric_active_days=metric_active_days,
+        observed_through=end_iso,
     )

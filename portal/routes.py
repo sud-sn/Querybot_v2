@@ -317,6 +317,57 @@ def _question_matches_visible_business_language(question: str, visible_phrases: 
     return False
 
 
+def _metrics_within_acl(
+    account_id: str,
+    metrics: list[dict],
+    allowed_tables: list[str] | None,
+) -> list[dict]:
+    """Keep only metrics whose every source table this user may read."""
+    if allowed_tables is None:
+        return metrics
+    allowed_variants: set[str] = set()
+    for table in allowed_tables:
+        parts = [p for p in str(table).upper().split(".") if p]
+        if parts:
+            allowed_variants.add(".".join(parts))
+            allowed_variants.add(parts[-1])
+
+    try:
+        from core.metric_scope import metric_source_tables
+        from core.schema import load_schema_columns
+        client = store.get_client(account_id) or {}
+        state_data = json.loads(client.get("state_data") or "{}")
+        table_columns = load_schema_columns(state_data.get("schema_dir", ""))
+    except Exception as exc:
+        log.warning(
+            "Could not resolve metric source tables for %s (%s) — suggesting "
+            "only metrics that name an allowed table outright", account_id, exc,
+        )
+        table_columns = {}
+        metric_source_tables = None  # type: ignore[assignment]
+
+    kept: list[dict] = []
+    for metric in metrics:
+        try:
+            sources = (
+                metric_source_tables(metric, table_columns)
+                if metric_source_tables else set()
+            )
+        except Exception:
+            sources = set()
+        if not sources:
+            # Nothing resolvable to check against. Withhold rather than guess:
+            # this is a filler for a panel that already has better sources.
+            continue
+        if all(
+            {".".join(p for p in str(src).upper().split(".") if p),
+             str(src).upper().split(".")[-1]} & allowed_variants
+            for src in sources
+        ):
+            kept.append(metric)
+    return kept
+
+
 def _guess_safe_metric_suggestions(
     account_id: str,
     allowed_tables: list[str] | None = None,
@@ -332,6 +383,15 @@ def _guess_safe_metric_suggestions(
         metrics = store.list_metrics(account_id)
     except Exception:
         return []
+    if not metrics:
+        return []
+
+    # The user's table ACL, applied to the metric's own source tables. The
+    # phrase filter below reads allowed_tables too, but only to decide which
+    # GLOSSARY terms count — a metric over a table this user cannot see was
+    # still offered, and clicking it ends in a policy denial or an empty
+    # result. The two filters answer different questions and both are needed.
+    metrics = _metrics_within_acl(account_id, metrics, allowed_tables)
     if not metrics:
         return []
 
@@ -522,13 +582,32 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
         )
 
         # Fallback: glossary-based synthesis (returns plain strings — wrap them)
+        #
+        # get_suggestions() gates every tier on the entity graph; this filler
+        # ran after it and was gated on nothing. Its own business-phrase filter
+        # is skipped entirely when the glossary is empty — the state a new
+        # workspace is in — so it filled the panel with every metric in the
+        # registry, including ones over tables this user cannot see. Put it
+        # through the same gate the tiers use before it reaches the panel.
         if len(suggestions) < 4:
             extra = _guess_safe_metric_suggestions(account_id, allowed, max_items=6)
-            for q in extra:
-                if not any(s["question"] == q for s in suggestions):
-                    suggestions.append({"question": q, "fqn": ""})
-                if len(suggestions) >= 6:
-                    break
+            if extra:
+                try:
+                    from core.suggestions import _graph_reachability_check
+                    reachable = _graph_reachability_check(account_id)
+                except Exception as exc:
+                    log.warning(
+                        "Shortfall suggestions for %s could not be graph-checked "
+                        "(%s) — offering them unfiltered", account_id, exc,
+                    )
+                    reachable = lambda _q: True  # noqa: E731
+                for q in extra:
+                    if not reachable(q):
+                        continue
+                    if not any(s["question"] == q for s in suggestions):
+                        suggestions.append({"question": q, "fqn": ""})
+                    if len(suggestions) >= 6:
+                        break
 
         # ── Genie signal engine: re-rank by behavioral signals ────────────────
         if client.get("enable_genie_suggestions"):
@@ -543,6 +622,14 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
         return suggestions[:6]
 
     except Exception:
+        # A bare handler with no log at all: the chat panel showing no
+        # suggestions was indistinguishable from a workspace that genuinely has
+        # none, and stayed that way for as long as the underlying fault lasted.
+        log.error(
+            "Chat suggestions could not be built for account %s — the panel will "
+            "render empty",
+            (user or {}).get("account_id", "?"), exc_info=True,
+        )
         return []
 
 

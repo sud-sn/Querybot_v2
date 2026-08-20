@@ -267,6 +267,14 @@ def find_reusable_validated_sql_plan(
     expected_contract = str(contract_version or "")
 
     with get_db() as conn:
+        # The question filter has to run INSIDE the query. It used to be applied
+        # in Python over the 100 most recent rows, so whether a reusable plan was
+        # found at all depended on how much unrelated traffic the account had
+        # since: the same question could reuse its plan on a quiet workspace and
+        # silently re-generate on a busy one. Matching is normalized rather than
+        # literal, so the normalizer is registered as a SQLite function instead
+        # of being approximated in SQL.
+        conn.create_function("qb_normalized_question", 1, _normalized_question)
         rows = conn.execute(
             """
             SELECT q.id AS query_log_id, q.question, q.sql_generated,
@@ -284,10 +292,11 @@ def find_reusable_validated_sql_plan(
                AND COALESCE(q.sql_generated, '') <> ''
                AND a.status='success'
                AND COALESCE(a.query_row_count, 0) > 0
+               AND qb_normalized_question(q.question) = ?
              ORDER BY q.id DESC
              LIMIT ?
             """,
-            (account_id, max(1, int(limit or 100))),
+            (account_id, question_key, max(1, int(limit or 100))),
         ).fetchall()
 
     for row in rows:

@@ -1037,6 +1037,7 @@ class QdrantKBRetriever:
         # True when the last retrieve() found nothing above the relevance
         # floor — read by the pipeline to penalize answer confidence.
         self.last_retrieval_weak = False
+        self.last_retrieval_unscored = False
         # Per-table telemetry from the last retrieve(): one entry per table
         # fqn with its best cross-encoder score, section count, and whether
         # the relevance floor kept or dropped it. The pipeline persists this
@@ -1272,6 +1273,7 @@ class QdrantKBRetriever:
             confidence drops instead of the prompt going context-free.
         """
         self.last_retrieval_weak = False
+        self.last_retrieval_unscored = False
 
         # Telemetry: one stats entry per table fqn in the candidate set.
         # Built BEFORE floor decisions so dropped tables are recorded too —
@@ -1295,6 +1297,22 @@ class QdrantKBRetriever:
 
         scored = [h for h in hits if "_rerank_score" in h and (h.get("fqn") or "") not in ("", "_global")]
         if not scored:
+            # No candidate carries a score, so the relevance floor cannot run
+            # and last_retrieval_weak can never become True — which means the
+            # weak-retrieval confidence penalty is off too. That is the correct
+            # behaviour (an unscored candidate must not be floored on a guess),
+            # but it is a DEGRADED state and it used to be indistinguishable
+            # from a clean pass for the entire process lifetime after one
+            # warning at model-load time.
+            self.last_retrieval_unscored = bool(
+                [h for h in hits if (h.get("fqn") or "") not in ("", "_global")]
+            )
+            if self.last_retrieval_unscored:
+                log.warning(
+                    "KB retrieval relevance floor did not run: no candidate "
+                    "carries a re-ranker score. Retrieved tables are unfiltered "
+                    "and this answer cannot be flagged as weakly retrieved.",
+                )
             return hits
 
         best_by_fqn: dict[str, float] = {}

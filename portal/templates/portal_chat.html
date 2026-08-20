@@ -4430,10 +4430,17 @@ function connect(){
         _markActiveOutbound('complete');
         // Success text result — small delay so mascot celebration is seen
         _setStageState('chart_ready');
-        // ── Genie: text answers count as executed (and successful) ──────────
+        // ── Genie: a text reply ran, but it is not automatically an answer ──
+        // A refusal ("I couldn't build a trusted join plan for this") arrives
+        // on this same branch. Crediting it as successful ranked the chips
+        // that dead-ended ABOVE the ones that worked — the ranker learning the
+        // opposite of what happened. A real answer carries its SQL in the
+        // trust block; a message about why there is no answer does not.
         if (_pendingSuggestion) {
-          _genieEvent('executed',    _pendingSuggestion);
-          _genieEvent('successful',  _pendingSuggestion);
+          _genieEvent('executed', _pendingSuggestion);
+          if (msg.trust && msg.trust.sql) {
+            _genieEvent('successful', _pendingSuggestion);
+          }
           _pendingSuggestion = null;
         }
         // ────────────────────────────────────────────────────────────────────
@@ -4522,6 +4529,11 @@ function connect(){
       appendSystem(`⚠ ${msg.content || 'Action could not be completed.'}${errDetail}`);
     } else if (msg.type === 'error') {
       setAgentRunState('failed', msg);
+      // The chip ran and did not work. Recording nothing here meant a failure
+      // was invisible to the ranker while every success accumulated, so a chip
+      // that fails for everyone kept its position. 'executed' without
+      // 'successful' is exactly the negative signal the success rate needs.
+      if (_pendingSuggestion) _genieEvent('executed', _pendingSuggestion);
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
       if (window._composerMascotError) window._composerMascotError('Something went wrong — please retry');

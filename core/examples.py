@@ -763,6 +763,32 @@ def scrub_example_sql_literals(sql: str) -> str:
     return _SQL_STRING_LITERAL_RE.sub("'<value>'", sql)
 
 
+_QUOTED_DATE_RE = re.compile(
+    r"'(?:\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}|\d{8})(?:[ T]\d{2}:\d{2}(?::\d{2})?)?'"
+)
+_ENCODED_DATE_RE = re.compile(r"(?<![\w.'])((?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])?)(?![\w.'])")
+
+
+def scrub_example_date_literals(sql: str) -> str:
+    """Replace date literals in an example SQL with a placeholder.
+
+    Examples are stored once and replayed into every future prompt under the
+    header "tested against this exact database". A date inside one was the
+    business-date anchor as it stood when the example was banked — so the
+    prompt kept presenting last spring's date as a verified fact about this
+    warehouse, and offered it to the model as something to copy.
+
+    Unlike value scrubbing, this is unconditional: it is not a privacy measure
+    but a correctness one. A date in an example is never a value to reuse, and
+    the current question's window has to come from the current anchor. The
+    placeholder keeps the shape, which is all the example was teaching.
+    """
+    if not sql:
+        return sql
+    scrubbed = _QUOTED_DATE_RE.sub("'<date>'", sql)
+    return _ENCODED_DATE_RE.sub("<date_key>", scrubbed)
+
+
 def format_examples_for_prompt(examples: list[dict], account_id: str = "") -> str:
     """
     Format validated examples as few-shot context for the SQL generation prompt.
@@ -801,15 +827,19 @@ def format_examples_for_prompt(examples: list[dict], account_id: str = "") -> st
             ]
 
     lines = [
-        "VERIFIED EXAMPLES — These question→SQL pairs have been tested against "
-        "this exact database. Use them as a guide for SQL syntax and patterns ONLY.\n"
+        "VERIFIED EXAMPLES — These question→SQL pairs ran successfully against "
+        "this database at some point in the past. Use them as a guide for SQL "
+        "syntax and patterns ONLY.\n"
         "CRITICAL: Examples show SQL structure only. The GROUP BY dimension, SELECT columns, "
         "aliases, and filters MUST be derived from the current question — never copied from "
         "the example. Each question determines its own dimension and output columns.\n"
+        "Dates appear as <date> / <date_key> because the real ones were correct "
+        "only on the day the example was recorded. Take every date from the "
+        "governed date policy for the current question, never from an example.\n"
     ]
     for ex in examples:
         lines.append(f"Q: {ex['question']}")
-        lines.append(f"SQL: {ex['sql']}\n")
+        lines.append(f"SQL: {scrub_example_date_literals(ex['sql'])}\n")
 
     return "\n".join(lines)
 

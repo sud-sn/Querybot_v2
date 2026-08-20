@@ -1898,6 +1898,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # is passed through explicitly; None means admin/unrestricted.
     _kb_phase_t0 = time.time()
     _weak_retrieval = False
+    _retrieval_unscored = False
     try:
         await _send_live_stage(adapter, event, "retrieving_context", "Understanding your data", "Retrieving the most relevant schema, examples, and business context.")
         import re as _re
@@ -1912,6 +1913,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         rag_filter = query_scope_tables
         relevant_kbs = retriever.retrieve(question, n=_n, allowed_tables=rag_filter)
         _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
+        _retrieval_unscored = bool(getattr(retriever, "last_retrieval_unscored", False))
 
         pinned    = [d for d in relevant_kbs if retriever._is_global(d)]
         table_kbs = [d for d in relevant_kbs if not retriever._is_global(d)]
@@ -1977,6 +1979,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # Model Health KB doc-quality ranking.
         _retrieval_stats = list(getattr(retriever, "last_retrieval_stats", []) or [])
         _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
+        _retrieval_unscored = bool(getattr(retriever, "last_retrieval_unscored", False))
         _trace_update(
             trace_id,
             route="normal_sql",
@@ -2114,9 +2117,20 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         else:
             # Snowflake supports DATABASE.SCHEMA.TABLE
             sql_name = ".".join(parts)
+        # Deliberately a NAMING hint, not a table choice. It said "This question
+        # is about the table X", which is a claim the click cannot support: the
+        # fqn was attached to the chip at KB-build time, and the same question
+        # typed by hand carried no such claim. So one question produced two
+        # different answers depending on whether it was clicked or typed, and
+        # the clicked one was steered toward a table chosen before the question
+        # was planned. What the click genuinely tells us is which name to
+        # render if that table is used at all.
         table_hint_injection = (
-            f"SCHEMA HINT: This question is about the table {table_hint_str}. "
-            f"Use exactly {sql_name} in the SQL if relevant."
+            f"TABLE NAME FORMAT: if this query uses {table_hint_str}, write it "
+            f"as exactly {sql_name}. This came from the suggestion the user "
+            f"clicked and does NOT restrict which tables the query may use — "
+            f"follow the governed plan and the question itself for that, "
+            f"exactly as you would for a typed question."
         )
     else:
         table_hint_injection = ""
@@ -6028,6 +6042,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # Everything above the relevance floor was dropped — the KB context
         # the SQL was built on matched this question only weakly.
         "weak_retrieval": _weak_retrieval,
+        # The re-ranker produced no scores at all, so the relevance floor did
+        # not run and weak_retrieval above could never become True. Retrieval
+        # is unfiltered here, not confirmed relevant.
+        "retrieval_unscored": _retrieval_unscored,
         "graph_scope": str((_graph_ctx or {}).get("graph_scope") or ""),
         "fanout_risk": _graph_fanout_risk,
         # Carried through to cache_result so compare_prior can read them.
@@ -6164,7 +6182,31 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             },
         )
     except Exception as _verification_exc:
-        log.debug("Result-shape verification skipped: %s", _verification_exc)
+        # This is the product's stated defence against a schema-valid but
+        # business-wrong answer — the check that a "top 5 by region" question
+        # came back with five rows and a region column. Failing it open at debug
+        # left the answer scored exactly as if the shape had been confirmed:
+        # verification contributes +5 when it passes and nothing at all when it
+        # is absent, so a silent failure reads as "no issues found".
+        log.error(
+            "Result-shape verification FAILED for %s on %r — the answer's shape "
+            "was not checked against what was asked",
+            account_id, question[:200], exc_info=True,
+        )
+        _confidence_context["result_verification"] = {
+            "status": "unavailable",
+            "errors": [
+                "The result could not be checked against the shape of the "
+                "question, so nothing confirms it answers what was asked."
+            ],
+        }
+        _trace_step(
+            trace_id,
+            "result_shape_verification",
+            output_summary=str(_verification_exc)[:500],
+            status="error",
+            metadata={"shape_verified": False},
+        )
 
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,

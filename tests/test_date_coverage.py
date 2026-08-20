@@ -104,8 +104,8 @@ class CheckDateCoverageTests(unittest.TestCase):
         self.assertEqual(
             gap.message,
             "You asked for the last 7 days, but revenue records were found on "
-            "only 2 invoice dates (2 days with data). The result reflects the "
-            "available data.",
+            "only 2 invoice dates (2 days with data), through 2026-07-20. "
+            "The result reflects the available data.",
         )
 
     def test_month_window_is_described_as_months_not_approximate_days(self):
@@ -153,8 +153,8 @@ class CheckDateCoverageTests(unittest.TestCase):
         self.assertEqual(
             gap.message,
             "You asked for the last 2 days, but revenue records were found on "
-            "only 1 invoice date (1 day with data). The result reflects the "
-            "available data.",
+            "only 1 invoice date (1 day with data), through 2026-07-20. "
+            "The result reflects the available data.",
         )
 
     def test_two_row_dates_but_one_nonzero_metric_day_is_reported(self):
@@ -183,8 +183,8 @@ class CheckDateCoverageTests(unittest.TestCase):
         self.assertEqual(
             gap.message,
             "You asked for the last 2 days. Records existed on 2 invoice dates, "
-            "but Revenue was nonzero on only 1 day. The result reflects the "
-            "available metric values.",
+            "but Revenue was nonzero on only 1 day, through 2026-07-20. "
+            "The result reflects the available metric values.",
         )
         activity_sql = mock_run.call_args_list[2].args[2]
         self.assertIn("GROUP BY ORDER_DATE", activity_sql)

@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime
 
 import store
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
@@ -70,6 +71,30 @@ log = logging.getLogger("querybot")
 router = APIRouter()
 
 
+# How old a stored result may be and still be replayed into the live result
+# cache on reconnect. Beyond this the rows describe a warehouse state that has
+# since moved, and the follow-up commands that compute from them would present
+# that as current.
+_RESTORE_MAX_AGE_HOURS = 12
+
+
+def _trace_age_hours(trace: dict) -> float | None:
+    """Hours since this answer was produced, or None if unreadable."""
+    raw = str(trace.get("created_at") or "").strip().replace("Z", "")
+    if not raw:
+        return None
+    for parse in (
+        lambda t: datetime.fromisoformat(t),
+        lambda t: datetime.strptime(t[:19], "%Y-%m-%d %H:%M:%S"),
+        lambda t: datetime.strptime(t[:10], "%Y-%m-%d"),
+    ):
+        try:
+            return max(0.0, (datetime.now() - parse(raw)).total_seconds() / 3600.0)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
 def _restore_durable_thread_result(
     account_id: str,
     portal_user_id: int,
@@ -118,6 +143,19 @@ def _restore_durable_thread_result(
             if requested_result_id and trace_result_id != requested_result_id:
                 continue
             if str(trace.get("status") or "").lower() != "success":
+                continue
+            age_hours = _trace_age_hours(trace)
+            if age_hours is not None and age_hours > _RESTORE_MAX_AGE_HOURS:
+                # These are ROWS, fetched once and stored. Replaying a set from
+                # a previous day into the live result cache makes every
+                # follow-up computed from it ("who is below average", "show the
+                # ratio") an answer about yesterday's data, rendered with no
+                # confidence block and nothing saying the rows are not fresh.
+                log.info(
+                    "Not restoring result %s for %s: its rows are %.0fh old — "
+                    "the question can be asked again against current data",
+                    trace.get("question_id"), account_id, age_hours,
+                )
                 continue
             sql = str(trace.get("generated_sql") or "").strip()
             if not sql:

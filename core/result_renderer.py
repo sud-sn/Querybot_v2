@@ -603,6 +603,16 @@ def _build_drilldown_context(
 
 # ── Main result sender ────────────────────────────────────────────────────────
 
+def _result_signals(rows: list[dict]) -> list[dict]:
+    """Statistical signals for follow-up grounding. Never raises."""
+    try:
+        from core.stat_signals import compute_signals
+        return compute_signals(rows or [])
+    except Exception as exc:
+        log.warning("Statistical signal detection skipped (%s)", exc)
+        return []
+
+
 async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
                         rag_context: str = "", question_id: str | None = None,
@@ -676,6 +686,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         null_metric_issue=bool(null_metric_issue),
         derived_metric_gap=str(confidence_context.get("derived_metric_gap") or ""),
         weak_retrieval=bool(confidence_context.get("weak_retrieval")),
+        retrieval_unscored=bool(confidence_context.get("retrieval_unscored")),
         graph_scope=str(confidence_context.get("graph_scope") or ""),
         graph_resolution_failed=bool(confidence_context.get("graph_resolution_failed")),
         semantic_planning_failed=bool(confidence_context.get("semantic_planning_failed")),
@@ -910,6 +921,10 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                     account_id=account_id,
                     audit_enabled=True,
                     audit_request_id=str(audit_rid),
+                    # Computed here because this is where the rows are; the
+                    # signal dicts carry labels and column names only, never a
+                    # row value, so they cross the PII boundary the rows do not.
+                    signals=_result_signals(rows),
                 )
                 if suggestions:
                     response_payload["follow_up_suggestions"] = suggestions

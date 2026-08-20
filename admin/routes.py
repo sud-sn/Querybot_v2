@@ -1431,6 +1431,14 @@ async def database_save(request: Request, bg: BackgroundTasks):
 
     try:
         saved_id = store.save_db_config(db_type, name, creds, db_id)
+        # Credentials can now point somewhere else entirely; a tree cached
+        # against this config id would describe the previous database.
+        try:
+            from core.schema_discovery import bust_cache as _bust_tree
+            _bust_tree(int(saved_id))
+        except Exception as _tree_exc:
+            log.warning("Could not invalidate the cached schema tree for db %s: %s",
+                        saved_id, _tree_exc)
         if is_log_export_enabled(creds):
             bg.add_task(_provision_log_store_background, saved_id)
             saved_msg = "Database saved. Log table provisioning started."
@@ -8964,6 +8972,19 @@ async def admin_discover_schema(
                     "discovery (%s) — relative-date answers may use the "
                     "pre-discovery date range until it ages out",
                     account_id, _anchor_exc,
+                )
+            # The in-process schema tree the table browser reads is held for 24
+            # hours, and bust_cache() — written for exactly this moment — had
+            # no production caller at all. An admin who added a table and
+            # re-ran Discover kept being shown yesterday's table list.
+            try:
+                from core.schema_discovery import bust_cache as _bust_tree
+                _bust_tree(int(db_cfg_id or 0))
+            except Exception as _tree_exc:
+                log.warning(
+                    "Could not invalidate the cached schema tree for %s (%s) — "
+                    "the table browser may show a stale table list for up to 24h",
+                    account_id, _tree_exc,
                 )
             if allowed_set:
                 log.info("Admin schema discovery: %d/%d selected tables written for %s",

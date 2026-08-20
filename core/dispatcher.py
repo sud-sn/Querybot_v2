@@ -687,6 +687,28 @@ def _example_validation_process_entry(
         )
         validated = int(validation_outcome.get("validated") or 0)
         failed = int(validation_outcome.get("failed") or max(total - validated, 0))
+
+        # The suggestion cache was written at KB-build time from every Q:/SQL:
+        # pair, before any of them had been compiled. Now that validation has
+        # said which ones resolve, remove the rest — otherwise a question the
+        # product has already established it cannot answer stays in the chat
+        # panel as a clickable chip.
+        try:
+            import store
+            from core.suggestions import prune_suggestion_cache
+            prune_suggestion_cache(
+                kb_dir,
+                {
+                    str(ex.get("question") or "")
+                    for ex in store.get_validated_examples(account_id, limit=5000)
+                },
+            )
+        except Exception as _prune_exc:
+            log.warning(
+                "Could not prune the suggestion cache for %s after Stage-2 "
+                "validation (%s) — questions whose SQL failed may still be "
+                "offered as chips", account_id, _prune_exc,
+            )
         result_queue.put({
             "kind": "result",
             "status": "stopped" if worker_stop_event.is_set() else "completed",

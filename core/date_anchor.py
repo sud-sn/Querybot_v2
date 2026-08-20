@@ -282,8 +282,22 @@ def remember_anchor(account_id: str, policy: dict | None, anchor: dict) -> None:
     key = anchor_key(account_id, policy)
     if not key[1] or not key[2]:
         return
+    # The in-memory entry may not outlive the persisted max-age bound. Raising
+    # the TTL for performance — a perfectly reasonable thing to do on a
+    # warehouse that loads once a day — used to switch off the ONLY staleness
+    # check there is, because a live in-memory hit returns before the stored
+    # anchor's age is ever examined. The two knobs answer different questions
+    # ("how often may we probe" and "how stale may an answer be"), and the
+    # second has to hold whichever cache serves the request.
+    lifetime = ttl
+    max_age = _max_age_seconds()
+    if max_age:
+        age = _anchor_age_seconds(anchor.get("resolved_at")) or 0.0
+        lifetime = min(ttl, max(0.0, max_age - age))
+        if lifetime <= 0:
+            return
     with _lock:
-        _cache[key] = {"anchor": dict(anchor), "expires_at": time.time() + ttl}
+        _cache[key] = {"anchor": dict(anchor), "expires_at": time.time() + lifetime}
 
 
 def _failure_ttl_seconds() -> int:

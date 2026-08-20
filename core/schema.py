@@ -15,6 +15,7 @@ v7 additions:
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from core.synthetic import generate_synthetic_sample, should_use_synthetic
@@ -123,6 +124,12 @@ def _allowed_has_qualified_refs(allowed: set[str] | None) -> bool:
     return bool(allowed and any("." in str(x) for x in allowed))
 
 
+# Below this many sample rows, an auto PII scan finding nothing means very
+# little. The verdict is still used — it is the only evidence there is —
+# but the thinness of it is now stated rather than assumed away.
+_MASK_SCAN_MIN_ROWS = 5
+
+
 def _apply_masking(
     fetch_fn,
     col_defs: list[dict],
@@ -200,6 +207,17 @@ def _apply_masking(
     # (selective), so adding extra columns would be surprising.
     value_strategy_overrides: dict[str, str] = {}
     if mode == "auto":
+        # The scan sees only the sample rows read at this moment, and its
+        # verdict is then frozen into masked_fields until the next Discover.
+        # On a thin sample the absence of a hit says very little, and that was
+        # indistinguishable from a column confirmed clean.
+        if len(rows or []) < _MASK_SCAN_MIN_ROWS:
+            log.warning(
+                "schema: value-based PII scan for %s saw only %d sample row(s) "
+                "— a column that holds sensitive values in rows it did not see "
+                "will not be masked until the next Discover",
+                table_name, len(rows or []),
+            )
         value_hits = scan_values_for_pii(rows, col_defs)
         for col_name, hit in value_hits.items():
             if col_name not in masked_fields:
@@ -1879,6 +1897,14 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 "fields_sent":         [c["COLUMN_NAME"] for c in columns],
                 "row_count_sent":      len(sample),
                 "masked_fields":       sorted(_masked_set),
+                # Provenance for the masking decision. In auto mode it is made
+                # by scanning the SAMPLE rows read at this moment, and then
+                # frozen: a column that starts holding email addresses after a
+                # migration is never re-examined, and nothing recorded how thin
+                # the evidence was. A five-row sample deciding a compliance
+                # control should at least say so.
+                "mask_observed_at":    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "mask_sample_rows":    len(sample),
                 "mask_mode":           _mode,
                 "mask_replacement_map": _replacement_map,
                 "synthetic_used":      _synthetic_used,
@@ -1924,6 +1950,7 @@ def _sf_md(name, meta, columns, sample, distinct_map: dict,
     _pk_set = {c.upper() for c in (pk_columns or [])}
     if _pk_set:
         lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
+    lines.append(_observed_at_note())
     lines.append("\n## Columns\n")
     lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
     lines.append("|--------|------|:--------:|-------|-----------------|")
@@ -2131,6 +2158,14 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 "fields_sent":         [c["COLUMN_NAME"] for c in columns],
                 "row_count_sent":      len(sample),
                 "masked_fields":       sorted(_masked_set),
+                # Provenance for the masking decision. In auto mode it is made
+                # by scanning the SAMPLE rows read at this moment, and then
+                # frozen: a column that starts holding email addresses after a
+                # migration is never re-examined, and nothing recorded how thin
+                # the evidence was. A five-row sample deciding a compliance
+                # control should at least say so.
+                "mask_observed_at":    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "mask_sample_rows":    len(sample),
                 "mask_mode":           _mode,
                 "mask_replacement_map": _replacement_map,
                 "synthetic_used":      _synthetic_used,
@@ -2170,6 +2205,7 @@ def _ora_md(name, meta, columns, sample, owner, distinct_map: dict,
     _pk_set = {c.upper() for c in (pk_columns or [])}
     if _pk_set:
         lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
+    lines.append(_observed_at_note())
     lines.append("\n## Columns\n")
     lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
     lines.append("|--------|------|:--------:|-------|-----------------|")
@@ -2656,6 +2692,7 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
     _pk_set = {c.upper() for c in (pk_columns or [])}
     if _pk_set:
         lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
+    lines.append(_observed_at_note())
     lines.append("\n## Columns\n")
     lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
     lines.append("|--------|------|:--------:|-------|-----------------|")
@@ -2690,6 +2727,23 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
 # ══════════════════════════════════════════════════════════════════════════════
 # Shared helpers
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _observed_at_note() -> str:
+    """Stamp when this schema snapshot was taken.
+
+    Distinct values, row counts, null percentages and sample rows are all read
+    once at Discover time and then frozen into the KB, and the KB-writer prompt
+    presents that value list as the set to use. Nothing downstream carried a
+    date, so a value added to the warehouse afterwards could not appear in an
+    answer and a removed one kept being offered — with no way to tell how old
+    any of it was.
+    """
+    return (
+        "\n**Schema observed:** " + time.strftime("%Y-%m-%d") + " — the "
+        "distinct values, row counts and sample rows below were read from the "
+        "database at that time. They are a snapshot, not a live view.\n"
+    )
+
 
 def _append_sample(lines: list, sample: list) -> None:
     if not sample:
