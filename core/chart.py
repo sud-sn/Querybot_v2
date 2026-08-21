@@ -113,17 +113,14 @@ def detect_chart_type(
     Returns one of: bar, line, area, scatter, pie, donut, waterfall, heatmap,
     funnel, forecast, histogram, boxplot, treemap, or None.
     """
-    # Tier 3 structural signals take priority over spec inference
-    if rows:
-        first = rows[0]
-        if first.get("is_forecast") is not None:
-            return "forecast"
-        if "bp_data" in first:
-            return "boxplot"
-        if "bin_label" in first and "count" in first:
-            return "histogram"
-        if "funnel_pct" in first:
-            return "funnel"
+    # Tier 3 structural signals take priority over spec inference. The marker
+    # list lives in chart_spec so this and infer_chart_spec cannot disagree —
+    # they used to, and the disagreement is exactly what made these types
+    # unreachable: this returned "forecast" while the spec offered only bar.
+    from core.chart_spec import structural_chart_type
+    _structural = structural_chart_type(rows)
+    if _structural:
+        return _structural
 
     spec = infer_chart_spec(rows, question=question, column_formats=column_formats)
     if not spec:

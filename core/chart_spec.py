@@ -345,6 +345,84 @@ def _first(cols: list[str]) -> str | None:
     return cols[0] if cols else None
 
 
+# ── Structural chart types ───────────────────────────────────────────────────
+# Some result shapes are not inferred from column roles at all: a post-processor
+# has already annotated the rows and the chart type follows from that annotation.
+# A forecast marks its projected rows, a boxplot carries its five-number summary,
+# a histogram carries its bins.
+#
+# These never reached the browser. `detect_chart_type` identified them correctly,
+# but `infer_chart_spec` only ever offered {table, kpi, line, area, bar, pie,
+# donut, scatter}, so `build_chart_payload`'s
+#     effective_type = requested if requested in allowed else recommended_type
+# silently downgraded every one of them to bar or line -- and the projection
+# branch then stripped the very marker columns the ECharts branch needed. The
+# forecast branch in portal_chat.html has never once run in production.
+_STRUCTURAL_MARKERS: tuple[tuple[str, str], ...] = (
+    ("is_forecast", "forecast"),
+    ("bp_data", "boxplot"),
+    ("funnel_pct", "funnel"),
+)
+
+# Columns a post-processor added for the renderer, not for the reader. They must
+# be kept in the payload and kept OUT of role inference: `forecast_value` is
+# numeric on projected rows and None on historical ones, and `_values` drops
+# None, so it would otherwise be classified a measure and drawn as a series.
+_STRUCTURAL_META_COLUMNS = frozenset({
+    "is_forecast", "forecast_value", "forecast_low", "forecast_high",
+    "__trend_slope", "__trend_r2", "__forecast_model",
+    "bp_data", "funnel_pct", "bin_min", "bin_max", "frequency_pct",
+})
+
+# Switched on one at a time. Each of these ECharts branches has never executed,
+# so enabling all four at once would ship four untested renderers in one commit.
+_STRUCTURAL_ENABLED = {"forecast"}
+
+
+def structural_chart_type(rows: list[dict]) -> str:
+    """The chart type implied by a post-processor's annotations, or "".
+
+    Single source of truth: `detect_chart_type` used to keep its own copy of
+    this marker list.
+    """
+    if not rows:
+        return ""
+    first = rows[0]
+    for marker, kind in _STRUCTURAL_MARKERS:
+        if first.get(marker) is not None:
+            return kind
+    # Histogram is the one type with no single distinguishing marker.
+    if "bin_label" in first and "count" in first:
+        return "histogram"
+    return ""
+
+
+def _structural_spec(rows: list[dict], kind: str, title: str) -> dict:
+    """A spec that names a structural type as the only thing worth rendering."""
+    headers = [h for h in rows[0].keys() if h not in _STRUCTURAL_META_COLUMNS]
+    roles = _column_roles([
+        {k: v for k, v in row.items() if k not in _STRUCTURAL_META_COLUMNS}
+        for row in rows
+    ], None) if headers else {}
+    x_col = next((c for c in headers if roles.get(c, {}).get("role") == "temporal"), None)
+    if x_col is None:
+        x_col = next((c for c in headers if roles.get(c, {}).get("role") != "measure"), None)
+    y_cols = [c for c in headers if roles.get(c, {}).get("role") == "measure"]
+    return {
+        "title": title,
+        "intent": kind,
+        "recommended_type": kind,
+        "allowed_types": [kind, "table"],
+        "renderable_types": [kind],
+        "x": roles.get(x_col) if x_col else None,
+        "y": [roles[c] for c in y_cols if c in roles],
+        "series": None,
+        "column_roles": roles,
+        "warnings": [],
+        "confidence": 0.95,
+    }
+
+
 def infer_chart_spec(
     rows: list[dict],
     question: str = "",
@@ -359,6 +437,13 @@ def infer_chart_spec(
     """
     if not rows:
         return None
+
+    # A structurally-marked result is not a role-inference problem: the shape is
+    # already decided, and offering "bar" here is what made these unreachable.
+    _structural = structural_chart_type(rows)
+    if _structural and _structural in _STRUCTURAL_ENABLED:
+        return _structural_spec(rows, _structural, title)
+
     headers = list(rows[0].keys())
     if not headers:
         return None

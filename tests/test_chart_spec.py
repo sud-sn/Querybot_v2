@@ -832,3 +832,85 @@ class ChartPaletteValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Structural chart types ───────────────────────────────────────────────────
+
+
+class TestStructurallyMarkedResultsReachTheRenderer(unittest.TestCase):
+    """A forecast, boxplot, histogram and funnel are not role-inference
+    problems: a post-processor has already annotated the rows and the chart type
+    follows from that annotation.
+
+    None of them ever reached the browser. `detect_chart_type` identified them
+    correctly, but `infer_chart_spec` only ever offered
+    {table, kpi, line, area, bar, pie, donut, scatter}, so build_chart_payload's
+        effective_type = requested if requested in allowed else recommended_type
+    silently downgraded each to bar, and the projection branch then stripped the
+    marker columns the ECharts branch needed. The forecast branch in
+    portal_chat.html had never executed in production.
+    """
+
+    FORECAST_ROWS = [
+        {"MONTH": "2026-01", "REVENUE": 100.0, "is_forecast": False, "forecast_value": None},
+        {"MONTH": "2026-02", "REVENUE": 120.0, "is_forecast": False, "forecast_value": None},
+        {"MONTH": "2026-03", "REVENUE": 140.0, "is_forecast": True, "forecast_value": 140.0},
+    ]
+
+    def test_a_forecast_is_offered_as_renderable(self):
+        spec = infer_chart_spec(self.FORECAST_ROWS, "forecast revenue", {}, "Revenue")
+        self.assertEqual(spec["recommended_type"], "forecast")
+        self.assertIn("forecast", spec["renderable_types"])
+
+    def test_the_payload_ships_as_a_forecast_not_a_bar(self):
+        from core.chart import build_chart_payload
+
+        payload = build_chart_payload(self.FORECAST_ROWS, "forecast", "Revenue", "forecast revenue")
+        self.assertEqual(payload["chart_type"], "forecast")
+
+    def test_the_marker_columns_survive_into_the_payload(self):
+        """Without these the historical and projected points render as one
+        indistinguishable series — which is what shipped."""
+        from core.chart import build_chart_payload
+
+        payload = build_chart_payload(self.FORECAST_ROWS, "forecast", "Revenue", "forecast revenue")
+        first = payload["rows"][0]
+        self.assertIn("is_forecast", first)
+        self.assertIn("forecast_value", first)
+
+    def test_forecast_meta_columns_are_not_mistaken_for_measures(self):
+        """`forecast_value` is numeric on projected rows and None on historical
+        ones, and `_values` drops None — so it would classify as a measure and
+        be drawn as a second series against itself."""
+        spec = infer_chart_spec(self.FORECAST_ROWS, "forecast revenue", {}, "Revenue")
+        self.assertEqual(spec["x"]["column"], "MONTH")
+        self.assertEqual([y["column"] for y in spec["y"]], ["REVENUE"])
+        # The meta columns are kept in the payload but never given a role.
+        self.assertEqual(sorted(spec["column_roles"]), ["MONTH", "REVENUE"])
+
+    def test_the_marker_list_has_one_home(self):
+        """detect_chart_type kept its own copy, and the two disagreeing is what
+        made these types unreachable."""
+        from core.chart import detect_chart_type
+        from core.chart_spec import structural_chart_type
+
+        self.assertEqual(detect_chart_type(self.FORECAST_ROWS, "forecast revenue", {}), "forecast")
+        self.assertEqual(structural_chart_type(self.FORECAST_ROWS), "forecast")
+
+    def test_types_not_yet_enabled_behave_exactly_as_before(self):
+        """boxplot, histogram and funnel are switched on one commit at a time —
+        each of their ECharts branches has also never run, and enabling four
+        untested renderers at once is how you ship four bugs."""
+        from core.chart_spec import _STRUCTURAL_ENABLED
+
+        self.assertEqual(_STRUCTURAL_ENABLED, {"forecast"})
+        histogram = [
+            {"bin_label": "0-10", "count": 5, "bin_min": 0, "bin_max": 10},
+            {"bin_label": "10-20", "count": 8, "bin_min": 10, "bin_max": 20},
+        ]
+        # Unchanged from before the structural spec existed: falls to bar.
+        self.assertEqual(infer_chart_spec(histogram, "q", {}, "t")["renderable_types"], ["bar"])
+
+    def test_an_ordinary_result_is_untouched(self):
+        plain = [{"REGION": "West", "SALES": 10.0}, {"REGION": "East", "SALES": 20.0}]
+        self.assertEqual(infer_chart_spec(plain, "sales by region", {}, "Sales")["renderable_types"], ["bar"])
