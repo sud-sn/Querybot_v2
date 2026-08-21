@@ -1216,6 +1216,13 @@ def _metric_phrases(metric: dict) -> set[str]:
 
 
 def _metric_mentioned(metric: dict, question: str) -> bool:
+    # A metric the user defined in this thread is their own explicit
+    # instruction for it, so enforcement must not depend on them re-typing its
+    # name. Without this the composed formula is enforced on the turn that
+    # created it and silently unenforced on every follow-up — the model would
+    # still be shown the formula, but nothing would check it used it.
+    if metric.get("_pinned_thread_metric"):
+        return True
     q = re.sub(r"[^a-z0-9]+", " ", (question or "").lower()).strip()
     if not q:
         return False

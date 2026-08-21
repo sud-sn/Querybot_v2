@@ -838,6 +838,48 @@ CREATE TABLE IF NOT EXISTS metric_proposal (
 CREATE INDEX IF NOT EXISTS idx_metric_proposal_account
     ON metric_proposal(account_id, status, created_at);
 
+-- ── Session metric drafts — logic a user composed, live only in their thread ──
+-- The first of the two tracks: a user describes a calculation, it runs and
+-- answers their question immediately, and it stays usable for follow-ups in the
+-- same thread. It is NEVER written to metric_registry, so it changes nobody
+-- else's answers; becoming shared requires a metric_proposal and a human.
+--
+-- Not conversation_state (its docstring forbids values and it expires in 30
+-- minutes) and not pending_clarification_thread (5 minutes, one row per thread,
+-- single-choice). A draft needs its own lifetime and its own shape.
+--
+-- source_tables is re-checked against the user's ACL on EVERY read, so a table
+-- revoked mid-thread kills the draft rather than leaving a stale grant behind.
+CREATE TABLE IF NOT EXISTS session_metric_draft (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id            TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    session_id            TEXT    NOT NULL,
+    portal_user_id        INTEGER NOT NULL,
+    name                  TEXT    NOT NULL,
+    synonyms              TEXT    NOT NULL DEFAULT '',
+    description           TEXT    NOT NULL DEFAULT '',
+    sql_template          TEXT    NOT NULL,
+    formula_type          TEXT    NOT NULL DEFAULT 'expression',
+    result_format         TEXT    NOT NULL DEFAULT 'number',
+    base_table            TEXT    NOT NULL DEFAULT '',
+    required_columns      TEXT    NOT NULL DEFAULT '',
+    allowed_dimensions    TEXT    NOT NULL DEFAULT '',
+    default_time_column   TEXT    NOT NULL DEFAULT '',
+    metric_builder_config TEXT    NOT NULL DEFAULT '',
+    source_tables         TEXT    NOT NULL DEFAULT '[]',
+    validation_json       TEXT    NOT NULL DEFAULT '{}',
+    dryrun_json           TEXT    NOT NULL DEFAULT '{}',
+    confidence            REAL    NOT NULL DEFAULT 0.0,
+    source_question       TEXT    NOT NULL DEFAULT '',
+    origin                TEXT    NOT NULL DEFAULT 'portal_chat',
+    status                TEXT    NOT NULL DEFAULT 'active',
+    proposal_id           INTEGER DEFAULT NULL,
+    created_at            TEXT    DEFAULT (datetime('now')),
+    expires_at            TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_session_metric_draft_thread
+    ON session_metric_draft(account_id, session_id, status, expires_at);
+
 -- =============================================================================
 -- Learning loop tables (v30)
 -- =============================================================================

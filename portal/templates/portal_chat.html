@@ -391,6 +391,10 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .diagnostic-list li+li{margin-top:.2rem}
 .diagnostic-card .sql-box{margin:.65rem 0 0;max-height:240px}
 .clarification-card{padding:1rem 1.05rem;border-radius:var(--radius-lg);background:var(--surface);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:.8rem}
+.metric-draft-body{display:flex;flex-direction:column;gap:.4rem;padding:.7rem .8rem;border-radius:var(--radius-md,8px);background:var(--surface-2,rgba(0,0,0,.03));border:1px solid var(--border)}
+.metric-draft-name{font-weight:600;font-size:.95rem;color:var(--text)}
+.metric-draft-formula{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.metric-draft-meta{font-size:.78rem;color:var(--text-muted,#666)}
 .clarification-question{line-height:1.6;color:var(--text)}
 .clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
 .clarification-option{font-size:12px;font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
@@ -494,6 +498,10 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .dashboard-picker-footer{display:flex;align-items:center;justify-content:flex-end;gap:.55rem;padding:.85rem 1.1rem;border-top:1px solid var(--border);background:var(--surface-2)}
 @media(max-width:560px){.dashboard-picker-backdrop{padding:0;align-items:flex-end}.dashboard-picker{width:100%;max-height:92vh;border-radius:var(--radius-lg) var(--radius-lg) 0 0}.dashboard-picker-head,.dashboard-picker-body,.dashboard-picker-footer{padding-left:.9rem;padding-right:.9rem}}
 .clarification-card{padding:1rem 1.05rem;border-radius:var(--radius-lg);background:var(--surface);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:.8rem}
+.metric-draft-body{display:flex;flex-direction:column;gap:.4rem;padding:.7rem .8rem;border-radius:var(--radius-md,8px);background:var(--surface-2,rgba(0,0,0,.03));border:1px solid var(--border)}
+.metric-draft-name{font-weight:600;font-size:.95rem;color:var(--text)}
+.metric-draft-formula{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.metric-draft-meta{font-size:.78rem;color:var(--text-muted,#666)}
 .clarification-question{line-height:1.6;color:var(--text)}
 .clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
 .clarification-option{font-size:12px;font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
@@ -1208,6 +1216,41 @@ function updateProcessing(stage, label, detail){
   setProcessing(true);
   _updateStageSteps(stage, label, detail);
 }
+function appendMetricDraftCard(msg){
+  // Track (a) has already run by the time this renders -- the answer to the
+  // user's question is on its way using this logic. The only decision here is
+  // track (b): whether to ask an admin to make it available to everyone.
+  const card = document.createElement('div');
+  card.className = 'clarification-card metric-draft-card';
+  const tables = (msg.tables || []).map(t => escHtml(t)).join(', ');
+  card.innerHTML =
+    '<div class="clarification-question">' + escHtml(msg.body || 'I composed a calculation for this.') + '</div>' +
+    '<div class="metric-draft-body">' +
+      '<div class="metric-draft-name">' + escHtml(msg.name || 'Untitled') + '</div>' +
+      '<code class="metric-draft-formula">' + escHtml(msg.formula || '') + '</code>' +
+      (tables ? '<div class="metric-draft-meta">Uses ' + tables + '</div>' : '') +
+    '</div>' +
+    '<div class="clarification-options">' +
+      '<button class="clarification-option" data-act="promote">Ask an admin to save this</button>' +
+      '<button class="clarification-option" data-act="discard">Just for now</button>' +
+    '</div>';
+  card.querySelectorAll('button[data-act]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      card.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      const act = btn.dataset.act;
+      try {
+        ws.send(JSON.stringify({
+          type: act === 'promote' ? 'metric_promotion_request' : 'metric_draft_discard',
+          draft_id: msg.draft_id,
+        }));
+      } catch (e) { /* socket closed; the draft simply expires on its own */ }
+      btn.textContent = act === 'promote' ? 'Sent for review' : 'Kept to this chat';
+    });
+  });
+  const thread = document.getElementById('thread');
+  if (thread) { thread.appendChild(card); thread.scrollTop = thread.scrollHeight; }
+}
+
 function escHtml(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeJsonParse(text){ try { return JSON.parse(text); } catch { return null; } }
 function loadChatCache(){
@@ -4505,6 +4548,8 @@ function connect(){
         chart_type: msg.chart_type || 'auto',
         color_palette: msg.color_palette || 'default',
       });
+    } else if (msg.type === 'assistant_metric_draft') {
+      appendMetricDraftCard(msg);
     } else if (msg.type === 'assistant_analysis') {
       finishAnalysisAction(msg);
       appendAnalysisResponse(msg);

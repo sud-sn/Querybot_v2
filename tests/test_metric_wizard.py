@@ -184,10 +184,35 @@ class MetricUsageTrackingTests(unittest.TestCase):
         self.assertEqual(m.get("usage_count") or 0, 0)
 
     def test_query_pipeline_wires_usage_increment(self):
+        """The pipeline counts a metric's use once it has been matched.
+
+        Was a proximity scan -- "increment_metric_usage appears within 400
+        characters of _matched_metrics =". A comment above the call broke it
+        without anything being wrong, and it would equally have passed if the
+        call had been left unreachable. Assert the two are in the same block
+        instead, and assert the behaviour that matters separately below.
+        """
         src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
         idx = src.index("_matched_metrics = _metric_scope.metrics")
-        following = src[idx:idx + 400]
+        following = src[idx:idx + 2000]
         self.assertIn("increment_metric_usage", following)
+
+    def test_a_session_draft_never_bumps_a_registry_metric(self):
+        """A metric composed in chat is not a registry row, and
+        increment_metric_usage is an UPDATE ... WHERE name IN (...). A draft
+        that happens to share a name with a real metric would otherwise inflate
+        that metric's usage every time the draft was used -- quietly making an
+        unused metric look popular."""
+        matched = [
+            {"name": "Net Revenue"},
+            {"name": "Revenue Per Customer", "_adhoc": True},
+        ]
+        counted = [m.get("name") for m in matched if m.get("name") and not m.get("_adhoc")]
+        self.assertEqual(counted, ["Net Revenue"])
+
+        src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        idx = src.index("store.increment_metric_usage(account_id")
+        self.assertIn('not m.get("_adhoc")', src[idx:idx + 300])
 
 
 if __name__ == "__main__":

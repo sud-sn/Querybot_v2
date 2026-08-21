@@ -1,4 +1,8 @@
 """store package — encrypted config persistence, query logging, client registry, user management."""
+from store.adhoc_metric_store import (
+    save_session_metric_draft, active_session_metrics, get_session_metric_draft,
+    mark_draft_promoted, discard_session_metric_draft, purge_expired_drafts,
+)
 from store.metric_proposal_store import (
     create_metric_proposal, list_metric_proposals, get_metric_proposal,
     review_metric_proposal, count_pending_metric_proposals,
@@ -159,6 +163,9 @@ __all__ = [
     "create_metric_proposal","list_metric_proposals","get_metric_proposal",
     "review_metric_proposal","count_pending_metric_proposals","metric_has_drifted",
     "GUARDED_METRIC_FIELDS",
+    "save_session_metric_draft","active_session_metrics",
+    "get_session_metric_draft","mark_draft_promoted",
+    "discard_session_metric_draft","purge_expired_drafts",
     "count_pending_graph_reviews","count_pending_structural_graph_reviews",
     "flag_relationships_needing_review","clear_relationship_review_flag",
     "save_graph_version","list_graph_versions","get_graph_version",

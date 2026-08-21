@@ -214,6 +214,24 @@ _REPORT_BUILDER_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Conversational metric authoring. Two shapes, because people express this two
+# ways: naming the artefact ("define a metric for ..."), or describing the
+# calculation directly ("take AMOUNT from the invoice fact and work out revenue
+# per active customer").
+#
+# A FALSE POSITIVE HERE IS CHEAPER THAN IT LOOKS, by design: every gate in
+# _run_metric_authoring_chat falls through to the ordinary question path, so the
+# worst case is one wasted planner call and then the normal answer. That is why
+# the second alternative can afford to be as loose as it is.
+_METRIC_AUTHOR_INTENT_RE = re.compile(
+    r"\b(?:define|create|make|add|set\s*up)\s+(?:me\s+)?(?:a|an|my)?\s*(?:new\s+)?"
+    r"(?:business\s+)?(?:metric|measure|kpi|calculation)\b"
+    r"|\b(?:take|use)\s+[A-Za-z][A-Za-z0-9_]{2,}\b.{0,140}?"
+    r"\b(?:compute|calculate|work\s+out)\b"
+    r"|\b(?:compute|calculate)\s+.{1,80}?\bas\s+a\s+(?:metric|measure|kpi)\b",
+    re.IGNORECASE,
+)
+
 # Conversational dashboard artifacts. These routes never generate or execute
 # SQL themselves: they attach only an already-governed result, or queue the
 # normal governed question pipeline and materialize its successful answer.
@@ -1441,6 +1459,154 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         await _run_main_question(
             _retry_question or strip_result_context(text), table_hint, schema_hint,
         )
+
+    async def _run_metric_authoring_chat(text: str, table_hint: str, schema_hint: str) -> None:
+        """Compose a calculation, answer the question with it, and ask for it to
+        be shared.
+
+        TWO TRACKS, both in this one turn:
+          (a) the composed logic is pinned to this thread and the question is
+              answered with it, right now — no confirmation step, because there
+              is nothing to confirm yet: it changes only this user's own answer;
+          (b) a metric_proposal goes to the admin queue, so it can become a
+              shared metric for everyone else.
+
+        Track (a) is why this needs no multi-field form. The only thing needing
+        a decision is (b), and that is one button.
+
+        Every gate falls through to the ordinary question path rather than
+        erroring, so a false intent match costs one planner call and nothing else.
+        """
+        async def _fall_through(reason: str) -> None:
+            log.info("Metric authoring declined (%s) — answering as a normal question", reason)
+            await _run_main_question(text, table_hint, schema_hint)
+
+        try:
+            state = store.get_client_state(account_id) or {}
+            schema_dir = state.get("schema_dir") or ""
+            if not schema_dir:
+                return await _fall_through("no discovered schema")
+
+            import json as _json
+            from pathlib import Path as _Path
+
+            manifest_path = _Path(schema_dir) / "_schema.json"
+            if not manifest_path.exists():
+                return await _fall_through("no schema manifest")
+            master = _json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            # ACL BEFORE the prompt is built, so a table this user may not see is
+            # never offered to the model as an option. Same ordering the report
+            # builder enforces and its wiring test asserts.
+            allowed = store.get_allowed_tables(portal_user)
+            manifest: dict[str, list[str]] = {}
+            for fqn, table in (master or {}).items():
+                if not isinstance(table, dict) or fqn.startswith("__"):
+                    continue
+                if allowed is not None and fqn.upper() not in {t.upper() for t in allowed}:
+                    continue
+                manifest[fqn] = [
+                    str((c.get("name") if isinstance(c, dict) else c) or "")
+                    for c in (table.get("columns") or [])
+                ]
+            if not manifest:
+                return await _fall_through("no tables available to this user")
+
+            await websocket.send_json({"type": "typing", "active": True})
+
+            provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+
+            async def _complete_metric_plan(**kwargs):
+                return await llm_complete(
+                    provider=provider, model=model, api_key=api_key, **kwargs, **az_kwargs,
+                )
+
+            from core.metric_authoring import parse_metric_plan
+
+            db_cfg = store.get_db_config(client.get("db_config_id")) if client.get("db_config_id") else None
+            db_type = (db_cfg or {}).get("db_type", "azure_sql")
+
+            request_id = make_llm_audit_request_id()
+            with llm_audit_scope(
+                account_id=account_id,
+                question="Compose a metric from chat",
+                enabled=bool(client.get("enable_llm_audit")),
+                request_id=request_id,
+                question_id=getattr(adapter, "last_question_id", None) or "",
+                component="metric_authoring_chat",
+            ):
+                draft, plan_error = await parse_metric_plan(
+                    text, manifest, _complete_metric_plan,
+                    existing_metric_names=[
+                        str(m.get("name") or "") for m in store.list_metrics(account_id)
+                    ],
+                    db_type=db_type,
+                )
+
+            if draft is None:
+                return await _fall_through(plan_error or "planner declined")
+            if draft.confidence < 0.6:
+                return await _fall_through(f"confidence {draft.confidence:.2f}")
+
+            # The first place in this codebase where metric validation BLOCKS.
+            # store.save_metric runs the same validator and inserts the row
+            # regardless, marking it draft; here an invalid formula means we
+            # simply do not use it.
+            from core.metric_validator import load_schema_columns, validate_metric
+
+            validation = validate_metric(
+                draft.as_metric(), db_type=db_type,
+                schema_columns=load_schema_columns(account_id),
+            )
+            if not validation.valid:
+                return await _fall_through(f"validation: {validation.errors[:2]}")
+
+            from core.metric_dryrun import dry_run_metric_formula
+
+            outcome = await dry_run_metric_formula(
+                account_id, formula=draft.sql_template,
+                base_table=draft.base_table,
+                metric_builder_config=draft.metric_builder_config,
+            )
+            if outcome.status == "error":
+                return await _fall_through(f"dry run: {outcome.detail[:120]}")
+
+            draft_id = store.save_session_metric_draft(
+                account_id, str(getattr(adapter, "session_id", "") or ""),
+                int(portal_user.get("id") or 0) if portal_user else 0,
+                draft.as_metric(),
+                source_tables=list(draft.source_tables),
+                validation={"valid": True},
+                # Never the probe's scalar — real data that did not cross the
+                # compliance boundary.
+                dryrun=outcome.to_dict(),
+                confidence=draft.confidence,
+                source_question=text,
+            )
+
+            await websocket.send_json({
+                "type": "assistant_metric_draft",
+                "draft_id": draft_id,
+                "name": draft.name,
+                "formula": draft.sql_template,
+                "description": draft.description,
+                "tables": list(draft.source_tables),
+                "columns": draft.required_columns,
+                "dry_run": outcome.status,
+                "confidence": round(draft.confidence, 2),
+                "body": (
+                    f"I worked out **{draft.name}** and used it to answer you. "
+                    "It applies to this conversation only — ask to save it and "
+                    "an admin can make it available to everyone."
+                ),
+            })
+        except Exception as exc:
+            log.warning("Metric authoring failed for %s: %s", account_id, exc, exc_info=True)
+            return await _fall_through(f"exception: {exc}")
+
+        # Track (a). Outside the try so a failure above has already fallen
+        # through and this cannot run twice.
+        await _run_main_question(text, table_hint, schema_hint)
 
     async def _run_report_builder_chat(text: str) -> None:
         """Turn a plain-language report request ("build me a report with net
@@ -3279,6 +3445,73 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     })
                 continue
 
+            # ── metric_promotion_request: track (b) ──────────────────────────
+            # The user already has their answer; this asks for the logic to
+            # become a shared metric. It creates a PROPOSAL and nothing else --
+            # the registry is only ever written by the admin accept route.
+            if msg_type == "metric_promotion_request":
+                try:
+                    draft = store.get_session_metric_draft(
+                        account_id, int(data.get("draft_id") or 0),
+                    )
+                    owner = int((portal_user or {}).get("id") or 0)
+                    if not draft or int(draft.get("portal_user_id") or -1) != owner:
+                        await websocket.send_json({
+                            "type": "assistant_error", "action": "promote_metric",
+                            "content": "That draft is no longer available.",
+                        })
+                        continue
+                    if draft.get("status") != "active":
+                        await websocket.send_json({
+                            "type": "assistant_error", "action": "promote_metric",
+                            "content": f"That draft was already {draft.get('status')}.",
+                        })
+                        continue
+                    proposal_id = store.create_metric_proposal(
+                        account_id,
+                        payload={
+                            key: draft.get(key) for key in (
+                                "name", "synonyms", "description", "sql_template",
+                                "formula_type", "result_format", "base_table",
+                                "required_columns", "allowed_dimensions",
+                                "default_time_column", "metric_builder_config",
+                            )
+                        },
+                        generated_by="portal_chat",
+                        requested_by_user_id=owner,
+                        request_text=str(data.get("note") or ""),
+                        source_question=str(draft.get("source_question") or ""),
+                        validation=draft.get("validation") or {},
+                        dryrun=draft.get("dryrun") or {},
+                        confidence_score=int(round(float(draft.get("confidence") or 0.0) * 100)),
+                    )
+                    store.mark_draft_promoted(account_id, int(draft["id"]), proposal_id)
+                    await websocket.send_json({
+                        "type": "assistant_action_ack", "action": "promote_metric",
+                        "content": (
+                            f"Sent. An admin will review '{draft.get('name')}' before it "
+                            "becomes available to everyone — you can keep using it here "
+                            "in the meantime."
+                        ),
+                    })
+                except Exception as exc:
+                    log.warning("Metric promotion failed for %s: %s", account_id, exc)
+                    await websocket.send_json({
+                        "type": "assistant_error", "action": "promote_metric",
+                        "content": "That request could not be sent.",
+                    })
+                continue
+
+            if msg_type == "metric_draft_discard":
+                try:
+                    store.discard_session_metric_draft(
+                        account_id, int(data.get("draft_id") or 0),
+                        int((portal_user or {}).get("id") or 0),
+                    )
+                except Exception as exc:
+                    log.debug("Metric draft discard failed: %s", exc)
+                continue
+
             if msg_type == "clarification_response":
                 pending = get_pending(
                     account_id,
@@ -4272,6 +4505,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
                 current_query_task = asyncio.create_task(_run_report_builder_chat(text))
+                continue
+
+            # Metric authoring. After the report gate (a report is the more
+            # specific ask) and before the result-cache commands, because
+            # defining a calculation has nothing to do with a cached result.
+            # Falls through to the ordinary question path on any failure, so a
+            # false match costs one planner call.
+            if _METRIC_AUTHOR_INTENT_RE.search(text):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(
+                    _run_metric_authoring_chat(text, table_hint, schema_hint)
+                )
                 continue
 
             # Deep analysis is explicit and operates only on the most recent

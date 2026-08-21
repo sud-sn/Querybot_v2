@@ -1,0 +1,307 @@
+"""
+tests/test_metric_authoring.py
+
+Phase 4: a user describes a calculation, it answers their question now, and a
+request goes to an admin to make it shared.
+
+The safety argument is that the model never writes SQL. It fills structured
+slots and references columns by tokens this process issued; the formula is
+compiled locally. So most of these tests are about what the model CANNOT do.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+
+_tmp_db = os.path.join(tempfile.mkdtemp(), "test_metric_authoring.db")
+os.environ["QUERYBOT_DB_PATH"] = _tmp_db
+for _mod in list(sys.modules):
+    if _mod.startswith("store"):
+        del sys.modules[_mod]
+
+import store  # noqa: E402
+
+from core.metric_authoring import (  # noqa: E402
+    build_metric_plan_input,
+    compile_metric_plan_response,
+)
+
+store.init_db()
+
+ROOT = Path(__file__).resolve().parents[1]
+
+MANIFEST = {
+    "EMDW_DMART.CUS_ORD_IVC_FCT": ["IVC_AMT", "CUS_DMS_KEY", "INVOICE_DT_DMS_KEY"],
+    "EMDW_DMART.CUS_DMS": ["CUS_NO", "CUS_NM", "STATUS_CD"],
+}
+
+
+@pytest.fixture
+def plan_input():
+    return build_metric_plan_input("revenue per active customer", MANIFEST, ["Net Revenue"])
+
+
+def _plan(**overrides):
+    plan = {
+        "operation": "define_metric", "name": "Revenue Per Active Customer",
+        "mode": "ratio", "result_format": "currency", "base_table_ref": "TABLE_REF_1",
+        "numerator": {"aggregation": "SUM", "measure_ref": "COL_REF_1"},
+        "denominator": {"aggregation": "COUNT_DISTINCT", "measure_ref": "COL_REF_4"},
+        "confidence": 0.9,
+    }
+    plan.update(overrides)
+    return json.dumps(plan)
+
+
+# ── The model composes; it does not write SQL ────────────────────────────────
+
+
+class TestTheModelFillsSlotsAndNeverWritesSql:
+    def test_a_ratio_compiles_from_structured_choices(self, plan_input):
+        draft, error = compile_metric_plan_response(_plan(), plan_input)
+        assert error == ""
+        assert draft.sql_template == (
+            "SUM(IVC_AMT) * 1.0 / NULLIF(COUNT(DISTINCT CUS_NO), 0)"
+        )
+        assert draft.required_columns == "IVC_AMT, CUS_NO"
+        assert draft.base_table == "EMDW_DMART.CUS_ORD_IVC_FCT"
+
+    def test_the_tables_it_touches_are_recorded(self, plan_input):
+        """These drive the ACL re-check on every later read."""
+        draft, _ = compile_metric_plan_response(_plan(), plan_input)
+        assert set(draft.source_tables) == {
+            "EMDW_DMART.CUS_ORD_IVC_FCT", "EMDW_DMART.CUS_DMS",
+        }
+
+    def test_there_is_no_plan_key_that_can_carry_sql(self):
+        """The existing AI-import route accepts a row_expression string from the
+        model. There is deliberately no equivalent here — nothing to sanitise
+        because nothing can arrive."""
+        from core.metric_authoring import _PLAN_KEYS
+
+        for suspicious in ("sql", "sql_template", "formula", "row_expression", "expression"):
+            assert suspicious not in _PLAN_KEYS
+
+
+class TestWhatTheModelCannotDo:
+    @pytest.mark.parametrize("bad_ref", ["SECRET_SALARY", "COL_REF_99", "", None, "DROP TABLE"])
+    def test_a_column_it_invents_is_refused(self, plan_input, bad_ref):
+        draft, error = compile_metric_plan_response(
+            _plan(mode="aggregate", aggregation="SUM", measure_ref=bad_ref,
+                  numerator=None, denominator=None).replace('"numerator": null, ', "")
+                .replace('"denominator": null, ', ""),
+            plan_input,
+        )
+        assert draft is None and "not available to you" in error
+
+    def test_an_unknown_plan_field_is_refused(self, plan_input):
+        draft, error = compile_metric_plan_response(
+            json.dumps({"operation": "define_metric", "name": "X", "raw_sql": "SELECT 1"}),
+            plan_input,
+        )
+        assert draft is None and "unsupported fields" in error
+
+    def test_an_unsupported_aggregation_is_refused(self, plan_input):
+        draft, error = compile_metric_plan_response(
+            _plan(numerator={"aggregation": "EXEC", "measure_ref": "COL_REF_1"}), plan_input,
+        )
+        assert draft is None and "not a supported" in error
+
+    def test_an_unsupported_filter_operator_is_refused(self, plan_input):
+        draft, error = compile_metric_plan_response(
+            _plan(numerator={
+                "aggregation": "SUM", "measure_ref": "COL_REF_1",
+                "filters": [{"field_ref": "COL_REF_6", "operator": "; DROP", "value": "x"}],
+            }), plan_input,
+        )
+        assert draft is None and "filter operator" in error
+
+    def test_a_filter_value_is_escaped_not_executed(self, plan_input):
+        """A value is a literal. Quotes in it are doubled, so it filters on a
+        strange-looking string rather than changing the statement."""
+        draft, _ = compile_metric_plan_response(
+            _plan(numerator={
+                "aggregation": "SUM", "measure_ref": "COL_REF_1",
+                "filters": [{"field_ref": "COL_REF_6", "operator": "equals",
+                             "value": "' OR 1=1--"}],
+            }), plan_input,
+        )
+        assert "''' OR 1=1--'" in draft.sql_template
+
+    def test_a_composed_metric_cannot_reference_another_metric(self, plan_input):
+        """${Name} resolves against list_metrics, which cannot see a session
+        draft — it would raise inside a try/except and ship the unresolved
+        literal into the prompt."""
+        from core.metric_authoring import compile_metric_plan_response as compile_
+
+        # Reach the guard directly: no legitimate plan can produce ${...},
+        # which is exactly why the guard is cheap to keep.
+        from core.metric_authoring import MetricDraft  # noqa: F401
+        source = (ROOT / "core" / "metric_authoring.py").read_text(encoding="utf-8")
+        assert 'if "${" in compiled.formula' in source
+
+    def test_declining_is_a_normal_outcome(self, plan_input):
+        draft, error = compile_metric_plan_response(
+            json.dumps({"operation": "unsupported"}), plan_input,
+        )
+        assert draft is None and "could not be built" in error
+
+    @pytest.mark.parametrize("raw", ["not json", "", "[]", "null", "```json\n{bad}\n```"])
+    def test_malformed_output_is_refused(self, plan_input, raw):
+        draft, error = compile_metric_plan_response(raw, plan_input)
+        assert draft is None and error
+
+
+class TestConfidenceFailsClosed:
+    def test_a_missing_confidence_is_zero_not_certain(self, plan_input):
+        plan = json.loads(_plan())
+        plan.pop("confidence")
+        draft, _ = compile_metric_plan_response(json.dumps(plan), plan_input)
+        assert draft.confidence == 0.0
+
+    @pytest.mark.parametrize("value", ["high", None, float("nan"), -3, 99])
+    def test_malformed_confidence_never_reads_as_high(self, plan_input, value):
+        draft, _ = compile_metric_plan_response(_plan(confidence=value), plan_input)
+        assert 0.0 <= draft.confidence <= 1.0
+
+    def test_the_gate_is_above_the_fail_closed_default(self):
+        """0.0 must not pass the handler's threshold, or failing closed would
+        fail open."""
+        webhooks = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+        assert "draft.confidence < 0.6" in webhooks
+
+
+# ── The prompt carries names, never values ───────────────────────────────────
+
+
+class TestTheEgressBoundary:
+    def test_the_prompt_contains_no_row_data(self, plan_input):
+        """Table and column NAMES only. A sample value here would need an entry
+        in llm_audit's _VALUE_BEARING_MARKERS, and the module docstring says so."""
+        blob = plan_input.system_prompt + plan_input.user_prompt
+        assert "IVC_AMT" in blob and "CUS_ORD_IVC_FCT" in blob
+        for value_ish in ("Nova Scotia", "ACTIVE'", "£", "$"):
+            assert value_ish not in blob
+
+    def test_the_audit_component_is_named(self):
+        webhooks = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+        assert 'component="metric_authoring_chat"' in webhooks
+
+
+# ── Wiring the two tracks ────────────────────────────────────────────────────
+
+
+class TestTheTwoTracks:
+    WEBHOOKS = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+
+    def test_the_acl_filter_precedes_the_prompt(self):
+        """A table this user cannot see must never be offered to the model as an
+        option. Same ordering the report builder enforces."""
+        handler = self.WEBHOOKS[self.WEBHOOKS.index("async def _run_metric_authoring_chat"):]
+        handler = handler[: handler.index("async def _run_report_builder_chat")]
+        assert handler.index("get_allowed_tables") < handler.index("parse_metric_plan")
+
+    def test_the_question_is_still_answered(self):
+        """Track (a). Without this the user describes a calculation and gets a
+        card instead of an answer."""
+        handler = self.WEBHOOKS[self.WEBHOOKS.index("async def _run_metric_authoring_chat"):]
+        handler = handler[: handler.index("async def _run_report_builder_chat")]
+        assert "_run_main_question(text, table_hint, schema_hint)" in handler
+
+    def test_every_gate_falls_through_rather_than_erroring(self):
+        """A false intent match must cost one planner call, not an error page."""
+        handler = self.WEBHOOKS[self.WEBHOOKS.index("async def _run_metric_authoring_chat"):]
+        handler = handler[: handler.index("async def _run_report_builder_chat")]
+        assert handler.count("_fall_through(") >= 7
+
+    def test_the_chat_handler_never_writes_a_metric(self):
+        """The governance rule, asserted where it can be broken.
+
+        Comments are stripped first: the handler explains in prose why it does
+        NOT call save_metric, and a naive substring search reads that
+        explanation as a violation."""
+        handler = self.WEBHOOKS[self.WEBHOOKS.index("async def _run_metric_authoring_chat"):]
+        handler = handler[: handler.index("async def _run_report_builder_chat")]
+        code = " ".join(line.split("#", 1)[0] for line in handler.splitlines())
+        assert "save_metric(" not in code
+        assert "_after_semantic_approval" not in code
+
+    def test_promotion_creates_a_proposal_and_nothing_else(self):
+        frame = self.WEBHOOKS[self.WEBHOOKS.index('if msg_type == "metric_promotion_request"'):]
+        frame = frame[: frame.index('if msg_type == "clarification_response"')]
+        assert "create_metric_proposal" in frame
+        assert "save_metric" not in frame
+
+    def test_the_intent_gate_sits_after_reports_and_before_result_commands(self):
+        """A report is the more specific ask, so it wins; and defining a
+        calculation has nothing to do with a cached result, so it comes first.
+
+        `parse_result_command` is compared at its DISPATCH site, not its import
+        at the top of the file."""
+        report_at = self.WEBHOOKS.index("_REPORT_BUILDER_INTENT_RE.search(text)")
+        metric_at = self.WEBHOOKS.index("_METRIC_AUTHOR_INTENT_RE.search(text)")
+        command_at = self.WEBHOOKS.index("result_command = parse_result_command(text)")
+        assert report_at < metric_at < command_at
+
+
+class TestTheIntentRegex:
+    @pytest.mark.parametrize("text", [
+        "define a metric for revenue per active customer",
+        "create a new metric called gross margin",
+        "set up a kpi for orders per warehouse",
+        "take IVC_AMT from the invoice fact and compute revenue per active customer",
+        "use CUS_NO and calculate the average order value",
+    ])
+    def test_it_catches_an_authoring_request(self, text):
+        from gateway.webhooks import _METRIC_AUTHOR_INTENT_RE
+
+        assert _METRIC_AUTHOR_INTENT_RE.search(text)
+
+    @pytest.mark.parametrize("text", [
+        "what is my revenue last month",
+        "show me the top 10 customers",
+        "how many customers do we have",
+        "build me a report with net revenue",
+        "which items have the highest on hand quantity",
+    ])
+    def test_it_leaves_ordinary_questions_alone(self, text):
+        from gateway.webhooks import _METRIC_AUTHOR_INTENT_RE
+
+        assert not _METRIC_AUTHOR_INTENT_RE.search(text)
+
+
+# ── The pipeline injection ───────────────────────────────────────────────────
+
+
+class TestThePipelineSeesTheDraft:
+    PIPELINE = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+
+    def test_drafts_are_prepended_before_both_metric_scope_passes(self):
+        """The early pass feeds authoritative_fact_tables into source
+        resolution, which is what anchors the query on the fact the user named.
+        Injecting after it would lose that."""
+        inject_at = self.PIPELINE.index("active_session_metrics(")
+        first_scope = self.PIPELINE.index("resolve_metric_scope(")
+        assert inject_at < first_scope
+
+    def test_a_pinned_draft_suppresses_the_ambiguity_prompt(self):
+        """The user already said which definition they meant — by defining it."""
+        assert "not _adhoc_metrics" in self.PIPELINE
+
+    def test_a_draft_never_counts_as_registry_usage(self):
+        idx = self.PIPELINE.index("store.increment_metric_usage(account_id")
+        assert 'not m.get("_adhoc")' in self.PIPELINE[idx:idx + 300]
+
+    def test_the_validator_enforces_a_pinned_draft_on_follow_ups(self):
+        """metric_formula_mismatch is gated on the metric being mentioned by
+        name. A follow-up does not repeat the name, so without this the formula
+        is shown to the model and silently unenforced."""
+        validator = (ROOT / "core" / "validator.py").read_text(encoding="utf-8")
+        idx = validator.index("def _metric_mentioned(")
+        assert '_pinned_thread_metric' in validator[idx:idx + 700]

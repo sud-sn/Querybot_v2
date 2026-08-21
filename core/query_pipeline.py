@@ -2112,6 +2112,26 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _metric_candidates = store.list_metric_formula_context(
         account_id, question, limit=10, metrics=_contract_metrics,
     )
+    # Metric logic this user composed in this thread. Never in metric_registry,
+    # so it steers nobody else's answers; its ACL is re-checked on every read,
+    # so a table revoked mid-thread kills it.
+    #
+    # Prepended HERE rather than later because this list feeds both metric-scope
+    # passes, and the early one at the source-resolution stage is what makes the
+    # pipeline anchor on the fact the user actually named.
+    _adhoc_metrics: list[dict] = []
+    try:
+        _adhoc_metrics = store.active_session_metrics(
+            account_id, _planner_session_id, allowed_tables,
+        )
+        if _adhoc_metrics:
+            _metric_candidates = _adhoc_metrics + list(_metric_candidates or [])
+            log.info(
+                "Session metric draft(s) in scope for %s: %s",
+                account_id, [m.get("name") for m in _adhoc_metrics],
+            )
+    except Exception as _adhoc_exc:
+        log.debug("Session metric drafts unavailable: %s", _adhoc_exc)
     _matched_metrics: list[dict] = []
     metric_formula_context = ""
     _metric_formula_tables: set[str] = set()
@@ -3201,7 +3221,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         entity_schema_map=_entity_schema_map or None,
         limit=6,
     )
-    if _metric_scope.ambiguous and can_request_clarification(event, "metric_scope"):
+    if (
+        _metric_scope.ambiguous
+        and not _adhoc_metrics
+        and can_request_clarification(event, "metric_scope")
+    ):
         options = _metric_scope.options or []
         clarifying_q = (
             "I found more than one revenue definition. Which one should I use?"
@@ -3242,10 +3266,26 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Work on request-local copies. Source resolution is execution evidence,
     # not persistent registry metadata, and must not leak into later requests.
     _matched_metrics = _metric_scope.metrics
+    # resolve_metric_scope drops anything scoring <= 0, and a follow-up turn
+    # ("now break that down by region") does not repeat the metric's name. A
+    # draft the user defined in this thread has to survive that, or their own
+    # definition silently stops applying one question after they made it.
+    _pinned_adhoc = [m for m in _adhoc_metrics if m.get("_pinned_thread_metric")]
+    if _pinned_adhoc:
+        _already = {str(m.get("name") or "").casefold() for m in _matched_metrics}
+        _matched_metrics = [
+            m for m in _pinned_adhoc if str(m.get("name") or "").casefold() not in _already
+        ] + list(_matched_metrics)
     _matched_metrics = [dict(metric) for metric in _matched_metrics]
     if _matched_metrics:
         try:
-            store.increment_metric_usage(account_id, [m.get("name") for m in _matched_metrics if m.get("name")])
+            # Ad-hoc drafts are not registry rows. increment_metric_usage is an
+            # UPDATE ... WHERE name IN (...), so a draft sharing a name with a
+            # real metric would bump that metric's usage instead.
+            store.increment_metric_usage(account_id, [
+                m.get("name") for m in _matched_metrics
+                if m.get("name") and not m.get("_adhoc")
+            ])
         except Exception as _usage_exc:
             log.debug("Metric usage increment skipped: %s", _usage_exc)
     metric_formula_context = _format_metric_formula_context(_matched_metrics, account_id=account_id)
