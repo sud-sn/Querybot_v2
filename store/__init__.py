@@ -1,4 +1,9 @@
 """store package — encrypted config persistence, query logging, client registry, user management."""
+from store.metric_proposal_store import (
+    create_metric_proposal, list_metric_proposals, get_metric_proposal,
+    review_metric_proposal, count_pending_metric_proposals,
+    metric_has_drifted, GUARDED_METRIC_FIELDS,
+)
 from store.db import init_db, get_db
 from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (
@@ -85,6 +90,7 @@ from store.semantic_feedback import (
 from store.admin_inbox import (
     pending_access_by_account, flagged_answers_by_account,
     open_conflicts_by_account,
+    pending_metric_proposals_by_account,
 )
 from store.date_context_store import (
     save_metric_date_context, list_metric_date_contexts,
@@ -150,6 +156,9 @@ __all__ = [
     "save_entity_property","list_entity_properties","list_all_entity_properties","get_full_graph",
     "create_graph_change_proposal","list_graph_change_proposals",
     "get_graph_change_proposal","review_graph_change_proposal",
+    "create_metric_proposal","list_metric_proposals","get_metric_proposal",
+    "review_metric_proposal","count_pending_metric_proposals","metric_has_drifted",
+    "GUARDED_METRIC_FIELDS",
     "count_pending_graph_reviews","count_pending_structural_graph_reviews",
     "flag_relationships_needing_review","clear_relationship_review_flag",
     "save_graph_version","list_graph_versions","get_graph_version",
@@ -207,7 +216,7 @@ __all__ = [
     "list_recent_reviewed_semantic_feedback",
     "semantic_feedback_maps","semantic_feedback_pending_summary",
     "pending_access_by_account","flagged_answers_by_account",
-    "open_conflicts_by_account",
+    "open_conflicts_by_account","pending_metric_proposals_by_account",
     "save_metric_date_context","list_metric_date_contexts",
     "get_metric_date_context","delete_metric_date_context",
     "create_answer_trace","update_answer_trace","log_answer_trace_step",

@@ -5988,6 +5988,159 @@ async def metric_ai_import(request: Request, account_id: str):
     })
 
 
+def _apply_metric_create(account_id: str, metric: dict, *, db_type: str) -> int:
+    """Save a metric and bring the rest of the semantic layer with it.
+
+    Three things have to happen together and in this order, and there are now
+    two callers -- the admin form and the proposal-accept route. Duplicating the
+    sequence is how they drift, and a drift here means a metric that exists in
+    the registry but not in the compiled contract, or vice versa.
+
+    Raises ValueError on a duplicate active name (from ``store.save_metric``);
+    the caller decides whether that is a redirect or a 409.
+    """
+    name = str(metric.get("name") or "").strip()
+    store.save_metric(account_id, metric, db_type=db_type)
+
+    # Sync approved metric formula into the structured semantic model (S2-1).
+    try:
+        from core.semantic_model import patch_metric_approval
+        _sm_state = store.get_client_state(account_id)
+        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
+        if _sm_kb_dir:
+            _req_cols = [
+                c.strip() for c in str(metric.get("required_columns") or "").split(",") if c.strip()
+            ]
+            _base_parts = str(metric.get("base_table") or "").strip().split(".")
+            patch_metric_approval(
+                kb_dir=_sm_kb_dir,
+                table_name=_base_parts[-1],
+                schema_name=_base_parts[-2] if len(_base_parts) >= 2 else "",
+                metric_name=name,
+                column_name=_req_cols[0] if _req_cols else "",
+                sql_template=str(metric.get("sql_template") or "").strip(),
+                is_active=True,
+            )
+    except Exception as _sm_exc:
+        log.warning("patch_metric_approval (create) skipped for %s: %s", name, _sm_exc)
+
+    # Recompiles the semantic contract synchronously and runs every conflict
+    # detector. This is why no chat handler may call it: a metric is the
+    # highest-authority layer, and this is the moment it starts changing
+    # answers to questions nobody has asked yet.
+    _after_semantic_approval(account_id, f"metric '{name}' created")
+    metric_id = 0
+    for row in store.list_metrics(account_id, active_only=False):
+        if str(row.get("name") or "").strip().casefold() == name.casefold():
+            metric_id = int(row.get("id") or 0)
+            break
+    return metric_id
+
+
+@router.post("/clients/{account_id}/metrics/api/proposals/{proposal_id}/accept")
+async def metric_proposal_accept(request: Request, account_id: str, proposal_id: int):
+    """Turn a proposed metric into a real one. The ONLY path that does.
+
+    Both chat surfaces write proposals and neither touches the registry, so
+    this route is the single place where a bot-composed metric becomes
+    something that changes other people's answers.
+    """
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+
+    proposal = store.get_metric_proposal(account_id, proposal_id)
+    if not proposal:
+        return JSONResponse({"status": "error", "detail": "Proposal not found"}, status_code=404)
+    if proposal.get("status") != "pending":
+        return JSONResponse(
+            {"status": "error", "detail": f"Already {proposal.get('status')}"}, status_code=409,
+        )
+
+    payload = dict(proposal.get("payload") or {})
+    if not str(payload.get("name") or "").strip():
+        return JSONResponse({"status": "error", "detail": "Proposal has no metric name"}, status_code=400)
+
+    client = store.get_client(account_id) or {}
+    db_cfg = store.get_db_config(client.get("db_config_id")) if client.get("db_config_id") else None
+    db_type = (db_cfg or {}).get("db_type", "azure_sql")
+
+    # A proposal describes a change from a specific starting point. If the live
+    # metric moved since, accepting would overwrite someone's edit with a diff
+    # computed against a version that no longer exists.
+    if proposal.get("action") == "update_metric":
+        live = store.get_metric(account_id, int(proposal.get("target_metric_id") or 0))
+        drifted, fields = store.metric_has_drifted(live, proposal.get("before"))
+        if drifted:
+            return JSONResponse({
+                "status": "conflict",
+                "detail": (
+                    "This metric changed since the request was made ("
+                    + ", ".join(fields) + "). Review it again against the current version."
+                ),
+            }, status_code=409)
+
+    try:
+        metric_id = _apply_metric_create(account_id, payload, db_type=db_type)
+    except ValueError as exc:
+        # Duplicate active name — a 409, not a 500. Someone very likely created
+        # the same metric by hand while this sat in the queue.
+        return JSONResponse({"status": "conflict", "detail": str(exc)}, status_code=409)
+
+    store.review_metric_proposal(account_id, proposal_id, "accepted", reviewed_by="admin")
+    await _notify_metric_proposal_reviewed(account_id, proposal, "accepted")
+    return JSONResponse({
+        "status": "ok",
+        "metric_id": metric_id,
+        "message": f"'{payload.get('name')}' is now a shared metric.",
+    })
+
+
+@router.post("/clients/{account_id}/metrics/api/proposals/{proposal_id}/reject")
+async def metric_proposal_reject(request: Request, account_id: str, proposal_id: int):
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    proposal = store.get_metric_proposal(account_id, proposal_id)
+    if not proposal:
+        return JSONResponse({"status": "error", "detail": "Proposal not found"}, status_code=404)
+    note = str(body.get("note") or "")
+    if not store.review_metric_proposal(
+        account_id, proposal_id, "rejected", reviewed_by="admin", review_note=note,
+    ):
+        return JSONResponse({"status": "error", "detail": "Proposal is no longer pending"}, status_code=409)
+    await _notify_metric_proposal_reviewed(account_id, proposal, "rejected", note=note)
+    return JSONResponse({"status": "ok"})
+
+
+async def _notify_metric_proposal_reviewed(
+    account_id: str, proposal: dict, outcome: str, *, note: str = "",
+) -> None:
+    """Tell the person who asked. Never raises — a notification failure must not
+    undo an approval that already happened."""
+    user_id = proposal.get("requested_by_user_id")
+    if not user_id:
+        return
+    name = str((proposal.get("payload") or {}).get("name") or "the metric")
+    try:
+        from core.portal_notifications import portal_notification_hub
+        message = (
+            f"'{name}' was approved and is now available to everyone."
+            if outcome == "accepted"
+            else f"'{name}' was not approved." + (f" {note}" if note else "")
+        )
+        await portal_notification_hub.broadcast_to_user(int(user_id), {
+            "type": "metric_proposal_reviewed",
+            "outcome": outcome,
+            "metric_name": name,
+            "message": message,
+        })
+    except Exception as exc:
+        log.debug("Could not notify user %s about metric proposal: %s", user_id, exc)
+
+
 @router.post("/clients/{account_id}/metrics/create")
 async def metric_create(
     request:      Request,
@@ -6055,7 +6208,7 @@ async def metric_create(
             status_code=303)
 
     try:
-        store.save_metric(account_id, {
+        _apply_metric_create(account_id, {
             "name":                name.strip(),
             "synonyms":            synonyms.strip(),
             "sql_template":        sql_template.strip(),
@@ -6079,27 +6232,6 @@ async def metric_create(
             status_code=303,
         )
 
-    # Sync approved metric formula into the structured semantic model (S2-1).
-    try:
-        from core.semantic_model import patch_metric_approval
-        _sm_state = store.get_client_state(account_id)
-        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
-        if _sm_kb_dir:
-            _req_cols = [c.strip() for c in required_columns.split(",") if c.strip()]
-            _base_parts = base_table.strip().split(".")
-            patch_metric_approval(
-                kb_dir=_sm_kb_dir,
-                table_name=_base_parts[-1],
-                schema_name=_base_parts[-2] if len(_base_parts) >= 2 else "",
-                metric_name=name.strip(),
-                column_name=_req_cols[0] if _req_cols else "",
-                sql_template=sql_template.strip(),
-                is_active=True,
-            )
-    except Exception as _sm_exc:
-        log.warning("patch_metric_approval (create) skipped for %s: %s", name, _sm_exc)
-
-    _after_semantic_approval(account_id, f"metric '{name.strip()}' created")
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 
 

@@ -799,6 +799,45 @@ CREATE TABLE IF NOT EXISTS graph_change_proposal (
 CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
     ON graph_change_proposal(account_id, status, created_at);
 
+-- ── Metric proposals — a metric someone asked for but nobody has approved ─────
+-- Same lifecycle as graph_change_proposal, deliberately its OWN table rather
+-- than a graft onto it: that one's target_kind/target_id are consumed by
+-- graph-specific accept logic and its rows are surfaced inside get_full_graph,
+-- so metrics riding along would pollute the graph payload and its review UI.
+--
+-- payload_json is a metric_registry-shaped dict. validation_json and dryrun_json
+-- carry the evidence gathered when the proposal was made — the parse result and
+-- the live probe — so a reviewer sees whether it actually runs without having to
+-- re-test it. dryrun_json never includes the probe's scalar value; that is real
+-- data which never crossed the compliance boundary.
+--
+-- requested_by_user_id is the portal user who asked. reviewed_by is always
+-- 'admin': admin auth is a single shared password with no identity, the same
+-- known limitation graph_change_proposal already carries.
+CREATE TABLE IF NOT EXISTS metric_proposal (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id           TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    action               TEXT    NOT NULL DEFAULT 'create_metric',
+    target_metric_id     INTEGER DEFAULT NULL,
+    before_json          TEXT    NOT NULL DEFAULT '{}',
+    payload_json         TEXT    NOT NULL DEFAULT '{}',
+    status               TEXT    NOT NULL DEFAULT 'pending',
+    confidence_score     INTEGER NOT NULL DEFAULT 0,
+    generated_by         TEXT    NOT NULL DEFAULT 'portal_chat',
+    requested_by_user_id INTEGER DEFAULT NULL,
+    request_text         TEXT    NOT NULL DEFAULT '',
+    source_question      TEXT    NOT NULL DEFAULT '',
+    validation_json      TEXT    NOT NULL DEFAULT '{}',
+    dryrun_json          TEXT    NOT NULL DEFAULT '{}',
+    reason               TEXT    NOT NULL DEFAULT '',
+    reviewed_by          TEXT    NOT NULL DEFAULT '',
+    reviewed_at          TEXT    DEFAULT NULL,
+    review_note          TEXT    NOT NULL DEFAULT '',
+    created_at           TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_metric_proposal_account
+    ON metric_proposal(account_id, status, created_at);
+
 -- =============================================================================
 -- Learning loop tables (v30)
 -- =============================================================================

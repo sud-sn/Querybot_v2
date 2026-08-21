@@ -48,12 +48,14 @@ def _clients(n: int, *, state: str = "READY", db: str | None = "db-1", prefix: s
 class _Signals:
     """Context manager: no signals except the ones named."""
 
-    def __init__(self, access=None, flagged=None, conflicts=None, errors=None, semantic=None):
+    def __init__(self, access=None, flagged=None, conflicts=None, errors=None,
+                 semantic=None, metric_proposals=None):
         self.access = access or {}
         self.flagged = flagged or {}
         self.conflicts = conflicts or {}
         self.errors = errors or {}
         self.semantic = semantic or {}
+        self.metric_proposals = metric_proposals or {}
         self._patches: list = []
 
     def _by_severity(self, severity: str = ""):
@@ -67,6 +69,11 @@ class _Signals:
             patch("admin.inbox.store.semantic_feedback_pending_summary", return_value={
                 "clients": [{"account_id": k, "pending": v} for k, v in self.semantic.items()]
             }),
+            # Every counter the inbox reads must be patched here. One left
+            # unpatched hits the real database, quietly returns nothing, and
+            # its signal is then untested however broken it is.
+            patch("admin.inbox.store.pending_metric_proposals_by_account",
+                  return_value=self.metric_proposals),
         ]
         for p in self._patches:
             p.start()
@@ -231,6 +238,30 @@ def test_a_clean_deployment_produces_no_items():
         items = build_inbox(_clients(3), _DB)
     assert items == []
     assert inbox_summary(items) == {"action": 0, "warn": 0, "info": 0, "clients": 0}
+
+
+def test_a_metric_someone_composed_in_chat_reaches_the_inbox():
+    """The proposal queue is the only way a bot-composed metric becomes shared,
+    so it has to be visible. Without a signal it sits there forever and the
+    person who asked never finds out."""
+    with _Signals(metric_proposals={"c0": 3}):
+        items = build_inbox(_clients(2), _DB)
+    proposals = [i for i in items if i["kind"] == "metric-proposal"]
+    assert len(proposals) == 1
+    assert proposals[0]["total"] == 3
+    assert proposals[0]["members"][0]["account_id"] == "c0"
+    assert proposals[0]["href"].endswith("/metrics#proposals")
+
+
+def test_a_pending_metric_is_a_warning_not_a_blocker():
+    """Whoever asked already got their answer -- the ad-hoc logic ran in their
+    own thread. Ranking this as `action` would put it above people who are
+    actually blocked, like someone waiting on access."""
+    with _Signals(metric_proposals={"c0": 1}, access={"c0": 1}):
+        items = build_inbox(_clients(1), _DB)
+    kinds = [i["kind"] for i in items]
+    assert kinds.index("access") < kinds.index("metric-proposal")
+    assert next(i for i in items if i["kind"] == "metric-proposal")["severity"] == "warn"
 
 
 def test_no_clients_at_all_is_not_an_error():

@@ -53,6 +53,19 @@ def flagged_answers_by_account() -> dict[str, int]:
     )
 
 
+def pending_metric_proposals_by_account() -> dict[str, int]:
+    """Metric definitions someone composed in chat, waiting to become shared.
+
+    Ranked below the blocking signals on purpose: the person who asked already
+    got their answer -- the ad-hoc logic ran for them in their own thread. What
+    is waiting is only whether everyone else gets it too.
+    """
+    return _counts(
+        """SELECT account_id, COUNT(*) FROM metric_proposal
+           WHERE status = 'pending' GROUP BY account_id"""
+    )
+
+
 def open_conflicts_by_account(severity: str = "") -> dict[str, int]:
     """Unresolved semantic-model conflicts.
 

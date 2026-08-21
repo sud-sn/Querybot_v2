@@ -68,6 +68,7 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
 
     access = store.pending_access_by_account()
     flagged = store.flagged_answers_by_account()
+    metric_proposals = store.pending_metric_proposals_by_account()
     errors = store.open_conflicts_by_account("ERROR")
     all_conflicts = store.open_conflicts_by_account()
     semantic = {
@@ -145,6 +146,15 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
             hit("semantic", "warn", "field mappings awaiting a decision",
                 "the semantic layer cannot settle these names on its own",
                 "/kb#semantic-feedback", "Review mappings", account_id, n)
+
+        n = metric_proposals.get(account_id, 0)
+        if n:
+            # "warn", not "action": whoever asked already has their answer --
+            # the logic ran in their own thread. What is pending is only
+            # whether it becomes available to everyone else.
+            hit("metric-proposal", "warn", "metric definitions awaiting approval",
+                "users composed these in chat and are waiting for them to become shared",
+                "/metrics#proposals", "Review metric requests", account_id, n)
 
         # ── Worth knowing ────────────────────────────────────────────────────
         n = all_conflicts.get(account_id, 0) - errors.get(account_id, 0)
