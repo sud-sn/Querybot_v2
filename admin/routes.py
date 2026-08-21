@@ -6292,7 +6292,14 @@ async def metrics_validate(request: Request, account_id: str):
 
 @router.post("/clients/{account_id}/metrics/test-formula")
 async def metrics_test_formula(request: Request, account_id: str):
-    """Run a metric formula as a live SELECT against the account's DB and return the result."""
+    """Run a metric formula as a live SELECT against the account's DB and return the result.
+
+    The probe itself lives in ``core.metric_dryrun`` so that a formula the bot
+    composed can be checked the same way, without an admin clicking this button.
+    This route is the admin face of it and is the ONLY caller allowed to read
+    ``DryRunOutcome.value`` — that value is real customer data which never went
+    through the compliance boundary, because a probe is not a governed query.
+    """
     if not _is_auth(request):
         return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
 
@@ -6301,222 +6308,23 @@ async def metrics_test_formula(request: Request, account_id: str):
     if not formula:
         return JSONResponse({"status": "error", "detail": "Formula is empty"})
 
-    client = store.get_client(account_id)
-    if not client:
+    if not store.get_client(account_id):
         return JSONResponse({"status": "error", "detail": "Account not found"}, status_code=404)
 
-    db_cfg_id = client.get("db_config_id")
-    if not db_cfg_id:
-        return JSONResponse({"status": "error", "detail": "No database configured for this account"})
+    from core.metric_dryrun import dry_run_metric_formula
 
-    raw_cfg = store.get_db_config(db_cfg_id)
-    if not raw_cfg:
-        return JSONResponse({"status": "error", "detail": "Database config not found"})
-
-    db_type = raw_cfg.get("db_type", "azure_sql")
-    creds   = raw_cfg.get("credentials", {})
-
-    # Find the table to anchor the query — prefer base_table from request, else first in schema
-    import json as _json
-    from pathlib import Path as _Path
-
-    base_table_raw = (body.get("base_table") or "").strip()
-
-    # Row-calculated / date-gap metrics reference join aliases (due_dt.DMS_DT)
-    # that only exist once the metric's required_joins are applied — the bare
-    # single-table probe can never bind them ("multi-part identifier could not
-    # be bound"). Detect that config up front and probe WITH the joins below.
-    builder_config_raw = (body.get("metric_builder_config") or "").strip()
-    join_probe = False
-    if builder_config_raw and not formula.upper().startswith("SELECT"):
-        try:
-            _mb_cfg = _json.loads(builder_config_raw)
-        except Exception:
-            _mb_cfg = None
-        if (
-            isinstance(_mb_cfg, dict)
-            and _mb_cfg.get("mode") in ("row_calculated", "date_gap")
-            and _mb_cfg.get("required_joins")
-        ):
-            join_probe = True
-
-    def _fqn_to_sql(fqn: str) -> str:
-        parts = fqn.split(".")
-        if db_type == "azure_sql" and len(parts) >= 2:
-            return f"[{parts[-2]}].[{parts[-1]}]"
-        if db_type == "snowflake" and len(parts) >= 3:
-            return f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
-        if db_type == "oracle" and len(parts) >= 2:
-            return f'"{parts[-2]}"."{parts[-1]}"'
-        return ""
-
-    first_table_sql = None
-    master = {}
-
-    state      = store.get_client_state(account_id)
-    schema_dir = (state or {}).get("schema_dir") or ""
-    schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
-    if schema_path and schema_path.exists():
-        master = _json.loads(schema_path.read_text(encoding="utf-8"))
-
-    if base_table_raw:
-        first_table_sql = _fqn_to_sql(base_table_raw)
-
-    if not first_table_sql:
-        for fqn in master:
-            first_table_sql = _fqn_to_sql(fqn)
-            if first_table_sql:
-                break
-
-    if not master and not first_table_sql:
-        return JSONResponse({"status": "error", "detail": "No tables found in schema — run discovery first"})
-
-    # ── Detect which schema columns the formula references ──────────────────
-    import re as _re
-    # Extract bare identifiers (skip SQL keywords and function names)
-    _SQL_KW = {
-        "SELECT","FROM","WHERE","AND","OR","NOT","IN","IS","NULL","AS","CASE",
-        "WHEN","THEN","ELSE","END","BETWEEN","LIKE","TOP","LIMIT","DISTINCT",
-        "WITH","NOLOCK","SUM","AVG","COUNT","MIN","MAX","COALESCE","NULLIF",
-        "ISNULL","NVL","CAST","CONVERT","ROUND","ABS","FLOOR","CEILING","IF",
-        "IIF","DATEDIFF","DATEADD","DATE","LEFT","RIGHT","MID","LEN","TRIM",
-        "UPPER","LOWER","REPLACE","SUBSTRING","CONCAT","ROWNUM",
-    }
-    tokens = [t.upper() for t in _re.findall(r'\b[A-Za-z_][A-Za-z0-9_]{2,}\b', formula)
-              if t.upper() not in _SQL_KW]
-
-    # Build column→table_fqn map from _schema.json
-    col_to_tables: dict[str, list[str]] = {}  # col_upper → [fqn, ...]
-    if master:
-        for fqn_key, tbl_data in master.items():
-            if not isinstance(tbl_data, dict):
-                continue
-            for col in (tbl_data.get("columns") or []):
-                col_name = (col.get("name") if isinstance(col, dict) else str(col) or "").upper()
-                if col_name:
-                    col_to_tables.setdefault(col_name, []).append(fqn_key)
-
-    # Map each token to its table (first match wins when unambiguous)
-    table_to_cols: dict[str, list[str]] = {}   # fqn → [col, ...]
-    unresolved: list[str] = []
-    for tok in tokens:
-        if tok in col_to_tables:
-            fqn_key = col_to_tables[tok][0]    # pick first table that has this column
-            table_to_cols.setdefault(fqn_key, []).append(tok)
-        # else: could be a literal/alias/keyword we didn't strip — ignore
-
-    multi_table = len(table_to_cols) > 1
-    single_table_fqn = next(iter(table_to_cols)) if len(table_to_cols) == 1 else None
-
-    def _tbl_sql(fqn: str) -> str:
-        parts = fqn.split(".")
-        if db_type == "azure_sql" and len(parts) >= 2:
-            return f"[{parts[-2]}].[{parts[-1]}]"
-        if db_type == "snowflake" and len(parts) >= 3:
-            return f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
-        if db_type == "oracle" and len(parts) >= 2:
-            return f'"{parts[-2]}"."{parts[-1]}"'
-        return fqn
-
-    try:
-        from core.schema import _az_connect, _sf_connect, _ora_connect
-
-        def _get_conn():
-            if db_type == "azure_sql":   return _az_connect(creds)
-            if db_type == "snowflake":   return _sf_connect(creds)
-            return _ora_connect(creds)
-
-        def _run_probe(sql: str):
-            conn = _get_conn()
-            try:
-                cur = conn.cursor()
-                cur.execute(sql)
-                row = cur.fetchone()
-                return row[0] if row else None
-            finally:
-                conn.close()
-
-        loop = asyncio.get_running_loop()
-
-        if join_probe:
-            # Probe with the metric's required joins applied so join-alias
-            # references (due_dt.DMS_DT) bind. Runs BEFORE the multi-table
-            # token heuristic, which misfires on alias-qualified formulas.
-            if not base_table_raw or not first_table_sql:
-                return JSONResponse({
-                    "status": "error",
-                    "detail": (
-                        "This metric's formula uses join aliases, so the test needs the "
-                        "Base table — set the Base table field (Advanced options) first."
-                    ),
-                })
-            from core.pipeline_helpers import _build_row_metric_join_sql
-            # No "AS" in the skeleton — the helper reads the last token of the
-            # FROM line as the anchor alias.
-            join_sql = _build_row_metric_join_sql(
-                [{"metric_builder_config": builder_config_raw}],
-                db_type,
-                f"FROM {first_table_sql} base",
-            )
-            if db_type == "azure_sql":
-                probe = f"SELECT TOP 1 ({formula}) AS _result FROM {first_table_sql} AS base WITH (NOLOCK)\n{join_sql}"
-            elif db_type == "snowflake":
-                probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} base\n{join_sql}\nLIMIT 1"
-            else:
-                probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} base\n{join_sql}\nWHERE ROWNUM <= 1"
-
-            result = await asyncio.wait_for(loop.run_in_executor(None, _run_probe, probe), timeout=20)
-            if result is not None and not isinstance(result, (int, float, str, bool)):
-                result = str(result)
-            return JSONResponse({"status": "ok", "result": result})
-
-        if multi_table:
-            # Per-table column existence probes
-            probe_results = []
-            all_ok = True
-            for fqn_key, cols in table_to_cols.items():
-                tbl_sql = _tbl_sql(fqn_key)
-                col_list = ", ".join(cols)
-                if db_type == "azure_sql":
-                    probe = f"SELECT TOP 1 {col_list} FROM {tbl_sql} WITH (NOLOCK)"
-                elif db_type == "snowflake":
-                    probe = f"SELECT {col_list} FROM {tbl_sql} LIMIT 1"
-                else:
-                    probe = f"SELECT {col_list} FROM {tbl_sql} WHERE ROWNUM <= 1"
-                try:
-                    await asyncio.wait_for(loop.run_in_executor(None, _run_probe, probe), timeout=15)
-                    probe_results.append(f"✓ {fqn_key.split('.')[-1]} ({col_list})")
-                except Exception as exc:
-                    probe_results.append(f"✗ {fqn_key.split('.')[-1]} ({col_list}): {exc}")
-                    all_ok = False
-
-            summary = f"Multi-table formula — {len(table_to_cols)} tables probed:\n" + "\n".join(probe_results)
-            if all_ok:
-                return JSONResponse({"status": "ok", "result": summary})
-            else:
-                return JSONResponse({"status": "error", "detail": summary})
-
-        else:
-            # Single table — run the full formula expression
-            tbl_sql = _tbl_sql(single_table_fqn) if single_table_fqn else first_table_sql
-            if not tbl_sql:
-                return JSONResponse({"status": "error", "detail": "No tables found in schema — run discovery first"})
-            if db_type == "azure_sql":
-                probe = f"SELECT TOP 1 ({formula}) AS _result FROM {tbl_sql} WITH (NOLOCK)"
-            elif db_type == "snowflake":
-                probe = f"SELECT ({formula}) AS _result FROM {tbl_sql} LIMIT 1"
-            else:
-                probe = f"SELECT ({formula}) AS _result FROM {tbl_sql} WHERE ROWNUM <= 1"
-
-            result = await asyncio.wait_for(loop.run_in_executor(None, _run_probe, probe), timeout=20)
-            if result is not None and not isinstance(result, (int, float, str, bool)):
-                result = str(result)
-            return JSONResponse({"status": "ok", "result": result})
-
-    except asyncio.TimeoutError:
-        return JSONResponse({"status": "error", "detail": "Query timed out (20 s)"})
-    except Exception as exc:
-        return JSONResponse({"status": "error", "detail": str(exc)})
+    outcome = await dry_run_metric_formula(
+        account_id,
+        formula=formula,
+        base_table=(body.get("base_table") or "").strip(),
+        metric_builder_config=(body.get("metric_builder_config") or "").strip(),
+    )
+    if outcome.status == "ok":
+        # A multi-table run reports its per-table summary in `detail`; a single
+        # expression run reports the scalar. Preserve the original wire shape.
+        result = outcome.detail if outcome.probe_kind == "multi_table" else outcome.value
+        return JSONResponse({"status": "ok", "result": result})
+    return JSONResponse({"status": "error", "detail": outcome.detail})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

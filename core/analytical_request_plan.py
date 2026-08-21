@@ -304,7 +304,11 @@ def compile_analytical_request_plan(
         {
             "id": m.get("id"),
             "name": m.get("name"),
-            "formula": m.get("formula") or m.get("sql_formula"),
+            # The column is `sql_template`. Neither "formula" nor "sql_formula"
+            # exists on a metric_registry row, so the compiled plan has been
+            # carrying a null formula for every metric it ever described --
+            # silently, because every consumer treats it as optional.
+            "formula": m.get("sql_template") or m.get("formula") or m.get("sql_formula"),
             "source_tables": list(
                 m.get("_resolved_source_tables")
                 or m.get("source_tables")

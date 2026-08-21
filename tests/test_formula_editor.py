@@ -575,18 +575,90 @@ class TestJoinAwareFormulaProbe(unittest.TestCase):
     formulas referencing join aliases (due_dt.DMS_DT) can't bind otherwise."""
 
     def test_route_reads_builder_config_and_builds_joins(self):
+        """The probe moved to core/metric_dryrun.py so a bot-composed formula can
+        be checked without an admin clicking Test. The route still forwards the
+        builder config, and the module still holds the alias-safe skeleton."""
         routes = _routes()
         self.assertIn('body.get("metric_builder_config")', routes)
-        self.assertIn("_build_row_metric_join_sql", routes)
-        # Join probe must run before the multi-table heuristic branch.
-        self.assertLess(
-            routes.index("if join_probe:"),
-            routes.index("if multi_table:"),
-        )
+
+        dryrun_path = os.path.join(os.path.dirname(__file__), "..", "core", "metric_dryrun.py")
+        with open(dryrun_path, encoding="utf-8") as fh:
+            dryrun = fh.read()
+        self.assertIn("_build_row_metric_join_sql", dryrun)
         # Skeleton without AS so the helper parses the anchor alias correctly.
-        self.assertIn('f"FROM {first_table_sql} base"', routes)
+        self.assertIn('f"FROM {first_table_sql} base"', dryrun)
         # Full-SQL formulas bypass the branch.
-        self.assertIn('not formula.upper().startswith("SELECT")', routes)
+        self.assertIn('formula.upper().startswith("SELECT")', dryrun)
+
+    def test_join_probe_wins_over_the_multi_table_heuristic(self):
+        """The ordering that the old source scan was standing in for, executed.
+
+        A row_calculated formula names columns from two tables, so the
+        multi-table heuristic would claim it and split into per-table column
+        probes — which can never bind a join alias ("multi-part identifier could
+        not be bound"). The join probe has to be tried first. `probe_kind` on
+        the outcome is what makes that observable without reading the source."""
+        import asyncio as _asyncio
+        import json as _json
+        from unittest.mock import patch
+
+        from core import metric_dryrun
+
+        captured: list[str] = []
+
+        class _Cur:
+            def execute(self, sql):
+                captured.append(sql)
+
+            def fetchone(self):
+                return (7,)
+
+        class _Conn:
+            def cursor(self):
+                return _Cur()
+
+            def close(self):
+                pass
+
+        config = _json.dumps({
+            "enabled": True,
+            "mode": "date_gap",
+            "required_joins": [{
+                "alias": "due_dt", "table": "DW.DT_DMS",
+                "left_column": "DUE_DT_DMS_KEY", "right_column": "DT_DMS_KEY",
+            }],
+        })
+        master = {
+            "DW.INVOICE_FCT": {"columns": [{"name": "DUE_DT_DMS_KEY"}, {"name": "PAY_DT_DMS_KEY"}]},
+            "DW.DT_DMS": {"columns": [{"name": "DT_DMS_KEY"}, {"name": "DMS_DT"}]},
+        }
+
+        with patch.object(metric_dryrun.store, "get_client", return_value={"db_config_id": 1}), \
+             patch.object(metric_dryrun.store, "get_db_config",
+                          return_value={"db_type": "azure_sql", "credentials": {}}), \
+             patch.object(metric_dryrun, "_load_schema_master", return_value=master), \
+             patch("core.schema._az_connect", return_value=_Conn()):
+            outcome = _asyncio.run(metric_dryrun.dry_run_metric_formula(
+                "acct",
+                formula="DATEDIFF(day, base.PAY_DT_DMS_KEY, due_dt.DMS_DT)",
+                base_table="DW.INVOICE_FCT",
+                metric_builder_config=config,
+            ))
+
+        self.assertEqual(outcome.probe_kind, "join_probe")
+        self.assertEqual(outcome.status, "ok")
+        self.assertTrue(captured, "the probe never reached the database")
+        self.assertIn("due_dt", captured[0], "the join alias was not bound")
+
+    def test_the_probe_value_is_opt_in_for_serialisation(self):
+        """The scalar is real customer data that never crossed the compliance
+        boundary — a probe is not a governed query. Portal surfaces read
+        status/detail; only the admin route may read the value."""
+        from core.metric_dryrun import DryRunOutcome
+
+        outcome = DryRunOutcome(status="ok", detail="fine", value=123456)
+        self.assertNotIn("value", outcome.to_dict())
+        self.assertEqual(outcome.to_dict(include_value=True)["value"], 123456)
 
     def test_client_sends_builder_config_to_test_endpoint(self):
         tmpl = _tmpl()

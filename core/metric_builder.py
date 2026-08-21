@@ -378,6 +378,10 @@ def compile_metric_builder_config(
         return _compile_date_gap_metric(config, aggregation, db_type)
     if mode in {"row", "row_calculated", "row-level", "row_level"}:
         return _compile_row_calculated_metric(config, aggregation)
+    if mode == "ratio":
+        # Each side carries its own aggregation, so the config-level one is
+        # unused here — hence no `aggregation` argument.
+        return _compile_ratio_metric(config)
     if mode not in {"aggregate", "filtered_aggregate", "measure"}:
         raise ValueError(f"Unsupported metric builder mode: {mode}")
 
@@ -423,6 +427,97 @@ def compile_metric_builder_config(
     return CompiledMetricFormula(
         formula=formula,
         required_columns=deduped_required,
+        config_json=json.dumps(clean_config, separators=(",", ":")),
+    )
+
+
+def _compile_ratio_side(
+    side: Any, label: str, default_aggregation: str,
+) -> tuple[str, list[str], dict[str, Any]]:
+    """Compile one half of a ratio into an aggregate expression.
+
+    Shares `_clean_identifier` and `_compile_condition` with the aggregate
+    mode, so a ratio side is exactly as constrained as a whole aggregate
+    metric -- no SQL text can reach the formula through it.
+    """
+    if not isinstance(side, dict):
+        raise ValueError(f"{label} must be an object.")
+    aggregation = (side.get("aggregation") or default_aggregation).strip().upper()
+    distinct = False
+    if aggregation in {"COUNT_DISTINCT", "COUNTDISTINCT", "DISTINCT_COUNT"}:
+        aggregation, distinct = "COUNT", True
+    if aggregation not in _AGGREGATIONS:
+        raise ValueError(f"Unsupported {label.lower()} aggregation: {aggregation}")
+
+    measure = _clean_identifier(side.get("measure") or "", f"{label} field")
+    required = [_bare_column(measure)]
+    conditions: list[str] = []
+    normalised_filters: list[dict[str, str]] = []
+    for filt in (side.get("filters") or []):
+        if not isinstance(filt, dict):
+            continue
+        field = (filt.get("field") or "").strip()
+        if not field:
+            continue
+        operator = (filt.get("operator") or "equals").strip().lower()
+        value = (filt.get("value") or "").strip()
+        conditions.append(_compile_condition(field, operator, value))
+        required.append(_bare_column(field))
+        normalised_filters.append({"field": field, "operator": operator, "value": value})
+
+    inner = f"DISTINCT {measure}" if distinct else measure
+    predicate = " AND ".join(conditions)
+    if not predicate:
+        expression = f"{aggregation}({inner})"
+    elif distinct:
+        expression = f"COUNT(DISTINCT CASE WHEN {predicate} THEN {measure} END)"
+    elif aggregation == "SUM":
+        expression = f"SUM(CASE WHEN {predicate} THEN {measure} ELSE 0 END)"
+    elif aggregation == "COUNT":
+        expression = f"COUNT(CASE WHEN {predicate} THEN 1 END)"
+    else:
+        expression = f"{aggregation}(CASE WHEN {predicate} THEN {measure} END)"
+
+    clean = {
+        "aggregation": "COUNT_DISTINCT" if distinct else aggregation,
+        "measure": measure,
+        "filters": normalised_filters,
+    }
+    return expression, required, clean
+
+
+def _compile_ratio_metric(config: dict[str, Any]) -> CompiledMetricFormula:
+    """No-code 'X per Y' wizard — revenue per customer, cost per order.
+
+    A ratio is the shape a person reaches for most often after a plain total,
+    and it was the one shape the builder could not express, so every "per"
+    metric had to be hand-written as advanced SQL. That mattered more once a
+    bot started composing metrics: hand-written SQL is exactly what a bot must
+    not be trusted to produce, so without this mode "revenue per active
+    customer" had no safe path at all.
+
+    The denominator is always wrapped in NULLIF(..., 0): an empty denominator
+    is a real and ordinary case (a period with no customers yet), and a
+    divide-by-zero error there would read to the user as a broken product
+    rather than an empty period.
+    """
+    numerator, num_required, num_clean = _compile_ratio_side(
+        config.get("numerator"), "Numerator", "SUM",
+    )
+    denominator, den_required, den_clean = _compile_ratio_side(
+        config.get("denominator"), "Denominator", "COUNT",
+    )
+    formula = f"{numerator} * 1.0 / NULLIF({denominator}, 0)"
+    required_columns = list(dict.fromkeys(col for col in num_required + den_required if col))
+    clean_config = {
+        "enabled": True,
+        "mode": "ratio",
+        "numerator": num_clean,
+        "denominator": den_clean,
+    }
+    return CompiledMetricFormula(
+        formula=formula,
+        required_columns=required_columns,
         config_json=json.dumps(clean_config, separators=(",", ":")),
     )
 
