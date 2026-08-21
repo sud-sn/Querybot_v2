@@ -372,8 +372,15 @@ def is_date_role_column(column_name: str) -> bool:
     return detect_date_role(column_name) is not None
 
 
+# Anchored on a word boundary, not a leading underscore. A role-playing key is
+# prefixed (INVOICE_DT_DMS_KEY, PAY_DT_DMS_KEY), but the date dimension's OWN
+# primary key is bare — DT_DMS_KEY — and that is the one column certain to
+# appear in every date join. Requiring the underscore excluded exactly it, so
+# the encoded key at the centre of the calendar was classified a plain
+# sequential surrogate and the prompt told the model it carried no calendar
+# meaning.
 _DMS_KEY_SUFFIX_RE = re.compile(
-    r"(?:_DT_DMS_KEY|_DATE_DMS_KEY|_PRD_DMS_KEY|_PERIOD_DMS_KEY)$",
+    r"(?:^|_)(?:DT_DMS_KEY|DATE_DMS_KEY|PRD_DMS_KEY|PERIOD_DMS_KEY)$",
     re.IGNORECASE,
 )
 # _SK / _FK are as standard in dimensional modelling as _ID / _KEY. Omitting

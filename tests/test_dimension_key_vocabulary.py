@@ -256,3 +256,39 @@ class TestTheDateKeyRuleFollowsTheTenantsOwnMetadata:
         """is_date_role_column also matches ORDER_DATE, a native DATE column;
         telling the model to avoid YEAR() on one would be wrong."""
         assert not self._rule_present("TABLE: DW.ORDERS\n  ORDER_DATE date\n")
+
+
+class TestTheDateDimensionsOwnKeyIsNotAPlainSurrogate:
+    """A role-playing date key is prefixed -- INVOICE_DT_DMS_KEY, PAY_DT_DMS_KEY
+    -- but the date dimension's OWN primary key is bare: DT_DMS_KEY. The regex
+    excluding the YYYYMMDD-encoded family required a leading underscore, so it
+    matched every prefixed key and missed the bare one: the single column
+    certain to appear in every date join was classified a plain sequential
+    surrogate, and the prompt told the model it carried no calendar meaning and
+    that decoding it was wrong.
+    """
+
+    @pytest.mark.parametrize("column", [
+        "DT_DMS_KEY", "DATE_DMS_KEY", "PRD_DMS_KEY", "PERIOD_DMS_KEY",
+        "INVOICE_DT_DMS_KEY", "PAY_DT_DMS_KEY",
+    ])
+    def test_an_encoded_key_is_never_called_a_plain_surrogate(self, column):
+        from core.date_roles import is_plain_surrogate_date_role_column
+
+        assert not is_plain_surrogate_date_role_column(column)
+
+    @pytest.mark.parametrize("column", [
+        "ADMIT_DATE_SK", "SERVICE_DATE_KEY", "DISPENSE_DATE_ID",
+    ])
+    def test_a_genuine_sequential_surrogate_still_is_one(self, column):
+        from core.date_roles import is_plain_surrogate_date_role_column
+
+        assert is_plain_surrogate_date_role_column(column)
+
+    def test_the_date_dimension_key_gets_no_decode_warning(self):
+        from core.llm import build_sql_system_prompt
+
+        prompt = build_sql_system_prompt(
+            "azure_sql", "TABLE: EMDW_DMART.DT_DMS\n  DT_DMS_KEY bigint\n",
+        )
+        assert "has NO inherent calendar meaning" not in prompt
