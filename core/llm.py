@@ -25,8 +25,6 @@ from core.llm_audit import record_llm_call
 
 log = logging.getLogger("querybot.llm")
 
-_DMS_KEY_SUFFIX_RE = re.compile(r"(?:_DT_DMS_KEY|_DATE_DMS_KEY)$", re.IGNORECASE)
-_SURROGATE_KEY_SUFFIX_RE = re.compile(r"(?:_ID|_KEY)$", re.IGNORECASE)
 _IDENTIFIER_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 
 
@@ -241,22 +239,51 @@ def _filter_sql_rules_for_compiled_plan(
 
 
 def _find_date_role_tokens(table_context: str) -> list[str]:
-    """Column-name-shaped tokens in the retrieved KB context that are BOTH a
-    recognized date-role foreign key (core.date_roles) AND end in _ID/_KEY —
-    e.g. DISPENSE_DATE_ID, ORDER_DT_DMS_KEY.
+    """Column-name-shaped tokens in the retrieved KB context that are a
+    recognized date-role key column — e.g. DISPENSE_DATE_ID, ADMIT_DATE_SK.
 
-    The _ID/_KEY suffix requirement matters: is_date_role_column() also
-    matches plain names like ORDER_DATE, which is usually a genuine native
+    The key-suffix requirement matters: is_date_role_column() also matches
+    plain names like ORDER_DATE, which is usually a genuine native
     DATE/DATETIME column, not a surrogate key — telling the model to avoid
-    YEAR()/MONTH() on a real date column would be wrong. Schema-agnostic
-    otherwise: works for whatever surrogate-key convention the client's own
-    schema actually uses, not one hardcoded suffix.
+    YEAR()/MONTH() on a real date column would be wrong.
+
+    The predicate is core.date_roles'. This module used to keep its own copy,
+    `(?:_ID|_KEY)$`, which was the version date_roles had already fixed: it
+    omits _SK and _FK, so ADMIT_DATE_SK was not a date key here while the rest
+    of the product agreed it was.
     """
+    from core.date_roles import is_surrogate_date_role_key_column
     tokens = set(_IDENTIFIER_TOKEN_RE.findall(table_context or ""))
-    return [
-        t for t in tokens
-        if _SURROGATE_KEY_SUFFIX_RE.search(t) and is_date_role_column(t)
-    ]
+    return [t for t in tokens if is_surrogate_date_role_key_column(t)]
+
+
+def _governed_date_key_types(semantic_plan: dict | None) -> dict[str, str]:
+    """{COLUMN: date_key_type} as the tenant's compiled plan declares it."""
+    types: dict[str, str] = {}
+    for field in ((semantic_plan or {}).get("fields") or []):
+        column = str((field or {}).get("column") or "").strip().upper()
+        declared = str((field or {}).get("date_key_type") or "").strip().lower()
+        if column and declared:
+            types[column] = declared
+    return types
+
+
+def _is_plain_surrogate_date_key(token: str, governed: dict[str, str]) -> bool:
+    """Whether a date key is a pure sequential surrogate, not an encoded date.
+
+    The tenant's own approved encoding decides. Only when the plan says nothing
+    does this fall back to inference. It used to be decided by one ERP's
+    suffix — anything not spelled _DT_DMS_KEY/_DATE_DMS_KEY was declared a pure
+    surrogate — which put a rule in the prompt asserting in capitals that a
+    YYYYMMDD smart key "has NO inherent calendar meaning and is NOT
+    YYYYMMDD-encoded", contradicting the plan's own decode expression in the
+    same request.
+    """
+    from core.date_roles import is_plain_surrogate_date_role_column
+    declared = governed.get(str(token or "").strip().upper(), "")
+    if declared:
+        return declared == "surrogate_fk"
+    return is_plain_surrogate_date_role_column(token)
 
 Provider = Literal["anthropic", "openai", "azure_openai"]
 
@@ -458,8 +485,10 @@ def build_sql_system_prompt(
     syntax = _SQL_SYNTAX.get(db_type, "- Use standard ANSI SQL\n")
 
     _date_role_tokens = _find_date_role_tokens(table_context)
+    _governed_key_types = _governed_date_key_types(semantic_plan)
     _has_plain_date_role_key = any(
-        not _DMS_KEY_SUFFIX_RE.search(tok) for tok in _date_role_tokens
+        _is_plain_surrogate_date_key(tok, _governed_key_types)
+        for tok in _date_role_tokens
     )
 
     # Dialect-correct pattern for the CROSS-TABLE QUERY RULE example.
@@ -920,12 +949,15 @@ def build_sql_system_prompt(
         "this produces wrong cardinality and confuses query readers. "
         "Identify fact tables by ANY of these naming patterns (case-insensitive): "
         "prefix FACT_ or FCT_ (e.g. FACT_SALES, FCT_ORDERS), "
-        "suffix _FACT or _FCT (e.g. SALES_FACT, CUS_ORD_IVC_FCT), "
+        "suffix _FACT or _FCT (e.g. SALES_FACT, ORDER_LINE_FCT), "
         "contains the word FACT anywhere (e.g. DAILY_FACT_SUMMARY, SALES_FACT_2024), "
         "or the Knowledge Base explicitly labels it as a fact table. "
         "Everything else (DIM_, _DIM, _DMS, _MASTER, lookup/reference tables) is a dimension. "
-        "Correct:   FROM CUS_ORD_IVC_FCT f JOIN PC_DVN_DMS d ON f.PC_DVN_DMS_KEY = d.PC_DVN_DMS_KEY\n"
-        "Incorrect: FROM PC_DVN_DMS d JOIN CUS_ORD_IVC_FCT f ON d.PC_DVN_DMS_KEY = f.PC_DVN_DMS_KEY\n\n"
+        # The worked example used to name one client's physical tables and key
+        # (CUS_ORD_IVC_FCT / PC_DVN_DMS), so every other tenant's prompt cited a
+        # schema that is not theirs — and one they have no business seeing.
+        "Correct:   FROM FACT_TABLE f JOIN DIM_TABLE d ON f.DIM_FK = d.DIM_KEY\n"
+        "Incorrect: FROM DIM_TABLE d JOIN FACT_TABLE f ON d.DIM_KEY = f.DIM_FK\n\n"
         "- FACT-TO-FACT JOIN RULE: When a question combines measures from multiple fact tables "
         "(for example on-hand inventory, purchase receipts, and replacement cost), aggregate each "
         "fact table in its own CTE to the shared join grain first, then join those CTEs. Do NOT "

@@ -675,15 +675,26 @@ class ExtractOriginalQuestionTests(unittest.TestCase):
         # straight into build_semantic_field_plan spuriously matched an
         # extra "customer id" field (CUS_ID) purely from the chip label —
         # UI metadata, not something the user actually asked for.
+        # The original fixture used the chip "Synonyms: customer id, customer
+        # key" against a CUS_ID column, and no longer reproduces: _role_for_column
+        # now reads any key suffix, not just one ERP's, so CUS_ID types as an
+        # identifier and the display-dimension upgrade resolves "customer" to
+        # CUS_NM instead of admitting it as a stray attribute. That is a better
+        # outcome by luck, not the guard being tested, so the fixture moves to a
+        # description column where the chip label still pulls a field in.
         from core.semantic_planner import build_semantic_field_plan
 
         table_columns = {
             "EMDW_DMART.CUS_ORD_IVC_FCT": {"CUS_DMS_KEY": "bigint", "PAY_DT_DMS_KEY": "bigint"},
-            "EMDW_DMART.CUS_DMS": {"CUS_DMS_KEY": "bigint", "CUS_NM": "varchar", "CUS_ID": "varchar"},
+            "EMDW_DMART.CUS_DMS": {
+                "CUS_DMS_KEY": "bigint", "CUS_NM": "varchar", "CUS_SEG_DSC": "varchar",
+            },
             "EMDW_DMART.DT_DMS": {"DT_DMS_KEY": "bigint", "DAY": "int", "DT_DSC": "varchar"},
         }
         original = "what is the number of days present between payment by each customer"
-        combined, _ = combine_with_clarification(original, "Synonyms: customer id, customer key")
+        combined, _ = combine_with_clarification(
+            original, "Synonyms: customer segment, segment description",
+        )
 
         polluted_plan = build_semantic_field_plan(combined, table_columns)
         clean_plan = build_semantic_field_plan(extract_original_question(combined), table_columns)
@@ -691,8 +702,8 @@ class ExtractOriginalQuestionTests(unittest.TestCase):
         polluted_columns = {f["column"] for f in polluted_plan.get("fields", [])}
         clean_columns = {f["column"] for f in clean_plan.get("fields", [])}
 
-        self.assertIn("CUS_ID", polluted_columns, "test fixture must reproduce the pollution")
-        self.assertNotIn("CUS_ID", clean_columns)
+        self.assertIn("CUS_SEG_DSC", polluted_columns, "test fixture must reproduce the pollution")
+        self.assertNotIn("CUS_SEG_DSC", clean_columns)
 
     def test_query_pipeline_wires_extraction_into_both_field_plan_builders(self):
         from pathlib import Path

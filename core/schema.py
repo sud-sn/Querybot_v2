@@ -1072,7 +1072,13 @@ def _build_join_map(master: dict) -> str:
     for rel in relationships:
         left_extra = [c for c in rel["right_cols"] if c not in rel["left_cols"]][:6]
         col = rel["left_col"]
-        _is_dim_key = col.upper().endswith("_DMS_KEY") and _col_table_count.get(col.upper(), 0) >= 3
+        # The warning against joining two facts directly on a shared dimension
+        # key was emitted only for M3's spelling, so the fan-out it prevents
+        # went unwarned on every other warehouse.
+        from core.vocab_packs import is_dimension_key_column
+        _is_dim_key = (
+            is_dimension_key_column(col) and _col_table_count.get(col.upper(), 0) >= 3
+        )
         lines.append(f"### {rel['left']} ↔ {rel['right']}")
         if _is_dim_key:
             lines.append(

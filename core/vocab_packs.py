@@ -443,6 +443,67 @@ def get_active_vocab() -> MergedVocab:
     return _ACTIVE.get() or builtin_vocab()
 
 
+def dimension_key_suffixes(vocab: "MergedVocab | None" = None) -> tuple[str, ...]:
+    """Suffixes that mark a column as a key pointing at a dimension.
+
+    One accessor rather than a literal per call site. Nine places had spelled
+    Infor M3's "_DMS_KEY" into Python -- deciding whether a column is a
+    dimension key, whether a relationship exists, which prefix names a
+    dimension's label column -- so a warehouse using _SK or _DIM_KEY had those
+    branches silently fail while EMCO's took them.
+    """
+    v = vocab if vocab is not None else get_active_vocab()
+    return tuple(sorted(
+        {str(s).strip().upper() for s in (v.join_key_suffixes or set()) if str(s).strip()},
+        key=len, reverse=True,
+    ))
+
+
+# Suffixes that mark a column as an identifier even though they are too
+# ambiguous to justify joining two tables on. Kept separate on purpose: whether
+# a shared column may ESTABLISH a join is a question about a relationship, and
+# a bare _KEY or _ID cannot answer it (it is a surrogate key on one warehouse
+# and a sort key on another). Whether a column is a key rather than something
+# to SUM is a question about the column alone, and there the same suffix is
+# decisive -- typing DEPARTMENT_KEY as a measure is far worse than declining to
+# join on it.
+_AMBIGUOUS_KEY_SUFFIXES = ("_KEY", "_ID")
+
+
+def key_column_suffixes(vocab: "MergedVocab | None" = None) -> tuple[str, ...]:
+    """Suffixes that mark a column as an identifier rather than a measure."""
+    return tuple(sorted(
+        set(dimension_key_suffixes(vocab)) | set(_AMBIGUOUS_KEY_SUFFIXES),
+        key=len, reverse=True,
+    ))
+
+
+def is_key_column(column: Any, vocab: "MergedVocab | None" = None) -> bool:
+    col = str(column or "").strip().strip('[]"`').upper()
+    return bool(col.endswith(key_column_suffixes(vocab)))
+
+
+def is_dimension_key_column(column: Any, vocab: "MergedVocab | None" = None) -> bool:
+    suffixes = dimension_key_suffixes(vocab)
+    col = str(column or "").strip().strip('[]"`').upper()
+    return bool(suffixes and col.endswith(suffixes))
+
+
+def strip_dimension_key_suffix(column: Any, vocab: "MergedVocab | None" = None) -> str:
+    """Return the column name with its dimension-key suffix removed.
+
+    Returns "" when the column carries no such suffix, so a caller can tell
+    "this is a key to a dimension" from "this merely ends in something".
+    Longest suffix first, so _DMS_KEY is stripped whole rather than leaving a
+    stray "_DMS" behind once "_KEY" is also in the set.
+    """
+    col = str(column or "").strip().strip('[]"`').upper()
+    for suffix in dimension_key_suffixes(vocab):
+        if col.endswith(suffix) and len(col) > len(suffix):
+            return col[: -len(suffix)]
+    return ""
+
+
 def activate_vocab(vocab: MergedVocab):
     """Set the active vocab for this context; returns a token for deactivate()."""
     return _ACTIVE.set(vocab)

@@ -30,6 +30,9 @@ from core.date_roles import (
     question_has_temporal_intent,
 )
 from core.naming_convention import match_audit_prefix, match_column_suffix, match_entity_prefix
+from core.vocab_packs import (
+    is_dimension_key_column, strip_dimension_key_suffix,
+)
 from core.schema_enrichment import EnrichedColumn, enrich_columns
 from core.semantic_plan_utils import required_semantic_tables
 
@@ -184,10 +187,16 @@ def _entity_name(table: str) -> str:
 
 
 def _display_field_for_columns(columns: list[str], prefix: str = "") -> str:
+    from core.vocab_packs import strip_dimension_key_suffix
     upper_to_raw = {c.upper(): c for c in columns}
     prefixes = [prefix.upper()] if prefix else []
-    if prefix and prefix.upper().endswith("_DMS_KEY"):
-        prefixes.append(prefix.upper()[: -len("_DMS_KEY")])
+    # The entity prefix is whatever remains once the key suffix is removed, in
+    # whichever convention this tenant uses. Stripping only "_DMS_KEY" meant
+    # PATIENT_SK never yielded PATIENT, so PATIENT_NAME was never found and the
+    # answer showed a surrogate key where a label belonged.
+    _stripped = strip_dimension_key_suffix(prefix)
+    if _stripped:
+        prefixes.append(_stripped)
     if prefix and "_" in prefix:
         prefixes.append(prefix.upper().split("_")[0])
     prefixes = [p for p in dict.fromkeys(prefixes) if p]
@@ -207,10 +216,16 @@ def _display_field_for_columns(columns: list[str], prefix: str = "") -> str:
 
 
 def _code_field_for_columns(columns: list[str], prefix: str = "") -> str:
+    from core.vocab_packs import strip_dimension_key_suffix
     upper_to_raw = {c.upper(): c for c in columns}
     prefixes = [prefix.upper()] if prefix else []
-    if prefix and prefix.upper().endswith("_DMS_KEY"):
-        prefixes.append(prefix.upper()[: -len("_DMS_KEY")])
+    _stripped = strip_dimension_key_suffix(prefix)
+    if _stripped:
+        prefixes.append(_stripped)
+    # The display sibling also tries the first "_"-separated token; without it
+    # a two-word entity prefix has exactly one candidate and no fallback.
+    if prefix and "_" in prefix:
+        prefixes.append(prefix.upper().split("_")[0])
     prefixes = [p for p in dict.fromkeys(prefixes) if p]
     for p in prefixes:
         for suffix in ("_CD", "_CODE"):
@@ -231,9 +246,11 @@ def _business_role_from_column(column: str) -> str:
     entity = match_entity_prefix(column)
     if entity:
         return re.sub(r"[^a-z0-9]+", "_", entity.lower()).strip("_")
+    from core.vocab_packs import strip_dimension_key_suffix
     col = column.upper()
-    if col.endswith("_DMS_KEY"):
-        col = col[: -len("_DMS_KEY")]
+    # Strip the tenant's own dimension-key marker first, whichever it is, so a
+    # two-part suffix comes off whole rather than leaving a stray fragment.
+    col = strip_dimension_key_suffix(col) or col
     # "_SK"/"_FK" are surrogate-key plumbing exactly like "_KEY"/"_ID".
     # Omitting them left INVOICE_DATE_SK deriving the business role
     # "invoice_date_sk", which surfaced to users as "Invoice Sk Date".
@@ -279,10 +296,10 @@ def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[st
     Priority: primary key, then the name convention, then containment.
     """
     source_upper = source_key.upper()
-    source_prefix = (
-        source_upper[: -len("_DMS_KEY")]
-        if source_upper.endswith("_DMS_KEY") else source_upper
-    )
+    # Same prefix derivation as everywhere else: whatever remains once this
+    # tenant's own key suffix is removed. Hardcoding M3's meant a warehouse
+    # keyed PATIENT_SK looked for a dimension called PATIENT_SK.
+    source_prefix = strip_dimension_key_suffix(source_upper) or source_upper
     keyed: tuple[str, dict[str, Any]] | None = None
     named: tuple[str, dict[str, Any]] | None = None
     contains: tuple[str, dict[str, Any]] | None = None
@@ -714,7 +731,10 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
         if _table_type(table, meta, schema) != "fact":
             continue
         for col in _column_names(meta):
-            if not col.upper().endswith("_DMS_KEY"):
+            # This test decided whether a fact column produced a relationship
+            # at all, so on a warehouse spelling its keys _SK or _DIM_KEY the
+            # semantic model came back with an empty relationship list.
+            if not is_dimension_key_column(col):
                 continue
             dim = _find_dimension_for_key(schema, col)
             if not dim:
@@ -727,7 +747,9 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
             dim_key = col if col.upper() in {c.upper() for c in dim_cols} else ""
             if not dim_key:
                 # Fall back to the first _DMS_KEY on the dimension table.
-                dim_key = next((c for c in dim_cols if c.upper().endswith("_DMS_KEY")), "")
+                dim_key = next(
+                    (c for c in dim_cols if is_dimension_key_column(c)), ""
+                )
             rel_id = _relationship_id(_qualified_name(fqn, meta), _qualified_name(dim_fqn, dim_meta), role, col, dim_key)
             if rel_id in seen:
                 continue
@@ -1221,10 +1243,13 @@ def build_field_plan_repair_note(
         )
         return (
             "\nSEMANTIC DISPLAY FIELD REPAIR RULE:\n"
-            "- The SQL returned a raw _DMS_KEY column as a business label instead of the required display field.\n"
-            "- Fix ALL of the following — the _DMS_KEY must ONLY appear in the JOIN ON clause:\n"
+            "- The SQL returned a raw surrogate key column as a business label "
+            "instead of the required display field.\n"
+            "- Fix ALL of the following — the join key must ONLY appear in the "
+            "JOIN ON clause:\n"
             f"{field_lines}\n"
-            "- Never use a _DMS_KEY in SELECT or GROUP BY as a label. Always JOIN to the dimension table and SELECT its display column.\n"
+            "- Never use a surrogate key in SELECT or GROUP BY as a label. Always "
+            "JOIN to the dimension table and SELECT its display column.\n"
             "- Keep all other query structure (date filters, WHERE clauses, metrics) unchanged.\n"
         )
 

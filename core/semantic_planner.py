@@ -301,16 +301,26 @@ def _role_for_column(column: str, col_type: str = "", vocab=None) -> str:
             return "date_key"
     except Exception:
         pass
-    if col.endswith("_DT_DMS_KEY") or col.endswith("_DATE_DMS_KEY"):
+    from core.date_roles import is_surrogate_date_role_key_column
+    if is_surrogate_date_role_key_column(col):
         return "date_key"
+    from core.vocab_packs import is_key_column
     if (
         governed_code in getattr(v, "raw_status_codes", set())
         or governed_code in v.raw_identifier_codes
-        or col.endswith("_DMS_KEY")
+        or is_key_column(col, v)
     ):
         # DIVI/WHLO/ORNO/PONR/POSX used to be listed here as literals; every one
         # of them is already in the pack's raw_identifier_codes, so the list was
         # duplicated ERP knowledge that only the next Python edit could extend.
+        #
+        # "_DMS_KEY" was the last literal standing, and it was the only
+        # structural signal, so every other convention fell through to the
+        # numeric branch below and typed as a MEASURE. PLANT_SK, PATIENT_ID and
+        # DEPARTMENT_KEY were all things to SUM. That is not cosmetic: role
+        # decides the display-name upgrade, and a mis-typed key can win the
+        # measure-fact anchor and demote the real measure to optional -- a
+        # staffing fact answering a question about charges.
         return "dimension"
     if governed_code in v.raw_measure_codes or any(suffix in col for suffix in ("_AMT", "_QTY", "_CST", "_PFT")):
         return "measure"
