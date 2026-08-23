@@ -49,8 +49,22 @@ The product includes an administrator workspace for onboarding, Knowledge Base g
 - Approved field meanings and use cases enforced during SQL generation and validation.
 - Governed metric formulas, result formats, filters, allowed dimensions, synonyms, and example questions.
 - Row-level calculated metrics with aggregation, required columns, and required joins.
+- Ratio metrics (`X per Y`) compile to a null-guarded division, so "revenue per active customer" is a structured definition rather than hand-written SQL.
 - Metric formula enforcement prevents the model from silently substituting a nearby measure.
 - Currency, percentage, numeric, and other result formatting metadata flows into the portal result renderer.
+
+**Describing a calculation in chat.** A user who knows the data can state a
+calculation in plain English — which table, which fields, what to divide by —
+and get an answer from it immediately. Two tracks run from one turn:
+
+- The composed definition is validated, dry-run against the live database, and pinned to that conversation thread, so the question is answered now and follow-ups ("now break that down by region") keep using it.
+- Separately, a proposal is raised for an administrator to promote it into the shared metric registry. Nothing a chat handler composes becomes a governed metric on its own.
+
+The model never writes SQL for this. It fills structured slots that reference
+tables and columns by opaque reference, and the formula is compiled locally by
+the metric builder, so injected SQL text cannot reach a formula through either
+side of a ratio. Access control is applied before the planner prompt is built,
+and a table revoked mid-thread invalidates a live draft on the next turn.
 
 ### Entity graph and join governance
 
@@ -82,6 +96,26 @@ Surrogate date IDs are distinguished from native dates, timestamps, and `YYYYMMD
 - Personal dashboards with live, movable pinned charts.
 - Statistical signals for ranking gaps, concentration, trends, variance, outliers, contribution, and cross-metric divergence.
 
+**Forecasting.** A projection is offered only when the series can support one,
+and every projection carries a 95% prediction interval — shown as a band on the
+chart and as `forecast_low` / `forecast_high` on the rows. A number without an
+interval is a claim; the band is what makes it a forecast.
+
+A forecast is refused, rather than drawn, when the result is truncated, masked,
+out of order, irregularly spaced, too short, constant, has no real time axis,
+holds more than one series, or when the fit fails both an R-squared and an
+out-of-sample backtest. Each refusal names its own threshold — *"I did not
+project future periods: this series has 2 years and a reliable projection needs
+at least 6"* — because "I could not forecast that" is only useful if it also
+says what would make it possible.
+
+Model selection follows the length and seasonality of the series: ordinary least
+squares under 12 points, damped-trend exponential smoothing above it, and
+seasonal SARIMAX only where there are two full cycles plus room and a real
+autocorrelation at the seasonal lag. If a model is unavailable or will not
+converge, the fit falls back down that ladder and says so; a missing library is
+never a reason to refuse a user a forecast.
+
 ### Evaluation, learning, and observability
 
 - End-to-end traces from question, retrieval, semantic plan, graph plan, SQL validation, execution, and response.
@@ -107,8 +141,15 @@ flowchart TD
     G -->|repairable| I["One constrained repair with exact validator evidence"]
     I --> G
     H --> J["Apply result policy, formatting, diagnostics, and charts"]
-    J --> K["Return answer and record trace/learning candidate"]
+    J --> L["Post-process analytics: contribution, anomaly, cohort, forecast, and the rest"]
+    L --> K["Return answer and record trace/learning candidate"]
 ```
+
+Post-processing runs after execution and before the answer is sent. Each
+analytic decides for itself whether the result can support it — statistics over
+a truncated result, a forecast over a masked or unordered series, and a
+distribution over a partial one are refused rather than computed, and the
+refusal says so in the answer.
 
 The LLM does not connect directly to a client database. The backend supplies governed schema context, executes validated SQL, and controls which result-derived information may be used for narration or follow-up features.
 
@@ -148,6 +189,7 @@ The KB is intentionally more than a collection of embeddings. It combines severa
 - Portal schema selection narrows retrieval, semantic planning, generation, and validation together.
 - Group and per-user table permissions are enforced before execution.
 - Qdrant payloads and governed examples are filtered by account and accessible schema/table scope.
+- No chat handler promotes anything into the governed model. Conversational surfaces may compose a definition, validate it, and use it for the asking user's own thread, but only a human accept route writes to the registry and triggers a semantic recompile. This holds for the entity-graph chat and for metric authoring alike, and is asserted by tests rather than left to convention.
 
 ### Sensitive-data controls
 
@@ -185,7 +227,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for module-level behavior and [ARCHITECTU
 
 ### Prerequisites
 
-- Python 3.12 recommended.
+- Python 3.12 recommended; 3.11 and 3.14 are also verified to install cleanly.
+- `pip install -r requirements.txt` pulls statsmodels (and scipy/pandas with it) for the seasonal and exponential-smoothing forecast models — roughly 60MB of wheels. Forecasting still works without them: the models load through a guarded lazy import and fall back to pure-Python least squares, prediction intervals included. Both configurations are covered by tests.
 - A reachable Qdrant service.
 - SQLite for local evaluation, or PostgreSQL for concurrent production-oriented workloads.
 - Native database drivers for the client database. Azure SQL requires Microsoft ODBC Driver 18 for SQL Server.
@@ -288,6 +331,10 @@ Run the complete suite:
 python -m pytest -q
 ```
 
+The current baseline is **5299 passed, 4 skipped**. Treat any drop as a
+regression rather than noise; the statistical suites are seeded and the coverage
+bounds are set from measurement, not tuned to pass.
+
 High-value focused suites include:
 
 ```bash
@@ -295,13 +342,29 @@ python -m pytest -q tests/test_sql_reliability.py
 python -m pytest -q tests/test_entity_graph.py tests/test_graph_governance.py
 python -m pytest -q tests/test_contextual_dates.py tests/test_date_roles.py
 python -m pytest -q tests/test_metric_builder.py tests/test_metric_scope.py
+python -m pytest -q tests/test_metric_foundations.py
 python -m pytest -q tests/test_semantic_layer.py tests/test_semantic_contract.py
 python -m pytest -q tests/test_compliance_engine.py tests/test_regulated_llm_boundary.py
+python -m pytest -q tests/test_forecast_gate.py tests/test_forecast_models.py
+python -m pytest -q tests/test_post_process_actually_runs.py
 python -m pytest -q tests/test_learning_loop_integration.py
 python -m pytest -q tests/test_production_ui.py
 ```
 
 Tests use isolated fixtures and must not require a production client database. Live database validation, query-plan review, concurrency/load testing, and recovery exercises remain deployment responsibilities.
+
+**A note on what a test here is expected to do.** This repository has repeatedly
+been bitten by assertions that read the source rather than run it — a check that
+`evaluate_forecast_request` appears before `compute_forecast(` in a file passed
+for a full release while the block it described raised `NameError` on every
+call. Prefer tests that execute the path. Two patterns are in use for the cases
+where that is hard:
+
+- `tests/test_post_process_actually_runs.py` compiles a block out of the real pipeline file and executes it, and walks the bytecode of the query entry point for names that do not resolve — the interpreter's own analysis, not a grep.
+- `tests/test_forecast_models.py` checks the prediction interval by drawing hundreds of series from a known process and counting how often the truth lands inside the band, rather than restating the formula in the assertion.
+
+An assertion that accepts either outcome (`assert model in {"ets", "ols"}`)
+tests nothing; one of those hid two broken model branches for a full commit.
 
 ## Operations
 
@@ -360,8 +423,18 @@ Primary implementation entry points:
 | `core/knowledge.py` | KB retrieval and ranking |
 | `core/masking.py` | KB sample masking and synthetic replacement |
 | `core/compliance/` | Regulated query and result policy boundary |
+| `core/chart_policy.py` | Aggregate-only rule shared by charts and forecasts |
 | `core/pipeline_trace.py` | Trace and learning-candidate lifecycle |
 | `core/result_renderer.py` | Business result rendering |
+| `core/forecast_gate.py` | Whether a series can support a projection, and why not |
+| `core/forecast_models.py` | The only module that touches statsmodels; fits and intervals |
+| `core/temporal_columns.py` | Strict "is this really a time axis" detection |
+| `core/metric_authoring.py` | Composing a metric definition from a described calculation |
+| `core/metric_dryrun.py` | Probing a candidate formula against the live database |
+
+A chart and a forecast are the same disclosure in different shapes, so the
+aggregate-only policy rule lives in one module used by both. Two copies of that
+rule would be one copy that can be forgotten.
 
 ## Current boundaries
 
@@ -371,6 +444,8 @@ Primary implementation entry points:
 - Qdrant and the metadata database require explicit backup, restore, monitoring, and capacity planning.
 - Learning is governed retrieval, not autonomous model training. Only approved memories should influence future generation.
 - Compliance features reduce risk but do not independently establish regulatory compliance.
+- **Forecast intervals are calibrated for series with a stable trend, and understate uncertainty at longer horizons when the level itself wanders.** Measured against a nominal 95%: about 0.93–0.98 one step ahead, and 0.82–0.86 three steps ahead on a random walk with drift. Neither a straight line nor a damped trend can express a stochastic level, and no interval built from one of them fully accounts for the model being the wrong shape — a differenced ARIMA would, and the model selector only reaches for one when it detects seasonality. The numbers above are asserted by a test so the limitation cannot quietly get worse.
+- A projection is an extrapolation of the past, not a business plan. It knows nothing about a price change, a lost customer, or a closed site.
 
 ## License and support
 
