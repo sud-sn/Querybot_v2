@@ -93,6 +93,45 @@ _DIMENSION_KEYWORDS = {
 }
 
 
+def _column_tokens(col_name: str) -> tuple[set[str], str]:
+    """Tokenise a column name on underscores, spaces and camelCase."""
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(col_name or ""))
+    raw = separated.replace("-", " ").replace("_", " ").lower()
+    tokens = {token for token in re.split(r"\s+", raw) if token}
+    return tokens, re.sub(r"[^a-z0-9]+", "", raw)
+
+
+def _is_period_label(val, col_name: str) -> bool:
+    """A calendar period written as an integer, not a quantity.
+
+    A year is a name, not an amount, so 2025 prints as "2025" and never
+    "2,025" -- which is how the yearly forecast rendered its own period column.
+
+    Two conditions, because either alone is wrong. The column has to read as a
+    calendar dimension, and the number has to actually parse as a period. So a
+    4-, 6- or 8-digit integer in a YEAR / PERIOD / MONTH column (2025, 202601,
+    20260117) loses its separators, while an ordinary count in a column that
+    merely mentions time -- DAYS_LATE = 1200 -- keeps them, because 1200 is not
+    a year any more than it is a month.
+    """
+    if isinstance(val, bool) or not isinstance(val, (int, float, _decimal.Decimal)):
+        return False
+    num = float(val)
+    if num != int(num):
+        return False
+    if len(str(abs(int(num)))) not in (4, 6, 8):
+        return False
+    tokens, _compact = _column_tokens(col_name)
+    if not tokens & _DIMENSION_KEYWORDS:
+        return False
+    try:
+        from core.temporal_columns import parse_period_label
+
+        return parse_period_label(int(num)) is not None
+    except Exception:
+        return False
+
+
 def _detect_column_format(col_name: str) -> str:
     """
     Infer display format from a column name.
@@ -103,10 +142,7 @@ def _detect_column_format(col_name: str) -> str:
     token against keyword sets.  Percentage wins over currency when both
     match (e.g. MARGIN_PCT → percent, not currency).
     """
-    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(col_name or ""))
-    raw = separated.replace("-", " ").replace("_", " ").lower()
-    tokens = {token for token in re.split(r"\s+", raw) if token}
-    compact = re.sub(r"[^a-z0-9]+", "", raw)
+    tokens, compact = _column_tokens(col_name)
 
     # Percentage check first (takes priority)
     if tokens & _PCT_KEYWORDS:
@@ -152,6 +188,12 @@ def _format_value(val, col_name: str = "", format_hint: str = "") -> str:
 
     if isinstance(val, (int, float, _decimal.Decimal)) and not isinstance(val, bool):
         num = float(val)
+
+        # Before any separator logic: a period is a label, not a quantity.
+        # An explicit format_hint still wins -- if a caller has declared what
+        # this column is, that beats an inference drawn from its name.
+        if not explicit_format and _is_period_label(val, col_name):
+            return str(int(num))
 
         if fmt == "currency":
             return f"${num:,.2f}"

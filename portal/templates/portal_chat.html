@@ -2228,6 +2228,18 @@ function buildChartOption(payload) {
       },
       yAxis: {
         type: 'value',
+        // scale:true drops the forced zero baseline. On a forecast that is not
+        // a cosmetic choice -- the whole point of the chart is a band a few
+        // percent wide, and anchored at zero a series moving between 6.9M and
+        // 8.1M renders as a flat line with the interval collapsed into it.
+        //
+        // Zero-baselining is the safer default elsewhere, because it stops a
+        // small change looking dramatic, and it stays the default elsewhere.
+        // Here the uncertainty IS the subject, and hiding it to avoid
+        // exaggerating the trend trades one misreading for a worse one. The
+        // caption carries the honesty instead: it says outright when there is
+        // no clear trend.
+        scale: true,
         axisLabel: { color: axisColor, formatter: v => valueFmt(v, metricKey, true), fontSize: 11 },
         splitLine: { show: true, lineStyle: { color: gridColor } },
         axisTick: { show: false }, axisLine: { show: false },

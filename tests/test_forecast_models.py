@@ -394,3 +394,87 @@ class TestThePayloadTheBrowserReceives:
             "PERIOD", "REVENUE", 3,
         )
         json.dumps(build_chart_payload(rows, chart_type="forecast", title="Revenue"))
+
+
+class TestAPeriodIsALabelNotAnAmount:
+    """Found on screen: a yearly forecast rendered its periods as 2,025 and
+    2,026. A year is a name; giving it a thousands separator makes it read as a
+    quantity and makes the result look broken."""
+
+    @pytest.mark.parametrize("value,column,expected", [
+        (2025, "PERIOD", "2025"),
+        (2026, "YEAR", "2026"),
+        (2025, "FISCAL_YEAR", "2025"),
+        (202601, "MONTH", "202601"),
+        (20260117, "INVOICE_DATE", "20260117"),
+        (2025.0, "YEAR", "2025"),
+    ])
+    def test_a_period_integer_keeps_its_digits(self, value, column, expected):
+        from core.result_renderer import _format_value
+
+        assert _format_value(value, column) == expected
+
+    @pytest.mark.parametrize("value,column,expected", [
+        (2025, "ORDER_COUNT", "2,025"),
+        (1200, "DAYS_LATE", "1,200"),
+        (12345, "PERIOD", "12,345"),
+        (900001, "CUSTOMER_PERIOD_KEY", "900,001"),
+    ])
+    def test_a_quantity_keeps_its_separators(self, value, column, expected):
+        """Both halves of the rule matter. The column must read as a calendar
+        dimension AND the number must parse as a period -- so a count in a
+        time-ish column keeps its commas, 12345 is not a year, and the
+        surrogate key 900001 is not a month of any year, which is the exact
+        trap the strict temporal detector exists to reject."""
+        from core.result_renderer import _format_value
+
+        assert _format_value(value, column) == expected
+
+    def test_an_explicit_format_still_wins(self):
+        """A declared column format beats an inference from the name."""
+        from core.result_renderer import _format_value
+
+        assert _format_value(2025, "YEAR", "currency") == "$2,025.00"
+
+    def test_the_whole_table_renders_periods_cleanly(self):
+        from core.result_renderer import _rows_to_table
+
+        table = _rows_to_table([{"PERIOD": 2025, "REVENUE": 89345610.51},
+                                {"PERIOD": 2026, "REVENUE": 44430302.60}])
+        assert "2025" in table and "2,025" not in table
+        assert "$89,345,610.51" in table
+
+
+class TestTheForecastChartDoesNotFlattenItsOwnBand:
+    """A forecast's subject is a band a few percent wide. Anchored at zero, a
+    series moving between 6.9M and 8.1M draws as a flat line with the interval
+    collapsed into it -- which is what the live chart looked like."""
+
+    def _forecast_branch(self) -> str:
+        from pathlib import Path
+
+        html = (Path(__file__).resolve().parents[1] / "portal" / "templates"
+                / "portal_chat.html").read_text(encoding="utf-8")
+        start = html.index("if (type === 'forecast')")
+        return html[start:html.index("if (type === 'histogram')", start)]
+
+    def test_the_forecast_axis_is_not_pinned_to_zero(self):
+        branch = self._forecast_branch()
+        y = branch.index("yAxis:")
+        assert "scale: true" in branch[y:y + 900]
+
+    def test_no_other_chart_type_was_changed(self):
+        """Zero-baselining stays the default everywhere else: it stops a small
+        change looking dramatic, and only the forecast has a reason to give
+        that up."""
+        from pathlib import Path
+
+        html = (Path(__file__).resolve().parents[1] / "portal" / "templates"
+                / "portal_chat.html").read_text(encoding="utf-8")
+        # `scale: true` also appears in an emphasis block (symbol scaling on
+        # hover), which is a different option entirely.
+        axis_scales = [
+            i for i in range(len(html))
+            if html.startswith("scale: true", i) and "emphasis" not in html[max(0, i - 200):i]
+        ]
+        assert len(axis_scales) == 1, "exactly one chart type may drop the zero baseline"
