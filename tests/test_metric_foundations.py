@@ -193,3 +193,45 @@ class TestTheCompiledPlanCarriesTheRealFormula:
             analytical_intent_plan={"intent": "metric_query"},
         )
         assert plan["metrics"][0]["formula"] == "SUM(AMOUNT) - SUM(DISCOUNT)"
+
+
+class TestAnExplicitBreakdownBeatsTheWindow:
+    """Found live. "What is my revenue by month this year" returned ONE row —
+    $44,430,302.60 labelled 2026-01-01 — where it should return one per month.
+
+    requested_temporal_grain read the WINDOW's unit first and returned early, so
+    for "this year" it answered "year" and the compiler bucketed by year. The
+    explicit "by month" branch sat below that early return and was unreachable
+    for every question that also named a period, which is most of them. A window
+    and a breakdown are different things: "by month this year" asks for twelve
+    numbers over a yearly window.
+    """
+
+    @pytest.mark.parametrize("question,grain", [
+        ("what is my revenue by month this year", "month"),
+        ("revenue by quarter this year", "quarter"),
+        ("revenue by day last week", "day"),
+        ("monthly revenue this year", "month"),
+        ("show revenue by month for the last 2 years", "month"),
+    ])
+    def test_the_breakdown_wins(self, question, grain):
+        from core.contextual_dates import requested_temporal_grain
+
+        assert requested_temporal_grain(question) == grain
+
+    @pytest.mark.parametrize("question,grain", [
+        ("what is my revenue this year", "year"),
+        ("revenue for the last 6 months", "month"),
+        ("revenue for the last 7 days", "day"),
+    ])
+    def test_the_window_still_answers_when_no_breakdown_is_named(self, question, grain):
+        """The window's unit remains the fallback, so nothing that worked before
+        this changed starts behaving differently."""
+        from core.contextual_dates import requested_temporal_grain
+
+        assert requested_temporal_grain(question) == grain
+
+    def test_a_question_with_neither_has_no_requested_grain(self):
+        from core.contextual_dates import requested_temporal_grain
+
+        assert requested_temporal_grain("what is my revenue") == ""

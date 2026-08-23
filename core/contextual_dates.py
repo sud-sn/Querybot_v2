@@ -51,11 +51,18 @@ def _question_requests_unbounded_available_scope(question: str) -> bool:
 
 
 def requested_temporal_grain(question: str) -> str:
-    """Return the finest grain explicitly requested by the user."""
-    window = detect_temporal_window(question)
-    unit = str(window.get("unit") or "").lower()
-    if unit in _GRAIN_ORDER:
-        return unit
+    """Return the finest grain explicitly requested by the user.
+
+    An explicit breakdown wins over the window's own unit, and it has to: they
+    are different things. "Revenue by month this year" asks for twelve numbers
+    over a yearly window, and reading the window's unit first made the answer
+    one number labelled with the year -- the "by month" branch below was
+    unreachable for every question that also named a period, which is most of
+    them.
+
+    The window's unit remains the fallback, so "last 6 months" still means
+    monthly and "this year" alone still means yearly.
+    """
     q = normalize_date_role_text(question)
     # Period-close wording ("month-end inventory", "end of month balance") is
     # as explicit a monthly-grain request as "monthly". Omitting it left
@@ -81,6 +88,11 @@ def requested_temporal_grain(question: str) -> str:
     ):
         if any(word in q for word in words):
             return grain
+
+    window = detect_temporal_window(question)
+    unit = str(window.get("unit") or "").lower()
+    if unit in _GRAIN_ORDER:
+        return unit
     return ""
 
 
