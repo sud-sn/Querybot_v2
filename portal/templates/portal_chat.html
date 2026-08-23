@@ -2127,7 +2127,7 @@ function buildChartOption(payload) {
     const trendNote = (slope != null && r2 != null)
       ? (r2 >= 0.5
           ? `Trend: ${slope >= 0 ? '+' : ''}${valueFmt(slope, metricKey, true)}/period  R²=${r2.toFixed(2)}`
-          : `No clear trend (R²=${r2.toFixed(2)}) — projection is close to the recent average`)
+          : `No clear trend (R²=${r2.toFixed(2)}) — projecting near the recent average`)
       : '';
 
     // 95% prediction interval, drawn as a stacked transparent baseline plus a
@@ -2162,10 +2162,16 @@ function buildChartOption(payload) {
       backgroundColor: 'transparent',
       animationDuration: 400,
       color: colors,
-      grid: { left: 56, right: 24, top: trendNote ? 44 : 28, bottom: longLabels ? 82 : 48 },
+      // The caption and the legend both used to sit on the top row, so they
+      // drew straight through each other -- worse once the caption grew from
+      // "Trend: +$43.9K/period" to a sentence. They are stacked now: legend
+      // first, caption on its own line beneath it, grid pushed down to clear
+      // both. Stacking rather than shortening, because the caption's length
+      // depends on the numbers in it and can grow again.
+      grid: { left: 56, right: 24, top: trendNote ? 62 : 34, bottom: longLabels ? 82 : 48 },
       title: trendNote ? {
         text: trendNote,
-        top: 6, left: 56,
+        top: 28, left: 56,
         textStyle: { color: axisColor, fontSize: 11, fontWeight: 'normal' },
       } : undefined,
       tooltip: {
@@ -2193,7 +2199,7 @@ function buildChartOption(payload) {
         },
       },
       legend: {
-        top: 4, textStyle: { color: axisColor, fontSize: 11 }, icon: 'roundRect',
+        top: 4, left: 56, textStyle: { color: axisColor, fontSize: 11 }, icon: 'roundRect',
         data: ['Actual', 'Forecast', ...(hasBand ? ['95% interval'] : [])],
       },
       xAxis: {
