@@ -370,7 +370,7 @@ _STRUCTURAL_MARKERS: tuple[tuple[str, str], ...] = (
 # None, so it would otherwise be classified a measure and drawn as a series.
 _STRUCTURAL_META_COLUMNS = frozenset({
     "is_forecast", "forecast_value", "forecast_low", "forecast_high",
-    "__trend_slope", "__trend_r2", "__forecast_model",
+    "__trend_slope", "__trend_r2", "__forecast_model", "__forecast_meta",
     "bp_data", "funnel_pct", "bin_min", "bin_max", "frequency_pct",
 })
 

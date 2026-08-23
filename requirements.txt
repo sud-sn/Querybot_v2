@@ -63,5 +63,23 @@ faker>=25.0.0
 #
 # presidio-analyzer>=2.2.0
 
+# ── OPTIONAL: statsmodels — seasonal and exponential-smoothing forecasts ──────
+# Without it, forecasting still works: core/forecast_models.py falls back to
+# ordinary least squares in pure Python, prediction intervals included. With it,
+# a series of 12+ points is fitted with damped-trend exponential smoothing and a
+# genuinely seasonal one of 28+ monthly points with SARIMAX, which OLS cannot
+# express -- a straight line through a seasonal series is wrong in a way no
+# amount of arithmetic fixes.
+#
+# Left optional deliberately: it pulls scipy, pandas and patsy -- roughly 60MB
+# of wheels -- for one feature, and this repo otherwise has no ML dependency.
+# Nothing imports it at module level, so an environment without it behaves
+# exactly as it did before. Verified installable on all three deploy targets
+# including Python 3.14 (statsmodels 0.14.6 ships a cp314 wheel).
+#
+#   pip install statsmodels
+#
+# statsmodels>=0.14.0
+
 # Golden-question evaluation files
 pyyaml>=6.0

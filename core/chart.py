@@ -485,9 +485,22 @@ def build_chart_payload(
                     item[key] = "" if val is None else str(val)
             clean_rows.append(item)
 
+    # Hoist the forecast's fit metadata off row 0 and onto the payload, where
+    # it describes the whole series rather than pretending to be a cell of the
+    # first one. The row-0 keys stay for one release so an un-refreshed browser
+    # tab keeps captioning the chart.
+    forecast_meta = None
+    for row in clean_rows:
+        if isinstance(row.get("__forecast_meta"), dict):
+            forecast_meta = row.pop("__forecast_meta")
+            break
+    for row in clean_rows:
+        row.pop("__forecast_meta", None)
+
     payload = {
         "title": title,
         "chart_type": effective_type,
+        "forecast_meta": forecast_meta,
         "requested_chart_type": requested or None,
         "x_key": x_key,
         "y_keys": y_keys,

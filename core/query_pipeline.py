@@ -6314,7 +6314,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
             if _post_intents.get("forecast") and not any("is_forecast" in r for r in rows[:1]):
                 from core.forecast import compute_forecast, extract_forecast_periods
-                from core.forecast_gate import evaluate_forecast_request
+                from core.forecast_gate import assess_fit, evaluate_forecast_request
 
                 # Ask whether a forecast is defensible BEFORE computing one.
                 # Until now nothing did: two points were enough, the period
@@ -6330,20 +6330,39 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     policy_allows_derived_visual=bool(chart_type),
                 )
                 if _fc_decision.allowed:
-                    rows = compute_forecast(
+                    _fc_rows = compute_forecast(
                         rows, _fc_decision.period_col, _fc_decision.value_col,
                         _fc_decision.horizon,
+                        model=_fc_decision.model,
+                        seasonal_period=_fc_decision.seasonal_period,
                     )
+                    # The last gate can only run once the model has been fitted,
+                    # because it judges the fit: in-sample R-squared and a
+                    # rolling-origin backtest. If it fails, the projection is
+                    # thrown away and the original rows go out unchanged.
+                    _fc_meta = (_fc_rows[0] if _fc_rows else {}).get("__forecast_meta") or {}
+                    _fc_decision = assess_fit(
+                        _fc_decision, _fc_meta.get("r2"), _fc_meta.get("backtest_mape"),
+                    )
+                if _fc_decision.allowed:
+                    rows = _fc_rows
                     log.info(
                         "post_process: forecast appended periods=%d period=%s value=%s "
-                        "model=%s grain=%s n=%d",
+                        "model=%s grain=%s n=%d r2=%s mape=%s fitted_on=%s",
                         _fc_decision.horizon, _fc_decision.period_col,
-                        _fc_decision.value_col, _fc_decision.model,
+                        _fc_decision.value_col, _fc_meta.get("model") or _fc_decision.model,
                         _fc_decision.grain, _fc_decision.n_points,
+                        _fc_meta.get("r2"), _fc_meta.get("backtest_mape"),
+                        _fc_meta.get("fitted_on"),
                     )
                     _confidence_context.setdefault("forecast_caveats", []).extend(
                         _fc_decision.notes
                     )
+                    if _fc_meta.get("fell_back_from"):
+                        _confidence_context.setdefault("forecast_caveats", []).append(
+                            f"I projected these periods with a {_fc_meta.get('model')} model; "
+                            f"the {_fc_meta['fell_back_from']} model was not available here."
+                        )
                 else:
                     log.info(
                         "post_process: forecast refused (%s) period=%s n=%d",

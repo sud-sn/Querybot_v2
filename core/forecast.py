@@ -40,6 +40,9 @@ from dataclasses import dataclass
 from statistics import mean
 from typing import Any
 
+from core.forecast_models import fit_series
+from core.temporal_columns import infer_series_grain, parse_period_label
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Detection
@@ -202,66 +205,145 @@ def _next_period_label(last_label: str, offset: int) -> str:
 # Forecast computation
 # ══════════════════════════════════════════════════════════════════════════════
 
+# One unit per calendar period, by grain. Day ordinals are the wrong unit here:
+# January is 31 days and February is 28, so an evenly spaced monthly series
+# measured in days is not evenly spaced at all, and fitting it that way tilts
+# the slope by around 3% and mislabels it "per period". Counting months instead
+# makes consecutive months exactly one apart and a six-month gap exactly six.
+_GRAIN_INDEX = {
+    "year": lambda d: float(d.year),
+    "quarter": lambda d: float(d.year * 4 + (d.month - 1) // 3),
+    "month": lambda d: float(d.year * 12 + d.month),
+    "week": lambda d: d.toordinal() / 7.0,
+    "day": lambda d: float(d.toordinal()),
+}
+
+
+def _period_units(parsed: list, labels: list) -> list[float] | None:
+    """x in whole periods, spaced by the calendar rather than by row number.
+
+    For a series with no gaps this is exactly the row index, so the projection
+    is unchanged -- which is what makes the switch safe on the gated path, where
+    core.forecast_gate has already required a regular cadence. It only changes
+    the answer where the spacing is uneven, and there the row index would have
+    treated a six-month gap as one step.
+
+    Returns None -- meaning "fall back to row index" -- when a label did not
+    parse, the grain is unknown, or the series is not strictly increasing.
+    """
+    if len(parsed) < 2 or any(d is None for d in parsed):
+        return None
+    grain, _consistency = infer_series_grain(labels)
+    index_of = _GRAIN_INDEX.get(grain)
+    if index_of is None:
+        return None
+    idx = [index_of(d) for d in parsed]
+    if any(b <= a for a, b in zip(idx, idx[1:])):
+        return None
+    gaps = [b - a for a, b in zip(idx, idx[1:])]
+    unit = sorted(gaps)[len(gaps) // 2] or 1.0
+    return [(i - idx[0]) / unit for i in idx]
+
+
 def compute_forecast(
     rows: list[dict],
     period_col: str,
     value_col: str,
     n_periods: int = 3,
+    model: str = "ols",
+    seasonal_period: int = 0,
 ) -> list[dict]:
     """
-    Fit a linear trend to the value_col series and append n_periods forecast rows.
+    Fit the value_col series and append n_periods projected rows.
 
     Each original row gets `is_forecast: False` and `forecast_value: None`.
-    Each appended forecast row gets `is_forecast: True` and the extrapolated
-    value in both the value_col and a `forecast_value` key.
+    Each appended row gets `is_forecast: True`, the projection in both the
+    value_col and `forecast_value`, and a 95% prediction interval in
+    `forecast_low` / `forecast_high`.
 
-    The `__trend_slope` and `__trend_r2` metadata are added to the first row.
+    THE INTERVAL IS THE POINT. A bare projected number is a claim about the
+    future; the band is what turns it into a forecast. Six flat months of
+    revenue project to "about 7.5M" either way, but only one of the two says
+    "give or take 400K".
+
+    `model` and `seasonal_period` are chosen by core.forecast_gate from the
+    length and seasonality of the series. They default to plain OLS so every
+    existing caller keeps exactly the behaviour it had.
+
+    `__trend_slope` and `__trend_r2` stay on row 0 for one release; the full
+    picture is in `__forecast_meta`, which core.chart hoists onto the payload.
     """
     if not rows or not period_col or not value_col:
         return rows
 
-    # Build (x_index, y_value) pairs, skipping nulls
-    pairs = []
-    for i, row in enumerate(rows):
+    values: list[float] = []
+    parsed: list = []
+    labels: list = []
+    for row in rows:
         v = _to_float(row.get(value_col))
-        if v is not None:
-            pairs.append((float(i), v))
+        if v is None:
+            continue
+        values.append(v)
+        labels.append(row.get(period_col))
+        parsed.append(parse_period_label(row.get(period_col)))
 
-    if len(pairs) < 2:
+    if len(values) < 2:
         return [{**r, "is_forecast": False, "forecast_value": None} for r in rows]
 
-    xs = [p[0] for p in pairs]
-    ys = [p[1] for p in pairs]
-    slope, intercept = _ols(xs, ys)
+    calendar_xs = _period_units(parsed, labels)
+    xs = calendar_xs or [float(i) for i in range(len(values))]
+    fit = fit_series(
+        values, n_periods, model=model, seasonal_period=seasonal_period, xs=xs,
+    )
+    if fit is None:
+        return [{**r, "is_forecast": False, "forecast_value": None} for r in rows]
 
-    # R²
-    my = mean(ys)
-    ss_tot = sum((y - my) ** 2 for y in ys)
-    ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in pairs)
-    r2 = round(1 - ss_res / ss_tot, 4) if ss_tot else None
+    # The descriptive trend line the chart captions, which is a straight line
+    # even when the projection came from ETS or SARIMAX.
+    slope, _intercept = _ols(xs, values)
+    my = mean(values)
+    ss_tot = sum((y - my) ** 2 for y in values)
+    if fit.r2 is not None:
+        r2 = round(fit.r2, 4)
+    elif ss_tot:
+        _s, _i = slope, _intercept
+        r2 = round(1 - sum((y - (_s * x + _i)) ** 2 for x, y in zip(xs, values)) / ss_tot, 4)
+    else:
+        r2 = None
 
-    # Annotate original rows
+    meta = {
+        "model": fit.model,
+        "slope": round(slope, 4),
+        "r2": r2,
+        "backtest_mape": None if fit.backtest_mape is None else round(fit.backtest_mape, 2),
+        "horizon": n_periods,
+        "n_points": len(values),
+        "interval_confidence": 0.95,
+        "fitted_on": "period_dates" if calendar_xs else "row_index",
+    }
+    if fit.fell_back_from:
+        meta["fell_back_from"] = fit.fell_back_from
+
     result = []
     for i, row in enumerate(rows):
-        new_row = {**row, "is_forecast": False, "forecast_value": None}
+        new_row = {**row, "is_forecast": False, "forecast_value": None,
+                   "forecast_low": None, "forecast_high": None}
         if i == 0:
-            new_row["__trend_slope"] = round(slope, 4)
-            new_row["__trend_r2"]    = r2
+            new_row["__trend_slope"] = meta["slope"]
+            new_row["__trend_r2"] = r2
+            new_row["__forecast_meta"] = meta
         result.append(new_row)
 
-    # Append forecast rows
     last_label = str(rows[-1].get(period_col, "")) if rows else ""
-    n_existing = len(rows)
     for i in range(1, n_periods + 1):
-        x_next  = float(n_existing - 1 + i)
-        y_next  = slope * x_next + intercept
-        y_next  = round(y_next, 4)
-        lbl     = _next_period_label(last_label, i)
-        fc_row  = {k: None for k in rows[0].keys()}
-        fc_row[period_col]  = lbl
-        fc_row[value_col]   = y_next
-        fc_row["is_forecast"]    = True
+        y_next = round(fit.predictions[i - 1], 4)
+        fc_row = {k: None for k in rows[0].keys()}
+        fc_row[period_col] = _next_period_label(last_label, i)
+        fc_row[value_col] = y_next
+        fc_row["is_forecast"] = True
         fc_row["forecast_value"] = y_next
+        fc_row["forecast_low"] = round(fit.lower[i - 1], 4)
+        fc_row["forecast_high"] = round(fit.upper[i - 1], 4)
         result.append(fc_row)
 
     return result
