@@ -10,6 +10,7 @@ follow-ups and governed source-query fallback.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from dataclasses import replace as _dataclass_replace
 import logging
 import time
@@ -3221,9 +3222,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         entity_schema_map=_entity_schema_map or None,
         limit=6,
     )
+    # A pinned draft IS the user's disambiguation -- they just defined, in this
+    # thread, exactly what they want computed. So do not ask which of the
+    # registry's rival definitions they meant.
+    #
+    # But suppressing the question is only half of it. Leaving the rivals in
+    # scope was worse than asking: their source tables union into the graph
+    # resolution, and on the live warehouse a two-table ratio pulled in ten
+    # entities (SUP_DMS, ITM_DMS, WHS_DMS, PC_DVN_DMS ...) and the answer came
+    # back "the confirmed entity graph cannot reach SUP_DMS" -- a question about
+    # customers refused over a supplier table nobody mentioned.
+    if _metric_scope.ambiguous and _adhoc_metrics:
+        log.info(
+            "Ambiguous metric scope for %s narrowed to the thread's own draft: %s",
+            account_id, [m.get("name") for m in _adhoc_metrics],
+        )
+        _metric_scope = dataclasses.replace(_metric_scope, metrics=[], ambiguous=False)
     if (
         _metric_scope.ambiguous
-        and not _adhoc_metrics
         and can_request_clarification(event, "metric_scope")
     ):
         options = _metric_scope.options or []

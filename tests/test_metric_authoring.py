@@ -290,9 +290,19 @@ class TestThePipelineSeesTheDraft:
         first_scope = self.PIPELINE.index("resolve_metric_scope(")
         assert inject_at < first_scope
 
-    def test_a_pinned_draft_suppresses_the_ambiguity_prompt(self):
-        """The user already said which definition they meant — by defining it."""
-        assert "not _adhoc_metrics" in self.PIPELINE
+    def test_a_pinned_draft_narrows_the_scope_rather_than_only_silencing_it(self):
+        """The user already said which definition they meant -- by defining it.
+
+        Suppressing the clarification alone was worse than asking. The rival
+        registry metrics stayed in scope, their source tables unioned into the
+        graph resolution, and a two-table ratio pulled ten entities in: the live
+        answer was "the confirmed entity graph cannot reach SUP_DMS" on a
+        question about customers. The draft has to REPLACE the rivals."""
+        idx = self.PIPELINE.index("if _metric_scope.ambiguous and _adhoc_metrics:")
+        block = self.PIPELINE[idx:idx + 600]
+        assert "dataclasses.replace" in block
+        assert "metrics=[]" in block
+        assert "ambiguous=False" in block
 
     def test_a_draft_never_counts_as_registry_usage(self):
         idx = self.PIPELINE.index("store.increment_metric_usage(account_id")
