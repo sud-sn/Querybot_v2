@@ -54,6 +54,30 @@ _METRIC_NAME_RE = re.compile(
 )
 
 
+def _json_safe(value):
+    """Coerce a database value into something json.dumps accepts.
+
+    Decimal is the one that bites: pyodbc returns it for every NUMERIC column,
+    and it survives all the way to the WebSocket send before failing. date and
+    datetime are here for the same reason -- a passthrough payload keeps every
+    column, so anything the driver returns can reach the wire.
+    """
+    from datetime import date as _date, datetime as _datetime
+    from decimal import Decimal as _Decimal
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, _Decimal):
+        return float(value)
+    if isinstance(value, (_datetime, _date)):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    return str(value)
+
+
 def _to_float(value) -> float | None:
     try:
         raw = str(value).strip().replace("$", "").replace(",", "").replace("%", "")
@@ -434,10 +458,21 @@ def build_chart_payload(
     else:
         y_keys = spec_y or numeric_cols
 
-    # For structural chart types, pass through all columns as-is (already computed)
+    # For structural chart types, keep every column — the marker columns
+    # (is_forecast, bp_data, funnel_pct) are what the renderer draws from, and
+    # projecting down to [x, *y] would strip them.
+    #
+    # "As-is" still has to mean JSON-serialisable. The projection branch below
+    # coerces its values on the way past, so nothing noticed that a database
+    # Decimal reaches the payload untouched here — until forecast became the
+    # first passthrough type that actually renders, and every answer died on
+    # "Object of type Decimal is not JSON serializable" AFTER the SQL had run
+    # and the forecast had been computed.
     _passthrough_types = {"funnel", "histogram", "boxplot", "forecast"}
     if effective_type in _passthrough_types:
-        clean_rows = [dict(r) for r in rows]
+        clean_rows = [
+            {key: _json_safe(value) for key, value in row.items()} for row in rows
+        ]
     else:
         clean_rows = []
         for r in rows:

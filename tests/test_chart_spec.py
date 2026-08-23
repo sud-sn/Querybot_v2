@@ -914,3 +914,53 @@ class TestStructurallyMarkedResultsReachTheRenderer(unittest.TestCase):
     def test_an_ordinary_result_is_untouched(self):
         plain = [{"REGION": "West", "SALES": 10.0}, {"REGION": "East", "SALES": 20.0}]
         self.assertEqual(infer_chart_spec(plain, "sales by region", {}, "Sales")["renderable_types"], ["bar"])
+
+
+class TestAPassthroughPayloadCanActuallyBeSent(unittest.TestCase):
+    """Found on the live warehouse, not by the suite.
+
+    "As-is" has to mean JSON-serialisable. The projection branch coerces its
+    values on the way past, so nothing noticed that a database Decimal reaches
+    the payload untouched in the passthrough branch — until forecast became the
+    first passthrough type that actually renders. Every forecast answer then
+    died on "Object of type Decimal is not JSON serializable", AFTER the SQL had
+    run and the projection had been computed: the work was done and thrown away.
+    """
+
+    def _forecast_rows(self):
+        from datetime import date
+        from decimal import Decimal
+
+        return [
+            {"PERIOD": "2026-01", "REVENUE": Decimal("44430302.60"),
+             "is_forecast": False, "forecast_value": None},
+            {"PERIOD": "2026-07", "REVENUE": None, "is_forecast": True,
+             "forecast_value": Decimal("45000000.00"), "AS_OF": date(2026, 6, 30)},
+        ]
+
+    def test_the_payload_survives_json_dumps(self):
+        import json
+
+        from core.chart import build_chart_payload
+
+        payload = build_chart_payload(self._forecast_rows(), "forecast", "Revenue", "project revenue")
+        json.dumps(payload)  # the assertion is that this does not raise
+
+    def test_decimals_become_floats_and_dates_iso_strings(self):
+        from core.chart import build_chart_payload
+
+        rows = build_chart_payload(
+            self._forecast_rows(), "forecast", "Revenue", "project revenue",
+        )["rows"]
+        self.assertIsInstance(rows[0]["REVENUE"], float)
+        self.assertEqual(rows[1]["AS_OF"], "2026-06-30")
+
+    def test_the_marker_columns_still_survive(self):
+        """Coercing must not become projecting — the markers are the point."""
+        from core.chart import build_chart_payload
+
+        first = build_chart_payload(
+            self._forecast_rows(), "forecast", "Revenue", "project revenue",
+        )["rows"][0]
+        self.assertIn("is_forecast", first)
+        self.assertIn("forecast_value", first)
