@@ -453,3 +453,111 @@ class TestADraftsTablesAreKnownNotInferred:
         pipeline = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
         idx = pipeline.index("_metric_formula_tables = set()")
         assert "metric_source_tables(_metric, all_columns)" in pipeline[idx:idx + 1400]
+
+
+class TestAFormulaThatBindsIsNotAFormulaThatMatches:
+    """The value-guess gap, found live.
+
+    The model is shown column NAMES and never their contents, so it guesses the
+    values it filters on. Across three consecutive live attempts "active" became
+    ACT_FLG = 'Y', then 'true', then 1. All three are valid SQL, all three bind,
+    all three pass the dry run — and at most one is right. The wrong ones return
+    a confident number computed over zero matching rows.
+    """
+
+    CONFIG = json.dumps({
+        "enabled": True, "mode": "ratio",
+        "numerator": {"aggregation": "SUM", "measure": "IVC_GRS_AMT",
+                      "filters": [{"field": "CNL_FLG", "operator": "equals", "value": "N"}]},
+        "denominator": {"aggregation": "COUNT", "measure": "CUS_DMS_KEY",
+                        "filters": [{"field": "ACT_FLG", "operator": "equals", "value": "1"}]},
+    })
+
+    def test_filters_are_found_in_every_builder_mode(self):
+        from core.metric_dryrun import _filters_from_config
+
+        assert [f["field"] for f in _filters_from_config(self.CONFIG)] == ["CNL_FLG", "ACT_FLG"]
+        aggregate = json.dumps({
+            "enabled": True, "mode": "aggregate", "aggregation": "SUM", "measure": "AMT",
+            "filters": [{"field": "STATUS_CD", "operator": "equals", "value": "X"}],
+        })
+        assert [f["field"] for f in _filters_from_config(aggregate)] == ["STATUS_CD"]
+
+    @pytest.mark.parametrize("config", ["", "{}", "not json", None])
+    def test_a_metric_with_no_filters_has_nothing_to_check(self, config):
+        from core.metric_dryrun import _filters_from_config
+
+        assert _filters_from_config(config) == []
+
+    def test_a_zero_match_filter_is_reported_by_column_not_by_value(self):
+        """Column names may be shown to a portal user; the probe's view of the
+        data may not — a probe does not pass through the compliance boundary."""
+        import asyncio
+        from unittest.mock import patch
+
+        from core import metric_dryrun
+
+        class _Cur:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def execute(self, sql):
+                # ACT_FLG = '1' matches nothing; CNL_FLG = 'N' matches plenty.
+                self.outer.n = 0 if "ACT_FLG" in sql else 4212
+
+            def fetchone(self):
+                return (self.outer.n,)
+
+        class _Conn:
+            n = 0
+
+            def cursor(self):
+                return _Cur(self)
+
+            def close(self):
+                pass
+
+        master = {
+            "DW.CUS_ORD_IVC_FCT": {"columns": [{"name": "IVC_GRS_AMT"}, {"name": "CNL_FLG"}]},
+            "DW.CUS_DMS": {"columns": [{"name": "CUS_DMS_KEY"}, {"name": "ACT_FLG"}]},
+        }
+        with patch.object(metric_dryrun.store, "get_client", return_value={"db_config_id": 1}), \
+             patch.object(metric_dryrun.store, "get_db_config",
+                          return_value={"db_type": "azure_sql", "credentials": {}}), \
+             patch.object(metric_dryrun, "_load_schema_master", return_value=master), \
+             patch("core.schema._az_connect", return_value=_Conn()):
+            empty = asyncio.run(metric_dryrun.check_filter_matches(
+                "acct", metric_builder_config=self.CONFIG,
+            ))
+
+        assert empty == ("ACT_FLG",), "only the filter matching nothing should be reported"
+        assert not any(v in str(empty) for v in ("'1'", "true", "Y"))
+
+    def test_a_probe_that_cannot_run_is_not_evidence_of_an_empty_filter(self):
+        """Failing closed here would refuse every metric whenever the database
+        is briefly unreachable."""
+        import asyncio
+        from unittest.mock import patch
+
+        from core import metric_dryrun
+
+        with patch.object(metric_dryrun.store, "get_client", return_value={"db_config_id": 1}), \
+             patch.object(metric_dryrun.store, "get_db_config",
+                          return_value={"db_type": "azure_sql", "credentials": {}}), \
+             patch.object(metric_dryrun, "_load_schema_master", return_value={
+                 "DW.CUS_DMS": {"columns": [{"name": "ACT_FLG"}]}}), \
+             patch("core.schema._az_connect", side_effect=RuntimeError("network down")):
+            empty = asyncio.run(metric_dryrun.check_filter_matches(
+                "acct", metric_builder_config=self.CONFIG,
+            ))
+        assert empty == ()
+
+    def test_the_handler_names_the_column_and_asks(self):
+        """Falling through silently would leave the user with an ordinary answer
+        and no idea their definition was dropped."""
+        webhooks = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+        handler = webhooks[webhooks.index("async def _run_metric_authoring_chat"):]
+        handler = handler[: handler.index("async def _run_report_builder_chat")]
+        assert "check_filter_matches" in handler
+        assert "matches no rows" in handler
+        assert "_fall_through(f\"filter matched no rows" in handler

@@ -65,6 +65,10 @@ class DryRunOutcome:
     probe_kind: str = "none"          # join_probe | single_table | multi_table | none
     tables_probed: tuple[str, ...] = ()
     value: Any = None                 # ADMIN ONLY -- real data, never sent to a portal user
+    # Filter columns whose value matched no rows. A formula that BINDS and a
+    # formula that MATCHES are different claims, and only the first was ever
+    # checked -- see check_filter_matches.
+    empty_filters: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -172,6 +176,128 @@ def _wants_join_probe(formula: str, metric_builder_config: str) -> bool:
         and config.get("mode") in ("row_calculated", "date_gap")
         and config.get("required_joins")
     )
+
+
+def _filters_from_config(metric_builder_config: str) -> list[dict[str, Any]]:
+    """Every structured filter in a builder config, whatever its mode."""
+    try:
+        config = json.loads((metric_builder_config or "").strip() or "{}")
+    except Exception:
+        return []
+    if not isinstance(config, dict):
+        return []
+    filters: list[dict[str, Any]] = []
+    for holder in (config, config.get("numerator"), config.get("denominator")):
+        if isinstance(holder, dict):
+            for item in holder.get("filters") or []:
+                if isinstance(item, dict) and item.get("field"):
+                    filters.append(item)
+    return filters
+
+
+async def check_filter_matches(
+    account_id: str,
+    *,
+    metric_builder_config: str,
+    timeout: int = _COLUMN_PROBE_TIMEOUT_SECONDS,
+) -> tuple[str, ...]:
+    """Return the filter columns whose value matches no rows at all.
+
+    The dry run proves a formula BINDS: the columns exist, the types work, the
+    joins resolve. It cannot prove the formula MATCHES anything, and that gap
+    matters precisely because a composed metric's filter VALUES are the one part
+    the model is guessing. It is shown column names, never their contents, so
+    "active" becomes ACT_FLG = 'Y' or 'true' or 1 depending on the day -- all
+    three bind, one at most is right, and the wrong ones return a confident
+    number computed over nothing.
+
+    A filter matching zero rows is not proof of a wrong guess (a category can be
+    legitimately empty today), but when the value was guessed rather than known
+    it is much the likeliest explanation, so the caller treats it as one and
+    asks.
+
+    Returns column names only. The values live in the database and stay there:
+    a probe does not pass through the compliance boundary, so nothing it sees
+    may be shown to a portal user.
+    """
+    filters = _filters_from_config(metric_builder_config)
+    if not filters:
+        return ()
+
+    client = store.get_client(account_id)
+    if not client or not client.get("db_config_id"):
+        return ()
+    raw_cfg = store.get_db_config(client["db_config_id"])
+    if not raw_cfg:
+        return ()
+    db_type = raw_cfg.get("db_type", "azure_sql")
+    creds = raw_cfg.get("credentials", {})
+    master = _load_schema_master(account_id)
+    if not master:
+        return ()
+
+    column_to_table: dict[str, str] = {}
+    for fqn, table in master.items():
+        if not isinstance(table, dict):
+            continue
+        for column in (table.get("columns") or []):
+            name = str((column.get("name") if isinstance(column, dict) else column) or "").upper()
+            if name and name not in column_to_table:
+                column_to_table[name] = fqn
+
+    try:
+        from core.metric_builder import _compile_condition
+        from core.schema import _az_connect, _sf_connect, _ora_connect
+    except Exception:
+        return ()
+
+    def _get_conn():
+        if db_type == "azure_sql":
+            return _az_connect(creds)
+        if db_type == "snowflake":
+            return _sf_connect(creds)
+        return _ora_connect(creds)
+
+    def _count(sql: str) -> int:
+        conn = _get_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(sql)
+            row = cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            conn.close()
+
+    loop = asyncio.get_running_loop()
+    empty: list[str] = []
+    for filt in filters:
+        field = str(filt.get("field") or "").strip()
+        table_fqn = column_to_table.get(field.upper())
+        if not field or not table_fqn:
+            continue
+        try:
+            predicate = _compile_condition(
+                field, str(filt.get("operator") or "equals"), str(filt.get("value") or ""),
+            )
+        except Exception:
+            continue
+        probe = f"SELECT COUNT(*) FROM {_table_sql(table_fqn, db_type)} WHERE {predicate}"
+        if db_type == "azure_sql":
+            probe = (
+                f"SELECT COUNT(*) FROM {_table_sql(table_fqn, db_type)} "
+                f"WITH (NOLOCK) WHERE {predicate}"
+            )
+        try:
+            matched = await asyncio.wait_for(
+                loop.run_in_executor(None, _count, probe), timeout=timeout,
+            )
+        except Exception as exc:
+            # A probe that cannot run is not evidence of an empty filter.
+            log.debug("Filter probe failed for %s: %s", field, exc)
+            continue
+        if matched == 0 and field.upper() not in {c.upper() for c in empty}:
+            empty.append(field)
+    return tuple(empty)
 
 
 async def dry_run_metric_formula(

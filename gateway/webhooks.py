@@ -1569,7 +1569,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if not validation.valid:
                 return await _fall_through(f"validation: {validation.errors[:2]}")
 
-            from core.metric_dryrun import dry_run_metric_formula
+            from core.metric_dryrun import check_filter_matches, dry_run_metric_formula
 
             outcome = await dry_run_metric_formula(
                 account_id, formula=draft.sql_template,
@@ -1578,6 +1578,30 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             )
             if outcome.status == "error":
                 return await _fall_through(f"dry run: {outcome.detail[:120]}")
+
+            # The dry run proves the formula BINDS. It cannot prove it MATCHES,
+            # and the filter VALUES are the one part the model is guessing --
+            # it sees column names, never their contents, so "active" became
+            # ACT_FLG = 'Y', then 'true', then 1 on three consecutive attempts.
+            # All three bind. At most one is right, and the wrong ones return a
+            # confident number computed over nothing.
+            empty_filters = await check_filter_matches(
+                account_id, metric_builder_config=draft.metric_builder_config,
+            )
+            if empty_filters:
+                columns = ", ".join(empty_filters)
+                await websocket.send_json({
+                    "type": "message",
+                    "content": (
+                        f"I can build that, but I had to guess which value of "
+                        f"**{columns}** you mean and the one I tried matches no rows — "
+                        "so the number would have been calculated over nothing.\n\n"
+                        f"Tell me the value and I'll rebuild it, for example: "
+                        f"\"{empty_filters[0]} is Y\"."
+                    ),
+                })
+                await websocket.send_json({"type": "typing", "active": False})
+                return await _fall_through(f"filter matched no rows: {columns}")
 
             draft_id = store.save_session_metric_draft(
                 account_id, str(getattr(adapter, "session_id", "") or ""),
