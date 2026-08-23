@@ -270,6 +270,7 @@ async def check_filter_matches(
 
     loop = asyncio.get_running_loop()
     empty: list[str] = []
+    probed: list[str] = []
     for filt in filters:
         field = str(filt.get("field") or "").strip()
         table_fqn = column_to_table.get(field.upper())
@@ -295,8 +296,18 @@ async def check_filter_matches(
             # A probe that cannot run is not evidence of an empty filter.
             log.debug("Filter probe failed for %s: %s", field, exc)
             continue
+        probed.append(field)
         if matched == 0 and field.upper() not in {c.upper() for c in empty}:
             empty.append(field)
+
+    # Say what was checked, not just what failed. A check that silently found
+    # nothing and a check that silently never ran produce the same log and the
+    # same outcome, and this codebase has been bitten by that distinction
+    # repeatedly — a gate nobody can see is a gate nobody can trust.
+    log.info(
+        "Filter match check: probed %s, matched no rows: %s",
+        probed or "nothing", list(empty) or "none",
+    )
     return tuple(empty)
 
 

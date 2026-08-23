@@ -561,3 +561,46 @@ class TestAFormulaThatBindsIsNotAFormulaThatMatches:
         assert "check_filter_matches" in handler
         assert "matches no rows" in handler
         assert "_fall_through(f\"filter matched no rows" in handler
+
+
+class TestTheFilterCheckIsObservable:
+    """A check that silently found nothing and a check that silently never ran
+    produce the same log and the same outcome. On the live warehouse the check
+    correctly did not fire — and there was no way to tell that from the log,
+    which is the same "did this code even execute" problem that has produced
+    four separate wrong diagnoses this week."""
+
+    def test_it_logs_what_it_probed_not_only_what_failed(self, caplog):
+        import asyncio
+        import logging
+        from unittest.mock import patch
+
+        from core import metric_dryrun
+
+        class _Conn:
+            def cursor(self):
+                class _Cur:
+                    def execute(self, sql): pass
+                    def fetchone(self): return (17,)
+                return _Cur()
+
+            def close(self): pass
+
+        config = json.dumps({
+            "enabled": True, "mode": "aggregate", "aggregation": "SUM", "measure": "AMT",
+            "filters": [{"field": "ACT_FLG", "operator": "equals", "value": "1"}],
+        })
+        with caplog.at_level(logging.INFO, logger="querybot.metric_dryrun"), \
+             patch.object(metric_dryrun.store, "get_client", return_value={"db_config_id": 1}), \
+             patch.object(metric_dryrun.store, "get_db_config",
+                          return_value={"db_type": "azure_sql", "credentials": {}}), \
+             patch.object(metric_dryrun, "_load_schema_master", return_value={
+                 "DW.CUS_DMS": {"columns": [{"name": "ACT_FLG"}]}}), \
+             patch("core.schema._az_connect", return_value=_Conn()):
+            empty = asyncio.run(metric_dryrun.check_filter_matches(
+                "acct", metric_builder_config=config,
+            ))
+
+        assert empty == ()
+        assert "ACT_FLG" in caplog.text
+        assert "matched no rows: none" in caplog.text
