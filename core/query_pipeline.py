@@ -6314,6 +6314,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
             if _post_intents.get("forecast") and not any("is_forecast" in r for r in rows[:1]):
                 from core.forecast import compute_forecast, extract_forecast_periods
+                from core.chart_policy import aggregate_only_gate_passes
                 from core.forecast_gate import assess_fit, evaluate_forecast_request
 
                 # Ask whether a forecast is defensible BEFORE computing one.
@@ -6327,7 +6328,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     question=question,
                     horizon=extract_forecast_periods(question),
                     truncated=bool(_rows_truncated),
-                    policy_allows_derived_visual=bool(chart_type),
+                    policy_allows_derived_visual=aggregate_only_gate_passes(
+                        account_id=account_id,
+                        portal_user=portal_user,
+                        event=event,
+                        sql=sql,
+                        db_type=db_type_hint or "azure_sql",
+                        what="Forecast",
+                    ),
                 )
                 if _fc_decision.allowed:
                     _fc_rows = compute_forecast(
@@ -6395,8 +6403,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     rows = compute_whatif(rows, _wi_p)
                     log.info("post_process: what-if scenario applied delta_pct=%s", _wi_p.delta_pct)
 
+        except (NameError, AttributeError, TypeError, ImportError) as _pp_exc:
+            # A programming error, not a data condition. This branch existed at
+            # debug level and hid a NameError that disabled forecasting
+            # entirely: the analytic silently did not run, the user got no
+            # projection and no explanation, and the logs said nothing. An
+            # analytic the user asked for failing to run is never routine.
+            log.error(
+                "post_process: analytics FAILED (bug, not data): %s",
+                _pp_exc, exc_info=True,
+            )
         except Exception as _pp_exc:
-            log.debug("Post-processing analytics skipped: %s", _pp_exc)
+            log.warning("post_process: analytics skipped: %s", _pp_exc)
 
     # SQL/schema validation proves the statement is safe to run; this second,
     # deterministic check verifies that the returned columns and row shape

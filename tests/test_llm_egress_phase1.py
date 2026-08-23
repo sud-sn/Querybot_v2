@@ -127,13 +127,39 @@ class FailOpenRemovalTests(unittest.TestCase):
     """A6 — the two sites that required enforcement_mode == 'enforce'."""
 
     def test_chart_guard_no_longer_requires_enforce_mode(self):
+        """The guard moved to core/chart_policy.py so the forecast gate applies
+        the same rule from the same code.
+
+        Rewritten from a string scan of result_renderer.py to an execution of
+        the guard. The scan broke the moment the code moved, which is the
+        clearest possible demonstration of what it was really testing: the
+        presence of a substring, not the behaviour. The behaviour is that a
+        regulated tenant fails CLOSED when policy evaluation raises.
+        """
+        from unittest.mock import patch
+
+        from core.chart_policy import aggregate_only_gate_passes
+
+        broken = dict(
+            portal_user=None, event=None,
+            sql="not valid sql at all", db_type="no_such_db_type",
+        )
+        with patch("core.compliance.policy_engine.is_regulated", return_value=True):
+            self.assertFalse(
+                aggregate_only_gate_passes(account_id="regulated", **broken),
+                "a regulated tenant must fail closed when evaluation raises",
+            )
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False):
+            self.assertTrue(
+                aggregate_only_gate_passes(account_id="ordinary", **broken),
+            )
+
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parents[1] / "core" / "result_renderer.py").read_text(
+        src = (Path(__file__).resolve().parents[1] / "core" / "chart_policy.py").read_text(
             encoding="utf-8"
         )
         self.assertNotIn('profile.get("enforcement_mode") == "enforce"', src)
-        self.assertIn("is_regulated(account_id)", src)
 
     def test_export_guard_no_longer_requires_enforce_mode(self):
         from pathlib import Path

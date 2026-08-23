@@ -708,43 +708,21 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             question=display_question,
             column_formats=column_formats,
         )
+    # Hoisted into core/chart_policy.py so the forecast gate applies the same
+    # rule from the same code. A forecast is a derived visual of these values
+    # too, and the two must not be able to drift apart.
     if chart_type:
-        try:
-            from core.compliance.policy_engine import evaluate, resolve_context
-            from core.compliance.sql_guard import analyze_sql
+        from core.chart_policy import aggregate_only_gate_passes
 
-            analysis = analyze_sql(sql, db_cfg.get("db_type", "azure_sql"))
-            chart_context = resolve_context(
-                account_id,
-                portal_user,
-                action="chart",
-                channel=getattr(event, "platform", "") or "portal",
-            )
-            chart_decision = evaluate(chart_context, analysis.resources)
-            aggregate_sources = {
-                source
-                for output, sources in analysis.lineage.items()
-                if output in analysis.aggregate_outputs
-                for source in sources
-            }
-            required_aggregate = {
-                resource.key for resource in chart_decision.aggregate_only
-            }
-            if (
-                not chart_decision.effective_allowed
-                or bool(required_aggregate - aggregate_sources)
-            ):
-                chart_type = None
-        except Exception as exc:
-            # Previously also required enforcement_mode == "enforce", which left
-            # a regulated tenant in shadow mode with no chart protection at all
-            # when policy evaluation failed. Shadow governs whether a *decision*
-            # is advisory, not whether a failed evaluation may be ignored.
-            from core.compliance.policy_engine import is_regulated
-
-            if is_regulated(account_id):
-                log.warning("Chart blocked because policy evaluation failed: %s", exc)
-                chart_type = None
+        if not aggregate_only_gate_passes(
+            account_id=account_id,
+            portal_user=portal_user,
+            event=event,
+            sql=sql,
+            db_type=db_cfg.get("db_type", "azure_sql"),
+            what="Chart",
+        ):
+            chart_type = None
     pin_token = None
     chart_payload = None
     if chart_type and portal_user and portal_user.get("id") is not None:
