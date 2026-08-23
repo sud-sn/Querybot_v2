@@ -28,6 +28,8 @@ import types
 
 import pytest
 
+NEWLINE = chr(10)
+
 
 def _unresolved_globals(func, module) -> list[str]:
     """Names the function loads from module scope that do not exist there.
@@ -140,9 +142,18 @@ class TestTheForecastBlockExecutes:
             "_confidence_context": {},
             "account_id": "acct", "portal_user": None, "event": None,
             "sql": "SELECT PERIOD, SUM(AMT) AS REVENUE FROM F GROUP BY PERIOD",
-            "db_type_hint": "azure_sql",
+            "db_cfg": {"db_type": "azure_sql"},
             "log": _Log(),
         }
+        # Every name here must be one PRODUCTION actually has bound at this
+        # point. The first version of this dict supplied "db_type_hint", which
+        # the block did read -- and which is assigned only inside
+        # `if table_hint_str:`, so on a typed question it does not exist. The
+        # test invented a favourable world and passed; production raised
+        # UnboundLocalError on every forecast. A fixture that supplies a name
+        # the real caller does not is not a test, it is a second bug agreeing
+        # with the first.
+        assert "db_type_hint" not in env, "production does not reliably bind this"
         # The policy gate is the thing that was broken; stub only its verdict so
         # the rest of the block runs exactly as written. It has to be patched on
         # the module, not injected into env: the block imports it by name, and
@@ -218,6 +229,91 @@ class TestTheForecastBlockExecutes:
         before = self._months(noise)
         env, _ = self._run([dict(r) for r in before])
         assert env["rows"] == before
+
+
+class TestTheBlockOnlyReadsNamesThatExist:
+    """The generalisation of two bugs of the same shape.
+
+    First `chart_type`, an undefined global. Fixed, and replaced with
+    `db_type_hint`, a local assigned only under `if table_hint_str:` -- so the
+    forecast died on every typed question instead of every question. The
+    bytecode check added for the first one looks at globals and could not see
+    the second.
+
+    This pins the block's external reads to a reviewed list. Adding a new name
+    fails the test, which is the point: each one has to be shown to be bound on
+    the path that reaches here.
+    """
+
+    # Verified bound wherever the forecast block runs:
+    #   parameters                     account_id, event, question, portal_user
+    #   unconditional at function top  _rows_truncated, db_cfg (a cell var)
+    #   guarded by `if rows and _post_intents`   rows, _post_intents
+    #   assigned before every use below          sql, _confidence_context
+    ALLOWED = {
+        "rows", "sql", "_post_intents", "_confidence_context", "_rows_truncated",
+        "question", "account_id", "portal_user", "event", "db_cfg", "log",
+    }
+
+    def _block_lines(self):
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(
+            encoding="utf-8",
+        ).splitlines()
+        lo = next(i for i, l in enumerate(src, 1) if '_post_intents.get("forecast")' in l)
+        hi = next(i for i, l in enumerate(src, 1) if '_post_intents.get("histogram")' in l)
+        return lo, hi
+
+    def test_no_conditionally_bound_local_is_read_in_the_forecast_block(self):
+        import dis
+
+        import core.query_pipeline as qp
+
+        lo, hi = self._block_lines()
+        code = qp._handle_query_impl.__code__
+        # Names the block assigns itself are fine; it is the ones it inherits
+        # from the enclosing function that have to be proven bound.
+        assigned = {
+            i.argval for i in dis.get_instructions(code)
+            if i.opname in {"STORE_FAST", "STORE_DEREF"}
+            and i.line_number and lo <= i.line_number < hi
+        }
+        # LOAD_FAST_CHECK is CPython's own verdict that a local may be unbound
+        # at this point -- the compiler already did this analysis.
+        risky = {
+            i.argval for i in dis.get_instructions(code)
+            if i.opname == "LOAD_FAST_CHECK"
+            and i.line_number and lo <= i.line_number < hi
+        } - assigned
+        unreviewed = risky - self.ALLOWED
+        assert not unreviewed, (
+            f"the forecast block reads {sorted(unreviewed)}, which CPython says "
+            f"may be unbound here and which nobody has shown otherwise"
+        )
+
+    def test_db_type_hint_specifically_is_not_read_here(self):
+        """The name that actually broke it, pinned by name.
+
+        It is assigned only inside `if table_hint_str:`, which is true only for
+        a suggested-question click, so reading it made forecasting work for
+        clicks and raise UnboundLocalError for anything typed.
+
+        Checked against the bytecode, not the source text -- the first version
+        of this test grepped the block and failed on the COMMENT explaining the
+        fix, which is a neat demonstration of why a string scan is not a test.
+        """
+        import dis
+
+        import core.query_pipeline as qp
+
+        lo, hi = self._block_lines()
+        read_here = {
+            i.argval for i in dis.get_instructions(qp._handle_query_impl.__code__)
+            if i.opname in {"LOAD_FAST", "LOAD_FAST_CHECK"}
+            and i.line_number and lo <= i.line_number < hi
+        }
+        assert "db_type_hint" not in read_here
 
 
 class TestAFailedAnalyticIsLoud:

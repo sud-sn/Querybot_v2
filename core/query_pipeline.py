@@ -6333,7 +6333,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         portal_user=portal_user,
                         event=event,
                         sql=sql,
-                        db_type=db_type_hint or "azure_sql",
+                        # db_cfg, not db_type_hint. db_type_hint is assigned
+                        # only inside `if table_hint_str:` -- it exists only when
+                        # the question came from a suggested-question click, so
+                        # every typed question raised UnboundLocalError here.
+                        # db_cfg is bound unconditionally at the top of the
+                        # function and is the same source result_renderer reads
+                        # for this identical gate.
+                        db_type=(db_cfg or {}).get("db_type", "azure_sql"),
                         what="Forecast",
                     ),
                 )
