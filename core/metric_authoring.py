@@ -354,6 +354,49 @@ def compile_metric_plan_response(
     ), ""
 
 
+def schema_columns_for_draft(
+    draft: MetricDraft, schema_columns: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """The columns a multi-table metric is allowed to reference.
+
+    ``core.metric_validator.validate_metric`` checks ``required_columns`` against
+    ``base_table`` alone. That is right for a single-table metric and wrong for a
+    ratio spanning a fact and a dimension -- which is precisely the shape this
+    feature exists to compose. "Revenue per active customer" takes the amount
+    from the invoice fact and the active flag from the customer master, and the
+    flag is quite correctly not on the fact.
+
+    So the base_table entry is widened to the union of the tables the draft
+    itself declares, making the check mean "these columns exist in the tables
+    this metric uses". The union is bounded by the draft's own source_tables,
+    every one of which came from a COL_REF binding, so this cannot admit a
+    column from a table the user was never offered.
+
+    Whether the join between those tables is correct is a different question,
+    and it is the live dry run that answers it.
+    """
+    widened = dict(schema_columns or {})
+    if len(draft.source_tables) <= 1 or not draft.base_table:
+        return widened
+
+    def _resolve(table: str) -> list[str]:
+        target = str(table or "").upper()
+        for fqn, columns in (schema_columns or {}).items():
+            fqn_upper = str(fqn).upper()
+            if fqn_upper == target or fqn_upper.endswith("." + target.split(".")[-1]):
+                return list(columns or [])
+        return []
+
+    union: list[str] = []
+    for table in draft.source_tables:
+        for column in _resolve(table):
+            if column not in union:
+                union.append(column)
+    if union:
+        widened[draft.base_table] = union
+    return widened
+
+
 def _extract_confidence(plan: dict) -> float:
     raw = plan.get("confidence")
     if raw is None:

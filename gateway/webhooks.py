@@ -1552,11 +1552,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # store.save_metric runs the same validator and inserts the row
             # regardless, marking it draft; here an invalid formula means we
             # simply do not use it.
+            from core.metric_authoring import schema_columns_for_draft
             from core.metric_validator import load_schema_columns, validate_metric
 
+            # A ratio across a fact and a dimension is the whole point of this
+            # feature, and validate_metric checks columns against base_table
+            # alone — so "revenue per active customer" was rejected because the
+            # active flag lives on the customer master rather than the invoice
+            # fact. Widen the check to the tables the draft actually declares.
             validation = validate_metric(
                 draft.as_metric(), db_type=db_type,
-                schema_columns=load_schema_columns(account_id),
+                schema_columns=schema_columns_for_draft(
+                    draft, load_schema_columns(account_id),
+                ),
             )
             if not validation.valid:
                 return await _fall_through(f"validation: {validation.errors[:2]}")

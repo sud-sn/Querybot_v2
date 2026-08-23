@@ -305,3 +305,83 @@ class TestThePipelineSeesTheDraft:
         validator = (ROOT / "core" / "validator.py").read_text(encoding="utf-8")
         idx = validator.index("def _metric_mentioned(")
         assert '_pinned_thread_metric' in validator[idx:idx + 700]
+
+
+class TestAMetricMaySpanAFactAndADimension:
+    """Found on the live warehouse. "Revenue per active customer" composed
+    correctly, then validation rejected it:
+
+        Required column 'ACT_FLG' does not exist in table 'CUS_ORD_IVC_FCT'
+
+    which is true and beside the point — the active flag lives on the customer
+    master, as it should. validate_metric checks required_columns against
+    base_table alone, which is right for a single-table metric and wrong for the
+    ratio shape this whole feature exists to compose.
+    """
+
+    SCHEMA = {
+        "CHATBOT_DB.EMDW_DMART.CUS_ORD_IVC_FCT": ["IVC_AMT", "CUS_DMS_KEY"],
+        "CHATBOT_DB.EMDW_DMART.CUS_DMS": ["CUS_NO", "ACT_FLG"],
+    }
+
+    def _draft(self):
+        plan_input = build_metric_plan_input("revenue per active customer", {
+            "EMDW_DMART.CUS_ORD_IVC_FCT": ["IVC_AMT", "CUS_DMS_KEY"],
+            "EMDW_DMART.CUS_DMS": ["CUS_NO", "ACT_FLG"],
+        })
+        draft, error = compile_metric_plan_response(json.dumps({
+            "operation": "define_metric", "name": "Revenue Per Active Customer",
+            "mode": "ratio", "base_table_ref": "TABLE_REF_1",
+            "numerator": {"aggregation": "SUM", "measure_ref": "COL_REF_1"},
+            "denominator": {
+                "aggregation": "COUNT_DISTINCT", "measure_ref": "COL_REF_3",
+                "filters": [{"field_ref": "COL_REF_4", "operator": "equals", "value": "Y"}],
+            },
+            "confidence": 0.9,
+        }), plan_input)
+        assert error == ""
+        return draft
+
+    def test_the_cross_table_ratio_now_validates(self):
+        from core.metric_authoring import schema_columns_for_draft
+        from core.metric_validator import validate_metric
+
+        draft = self._draft()
+        widened = schema_columns_for_draft(draft, self.SCHEMA)
+        assert validate_metric(draft.as_metric(), db_type="azure_sql",
+                               schema_columns=widened).valid
+
+    def test_without_widening_it_was_rejected(self):
+        """Pin the failure so the fix cannot be quietly undone."""
+        from core.metric_validator import validate_metric
+
+        result = validate_metric(
+            self._draft().as_metric(), db_type="azure_sql", schema_columns=self.SCHEMA,
+        )
+        assert not result.valid
+        assert any("ACT_FLG" in e for e in result.errors)
+
+    def test_widening_is_a_no_op_for_a_single_table_metric(self):
+        from core.metric_authoring import schema_columns_for_draft
+
+        plan_input = build_metric_plan_input(
+            "total revenue", {"EMDW_DMART.CUS_ORD_IVC_FCT": ["IVC_AMT"]},
+        )
+        draft, _ = compile_metric_plan_response(json.dumps({
+            "operation": "define_metric", "name": "Total Revenue", "mode": "aggregate",
+            "aggregation": "SUM", "measure_ref": "COL_REF_1",
+            "base_table_ref": "TABLE_REF_1", "confidence": 0.9,
+        }), plan_input)
+        assert schema_columns_for_draft(draft, self.SCHEMA) == self.SCHEMA
+
+    def test_widening_cannot_admit_a_table_the_user_never_saw(self):
+        """The union is bounded by the draft's own source_tables, every one of
+        which came from a COL_REF binding — so it can only ever contain tables
+        the ACL already allowed into the manifest."""
+        from core.metric_authoring import schema_columns_for_draft
+
+        draft = self._draft()
+        widened = schema_columns_for_draft(draft, {
+            **self.SCHEMA, "CHATBOT_DB.EMDW_DMART.PAYROLL": ["SALARY"],
+        })
+        assert "SALARY" not in widened[draft.base_table]
