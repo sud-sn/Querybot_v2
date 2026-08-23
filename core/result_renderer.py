@@ -821,6 +821,16 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     # meaningful fraction of rows (no matching dimension row). No new query
     # here -- reads the already-persisted orphan_rate on the relationship
     # row(s) already resolved during graph resolution (confidence_context["graph_edges"]).
+    # Why a forecast was refused, or what was clamped about the one that ran.
+    # Computed in the pipeline's post-processing (core/forecast_gate.py) and
+    # carried here on the same channel as graph_edges. Ranked with the other
+    # caveats rather than given a panel of its own: "I did not project future
+    # periods, and here is why" is the same KIND of statement as "some rows
+    # were excluded by a lossy join".
+    coverage_caveats.extend(
+        str(note) for note in (confidence_context.get("forecast_caveats") or []) if note
+    )
+
     _graph_edges = confidence_context.get("graph_edges") or []
     if _graph_edges:
         try:

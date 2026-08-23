@@ -6313,12 +6313,47 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     log.info("post_process: funnel computed stage=%s count=%s", _s_col, _c_col)
 
             if _post_intents.get("forecast") and not any("is_forecast" in r for r in rows[:1]):
-                from core.forecast import infer_forecast_cols, compute_forecast, extract_forecast_periods
-                _p_col, _v_col = infer_forecast_cols(rows)
-                if _p_col and _v_col:
-                    _n_fc = extract_forecast_periods(question)
-                    rows = compute_forecast(rows, _p_col, _v_col, _n_fc)
-                    log.info("post_process: forecast appended periods=%d period=%s value=%s", _n_fc, _p_col, _v_col)
+                from core.forecast import compute_forecast, extract_forecast_periods
+                from core.forecast_gate import evaluate_forecast_request
+
+                # Ask whether a forecast is defensible BEFORE computing one.
+                # Until now nothing did: two points were enough, the period
+                # column did not have to be temporal, and the R-squared was
+                # computed only to caption the chart. Live, six flat months with
+                # an R-squared of 0.0964 were projected three months forward
+                # under "Trend: +$43.9K/period".
+                _fc_decision = evaluate_forecast_request(
+                    rows,
+                    question=question,
+                    horizon=extract_forecast_periods(question),
+                    truncated=bool(_rows_truncated),
+                    policy_allows_derived_visual=bool(chart_type),
+                )
+                if _fc_decision.allowed:
+                    rows = compute_forecast(
+                        rows, _fc_decision.period_col, _fc_decision.value_col,
+                        _fc_decision.horizon,
+                    )
+                    log.info(
+                        "post_process: forecast appended periods=%d period=%s value=%s "
+                        "model=%s grain=%s n=%d",
+                        _fc_decision.horizon, _fc_decision.period_col,
+                        _fc_decision.value_col, _fc_decision.model,
+                        _fc_decision.grain, _fc_decision.n_points,
+                    )
+                    _confidence_context.setdefault("forecast_caveats", []).extend(
+                        _fc_decision.notes
+                    )
+                else:
+                    log.info(
+                        "post_process: forecast refused (%s) period=%s n=%d",
+                        _fc_decision.reason_code, _fc_decision.period_col,
+                        _fc_decision.n_points,
+                    )
+                    if _fc_decision.caveat:
+                        _confidence_context.setdefault("forecast_caveats", []).append(
+                            _fc_decision.caveat
+                        )
 
             if _post_intents.get("histogram") and not any("bin_label" in r for r in rows[:1]):
                 from core.distribution_analysis import infer_histogram_col, compute_histogram
