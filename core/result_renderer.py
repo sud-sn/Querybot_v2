@@ -173,11 +173,34 @@ def _format_value(val, col_name: str = "", format_hint: str = "") -> str:
     return str(val)
 
 
+def _is_internal_column(name) -> bool:
+    """Columns the analytics wrote for the renderer, not for the reader.
+
+    A forecast adds is_forecast, forecast_value, forecast_low, forecast_high,
+    __trend_slope, __trend_r2 and __forecast_meta to every row. The text table
+    printed all of them, including __forecast_meta as a literal Python dict --
+    {'model': 'ols', 'slope': 0.6286, ...} -- in the middle of the chat reply a
+    customer reads. The chart path already excluded these through
+    core.chart_spec._STRUCTURAL_META_COLUMNS; the text path never did.
+    """
+    text = str(name)
+    if text.startswith("__"):
+        return True
+    try:
+        from core.chart_spec import _STRUCTURAL_META_COLUMNS
+
+        return text in _STRUCTURAL_META_COLUMNS
+    except Exception:
+        return False
+
+
 def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
     """Format query results as a clean text table with smart value formatting."""
     if not rows:
         return "(no results)"
-    headers = list(rows[0].keys())
+    headers = [h for h in rows[0].keys() if not _is_internal_column(h)]
+    if not headers:                      # a result of nothing but markers
+        headers = list(rows[0].keys())
     column_formats = column_formats or {}
     formatted = [
         {
@@ -196,7 +219,15 @@ def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
         " | ".join(f[h].ljust(widths[h]) for h in headers)
         for f in formatted
     )
-    return f"{head}\n{sep}\n{body}"
+    table = f"{head}\n{sep}\n{body}"
+    # Hiding the marker columns removes the only thing that distinguished a
+    # projected row from a measured one in a text channel, so say it in words.
+    # Teams and /api/ask receive this table and no chart at all.
+    projected = sum(1 for r in rows if r.get("is_forecast"))
+    if projected:
+        plural = "s are" if projected != 1 else " is"
+        table += f"\n\n(the last {projected} row{plural} projected, not measured)"
+    return table
 
 
 # ── Row sanitisation ──────────────────────────────────────────────────────────

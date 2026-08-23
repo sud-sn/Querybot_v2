@@ -2111,6 +2111,11 @@ function buildChartOption(payload) {
     const allLabels  = rows.map(r => String(r[periodKey] ?? ''));
     const histVals   = rows.map(r => r.is_forecast ? null : _chartNumber(r[metricKey]));
     const fcVals     = rows.map(r => r.is_forecast ? _chartNumber(r[metricKey]) : null);
+    // Start the dashed line at the last actual point so the projection reads as
+    // a continuation rather than a second, unconnected series floating to the
+    // right of the history.
+    const _lastActual = rows.reduce((acc, r, i) => r.is_forecast ? acc : i, -1);
+    if (_lastActual >= 0) fcVals[_lastActual] = _chartNumber(rows[_lastActual][metricKey]);
 
     // Fit metadata describes the whole series, so it now travels on the
     // payload. The row-0 read stays for one release, for a browser tab that
@@ -2135,24 +2140,38 @@ function buildChartOption(payload) {
     // because uncertainty about a period that has already happened is zero.
     const lastHistIdx = rows.reduce((acc, r, i) => r.is_forecast ? acc : i, -1);
     const hasBand = rows.some(r => r.is_forecast && r.forecast_low != null);
+    // Anchor the band at the last actual point with zero width, but only if
+    // that point HAS a value. A trailing historical row with a null measure
+    // would otherwise pin the band's base to null and collapse the whole
+    // shaded region.
+    const anchorVal = lastHistIdx >= 0 ? _chartNumber(rows[lastHistIdx][metricKey]) : null;
+    const anchored = anchorVal != null;
     const bandBase = rows.map((r, i) => {
-      if (i === lastHistIdx) return _chartNumber(r[metricKey]);
+      if (anchored && i === lastHistIdx) return anchorVal;
       return r.is_forecast ? _chartNumber(r.forecast_low) : null;
     });
     const bandSpan = rows.map((r, i) => {
-      if (i === lastHistIdx) return 0;
+      if (anchored && i === lastHistIdx) return 0;
       if (!r.is_forecast) return null;
       const lo = _chartNumber(r.forecast_low), hi = _chartNumber(r.forecast_high);
       return (lo == null || hi == null) ? null : hi - lo;
     });
     const bandSeries = !hasBand ? [] : [
       {
-        name: 'band-base', type: 'line', stack: 'fcband', data: bandBase,
+        // stackStrategy 'all' is load-bearing, not a tidy-up. ECharts defaults
+        // to 'samesign', which stacks a value onto the accumulated total only
+        // when the signs agree and onto zero otherwise -- so the moment a lower
+        // bound goes negative, which any margin, variance or profit series
+        // does, the band detaches and draws from the axis instead of from the
+        // bound. The interval silently becomes a different shape.
+        name: 'band-base', type: 'line', stack: 'fcband', stackStrategy: 'all',
+        data: bandBase,
         lineStyle: { opacity: 0 }, itemStyle: { opacity: 0 }, symbol: 'none',
         silent: true, tooltip: { show: false }, legendHoverLink: false,
       },
       {
-        name: '95% interval', type: 'line', stack: 'fcband', data: bandSpan,
+        name: '95% interval', type: 'line', stack: 'fcband', stackStrategy: 'all',
+        data: bandSpan,
         lineStyle: { opacity: 0 }, symbol: 'none', silent: true,
         areaStyle: { color: (colors[1] || '#f59e0b') + '26' },
       },

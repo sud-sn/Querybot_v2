@@ -241,7 +241,12 @@ def _period_units(parsed: list, labels: list) -> list[float] | None:
     if any(b <= a for a, b in zip(idx, idx[1:])):
         return None
     gaps = [b - a for a, b in zip(idx, idx[1:])]
-    unit = sorted(gaps)[len(gaps) // 2] or 1.0
+    # The MODE, not the median. A monthly series with one six-month hole has
+    # gaps [1,1,6,1]; the median of an even-length list picks the larger of the
+    # two middle values, so a series with more holes could take its unit from a
+    # gap rather than from its actual cadence, and every projected step would
+    # then be spaced by the wrong amount.
+    unit = max(set(gaps), key=gaps.count) or 1.0
     return [(i - idx[0]) / unit for i in idx]
 
 
@@ -334,7 +339,15 @@ def compute_forecast(
             new_row["__forecast_meta"] = meta
         result.append(new_row)
 
-    last_label = str(rows[-1].get(period_col, "")) if rows else ""
+    # From the last period that carried a NUMBER, not the last row. A trailing
+    # row whose measure is null is excluded from the fit but was still used as
+    # the label anchor, so the first projection -- which is one step past the
+    # last fitted point -- got printed one period late, and every later one with
+    # it. A null tail row is ordinary: the current month often exists in the
+    # date dimension before any value lands against it.
+    last_label = str(labels[-1]) if labels else (
+        str(rows[-1].get(period_col, "")) if rows else ""
+    )
     for i in range(1, n_periods + 1):
         y_next = round(fit.predictions[i - 1], 4)
         fc_row = {k: None for k in rows[0].keys()}

@@ -51,32 +51,76 @@ class TestTheIntervalIsReal:
         noisy = fit_series([100, 180, 40, 210, 60, 150], 3)
         assert (noisy.upper[0] - noisy.lower[0]) > (tight.upper[0] - tight.lower[0]) * 3
 
-    def test_the_band_covers_the_truth_about_95_percent_of_the_time(self):
-        """The test that would actually catch a wrong formula.
-
-        Draw 400 series from a known linear model with gaussian noise, project
-        one period, and ask how often the real next value falls inside the
-        band. A normal-approximation interval -- 1.96 instead of the Student t,
-        or a standard error missing its 1 + 1/n term -- comes in near 85% here
-        and this fails.
-        """
-        rng = random.Random(20260823)
-        slope, sigma, n, hits, trials = 4.0, 25.0, 8, 0, 400
+    def _coverage(self, *, n, h, model, trials=260, seed=11, sigma=25.0):
+        rng = random.Random(seed)
+        hits = 0
         for _ in range(trials):
-            series = [100 + slope * i + rng.gauss(0, sigma) for i in range(n)]
-            truth = 100 + slope * n + rng.gauss(0, sigma)
-            fit = fit_series(series, 1, with_backtest=False)
-            if fit.lower[0] <= truth <= fit.upper[0]:
+            series = [100 + 4 * i + rng.gauss(0, sigma) for i in range(n)]
+            truth = 100 + 4 * (n + h - 1) + rng.gauss(0, sigma)
+            fit = fit_series(series, h, model=model, with_backtest=False)
+            if fit.lower[h - 1] <= truth <= fit.upper[h - 1]:
                 hits += 1
-        coverage = hits / trials
-        assert 0.90 <= coverage <= 0.99, f"95% interval covered {coverage:.1%}"
+        return hits / trials
 
-    @pytest.mark.parametrize("df,expected", [(1, 12.706), (5, 2.571), (10, 2.228), (100, 1.980)])
+    @pytest.mark.parametrize("n,h", [(8, 1), (12, 1), (14, 3), (24, 3)])
+    def test_the_ols_band_covers_the_truth_95_percent_of_the_time(self, n, h):
+        """The test that checks a formula against reality rather than against a
+        restatement of itself: draw series from a known model, project, and
+        count how often the truth lands in the band."""
+        cov = self._coverage(n=n, h=h, model="ols")
+        assert 0.92 <= cov <= 0.98, f"nominal 95% band covered {cov:.1%}"
+
+    @pytest.mark.parametrize("n,h", [(12, 1), (14, 3), (24, 1), (24, 3)])
+    def test_the_ets_band_covers_the_truth_95_percent_of_the_time(self, n, h):
+        """ETS had NO coverage test, because the only one called fit_series
+        without a model and `model` defaults to "ols". The band it shipped
+        covered 88-90% at one step and 98-100% at three -- too narrow and too
+        wide at once, from two errors pointing opposite ways, under a legend
+        reading "95% interval".
+
+        Both horizons are checked precisely because a single-horizon test is
+        what let that through.
+        """
+        if not statsmodels_available():
+            pytest.skip("statsmodels not installed; ETS falls back to OLS")
+        cov = self._coverage(n=n, h=h, model="ets")
+        assert 0.92 <= cov <= 0.98, f"nominal 95% ETS band covered {cov:.1%}"
+
+    def test_the_bound_is_tight_enough_to_catch_the_formulas_it_names(self):
+        """A coverage bound is only worth having if a wrong formula fails it.
+
+        The previous bound was 0.90, and the two errors actually shipped landed
+        at 0.90 and 0.98 -- inside it. These are the real numbers measured
+        before the fix, checked against the bound now in force.
+        """
+        for wrong in (0.877, 0.895, 0.905, 0.986, 1.000):
+            assert not (0.92 <= wrong <= 0.98), f"{wrong} would have passed"
+
+    @pytest.mark.parametrize("df,expected", [
+        (1, 12.706), (5, 2.571), (10, 2.228), (30, 2.042), (100, 1.984),
+    ])
     def test_short_series_use_the_student_t_not_1_96(self, df, expected):
         assert _t_value(df) == expected
 
-    def test_a_very_long_series_converges_on_the_normal(self):
-        assert _t_value(5000) == pytest.approx(1.96)
+    def test_a_very_long_series_sits_just_above_the_normal(self):
+        """It holds the last table row rather than returning 1.960. The normal
+        is the limit t approaches from ABOVE, so returning it exactly is
+        narrower than the truth at every finite df."""
+        assert 1.96 <= _t_value(5000) <= 1.99
+
+    @pytest.mark.parametrize("df,true_t", [
+        (21, 2.080), (26, 2.056), (33, 2.035), (61, 2.000), (200, 1.972),
+    ])
+    def test_an_unlisted_df_errs_wide_never_narrow(self, df, true_t):
+        """The table interpolates by rounding the degrees of freedom DOWN.
+
+        It rounded UP originally, which is the wrong direction: more df means a
+        smaller t, so every approximated value produced a band narrower than
+        the 95% it was labelled. df=21 returned t(25)=2.060 against a true
+        2.080. An interval may be conservative; it may not overstate itself.
+        """
+        assert _t_value(df) >= true_t - 1e-9, "band would be narrower than 95%"
+        assert _t_value(df) <= true_t * 1.05, "band absurdly over-wide"
 
 
 class TestTheFallbackLadder:
