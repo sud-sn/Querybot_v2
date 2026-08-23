@@ -20,6 +20,14 @@ if (-not (Test-Path $VenvPython)) {
 Write-Host "Installing QueryBot dependencies..."
 & $VenvPython -m pip install --upgrade pip
 & $VenvPython -m pip install -r requirements-windows.txt
+# pip's exit code was not checked, so a failed dependency install still ended
+# with "Python setup complete" and the failure only surfaced later as missing
+# behaviour at runtime. Stop here instead: a half-installed environment is not
+# a working install, and saying so now is cheaper than debugging it in the app.
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Dependency installation failed (pip exit code $LASTEXITCODE). QueryBot is NOT installed."
+    exit $LASTEXITCODE
+}
 
 Write-Host "Checking Microsoft ODBC Driver 18..."
 $Drivers = & $VenvPython -c "import pyodbc; print('|'.join(pyodbc.drivers()))"
