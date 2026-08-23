@@ -70,19 +70,24 @@ def requested_temporal_grain(question: str) -> str:
     # February 2026", so every daily snapshot role stayed grain-compatible and
     # the finest-grain preference handed the question to the daily fact — the
     # monthly period role was never offered at all.
+    # "per <unit>" is the same request as "by <unit>" and was the one phrasing
+    # missing here. Found live: "what is my total revenue per year" returned two
+    # hundred DAILY rows under a column named Year, because no branch matched
+    # and the grain fell through to the window's unit. "per customer" and the
+    # like are untouched -- only the calendar units are listed.
     for grain, words in (
-        ("day", ("daily", "by day", "each day", "day end", "end of day")),
-        ("week", ("weekly", "by week", "each week", "week end", "end of week")),
+        ("day", ("daily", "by day", "each day", "per day", "day end", "end of day")),
+        ("week", ("weekly", "by week", "each week", "per week", "week end", "end of week")),
         ("month", (
-            "monthly", "by month", "each month",
+            "monthly", "by month", "each month", "per month",
             "month end", "end of month", "eom", "month close",
         )),
         ("quarter", (
-            "quarterly", "by quarter", "each quarter",
+            "quarterly", "by quarter", "each quarter", "per quarter",
             "quarter end", "end of quarter", "eoq",
         )),
         ("year", (
-            "yearly", "annual", "by year", "each year",
+            "yearly", "annual", "by year", "each year", "per year", "per annum",
             "year end", "end of year", "eoy",
         )),
     ):

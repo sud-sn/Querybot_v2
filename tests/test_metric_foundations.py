@@ -220,6 +220,37 @@ class TestAnExplicitBreakdownBeatsTheWindow:
         assert requested_temporal_grain(question) == grain
 
     @pytest.mark.parametrize("question,grain", [
+        ("what is my total revenue per year", "year"),
+        ("revenue per month", "month"),
+        ("revenue per quarter", "quarter"),
+        ("revenue per day", "day"),
+        ("sales per week", "week"),
+        ("revenue per annum", "year"),
+    ])
+    def test_per_unit_is_a_breakdown_too(self, question, grain):
+        """Found live: "what is my total revenue per year" returned two hundred
+        DAILY rows under a column named Year. The word lists had "by year" and
+        "yearly" but not "per year", so nothing matched and the grain fell
+        through to the window's unit."""
+        from core.contextual_dates import requested_temporal_grain
+
+        assert requested_temporal_grain(question) == grain
+
+    @pytest.mark.parametrize("question", [
+        "what is revenue per active customer",
+        "revenue per customer",
+        "orders per profit centre",
+        "revenue per employee",
+    ])
+    def test_per_something_that_is_not_a_calendar_unit_is_not_a_grain(self, question):
+        """"per" is how every ratio metric in the product is phrased, so only
+        the calendar units are listed. "Revenue per active customer" must stay a
+        ratio and never become a time breakdown."""
+        from core.contextual_dates import requested_temporal_grain
+
+        assert requested_temporal_grain(question) == ""
+
+    @pytest.mark.parametrize("question,grain", [
         ("what is my revenue this year", "year"),
         ("revenue for the last 6 months", "month"),
         ("revenue for the last 7 days", "day"),
