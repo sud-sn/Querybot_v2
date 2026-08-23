@@ -3307,7 +3307,23 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     metric_formula_context = _format_metric_formula_context(_matched_metrics, account_id=account_id)
     _metric_formula_tables = set()
     for _metric in _matched_metrics:
-        _resolved_metric_tables = metric_source_tables(_metric, all_columns)
+        if _metric.get("_adhoc") and _metric.get("_source_tables"):
+            # A session draft knows its tables EXACTLY: every one came from a
+            # COL_REF binding this process issued. metric_source_tables infers
+            # them instead, and one of its rules is "any table whose columns
+            # intersect required_columns" -- which for a draft requiring
+            # CUS_DMS_KEY means every fact and dimension carrying that key.
+            #
+            # Live consequence: a two-table ratio resolved to ten entities, the
+            # graph could not reach SUP_DMS, and a question about customers was
+            # refused over a supplier table nobody mentioned. Inference is the
+            # right default for a registry metric someone typed by hand; it is
+            # strictly worse than the truth we already have here.
+            _resolved_metric_tables = {
+                str(t).upper() for t in _metric["_source_tables"] if t
+            }
+        else:
+            _resolved_metric_tables = metric_source_tables(_metric, all_columns)
         _metric["_resolved_source_tables"] = sorted(_resolved_metric_tables)
         _metric_formula_tables.update(_resolved_metric_tables)
     # The field plan was built from schema names before metric matching ran, so

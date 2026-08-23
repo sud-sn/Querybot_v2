@@ -395,3 +395,61 @@ class TestAMetricMaySpanAFactAndADimension:
             **self.SCHEMA, "CHATBOT_DB.EMDW_DMART.PAYROLL": ["SALARY"],
         })
         assert "SALARY" not in widened[draft.base_table]
+
+
+class TestADraftsTablesAreKnownNotInferred:
+    """The live failure: a two-table ratio resolved to ten entities, graph
+    planning blocked, and the answer was "the confirmed entity graph cannot
+    reach SUP_DMS" — a question about customers refused over a supplier table
+    nobody mentioned.
+
+    metric_source_tables INFERS a metric's tables, and one of its rules is "any
+    table whose columns intersect required_columns". A draft requiring
+    CUS_DMS_KEY therefore claims every fact and dimension carrying that key.
+    That inference is the right default for a registry metric someone typed by
+    hand. For a draft it is strictly worse than the truth, because every table
+    came from a COL_REF binding this process issued.
+    """
+
+    ALL_COLUMNS = {
+        "EMDW_DMART.CUS_ORD_IVC_FCT": {"IVC_GRS_AMT": "d", "CUS_DMS_KEY": "i"},
+        "EMDW_DMART.CUS_DMS": {"CUS_DMS_KEY": "i", "ACT_FLG": "c"},
+        "EMDW_DMART.CUS_TYP_DMS": {"CUS_DMS_KEY": "i"},
+        "EMDW_DMART.SUP_DMS": {"CUS_DMS_KEY": "i"},
+        "EMDW_DMART.WHS_DMS": {"CUS_DMS_KEY": "i"},
+    }
+
+    def _draft_metric(self):
+        return {
+            "name": "Revenue Per Active Customer",
+            "sql_template": (
+                "SUM(IVC_GRS_AMT) * 1.0 / NULLIF("
+                "COUNT(DISTINCT CASE WHEN ACT_FLG = 'Y' THEN CUS_DMS_KEY END), 0)"
+            ),
+            "required_columns": "IVC_GRS_AMT, CUS_DMS_KEY, ACT_FLG",
+            "base_table": "EMDW_DMART.CUS_ORD_IVC_FCT",
+            "_adhoc": True,
+            "_source_tables": ["EMDW_DMART.CUS_ORD_IVC_FCT", "EMDW_DMART.CUS_DMS"],
+        }
+
+    def test_inference_really_does_over_reach(self):
+        """Pin the cause, so the fix cannot be undone as an apparent tidy-up."""
+        from core.metric_scope import metric_source_tables
+
+        inferred = metric_source_tables(self._draft_metric(), self.ALL_COLUMNS)
+        assert any("SUP_DMS" in table for table in inferred)
+        assert len(inferred) > 2
+
+    def test_the_pipeline_prefers_the_bindings_over_inference(self):
+        pipeline = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        idx = pipeline.index("_metric_formula_tables = set()")
+        block = pipeline[idx:idx + 1400]
+        assert '_metric.get("_adhoc")' in block
+        assert '_metric["_source_tables"]' in block
+
+    def test_a_registry_metric_still_uses_inference(self):
+        """Inference is right for a metric someone typed by hand — it has no
+        bindings to fall back on."""
+        pipeline = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        idx = pipeline.index("_metric_formula_tables = set()")
+        assert "metric_source_tables(_metric, all_columns)" in pipeline[idx:idx + 1400]
