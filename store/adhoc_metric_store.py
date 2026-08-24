@@ -144,6 +144,28 @@ def _row_to_metric(row) -> dict[str, Any]:
     }
 
 
+def _tables_still_permitted(source_tables, allowed_tables) -> bool:
+    """Does this draft still only touch tables the user may see?
+
+    One rule, two readers. The listing read has always applied it; the read
+    used by the promotion frame did not, so a user whose grant was revoked
+    mid-thread could still turn that draft into a proposal naming a table they
+    can no longer query. A draft is a live reference to data, and an ACL that
+    only applies on the path someone remembered is not an ACL.
+    """
+    permitted = {_normalise_table(t) for t in allowed_tables or []}
+    required = {_normalise_table(t) for t in source_tables or [] if t}
+    if not required:
+        return True
+    # Compare on the bare table name too: an ACL may be stored unqualified
+    # while a draft records a fully-qualified name.
+    bare = {p.split(".")[-1] for p in permitted}
+    return all(
+        table in permitted or table.split(".")[-1] in bare
+        for table in required
+    )
+
+
 def active_session_metrics(
     account_id: str,
     session_id: str,
@@ -171,25 +193,28 @@ def active_session_metrics(
     metrics: list[dict[str, Any]] = []
     for row in rows:
         metric = _row_to_metric(row)
-        if allowed_tables is not None:
-            permitted = {_normalise_table(t) for t in allowed_tables}
-            required = {_normalise_table(t) for t in metric["_source_tables"] if t}
-            # Compare on the bare table name too: an ACL may be stored
-            # unqualified while a draft records a fully-qualified name.
-            if required and not all(
-                table in permitted or table.split(".")[-1] in {p.split(".")[-1] for p in permitted}
-                for table in required
-            ):
-                log.info(
-                    "Session metric draft %s dropped: its tables are no longer permitted",
-                    metric["_draft_id"],
-                )
-                continue
+        if allowed_tables is not None and not _tables_still_permitted(
+            metric["_source_tables"], allowed_tables
+        ):
+            log.info(
+                "Session metric draft %s dropped: its tables are no longer permitted",
+                metric["_draft_id"],
+            )
+            continue
         metrics.append(metric)
     return metrics
 
 
-def get_session_metric_draft(account_id: str, draft_id: int) -> dict[str, Any] | None:
+def get_session_metric_draft(
+    account_id: str, draft_id: int, allowed_tables=None,
+) -> dict[str, Any] | None:
+    """Read one draft.
+
+    ``allowed_tables`` is optional only so existing non-user-facing callers
+    keep working; every caller acting for a USER must pass it. Promotion is the
+    one path that turns a draft into a durable artifact, and it was the path
+    that never re-checked the ACL.
+    """
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM session_metric_draft WHERE id=? AND account_id=?",
@@ -207,6 +232,14 @@ def get_session_metric_draft(account_id: str, draft_id: int) -> dict[str, Any] |
         record["source_tables_list"] = json.loads(record.get("source_tables") or "[]")
     except (TypeError, ValueError):
         record["source_tables_list"] = []
+    if allowed_tables is not None and not _tables_still_permitted(
+        record["source_tables_list"], allowed_tables
+    ):
+        log.info(
+            "Session metric draft %s withheld: its tables are no longer permitted",
+            draft_id,
+        )
+        return None
     return record
 
 

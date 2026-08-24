@@ -87,6 +87,38 @@ class TestWhatIsRefusedAndWhy:
             months(list(range(1, 9))), policy_allows_derived_visual=False,
         ).reason_code == "policy_blocked"
 
+    def test_a_result_with_no_number_to_project_says_so(self):
+        """This refused with an EMPTY caveat, and the pipeline only surfaces a
+        refusal that has one -- so the user got a plain table and total silence
+        about why their forecast question produced no forecast."""
+        rows = [{"PERIOD": f"2026-{i + 1:02d}", "STATUS": "open"} for i in range(8)]
+        decision = evaluate_forecast_request(rows)
+        assert decision.reason_code == "no_measure"
+        assert decision.caveat, "a refusal the user cannot see is a silent failure"
+        assert "numeric" in decision.caveat
+
+    def test_no_refusal_the_user_can_reach_is_silent(self):
+        """Every reason_code reachable from a real result must carry a caveat.
+
+        no_rows is the one deliberate exception: an empty result already
+        explains itself, and adding a second sentence about forecasting would
+        be noise on top of "there is nothing here".
+        """
+        from core.forecast_gate import evaluate_forecast_request as _ev
+
+        cases = [
+            (months([100, 110, 120]), {}),
+            (months([100] * 8), {}),
+            (months(list(range(1, 9))), {"truncated": True}),
+            (months(list(range(1, 9))), {"policy_allows_derived_visual": False}),
+            ([{"PERIOD": f"2026-{i + 1:02d}", "STATUS": "x"} for i in range(8)], {}),
+            ([{"CUSTOMER": n, "REVENUE": i} for i, n in enumerate("abcdef")], {}),
+        ]
+        for rows, kwargs in cases:
+            decision = _ev(rows, **kwargs)
+            assert not decision.allowed
+            assert decision.caveat, f"{decision.reason_code} refuses silently"
+
     def test_every_refusal_says_what_would_make_it_possible(self):
         for rows, kwargs in [
             (months([1, 2, 3]), {}),

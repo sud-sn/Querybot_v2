@@ -3491,8 +3491,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # the registry is only ever written by the admin accept route.
             if msg_type == "metric_promotion_request":
                 try:
+                    # The ACL is re-checked HERE, not only when the draft is
+                    # listed. Promotion is the one path that turns a draft into
+                    # a durable artifact, and a grant revoked mid-thread has to
+                    # kill it on the way out as well as on the way in.
                     draft = store.get_session_metric_draft(
                         account_id, int(data.get("draft_id") or 0),
+                        allowed_tables=store.get_allowed_tables(portal_user),
                     )
                     owner = int((portal_user or {}).get("id") or 0)
                     if not draft or int(draft.get("portal_user_id") or -1) != owner:

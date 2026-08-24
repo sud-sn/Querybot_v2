@@ -155,7 +155,17 @@ def evaluate_forecast_request(
             "read as a time axis.",
         )
     if not numeric_candidates:
-        return _refuse("no_measure", "")
+        # This refused with an empty caveat, and the pipeline only surfaces a
+        # refusal that HAS one -- so a forecast question over a result with no
+        # numeric column produced a plain table and total silence about why.
+        # Every other refusal here names its reason; this one was written as
+        # though it were too obvious to say, which is exactly when a user
+        # assumes the product simply ignored them.
+        return _refuse(
+            "no_measure",
+            "I did not project future periods: this result has no numeric "
+            "column to project.",
+        )
 
     period_col, value_col = period_candidates[0], numeric_candidates[0]
 
