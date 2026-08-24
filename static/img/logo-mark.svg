@@ -1,54 +1,77 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="QueryBot">
   <!--
-    QueryBot mark — a Q that is also a speech bubble.
+    QueryBot mark — a speech bubble with the answer already inside it.
 
-    The ring is the letter's bowl; the pointer at 4 o'clock is both the Q's tail
-    and the tail of a bubble. That is the point: every earlier attempt put a
-    straight diagonal stroke there, and a straight diagonal leaving a circle is
-    a magnifying-glass handle no matter how it is tuned — start it deeper, make
-    it shorter, make it longer, it stays a lens. A triangle cannot be read that
-    way. It also changes what the mark says, from "search your data" to "ask a
-    question", which is the product.
+    The previous mark was a stroked Q whose counter was empty: honest, but it
+    said only "ask". This one says both halves of the product in one shape: a
+    filled bubble (the question) with three ascending bars cut out of it (the
+    data that comes back). The bars are CUT, not painted — they reveal the tile
+    through the glyph, so the mark stays a single-colour silhouette that
+    survives any ground.
 
-    Dropped from the original mark: the blue-to-violet gradient (which bands
-    into mud at favicon size), the magnifying glass, and the four-pointed
-    sparkle, which is Gemini's glyph by now.
+    The tail is still a closed filled shape, never a straight open stroke — a
+    straight diagonal leaving a circle reads as a magnifying-glass handle no
+    matter how it is tuned, which is the trap every earlier redesign fell into.
+    Here the tail is two outward-bowed quadratics meeting at a rounded tip at
+    48 degrees; it cannot be read as a handle because it is part of the fill.
 
-    Geometry verified rather than eyeballed: bowl r=10.2 with a 4.4 stroke, and
-    the composite sits on even 5.92 / 7.60 margins in the 40 canvas.
+    Geometry computed, not eyeballed: bubble r=12.6 at (20,19.2); the tail
+    spans 26..70 degrees with every arc endpoint ON the circle (the draft had
+    one 1.2 units off, which the browser silently "fixed" by inflating the
+    closing arc). Margins 6.6 / 7.4 / 6.95 / 6.31. Bars share one baseline at
+    y=24.6 and their farthest corner sits at r=9.77, leaving 2.8 of glyph
+    around every cut — which is what keeps the bars legible at 16px.
 
-    NO DOTS HERE. The animated component carries three dots inside the counter
-    that appear only while the product is working — a typing indicator that
-    stretches into bars as the answer streams. This file is the favicon *and*
-    the avatar on every assistant message, so it stays the resting mark: bowl
-    and pointer, legible at 16px, drawn once and then still. Forty marks
-    animating out of sync down a conversation is noise, not life. Animation is
-    declared inside the file because custom properties and host stylesheets do
-    not reach an SVG loaded through <img>.
+    The gradient lives ONLY in this standalone file. The inline component keeps
+    a flat token fill so its states can recolour with one custom property and
+    the whole mark rebrands with the design system; a gradient cannot do
+    either. Two stops inside one hue family — the old blue-to-violet banded
+    into mud at favicon size, and that is why it was removed.
+
+    This file is the favicon and the avatar on every assistant message, so it
+    animates ONCE on load and then rests. Forty marks animating out of sync
+    down a conversation is noise. Animation is declared inside the file because
+    host stylesheets and custom properties do not reach an SVG loaded through
+    <img>.
   -->
+  <defs>
+    <linearGradient id="qbTile" x1="0" y1="0" x2="0" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16332B"/>
+      <stop offset="1" stop-color="#0B1A15"/>
+    </linearGradient>
+    <linearGradient id="qbGlyph" x1="9" y1="8" x2="33" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3FDCBD"/>
+      <stop offset="1" stop-color="#10A088"/>
+    </linearGradient>
+  </defs>
+
   <style>
-    .qb-tile    { fill: #12211D; }
-    .qb-bowl    { fill: none; stroke: #1FBFA4; stroke-width: 4.4; }
-    .qb-pointer { fill: #1FBFA4; transform-box: view-box; transform-origin: 26.74px 26.58px; }
+    .qb-bubble { transform-box: view-box; transform-origin: 20px 20px; }
+    .qb-bar    { transform-box: fill-box; transform-origin: bottom center; }
 
-    /* 2*pi*10.2 = 64.09 */
-    .qb-bowl    { stroke-dasharray: 64.1; animation: qb-draw .72s cubic-bezier(.22,.8,.26,1) both; }
-    .qb-pointer { animation: qb-out .4s .46s cubic-bezier(.22,.8,.26,1) both; }
+    .qb-bubble { animation: qb-pop .5s cubic-bezier(.34,1.4,.4,1) both; }
+    .qb-bar    { animation: qb-rise .45s cubic-bezier(.22,.8,.26,1) both; }
+    .qb-bar:nth-of-type(2) { animation-delay: .1s; }
+    .qb-bar:nth-of-type(3) { animation-delay: .18s; }
 
-    @keyframes qb-draw { from { stroke-dashoffset: 64.1; opacity: .35 } to { stroke-dashoffset: 0; opacity: 1 } }
-    @keyframes qb-out  { from { opacity: 0; transform: scale(.2) } to { opacity: 1; transform: scale(1) } }
+    @keyframes qb-pop  { from { opacity: 0; transform: scale(.62) } to { opacity: 1; transform: scale(1) } }
+    @keyframes qb-rise { from { transform: scaleY(.15) } to { transform: scaleY(1) } }
 
     @media (prefers-reduced-motion: reduce) {
-      .qb-bowl    { animation: none; stroke-dashoffset: 0; opacity: 1; }
-      .qb-pointer { animation: none; opacity: 1; transform: scale(1); }
+      .qb-bubble, .qb-bar { animation: none; opacity: 1; transform: none; }
     }
   </style>
 
-  <rect class="qb-tile" width="40" height="40" rx="7"/>
+  <rect width="40" height="40" rx="9" fill="url(#qbTile)"/>
+  <rect x="0.5" y="0.5" width="39" height="39" rx="8.5" fill="none" stroke="#FFFFFF" stroke-opacity=".07"/>
 
-  <!-- The bowl of the Q, and the body of the bubble -->
-  <circle class="qb-bowl" cx="18.32" cy="20" r="10.2"/>
-
-  <!-- The tail of the Q, and the tail of the bubble -->
-  <path class="qb-pointer" d="M29.67 22.83 34.08 32.31 23.81 30.33Z"/>
+  <g class="qb-bubble">
+    <!-- Body and tail, one closed fill -->
+    <path fill="url(#qbGlyph)"
+          d="M31.32 24.72 A12.6 12.6 0 1 0 24.31 31.04 Q27.6 32.36 33.05 33.69 Q32.61 29.05 31.32 24.72 Z"/>
+    <!-- The answer: three bars cut through to the tile -->
+    <rect class="qb-bar" x="13.4" y="18.2" width="3.4" height="6.4"  rx="1.7" fill="url(#qbTile)"/>
+    <rect class="qb-bar" x="18.3" y="15.2" width="3.4" height="9.4"  rx="1.7" fill="url(#qbTile)"/>
+    <rect class="qb-bar" x="23.2" y="12.0" width="3.4" height="12.6" rx="1.7" fill="url(#qbTile)"/>
+  </g>
 </svg>

@@ -320,27 +320,61 @@ _GENERIC_AI_MARK_PARTS = (
     "qb-brand-motion__spark",   # four-pointed sparkle (Gemini's glyph)
     "qb-brand-motion__data",    # data rows floating in a lens
     "qb-brand-motion__badge",   # saturated tile
-    "linearGradient",           # gradient badge
+    "linearGradient",           # gradients stay OUT of the component: every
+                                # state recolours through one custom property,
+                                # which a gradient fill cannot do
     "M24.3 25.3 29 30v-2.2",    # the magnifier handle path
     "M30 3 1.27",               # the sparkle path
 )
 
 
+def _brand_macro(template: str) -> str:
+    source = _read(template)
+    return source.split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
+
+
 def test_the_animated_mark_carries_none_of_the_generic_ai_motifs():
     for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
-        source = _read(template)
-        macro = source.split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
-        found = [part for part in _GENERIC_AI_MARK_PARTS if part in macro]
+        found = [part for part in _GENERIC_AI_MARK_PARTS if part in _brand_macro(template)]
         assert not found, f"{template}: brand_motion still contains {found}"
 
 
-def test_the_animated_mark_is_a_q_built_from_an_analysis():
+def test_the_mark_is_a_bubble_carrying_three_bars():
+    """The 2026-08 redesign: a filled speech bubble (the question) with three
+    ascending bars inside it (the answer). The bars are the mark, not an
+    indicator -- they rest visible."""
     for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
-        macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
-        assert "qb-brand-motion__bowl" in macro, f"{template}: the Q bowl is missing"
-        assert "qb-brand-motion__pointer" in macro, f"{template}: the bubble pointer is missing"
-        dots = len(re.findall(r'class="qb-brand-motion__dot"', macro))
-        assert dots == 3, f"{template}: expected three dots in the counter, found {dots}"
+        macro = _brand_macro(template)
+        assert "qb-brand-motion__bowl" in macro, f"{template}: the bubble is missing"
+        bars = len(re.findall(r'class="qb-brand-motion__dot"', macro))
+        assert bars == 3, f"{template}: expected three bars, found {bars}"
+        heights = [float(h) for h in re.findall(
+            r'class="qb-brand-motion__dot"[^>]*height="([\d.]+)"', macro)]
+        assert heights == sorted(heights) and len(set(heights)) == 3, (
+            f"{template}: the bars must ascend -- that is the answer half of the mark"
+        )
+
+
+def test_the_tail_is_part_of_the_closed_fill_never_an_open_stroke():
+    """The whole reason the mark has this shape. A straight diagonal leaving a
+    circle reads as a magnifying-glass handle however it is tuned; a tail that
+    is two bowed curves inside one closed filled path cannot."""
+    for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
+        macro = _brand_macro(template)
+        bubble = re.search(r'class="qb-brand-motion__bowl" d="([^"]+)"', macro)
+        assert bubble, f"{template}: no bubble path"
+        d = bubble.group(1).strip()
+        assert d.endswith("Z"), f"{template}: the bubble must be a closed fill"
+        assert "A" in d, f"{template}: the bubble body must be a circular arc"
+        assert d.count("Q") >= 2, (
+            f"{template}: the tail must be bowed curves, not a straight diagonal"
+        )
+    css = _read("static/css/brand-motion.css")
+    bowl = css.split(".qb-brand-motion__bowl {", 1)[1].split("}", 1)[0]
+    assert "fill: var(--qb-mark-glyph)" in bowl, (
+        "the bubble must take a flat token fill, so every state can recolour it"
+    )
+    assert "stroke" not in bowl, "the bubble is a filled shape, never a stroked ring"
 
 
 def test_both_macro_copies_render_an_identical_mark():
@@ -348,42 +382,75 @@ def test_both_macro_copies_render_an_identical_mark():
     drifted apart in the first place."""
     marks = []
     for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
-        macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
+        macro = _brand_macro(template)
         svg = macro[macro.index("<svg"):macro.index("</svg>")]
         marks.append(re.sub(r"\s+", " ", svg).strip())
     assert marks[0] == marks[1], "admin and portal brand_motion marks have drifted apart"
 
 
 def test_the_bars_carry_the_motion_across_every_state():
-    """A single blinking element is not motion. The bars must animate at rest,
-    while working, and on both terminal states."""
+    """A single blinking element is not motion. The bars must crouch into dots
+    and type while working, stream while answering, land on success, drop on
+    error, pop on hover, and rise on the auth intro."""
     css = _read("static/css/brand-motion.css")
-    for keyframes in ("qb-dot-type", "qb-dot-stream", "qb-dot-rise", "qb-dot-drop",
-                      "qb-bowl-breathe", "qb-bowl-draw", "qb-pointer-out"):
+    for keyframes in ("qb-bar-crouch", "qb-bar-bounce", "qb-bar-stream", "qb-bar-land",
+                      "qb-bar-drop", "qb-bar-pop", "qb-bar-rise",
+                      "qb-bubble-breathe", "qb-bubble-pop", "qb-bubble-shake"):
         assert f"@keyframes {keyframes}" in css, f"{keyframes} is not defined"
         assert css.count(keyframes) >= 2, f"{keyframes} is defined but never applied"
 
-    # Bars grow from their baseline, not their centre, or they float.
-    dot_rule = css.split(".qb-brand-motion__dot {", 1)[1].split("}", 1)[0]
-    assert "transform-origin: bottom" in dot_rule, (
-        "dots must stretch upward from their baseline, the way a bar chart does"
+    bar_rule = css.split(".qb-brand-motion__dot {", 1)[1].split("}", 1)[0]
+    assert "transform-origin: bottom" in bar_rule, (
+        "bars must stretch from their baseline, the way a bar chart does"
     )
-    assert "opacity: 0" in dot_rule, (
-        "the dots must rest hidden — the resting mark is bowl and pointer only, "
-        "which is what keeps the 16px favicon legible"
+    assert "opacity: 1" in bar_rule, (
+        "the bars rest VISIBLE -- they are the mark itself, not an indicator"
+    )
+
+
+def test_the_mark_is_interactive_only_at_rest():
+    """Hover and press respond at idle, and are scoped so they can never fight
+    a working state's animation."""
+    css = _read("static/css/brand-motion.css")
+    assert '[data-state="idle"]:hover' in css, "the resting mark must respond to hover"
+    assert '[data-state="idle"]:active' in css, "the resting mark must respond to press"
+    for line in css.splitlines():
+        if ":hover" in line and "qb-brand-motion" in line and "@" not in line:
+            assert '[data-state="idle"]' in line, (
+                f"hover styling outside the idle state would fight the working "
+                f"animation: {line.strip()}"
+            )
+
+
+def test_the_typing_bounce_carries_the_crouch_in_every_frame():
+    """Two transform animations replace each other rather than composing, so if
+    the bounce frames dropped the scaleY crouch the dots would flash back to
+    full-height bars every cycle."""
+    css = _read("static/css/brand-motion.css")
+    bounce = css.split("@keyframes qb-bar-bounce {", 1)[1]
+    bounce = bounce[:bounce.index("@keyframes")]
+    lines = [ln for ln in bounce.splitlines() if "transform:" in ln]
+    assert lines and all("scaleY(var(--qb-squash" in ln for ln in lines), (
+        "every qb-bar-bounce frame must keep scaleY(var(--qb-squash)) or the "
+        "dots pop back into bars mid-bounce"
     )
 
 
 def test_reduced_motion_leaves_every_animated_part_at_full_value():
-    """The animations drive scaleY and stroke-dashoffset, so switching them off
-    must not leave a bar collapsed or a stroke half-drawn."""
+    """The animations drive opacity and scaleY, so switching them off must not
+    leave a bar crouched or the bubble mid-breath."""
     css = _read("static/css/brand-motion.css")
-    reduced = css.split("prefers-reduced-motion", 1)[1]
-    assert "stroke-dashoffset: 0" in reduced, "the bowl could be left half-drawn"
-    assert "transform: scale(1)" in reduced, "the bowl or pointer could be left shrunk"
-    # The dots rest hidden on purpose: bowl and pointer alone IS the static mark.
-    dot = reduced.split(".qb-brand-motion__dot", 1)[1].split("}", 1)[0]
-    assert "opacity: 0" in dot, "the dots must rest hidden, not frozen mid-animation"
+    # Split on the @media token, not the phrase: the file header MENTIONS
+    # reduced motion in prose, and splitting there reads the base rules instead.
+    reduced = css.split("@media (prefers-reduced-motion", 1)[1]
+    assert "animation: none" in reduced
+    bowl = reduced.split(".qb-brand-motion__bowl", 1)[1].split("}", 1)[0]
+    assert "scale(1)" in bowl, "the bubble could be left mid-breath"
+    bar = reduced.split(".qb-brand-motion__dot", 1)[1].split("}", 1)[0]
+    assert "opacity: 1" in bar and "scaleY(1)" in bar, (
+        "with motion off the bars must stand at full height -- the bubble with "
+        "three ascending bars IS the static mark"
+    )
 
 
 def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
@@ -394,34 +461,38 @@ def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
     assert not stale, f"brand-motion.css still references the old brand blue: {stale}"
 
 
-def test_the_bowl_cannot_fail_to_close():
-    """An earlier mark rounded a dash length to 58.4 against a circumference of
-    58.4336 and left a hairline gap in the ring. The resting bowl must carry no
-    dasharray at all, so rounding can never reopen it."""
-    css = _read("static/css/brand-motion.css")
-    bowl = css.split(".qb-brand-motion__bowl {", 1)[1].split("}", 1)[0]
-    assert "stroke-dasharray" not in bowl, (
-        "the resting bowl must not be dashed; only the intro adds dashes"
+def test_the_standalone_mark_matches_the_component_geometry():
+    """logo-mark.svg is the favicon and every chat avatar; the macro is the
+    animated component. If their geometry drifts the product wears two logos."""
+    svg = _read("static/img/logo-mark.svg")
+    macro = _brand_macro("portal/templates/macros.html")
+    svg_bubble = re.search(r'<path[^>]*d="(M31\.32[^"]+)"', svg)
+    macro_bubble = re.search(r'class="qb-brand-motion__bowl" d="([^"]+)"', macro)
+    assert svg_bubble and macro_bubble
+    assert svg_bubble.group(1).strip() == macro_bubble.group(1).strip(), (
+        "the standalone SVG and the component draw different bubbles"
     )
-    assert "vector-effect" not in bowl, (
-        "non-scaling-stroke makes the browser compute dasharray in screen units, "
-        "which once rendered one arc as six"
+    svg_bars = re.findall(
+        r'class="qb-bar" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"', svg)
+    macro_bars = re.findall(
+        r'class="qb-brand-motion__dot" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"',
+        macro)
+    assert svg_bars and svg_bars == macro_bars, (
+        "the bars have drifted between the SVG and the component"
     )
 
 
-def test_the_tail_is_a_triangle_not_a_diagonal_stroke():
-    """The whole reason this mark exists. A straight diagonal leaving a circle
-    reads as a magnifying-glass handle however it is tuned; a triangle cannot."""
-    for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
-        macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
-        pointer = re.search(r'class="qb-brand-motion__pointer" d="([^"]+)"', macro)
-        assert pointer, f"{template}: no pointer path"
-        assert pointer.group(1).strip().endswith("Z"), (
-            f"{template}: the pointer must be a closed triangle, not an open stroke"
-        )
-    css = _read("static/css/brand-motion.css")
-    ptr = css.split(".qb-brand-motion__pointer {", 1)[1].split("}", 1)[0]
-    assert "stroke" not in ptr, "the pointer is a filled shape, never a stroked line"
+def test_the_standalone_mark_animates_once_and_respects_reduced_motion():
+    """The file is the avatar on every assistant message: it may animate ON
+    LOAD only, and must rest still -- forty marks looping out of sync down a
+    conversation is noise, not life."""
+    svg = _read("static/img/logo-mark.svg")
+    assert "infinite" not in svg, "the standalone mark must not loop"
+    assert "prefers-reduced-motion" in svg, "the standalone mark must honour reduced motion"
+    assert 'gradientUnits="userSpaceOnUse"' in svg, (
+        "the bar cut-outs share the tile gradient; objectBoundingBox would "
+        "restart the gradient inside every bar and the cuts would not match the tile"
+    )
 
 
 # ── Admin console: colour must come from the tokens ──────────────────────────

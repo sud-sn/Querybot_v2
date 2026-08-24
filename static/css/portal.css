@@ -402,10 +402,17 @@ body { background: var(--bg); }
   height: 28px;
   flex: 0 0 28px;
   border-radius: 7px;
-  background: var(--primary);
+  /* Transparent: the mark carries its own tile now, and a teal ground behind a
+     rounder dark tile peeked out at all four corners. */
+  background: transparent;
   box-shadow: none;
 }
 .portal-brand-mark .qb-logo-mark { width: 100%; height: 100%; display: block; }
+/* The sidebar mark is an <img>, so host CSS can only move the whole tile —
+   which is exactly enough: a small tip of the hat on hover, spring-eased. */
+.portal-brand-mark .qb-logo-mark { transition: transform .22s cubic-bezier(.34,1.4,.4,1); }
+.portal-brand:hover .qb-logo-mark { transform: rotate(-4deg) scale(1.07); }
+.portal-brand:active .qb-logo-mark { transform: scale(.94); transition-duration: .09s; }
 .portal-brand-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .portal-sidebar-toggle,

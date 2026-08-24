@@ -8,28 +8,33 @@
 <div{% if root_id %} id="{{ root_id }}"{% endif %}
      class="qb-brand-motion qb-brand-motion--{{ size }}{% if extra_class %} {{ extra_class }}{% endif %}"
      data-state="{{ state }}"{% if status %} role="status" aria-live="polite"{% else %} aria-hidden="true"{% endif %}>
-  {# A Q that is also a speech bubble. The bowl is the letter; the pointer at
-     4 o'clock is both the Q's tail and the tail of a bubble — which is why this
-     shape can never collapse into a magnifying glass the way a straight
-     diagonal stroke does. It also changes what the mark says: not "search your
-     data" but "ask a question", which is the product.
+  {# A speech bubble with the answer already inside it: a filled bubble (the
+     question) carrying three ascending bars (the data that comes back). The
+     tail is two outward-bowed quadratics meeting at a rounded tip — part of
+     the closed fill, so it can never be read as a magnifying-glass handle the
+     way a straight diagonal stroke leaving a circle always is.
 
-     The three dots inside the counter are hidden at rest, so the resting mark
-     is just the bowl and the pointer. They appear only while the product is
-     working, where they read as a typing indicator, then stretch into bars as
-     the answer arrives. Hiding them at rest is also what keeps the 16px
-     favicon legible.
+     The bars REST VISIBLE — they are the mark, not an indicator. While the
+     product works they crouch into dots and bounce (the typing indicator
+     everyone knows), stream while the answer arrives, land as bars again on
+     success, and drop flat on error. So the same three shapes carry the whole
+     turn: promise, work, answer.
 
-     Geometry verified: counter radius 8.00, the tallest bar corner reaches
-     7.94, and the composite sits on 5.92/7.60 margins in a 40 canvas. `uid` is
-     kept for call-site compatibility. #}
+     The fill is a flat token colour, deliberately not a gradient: every state
+     recolours the whole glyph through one custom property, and the mark
+     rebrands with the design system. The gradient lives only in the standalone
+     logo-mark.svg, which never changes state.
+
+     Geometry computed, not eyeballed: bubble r=12.6 at (20,19.2); tail spans
+     26..70 degrees with every arc endpoint on the circle; bars share one
+     baseline at y=24.6 and their farthest corner sits at r=9.77, keeping 2.8
+     of glyph around every cut. `uid` is kept for call-site compatibility. #}
   <svg class="qb-brand-motion__mark" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
-    <circle class="qb-brand-motion__bowl" cx="18.32" cy="20" r="10.2"/>
-    <path class="qb-brand-motion__pointer" d="M29.67 22.83 34.08 32.31 23.81 30.33Z"/>
+    <path class="qb-brand-motion__bowl" d="M31.32 24.72 A12.6 12.6 0 1 0 24.31 31.04 Q27.6 32.36 33.05 33.69 Q32.61 29.05 31.32 24.72 Z"/>
     <g class="qb-brand-motion__dots">
-      <rect class="qb-brand-motion__dot" x="13.12" y="18.5" width="3" height="3" rx="1.5"/>
-      <rect class="qb-brand-motion__dot" x="16.82" y="18.5" width="3" height="3" rx="1.5"/>
-      <rect class="qb-brand-motion__dot" x="20.52" y="18.5" width="3" height="3" rx="1.5"/>
+      <rect class="qb-brand-motion__dot" x="13.4" y="18.2" width="3.4" height="6.4"  rx="1.7"/>
+      <rect class="qb-brand-motion__dot" x="18.3" y="15.2" width="3.4" height="9.4"  rx="1.7"/>
+      <rect class="qb-brand-motion__dot" x="23.2" y="12.0" width="3.4" height="12.6" rx="1.7"/>
     </g>
   </svg>
   {% if label %}<span{% if label_id %} id="{{ label_id }}"{% endif %} class="{{ label_class }}" data-brand-label>{{ label }}</span>{% endif %}
