@@ -5497,9 +5497,16 @@ async def metrics_page(request: Request, account_id: str):
         raw = store.get_db_config(db_cfg_id)
         if raw:
             db_type = raw.get("db_type", "azure_sql")
+    # The accept and reject routes have existed since the proposal model
+    # landed, and store.list_metric_proposals has existed alongside them with
+    # ZERO callers -- so nothing could enumerate the queue and the admin inbox
+    # badge linked to /metrics#proposals, an anchor that resolved to nothing.
+    # A review queue nobody can open is a queue that fills up silently.
+    proposals = store.list_metric_proposals(account_id, status="pending")
     return _resp(request, "client_metrics.html", {
         "client":  client,
         "metrics": metrics,
+        "proposals": proposals,
         "saved":   request.query_params.get("saved"),
         "error":   request.query_params.get("error"),
         "db_type": db_type,

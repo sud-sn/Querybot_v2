@@ -31,6 +31,22 @@
 .metric-section-header{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;margin:.55rem 0 .75rem;flex-wrap:wrap}
 .metric-section-header h2{font-size:17px;font-weight:900;margin:0;color:var(--text)}
 .metric-section-header p{margin:.25rem 0 0;font-size:12px;color:var(--text-muted);line-height:1.5}
+/* ── Metric requests queue ──────────────────────────────────────────── */
+.metric-proposals{margin:1rem 0 1.25rem}
+.mp-count{display:inline-block;min-width:20px;padding:0 6px;border-radius:10px;background:var(--warn-bg,#fef3c7);color:var(--warn-fg,#92400e);font-size:12px;font-weight:800;vertical-align:middle}
+.mp-empty{padding:.85rem 1rem;border:1px dashed var(--border);border-radius:8px;color:var(--text-muted);font-size:12.5px}
+.mp-card{border:1px solid var(--border);border-radius:8px;padding:.85rem 1rem;margin-bottom:.6rem;background:var(--surface,#fff)}
+.mp-head{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.3rem}
+.mp-head strong{font-size:14px}
+.mp-badge{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:1px 7px;border-radius:10px;background:var(--chip-bg,#eef2ff);color:var(--chip-fg,#3730a3)}
+.mp-conf{font-size:11.5px;color:var(--text-muted)}
+.mp-asked{font-size:12px;color:var(--text-muted);margin-bottom:.4rem}
+.mp-formula{display:block;font-family:Consolas,monospace;font-size:12.5px;padding:.5rem .6rem;border-radius:6px;background:var(--code-bg,#f6f8fa);overflow-x:auto;white-space:pre;margin-bottom:.45rem}
+.mp-meta{display:flex;gap:.75rem;flex-wrap:wrap;font-size:11.5px;color:var(--text-muted);margin-bottom:.55rem}
+.mp-ok{color:var(--ok-fg,#166534)}
+.mp-actions{display:flex;align-items:center;gap:.5rem}
+.mp-status{font-size:12px;color:var(--text-muted)}
+.mp-status.mp-error{color:var(--err-fg,#b91c1c)}
 .metric-card{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1rem;background:var(--surface);box-shadow:var(--shadow)}
 .metric-card-header{padding:.8rem 1rem;background:linear-gradient(180deg,var(--surface-2),var(--surface));border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap}
 .metric-card-body{padding:1rem}
@@ -446,6 +462,69 @@
 
 {% if saved %}<div class="alert alert-success">Saved successfully.</div>{% endif %}
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{# The admin inbox has always linked here. Until now #proposals resolved to
+   nothing, so requests composed in chat queued up where no one could see them. #}
+<div id="proposals" class="metric-proposals">
+  <div class="metric-section-header">
+    <div>
+      <h2>Metric requests{% if proposals %} <span class="mp-count">{{ proposals | length }}</span>{% endif %}</h2>
+      <p>
+        Composed in chat by someone who already has their answer. Accepting one
+        makes it a shared metric for everyone and recompiles the semantic contract.
+      </p>
+    </div>
+  </div>
+
+  {% if not proposals %}
+    <div class="mp-empty">Nothing waiting. Requests appear here when a user asks for a calculation they composed to be shared.</div>
+  {% else %}
+    {% for p in proposals %}
+    <div class="mp-card" id="mp-{{ p.id }}">
+      <div class="mp-head">
+        <strong>{{ p.payload.name or 'Untitled metric' }}</strong>
+        <span class="mp-badge">{{ 'update' if p.action == 'update_metric' else 'new' }}</span>
+        {% if p.confidence_score %}<span class="mp-conf">confidence {{ p.confidence_score }}%</span>{% endif %}
+      </div>
+      {% if p.source_question %}<div class="mp-asked">asked: “{{ p.source_question }}”</div>{% endif %}
+      <code class="mp-formula">{{ p.payload.sql_template }}</code>
+      <div class="mp-meta">
+        {% if p.payload.base_table %}<span>{{ p.payload.base_table }}</span>{% endif %}
+        {% if p.validation and p.validation.valid %}<span class="mp-ok">validated</span>{% endif %}
+        {% if p.dryrun and p.dryrun.status == 'ok' %}<span class="mp-ok">dry run passed{% if p.dryrun.probe_kind %} ({{ p.dryrun.probe_kind }}){% endif %}</span>{% endif %}
+      </div>
+      <div class="mp-actions">
+        <button type="button" class="btn btn-primary btn-sm" onclick="reviewProposal({{ p.id }}, 'accept')">Accept</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="reviewProposal({{ p.id }}, 'reject')">Reject</button>
+        <span class="mp-status" id="mp-status-{{ p.id }}"></span>
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<script>
+async function reviewProposal(id, action) {
+  const status = document.getElementById('mp-status-' + id);
+  status.textContent = action === 'accept' ? 'Accepting…' : 'Rejecting…';
+  try {
+    const res  = await fetch(
+      `/admin/clients/{{ client.account_id }}/metrics/api/proposals/${id}/${action}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    );
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && body.status === 'ok') { location.reload(); return; }
+    // A 409 here is the drift guard, and its detail names the fields that
+    // moved — showing it is the whole point of refusing rather than silently
+    // overwriting someone's edit.
+    status.textContent = body.detail || `Failed (${res.status})`;
+    status.classList.add('mp-error');
+  } catch (err) {
+    status.textContent = 'Request failed';
+    status.classList.add('mp-error');
+  }
+}
+</script>
 
 <div class="metric-guidance">
   <strong>Production rule:</strong>

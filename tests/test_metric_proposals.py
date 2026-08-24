@@ -305,3 +305,61 @@ class TestTheAcceptRouteActuallyRuns:
         assert len(params) == 1, (
             "get_metric grew a parameter; the accept route passes exactly one"
         )
+
+
+class TestTheQueueIsReachable:
+    """A review queue nobody can open is a queue that fills up silently.
+
+    store.list_metric_proposals shipped with the proposal model and had ZERO
+    production callers. The admin inbox badge linked to /metrics#proposals --
+    an anchor that resolved to nothing, on a page that never fetched a
+    proposal. Both chat surfaces could file requests; no administrator could
+    see one.
+    """
+
+    @staticmethod
+    def _render(account_id):
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from admin import routes
+
+        request = MagicMock()
+        request.query_params = {}
+        with patch.object(routes, "_is_auth", return_value=True):
+            resp = asyncio.run(routes.metrics_page(request, account_id))
+        return resp.body.decode("utf-8", "replace")
+
+    def test_a_pending_proposal_appears_on_the_metrics_page(self, account):
+        _proposal(account)
+        html = self._render(account)
+        assert 'id="proposals"' in html, "the anchor the admin inbox links to"
+        assert "Revenue Per Customer" in html
+        assert "SUM(AMOUNT) * 1.0 / NULLIF(COUNT(DISTINCT CUS_NO), 0)" in html
+
+    def test_the_question_that_prompted_it_is_shown(self, account):
+        """An administrator approving a metric needs to know what someone was
+        actually trying to answer with it."""
+        _proposal(account)
+        assert "revenue per active customer" in self._render(account)
+
+    def test_the_evidence_is_shown_not_just_the_formula(self, account):
+        _proposal(account)
+        html = self._render(account)
+        assert "validated" in html and "dry run passed" in html
+
+    def test_an_accepted_proposal_leaves_the_queue(self, account):
+        pid = _proposal(account)
+        assert "Revenue Per Customer" in self._render(account)
+        store.review_metric_proposal(account, pid, "accepted", reviewed_by="admin")
+        html = self._render(account)
+        assert "Nothing waiting" in html
+
+    def test_another_clients_proposals_never_appear(self, account):
+        other = f"acct{os.urandom(4).hex()}"
+        store.upsert_client(other, "Other Ltd")
+        _proposal(other, payload={"name": "Someone Elses Metric"})
+        assert "Someone Elses Metric" not in self._render(account)
+
+    def test_an_empty_queue_says_so_rather_than_showing_nothing(self, account):
+        assert "Nothing waiting" in self._render(account)
