@@ -604,3 +604,59 @@ class TestTheFilterCheckIsObservable:
         assert empty == ()
         assert "ACT_FLG" in caplog.text
         assert "matched no rows: none" in caplog.text
+
+
+class TestTheDryRunGateRejectsAnythingNotProven:
+    """"Not an error" is not "verified".
+
+    DryRunOutcome has three statuses. The gate was written as
+    `if outcome.status == "error"`, so "skipped" -- returned when there is no
+    database configured, no discovered tables, or no such account, i.e. exactly
+    the cases where NOTHING was probed -- passed through as though the formula
+    had been proven against the live warehouse. The dry run is the last gate
+    before a composed metric answers a real question, and it was accepting
+    silence as proof.
+
+    The condition is lifted out of the shipped source and evaluated, rather than
+    restated here. A restatement would pass whatever the file says.
+    """
+
+    def _gate_condition(self) -> str:
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parents[1] / "gateway" / "webhooks.py").read_text(
+            encoding="utf-8",
+        )
+        marker = "outcome.status"
+        idx = src.index("outcome = await dry_run_metric_formula(")
+        window = src[idx:idx + 1400]
+        line = next(
+            ln.strip() for ln in window.splitlines()
+            if ln.strip().startswith("if ") and marker in ln
+        )
+        assert line.endswith(":"), line
+        return line[len("if "):-1]
+
+    @pytest.mark.parametrize("status,should_fall_through", [
+        ("ok", False),
+        ("error", True),
+        ("skipped", True),
+    ])
+    def test_only_a_proven_dry_run_passes_the_gate(self, status, should_fall_through):
+        from core.metric_dryrun import DryRunOutcome
+
+        outcome = DryRunOutcome(status=status, detail="probe detail")
+        assert bool(eval(self._gate_condition(), {}, {"outcome": outcome})) is should_fall_through
+
+    def test_every_status_the_outcome_can_carry_is_covered(self):
+        """If a fourth status is added, this test has to be revisited rather
+        than silently letting the new one through."""
+        import re
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parents[1] / "core" / "metric_dryrun.py").read_text(
+            encoding="utf-8",
+        )
+        declared = re.search(r'status: str\s*#\s*(.+)', src).group(1)
+        found = set(re.findall(r'"(\w+)"', declared))
+        assert found == {"ok", "error", "skipped"}, f"statuses changed: {found}"

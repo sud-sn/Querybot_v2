@@ -177,3 +177,131 @@ class TestTheAcceptPathIsTheOnlyWayIn:
             encoding="utf-8",
         )
         assert routes.count("_apply_metric_create(account_id,") == 2
+
+
+class TestTheAcceptRouteActuallyRuns:
+    """Executing the route, not reading it.
+
+    Everything above this class tests the store layer or scans source text, and
+    every one of those was green while the accept route contained a guaranteed
+    TypeError on half its inputs:
+
+        store.get_metric(account_id, int(proposal.get("target_metric_id")))
+
+    store.get_metric takes ONE argument. Accepting an update proposal was a 500,
+    always, and no test noticed because none of them called the route. The two
+    source-scan tests immediately above are exactly the pattern that missed it.
+
+    A second defect hid behind the first: even with the call fixed, every
+    proposal went to _apply_metric_CREATE, so an accepted update would have
+    tried to insert a duplicate metric under an existing name.
+    """
+
+    @staticmethod
+    def _run(coro):
+        import asyncio
+
+        return asyncio.run(coro)
+
+    @staticmethod
+    def _request():
+        from unittest.mock import MagicMock
+
+        return MagicMock()
+
+    def _accept(self, account_id, proposal_id):
+        import json as _json
+        from unittest.mock import patch
+
+        from admin import routes
+
+        with patch.object(routes, "_is_auth", return_value=True), \
+                patch.object(routes, "_after_semantic_approval"), \
+                patch.object(routes, "_notify_metric_proposal_reviewed", create=True):
+            resp = self._run(routes.metric_proposal_accept(
+                self._request(), account_id, proposal_id,
+            ))
+        return resp.status_code, _json.loads(bytes(resp.body))
+
+    def _seed_metric(self, account_id, name="Revenue Per Customer"):
+        store.save_metric(account_id, {
+            "name": name,
+            "sql_template": "SUM(AMOUNT)",
+            "formula_type": "expression",
+            "required_columns": "AMOUNT",
+            "base_table": "DW.SALES_FACT",
+        }, db_type="azure_sql")
+        for row in store.list_metrics(account_id, active_only=False):
+            if str(row.get("name") or "") == name:
+                return int(row["id"]), row
+        raise AssertionError("seed metric not saved")
+
+    def test_accepting_a_create_proposal_writes_one_metric(self, account):
+        pid = _proposal(account)
+        code, body = self._accept(account, pid)
+        assert code == 200, body
+        names = [m["name"] for m in store.list_metrics(account, active_only=False)]
+        assert names.count("Revenue Per Customer") == 1
+
+    def test_accepting_an_update_proposal_updates_rather_than_500s(self, account):
+        """The regression. Before the fix this raised TypeError from the route
+        itself, so the assertion below never got the chance to run."""
+        metric_id, live = self._seed_metric(account)
+        pid = store.create_metric_proposal(
+            account, action="update_metric", target_metric_id=metric_id,
+            before=dict(live),
+            payload={
+                "name": "Revenue Per Customer",
+                "sql_template": "SUM(AMOUNT) - SUM(DISCOUNT)",
+                "formula_type": "expression",
+                "required_columns": "AMOUNT, DISCOUNT",
+                "base_table": "DW.SALES_FACT",
+            },
+        )
+        code, body = self._accept(account, pid)
+        assert code == 200, body
+
+        rows = [m for m in store.list_metrics(account, active_only=False)
+                if m["name"] == "Revenue Per Customer"]
+        assert len(rows) == 1, "an update must not create a second metric"
+        assert rows[0]["sql_template"] == "SUM(AMOUNT) - SUM(DISCOUNT)"
+        assert int(rows[0]["id"]) == metric_id
+
+    def test_an_update_whose_metric_moved_is_refused_as_a_conflict(self, account):
+        metric_id, live = self._seed_metric(account, "Margin")
+        pid = store.create_metric_proposal(
+            account, action="update_metric", target_metric_id=metric_id,
+            before=dict(live),
+            payload={**dict(live), "sql_template": "SUM(A) - SUM(B)"},
+        )
+        store.update_metric(metric_id, {"sql_template": "SUM(SOMETHING_ELSE)"},
+                            account_id=account, db_type="azure_sql")
+        code, body = self._accept(account, pid)
+        assert code == 409, body
+        assert "changed since" in body["detail"]
+
+    def test_an_update_targeting_another_tenants_metric_is_not_found(self, account):
+        """store.get_metric does not scope by account, so the tenant check has
+        to be explicit. The broken call passed account_id as the metric id,
+        which meant the check it looked like it was doing never happened."""
+        other = f"acct{os.urandom(4).hex()}"
+        store.upsert_client(other, "Other Ltd")
+        metric_id, live = self._seed_metric(other, "Someone Elses Metric")
+        pid = store.create_metric_proposal(
+            account, action="update_metric", target_metric_id=metric_id,
+            before=dict(live), payload={**dict(live), "sql_template": "SUM(X)"},
+        )
+        code, body = self._accept(account, pid)
+        assert code == 404, body
+        still = store.get_metric(metric_id)
+        assert still["sql_template"] == "SUM(AMOUNT)", "another tenant's metric was written"
+
+    def test_the_route_reads_get_metric_with_the_arity_it_has(self):
+        """The specific defect, pinned by calling the real function the way the
+        route calls it — not by grepping for the call."""
+        import inspect
+
+        params = inspect.signature(store.get_metric).parameters
+        assert len(params) == 1, (
+            "get_metric grew a parameter; the accept route passes exactly one"
+        )

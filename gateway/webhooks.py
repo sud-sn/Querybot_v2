@@ -1576,8 +1576,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 base_table=draft.base_table,
                 metric_builder_config=draft.metric_builder_config,
             )
-            if outcome.status == "error":
-                return await _fall_through(f"dry run: {outcome.detail[:120]}")
+            # "not an error" is not "verified". DryRunOutcome has three
+            # statuses, and "skipped" is returned when there is no database
+            # configured, no discovered tables, or no such account -- exactly
+            # the cases where nothing was probed at all. Gating on == "error"
+            # let an unprobed formula through as if it had been proven against
+            # the live warehouse, which is the one thing this gate exists for.
+            if outcome.status != "ok":
+                return await _fall_through(
+                    f"dry run {outcome.status}: {(outcome.detail or '')[:120]}"
+                )
 
             # The dry run proves the formula BINDS. It cannot prove it MATCHES,
             # and the filter VALUES are the one part the model is guessing --

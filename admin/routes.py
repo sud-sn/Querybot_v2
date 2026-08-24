@@ -6037,6 +6037,52 @@ def _apply_metric_create(account_id: str, metric: dict, *, db_type: str) -> int:
     return metric_id
 
 
+def _apply_metric_update(account_id: str, metric_id: int, metric: dict, *, db_type: str) -> None:
+    """The update half of _apply_metric_create, and its mirror image.
+
+    An accepted update proposal REPLACES the metric's fields with the proposed
+    payload rather than merging field by field. That is safe only because of the
+    drift check the caller runs first: if the live metric moved since the
+    proposal was written, the accept is refused with a 409 and a human looks at
+    it again. Given the metric has not moved, applying the payload whole is
+    exactly what an administrator editing it by hand would do, and a partial
+    merge would invent a third version that neither the proposer nor the
+    registry ever saw.
+
+    Same three steps as the create applier, in the same order, for the same
+    reason: registry, semantic model, contract recompile. Two appliers that
+    drift apart give you a metric the compiled contract disagrees with.
+    """
+    name = str(metric.get("name") or "").strip()
+    payload = dict(metric)
+    payload.pop("id", None)          # the target is an argument, not a field
+    payload.pop("account_id", None)  # never let a payload retarget the tenant
+    store.update_metric(metric_id, payload, account_id=account_id, db_type=db_type)
+
+    try:
+        from core.semantic_model import patch_metric_approval
+        _sm_state = store.get_client_state(account_id)
+        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
+        if _sm_kb_dir:
+            _req_cols = [
+                c.strip() for c in str(metric.get("required_columns") or "").split(",") if c.strip()
+            ]
+            _base_parts = str(metric.get("base_table") or "").strip().split(".")
+            patch_metric_approval(
+                kb_dir=_sm_kb_dir,
+                table_name=_base_parts[-1],
+                schema_name=_base_parts[-2] if len(_base_parts) >= 2 else "",
+                metric_name=name,
+                column_name=_req_cols[0] if _req_cols else "",
+                sql_template=str(metric.get("sql_template") or "").strip(),
+                is_active=bool(int(metric.get("is_active", 1) or 0)),
+            )
+    except Exception as _sm_exc:
+        log.warning("patch_metric_approval (update) skipped for %s: %s", name, _sm_exc)
+
+    _after_semantic_approval(account_id, f"metric '{name}' updated")
+
+
 @router.post("/clients/{account_id}/metrics/api/proposals/{proposal_id}/accept")
 async def metric_proposal_accept(request: Request, account_id: str, proposal_id: int):
     """Turn a proposed metric into a real one. The ONLY path that does.
@@ -6067,8 +6113,21 @@ async def metric_proposal_accept(request: Request, account_id: str, proposal_id:
     # A proposal describes a change from a specific starting point. If the live
     # metric moved since, accepting would overwrite someone's edit with a diff
     # computed against a version that no longer exists.
-    if proposal.get("action") == "update_metric":
-        live = store.get_metric(account_id, int(proposal.get("target_metric_id") or 0))
+    target_metric_id = int(proposal.get("target_metric_id") or 0)
+    is_update = proposal.get("action") == "update_metric"
+    if is_update:
+        # store.get_metric takes ONE argument. This read account_id as the
+        # metric id and the id as a second positional, which is a guaranteed
+        # TypeError -- so accepting an update proposal was a 500, every time.
+        # It also meant the tenant check the argument was there to perform
+        # never happened, because get_metric does not scope by account at all.
+        # Do it explicitly instead.
+        live = store.get_metric(target_metric_id)
+        if not live or str(live.get("account_id") or "") != str(account_id):
+            return JSONResponse(
+                {"status": "error", "detail": "That metric does not exist for this client."},
+                status_code=404,
+            )
         drifted, fields = store.metric_has_drifted(live, proposal.get("before"))
         if drifted:
             return JSONResponse({
@@ -6080,7 +6139,15 @@ async def metric_proposal_accept(request: Request, account_id: str, proposal_id:
             }, status_code=409)
 
     try:
-        metric_id = _apply_metric_create(account_id, payload, db_type=db_type)
+        # An update proposal was previously handed to the CREATE applier, so
+        # even with the TypeError above fixed it would have tried to insert a
+        # second metric under an existing name and died on the duplicate-name
+        # guard. A proposal says what it is; dispatch on it.
+        if is_update:
+            _apply_metric_update(account_id, target_metric_id, payload, db_type=db_type)
+            metric_id = target_metric_id
+        else:
+            metric_id = _apply_metric_create(account_id, payload, db_type=db_type)
     except ValueError as exc:
         # Duplicate active name — a 409, not a 500. Someone very likely created
         # the same metric by hand while this sat in the queue.
