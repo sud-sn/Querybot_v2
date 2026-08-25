@@ -6045,10 +6045,17 @@ async def metric_authoring_chat(request: Request, account_id: str):
             "probe_kind": outcome.probe_kind,
             "tables_probed": list(outcome.tables_probed),
         },
+        # "Proven" was an overclaim. The probe proves the formula BINDS --
+        # that every column resolves and the joins execute -- and says nothing
+        # about whether it computes what was asked. Live, this same sentence
+        # sat under AVG(amount)/COUNT(DISTINCT customer) for "average invoice
+        # line amount per customer", which is dimensionally meaningless and
+        # bound perfectly.
         "reply": (
             f"{draft.name} = {draft.sql_template} on {draft.base_table}. "
-            "Validated and proven against the database. Accept it to make it a "
-            "shared metric."
+            "It parses, its columns exist, and it runs against the database. "
+            "Whether it is the right calculation is your call — accept it to "
+            "make it a shared metric."
         ),
     })
 

@@ -344,9 +344,23 @@ class TestTheQueueIsReachable:
         assert "revenue per active customer" in self._render(account)
 
     def test_the_evidence_is_shown_not_just_the_formula(self, account):
+        """And it says what it CHECKED, not a verdict.
+
+        This asserted "validated" and "dry run passed" until a live example
+        showed what that pair could sit under: a formula composed for "average
+        invoice line amount per customer" that divided an average by a customer
+        count -- dimensionally meaningless, yet it parsed, its columns existed,
+        and it bound against two real tables. Both badges were green. So the
+        card now reports the checks it ran and names the one nobody ran.
+        """
         _proposal(account)
         html = self._render(account)
-        assert "validated" in html and "dry run passed" in html
+        assert "formula parses, columns exist" in html
+        assert "ran on the database" in html
+        assert "Not checked" in html, (
+            "the card must name what it did NOT verify -- that is the thing "
+            "the approver is actually being asked to judge"
+        )
 
     def test_an_accepted_proposal_leaves_the_queue(self, account):
         pid = _proposal(account)

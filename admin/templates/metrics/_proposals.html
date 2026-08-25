@@ -27,10 +27,25 @@
       </div>
       {% if p.source_question %}<div class="mp-asked">asked: “{{ p.source_question }}”</div>{% endif %}
       <code class="mp-formula">{{ p.payload.sql_template }}</code>
+      {#- The checks name what they DID, not a verdict.
+
+          These read "validated" and "dry run passed" in green, which an
+          approver could fairly take to mean "this metric is correct". It does
+          not mean that, and a live example proved the gap: asked for "average
+          invoice line amount per customer", the composer produced
+          AVG(amount) / COUNT(DISTINCT customer) -- which divides by line count
+          and then by customers again, so it is dimensionally meaningless. It
+          parsed, every column existed, and it bound against two real tables.
+          Both badges were green. Nothing had checked that it MEANS what was
+          asked, because nothing can. -#}
       <div class="mp-meta">
         {% if p.payload.base_table %}<span>{{ p.payload.base_table }}</span>{% endif %}
-        {% if p.validation and p.validation.valid %}<span class="mp-ok">validated</span>{% endif %}
-        {% if p.dryrun and p.dryrun.status == 'ok' %}<span class="mp-ok">dry run passed{% if p.dryrun.probe_kind %} ({{ p.dryrun.probe_kind }}){% endif %}</span>{% endif %}
+        {% if p.validation and p.validation.valid %}<span class="mp-check">formula parses, columns exist</span>{% endif %}
+        {% if p.dryrun and p.dryrun.status == 'ok' %}<span class="mp-check">ran on the database{% if p.dryrun.tables_probed %} ({{ p.dryrun.tables_probed | length }} table{{ '' if p.dryrun.tables_probed | length == 1 else 's' }}){% endif %}</span>{% endif %}
+      </div>
+      <div class="mp-unchecked">
+        Not checked: whether this is the right calculation for the question.
+        That is what you are approving.
       </div>
       <div class="mp-actions">
         <button type="button" class="btn btn-primary btn-sm" onclick="reviewProposal({{ p.id }}, 'accept')">Accept</button>

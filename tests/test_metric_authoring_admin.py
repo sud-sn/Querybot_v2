@@ -315,3 +315,103 @@ class TestThePanelIsOnThePage:
         page = metrics_template()
         assert "function esc(" in page
         assert "esc(d.sql_template)" in page, "the formula must be escaped"
+
+
+class TestTheEvidenceDoesNotOverclaim:
+    """A proposal card is what an administrator approves a metric from, so what
+    it claims to have checked has to be what it actually checked.
+
+    It used to show "validated" and "dry run passed" as green ticks. Live, that
+    pair sat under a formula composed for "average invoice line amount per
+    customer":
+
+        AVG(SOP_CUS_IVC_LIN_AMT) * 1.0 / NULLIF(COUNT(DISTINCT CUS_DMS_KEY), 0)
+
+    AVG already divides by line count, so dividing again by customers gives
+    total / (lines x customers) -- dimensionally meaningless. It parsed. Every
+    column existed. It bound against two real tables. Both badges were green.
+
+    Nothing had checked that it MEANS what was asked, because nothing can. The
+    badges now say what they did, and the card says out loud what is left for
+    the person clicking Accept.
+    """
+
+    SURFACES = ("admin/templates/metrics/_proposals.html",
+                "admin/templates/metrics/_author_chat.html")
+
+    @staticmethod
+    def _read(rel):
+        """What the browser receives, with comments stripped.
+
+        The first version of this scanned the raw file and failed on the Jinja
+        comment EXPLAINING the fix, which quotes the old wording. A comment is
+        not something a user can read, and a test that cannot tell the
+        difference is testing the file rather than the page.
+        """
+        import re
+        from pathlib import Path
+
+        body = (Path(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
+        body = re.sub(r"{#.*?#}", "", body, flags=re.S)       # Jinja comments
+        body = re.sub(r"^\s*//.*$", "", body, flags=re.M)      # JS line comments
+        body = re.sub(r"^\s*#.*$", "", body, flags=re.M)       # Python comments
+        return body
+
+    @pytest.mark.parametrize("surface", SURFACES)
+    def test_no_surface_claims_the_metric_is_validated_or_proven(self, surface):
+        body = self._read(surface)
+        for overclaim in (">validated<", "dry run passed", "proven"):
+            assert overclaim not in body, f"{surface} still claims {overclaim!r}"
+
+    @pytest.mark.parametrize("surface", SURFACES)
+    def test_each_surface_states_what_was_actually_checked(self, surface):
+        body = self._read(surface)
+        assert "formula parses, columns exist" in body
+        assert "ran on the database" in body
+
+    @pytest.mark.parametrize("surface", SURFACES)
+    def test_each_surface_states_what_was_not_checked(self, surface):
+        """The most important line on the card, and the one a green tick was
+        quietly answering for the reader."""
+        body = self._read(surface)
+        assert "Not checked" in body
+        assert "right calculation" in body
+
+    def test_the_route_reply_does_not_say_proven(self):
+        body = self._read("admin/routes.py")
+        reply = body[body.index('"reply": ('):]
+        reply = reply[:reply.index("})")]
+        assert "proven" not in reply.lower()
+        assert "your call" in reply
+
+    def test_a_check_is_not_coloured_like_a_verdict(self):
+        """Green is a pass. These are observations, and colouring them like a
+        pass invited the reading they could not support."""
+        styles = self._read("admin/templates/metrics/_styles.html")
+        rule = styles[styles.index(".mp-check{"):]
+        rule = rule[:rule.index("}")]
+        assert "--text-muted" in rule
+        assert "ok-fg" not in rule and "#166534" not in rule
+
+    def test_the_live_example_would_still_pass_every_automated_gate(self):
+        """Pinning the limitation itself: this formula is wrong, and the
+        validator cannot know. If a future change makes it fail, the card's
+        wording can soften -- but that has to be a deliberate decision, not an
+        assumption."""
+        from core.metric_validator import validate_metric
+
+        result = validate_metric(
+            {
+                "name": "Average Invoice Line Amount Per Customer",
+                "sql_template": "AVG(AMOUNT) * 1.0 / NULLIF(COUNT(DISTINCT CUS_NO), 0)",
+                "formula_type": "expression",
+                "required_columns": "AMOUNT, CUS_NO",
+                "base_table": "DW.SALES_FACT",
+            },
+            db_type="azure_sql",
+            schema_columns={"DW.SALES_FACT": ["AMOUNT", "CUS_NO"]},
+        )
+        assert result.valid, (
+            "a dimensionally meaningless formula still validates -- which is "
+            "precisely why the card must not present validation as correctness"
+        )

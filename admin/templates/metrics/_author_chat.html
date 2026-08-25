@@ -9,7 +9,9 @@
         Say what to calculate — “revenue per active customer”, or paste
         <code>Net Revenue = SUM(AMOUNT) - SUM(DISCOUNT) FROM DW.SALES_FACT</code>.
         An explicit definition like that is parsed directly, with no model call.
-        Either way it is validated and run against the database before you see it.
+        Either way the formula is checked for syntax and column existence, then
+        run against the database to prove it binds — none of which can tell you
+        it is the right calculation. That judgement is yours.
       </p>
     </div>
   </div>
@@ -55,7 +57,7 @@
 
   function renderProposal(data) {
     const d = data.draft || {}, ev = data.evidence || {};
-    const probed = (ev.tables_probed || []).map(esc).join(', ');
+    const nTables = (ev.tables_probed || []).length;
     return `
       <div class="mc-chat-card">
         <div class="mc-chat-card-hd">
@@ -65,9 +67,10 @@
         <code class="mp-formula">${esc(d.sql_template)}</code>
         <div class="mp-meta">
           <span>${esc(d.base_table)}</span>
-          <span class="mp-ok">validated</span>
-          <span class="mp-ok">dry run passed${probed ? ' (' + probed + ')' : ''}</span>
+          <span class="mp-check">formula parses, columns exist</span>
+          <span class="mp-check">ran on the database${nTables ? ' (' + nTables + ' table' + (nTables === 1 ? '' : 's') + ')' : ''}</span>
         </div>
+        <div class="mp-unchecked">Not checked: whether this is the right calculation for what you asked.</div>
         <div class="mp-actions">
           <button type="button" class="btn btn-primary btn-sm"
                   data-accept="${data.proposal_id}">Accept as shared metric</button>
