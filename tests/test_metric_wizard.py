@@ -27,11 +27,13 @@ import store.db as db_mod
 db_mod.init_db()
 import store
 
+from metrics_template import metrics_template
+
 
 class MetricWizardStructureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        cls.template = metrics_template()
 
     def test_three_wizard_steps_only_in_create_dialog(self):
         # Exactly 3 — proves the edit form (inline expand) was not wrapped
@@ -107,7 +109,7 @@ class MetricWizardStructureTests(unittest.TestCase):
 class MetricListRevampTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        cls.template = metrics_template()
 
     def test_row_carries_usage_and_status_data_attrs(self):
         self.assertIn('data-usage="{{ m.usage_count or 0 }}"', self.template)
@@ -136,7 +138,7 @@ class MetricListRevampTests(unittest.TestCase):
 class MetricEditFormCleanupTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        cls.template = metrics_template()
 
     def test_section_dividers_present(self):
         for label in ("Identity", "Calculation", "Metadata", "Advanced"):
@@ -217,3 +219,39 @@ class MetricUsageTrackingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheSplitPageStaysWhole(unittest.TestCase):
+    """7a split client_metrics.html into partials so later commits can change
+    layout without fighting three string-scanning test modules.
+
+    A split like that rots in two ways, and both are silent: a partial stops
+    being included (its markers vanish from the page but the file lingers on
+    disk), or a partial is added and never wired in. Either leaves the tests
+    reading something the browser never receives.
+    """
+
+    def test_every_partial_on_disk_is_included_by_the_page(self):
+        from metrics_template import metrics_partials
+
+        parent = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(
+            encoding="utf-8")
+        orphans = [p.name for p in metrics_partials()
+                   if f'metrics/{p.name}"' not in parent]
+        self.assertFalse(orphans, f"partials nothing includes: {orphans}")
+
+    def test_the_page_is_assembled_from_partials_not_inlined_again(self):
+        """If someone pastes a partial back into the parent, the monolith is
+        rebuilding itself and 7a has been undone."""
+        parent = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(
+            encoding="utf-8")
+        self.assertLess(len(parent.splitlines()), 120,
+                        "client_metrics.html should be a thin shell of includes")
+        self.assertGreaterEqual(parent.count("{% include \"metrics/"), 5)
+
+    def test_the_assembled_page_still_carries_the_markers_the_tests_scan(self):
+        """The concatenation is only useful if it reproduces the real page."""
+        page = metrics_template()
+        for marker in ('id="mc-form"', 'id="mc-overlay"', 'class="mc-mode-card"',
+                       'window._qbDbType', 'id="proposals"'):
+            self.assertIn(marker, page, f"{marker} is missing from the assembled page")

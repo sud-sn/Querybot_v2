@@ -1,0 +1,19 @@
+{# function helper and the suggestion layers — moved verbatim from client_metrics.html by 7a -#}
+<!-- ══ Function helper popover ══════════════════════════════════════════ -->
+<div id="fn-popover">
+  <div class="fn-pop-head">
+    <h3>ƒ Function helper
+      <span id="fn-db-label" class="fn-db-badge" style="margin-left:6px"></span>
+    </h3>
+    <button class="fn-pop-close" onclick="closeFnHelper()">✕</button>
+  </div>
+  <input class="fn-search" id="fnSearch" placeholder="Search functions…" oninput="filterFns(this.value)">
+  <div id="fn-buckets"></div>
+</div>
+<div id="fn-overlay" style="display:none;position:fixed;inset:0;z-index:10499" onclick="closeFnHelper()"></div>
+
+<!-- Column suggestion dropdown (tag inputs: required_columns / allowed_dimensions) -->
+<div id="col-suggest"></div>
+<!-- ThoughtSpot-style formula autocomplete -->
+<div id="formula-col-suggest"></div>
+

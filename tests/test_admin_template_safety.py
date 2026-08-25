@@ -30,7 +30,7 @@ _INLINE_HANDLER = re.compile(
 
 
 def _handler_sites():
-    for template in sorted(TEMPLATES.glob("*.html")):
+    for template in sorted(TEMPLATES.rglob("*.html")):
         source = template.read_text(encoding="utf-8")
         for match in _INLINE_HANDLER.finditer(source):
             yield (

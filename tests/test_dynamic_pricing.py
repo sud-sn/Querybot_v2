@@ -35,6 +35,7 @@ def _fresh_modules():
 _fresh_modules()
 import store.db as db_mod
 import store.config_store as cs
+from metrics_template import metrics_template
 
 db_mod.init_db()
 
@@ -302,8 +303,7 @@ class TestArchitectureGuards(unittest.TestCase):
                       "billing.html must include the pricing save form action")
 
     def test_metrics_template_has_col_suggest(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html"), encoding="utf-8") as f:
-            tmpl = f.read()
+        tmpl = metrics_template()
         self.assertIn("col-suggest", tmpl)
         self.assertIn("_allColumns", tmpl)
         self.assertIn("api/columns", tmpl)
@@ -312,16 +312,14 @@ class TestArchitectureGuards(unittest.TestCase):
         # The inline "colBrowser*" sidebar was replaced by the Qlik-style New
         # Metric modal's field browser (commit ed951e4) — assert on the
         # current mc-fields-* implementation instead of the removed markup.
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html"), encoding="utf-8") as f:
-            tmpl = f.read()
+        tmpl = metrics_template()
         self.assertIn("mc-fields-list", tmpl)
         self.assertIn("mc-fields-search", tmpl)
         self.assertIn("insertColumnFromMcDialog", tmpl)
 
     def test_metrics_template_cursor_in_parens(self):
         """Snippet buttons now park cursor inside parens."""
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html"), encoding="utf-8") as f:
-            tmpl = f.read()
+        tmpl = metrics_template()
         self.assertIn("inner = text.match", tmpl,
                       "insertAtCursor should detect empty parens and park cursor inside them")
 

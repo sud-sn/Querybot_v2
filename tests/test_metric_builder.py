@@ -10,10 +10,12 @@ if str(ROOT) not in sys.path:
 from core.metric_builder import compile_metric_builder_config, merge_required_columns
 from core.pipeline_helpers import _format_metric_formula_context, _build_row_metric_join_sql
 
+from metrics_template import metrics_template
+
 
 class MetricBuilderTests(unittest.TestCase):
     def test_metric_builder_ui_exposes_row_calculated_controls(self):
-        template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        template = metrics_template()
         self.assertIn('value="row_calculated"', template)
         self.assertIn("metric-builder-row-expression", template)
         self.assertIn("metric-builder-row-aggregation", template)
@@ -32,7 +34,7 @@ class MetricBuilderTests(unittest.TestCase):
         # survived once _initialiseMetricBuilder skips value population for
         # a builder marked userEdited, and normal (untouched) builders still
         # populate correctly from the saved config on first load.
-        template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        template = metrics_template()
         self.assertIn('if(builder.dataset.userEdited === "1"){', template)
         self.assertIn('_mbForFlag.dataset.userEdited = "1";', template)
         # The guard must be the FIRST thing _initialiseMetricBuilder checks,
@@ -43,7 +45,7 @@ class MetricBuilderTests(unittest.TestCase):
         self.assertLess(idx_guard, idx_overwrite)
 
     def test_metric_builder_ui_wires_schema_autocomplete_to_row_calc_fields(self):
-        template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        template = metrics_template()
         self.assertIn('.metric-builder-row-expression,.metric-builder-required-joins', template)
         self.assertIn("_joinTableContext", template)
         self.assertIn("_distinctTables", template)
@@ -348,7 +350,7 @@ class DateGapMetricTests(unittest.TestCase):
         self.assertIn("LEFT  JOIN [DT_DMS] due_dt", joins)
 
     def test_wizard_ui_present_in_template(self):
-        template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        template = metrics_template()
         self.assertEqual(template.count('value="date_gap"'), 2)  # create + edit forms
         self.assertEqual(template.count('class="metric-builder-date-gap"'), 2)
         for marker in (
@@ -376,7 +378,7 @@ class MetricAiImportTests(unittest.TestCase):
         )
 
     def test_ai_import_ui_present_in_template(self):
-        template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        template = metrics_template()
         self.assertIn("metric-ai-import-text", template)
         self.assertIn("aiImportMetric", template)
         self.assertIn("metrics/api/ai-import", template)

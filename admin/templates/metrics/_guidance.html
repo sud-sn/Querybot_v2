@@ -1,0 +1,9 @@
+{# the production rule callout — moved verbatim from client_metrics.html by 7a -#}
+<div class="metric-guidance">
+  <strong>Production rule:</strong>
+  Use <strong>Formula expression</strong> for reusable measures like
+  <code>SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)</code>.
+  Use <strong>Full SQL query</strong> only when the whole SELECT should run directly.
+  Formulas run against a single table — column names are inserted without table prefix.
+</div>
+

@@ -1,0 +1,67 @@
+{# save/error alerts and the metric request queue — moved verbatim from client_metrics.html by 7a -#}
+{% if saved %}<div class="alert alert-success">Saved successfully.</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{# The admin inbox has always linked here. Until now #proposals resolved to
+   nothing, so requests composed in chat queued up where no one could see them. #}
+<div id="proposals" class="metric-proposals">
+  <div class="metric-section-header">
+    <div>
+      <h2>Metric requests{% if proposals %} <span class="mp-count">{{ proposals | length }}</span>{% endif %}</h2>
+      <p>
+        Composed in chat by someone who already has their answer. Accepting one
+        makes it a shared metric for everyone and recompiles the semantic contract.
+      </p>
+    </div>
+  </div>
+
+  {% if not proposals %}
+    <div class="mp-empty">Nothing waiting. Requests appear here when a user asks for a calculation they composed to be shared.</div>
+  {% else %}
+    {% for p in proposals %}
+    <div class="mp-card" id="mp-{{ p.id }}">
+      <div class="mp-head">
+        <strong>{{ p.payload.name or 'Untitled metric' }}</strong>
+        <span class="mp-badge">{{ 'update' if p.action == 'update_metric' else 'new' }}</span>
+        {% if p.confidence_score %}<span class="mp-conf">confidence {{ p.confidence_score }}%</span>{% endif %}
+      </div>
+      {% if p.source_question %}<div class="mp-asked">asked: “{{ p.source_question }}”</div>{% endif %}
+      <code class="mp-formula">{{ p.payload.sql_template }}</code>
+      <div class="mp-meta">
+        {% if p.payload.base_table %}<span>{{ p.payload.base_table }}</span>{% endif %}
+        {% if p.validation and p.validation.valid %}<span class="mp-ok">validated</span>{% endif %}
+        {% if p.dryrun and p.dryrun.status == 'ok' %}<span class="mp-ok">dry run passed{% if p.dryrun.probe_kind %} ({{ p.dryrun.probe_kind }}){% endif %}</span>{% endif %}
+      </div>
+      <div class="mp-actions">
+        <button type="button" class="btn btn-primary btn-sm" onclick="reviewProposal({{ p.id }}, 'accept')">Accept</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="reviewProposal({{ p.id }}, 'reject')">Reject</button>
+        <span class="mp-status" id="mp-status-{{ p.id }}"></span>
+      </div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<script>
+async function reviewProposal(id, action) {
+  const status = document.getElementById('mp-status-' + id);
+  status.textContent = action === 'accept' ? 'Accepting…' : 'Rejecting…';
+  try {
+    const res  = await fetch(
+      `/admin/clients/{{ client.account_id }}/metrics/api/proposals/${id}/${action}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    );
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && body.status === 'ok') { location.reload(); return; }
+    // A 409 here is the drift guard, and its detail names the fields that
+    // moved — showing it is the whole point of refusing rather than silently
+    // overwriting someone's edit.
+    status.textContent = body.detail || `Failed (${res.status})`;
+    status.classList.add('mp-error');
+  } catch (err) {
+    status.textContent = 'Request failed';
+    status.classList.add('mp-error');
+  }
+}
+</script>
+

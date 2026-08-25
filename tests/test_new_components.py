@@ -61,6 +61,7 @@ import unittest
 from collections import deque
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
+from metrics_template import metrics_template
 
 # ── DB isolation ──────────────────────────────────────────────────────────────
 _TMP = os.path.join(tempfile.mkdtemp(), "test_newcomp.db")
@@ -733,36 +734,35 @@ class TestFormulaEditorPopover(unittest.TestCase):
     """F1/F2 — ƒ Functions popover with DB-aware templates."""
 
     def test_fn_helper_button_present(self):
-        self.assertIn("fn-helper-btn", _src(SETUP_TMPL := \
-            ROOT/"admin"/"templates"/"client_metrics.html"))
+        self.assertIn("fn-helper-btn", metrics_template())
 
     def test_old_pill_toolbar_absent(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         self.assertNotIn("formula-snippet", tmpl)
 
     def test_six_buckets_in_catalogue(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         for bucket in ("Aggregation","Ratio & Division","Conditional",
                        "Null Handling","Type Conversion","String"):
             self.assertIn(bucket, tmpl)
 
     def test_median_azure_uses_percentile_cont(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         self.assertIn("PERCENTILE_CONT", tmpl)
 
     def test_isnull_azure_only(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         self.assertIn('dbs:["azure_sql"]', tmpl)
 
     def test_nvl_oracle_only(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         self.assertIn('dbs:["oracle"]', tmpl)
 
     def test_db_type_passed_from_route(self):
         self.assertIn('"db_type": db_type', _src(ROUTES))
 
     def test_db_type_set_in_js(self):
-        self.assertIn("window._qbDbType", (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8"))
+        self.assertIn("window._qbDbType", metrics_template())
 
 
 class TestSyntaxValidator(unittest.TestCase):
@@ -770,7 +770,7 @@ class TestSyntaxValidator(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        src   = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        src   = metrics_template()
         start = src.find("function updateFormulaHints")
         end   = src.find("function setStatus", start)
         cls._validator_src = src[start:end]
@@ -805,26 +805,26 @@ class TestDuplicateColumnDisambiguation(unittest.TestCase):
     """F4 — duplicate column display uses TABLE.COLUMN, insert uses bare name."""
 
     def test_dup_set_built(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         self.assertIn("_dupCols", tmpl)
         self.assertIn("_buildDupSet", tmpl)
 
     def test_display_label_uses_table_prefix(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         self.assertIn("_displayLabel", tmpl)
         self.assertIn('c.table+"."', tmpl)
 
 
     def test_insert_uses_bare_col(self):
         """dropdown item stores bare column name in data-col, not TABLE.COLUMN."""
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         # JS builds: data-col="'+c.column+'"  — bare column, not display label
         self.assertIn("data-col=", tmpl)
         # _insertSuggestion reads dataset.col (bare name) not the display label
         self.assertIn("_insertSuggestion(item.dataset.col)", tmpl)
 
     def test_insert_suggestion_uses_dataset_col(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
+        tmpl = metrics_template()
         self.assertIn("_insertSuggestion(item.dataset.col)", tmpl)
 
 

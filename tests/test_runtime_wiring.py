@@ -25,6 +25,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from metrics_template import metrics_template
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -569,7 +570,7 @@ class RouteRegistrationTests(unittest.TestCase):
 
     def test_metric_formula_builder_ui_wiring(self):
         """Metric Registry must expose the interactive formula-builder fields."""
-        html = _read("admin/templates/client_metrics.html")
+        html = metrics_template()
         for token in [
             "Formula Builder",
             "fn-helper-btn",   # replaces formula-snippet pill toolbar

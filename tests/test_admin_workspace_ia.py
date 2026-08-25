@@ -191,14 +191,17 @@ def test_no_script_looks_up_an_element_the_page_no_longer_renders():
     legitimately reach into ids a child template draws) or if JS assigns it to a
     node it built."""
     rendered_ids = set()
-    for template in TEMPLATES.glob("*.html"):
+    # rglob on BOTH sides. 7a moved the metric page into a subdirectory; if
+    # only the lookup scan descends, every id declared in a partial reads as
+    # an orphan and the guard reports twenty false positives.
+    for template in TEMPLATES.rglob("*.html"):
         src = template.read_text(encoding="utf-8")
         rendered_ids |= set(re.findall(r"""\bid=["']([A-Za-z][\w:-]*)["']""", src))
         # Nodes built in JS: `modal.id = 'diag-modal'`, `dl.id = "base-table-options"`
         rendered_ids |= set(re.findall(r"""\.id\s*=\s*["']([A-Za-z][\w:-]*)["']""", src))
 
     orphans = set()
-    for template in sorted(TEMPLATES.glob("*.html")):
+    for template in sorted(TEMPLATES.rglob("*.html")):
         src = template.read_text(encoding="utf-8")
         for looked_up in re.findall(r"""getElementById\(\s*["']([\w:-]+)["']\s*\)""", src):
             if looked_up not in rendered_ids:

@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from metrics_template import metrics_template
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -750,7 +751,7 @@ def test_sql_syntax_colours_stay_distinguishable_from_each_other():
 
 def test_the_editor_reads_its_syntax_colours_from_the_tokens():
     """A local hex here is how the dark-mode failure happened the first time."""
-    metrics = _read("admin/templates/client_metrics.html")
+    metrics = metrics_template()
     for name in _SYNTAX_TOKENS:
         assert f"var({name})" in metrics, f"{name} is not used by the editor"
     for rule in ("tok-kw", "tok-fn", "tok-col", "tok-str", "tok-num"):

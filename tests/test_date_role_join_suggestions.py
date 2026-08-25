@@ -19,6 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from metrics_template import metrics_template
 
 
 def _arun(coro):
@@ -272,7 +273,7 @@ class MetricsTemplateDateRoleUiTests(unittest.TestCase):
     def _template(self):
         from pathlib import Path
         root = Path(__file__).resolve().parents[1]
-        return (root / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        return metrics_template()
 
     def test_button_label_reflects_live_lookup(self):
         template = self._template()

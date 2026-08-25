@@ -1,0 +1,395 @@
+{# the fx New Metric dialog — moved verbatim from client_metrics.html by 7a -#}
+<!-- ══ Metric creation dialog (fx New Metric) ════════════════════════════ -->
+<div id="mc-overlay" onclick="if(event.target===this)closeMetricDialog()">
+  <div id="mc-dialog" role="dialog" aria-modal="true">
+    <div class="mc-dialog-hd">
+      <h2><span class="mc-fx-badge">fx</span> New Metric</h2>
+      <button class="mc-dialog-close" onclick="closeMetricDialog()" aria-label="Close">✕</button>
+    </div>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/create" class="metric-form" id="mc-form" data-step="1">
+      <div class="mc-wizard-bar">
+        <div class="wizard-steps">
+          <div class="wizard-step active" data-goto="1" onclick="_mcGoToStep(1)">
+            <span class="wizard-step-circle">1</span>
+            <span class="wizard-step-label">Describe</span>
+            <span class="wizard-step-line"></span>
+          </div>
+          <div class="wizard-step" data-goto="2" onclick="_mcGoToStep(2)">
+            <span class="wizard-step-circle">2</span>
+            <span class="wizard-step-label">Calculate</span>
+            <span class="wizard-step-line"></span>
+          </div>
+          <div class="wizard-step" data-goto="3" onclick="_mcGoToStep(3)">
+            <span class="wizard-step-circle">3</span>
+            <span class="wizard-step-label">Review &amp; test</span>
+          </div>
+        </div>
+      </div>
+      <div class="mc-body">
+        <div class="mc-left">
+          <div class="mc-step" data-step="1">
+          <div class="metric-ai-import">
+            <label>✨ AI import — paste a DAX measure or describe the metric in plain English, and we'll fill the rest</label>
+            <textarea class="metric-ai-import-text" rows="3" placeholder="Paste a Power BI DAX measure here, or describe it: average days between due date and payment date per invoice; unpaid overdue invoices count days up to today, not-yet-due count as 0"></textarea>
+            <div class="metric-builder-join-actions">
+              <button type="button" class="btn btn-secondary btn-xs" onclick="aiImportMetric(this)">Generate config with AI</button>
+              <span class="metric-ai-import-status"></span>
+            </div>
+            <p class="form-note">Nothing is saved automatically — the wizard is pre-filled for your review. You'll land on Review &amp; test to verify before saving.</p>
+          </div>
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Metric name *</label>
+              <input type="text" name="name" required placeholder="e.g. profit_percentage"
+                oninput="checkSynonymCollision(this.closest('.metric-form'))">
+              <p class="form-note">Use a stable name the team will recognize.</p>
+            </div>
+            <div class="form-group">
+              <label>Synonyms</label>
+              <input type="text" name="synonyms" placeholder="profit %, profit margin, margin percentage"
+                oninput="checkSynonymCollision(this.closest('.metric-form'))">
+              <p class="form-note">Comma separated words users may type.</p>
+              <div class="collision-warn" id="add-collision-warn"></div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" name="description" placeholder="Net profit percentage after rebates and allocated costs.">
+          </div>
+
+          <div class="metric-meta-grid two">
+            <div class="form-group">
+              <label>Result format</label>
+              <select name="result_format">
+                <option value="number">Number</option>
+                <option value="currency">Currency</option>
+                <option value="percentage">Percentage</option>
+                <option value="date">Date</option>
+                <option value="text">Text</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Category / Domain</label>
+              <input type="text" name="category" list="category-options"
+                placeholder="e.g. Finance, Sales, Operations">
+              <datalist id="category-options">
+                <option value="Finance"><option value="Sales"><option value="Operations">
+                <option value="Customer"><option value="Product"><option value="HR">
+                <option value="Supply Chain"><option value="Marketing">
+              </datalist>
+              <p class="form-note">Group metrics by business domain for filtering.</p>
+            </div>
+          </div>
+          </div><!-- /.mc-step 1 -->
+
+          <div class="mc-step" data-step="2">
+          <div class="mc-mode-cards">
+            <button type="button" class="mc-mode-card" data-mode="aggregate" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Total / filtered total</span>
+              <span class="mc-mode-desc">Sum, average, or count a column — optionally filtered (e.g. revenue where status is Active).</span>
+              <span class="mc-mode-tag no-sql">No SQL</span>
+            </button>
+            <button type="button" class="mc-mode-card" data-mode="date_gap" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Days between two dates</span>
+              <span class="mc-mode-desc">Gap between two date roles (e.g. due date → payment date), with overdue handling.</span>
+              <span class="mc-mode-tag no-sql">No SQL</span>
+            </button>
+            <button type="button" class="mc-mode-card" data-mode="expression" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Advanced SQL expression</span>
+              <span class="mc-mode-desc">Write the aggregate formula yourself with autocomplete and function help.</span>
+              <span class="mc-mode-tag sql">SQL</span>
+            </button>
+            <button type="button" class="mc-mode-card" data-mode="query" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Full SQL query</span>
+              <span class="mc-mode-desc">A complete SELECT statement for metrics that need total control.</span>
+              <span class="mc-mode-tag sql">SQL</span>
+            </button>
+          </div>
+          <div class="mc-row-subtoggle" style="display:none">
+            <label style="font-size:12px;font-weight:700;color:var(--text-soft)">Expression kind:</label>
+            <button type="button" class="ui-chip active" data-rowmode="0" onclick="selectMcRowMode(this)">Aggregate formula</button>
+            <button type="button" class="ui-chip" data-rowmode="1" onclick="selectMcRowMode(this)">Per-row expression</button>
+          </div>
+
+          <div class="mc-legacy">
+            <div class="form-group">
+              <label>Builder mode</label>
+              <select name="formula_type" class="formula-type-select">
+                <option value="expression" selected>Formula expression</option>
+                <option value="query">Full SQL query</option>
+              </select>
+            </div>
+          </div>
+          <input type="hidden" name="metric_builder_config" class="metric-builder-config" value="">
+          <div class="metric-builder">
+            <div class="metric-builder-head">
+              <label class="mc-legacy"><input type="checkbox" class="metric-builder-enabled"> No-code measure builder</label>
+              <button type="button" class="btn btn-secondary btn-xs metric-builder-add-filter" onclick="addMetricFilterRow(this)">+ Filter</button>
+            </div>
+            <div class="metric-builder-body">
+              <div class="metric-builder-grid mc-legacy">
+                <div>
+                  <label>Calculation mode</label>
+                  <select class="metric-builder-mode">
+                    <option value="aggregate">Aggregate / filtered measure</option>
+                    <option value="date_gap">Days between two dates (wizard)</option>
+                    <option value="row_calculated">Row-level calculated measure</option>
+                  </select>
+                </div>
+                <div>
+                  <label>When to use row mode</label>
+                  <input type="text" value="Calculate per row, then aggregate by the user's requested grain" disabled>
+                </div>
+              </div>
+              <div class="metric-builder-mode-panel metric-builder-aggregate-panel">
+                <h4>Aggregate measure</h4>
+                <div class="metric-builder-grid">
+                <div>
+                  <label>Aggregation</label>
+                  <select class="metric-builder-aggregation">
+                    <option value="SUM">SUM</option>
+                    <option value="AVG">AVG</option>
+                    <option value="COUNT">COUNT</option>
+                    <option value="MIN">MIN</option>
+                    <option value="MAX">MAX</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Measure field</label>
+                  <input type="text" class="metric-builder-measure" placeholder="SOP_CUS_IVC_LIN_AMT" autocomplete="off">
+                </div>
+              </div>
+                <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
+                <div class="metric-filter-list"></div>
+                <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
+              </div>
+              <div class="metric-builder-row-calc">
+                <h4>Row-level calculation</h4>
+                <div class="metric-builder-grid">
+                  <div>
+                    <label>Aggregation</label>
+                    <select class="metric-builder-row-aggregation">
+                      <option value="AVG">AVG</option>
+                      <option value="SUM">SUM</option>
+                      <option value="COUNT">COUNT</option>
+                      <option value="MIN">MIN</option>
+                      <option value="MAX">MAX</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Output meaning</label>
+                    <input type="text" value="Per-row expression aggregated at query grain" disabled>
+                  </div>
+                </div>
+                <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Row expression</label>
+                <textarea class="metric-builder-row-expression" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
+                <p class="form-note">Enter one row-level SQL expression only. Do not include SELECT, FROM, JOIN, SUM, or AVG here.</p>
+                <div class="metric-builder-grid">
+                  <div>
+                    <label>Base required columns</label>
+                    <input type="text" class="metric-builder-required-columns" placeholder="DUE_DT_DMS_KEY, PAY_DT_DMS_KEY">
+                  </div>
+                  <div>
+                    <label>Required joins JSON</label>
+                    <textarea class="metric-builder-required-joins" placeholder='[{"alias":"due_dt","table":"DT_DMS","from_column":"DUE_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"due date"},{"alias":"pay_dt","table":"DT_DMS","from_column":"PAY_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"payment date"}]'></textarea>
+                    <div class="metric-builder-join-actions">
+                      <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Suggest joins from schema</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="metric-builder-date-gap">
+                <h4>Days between two dates</h4>
+                <p class="form-note">Pick two date roles — joins, sentinel-key guards, and the CASE expression are generated for you. Set the Base table (Advanced options) first, then load the roles.</p>
+                <div class="metric-builder-join-actions">
+                  <button type="button" class="btn btn-secondary btn-xs" onclick="loadDateGapRoles(this)">Load date roles from schema</button>
+                  <span class="metric-builder-dg-status form-note"></span>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>From date role (start)</label>
+                    <select class="metric-builder-dg-from"><option value="">— load date roles —</option></select>
+                  </div>
+                  <div>
+                    <label>To date role (end)</label>
+                    <select class="metric-builder-dg-to"><option value="">— load date roles —</option></select>
+                  </div>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>Unit</label>
+                    <select class="metric-builder-dg-unit">
+                      <option value="day">Days</option>
+                      <option value="month">Months</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Aggregation</label>
+                    <select class="metric-builder-dg-aggregation">
+                      <option value="AVG">AVG</option>
+                      <option value="SUM">SUM</option>
+                      <option value="COUNT">COUNT</option>
+                      <option value="MIN">MIN</option>
+                      <option value="MAX">MAX</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>If the "to" date is missing</label>
+                    <select class="metric-builder-dg-missing">
+                      <option value="null">Exclude the row (NULL)</option>
+                      <option value="today_if_overdue_else_zero">Count to today if overdue, else 0</option>
+                      <option value="today">Count from start date to today</option>
+                      <option value="zero">Count as 0</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Invalid key values (mean "no date")</label>
+                    <input type="text" class="metric-builder-dg-invalid" value="0" placeholder="0, 777">
+                  </div>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>Dimension date column</label>
+                    <input type="text" class="metric-builder-dg-datecol" value="DMS_DT" placeholder="DMS_DT">
+                  </div>
+                  <div></div>
+                </div>
+              </div>
+              <div class="metric-builder-preview">Enable builder and choose a measure to preview the formula.</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Source table</label>
+            <input type="text" name="base_table" class="base-table-input"
+              placeholder="e.g. dbo.SalesOrders" autocomplete="off">
+            <p class="form-note">The fact table this metric aggregates over — powers date-role loading and column validation.</p>
+          </div>
+
+          <div class="form-group mc-formula-group">
+            <div class="formula-label-row">
+              <label class="formula-label">Approved formula *</label>
+              <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
+            </div>
+            <textarea name="sql_template" rows="4" required class="formula-editor"
+              spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+              placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
+            <p class="form-note">
+              Expression: write only the aggregate formula. Full SQL: write a complete SELECT.
+            </p>
+          </div>
+          </div><!-- /.mc-step 2 -->
+
+          <div class="mc-step" data-step="3">
+          <div data-mc-review></div>
+
+          <div class="form-group">
+            <div class="formula-label-row">
+              <label class="formula-label">Verify against the database</label>
+              <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
+              <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
+            </div>
+            <div class="validate-result"></div>
+            <p class="form-note">▶ Test runs the formula against your live data. ✓ Validate checks syntax and column names.</p>
+          </div>
+
+          <div class="form-group">
+            <label>Example questions</label>
+            <textarea name="example_questions" rows="2" placeholder="What is profit percentage by customer?&#10;Show net profit by segment."></textarea>
+          </div>
+
+          <div class="metric-meta-grid two">
+            <div class="form-group">
+              <label>Grain</label>
+              <input type="text" name="grain" placeholder="e.g. customer, month, order">
+            </div>
+            <div class="form-group">
+              <label>Default time column</label>
+              <select name="default_time_column" class="time-col-select add-time-col-select">
+                <option value="">— none —</option>
+              </select>
+              <p class="form-note">Date column used when grouping by period.</p>
+            </div>
+          </div>
+
+          <!-- Advanced (collapsed by default) -->
+          <details class="metric-advanced">
+            <summary class="metric-advanced-toggle">Advanced options</summary>
+            <div class="metric-advanced-body">
+              <div class="metric-meta-grid two">
+                <div class="form-group">
+                  <label>Required columns</label>
+                  <input type="text" name="required_columns" placeholder="Revenue, NetProfit, CustomerID">
+                  <p class="form-note">Exact columns the formula depends on (used in validation).</p>
+                </div>
+                <div class="form-group">
+                  <label>Allowed dimensions</label>
+                  <input type="text" name="allowed_dimensions" placeholder="Customer, Segment, Date">
+                  <p class="form-note">Dimensions users can group this metric by.</p>
+                </div>
+              </div>
+              <div class="metric-meta-grid two">
+                <div class="form-group">
+                  <label>Base entity</label>
+                  <input type="text" name="base_entity" placeholder="e.g. Order, Customer">
+                  <p class="form-note">Entity graph node — enables dimension pickers.</p>
+                </div>
+                <div></div>
+              </div>
+            </div>
+          </details>
+          </div><!-- /.mc-step 3 -->
+
+        </div><!-- /.mc-left -->
+
+        <div class="mc-right">
+          <div class="mc-right-top">
+            <h3>Syntax validator</h3>
+            <div class="syntax-panel formula-status">Start writing a formula — the validator will highlight issues.</div>
+            <ul class="hint-list" style="margin:.45rem 0 0 1rem;font-size:11px">
+              <li>Use <code>NULLIF(denom, 0)</code> when dividing.</li>
+              <li>For percentages, use sums not row averages.</li>
+            </ul>
+            <div class="formula-example" style="margin-top:.5rem;font-size:10px">
+SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
+            </div>
+          </div>
+          <!-- Saved metrics — click inserts ${MetricName} macro -->
+          <div class="mc-metrics-section open" id="mc-metrics-section">
+            <div class="mc-metrics-hd" onclick="this.parentElement.classList.toggle('open')">
+              <span>Saved metrics <span id="mc-metrics-count" style="font-weight:400;text-transform:none;letter-spacing:0"></span></span>
+              <span class="mc-chev">▶</span>
+            </div>
+            <div class="mc-metrics-body" id="mc-metrics-body">
+              <div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">No saved metrics yet.</div>
+            </div>
+          </div>
+
+          <div class="mc-fields-panel">
+            <div class="mc-fields-hd">
+              Fields
+              <span id="mc-col-status">loading…</span>
+            </div>
+            <input class="mc-fields-search" type="text" placeholder="Search fields…" oninput="filterMcFields(this.value)">
+            <div class="mc-fields-list" id="mc-fields-list">
+              <div style="padding:10px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>
+            </div>
+          </div>
+        </div><!-- /.mc-right -->
+      </div><!-- /.mc-body -->
+
+      <div class="mc-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeMetricDialog()">Cancel</button>
+        <span style="flex:1"></span>
+        <button type="button" class="btn btn-secondary" id="mc-back" onclick="_mcGoToStep(parseInt(document.getElementById('mc-form').dataset.step||'1',10)-1)">← Back</button>
+        <button type="button" class="btn btn-primary" id="mc-next" onclick="_mcGoToStep(parseInt(document.getElementById('mc-form').dataset.step||'1',10)+1)">Next →</button>
+        <button type="submit" class="btn btn-primary">Save metric</button>
+      </div>
+    </form>
+  </div><!-- /#mc-dialog -->
+</div><!-- /#mc-overlay -->
+

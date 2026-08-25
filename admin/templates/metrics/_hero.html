@@ -1,0 +1,43 @@
+{# hero and the stat grid — moved verbatim from client_metrics.html by 7a -#}
+<div class="metrics-hero">
+  <div>
+    <div class="metrics-kicker">Semantic metrics</div>
+    <h1>Metric Registry &amp; Formula Builder</h1>
+    <p>
+      Govern the calculations QueryBot is allowed to use. Define trusted formulas,
+      direct SQL metrics, result formatting, time behavior, and optional filters from
+      one reviewable workspace.
+    </p>
+  </div>
+  <div class="metrics-hero-actions">
+    <button type="button" class="btn btn-primary" onclick="openMetricDialog()"><span style="font-family:Consolas,monospace;font-weight:900;letter-spacing:-.02em">fx</span> New Metric</button>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/harvest">
+      <button type="submit" class="btn btn-secondary btn-sm">Refresh examples</button>
+    </form>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="exportMetricsJSON()">⬇ Export JSON</button>
+  </div>
+</div>
+
+<div class="metrics-stat-grid">
+  <div class="metrics-stat">
+    <span>Total metrics</span>
+    <strong>{{ metric_list | length }}</strong>
+    <small>Approved business definitions</small>
+  </div>
+  <div class="metrics-stat">
+    <span>Formula metrics</span>
+    <strong>{{ formula_count }}</strong>
+    <small>Reusable grouped measures</small>
+  </div>
+  <div class="metrics-stat">
+    <span>Direct SQL</span>
+    <strong>{{ direct_sql_count }}</strong>
+    <small>Pre-authored result queries</small>
+  </div>
+  <div class="metrics-stat">
+    <span>Needs attention</span>
+    <strong>{{ attn_ns.count }}</strong>
+    <small>Drafts or metrics with validation errors</small>
+  </div>
+</div>
+

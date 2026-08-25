@@ -1,0 +1,2845 @@
+{# every behaviour on the page — moved verbatim from client_metrics.html by 7a -#}
+<script>
+(function(){
+"use strict";
+
+// ── Escape transformed ancestor (.page has translateY(0) from qb-fadeUp animation
+//    fill mode, which makes position:fixed relative to .page, not the viewport).
+//    Moving both dropdowns to <body> ensures position:fixed uses viewport coords. ──
+(function(){
+  var ids = ["formula-col-suggest","col-suggest"];
+  ids.forEach(function(id){ var el=document.getElementById(id); if(el) document.body.appendChild(el); });
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// DB-AWARE FUNCTION CATALOGUE
+// Each entry: { name, tpl(db), desc, bucket, dbs? }
+// tpl is a function(db) → string template to insert
+// dbs: array of db types this applies to; omit = all
+// ══════════════════════════════════════════════════════════════════════
+var DB = window._qbDbType || "azure_sql";
+
+var DB_LABELS = {
+  azure_sql: "Azure SQL",
+  snowflake: "Snowflake",
+  oracle: "Oracle"
+};
+
+var FN_CATALOGUE = [
+  // ── Aggregation ─────────────────────────────────────────────────────
+  { bucket:"Aggregation", name:"SUM", fnName:"SUM",
+    tpl:function(){ return "SUM()"; },
+    desc:"Total of a numeric column. Most common aggregate." },
+  { bucket:"Aggregation", name:"COUNT all rows", fnName:"COUNT",
+    tpl:function(){ return "COUNT(*)"; },
+    desc:"Count every row in the result, including nulls." },
+  { bucket:"Aggregation", name:"COUNT DISTINCT",
+    tpl:function(){ return "COUNT(DISTINCT )"; },
+    desc:"Count unique values only — unique customers, orders, SKUs." },
+  { bucket:"Aggregation", name:"AVG", fnName:"AVG",
+    tpl:function(){ return "AVG()"; },
+    desc:"Mean value. Note: AVG silently ignores nulls — use COALESCE if that matters." },
+  { bucket:"Aggregation", name:"MIN", fnName:"MIN",
+    tpl:function(){ return "MIN()"; },
+    desc:"Lowest value or earliest date in the set." },
+  { bucket:"Aggregation", name:"MAX", fnName:"MAX",
+    tpl:function(){ return "MAX()"; },
+    desc:"Highest value or latest date in the set." },
+  { bucket:"Aggregation", name:"MEDIAN", fnName:"MEDIAN",
+    tpl:function(db){
+      if(db==="azure_sql") return "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY )";
+      return "MEDIAN()";
+    },
+    desc:"Middle value of a distribution. Useful for salary and spend — less distorted by outliers than AVG.",
+    dbNote:{ azure_sql:"Uses PERCENTILE_CONT syntax", snowflake:"Native MEDIAN()", oracle:"Native MEDIAN()" } },
+  { bucket:"Aggregation", name:"STRING_AGG (list values)",
+    tpl:function(db){
+      if(db==="azure_sql") return "STRING_AGG(, ', ')";
+      if(db==="oracle")    return "LISTAGG(, ', ') WITHIN GROUP (ORDER BY 1)";
+      return "LISTAGG(, ', ')";
+    },
+    desc:"Concatenate values from multiple rows into one string — e.g. list all products per customer.",
+    dbNote:{ azure_sql:"STRING_AGG(col, sep)", snowflake:"LISTAGG(col, sep)", oracle:"LISTAGG with WITHIN GROUP" } },
+
+  // ── Date & Time ────────────────────────────────────────────────────────
+  { bucket:"Date & Time", name:"TRY_CONVERT (YYYYMMDD key → date)", fnName:"TRY_CONVERT",
+    tpl:function(){ return "TRY_CONVERT(date, CONVERT(varchar(8), ), 112)"; },
+    desc:"Columns ending in _DT_DMS_KEY / _DATE_DMS_KEY are integer YYYYMMDD keys, not real dates. "
+        +"Convert with this before comparing, filtering, or applying DATEDIFF/DATEADD — never operate on the raw key directly.",
+    dbs:["azure_sql"] },
+  { bucket:"Date & Time", name:"DATEDIFF (days/months between two dates)", fnName:"DATEDIFF",
+    tpl:function(db){
+      if(db==="azure_sql") return "DATEDIFF(day, , )";
+      if(db==="snowflake") return "DATEDIFF('day', , )";
+      return " - ";  // Oracle: date subtraction returns a day count directly
+    },
+    desc:"Difference between two dates. Oracle has no DATEDIFF function — subtract the dates directly instead.",
+    dbNote:{ azure_sql:"DATEDIFF(day, start, end)", snowflake:"DATEDIFF('day', start, end)", oracle:"end_date - start_date" } },
+  { bucket:"Date & Time", name:"DATEADD (shift a date)", fnName:"DATEADD",
+    tpl:function(db){
+      if(db==="azure_sql") return "DATEADD(day, , )";
+      if(db==="snowflake") return "DATEADD('day', , )";
+      return " + ";  // Oracle: date + N (days)
+    },
+    desc:"Add or subtract a time interval from a date. On a _DT_DMS_KEY column, convert it with TRY_CONVERT first — "
+        +"never call DATEADD on the raw integer key.",
+    dbNote:{ azure_sql:"DATEADD(day, N, date)", snowflake:"DATEADD('day', N, date)", oracle:"date + N" } },
+  { bucket:"Date & Time", name:"YEAR / EXTRACT (year from date)", fnName:"YEAR",
+    tpl:function(db){
+      if(db==="oracle") return "EXTRACT(YEAR FROM )";
+      return "YEAR()";
+    },
+    desc:"Extract the year from a date column. Oracle uses EXTRACT(YEAR FROM date) instead of YEAR().",
+    dbNote:{ azure_sql:"YEAR(date)", snowflake:"YEAR(date)", oracle:"EXTRACT(YEAR FROM date)" } },
+  { bucket:"Date & Time", name:"FORMAT (month bucket, Azure SQL)", fnName:"FORMAT",
+    tpl:function(){ return "FORMAT(, 'yyyy-MM')"; },
+    desc:"Bucket a date into a 'yyyy-MM' month label for GROUP BY. Azure SQL only — use DATE_TRUNC (Snowflake) or TRUNC (Oracle) elsewhere.",
+    dbs:["azure_sql"] },
+  { bucket:"Date & Time", name:"DATE_TRUNC (month bucket, Snowflake)", fnName:"DATE_TRUNC",
+    tpl:function(){ return "DATE_TRUNC('month', )"; },
+    desc:"Bucket a date to the start of its month for GROUP BY.",
+    dbs:["snowflake"] },
+  { bucket:"Date & Time", name:"TRUNC (month bucket, Oracle)", fnName:"TRUNC",
+    tpl:function(){ return "TRUNC(, 'MM')"; },
+    desc:"Bucket a date to the start of its month for GROUP BY.",
+    dbs:["oracle"] },
+  { bucket:"Date & Time", name:"GETDATE (today, Azure SQL)", fnName:"GETDATE",
+    tpl:function(){ return "GETDATE()"; },
+    desc:"Current date/time. CAUTION: never use for relative-time questions (last month, this year) — the database "
+        +"may be historical. Anchor to MAX(date_col) from the table instead.",
+    dbs:["azure_sql"] },
+  { bucket:"Date & Time", name:"CURRENT_DATE (today, Snowflake/Oracle)", fnName:"CURRENT_DATE",
+    tpl:function(){ return "CURRENT_DATE"; },
+    desc:"Current date. CAUTION: never use for relative-time questions (last month, this year) — the database "
+        +"may be historical. Anchor to MAX(date_col) from the table instead.",
+    dbs:["snowflake","oracle"] },
+
+  // ── Ratio and Safe Division ──────────────────────────────────────────
+  { bucket:"Ratio & Division", name:"Safe divide (NULLIF denominator)",
+    tpl:function(){ return "SUM() / NULLIF(SUM(), 0)"; },
+    desc:"Prevents divide-by-zero. Always use this pattern for any ratio — without it a zero denominator crashes the query." },
+  { bucket:"Ratio & Division", name:"Percentage (rounded 2dp)",
+    tpl:function(){ return "ROUND(SUM() * 100.0 / NULLIF(SUM(), 0), 2)"; },
+    desc:"Standard percentage formula with safe divide and two decimal places. Replace the two SUM columns." },
+  { bucket:"Ratio & Division", name:"Period-over-period growth %",
+    tpl:function(){ return "ROUND((SUM(current_col) - SUM(prior_col)) * 100.0 / NULLIF(SUM(prior_col), 0), 2)"; },
+    desc:"Change percentage between two periods. Replace current_col and prior_col with actual column names." },
+  { bucket:"Ratio & Division", name:"NULLIF (zero → null)", fnName:"NULLIF",
+    tpl:function(){ return "NULLIF(, 0)"; },
+    desc:"Turns a zero value into NULL. Primary use: make a denominator safe for division." },
+  { bucket:"Ratio & Division", name:"ROUND", fnName:"ROUND",
+    tpl:function(){ return "ROUND(, 2)"; },
+    desc:"Round to N decimal places. Every percentage or ratio should pass through ROUND before display." },
+  { bucket:"Ratio & Division", name:"ABS (absolute value)", fnName:"ABS",
+    tpl:function(){ return "ABS()"; },
+    desc:"Strip the sign — useful for variance metrics where you want magnitude regardless of direction." },
+
+  // ── Conditional ──────────────────────────────────────────────────────
+  { bucket:"Conditional", name:"Conditional SUM (filter inside aggregate)",
+    tpl:function(){ return "SUM(CASE WHEN  = '' THEN  ELSE 0 END)"; },
+    desc:"Sum only rows matching a condition. Replaces WHERE when you need multiple measures in the same query." },
+  { bucket:"Conditional", name:"Conditional COUNT",
+    tpl:function(){ return "COUNT(CASE WHEN  = '' THEN 1 END)"; },
+    desc:"Count only rows matching a condition — e.g. count only active customers without a subquery." },
+  { bucket:"Conditional", name:"CASE expression (label/bucket values)", fnName:"CASE",
+    tpl:function(){ return "CASE WHEN  > 0 THEN 'Positive' WHEN  < 0 THEN 'Negative' ELSE 'Zero' END"; },
+    desc:"Branch on conditions to produce labels or buckets. Works inside or outside an aggregate." },
+  { bucket:"Conditional", name:"IIF (inline if)", fnName:"IIF",
+    tpl:function(db){
+      if(db==="oracle") return "CASE WHEN  THEN  ELSE  END";
+      return "IIF(, , )";
+    },
+    desc:"Compact two-branch conditional. Oracle uses CASE — IIF is T-SQL/Snowflake shorthand.",
+    dbNote:{ oracle:"Rewritten to CASE WHEN for Oracle" } },
+
+  // ── Null Handling ─────────────────────────────────────────────────────
+  { bucket:"Null Handling", name:"COALESCE (cross-DB, null → default)", fnName:"COALESCE",
+    tpl:function(){ return "COALESCE(, 0)"; },
+    desc:"Returns the first non-null value. Works on all three supported databases. Use this over ISNULL or NVL for portability." },
+  { bucket:"Null Handling", name:"ISNULL (Azure SQL only)", fnName:"ISNULL",
+    tpl:function(){ return "ISNULL(, 0)"; },
+    desc:"Azure SQL / SQL Server specific null replacement. Slightly faster than COALESCE but not portable.",
+    dbs:["azure_sql"] },
+  { bucket:"Null Handling", name:"NVL (Oracle/Snowflake)", fnName:"NVL",
+    tpl:function(){ return "NVL(, 0)"; },
+    desc:"Null replacement equivalent to COALESCE(col, default). Native in Oracle and Snowflake; not available in Azure SQL — use ISNULL or COALESCE there instead.",
+    dbs:["oracle","snowflake"] },
+  { bucket:"Null Handling", name:"NULLIF (value → null)",
+    tpl:function(){ return "NULLIF(, 0)"; },
+    desc:"Turns a specific value into NULL. Opposite of COALESCE — mainly used on zero denominators." },
+
+  // ── Type Conversion ───────────────────────────────────────────────────
+  { bucket:"Type Conversion", name:"CAST to DECIMAL (fix integer division)", fnName:"CAST",
+    tpl:function(){ return "CAST( AS DECIMAL(18,4))"; },
+    desc:"CRITICAL: integer ÷ integer = integer in SQL. 7/2 = 3 not 3.5. Always CAST before division." },
+  { bucket:"Type Conversion", name:"CAST to FLOAT",
+    tpl:function(){ return "CAST( AS FLOAT)"; },
+    desc:"Simpler decimal cast. Use DECIMAL(18,4) for financial data — FLOAT has binary rounding errors." },
+  { bucket:"Type Conversion", name:"CAST to INT",
+    tpl:function(){ return "CAST( AS INT)"; },
+    desc:"Truncate to whole number. Use FLOOR() if you need explicit round-down control." },
+  { bucket:"Type Conversion", name:"FLOOR / CEILING", fnName:"FLOOR",
+    tpl:function(){ return "FLOOR()"; },
+    desc:"FLOOR rounds down, CEILING rounds up to nearest whole number. Useful for age bands and bin sizes." },
+
+  // ── String ────────────────────────────────────────────────────────────
+  { bucket:"String", name:"Concatenate",
+    tpl:function(db){
+      if(db==="azure_sql") return " + ' ' + ";
+      return " || ' ' || ";
+    },
+    desc:"Join two text fields. Azure SQL uses + operator; Snowflake and Oracle use ||.",
+    dbNote:{ azure_sql:"Uses + operator", snowflake:"Uses || operator", oracle:"Uses || operator" } },
+  { bucket:"String", name:"UPPER / LOWER", fnName:"UPPER",
+    tpl:function(){ return "UPPER()"; },
+    desc:"Standardise case before grouping — prevents 'London' and 'LONDON' appearing as separate groups." },
+  { bucket:"String", name:"TRIM", fnName:"TRIM",
+    tpl:function(){ return "TRIM()"; },
+    desc:"Remove leading and trailing spaces. Catches data quality issues that break GROUP BY matching." },
+  { bucket:"String", name:"LEFT / RIGHT", fnName:"LEFT",
+    tpl:function(db){
+      if(db==="oracle") return "SUBSTR(, 1, N)";
+      return "LEFT(, N)";
+    },
+    desc:"Extract N characters from the start or end. Oracle uses SUBSTR() instead of LEFT/RIGHT.",
+    dbNote:{ oracle:"Uses SUBSTR(col, 1, N) for LEFT" } },
+  { bucket:"String", name:"LEN / LENGTH (string length)", fnName:"LEN",
+    tpl:function(db){
+      if(db==="azure_sql") return "LEN()";
+      return "LENGTH()";
+    },
+    desc:"Character count. Azure SQL uses LEN; Snowflake and Oracle use LENGTH.",
+    dbNote:{ azure_sql:"LEN()", snowflake:"LENGTH()", oracle:"LENGTH()" } },
+];
+
+// ══════════════════════════════════════════════════════════════════════
+// RENDER POPOVER
+// ══════════════════════════════════════════════════════════════════════
+var _activeEditor = null;
+
+function buildPopover(){
+  var buckets = {};
+  FN_CATALOGUE.forEach(function(fn){
+    if(fn.dbs && fn.dbs.indexOf(DB) === -1) return; // skip DB-incompatible
+    if(!buckets[fn.bucket]) buckets[fn.bucket] = [];
+    buckets[fn.bucket].push(fn);
+  });
+
+  var dbLabel = document.getElementById("fn-db-label");
+  if(dbLabel) dbLabel.textContent = DB_LABELS[DB] || DB;
+
+  var container = document.getElementById("fn-buckets");
+  container.innerHTML = "";
+  var firstOpen = true;
+  Object.keys(buckets).forEach(function(bName){
+    var div = document.createElement("div");
+    div.className = "fn-bucket" + (firstOpen ? " open" : "");
+    firstOpen = false;
+    var items = buckets[bName].map(function(fn){
+      var tpl = fn.tpl(DB);
+      var note = fn.dbNote && fn.dbNote[DB] ? fn.dbNote[DB] : "";
+      var noteHtml = note ? '<span class="fn-item-db all">'+note+'</span>' : "";
+      return '<div class="fn-item" data-insert="'+escHtml(tpl)+'" data-name="'+escHtml(fn.name.toLowerCase())+'" data-desc="'+escHtml(fn.desc.toLowerCase())+'">'
+        +'<div class="fn-item-name">'+escHtml(fn.name)+'</div>'
+        +'<div class="fn-item-tpl">'+escHtml(tpl)+noteHtml+'</div>'
+        +'<div class="fn-item-desc">'+escHtml(fn.desc)+'</div>'
+        +'</div>';
+    }).join("");
+    div.innerHTML = '<div class="fn-bucket-head" onclick="toggleBucket(this)">'
+      +escHtml(bName)+' <span class="chevron">▶</span></div>'
+      +'<div class="fn-bucket-body">'+items+'</div>';
+    container.appendChild(div);
+  });
+
+  // Click on a function item → insert
+  container.addEventListener("click", function(e){
+    var item = e.target.closest(".fn-item");
+    if(!item) return;
+    var tpl = item.getAttribute("data-insert") || "";
+    if(_activeEditor) insertAtCursor(_activeEditor, tpl);
+    closeFnHelper();
+  });
+}
+
+function escHtml(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+window.toggleBucket = function(head){
+  head.parentElement.classList.toggle("open");
+};
+
+window.openFnHelper = function(btn){
+  var form = btn.closest(".metric-form");
+  _activeEditor = form ? (form.querySelector(".formula-editor") || null) : null;
+  document.getElementById("fn-popover").classList.add("open");
+  document.getElementById("fn-overlay").style.display = "block";
+  document.getElementById("fnSearch").value = "";
+  filterFns("");
+  document.getElementById("fnSearch").focus();
+};
+
+window.closeFnHelper = function(){
+  document.getElementById("fn-popover").classList.remove("open");
+  document.getElementById("fn-overlay").style.display = "none";
+};
+
+window.filterFns = function(q){
+  var lc = (q||"").toLowerCase();
+  document.querySelectorAll(".fn-item").forEach(function(item){
+    var match = !lc
+      || item.dataset.name.includes(lc)
+      || item.dataset.desc.includes(lc)
+      || (item.querySelector(".fn-item-tpl")||{}).textContent.toLowerCase().includes(lc);
+    item.style.display = match ? "" : "none";
+  });
+  // Auto-open buckets that have visible items
+  document.querySelectorAll(".fn-bucket").forEach(function(bucket){
+    var hasVisible = Array.from(bucket.querySelectorAll(".fn-item"))
+      .some(function(i){ return i.style.display !== "none"; });
+    if(q) bucket.classList.toggle("open", hasVisible);
+  });
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// insertAtCursor — place text at caret, park cursor inside empty parens
+// ══════════════════════════════════════════════════════════════════════
+function insertAtCursor(editor, text){
+  var start = editor.selectionStart || 0;
+  var end   = editor.selectionEnd   || 0;
+  editor.value = editor.value.slice(0, start) + text + editor.value.slice(end);
+  // Park cursor inside empty parens if present
+  var next = start + text.length;
+  var inner = text.match(/\(([^)]*)\)/);
+  if(inner && inner[1] === ""){
+    next = start + text.indexOf("(") + 1;
+  }
+  editor.focus();
+  editor.setSelectionRange(next, next);
+  updateFormulaHints(editor);
+  _renderSqlHighlight(editor);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SYNTAX VALIDATOR — runs on every keystroke in formula editor
+// ══════════════════════════════════════════════════════════════════════
+function updateFormulaHints(editor){
+  var form  = editor.closest(".metric-form");
+  if(!form) return;
+  var panel = form.querySelector(".formula-status");
+  if(!panel) return;
+  var val   = (editor.value || "").trim();
+  var type  = (form.querySelector(".formula-type-select") || {}).value || "expression";
+
+  if(!val){ setStatus(panel,"","Start writing a formula. Use the ƒ Functions button to browse available functions."); return; }
+
+  var notes = [];
+  var state = "good";
+
+  if(type === "expression"){
+    // Rule 1: SELECT keyword in expression mode
+    if(/\bSELECT\b/i.test(val)){
+      notes.push("⚠ Remove SELECT — expression mode writes only the aggregate formula, not a full query.");
+      state = "danger";
+    }
+    // Rule 2: Division without NULLIF on denominator
+    if(/\//.test(val) && !/NULLIF/i.test(val)){
+      notes.push("⚠ Division detected without NULLIF. A zero denominator will crash the query at runtime. Wrap denominator: NULLIF(SUM(col), 0)");
+      state = state === "danger" ? "danger" : "warn";
+    }
+    // Rule 3: Integer division risk — dividing two non-cast integer-looking columns
+    if(/\bSUM\([^)]+\)\s*\/\s*SUM\([^)]+\)/i.test(val) && !/CAST/i.test(val) && !/\* 100/i.test(val) && !/1\.0/i.test(val)){
+      notes.push("⚠ Integer division risk: SUM/SUM may return 0 for values less than 1. Use * 100.0 / for percentages or CAST(SUM(col) AS FLOAT) to force decimal.");
+      state = state === "danger" ? "danger" : "warn";
+    }
+    // Rule 4: AVG without COALESCE — silent null exclusion
+    if(/\bAVG\(/i.test(val) && !/COALESCE/i.test(val) && !/ISNULL/i.test(val) && !/NVL\(/i.test(val)){
+      notes.push("ℹ AVG silently excludes null rows which may produce a higher-than-expected average. Wrap with COALESCE(col, 0) if nulls should count as zero.");
+    }
+    // Rule 5: MEDIAN check for Azure SQL
+    if(/\bMEDIAN\s*\(/i.test(val) && DB === "azure_sql"){
+      notes.push("⚠ MEDIAN() is not valid in Azure SQL. Use PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col) — click ƒ → Aggregation → MEDIAN to insert correct syntax.");
+      state = "danger";
+    }
+    // Rule 6: DB-specific concat check
+    if(/\|\|/.test(val) && DB === "azure_sql"){
+      notes.push("⚠ || concatenation is not supported in Azure SQL. Use the + operator: FirstName + ' ' + LastName");
+      state = state === "danger" ? "danger" : "warn";
+    }
+    if(/[^|]\+[^0-9]/.test(val) && /[A-Za-z]/.test(val) && DB === "oracle"){
+      notes.push("ℹ Oracle uses || for string concatenation, not +. Use: col1 || ' ' || col2");
+    }
+    // Unknown column check — only when schema is loaded
+    if(_allColumns.length){
+      // Strip ${MetricName} refs before checking — they expand to valid SQL at runtime
+      var _valForCheck = val.replace(/\$\{[^}]+\}/g, '1');
+      // Show hint for each ${MetricName} ref found
+      var _metricRefs = val.match(/\$\{([^}]+)\}/g) || [];
+      if(_metricRefs.length){
+        var _savedNames = new Set((window._metricsData||[]).map(function(m){ return m.name.toLowerCase(); }));
+        _metricRefs.forEach(function(ref){
+          var nm = ref.slice(2,-1).trim();
+          if(!_savedNames.has(nm.toLowerCase())){
+            notes.push("⚠ Metric reference <code style='font-family:Consolas,monospace'>"+escHtml(ref)+"</code> not found — save that metric first.");
+            state = "danger";
+          } else {
+            notes.push("✓ References saved metric <code style='font-family:Consolas,monospace'>"+escHtml(ref)+"</code> — will be expanded at query time.");
+          }
+        });
+      }
+      var _knownCols = new Set(_allColumns.map(function(c){ return c.column.toLowerCase(); }));
+      var _knownQual = new Set(_allColumns.map(function(c){ return (c.table+"."+c.column).toLowerCase(); }));
+      var _sqlKw = new Set(["SUM","AVG","COUNT","MIN","MAX","NULLIF","ISNULL","COALESCE","CAST","AS",
+        "FLOAT","INT","INTEGER","BIGINT","VARCHAR","NVARCHAR","DECIMAL","NUMERIC","BY","OVER",
+        "PARTITION","ORDER","CASE","WHEN","THEN","ELSE","END","AND","OR","NOT","IN","IS","NULL",
+        "DISTINCT","PERCENTILE_CONT","WITHIN","GROUP","MEDIAN","NVL","ROUND","FLOOR","CEIL",
+        "CEILING","ABS","POWER","SQRT","MOD","LEN","LENGTH","TRIM","UPPER","LOWER","REPLACE",
+        "SUBSTRING","DATEADD","DATEDIFF","GETDATE","CURRENT_DATE","YEAR","MONTH","DAY","IIF",
+        "SIGN","TOP","SELECT","FROM","WHERE","HAVING","TRY_CAST","TRY_CONVERT","CONVERT","FORMAT",
+        "DATE","DATETIME","TIME","DATE_TRUNC","TRUNC","EXTRACT","VARCHAR2","NUMBER",
+        "STRING_AGG","LISTAGG","CONCAT","ILIKE","LIKE"]);
+      var _tokens = _valForCheck.match(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g) || [];
+      var _unknown = _tokens.filter(function(tok){
+        if(_sqlKw.has(tok.toUpperCase())) return false;
+        if(/^\d/.test(tok)) return false;
+        if(tok.includes(".")) return !_knownQual.has(tok.toLowerCase());
+        return !_knownCols.has(tok.toLowerCase());
+      });
+      var _uniq = _unknown.filter(function(v,i,a){ return a.indexOf(v)===i; });
+      if(_uniq.length){
+        notes.push("⚠ Unknown identifier(s): "+_uniq.map(function(t){
+          return "<code style='font-family:Consolas,monospace'>"+escHtml(t)+"</code>";
+        }).join(", ")+". Verify spelling or pick from the field browser.");
+        state = state === "danger" ? "danger" : "warn";
+      }
+    }
+    // Looks good
+    if(notes.length === 0){
+      notes.push("✓ Formula looks valid. Run a test query after saving to confirm results.");
+      state = "good";
+    }
+  } else {
+    // Full SQL mode
+    if(!/\bSELECT\b/i.test(val)){
+      notes.push("⚠ Full SQL mode requires a complete SELECT statement.");
+      state = "warn";
+    } else if(!/\bDROP\b|\bDELETE\b|\bUPDATE\b|\bINSERT\b/i.test(val)){
+      notes.push("✓ Full SQL query mode. Make sure this is a read-only SELECT and is not grouped — grouping happens at query time.");
+      state = "good";
+    } else {
+      notes.push("⚠ Destructive keywords detected (DROP/DELETE/UPDATE/INSERT). Only SELECT queries are permitted.");
+      state = "danger";
+    }
+  }
+  setStatus(panel, state, notes.map(function(n){ return "<div>"+n+"</div>"; }).join(""));
+}
+
+function setStatus(panel, state, html){
+  panel.className = "syntax-panel formula-status" + (state ? " "+state : "");
+  panel.innerHTML = html || "";
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SQL SYNTAX HIGHLIGHTING — transparent-text textarea over a colored
+// backdrop div, like a DB IDE. Applies to .formula-editor and
+// .metric-builder-row-expression (not the required-joins JSON field).
+// ══════════════════════════════════════════════════════════════════════
+var _SQL_HL_KEYWORDS = new Set([
+  "SELECT","FROM","WHERE","GROUP","BY","ORDER","HAVING","AS","CASE","WHEN",
+  "THEN","ELSE","END","AND","OR","NOT","IN","IS","NULL","DISTINCT","WITHIN",
+  "OVER","PARTITION","TOP","ASC","DESC","LIKE","BETWEEN","JOIN","ON","UNION","ALL",
+  // Type names — colored like keywords, matching a real DB IDE
+  "DATE","DATETIME","DATETIME2","TIME","TIMESTAMP","INT","INTEGER","BIGINT",
+  "SMALLINT","TINYINT","FLOAT","DECIMAL","NUMERIC","VARCHAR","NVARCHAR","CHAR",
+  "NCHAR","BIT","BOOLEAN","TEXT","REAL","MONEY"
+]);
+var _SQL_HL_EXTRA_FNS = ["CONVERT","TRY_CAST","SUBSTRING","POWER","SQRT","MOD","REPLACE","CONCAT","ILIKE"];
+
+function _sqlHlFnNames(){
+  var out = {};
+  if(typeof FN_CATALOGUE !== "undefined"){
+    FN_CATALOGUE.forEach(function(fn){ if(fn.fnName) out[fn.fnName.toUpperCase()] = true; });
+  }
+  _SQL_HL_EXTRA_FNS.forEach(function(f){ out[f] = true; });
+  return out;
+}
+
+function _tokenizeSqlHtml(text){
+  if(!text) return "";
+  var fnNames = _sqlHlFnNames();
+  var colNames = {};
+  (_allColumns||[]).forEach(function(c){ colNames[String(c.column).toUpperCase()] = true; });
+
+  var re = /('(?:[^']|'')*')|(\d+\.?\d*)|([A-Za-z_][A-Za-z0-9_]*)|([+\-*/=<>(),.])|(\s+)|([^\s])/g;
+  var out = "";
+  var m;
+  while((m = re.exec(text)) !== null){
+    if(m[1] !== undefined){ out += '<span class="tok-str">'+escHtml(m[1])+'</span>'; }
+    else if(m[2] !== undefined){ out += '<span class="tok-num">'+escHtml(m[2])+'</span>'; }
+    else if(m[3] !== undefined){
+      var word  = m[3];
+      var upper = word.toUpperCase();
+      var nextCh = text.charAt(re.lastIndex);
+      // Keyword check must come first: a few words (e.g. CASE) are both a
+      // reserved keyword AND have an fnName tag (for the ƒ Functions /
+      // autocomplete snippet-insert feature) — for highlighting they must
+      // read as keywords, not functions.
+      if(_SQL_HL_KEYWORDS.has(upper)){
+        out += '<span class="tok-kw">'+escHtml(word)+'</span>';
+      } else if(fnNames[upper] || nextCh === "("){
+        out += '<span class="tok-fn">'+escHtml(word)+'</span>';
+      } else if(colNames[upper]){
+        out += '<span class="tok-col">'+escHtml(word)+'</span>';
+      } else {
+        out += escHtml(word);
+      }
+    }
+    else if(m[4] !== undefined){ out += '<span class="tok-op">'+escHtml(m[4])+'</span>'; }
+    else { out += escHtml(m[5] !== undefined ? m[5] : m[6]); }
+  }
+  return out;
+}
+
+function _renderSqlHighlight(editor){
+  var wrap = editor.closest && editor.closest(".sql-hl-wrap");
+  if(!wrap) return;
+  var backdrop = wrap.querySelector(".sql-hl-backdrop");
+  if(!backdrop) return;
+  // Trailing newline avoids the last line collapsing when the value ends in \n
+  backdrop.innerHTML = _tokenizeSqlHtml(editor.value) + "\n";
+  backdrop.scrollTop  = editor.scrollTop;
+  backdrop.scrollLeft = editor.scrollLeft;
+  // Re-sync box size on every render too — ResizeObserver alone isn't a
+  // reliable enough signal for a manual drag-resize in every environment.
+  backdrop.style.width  = editor.offsetWidth + "px";
+  backdrop.style.height = editor.offsetHeight + "px";
+}
+
+function _initSqlHighlight(editor){
+  if(!editor || editor.dataset.hlInit){ _renderSqlHighlight(editor); return; }
+  editor.dataset.hlInit = "1";
+
+  // Capture the ORIGINAL computed style before any DOM move — once editor
+  // becomes a child of .sql-hl-wrap, the color:transparent/background:
+  // transparent CSS rules immediately apply, corrupting these same reads.
+  var cs = getComputedStyle(editor);
+  var box = {
+    borderTopWidth: cs.borderTopWidth, borderRightWidth: cs.borderRightWidth,
+    borderBottomWidth: cs.borderBottomWidth, borderLeftWidth: cs.borderLeftWidth,
+    borderStyle: cs.borderTopStyle,
+    color: cs.color,
+    paddingTop: cs.paddingTop, paddingRight: cs.paddingRight,
+    paddingBottom: cs.paddingBottom, paddingLeft: cs.paddingLeft,
+    fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontWeight: cs.fontWeight,
+    lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, boxSizing: cs.boxSizing
+  };
+
+  var wrap = document.createElement("div");
+  wrap.className = "sql-hl-wrap";
+  editor.parentNode.insertBefore(wrap, editor);
+
+  var backdrop = document.createElement("div");
+  backdrop.className = "sql-hl-backdrop";
+  wrap.appendChild(backdrop);
+  wrap.appendChild(editor);
+
+  // The editor KEEPS its own border/background (border isn't affected by
+  // background:transparent, so it still renders normally on top). The
+  // backdrop only needs a transparent border of the SAME width plus the
+  // same padding/font, so its text lands exactly where the editor's own
+  // (now-invisible) text would have been.
+  backdrop.style.borderWidth = box.borderTopWidth+" "+box.borderRightWidth+" "+box.borderBottomWidth+" "+box.borderLeftWidth;
+  backdrop.style.borderStyle = box.borderStyle;
+  backdrop.style.borderColor = "transparent";
+  ["paddingTop","paddingRight","paddingBottom","paddingLeft",
+   "fontFamily","fontSize","fontWeight","lineHeight","letterSpacing","boxSizing"
+  ].forEach(function(p){ backdrop.style[p] = box[p]; });
+  // The backdrop is the ONLY visible text layer (the textarea's own text is
+  // transparent), so its base color must be the editor's normal text color —
+  // otherwise any token the tokenizer leaves unspanned (join aliases like
+  // due_dt, [ ] brackets) inherits the CSS color:transparent and vanishes.
+  backdrop.style.color = box.color;
+
+  editor.style.caretColor = box.color;
+
+  // ResizeObserver catches most resize sources, but a manual drag on the
+  // textarea's native resize handle doesn't reliably fire it in every
+  // browser/automation context — mouseup after interacting with the editor
+  // is a simple, reliable fallback that catches the end of a drag-resize.
+  if(typeof ResizeObserver !== "undefined"){
+    new ResizeObserver(function(){ _renderSqlHighlight(editor); }).observe(editor);
+  }
+  editor.addEventListener("mouseup", function(){ _renderSqlHighlight(editor); });
+  editor.addEventListener("scroll", function(){
+    backdrop.scrollTop  = editor.scrollTop;
+    backdrop.scrollLeft = editor.scrollLeft;
+  });
+
+  _renderSqlHighlight(editor);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// COLUMN SUGGESTION DROPDOWN
+// ══════════════════════════════════════════════════════════════════════
+var _allColumns = [];
+var _dupCols    = new Set();   // column names that appear in >1 table
+var _suggestIdx = -1;
+var _suggestTarget = null;
+
+function _buildDupSet(){
+  var seen = {};
+  _allColumns.forEach(function(c){
+    if(seen[c.column]) _dupCols.add(c.column);
+    else seen[c.column] = true;
+  });
+}
+
+function _displayLabel(c){
+  // Show TABLE.COLUMN when name is ambiguous, bare COLUMN otherwise
+  return _dupCols.has(c.column) ? c.table+"."+c.column : c.column;
+}
+
+function _distinctTables(){
+  var seen = {}, out = [];
+  _allColumns.forEach(function(c){
+    if(c.table && !seen[c.table]){ seen[c.table]=true; out.push(c.table); }
+  });
+  return out;
+}
+
+function _joinTableContext(editor){
+  // True when the cursor sits inside the value of a JSON "table" key, e.g.
+  // `"table": "DT_D|` — used only for .metric-builder-required-joins so we
+  // suggest table names there instead of column names.
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value.slice(0, pos);
+  return /"table"\s*:\s*"[A-Za-z0-9_]*$/.test(text);
+}
+
+function _matchingFunctions(token){
+  // DB-aware function-name suggestions sourced from FN_CATALOGUE (the same
+  // data backing the ƒ Functions browser) so typing "DATED" or "TRY_CON"
+  // suggests DATEDIFF / TRY_CONVERT for the client's actual connected DB
+  // dialect, not a generic/wrong-dialect function.
+  if(!token || typeof FN_CATALOGUE === "undefined") return [];
+  var lc = token.toLowerCase();
+  var seen = {};
+  var out = [];
+  FN_CATALOGUE.forEach(function(fn){
+    if(!fn.fnName) return;
+    if(fn.dbs && fn.dbs.indexOf(DB) === -1) return;
+    if(seen[fn.fnName]) return;
+    if(fn.fnName.toLowerCase().indexOf(lc) !== 0) return;
+    seen[fn.fnName] = true;
+    out.push({ fnName: fn.fnName, bucket: fn.bucket, desc: fn.desc, tpl: fn.tpl(DB) });
+  });
+  return out.slice(0, 6);
+}
+
+function _currentToken(editor){
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value.slice(0, pos);
+  // Match TABLE.COLUMN or bare COLUMN
+  var m = text.match(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/);
+  return m ? m[0] : "";
+}
+
+// ── ThoughtSpot-style formula autocomplete ────────────────────────────
+// Uses #formula-col-suggest (styled with .fcs-* classes)
+// Triggers on 1+ chars, also inside function parens like SUM(cu
+// Highlights matching prefix, shows table name + type badge
+
+function _fcsTypeClass(type){
+  var t = (type||"").toLowerCase();
+  if(t === "number" || t === "integer" || t === "float" || t === "decimal" || t === "numeric" || t === "bigint") return "num";
+  if(t === "date" || t === "datetime" || t === "timestamp" || t === "time") return "date";
+  return "text";
+}
+function _fcsTypeIcon(cls){
+  return cls === "num" ? "#" : cls === "date" ? "◷" : "Aa";
+}
+function _fcsHighlight(colName, token){
+  // Highlight the matched prefix in the column name
+  if(!token) return escHtml(colName);
+  var lc = token.toLowerCase(), cl = colName.toLowerCase();
+  if(cl.startsWith(lc)){
+    return '<mark>'+escHtml(colName.slice(0,token.length))+'</mark>'+escHtml(colName.slice(token.length));
+  }
+  return escHtml(colName);
+}
+function _fcsCurrentToken(editor){
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value.slice(0, pos);
+  // Match TABLE.COLUMN or bare COLUMN (also after open-paren for SUM(cu…)
+  var m = text.match(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/);
+  return m ? m[0] : "";
+}
+
+function _columnsForSuggestionEditor(editor){
+  var columns = _allColumns.slice();
+  var form = editor && editor.closest ? editor.closest(".metric-form") : null;
+  var baseInput = form ? form.querySelector("[name='base_table']") : null;
+  var base = (baseInput && baseInput.value || "").split(".").pop().toLowerCase();
+  var isMeasure = editor && editor.matches && editor.matches(".metric-builder-measure");
+  var numeric = /int|decimal|numeric|float|double|money|number|real/i;
+  columns.sort(function(a, b){
+    var aBase = base && String(a.table).toLowerCase() === base ? 0 : 1;
+    var bBase = base && String(b.table).toLowerCase() === base ? 0 : 1;
+    if(aBase !== bBase) return aBase - bBase;
+    if(isMeasure){
+      var aNum = numeric.test(a.type || "") ? 0 : 1;
+      var bNum = numeric.test(b.type || "") ? 0 : 1;
+      if(aNum !== bNum) return aNum - bNum;
+    }
+    return String(a.column).localeCompare(String(b.column));
+  });
+  return columns;
+}
+
+function _showSuggestions(editor, token, forceAll){
+  var el = document.getElementById("formula-col-suggest");
+  var wantsFns = editor.matches(".formula-editor,.metric-builder-row-expression");
+  var fnMatches = wantsFns ? _matchingFunctions(token) : [];
+  if((!_allColumns.length && !fnMatches.length) || (!forceAll && token.length < 1)){ if(el) el.style.display="none"; return; }
+  var tableMode = editor.matches(".metric-builder-required-joins") && _joinTableContext(editor);
+  var lc = token.toLowerCase();
+  var sourceColumns = _columnsForSuggestionEditor(editor);
+  var matches;
+  if(tableMode){
+    matches = _distinctTables()
+      .filter(function(t){ return t.toLowerCase().includes(lc); })
+      .map(function(t){ return {table: t, column: t, type: "table"}; })
+      .slice(0, 10);
+  } else if(lc.includes(".")){
+    var dotParts = lc.split(".");
+    var tblPfx = dotParts[0], colPfx = dotParts[1] || "";
+    matches = sourceColumns.filter(function(c){
+      return c.table.toLowerCase() === tblPfx && c.column.toLowerCase().startsWith(colPfx);
+    }).slice(0, 10);
+  } else {
+    // Starts-with first, then contains — keep starts-with at top
+    var sw = sourceColumns.filter(function(c){ return c.column.toLowerCase().startsWith(lc); });
+    var ct = sourceColumns.filter(function(c){ return !c.column.toLowerCase().startsWith(lc) && c.column.toLowerCase().includes(lc); });
+    matches = sw.concat(ct).slice(0, 10);
+  }
+  if(!matches.length && !fnMatches.length){ if(el) el.style.display="none"; return; }
+  _suggestTarget = editor;
+  _suggestIdx = 0;
+  var _rows = [], _gIdx = 0;
+
+  // Function suggestions — shown first, DB-aware (see FN_CATALOGUE)
+  if(fnMatches.length){
+    _rows.push('<div class="fcs-group-hd">Functions</div>');
+    fnMatches.forEach(function(fn){
+      _rows.push('<div class="fcs-item fcs-fn" data-isfn="1" data-tpl="'+escHtml(fn.tpl)+'" data-idx="'+_gIdx+'" title="'+escHtml(fn.desc)+'">'
+        +'<span class="fcs-type fn" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0">ƒ</span>'
+        +'<span class="fcs-col">'+_fcsHighlight(fn.fnName, token)+'</span>'
+        +'<span class="fcs-tbl">'+escHtml(fn.bucket)+'</span>'
+        +'<span class="fcs-type fn"></span>'
+        +'</div>');
+      _gIdx++;
+    });
+  }
+
+  // Use bare column name for non-ambiguous, TABLE.COL for ambiguous
+  // Group matches by table for Qlik-style display
+  var _grpMap = {}, _grpOrder = [];
+  matches.forEach(function(c){
+    if(!_grpMap[c.table]){ _grpMap[c.table]=[]; _grpOrder.push(c.table); }
+    _grpMap[c.table].push(c);
+  });
+  var dispToken = (!tableMode && lc.includes(".")) ? (lc.split(".")[1]||"") : lc;
+  var _multiTbl = !tableMode && _grpOrder.length > 1;
+  _grpOrder.forEach(function(tbl){
+    if(_multiTbl) _rows.push('<div class="fcs-group-hd">'+escHtml(tbl)+'</div>');
+    _grpMap[tbl].forEach(function(c){
+      var isDup  = !tableMode && _dupCols.has(c.column);
+      var highlighted = _fcsHighlight(c.column, dispToken);
+      var cls    = _fcsTypeClass(c.type);
+      var icon   = _fcsTypeIcon(cls);
+      var label  = isDup ? escHtml(c.table)+'.'+highlighted : highlighted;
+      _rows.push('<div class="fcs-item" data-col="'+escHtml(c.column)+'" data-table="'+escHtml(c.table)+'" data-dup="'+(isDup?"1":"0")+'" data-idx="'+_gIdx+'">'
+        +'<span class="fcs-type '+cls+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0">'+icon+'</span>'
+        +'<span class="fcs-col">'+label+'</span>'
+        +'<span class="fcs-tbl">'+(isDup||_multiTbl ? "" : escHtml(c.table))+'</span>'
+        +'<span class="fcs-type '+cls+'">'+escHtml(c.type)+'</span>'
+        +'</div>');
+      _gIdx++;
+    });
+  });
+  el.innerHTML = _rows.join("");
+  var firstItem = el.querySelector(".fcs-item");
+  if(firstItem) firstItem.classList.add("active");
+  _mountSuggestionTray(el, editor);
+  el.style.display = "block";
+}
+
+function _suggestionHostFor(editor){
+  if(!editor) return null;
+  if(editor.matches(".formula-editor,.metric-builder-row-expression")){
+    return editor.closest(".sql-hl-wrap") || editor.parentElement;
+  }
+  if(editor.matches(".metric-builder-field,.metric-builder-measure")){
+    var filterRow = editor.closest(".metric-filter-row");
+    if(filterRow) return filterRow;
+  }
+  var existing = editor.closest(".suggest-input-shell");
+  if(existing) return existing;
+  if(editor.tagName === "INPUT"){
+    var shell = document.createElement("div");
+    shell.className = "suggest-input-shell";
+    editor.parentNode.insertBefore(shell, editor);
+    shell.appendChild(editor);
+    return shell;
+  }
+  return editor.parentElement;
+}
+
+function _mountSuggestionTray(tray, editor){
+  var host = _suggestionHostFor(editor);
+  if(!tray || !host) return;
+  document.querySelectorAll(".suggest-inline-host.suggest-open").forEach(function(node){
+    if(node !== host) node.classList.remove("suggest-open");
+  });
+  host.classList.add("suggest-inline-host", "suggest-open");
+  host.appendChild(tray);
+  tray.style.left = "";
+  tray.style.top = "";
+  tray.style.width = "";
+}
+
+function _hideSuggestions(){
+  var el1 = document.getElementById("formula-col-suggest");
+  if(el1) el1.style.display = "none";
+  var el2 = document.getElementById("col-suggest");
+  if(el2) el2.style.display = "none";
+  document.querySelectorAll(".suggest-inline-host.suggest-open").forEach(function(node){ node.classList.remove("suggest-open"); });
+  _suggestIdx = -1; _suggestTarget = null;
+}
+
+function _insertFunctionSuggestion(tpl){
+  // Replace the partially-typed token (e.g. "DATED") with the full,
+  // DB-correct function template, then park the cursor inside the first
+  // empty parens via insertAtCursor — same UX as the ƒ Functions browser.
+  var editor = _suggestTarget || _activeEditor;
+  if(!editor || !tpl) return;
+  var pos     = editor.selectionStart || 0;
+  var before  = editor.value.slice(0, pos);
+  var replaced = before.replace(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/, "");
+  editor.value = replaced + editor.value.slice(pos);
+  editor.setSelectionRange(replaced.length, replaced.length);
+  _hideSuggestions();
+  insertAtCursor(editor, tpl);
+  if(!editor.matches(".formula-editor")) _syncMetricBuilder(editor.closest(".metric-form"));
+}
+
+function _insertSuggestion(bareColName, tableName, isDup){
+  // Insert TABLE.COLUMN for ambiguous (duplicate) columns, bare name otherwise
+  var insertName = (isDup && tableName) ? tableName + "." + bareColName : bareColName;
+  var editor = _suggestTarget || _activeEditor;
+  if(!editor) return;
+  var pos     = editor.selectionStart || 0;
+  var before  = editor.value.slice(0, pos);
+  // Replace TABLE.COLUMN or bare COLUMN token at cursor
+  var replaced = before.replace(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/, insertName);
+  editor.value = replaced + editor.value.slice(pos);
+  var next = replaced.length;
+  editor.focus(); editor.setSelectionRange(next, next);
+  _hideSuggestions();
+
+  if(!editor.matches(".formula-editor")){
+    // Metric-builder row-expression / required-joins fields — just refresh
+    // the builder preview; the base_table auto-fill below is specific to
+    // the main formula editor and doesn't apply here.
+    var mbForm = editor.closest(".metric-form");
+    _syncMetricBuilder(mbForm);
+    if(editor.matches(".metric-builder-row-expression,.metric-builder-required-columns")){
+      _scheduleMetricBuilderBaseTableInference(mbForm);
+    }
+    if(editor.matches(".metric-builder-measure")){
+      _scheduleMetricBuilderBaseTableInference(mbForm);
+    }
+    return;
+  }
+
+  updateFormulaHints(editor);
+  // Auto-fill base_table and detect multi-table formulas
+  if(tableName){
+    var form = editor.closest(".metric-form");
+    var btInput = form ? form.querySelector("[name='base_table']") : null;
+    if(btInput){
+      // Scan all column tokens in the updated formula to find referenced tables
+      var tokens = editor.value.match(/\b[A-Z_][A-Z0-9_]{2,}\b/gi) || [];
+      var tablesInFormula = new Set();
+      tokens.forEach(function(tok){
+        var hit = _allColumns.find(function(c){ return c.column.toLowerCase() === tok.toLowerCase(); });
+        if(hit) tablesInFormula.add(hit.table);
+      });
+      tablesInFormula.add(tableName);
+
+      var colEntry = _allColumns.find(function(c){ return c.column === bareColName && c.table === tableName; });
+      var fqn = (colEntry && colEntry.table_fqn) ? colEntry.table_fqn : tableName;
+
+      if(tablesInFormula.size === 1){
+        // Single table — safe to auto-fill
+        btInput.value = fqn;
+        // Clear any multi-table warning
+        var warn = form ? form.querySelector(".multi-table-warn") : null;
+        if(warn) warn.remove();
+      } else {
+        // Multiple tables — fill with primary table but show warning
+        if(!btInput.value.trim()) btInput.value = fqn;
+        var existWarn = form ? form.querySelector(".multi-table-warn") : null;
+        if(!existWarn && form){
+          var vr = form.querySelector(".validate-result");
+          if(vr){
+            vr.className = "validate-result show warn multi-table-warn";
+            vr.innerHTML = "⚠ Formula uses columns from multiple tables ("
+              + Array.from(tablesInFormula).join(", ")
+              + "). Test will run against the Base table only — use <strong>Validate</strong> for full checks, or write a subquery.";
+          }
+        }
+      }
+      _updateMetricUxPanels(form);
+    }
+  }
+}
+
+// Keyboard navigation for formula-col-suggest dropdown
+document.addEventListener("keydown", function(e){
+  var fcs = document.getElementById("formula-col-suggest");
+  var cs  = document.getElementById("col-suggest");
+  if((e.ctrlKey || e.metaKey) && e.code === "Space" && e.target.matches(".formula-editor,.metric-builder-row-expression,.metric-builder-required-joins,.metric-builder-measure,.metric-builder-field,.metric-builder-required-columns")){
+    e.preventDefault();
+    _showSuggestions(e.target, _currentToken(e.target), true);
+    return;
+  }
+  // Handle formula dropdown (ThoughtSpot-style)
+  if(fcs && fcs.style.display !== "none"){
+    var items = fcs.querySelectorAll(".fcs-item");
+    if(e.key === "ArrowDown"){ e.preventDefault(); _suggestIdx = Math.min(_suggestIdx+1, items.length-1); }
+    else if(e.key === "ArrowUp"){ e.preventDefault(); _suggestIdx = Math.max(_suggestIdx-1, 0); }
+    else if(e.key === "Enter" || e.key === "Tab"){
+      if(_suggestIdx >= 0){
+        var sel = items[_suggestIdx];
+        e.preventDefault();
+        if(sel.dataset.isfn === "1"){ _insertFunctionSuggestion(sel.dataset.tpl); return; }
+        _insertSuggestion(sel.dataset.col, sel.dataset.table, sel.dataset.dup === "1");
+        return;
+      }
+      _hideSuggestions();
+    }
+    else if(e.key === "Escape"){ _hideSuggestions(); return; }
+    items.forEach(function(item, i){ item.classList.toggle("active", i === _suggestIdx); });
+    return;
+  }
+  // Handle tag input dropdown (col-suggest)
+  if(cs && cs.style.display !== "none"){
+    var items2 = cs.querySelectorAll(".col-suggest-item");
+    if(e.key === "ArrowDown"){ e.preventDefault(); _suggestIdx = Math.min(_suggestIdx+1, items2.length-1); }
+    else if(e.key === "ArrowUp"){ e.preventDefault(); _suggestIdx = Math.max(_suggestIdx-1, 0); }
+    else if(e.key === "Enter" || e.key === "Tab"){
+      if(_suggestIdx >= 0){
+        var sel2 = items2[_suggestIdx];
+        e.preventDefault();
+        _insertSuggestion(sel2.dataset.col, sel2.dataset.table, sel2.dataset.dup === "1");
+        return;
+      }
+      _hideSuggestions();
+    }
+    else if(e.key === "Escape"){ _hideSuggestions(); return; }
+    items2.forEach(function(item, i){ item.classList.toggle("active", i === _suggestIdx); });
+  }
+  // Metric ref autocomplete keyboard nav
+  if(_mcMetricSuggestEl && _mcMetricSuggestEl.style.display !== "none"){
+    var mItems = _mcMetricSuggestEl.querySelectorAll(".fcs-item");
+    if(e.key === "ArrowDown"){ e.preventDefault(); _mcMetricSuggestIdx = Math.min(_mcMetricSuggestIdx+1, mItems.length-1); }
+    else if(e.key === "ArrowUp"){ e.preventDefault(); _mcMetricSuggestIdx = Math.max(_mcMetricSuggestIdx-1, 0); }
+    else if(e.key === "Enter" || e.key === "Tab"){
+      if(_mcMetricSuggestIdx >= 0){ e.preventDefault(); _pickMetricSuggest(_mcMetricSuggestIdx); return; }
+      _hideMcMetricSuggest();
+    }
+    else if(e.key === "Escape"){ _hideMcMetricSuggest(); return; }
+    mItems.forEach(function(it, i){ it.style.background = i===_mcMetricSuggestIdx ? "var(--blue-light,#EBF8FF)" : ""; });
+  }
+});
+
+document.addEventListener("click", function(e){
+  // Re-evaluate token when clicking into (or repositioning cursor in) formula editor
+  if(e.target.matches(".formula-editor")){
+    // Use setTimeout(0) so selectionStart reflects the new click position
+    setTimeout(function(){ _showSuggestions(e.target, _currentToken(e.target)); }, 0);
+    return;
+  }
+  if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
+    setTimeout(function(){ _showSuggestions(e.target, _currentToken(e.target)); }, 0);
+    return;
+  }
+  // Metric ref suggest click
+  if(e.target.closest("#mc-metric-suggest")) return;
+  // ThoughtSpot formula dropdown click
+  var fcsItem = e.target.closest(".fcs-item");
+  if(fcsItem){
+    if(fcsItem.dataset.isfn === "1"){ _insertFunctionSuggestion(fcsItem.dataset.tpl); return; }
+    _insertSuggestion(fcsItem.dataset.col, fcsItem.dataset.table, fcsItem.dataset.dup === "1");
+    return;
+  }
+  if(e.target.closest("#formula-col-suggest")) return;  // clicking inside dropdown but not on item
+  // Tag input dropdown click
+  var item = e.target.closest(".col-suggest-item");
+  if(item){
+    if(item.dataset.tag && _suggestTarget){
+      _insertTagValue(_suggestTarget, item.dataset.col);
+    } else {
+      _insertSuggestion(item.dataset.col);
+    }
+    return;
+  }
+  if(!e.target.closest("#col-suggest")) _hideSuggestions();
+  _hideMcMetricSuggest();
+});
+
+// Tag-style suggestions for required_columns / allowed_dimensions
+function _showTagSuggestions(input, token){
+  var el = document.getElementById("col-suggest");
+  if(!_allColumns.length || token.length < 2){ if(el) el.style.display="none"; return; }
+  var lc = token.toLowerCase();
+  var matches = _allColumns.filter(function(c){ return c.column.toLowerCase().startsWith(lc); }).slice(0,6);
+  if(!matches.length){ if(el) el.style.display="none"; return; }
+  _suggestTarget = input; _suggestIdx = -1;
+  el.innerHTML = matches.map(function(c,i){
+    return '<div class="col-suggest-item" data-col="'+c.column+'" data-idx="'+i+'" data-tag="1">'
+      +'<span class="col-suggest-col">'+_displayLabel(c)+'</span>'
+      +'<span class="col-suggest-table">'+c.table+'</span>'
+      +'<span class="col-suggest-type">'+c.type+'</span></div>';
+  }).join("");
+  _mountSuggestionTray(el, input);
+  el.style.display="block";
+}
+
+function _insertTagValue(input, colName){
+  var parts = input.value.split(",").map(function(p){ return p.trim(); });
+  parts[parts.length-1] = colName;
+  input.value = parts.join(", ")+", ";
+  input.focus(); _hideSuggestions();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// FORMULA TEST RUNNER (runs against the database)
+// ══════════════════════════════════════════════════════════════════════
+function _metricFilterOperatorOptions(selected){
+  var ops = [["equals","equals"],["not_equals","not equals"],["in","in"],["not_in","not in"],["is_null","is null"],["is_not_null","is not null"],["greater_than",">"],["greater_or_equal",">="],["less_than","<"],["less_or_equal","<="],["between","between"],["contains","contains"]];
+  return ops.map(function(op){ return '<option value="'+op[0]+'"'+(op[0]===selected?' selected':'')+'>'+op[1]+'</option>'; }).join("");
+}
+
+function _metricFilterRowHtml(row){
+  row = row || {};
+  return '<div class="metric-filter-row">'
+    + '<input type="text" class="metric-builder-field" placeholder="Filter field" autocomplete="off" value="'+escHtml(row.field||'')+'">'
+    + '<select class="metric-builder-operator">'+_metricFilterOperatorOptions(row.operator || "equals")+'</select>'
+    + '<input type="text" class="metric-builder-value" placeholder="Value" value="'+escHtml(row.value||'')+'">'
+    + '<button type="button" class="metric-filter-remove" title="Remove filter" onclick="removeMetricFilterRow(this)">x</button>'
+    + '</div>';
+}
+
+window.addMetricFilterRow = function(btn, row){
+  var builder = btn.closest(".metric-builder");
+  if(!builder) return;
+  var list = builder.querySelector(".metric-filter-list");
+  if(list) list.insertAdjacentHTML("beforeend", _metricFilterRowHtml(row || {}));
+  _wireMetricBuilderColumnLists(builder);
+  _syncMetricBuilder(builder.closest(".metric-form"));
+};
+
+window.removeMetricFilterRow = function(btn){
+  var form = btn.closest(".metric-form");
+  var row = btn.closest(".metric-filter-row");
+  if(row) row.remove();
+  _syncMetricBuilder(form);
+};
+
+function _metricSqlLiteral(value){
+  var v = (value || "").trim();
+  if(/^-?\d+(\.\d+)?$/.test(v)) return v;
+  return "'" + v.replace(/'/g, "''") + "'";
+}
+
+function _metricSplitValues(value){
+  return (value || "").split(",").map(function(v){ return v.trim(); }).filter(Boolean);
+}
+
+function _metricCondition(row){
+  var f = (row.field || "").trim();
+  var op = (row.operator || "equals").trim();
+  var v = (row.value || "").trim();
+  if(!f) return "";
+  if(op === "equals") return f + " = " + _metricSqlLiteral(v);
+  if(op === "not_equals") return f + " <> " + _metricSqlLiteral(v);
+  if(op === "greater_than") return f + " > " + _metricSqlLiteral(v);
+  if(op === "greater_or_equal") return f + " >= " + _metricSqlLiteral(v);
+  if(op === "less_than") return f + " < " + _metricSqlLiteral(v);
+  if(op === "less_or_equal") return f + " <= " + _metricSqlLiteral(v);
+  if(op === "contains") return f + " LIKE '%' + " + _metricSqlLiteral(v) + " + '%'";
+  if(op === "is_null") return f + " IS NULL";
+  if(op === "is_not_null") return f + " IS NOT NULL";
+  if(op === "between"){
+    var b = _metricSplitValues(v);
+    if(b.length < 2) return "";
+    return f + " BETWEEN " + _metricSqlLiteral(b[0]) + " AND " + _metricSqlLiteral(b[1]);
+  }
+  if(op === "in" || op === "not_in"){
+    var vals = _metricSplitValues(v);
+    if(!vals.length) return "";
+    return f + (op === "in" ? " IN " : " NOT IN ") + "(" + vals.map(_metricSqlLiteral).join(", ") + ")";
+  }
+  return "";
+}
+
+function _metricFormatSample(fmt){
+  fmt = (fmt || "number").toLowerCase();
+  if(fmt === "currency") return "$52,536.00";
+  if(fmt === "percentage") return "42.5%";
+  if(fmt === "date") return "2026-05-28";
+  if(fmt === "text") return "Returned result";
+  return "52,536";
+}
+
+function _metricFilterText(row){
+  var f = (row.field || "").trim();
+  var op = (row.operator || "equals").replace(/_/g, " ");
+  var v = (row.value || "").trim();
+  if(!f) return "";
+  if(op === "is null" || op === "is not null") return f + " " + op;
+  return f + " " + op + " " + (v || "...");
+}
+
+function _metricBuilderHumanSummary(config){
+  if(!config || !config.enabled) return "Enable the builder to generate a validated aggregate formula.";
+  var measure = (config.measure || "").trim();
+  if(!measure) return "Choose the measure column that this metric should aggregate.";
+  var filters = (config.filters || []).map(_metricFilterText).filter(Boolean);
+  var line = "Metric will calculate " + (config.aggregation || "SUM") + " of " + measure + ".";
+  if(filters.length) line += " It only includes rows where " + filters.join(" and ") + ".";
+  else line += " No row-level filters are applied.";
+  return line;
+}
+
+function _listFromInput(form, name){
+  var el = form ? form.querySelector("[name='"+name+"']") : null;
+  return el && el.value ? el.value.trim() : "";
+}
+
+function _ensureMetricUxPanels(form){
+  if(!form) return;
+  var fmt = form.querySelector("[name='result_format']");
+  if(fmt && !fmt.parentElement.querySelector(".metric-live-preview")){
+    fmt.insertAdjacentHTML("afterend",
+      '<div class="metric-live-preview"><span>Result preview</span><strong class="format-preview-pill" data-format-preview></strong></div>');
+  }
+  var builder = form.querySelector(".metric-builder");
+  if(builder){
+    var body = builder.querySelector(".metric-builder-body");
+    if(body && !builder.querySelector(".metric-builder-steps")){
+      body.insertAdjacentHTML("afterbegin",
+        '<div class="metric-builder-steps">'
+        + '<div class="metric-builder-step"><span>1. Measure</span><strong>Select the field and aggregation.</strong></div>'
+        + '<div class="metric-builder-step"><span>2. Filters</span><strong>Add business rules without CASE syntax.</strong></div>'
+        + '<div class="metric-builder-step"><span>3. Publish</span><strong>Validate the generated formula.</strong></div>'
+        + '</div>');
+    }
+    var preview = builder.querySelector(".metric-builder-preview");
+    if(preview && !builder.querySelector(".metric-builder-human")){
+      preview.insertAdjacentHTML("beforebegin",
+        '<div class="metric-builder-human" data-builder-human></div>'
+        + '<div class="metric-preview-title"><span>Generated formula</span><span>Saved into approved formula</span></div>');
+    }
+    if(!form.querySelector(".metric-lineage")){
+      var lineageHtml =
+        '<div class="metric-lineage">'
+        + '<div class="metric-lineage-title">Metric lineage before publish</div>'
+        + '<div class="metric-lineage-grid">'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Source table</div><div class="metric-lineage-v" data-lineage="source"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Required columns</div><div class="metric-lineage-v" data-lineage="columns"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Allowed dimensions</div><div class="metric-lineage-v" data-lineage="dimensions"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Time column</div><div class="metric-lineage-v" data-lineage="time"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Result format</div><div class="metric-lineage-v" data-lineage="format"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Mode</div><div class="metric-lineage-v" data-lineage="mode"></div></div>'
+        + '</div></div>';
+      // Wizard forms host the lineage grid on the Review & test step;
+      // inline edit forms keep the original placement after the builder.
+      var reviewHost = form.querySelector("[data-mc-review]");
+      if(reviewHost){
+        reviewHost.insertAdjacentHTML("beforeend",
+          '<div class="metric-builder-human" data-builder-human></div>'
+          + '<div class="metric-preview-title"><span>Generated formula</span><span>Saved into approved formula</span></div>'
+          + '<pre class="mc-review-formula" data-mc-review-formula>—</pre>'
+          + lineageHtml);
+      } else {
+        builder.insertAdjacentHTML("afterend", lineageHtml);
+      }
+    }
+  }
+  _updateMetricUxPanels(form);
+}
+
+function _updateMetricUxPanels(form){
+  if(!form) return;
+  var fmt = (form.querySelector("[name='result_format']") || {}).value || "number";
+  form.querySelectorAll("[data-format-preview]").forEach(function(sample){
+    sample.textContent = _metricFormatSample(fmt);
+  });
+  var config = _collectMetricBuilderConfig(form);
+  form.querySelectorAll("[data-builder-human]").forEach(function(human){
+    human.textContent = _metricBuilderHumanSummary(config);
+  });
+  var source = _listFromInput(form, "base_table") || _listFromInput(form, "base_entity") || "Not selected";
+  var cols = _listFromInput(form, "required_columns");
+  if(!cols && config.enabled){
+    cols = [config.measure].concat((config.filters || []).map(function(f){ return f.field; })).filter(Boolean).join(", ");
+  }
+  var dims = _listFromInput(form, "allowed_dimensions") || "Any validated field";
+  var time = _listFromInput(form, "default_time_column") || "None";
+  var mode = ((form.querySelector("[name='formula_type']") || {}).value || "expression") === "query" ? "Full SQL query" : "Formula expression";
+  var pairs = { source: source, columns: cols || "Auto from formula", dimensions: dims, time: time, format: fmt + " (" + _metricFormatSample(fmt) + ")", mode: mode };
+  Object.keys(pairs).forEach(function(key){
+    form.querySelectorAll("[data-lineage='"+key+"']").forEach(function(el){
+      el.textContent = pairs[key];
+    });
+  });
+}
+
+function _collectMetricBuilderConfig(form){
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return { enabled:false };
+  var mode = (builder.querySelector(".metric-builder-mode")||{}).value || "aggregate";
+  var filters = Array.from(builder.querySelectorAll(".metric-filter-row")).map(function(row){
+    return {
+      field: (row.querySelector(".metric-builder-field")||{}).value || "",
+      operator: (row.querySelector(".metric-builder-operator")||{}).value || "equals",
+      value: (row.querySelector(".metric-builder-value")||{}).value || ""
+    };
+  }).filter(function(row){ return row.field.trim(); });
+  if(mode === "row_calculated"){
+    var joinsRaw = ((builder.querySelector(".metric-builder-required-joins")||{}).value || "").trim();
+    var joins = [];
+    if(joinsRaw){
+      try{ joins = JSON.parse(joinsRaw); }
+      catch(err){ throw new Error("Required joins must be valid JSON."); }
+      if(!Array.isArray(joins)) throw new Error("Required joins must be a JSON array.");
+    }
+    return {
+      enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
+      mode: "row_calculated",
+      aggregation: (builder.querySelector(".metric-builder-row-aggregation")||{}).value || "AVG",
+      row_expression: (builder.querySelector(".metric-builder-row-expression")||{}).value || "",
+      required_columns: ((builder.querySelector(".metric-builder-required-columns")||{}).value || "")
+        .split(",").map(function(c){ return c.trim(); }).filter(Boolean),
+      required_joins: joins
+    };
+  }
+  if(mode === "date_gap"){
+    var fromSel = builder.querySelector(".metric-builder-dg-from");
+    var toSel   = builder.querySelector(".metric-builder-dg-to");
+    var fromOpt = fromSel && fromSel.selectedOptions.length ? fromSel.selectedOptions[0] : null;
+    var toOpt   = toSel && toSel.selectedOptions.length ? toSel.selectedOptions[0] : null;
+    var fromJoin = null, toJoin = null;
+    try{
+      if(fromOpt && fromOpt.dataset.join) fromJoin = JSON.parse(fromOpt.dataset.join);
+      if(toOpt && toOpt.dataset.join) toJoin = JSON.parse(toOpt.dataset.join);
+    }catch(err){ /* fall through to null checks */ }
+    var invalidRaw = ((builder.querySelector(".metric-builder-dg-invalid")||{}).value || "").trim();
+    return {
+      enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
+      mode: "date_gap",
+      aggregation: (builder.querySelector(".metric-builder-dg-aggregation")||{}).value || "AVG",
+      unit: (builder.querySelector(".metric-builder-dg-unit")||{}).value || "day",
+      missing_to: (builder.querySelector(".metric-builder-dg-missing")||{}).value || "null",
+      invalid_keys: invalidRaw,
+      date_column: ((builder.querySelector(".metric-builder-dg-datecol")||{}).value || "DMS_DT").trim() || "DMS_DT",
+      from_join: fromJoin,
+      to_join: toJoin
+    };
+  }
+  return {
+    enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
+    mode: "aggregate",
+    aggregation: (builder.querySelector(".metric-builder-aggregation")||{}).value || "SUM",
+    measure: (builder.querySelector(".metric-builder-measure")||{}).value || "",
+    filters: filters
+  };
+}
+
+function _compileMetricBuilderFormula(config){
+  if(!config.enabled) return "";
+  var agg = (config.aggregation || "SUM").toUpperCase();
+  if(config.mode === "date_gap"){
+    if(!config.from_join || !config.to_join) throw new Error("Load date roles and pick both From and To.");
+    if(config.from_join.alias === config.to_join.alias) throw new Error("From and To must be different date roles.");
+    var dcol = config.date_column || "DMS_DT";
+    var fd = config.from_join.alias + "." + dcol;
+    var td = config.to_join.alias + "." + dcol;
+    var unit = config.unit || "day";
+    // Azure SQL flavour for preview — the server compiles the authoritative
+    // dialect-correct version on save.
+    var today = "CAST(GETDATE() AS date)";
+    var gap = "DATEDIFF(" + unit + ", " + fd + ", " + td + ")";
+    var gapToday = "DATEDIFF(" + unit + ", " + fd + ", " + today + ")";
+    var dgExpr = "CASE WHEN " + fd + " IS NULL THEN NULL WHEN " + td + " IS NOT NULL THEN " + gap;
+    var mt = config.missing_to || "null";
+    if(mt === "zero") dgExpr += " ELSE 0";
+    else if(mt === "today") dgExpr += " ELSE " + gapToday;
+    else if(mt === "today_if_overdue_else_zero") dgExpr += " WHEN " + fd + " < " + today + " THEN " + gapToday + " ELSE 0";
+    else dgExpr += " ELSE NULL";
+    dgExpr += " END";
+    if(agg === "COUNT") return "COUNT(CASE WHEN (" + dgExpr + ") IS NOT NULL THEN 1 END)";
+    return agg + "(CAST((" + dgExpr + ") AS float))";
+  }
+  if(config.mode === "row_calculated"){
+    var expr = (config.row_expression || "").trim();
+    if(!expr) throw new Error("Enter the row-level expression.");
+    if(agg === "COUNT") return "COUNT(CASE WHEN (" + expr + ") IS NOT NULL THEN 1 END)";
+    return agg + "(CAST((" + expr + ") AS float))";
+  }
+  var measure = (config.measure || "").trim();
+  if(!measure) throw new Error("Choose a measure field for the metric builder.");
+  var conditions = (config.filters || []).map(_metricCondition).filter(Boolean);
+  if(!conditions.length) return agg + "(" + measure + ")";
+  var predicate = conditions.join(" AND ");
+  if(agg === "SUM") return "SUM(CASE WHEN " + predicate + " THEN " + measure + " ELSE 0 END)";
+  if(agg === "COUNT") return "COUNT(CASE WHEN " + predicate + " THEN 1 END)";
+  return agg + "(CASE WHEN " + predicate + " THEN " + measure + " END)";
+}
+
+function _syncMetricBuilder(form){
+  if(!form) return true;
+  var builder = form.querySelector(".metric-builder");
+  if(!builder) return true;
+  var enabled = !!(builder.querySelector(".metric-builder-enabled")||{}).checked;
+  builder.classList.toggle("enabled", enabled);
+  var modeSelect = builder.querySelector(".metric-builder-mode");
+  var mode = (modeSelect && modeSelect.value) || "aggregate";
+  builder.dataset.builderMode = mode;
+  var filterBtn = builder.querySelector(".metric-builder-add-filter");
+  if(filterBtn) filterBtn.disabled = mode === "row_calculated";
+  var hidden = form.querySelector(".metric-builder-config");
+  var preview = builder.querySelector(".metric-builder-preview");
+  var editor = form.querySelector(".formula-editor");
+  var required = form.querySelector("[name='required_columns']");
+  var config = _collectMetricBuilderConfig(form);
+  if(!enabled){
+    if(hidden) hidden.value = "";
+    if(preview) preview.textContent = "Enable builder and choose a measure to preview the formula.";
+    _updateMetricUxPanels(form);
+    return true;
+  }
+  try{
+    var formula = _compileMetricBuilderFormula(config);
+    if(hidden) hidden.value = JSON.stringify(config);
+    if(preview) preview.textContent = formula;
+    if(editor){ editor.value = formula; updateFormulaHints(editor); _renderSqlHighlight(editor); }
+    if(required){
+      var cols;
+      if(config.mode === "row_calculated"){
+        cols = (config.required_columns || []).concat((config.required_joins || []).map(function(j){ return j.from_column; }));
+      } else if(config.mode === "date_gap"){
+        cols = [config.from_join && config.from_join.from_column, config.to_join && config.to_join.from_column];
+      } else {
+        cols = [config.measure].concat((config.filters||[]).map(function(f){ return f.field; }));
+      }
+      cols = cols.map(function(c){ return (c || "").split(".").pop().trim(); }).filter(Boolean);
+      var existing = required.value.split(",").map(function(c){ return c.trim(); }).filter(Boolean);
+      cols.forEach(function(c){ if(existing.indexOf(c) === -1) existing.push(c); });
+      required.value = existing.join(", ");
+    }
+    _updateMetricUxPanels(form);
+    return true;
+  } catch(err){
+    if(preview) preview.textContent = err.message;
+    _updateMetricUxPanels(form);
+    return false;
+  }
+}
+
+function _metricBuilderDateKeyColumns(builder){
+  if(!builder) return [];
+  var text = [
+    (builder.querySelector(".metric-builder-row-expression")||{}).value || "",
+    (builder.querySelector(".metric-builder-required-columns")||{}).value || ""
+  ].join(" ");
+  var re = /\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*(?:_DT_DMS_KEY|_DATE_DMS_KEY))\b/gi;
+  var seen = {}, out = [], m;
+  while((m = re.exec(text))){
+    var col = (m[1] || "").toUpperCase();
+    if(col && !seen[col]){ seen[col] = true; out.push(col); }
+  }
+  return out;
+}
+
+function _metricBuilderKnownColumns(){
+  var known = {};
+  (_allColumns || []).forEach(function(c){
+    var col = String(c.column || "").toUpperCase();
+    if(col) known[col] = true;
+  });
+  return known;
+}
+
+function _metricBuilderIdentifierColumns(text, opts){
+  opts = opts || {};
+  var known = _metricBuilderKnownColumns();
+  var skip = {
+    CASE:1, WHEN:1, THEN:1, ELSE:1, END:1, NULL:1, IS:1, NOT:1, AND:1, OR:1,
+    AS:1, CAST:1, CONVERT:1, TRY_CONVERT:1, DATEDIFF:1, DATEADD:1, GETDATE:1,
+    CURRENT_TIMESTAMP:1, DAY:1, DAYS:1, DATE:1, TRUE:1, FALSE:1
+  };
+  var seen = {}, out = [], m;
+  var re = /\b([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\b/g;
+  while((m = re.exec(text || ""))){
+    if(opts.skipQualified && m[2]) continue;
+    var col = String(m[2] || m[1] || "").toUpperCase();
+    if(!col || skip[col] || !known[col] || seen[col]) continue;
+    seen[col] = true;
+    out.push(col);
+  }
+  return out;
+}
+
+function _metricBuilderBaseTableColumns(builder){
+  if(!builder) return [];
+  var requiredText = (builder.querySelector(".metric-builder-required-columns")||{}).value || "";
+  var requiredCols = _metricBuilderIdentifierColumns(requiredText, {skipQualified:false});
+  if(requiredCols.length) return requiredCols;
+
+  var dateKeys = _metricBuilderDateKeyColumns(builder);
+  if(dateKeys.length) return dateKeys;
+
+  // Last-resort fallback for expressions that use raw fact columns directly.
+  // Qualified aliases such as due_dt.DMS_DT are ignored so a date dimension
+  // alias does not become the inferred fact/base table.
+  var expr = (builder.querySelector(".metric-builder-row-expression")||{}).value || "";
+  return _metricBuilderIdentifierColumns(expr, {skipQualified:true});
+}
+
+function _inferMetricBuilderBaseTable(form, opts){
+  opts = opts || {};
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder || !_allColumns.length) return false;
+  var mode = (builder.querySelector(".metric-builder-mode")||{}).value || "aggregate";
+  if(mode !== "row_calculated") return false;
+
+  var baseInput = form.querySelector("[name='base_table']");
+  if(!baseInput || (baseInput.value.trim() && !opts.force)) return false;
+
+  var needed = _metricBuilderBaseTableColumns(builder);
+  if(!needed.length) return false;
+
+  var tableMap = {};
+  (_allColumns || []).forEach(function(c){
+    var col = String(c.column || "").toUpperCase();
+    if(needed.indexOf(col) === -1) return;
+    var key = c.table_fqn || c.table;
+    if(!key) return;
+    if(!tableMap[key]) tableMap[key] = { table: key, display: c.table || key, columns: {} };
+    tableMap[key].columns[col] = true;
+  });
+
+  var candidates = Object.keys(tableMap).filter(function(table){
+    return needed.every(function(col){ return !!tableMap[table].columns[col]; });
+  });
+
+  if(candidates.length === 1){
+    baseInput.value = candidates[0];
+    _setMetricJoinStatus(builder, "Base table auto-detected: " + tableMap[candidates[0]].display, "ok");
+    _updateMetricUxPanels(form);
+    _syncMetricBuilder(form);
+    _scheduleAutoDateRoleJoins(form);
+    return true;
+  }
+
+  if(candidates.length > 1){
+    _setMetricJoinStatus(
+      builder,
+      "Choose base table: " + candidates.slice(0, 3).map(function(t){ return tableMap[t].display; }).join(", ") + (candidates.length > 3 ? "..." : ""),
+      "warn"
+    );
+  }
+  return false;
+}
+
+function _scheduleMetricBuilderBaseTableInference(form){
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return;
+  clearTimeout(builder._baseTableAutoTimer);
+  builder._baseTableAutoTimer = setTimeout(function(){
+    _inferMetricBuilderBaseTable(form);
+  }, 180);
+}
+
+function _setMetricJoinStatus(builder, message, tone){
+  if(!builder) return;
+  var slot = builder.querySelector(".metric-builder-join-status");
+  if(!slot){
+    var actions = builder.querySelector(".metric-builder-join-actions");
+    if(!actions) return;
+    slot = document.createElement("span");
+    slot.className = "metric-builder-join-status";
+    actions.appendChild(slot);
+  }
+  slot.textContent = message || "";
+  slot.dataset.tone = tone || "neutral";
+}
+
+/* Writes a looked-up set of date-role joins into a metric builder. Extracted so
+   the two lookup paths can hand it to qbConfirm's callback: qbConfirm cannot
+   block the way the native confirm() it replaced did, so the work that used to
+   sit after the prompt has to be callable later. */
+function _writeDateRoleJoins(form, builder, joinsEl, joins, statusText){
+  joinsEl.value = JSON.stringify(joins, null, 2);
+  var columns = builder.querySelector(".metric-builder-required-columns");
+  if(columns){
+    var existing = (columns.value || "").split(",").map(function(c){ return c.trim(); }).filter(Boolean);
+    joins.forEach(function(j){ if(j.from_column && existing.indexOf(j.from_column) === -1) existing.push(j.from_column); });
+    columns.value = existing.join(", ");
+  }
+  if(statusText) _setMetricJoinStatus(builder, statusText, "ok");
+  _syncMetricBuilder(form);
+}
+
+async function _applyDateRoleJoins(form, opts){
+  opts = opts || {};
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return false;
+  var mode = (builder.querySelector(".metric-builder-mode")||{}).value || "aggregate";
+  if(mode !== "row_calculated") return false;
+
+  var joinsEl = builder.querySelector(".metric-builder-required-joins");
+  if(!joinsEl) return false;
+  if(joinsEl.value.trim() && !opts.force) return false;
+
+  var baseTableInput = form.querySelector("[name='base_table']");
+  var table = baseTableInput ? baseTableInput.value.trim() : "";
+  if(!table){
+    if(opts.showAlerts) qbToast.warning("Set the Base table field (Advanced options) first — date roles are looked up per table.");
+    return false;
+  }
+
+  var dateKeys = _metricBuilderDateKeyColumns(builder);
+  if(!opts.force && !dateKeys.length) return false;
+
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return false;
+
+  var btn = opts.button || null;
+  var origLabel = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "Looking up..."; }
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/date-role-joins?table="+encodeURIComponent(table));
+    var data = await resp.json();
+    var joins = data.joins || [];
+    if(dateKeys.length){
+      var keySet = {};
+      dateKeys.forEach(function(k){ keySet[k.toUpperCase()] = true; });
+      joins = joins.filter(function(j){ return keySet[String(j.from_column || "").toUpperCase()]; });
+    }
+    if(!joins.length){
+      if(opts.showAlerts) qbToast.warning("No matching date roles were detected for "+table+". Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      else _setMetricJoinStatus(builder, "No matching date roles found yet", "warn");
+      return false;
+    }
+    if(joinsEl.value.trim() && opts.confirmReplace){
+      qbConfirm({title:"Replace the required joins?",body:"This overwrites the joins JSON you have there with the "+joins.length+" date role(s) found for "+table+".",confirm:"Replace",variant:"warning",onConfirm:function(){ _writeDateRoleJoins(form, builder, joinsEl, joins, "Date joins filled from schema"); }});
+      return false;
+    }
+    _writeDateRoleJoins(form, builder, joinsEl, joins, "Date joins filled from schema");
+    return true;
+  } catch(err) {
+    if(opts.showAlerts) qbToast.error("Failed to look up date roles: "+err.message);
+    else _setMetricJoinStatus(builder, "Date join lookup failed", "warn");
+    return false;
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = origLabel; }
+  }
+}
+
+function _scheduleAutoDateRoleJoins(form){
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return;
+  clearTimeout(builder._dateRoleAutoTimer);
+  builder._dateRoleAutoTimer = setTimeout(function(){
+    _applyDateRoleJoins(form, {force:false, showAlerts:false});
+  }, 350);
+}
+
+function _wireMetricBuilderColumnLists(scope){
+  if(!_allColumns.length) return;
+  (scope || document).querySelectorAll(".metric-builder-measure,.metric-builder-field,.metric-builder-required-columns").forEach(function(inp){
+    inp.removeAttribute("list");
+    inp.setAttribute("autocomplete", "off");
+    inp.dataset.inlineSuggest = "1";
+  });
+}
+
+function _initialiseMetricBuilder(builder){
+  // This runs from the async /api/columns fetch callback (see loadColumns
+  // below). If that fetch is still in flight when the admin opens the
+  // edit dialog and starts pasting/typing into the row expression, it
+  // used to resolve later and silently overwrite their in-progress edit
+  // with the stale server-rendered saved config the moment it completed.
+  // Once the user has touched any field in this builder, only (re)wire
+  // the column autocomplete lists — never touch field values again.
+  if(builder.dataset.userEdited === "1"){
+    _wireMetricBuilderColumnLists(builder);
+    return;
+  }
+  var form = builder.closest(".metric-form");
+  var hidden = form ? form.querySelector(".metric-builder-config") : null;
+  var raw = (hidden && hidden.value) || builder.dataset.config || "";
+  if(!raw) return;
+  try{
+    var cfg = JSON.parse(raw);
+    if(!cfg || !cfg.enabled) return;
+    builder.querySelector(".metric-builder-enabled").checked = true;
+    builder.classList.add("enabled");
+    builder.dataset.builderMode = cfg.mode || "aggregate";
+    var modeSelect = builder.querySelector(".metric-builder-mode");
+    if(modeSelect) modeSelect.value = cfg.mode || "aggregate";
+    builder.querySelector(".metric-builder-aggregation").value = (cfg.aggregation || "SUM").toUpperCase();
+    var rowAgg = builder.querySelector(".metric-builder-row-aggregation");
+    if(rowAgg) rowAgg.value = (cfg.aggregation || "AVG").toUpperCase();
+    builder.querySelector(".metric-builder-measure").value = cfg.measure || "";
+    var rowExpression = builder.querySelector(".metric-builder-row-expression");
+    if(rowExpression) rowExpression.value = cfg.row_expression || "";
+    var reqColumns = builder.querySelector(".metric-builder-required-columns");
+    if(reqColumns) reqColumns.value = Array.isArray(cfg.required_columns) ? cfg.required_columns.join(", ") : (cfg.required_columns || "");
+    var reqJoins = builder.querySelector(".metric-builder-required-joins");
+    if(reqJoins) reqJoins.value = cfg.required_joins ? JSON.stringify(cfg.required_joins, null, 2) : "";
+    if(cfg.mode === "date_gap"){
+      _setDateGapRoleOption(builder, ".metric-builder-dg-from", cfg.from_join);
+      _setDateGapRoleOption(builder, ".metric-builder-dg-to", cfg.to_join);
+      var dgUnit = builder.querySelector(".metric-builder-dg-unit");
+      if(dgUnit) dgUnit.value = cfg.unit || "day";
+      var dgMissing = builder.querySelector(".metric-builder-dg-missing");
+      if(dgMissing) dgMissing.value = cfg.missing_to || "null";
+      var dgInvalid = builder.querySelector(".metric-builder-dg-invalid");
+      if(dgInvalid) dgInvalid.value = Array.isArray(cfg.invalid_keys) ? cfg.invalid_keys.join(", ") : (cfg.invalid_keys || "");
+      var dgDateCol = builder.querySelector(".metric-builder-dg-datecol");
+      if(dgDateCol) dgDateCol.value = cfg.date_column || "DMS_DT";
+      var dgAgg = builder.querySelector(".metric-builder-dg-aggregation");
+      if(dgAgg) dgAgg.value = (cfg.aggregation || "AVG").toUpperCase();
+    }
+    var list = builder.querySelector(".metric-filter-list");
+    if(list) list.innerHTML = (cfg.filters || []).map(_metricFilterRowHtml).join("");
+    _wireMetricBuilderColumnLists(builder);
+    _syncMetricBuilder(form);
+  }catch(e){}
+}
+
+function _setDateGapRoleOption(builder, selector, join){
+  var sel = builder.querySelector(selector);
+  if(!sel || !join || !join.alias) return;
+  var label = (join.role || join.alias) + " (" + (join.from_column || "") + ")";
+  var opt = document.createElement("option");
+  opt.value = join.alias;
+  opt.textContent = label;
+  opt.dataset.join = JSON.stringify(join);
+  sel.appendChild(opt);
+  sel.value = join.alias;
+}
+
+window.insertDateRoleJoinTemplate = async function(btn){
+  var builder = btn ? btn.closest(".metric-builder") : null;
+  var form    = builder ? builder.closest(".metric-form") : null;
+  if(!builder || !form) return;
+  return _applyDateRoleJoins(form, {force:true, confirmReplace:true, showAlerts:true, button:btn});
+  var joinsEl = builder.querySelector(".metric-builder-required-joins");
+  if(!joinsEl) return;
+
+  var baseTableInput = form.querySelector("[name='base_table']");
+  var table = baseTableInput ? baseTableInput.value.trim() : "";
+  if(!table){
+    qbToast.warning("Set the Base table field (Advanced options) first — date roles are looked up per table.");
+    return;
+  }
+
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return;
+
+  var origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Looking up...";
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/date-role-joins?table="+encodeURIComponent(table));
+    var data = await resp.json();
+    var joins = data.joins || [];
+    if(!joins.length){
+      qbToast.warning("No date roles were detected for "+table+" in the Knowledge Base. Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      return;
+    }
+    if(joinsEl.value.trim()){
+      qbConfirm({title:"Replace the required joins?",body:"This overwrites the joins JSON you have there with the "+joins.length+" date role(s) found for "+table+".",confirm:"Replace",variant:"warning",onConfirm:function(){ _writeDateRoleJoins(form, builder, joinsEl, joins, null); }});
+      return;
+    }
+    _writeDateRoleJoins(form, builder, joinsEl, joins, null);
+  } catch(err) {
+    qbToast.error("Failed to look up date roles: "+err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+};
+
+window.loadDateGapRoles = async function(btn){
+  var builder = btn ? btn.closest(".metric-builder") : null;
+  var form    = builder ? builder.closest(".metric-form") : null;
+  if(!builder || !form) return;
+  var status = builder.querySelector(".metric-builder-dg-status");
+  var baseTableInput = form.querySelector("[name='base_table']");
+  var table = baseTableInput ? baseTableInput.value.trim() : "";
+  if(!table){
+    if(status) status.textContent = "Set the Base table field (Advanced options) first.";
+    return;
+  }
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return;
+  var origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Loading…";
+  if(status) status.textContent = "";
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/date-role-joins?table="+encodeURIComponent(table));
+    var data = await resp.json();
+    var joins = data.joins || [];
+    if(!joins.length){
+      if(status) status.textContent = "No date roles detected for "+table+". Rebuild the KB or check the Date Roles page.";
+      return;
+    }
+    ["dg-from","dg-to"].forEach(function(which){
+      var sel = builder.querySelector(".metric-builder-"+which);
+      if(!sel) return;
+      var current = sel.value;
+      sel.innerHTML = '<option value="">— pick a date role —</option>';
+      joins.forEach(function(j){
+        var opt = document.createElement("option");
+        opt.value = j.alias;
+        opt.textContent = (j.role || j.alias) + " (" + j.from_column + ")";
+        opt.dataset.join = JSON.stringify(j);
+        sel.appendChild(opt);
+      });
+      if(current) sel.value = current;
+    });
+    // Sensible defaults: a role containing "due" starts the gap, "pay" ends it.
+    var fromSel = builder.querySelector(".metric-builder-dg-from");
+    var toSel   = builder.querySelector(".metric-builder-dg-to");
+    if(fromSel && !fromSel.value){
+      var dueOpt = joins.find(function(j){ return /due/i.test(j.role || j.alias); });
+      if(dueOpt) fromSel.value = dueOpt.alias;
+    }
+    if(toSel && !toSel.value){
+      var payOpt = joins.find(function(j){ return /pay/i.test(j.role || j.alias); });
+      if(payOpt) toSel.value = payOpt.alias;
+    }
+    var dateColInput = builder.querySelector(".metric-builder-dg-datecol");
+    var withDateCol = joins.find(function(j){ return j.date_column; });
+    if(dateColInput && withDateCol && (!dateColInput.value || dateColInput.value === "DMS_DT")){
+      dateColInput.value = withDateCol.date_column;
+    }
+    if(status) status.textContent = joins.length + " date role(s) loaded.";
+    _syncMetricBuilder(form);
+  } catch(err) {
+    if(status) status.textContent = "Failed to load date roles: " + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+};
+
+window.aiImportMetric = async function(btn){
+  var panel = btn ? btn.closest(".metric-ai-import") : null;
+  var form  = btn ? btn.closest(".metric-form") : null;
+  if(!panel || !form) return;
+  var status = panel.querySelector(".metric-ai-import-status");
+  var textEl = panel.querySelector(".metric-ai-import-text");
+  var text = textEl ? textEl.value.trim() : "";
+  if(!text){
+    if(status){ status.dataset.tone = "err"; status.textContent = "Paste a DAX measure or describe the metric first."; }
+    return;
+  }
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return;
+  var origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+  if(status){ status.dataset.tone = ""; status.textContent = "Asking the AI to convert the definition…"; }
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/ai-import", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: text})
+    });
+    var data = await resp.json();
+    if(data.status !== "ok"){
+      if(status){ status.dataset.tone = "err"; status.textContent = data.message || "AI import failed."; }
+      return;
+    }
+    // Pre-fill the form for review — nothing is saved until the admin submits.
+    var setVal = function(name, value){
+      var el = form.querySelector("[name='"+name+"']");
+      if(el && value) el.value = value;
+    };
+    setVal("name", data.name);
+    setVal("synonyms", data.synonyms);
+    setVal("description", data.description);
+    setVal("base_table", data.base_table);
+    setVal("example_questions", data.example_questions);
+    var fmtSel = form.querySelector("[name='result_format']");
+    if(fmtSel && data.result_format) fmtSel.value = data.result_format;
+    var hidden = form.querySelector(".metric-builder-config");
+    if(hidden) hidden.value = JSON.stringify(data.config);
+    var builder = form.querySelector(".metric-builder");
+    if(builder){
+      builder.dataset.config = JSON.stringify(data.config);
+      // Allow re-initialisation from the AI config, then re-protect against
+      // the async columns-fetch clobbering what we just filled.
+      builder.dataset.userEdited = "";
+      _initialiseMetricBuilder(builder);
+      builder.dataset.userEdited = "1";
+    }
+    var editor = form.querySelector(".formula-editor");
+    if(editor && data.formula){
+      editor.value = data.formula;
+      updateFormulaHints(editor);
+      _renderSqlHighlight(editor);
+    }
+    if(status){
+      status.dataset.tone = "ok";
+      status.textContent = "Config generated — review the fields below, then ▶ Test before saving.";
+    }
+    _updateMetricUxPanels(form);
+    // Wizard: the AI filled every step — select the matching mode card and
+    // land the admin straight on Review & test.
+    if(form.id === "mc-form"){
+      var _aiCfgMode = (data.config && data.config.mode) || "";
+      var _aiFt = (form.querySelector(".formula-type-select")||{}).value || "expression";
+      _mcSelectCardForConfig(form, _aiCfgMode, _aiFt);
+      _mcVisited = {1:true, 2:true, 3:true};
+      _mcGoToStep(3);
+    }
+  } catch(err) {
+    if(status){ status.dataset.tone = "err"; status.textContent = "AI import failed: " + err.message; }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+};
+
+function _checkParens(sql){
+  var depth = 0;
+  for(var i = 0; i < sql.length; i++){
+    if(sql[i] === "(") depth++;
+    else if(sql[i] === ")") depth--;
+    if(depth < 0) return "Unexpected closing ) — check parentheses balance.";
+  }
+  if(depth > 0) return depth + " unclosed parenthes" + (depth===1?"is":"es") + " — add missing ).";
+  return null;
+}
+
+async function testFormula(btn){
+  var form        = btn.closest(".metric-form");
+  var editor      = form ? form.querySelector(".formula-editor") : null;
+  var resultPanel = form ? form.querySelector(".validate-result") : null;
+  if(!editor || !editor.value.trim()){
+    if(resultPanel){ resultPanel.className="validate-result show warn"; resultPanel.innerHTML="Write a formula first."; }
+    return;
+  }
+  // Client-side parenthesis check
+  var parenErr = _checkParens(editor.value.trim());
+  if(parenErr){
+    if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="✗ Syntax error: "+escHtml(parenErr); }
+    return;
+  }
+  var origText = btn.textContent;
+  btn.disabled = true; btn.textContent = "…";
+  if(resultPanel){ resultPanel.className="validate-result show"; resultPanel.innerHTML="Running test…"; }
+  try {
+    var m = location.pathname.match(/\/clients\/([^/]+)\//);
+    if(!m) throw new Error("Cannot determine account from URL");
+    var baseTable = (form.querySelector("[name='base_table']")||{}).value || "";
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/test-formula", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        formula: editor.value.trim(),
+        base_table: baseTable,
+        metric_builder_config: (form.querySelector("[name='metric_builder_config']")||{}).value || ""
+      })
+    });
+    var data = await resp.json();
+    if(data.status === "ok"){
+      var resultLine = data.result !== undefined && data.result !== null
+        ? "<div style='font-family:Consolas,monospace;margin-top:4px;font-size:11px'>Result: "
+          + escHtml(JSON.stringify(data.result)) + "</div>"
+        : "";
+      if(resultPanel){ resultPanel.className="validate-result show ok"; resultPanel.innerHTML="<div>✓ Test passed — formula executed against the database.</div>"+resultLine; }
+    } else {
+      if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="<div>✗ Test failed: "+escHtml(data.detail||"unknown error")+"</div>"; }
+    }
+  } catch(err){
+    if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="<div>✗ "+escHtml(err.message)+"</div>"; }
+  } finally {
+    btn.disabled = false; btn.textContent = origText;
+  }
+}
+
+window.testFormula = testFormula;
+
+// ══════════════════════════════════════════════════════════════════════
+// LIVE BACKEND VALIDATOR — calls /metrics/validate and shows inline result
+// ══════════════════════════════════════════════════════════════════════
+async function liveValidate(btn){
+  var form        = btn.closest(".metric-form");
+  _syncMetricBuilder(form);
+  var editor      = form ? form.querySelector(".formula-editor") : null;
+  var resultPanel = form ? form.querySelector(".validate-result") : null;
+  if(!editor || !editor.value.trim()){
+    if(resultPanel){ resultPanel.className="validate-result show warn"; resultPanel.innerHTML="Write a formula first."; }
+    return;
+  }
+  var origText = btn.textContent;
+  btn.disabled = true; btn.textContent = "…";
+  if(resultPanel){ resultPanel.className="validate-result show"; resultPanel.innerHTML="Validating…"; }
+  try {
+    var clientMatch = location.pathname.match(/\/clients\/([^/]+)\//);
+    if(!clientMatch) throw new Error("Cannot determine account from URL");
+    var payload = {
+      sql_template:  editor.value.trim(),
+      formula_type:  (form.querySelector(".formula-type-select")||{}).value || "expression",
+      required_columns: (form.querySelector("[name='required_columns']")||{}).value || "",
+      base_table:    (form.querySelector("[name='base_table']")||{}).value || "",
+      base_entity:   (form.querySelector("[name='base_entity']")||{}).value || "",
+    };
+    var resp = await fetch("/admin/clients/"+clientMatch[1]+"/metrics/validate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    if(!resp.ok) throw new Error("Server error "+resp.status);
+    var data = await resp.json();
+    var html = "";
+    if(data.errors && data.errors.length){
+      html += data.errors.map(function(e){ return "<div>✗ "+escHtml(e)+"</div>"; }).join("");
+    }
+    if(data.warnings && data.warnings.length){
+      html += data.warnings.map(function(w){ return "<div>⚠ "+escHtml(w)+"</div>"; }).join("");
+    }
+    if(data.valid && !data.warnings.length){
+      html = "<div>✓ Validation passed — metric is ready to save.</div>";
+    } else if(data.valid){
+      html = "<div>✓ Valid with warnings:</div>" + html;
+    }
+    var cls = data.valid ? (data.warnings && data.warnings.length ? "warn" : "ok") : "fail";
+    if(resultPanel){ resultPanel.className="validate-result show "+cls; resultPanel.innerHTML=html; }
+  } catch(err){
+    if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="✗ "+escHtml(err.message); }
+  } finally {
+    btn.disabled = false; btn.textContent = origText;
+  }
+}
+window.liveValidate = liveValidate;
+
+/* The FIELD BROWSER that lived here is gone. It was the predecessor of the
+   Fields panel in the metric dialog (#mc-fields-list, _buildMcFieldsList) and
+   had stopped shipping: nothing rendered #colBrowserList, so `if(!list) return;`
+   swallowed every call and the panel silently did not exist.
+
+   The survivor is strictly better -- grouped by table with collapsible groups,
+   type badges, a live column count, and escHtml on every interpolation, where
+   this one wrote c.column raw into an onclick attribute. Giving it a container
+   would have put a second, worse column picker beside the working one. Typing a
+   column into a formula is still served by the #formula-col-suggest typeahead,
+   live on both the dialog and the inline edit forms. */
+
+// Load columns from API on page load
+(function loadColumns(){
+  document.querySelectorAll(".metric-form").forEach(_ensureMetricUxPanels);
+  var m = window.location.pathname.match(/\/clients\/([^\/]+)/);
+  if(!m) return;
+  fetch("/admin/clients/"+m[1]+"/api/columns")
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(data.status === "ok" && data.columns && data.columns.length){
+        _allColumns = data.columns;
+        _buildDupSet();
+        _buildMcFieldsList(_allColumns);
+        _populateTimeColSelects(_allColumns);
+        _populateBaseTableInputs(_allColumns);
+        _wireMetricBuilderColumnLists(document);
+        document.querySelectorAll(".metric-builder").forEach(_initialiseMetricBuilder);
+        document.querySelectorAll(".metric-form").forEach(_scheduleMetricBuilderBaseTableInference);
+        document.querySelectorAll(".metric-form").forEach(_ensureMetricUxPanels);
+        // Re-color already-typed identifiers now that real column names are known
+        document.querySelectorAll(".formula-editor,.metric-builder-row-expression").forEach(_initSqlHighlight);
+      } else {
+        _buildMcFieldsList([]);
+      }
+    })
+    .catch(function(err){
+      // Reset the Fields panel, or its header reads "loading..." for ever.
+      console.error("column load failed:", err);
+      _buildMcFieldsList([]);
+    });
+})();
+
+// Populate date-type columns into time-col-select dropdowns
+function _populateTimeColSelects(columns){
+  var DATE_TYPES = /date|time|timestamp|datetime/i;
+  // Include date-ish columns first, then all others as fallback
+  var dateCols = columns.filter(function(c){ return DATE_TYPES.test(c.type||""); });
+  var otherCols = columns.filter(function(c){ return !DATE_TYPES.test(c.type||""); });
+  var ordered = dateCols.concat(otherCols);
+
+  // Deduplicate by column name for add-form select (show unqualified names)
+  var seen = {}, opts = ['<option value="">— none —</option>'];
+  ordered.forEach(function(c){
+    var label = _dupCols.has(c.column) ? c.table+"."+c.column : c.column;
+    if(!seen[label]){
+      seen[label] = true;
+      var isDate = DATE_TYPES.test(c.type||"") ? ' data-date="1"' : "";
+      opts.push('<option value="'+escHtml(c.column)+'"'+isDate+'>'+escHtml(label)
+        +(c.type ? " ("+escHtml(c.type)+")" : "")+'</option>');
+    }
+  });
+  var optHtml = opts.join("");
+
+  // Populate add-form selects
+  document.querySelectorAll(".add-time-col-select").forEach(function(sel){
+    sel.innerHTML = optHtml;
+  });
+  // Populate edit-form selects, restoring current value
+  document.querySelectorAll(".edit-time-col-select").forEach(function(sel){
+    var current = sel.getAttribute("data-current") || "";
+    sel.innerHTML = optHtml;
+    if(current){
+      // Try to select the current value; if not in list, add it
+      if(!sel.querySelector('option[value="'+current+'"]')){
+        sel.insertAdjacentHTML("beforeend", '<option value="'+escHtml(current)+'">'+escHtml(current)+'</option>');
+      }
+      sel.value = current;
+    }
+  });
+}
+
+// Wire base-table text inputs to show table names from schema
+function _populateBaseTableInputs(columns){
+  var tables = [];
+  var seen = {};
+  columns.forEach(function(c){
+    if(c.table && !seen[c.table]){ seen[c.table]=true; tables.push(c.table); }
+  });
+  if(!tables.length) return;
+  // Build/update a shared datalist for base-table inputs
+  var dl = document.getElementById("base-table-options");
+  if(!dl){
+    dl = document.createElement("datalist");
+    dl.id = "base-table-options";
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = tables.map(function(t){ return '<option value="'+escHtml(t)+'">'; }).join("");
+  document.querySelectorAll(".base-table-input").forEach(function(inp){
+    inp.setAttribute("list","base-table-options");
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// WIRE ALL INPUT EVENTS
+// ══════════════════════════════════════════════════════════════════════
+document.addEventListener("focusin", function(e){
+  if(e.target.matches(".formula-editor")){
+    _activeEditor = e.target;
+    updateFormulaHints(e.target);
+    _initSqlHighlight(e.target);
+    // Show autocomplete immediately for whatever token is at the cursor —
+    // critical for edit forms where value is pre-filled and input never fires
+    _showSuggestions(e.target, _currentToken(e.target));
+  }
+  if(e.target.matches(".metric-builder-row-expression")){
+    _initSqlHighlight(e.target);
+  }
+  if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
+    _showSuggestions(e.target, _currentToken(e.target));
+  }
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-required-columns")){
+    _showSuggestions(e.target, _currentToken(e.target), true);
+  }
+});
+
+document.addEventListener("input", function(e){
+  // Mark this builder as having live, in-progress user edits — set by a
+  // real keystroke/paste (native `input` events; programmatic .value
+  // assignment from _initialiseMetricBuilder/_syncMetricBuilder does NOT
+  // fire input, so this only catches genuine user action). Prevents the
+  // async columns-fetch callback from later clobbering unsaved edits with
+  // the stale server-rendered config if it resolves after the user has
+  // already started typing/pasting.
+  var _mbForFlag = e.target.closest(".metric-builder");
+  if(_mbForFlag) _mbForFlag.dataset.userEdited = "1";
+  if(e.target.matches(".formula-editor")){
+    _activeEditor = e.target;
+    updateFormulaHints(e.target);
+    _renderSqlHighlight(e.target);
+    // ${MetricName} autocomplete takes priority when inside a metric ref
+    _checkMetricRefTrigger(e.target);
+    if(!_inMetricRef) _showSuggestions(e.target, _currentToken(e.target));
+    // Hide live-validate panel on formula change — result is stale
+    var vr = e.target.closest(".metric-form") && e.target.closest(".metric-form").querySelector(".validate-result");
+    if(vr){ vr.className="validate-result"; vr.innerHTML=""; }
+  }
+  if(e.target.matches(".metric-builder-row-expression")){
+    _renderSqlHighlight(e.target);
+  }
+  if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
+    _showSuggestions(e.target, _currentToken(e.target));
+  }
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-required-columns")){
+    _showSuggestions(e.target, _currentToken(e.target));
+  }
+  if(e.target.name === "required_columns" || e.target.name === "allowed_dimensions"){
+    var parts = e.target.value.split(",");
+    var last  = parts[parts.length-1].trim();
+    if(last.length >= 2) _showTagSuggestions(e.target, last);
+    else _hideSuggestions();
+    _updateMetricUxPanels(e.target.closest(".metric-form"));
+  }
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value,.metric-builder-row-expression,.metric-builder-required-columns,.metric-builder-required-joins,.metric-builder-dg-invalid,.metric-builder-dg-datecol")){
+    _syncMetricBuilder(e.target.closest(".metric-form"));
+    if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-columns")){
+      _scheduleMetricBuilderBaseTableInference(e.target.closest(".metric-form"));
+      _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
+    }
+  }
+  if(e.target.matches("[name='base_table'],[name='base_entity'],[name='grain']")){
+    _updateMetricUxPanels(e.target.closest(".metric-form"));
+    if(e.target.matches("[name='base_table']")){
+      _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
+    }
+  }
+});
+
+document.addEventListener("change", function(e){
+  if(e.target.matches(".formula-type-select")){
+    var form   = e.target.closest(".metric-form");
+    var editor = form ? form.querySelector(".formula-editor") : null;
+    var label  = form ? form.querySelector(".formula-label") : null;
+    if(label) label.textContent = e.target.value === "query" ? "Full SELECT query *" : "Approved formula *";
+    if(editor) updateFormulaHints(editor);
+    _updateMetricUxPanels(form);
+  }
+  if(e.target.matches(".metric-builder-mode")){
+    var builder = e.target.closest(".metric-builder");
+    if(builder && e.target.value === "row_calculated"){
+      var rowAgg = builder.querySelector(".metric-builder-row-aggregation");
+      if(rowAgg && !rowAgg.value) rowAgg.value = "AVG";
+    }
+    _syncMetricBuilder(e.target.closest(".metric-form"));
+    _scheduleMetricBuilderBaseTableInference(e.target.closest(".metric-form"));
+    _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
+  }
+  if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-row-aggregation,.metric-builder-operator,.metric-builder-dg-from,.metric-builder-dg-to,.metric-builder-dg-unit,.metric-builder-dg-aggregation,.metric-builder-dg-missing")){
+    _syncMetricBuilder(e.target.closest(".metric-form"));
+  }
+  if(e.target.matches("[name='result_format'],[name='default_time_column']")){
+    _updateMetricUxPanels(e.target.closest(".metric-form"));
+  }
+});
+
+document.addEventListener("submit", function(e){
+  if(!e.target.matches(".metric-form")) return;
+  var builder = e.target.querySelector(".metric-builder");
+  var enabled = builder && (builder.querySelector(".metric-builder-enabled")||{}).checked;
+  if(enabled && !_syncMetricBuilder(e.target)){
+    e.preventDefault();
+    qbToast.error("Metric builder is incomplete. Check the measure/row expression and valid filter or join values.");
+  }
+}, true);
+
+window.toggleEdit = function(id){
+  var el = document.getElementById(id);
+  if(el) el.style.display = el.style.display === "none" ? "block" : "none";
+};
+
+// Toggle the edit expand inside a compact metric row
+window.toggleMetricEdit = function(id){
+  var el = document.getElementById("edit-" + id);
+  if(!el) return;
+  var opening = el.style.display === "none";
+  el.style.display = opening ? "block" : "none";
+  // Wire up autocomplete for the formula editor when first revealed
+  if(opening){
+    var form = el.querySelector(".metric-form");
+    if(form) _ensureMetricUxPanels(form);
+    var editor = el.querySelector(".formula-editor");
+    if(editor && !editor._hinted){ updateFormulaHints(editor); editor._hinted = true; }
+  }
+};
+
+// Hard-delete via fetch — removes row from DOM without page reload
+window.deleteMetricFetch = function(id, name, btn){
+  qbConfirm({
+    title: 'Delete metric?',
+    body: '"' + name + '" will be permanently removed from all query matching. This cannot be undone.',
+    confirm: 'Delete metric',
+    onConfirm: async function(){
+      var m = location.pathname.match(/\/clients\/([^/]+)\//);
+      if(!m){ return; }
+      var url = "/admin/clients/" + m[1] + "/metrics/" + id + "/delete";
+      try{
+        var resp = await fetch(url, { method: "POST", headers: { "X-Requested-With": "fetch" } });
+        if(resp.ok){
+          var row = btn.closest(".metric-row");
+          if(row){ row.style.transition = "opacity .18s,transform .18s"; row.style.opacity = "0"; row.style.transform = "translateX(6px)"; setTimeout(function(){ row.remove(); applyFilters(); }, 200); }
+          window._metricsData = (window._metricsData || []).filter(function(x){ return x.id !== id; });
+        } else {
+          qbToast.warning("Delete failed (status " + resp.status + "). Please refresh and try again.");
+        }
+      } catch(err){
+        qbToast.error("Delete failed: " + err.message);
+      }
+    }
+  });
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// METRICS SEARCH / FILTER / SORT
+// ══════════════════════════════════════════════════════════════════════
+var _activeFilter = "all";
+
+window.setChip = function(btn, filter){
+  document.querySelectorAll(".filter-chip").forEach(function(c){ c.classList.remove("active"); });
+  btn.classList.add("active");
+  _activeFilter = filter;
+  applyFilters();
+};
+
+window.applyFilters = function(){
+  var q   = (document.getElementById("metricSearch")||{}).value || "";
+  var lc  = q.toLowerCase().trim();
+  var sort = (document.getElementById("metricSort")||{}).value || "name-asc";
+
+  var cards = Array.from(document.querySelectorAll("#metricsListWrap .metric-row"));
+  var visible = 0;
+
+  cards.forEach(function(card){
+    var name  = card.dataset.name        || "";
+    var syns  = card.dataset.synonyms    || "";
+    var desc  = card.dataset.description || "";
+    var type  = card.dataset.type        || "";
+    var active= card.dataset.active      || "1";
+    var cat   = card.dataset.category    || "";
+
+    // Text match
+    var textOk = !lc || name.includes(lc) || syns.includes(lc) || desc.includes(lc) || cat.includes(lc);
+
+    var status = card.dataset.status || "published";
+
+    // Filter chip match
+    var filterOk = true;
+    if(_activeFilter === "expression") filterOk = type === "expression";
+    else if(_activeFilter === "query") filterOk = type === "query";
+    else if(_activeFilter === "inactive") filterOk = active === "0";
+    else if(_activeFilter === "draft") filterOk = status === "draft";
+    else if(_activeFilter !== "all"){
+      // category chip
+      filterOk = cat === _activeFilter;
+    }
+
+    var show = textOk && filterOk;
+    card.style.display = show ? "" : "none";
+    if(show) visible++;
+  });
+
+  // Sort visible cards
+  var wrap = document.getElementById("metricsListWrap");
+  if(wrap){
+    var visCards = cards.filter(function(c){ return c.style.display !== "none"; });
+    visCards.sort(function(a, b){
+      if(sort === "name-desc") return b.dataset.name.localeCompare(a.dataset.name);
+      if(sort === "usage-desc"){
+        var diff = (parseInt(b.dataset.usage||"0",10) - parseInt(a.dataset.usage||"0",10));
+        return diff || a.dataset.name.localeCompare(b.dataset.name);
+      }
+      if(sort === "type")      return (a.dataset.type||"").localeCompare(b.dataset.type||"");
+      if(sort === "category")  return (a.dataset.category||"zz").localeCompare(b.dataset.category||"zz");
+      return a.dataset.name.localeCompare(b.dataset.name); // name-asc default
+    });
+    visCards.forEach(function(c){ wrap.appendChild(c); });
+  }
+
+  var countEl = document.getElementById("metricsCount");
+  if(countEl) countEl.textContent = visible + " of " + cards.length + " metric" + (cards.length !== 1 ? "s" : "");
+  var emptyEl = document.getElementById("metricsEmpty");
+  if(emptyEl) emptyEl.style.display = visible === 0 ? "block" : "none";
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// CLONE — fill the Add form from an existing metric
+// ══════════════════════════════════════════════════════════════════════
+window.cloneMetric = function(id){
+  var all = window._metricsData || [];
+  var m   = all.find(function(x){ return x.id === id; });
+  if(!m){ qbToast.error("Metric data not found."); return; }
+
+  var addForm = document.getElementById("mc-form") || document.querySelector(".metric-form#mc-form");
+  if(!addForm){ qbToast.error("Metric dialog not found on page."); return; }
+
+  function _set(name, value){
+    var el = addForm.querySelector("[name='"+name+"']");
+    if(!el) return;
+    el.value = value || "";
+  }
+
+  _set("name",                (m.name || "") + "_copy");
+  _set("synonyms",            m.synonyms || "");
+  _set("sql_template",        m.sql_template || "");
+  _set("description",         m.description || "");
+  _set("grain",               m.grain || "");
+  _set("required_columns",    m.required_columns || "");
+  _set("allowed_dimensions",  m.allowed_dimensions || "");
+  _set("metric_builder_config", m.metric_builder_config || "");
+  _set("example_questions",   m.example_questions || "");
+  _set("category",            m.category || "");
+  _set("default_time_column", m.default_time_column || "");
+  _set("base_table",          m.base_table || "");
+  _set("base_entity",         m.base_entity || "");
+  _set("result_format",       m.result_format || "number");
+  _set("formula_type",        m.formula_type || "expression");
+
+  // Fire change on formula_type select so label updates
+  var typeSelect = addForm.querySelector(".formula-type-select");
+  if(typeSelect){
+    typeSelect.value = m.formula_type || "expression";
+    typeSelect.dispatchEvent(new Event("change"));
+  }
+
+  var builder = addForm.querySelector(".metric-builder");
+  if(builder){
+    builder.querySelector(".metric-builder-enabled").checked = false;
+    builder.classList.remove("enabled");
+    var list = builder.querySelector(".metric-filter-list");
+    if(list) list.innerHTML = "";
+    _initialiseMetricBuilder(builder);
+  }
+  _ensureMetricUxPanels(addForm);
+
+  // Trigger validator on formula editor
+  var editor = addForm.querySelector(".formula-editor");
+  if(editor) updateFormulaHints(editor);
+
+  // Wizard: all steps reviewable immediately for a clone, mode card matched
+  // to the cloned config, dialog keeps this state instead of resetting.
+  var _cloneCfgMode = "";
+  try{ _cloneCfgMode = (JSON.parse(m.metric_builder_config || "{}") || {}).mode || ""; }catch(e){}
+  _mcVisited = {1:true, 2:true, 3:true};
+  _mcSelectCardForConfig(addForm, _cloneCfgMode, m.formula_type || "expression");
+  window._mcSkipReset = true;
+
+  // Open the dialog with cloned data and focus the name input
+  openMetricDialog();
+  _mcSetStep(1);
+  setTimeout(function(){
+    var nameInput = addForm.querySelector("[name='name']");
+    if(nameInput){ nameInput.focus(); nameInput.select(); }
+  }, 120);
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// EXPORT METRICS AS JSON
+// ══════════════════════════════════════════════════════════════════════
+window.exportMetricsJSON = function(){
+  var all = window._metricsData || [];
+  if(!all.length){ qbToast.warning("No metrics to export."); return; }
+  var cleaned = all.map(function(m){
+    return {
+      name:                m.name,
+      synonyms:            m.synonyms,
+      description:         m.description,
+      formula_type:        m.formula_type,
+      sql_template:        m.sql_template,
+      result_format:       m.result_format,
+      grain:               m.grain,
+      required_columns:    m.required_columns,
+      allowed_dimensions:  m.allowed_dimensions,
+      metric_builder_config: m.metric_builder_config,
+      example_questions:   m.example_questions,
+      category:            m.category,
+      default_time_column: m.default_time_column,
+      base_table:          m.base_table,
+      base_entity:         m.base_entity,
+      is_active:           m.is_active,
+    };
+  });
+  var blob = new Blob([JSON.stringify(cleaned, null, 2)], { type: "application/json" });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement("a");
+  a.href   = url;
+  a.download = "metrics_export.json";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 500);
+};
+
+// time-col-input free-text wiring removed — replaced by .time-col-select dropdowns
+// populated by _populateTimeColSelects() once schema columns are loaded.
+
+// Initialise count display on page load
+(function(){ if(document.getElementById("metricsListWrap")) applyFilters(); })();
+
+// ══════════════════════════════════════════════════════════════════════
+// CREATE WIZARD — step navigation, mode cards, review refresh
+// ══════════════════════════════════════════════════════════════════════
+var _mcVisited = {1:true};
+
+function _mcForm(){ return document.getElementById("mc-form"); }
+
+function _mcValidateStep(n){
+  var form = _mcForm();
+  if(!form) return true;
+  if(n === 1){
+    var nm = form.querySelector("[name='name']");
+    if(nm && !nm.value.trim()){ nm.reportValidity(); return false; }
+    return true;
+  }
+  if(n === 2){
+    if(!form.dataset.mcMode){
+      if(window.qbToast && qbToast.warning) qbToast.warning("Pick how this metric is calculated first.");
+      else qbToast.warning("Pick how this metric is calculated first.");
+      return false;
+    }
+    var en = form.querySelector(".metric-builder-enabled");
+    if(en && en.checked) return _syncMetricBuilder(form);
+    var ed = form.querySelector(".formula-editor");
+    if(ed && !ed.value.trim()){
+      if(window.qbToast && qbToast.warning) qbToast.warning("Write the formula before continuing.");
+      ed.focus();
+      return false;
+    }
+    return true;
+  }
+  return true;
+}
+
+window._mcGoToStep = function(n){
+  var form = _mcForm();
+  if(!form) return;
+  n = Math.max(1, Math.min(3, n));
+  var cur = parseInt(form.dataset.step || "1", 10);
+  if(n > cur){
+    for(var s = cur; s < n; s++){
+      if(!_mcValidateStep(s)){ _mcSetStep(s); return; }
+      _mcVisited[s + 1] = true;
+    }
+  } else if(n < cur){
+    // going back is always allowed
+  } else {
+    return;
+  }
+  if(!_mcVisited[n]) return;   // direct jumps only to visited steps
+  _mcSetStep(n);
+};
+
+function _mcSetStep(n){
+  var form = _mcForm();
+  if(!form) return;
+  form.dataset.step = String(n);
+  _mcUpdateStepper();
+  if(n === 3) _mcRefreshReview(form);
+  var first = form.querySelector('.mc-step[data-step="' + n + '"] input:not([type="hidden"]), .mc-step[data-step="' + n + '"] textarea');
+  if(first) setTimeout(function(){ try{ first.focus({preventScroll:true}); }catch(e){} }, 50);
+}
+
+function _mcUpdateStepper(){
+  var form = _mcForm();
+  if(!form) return;
+  var cur = parseInt(form.dataset.step || "1", 10);
+  form.querySelectorAll(".mc-wizard-bar .wizard-step").forEach(function(stepEl){
+    var sn = parseInt(stepEl.dataset.goto, 10);
+    stepEl.classList.toggle("active", sn === cur);
+    stepEl.classList.toggle("done", sn < cur);
+    stepEl.classList.toggle("visited", !!_mcVisited[sn]);
+    var line = stepEl.querySelector(".wizard-step-line");
+    if(line) line.classList.toggle("done", sn < cur);
+  });
+}
+
+function _mcApplyMode(form, mode, formulaType){
+  form.dataset.mcMode = mode;
+  var ft = form.querySelector(".formula-type-select");
+  if(ft && ft.value !== formulaType){
+    ft.value = formulaType;
+    ft.dispatchEvent(new Event("change", {bubbles:true}));
+  }
+  var en = form.querySelector(".metric-builder-enabled");
+  var noCode = (mode === "aggregate" || mode === "date_gap" || mode === "row_calculated");
+  if(en && en.checked !== noCode){
+    en.checked = noCode;
+    en.dispatchEvent(new Event("change", {bubbles:true}));
+  }
+  if(noCode){
+    var ms = form.querySelector(".metric-builder-mode");
+    if(ms && ms.value !== mode){
+      ms.value = mode;
+      ms.dispatchEvent(new Event("change", {bubbles:true}));
+    }
+  }
+}
+
+window.selectMcModeCard = function(card){
+  var form = card.closest(".metric-form") || _mcForm();
+  if(!form) return;
+  var mode = card.dataset.mode;
+  form.querySelectorAll(".mc-mode-card").forEach(function(c){ c.classList.toggle("selected", c === card); });
+  var rowChipOn = !!form.querySelector('.mc-row-subtoggle [data-rowmode="1"].active');
+  var effective = (mode === "expression" && rowChipOn) ? "row_calculated" : mode;
+  _mcApplyMode(form, effective, mode === "query" ? "query" : "expression");
+};
+
+window.selectMcRowMode = function(chip){
+  var form = chip.closest(".metric-form");
+  if(!form) return;
+  form.querySelectorAll(".mc-row-subtoggle .ui-chip").forEach(function(c){ c.classList.toggle("active", c === chip); });
+  var perRow = chip.dataset.rowmode === "1";
+  _mcApplyMode(form, perRow ? "row_calculated" : "expression", "expression");
+};
+
+function _mcSelectCardForConfig(form, builderMode, formulaType){
+  var cardMode = (formulaType === "query") ? "query"
+    : (builderMode === "aggregate" || builderMode === "date_gap") ? builderMode
+    : "expression";
+  var rowChip = form.querySelector('.mc-row-subtoggle [data-rowmode="' + (builderMode === "row_calculated" ? "1" : "0") + '"]');
+  if(rowChip){
+    form.querySelectorAll(".mc-row-subtoggle .ui-chip").forEach(function(c){ c.classList.toggle("active", c === rowChip); });
+  }
+  var card = form.querySelector('.mc-mode-card[data-mode="' + cardMode + '"]');
+  if(card) selectMcModeCard(card);
+}
+
+function _mcRefreshReview(form){
+  var pre = form.querySelector("[data-mc-review-formula]");
+  if(pre){
+    var ed = form.querySelector(".formula-editor");
+    pre.textContent = (ed && ed.value.trim()) || "—";
+  }
+  _updateMetricUxPanels(form);
+}
+
+// Enter on steps 1–2 advances instead of implicitly submitting the form.
+document.addEventListener("keydown", function(e){
+  if(e.key !== "Enter") return;
+  var form = e.target.closest && e.target.closest("#mc-form");
+  if(!form || e.target.tagName === "TEXTAREA") return;
+  var step = parseInt(form.dataset.step || "1", 10);
+  if(step !== 3){
+    e.preventDefault();
+    _mcGoToStep(step + 1);
+  }
+});
+
+// Save is only valid once steps 1–2 pass — jump back with the browser's
+// own validity UI instead of a silent "not focusable" submit failure.
+document.addEventListener("submit", function(e){
+  if(e.target.id !== "mc-form") return;
+  if(!_mcValidateStep(1)){ e.preventDefault(); _mcSetStep(1); return; }
+  if(!_mcValidateStep(2)){ e.preventDefault(); _mcSetStep(2); return; }
+}, true);
+
+// ══════════════════════════════════════════════════════════════════════
+// METRIC CREATION DIALOG — open / close
+// ══════════════════════════════════════════════════════════════════════
+window.openMetricDialog = function(){
+  var ov = document.getElementById("mc-overlay");
+  if(!ov) return;
+  ov.classList.add("open");
+  document.body.style.overflow = "hidden";
+  var form = document.getElementById("mc-form");
+  if(form){
+    if(!window._mcSkipReset){
+      form.dataset.step = "1";
+      delete form.dataset.mcMode;
+      form.querySelectorAll(".mc-mode-card").forEach(function(c){ c.classList.remove("selected"); });
+      _mcVisited = {1:true};
+    }
+    window._mcSkipReset = false;
+    _mcUpdateStepper();
+    _ensureMetricUxPanels(form);
+    // Wire builder column lists now that dialog is visible
+    if(_allColumns.length) _wireMetricBuilderColumnLists(form);
+  }
+  // Build field list if columns are already loaded
+  if(_allColumns.length) _buildMcFieldsList(_allColumns);
+  // Populate saved metrics panel
+  _buildMcMetricsList();
+  setTimeout(function(){
+    var inp = document.querySelector("#mc-form [name='name']");
+    if(inp) inp.focus();
+  }, 60);
+};
+
+window.closeMetricDialog = function(){
+  var ov = document.getElementById("mc-overlay");
+  if(ov) ov.classList.remove("open");
+  document.body.style.overflow = "";
+  _hideSuggestions();
+  _hideMcMetricSuggest();
+};
+
+// Close on Escape
+document.addEventListener("keydown", function(e){
+  if(e.key === "Escape"){
+    var ov = document.getElementById("mc-overlay");
+    if(ov && ov.classList.contains("open")){ closeMetricDialog(); }
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// QLIK-STYLE FIELD BROWSER (dialog right panel)
+// ══════════════════════════════════════════════════════════════════════
+function _mcTypeCls(type){
+  var t = (type||"").toLowerCase();
+  if(/int|num|float|decimal|money|real|double|bigint|tinyint|smallint|numeric/.test(t)) return "num";
+  if(/date|time|timestamp|datetime/.test(t)) return "dt";
+  if(/char|text|varchar|nvarchar|string|clob/.test(t)) return "str";
+  return "oth";
+}
+function _mcTypeIcon(cls){
+  return cls==="num" ? "#" : cls==="dt" ? "◷" : cls==="str" ? "Aa" : "?";
+}
+
+window._buildMcFieldsList = function(columns){
+  var list   = document.getElementById("mc-fields-list");
+  var status = document.getElementById("mc-col-status");
+  if(!list) return;
+  if(!columns || !columns.length){
+    list.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>';
+    if(status) status.textContent = "";
+    return;
+  }
+  if(status) status.textContent = "("+columns.length+" cols)";
+  var grps = {}, grpOrder = [];
+  columns.forEach(function(c){
+    if(!grps[c.table]){ grps[c.table]=[]; grpOrder.push(c.table); }
+    grps[c.table].push(c);
+  });
+  list.innerHTML = grpOrder.map(function(tbl, gi){
+    var rows = grps[tbl].map(function(c){
+      var tc  = _mcTypeCls(c.type);
+      var til = _mcTypeIcon(tc);
+      return '<div class="mc-field-item" data-col="'+escHtml(c.column)+'" data-tbl="'+escHtml(tbl)+'"'
+        // escHtml covers & < > " but not the apostrophe, which then closes this
+        // handler's string literal early: a column named O'BRIEN would yield
+        // insertColumnFromMcDialog('O'BRIEN') and the click throws "missing )
+        // after argument list", so the field silently refuses to insert. Escape
+        // for the JS context first, as the saved-metrics list below already does.
+        +' onclick="insertColumnFromMcDialog(\''+escHtml(c.column.replace(/'/g,"\\'"))+'\')"'
+        +' title="'+escHtml(tbl+'.'+c.column+(c.type?' ('+c.type+')':''))+' — click to insert">'
+        +'<span class="mc-type-badge '+tc+'">'+til+'</span>'
+        +'<span class="mc-field-name">'+escHtml(c.column)+'</span>'
+        +'<span class="mc-field-dtype">'+escHtml(c.type||'')+'</span>'
+        +'</div>';
+    }).join("");
+    return '<div class="mc-field-group'+(gi===0?' open':'')+'">'
+      +'<div class="mc-field-group-hd" onclick="toggleMcFieldGroup(this)">'
+      +'<span>'+escHtml(tbl)+'</span><span class="mc-chev">▶</span></div>'
+      +'<div class="mc-field-group-body">'+rows+'</div>'
+      +'</div>';
+  }).join("");
+};
+
+window.filterMcFields = function(q){
+  var lc = (q||"").toLowerCase();
+  document.querySelectorAll("#mc-fields-list .mc-field-item").forEach(function(item){
+    var ok = !lc || item.dataset.col.toLowerCase().includes(lc) || (item.dataset.tbl||"").toLowerCase().includes(lc);
+    item.style.display = ok ? "" : "none";
+  });
+  document.querySelectorAll("#mc-fields-list .mc-field-group").forEach(function(grp){
+    var anyVis = Array.from(grp.querySelectorAll(".mc-field-item")).some(function(i){ return i.style.display!=="none"; });
+    grp.style.display = anyVis ? "" : "none";
+    if(lc && anyVis) grp.classList.add("open");
+  });
+  // Also filter the saved metrics section
+  document.querySelectorAll("#mc-metrics-body .mc-metric-item").forEach(function(item){
+    var ok = !lc || (item.dataset.name||"").toLowerCase().includes(lc);
+    item.style.display = ok ? "" : "none";
+  });
+};
+
+/* ── Saved metrics panel ─────────────────────────────────────────────── */
+window._buildMcMetricsList = function(){
+  var body    = document.getElementById("mc-metrics-body");
+  var counter = document.getElementById("mc-metrics-count");
+  if(!body) return;
+  var metrics = (window._metricsData || []).filter(function(m){ return m.is_active !== 0; });
+  if(!metrics.length){
+    body.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">No saved metrics yet.</div>';
+    if(counter) counter.textContent = "";
+    return;
+  }
+  if(counter) counter.textContent = "("+metrics.length+")";
+  body.innerHTML = metrics.map(function(m){
+    var fmt = m.result_format || "number";
+    var fmtLabel = {currency:"$",percentage:"%",number:"#",date:"date",text:"Aa"}[fmt] || "#";
+    return '<div class="mc-metric-item" data-name="'+escHtml(m.name)+'"'
+      +' onclick="insertMetricRef(\''+escHtml(m.name.replace(/'/g,"\\'"))+'\')"'
+      +' title="'+escHtml(m.name+(m.description?' — '+m.description:''))+' — click to insert ${'+escHtml(m.name)+'}">'
+      +'<span class="mc-metric-fx">fx</span>'
+      +'<span class="mc-metric-nm">'+escHtml(m.name)+'</span>'
+      +'<span class="mc-metric-fmt">'+escHtml(fmtLabel)+'</span>'
+      +'</div>';
+  }).join("");
+};
+
+window.insertMetricRef = function(metricName){
+  var editor = _activeEditor || document.querySelector("#mc-form .formula-editor");
+  if(!editor) return;
+  var macro = "${"+metricName+"}";
+  var pos = editor.selectionStart || 0;
+  editor.value = editor.value.slice(0, pos) + macro + editor.value.slice(pos);
+  var next = pos + macro.length;
+  editor.focus();
+  editor.setSelectionRange(next, next);
+  updateFormulaHints(editor);
+  _hideSuggestions();
+};
+
+/* ── ${MetricName} autocomplete in formula editor ───────────────────── */
+// Trigger when user types ${ — show metric picker dropdown
+var _inMetricRef = false;
+
+function _checkMetricRefTrigger(editor){
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value.slice(0, pos);
+  // Detect if cursor is inside an open ${...  (no closing } yet)
+  var m = text.match(/\$\{([^}]*)$/);
+  if(!m){ _inMetricRef = false; _hideMcMetricSuggest(); return; }
+  _inMetricRef = true;
+  var partial = m[1].toLowerCase();
+  var metrics = (window._metricsData || []).filter(function(mx){
+    return mx.is_active !== 0 && mx.name.toLowerCase().startsWith(partial);
+  });
+  _showMcMetricSuggest(editor, metrics, partial);
+}
+
+var _mcMetricSuggestEl = null;
+var _mcMetricSuggestIdx = -1;
+var _mcMetricSuggestItems = [];
+
+function _showMcMetricSuggest(editor, metrics, partial){
+  if(!_mcMetricSuggestEl){
+    _mcMetricSuggestEl = document.createElement("div");
+    _mcMetricSuggestEl.id = "mc-metric-suggest";
+    _mcMetricSuggestEl.style.cssText = "position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:7px;box-shadow:0 6px 24px rgba(0,0,0,.14);z-index:10999;min-width:220px;padding:3px 0;display:none";
+    document.body.appendChild(_mcMetricSuggestEl);
+  }
+  if(!metrics.length){ _hideMcMetricSuggest(); return; }
+  _mcMetricSuggestItems = metrics;
+  _mcMetricSuggestIdx   = -1;
+  _mcMetricSuggestEl.innerHTML = metrics.map(function(m, i){
+    var hl = '<mark style="background:none;color:var(--primary,#2B5CE6);font-weight:800">'+escHtml(m.name.slice(0, partial.length))+'</mark>'+escHtml(m.name.slice(partial.length));
+    return '<div class="fcs-item" data-idx="'+i+'" onclick="_pickMetricSuggest('+i+')" style="padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:12px">'
+      +'<span style="font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700;flex-shrink:0">fx</span>'
+      +'<span style="font-weight:700;flex:1">'+hl+'</span>'
+      +'<span style="font-size:9px;color:var(--text-muted)">'+(m.result_format||"")+'</span>'
+      +'</div>';
+  }).join("");
+  var rect = editor.getBoundingClientRect();
+  _mcMetricSuggestEl.style.left  = rect.left + "px";
+  _mcMetricSuggestEl.style.top   = (rect.bottom + 4) + "px";
+  _mcMetricSuggestEl.style.display = "block";
+}
+
+function _hideMcMetricSuggest(){
+  if(_mcMetricSuggestEl) _mcMetricSuggestEl.style.display = "none";
+  _mcMetricSuggestIdx = -1;
+}
+
+window._pickMetricSuggest = function(idx){
+  var m = _mcMetricSuggestItems[idx];
+  if(!m) return;
+  var editor = _activeEditor || document.querySelector("#mc-form .formula-editor");
+  if(!editor) return;
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value;
+  // Replace everything from ${ to cursor with the full macro + closing }
+  var before = text.slice(0, pos).replace(/\$\{[^}]*$/, "${"+m.name+"}");
+  editor.value = before + text.slice(pos);
+  var next = before.length;
+  editor.focus();
+  editor.setSelectionRange(next, next);
+  updateFormulaHints(editor);
+  _hideMcMetricSuggest();
+};
+
+window.toggleMcFieldGroup = function(hd){
+  var grp = hd.closest(".mc-field-group");
+  if(grp) grp.classList.toggle("open");
+};
+
+window.insertColumnFromMcDialog = function(colName){
+  var ed = document.querySelector("#mc-form .formula-editor");
+  if(ed){ insertAtCursor(ed, colName); ed.focus(); }
+};
+
+// Build the popover on load
+buildPopover();
+document.querySelectorAll(".formula-editor").forEach(updateFormulaHints);
+document.querySelectorAll(".formula-editor,.metric-builder-row-expression").forEach(_initSqlHighlight);
+
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// SYNONYM COLLISION CHECKER
+// Runs on blur of name/synonyms fields. Calls /metrics/check-collision
+// and shows an inline amber warning if any phrase matches a business term.
+// ══════════════════════════════════════════════════════════════════════
+(function(){
+  var _collisionTimer = null;
+
+  window.checkSynonymCollision = function(form) {
+    if (!form) return;
+    clearTimeout(_collisionTimer);
+    _collisionTimer = setTimeout(function(){ _runCheck(form); }, 450);
+  };
+
+  function _runCheck(form) {
+    var nameEl   = form.querySelector('[name="name"]');
+    var synEl    = form.querySelector('[name="synonyms"]');
+    var skipEl   = form.querySelector('[name="skip_id"]');
+    var warnEl   = form.querySelector('.collision-warn');
+    if (!warnEl) return;
+
+    var name    = (nameEl  ? nameEl.value.trim()  : "");
+    var syns    = (synEl   ? synEl.value.trim()   : "");
+    var skipId  = (skipEl  ? skipEl.value.trim()  : "0");
+    var allPhrases = [name].concat(syns.split(",").map(function(s){ return s.trim(); }))
+                           .filter(Boolean).join(",");
+    if (!allPhrases) { warnEl.className="collision-warn"; warnEl.innerHTML=""; return; }
+
+    var m = location.pathname.match(/\/clients\/([^/]+)\//);
+    if (!m) return;
+    var url = "/admin/clients/"+m[1]+"/metrics/check-collision?phrases="+encodeURIComponent(allPhrases)
+              +(skipId && skipId!=="0" ? "&skip_id="+skipId : "");
+
+    fetch(url).then(function(r){ return r.json(); }).then(function(data){
+      if (!data.collisions || !data.collisions.length) {
+        warnEl.className = "collision-warn";
+        warnEl.innerHTML = "";
+        return;
+      }
+      var msgs = data.collisions.map(function(c){
+        return "<strong>\""+escHtml2(c.metric_phrase)+"\"</strong> matches business term <strong>\""+escHtml2(c.term)+"\"</strong>"
+             + (c.term_aliases ? " (aliases: "+escHtml2(c.term_aliases)+")" : "")
+             + ". The metric formula will take precedence in queries, but consider removing the term alias to avoid confusion.";
+      });
+      warnEl.className = "collision-warn show";
+      warnEl.innerHTML = "Synonym collision detected:<br>" + msgs.join("<br>");
+    }).catch(function(){});
+  }
+
+  function escHtml2(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+})();
+</script>

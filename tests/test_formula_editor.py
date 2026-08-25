@@ -23,14 +23,15 @@ for mod in list(sys.modules.keys()):
         del sys.modules[mod]
 
 import store.db as db_mod
+from metrics_template import metrics_template
+
 db_mod.init_db()
 
-TMPL_PATH  = os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html")
 ROUTES_PATH = os.path.join(os.path.dirname(__file__), "..", "admin", "routes.py")
 
 def _tmpl():
-    with open(TMPL_PATH, encoding="utf-8") as f:
-        return f.read()
+    """The whole page: parent plus every partial (7a split it up)."""
+    return metrics_template()
 
 def _routes():
     with open(ROUTES_PATH, encoding="utf-8") as f:
