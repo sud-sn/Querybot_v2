@@ -413,9 +413,24 @@ def fit_series(
 
     if fit is None:
         return None
+    # r2 is ALWAYS the straight-line R-squared, whichever model ran.
+    #
+    # It used to be set only by the OLS path, so a Fit from ETS or SARIMAX
+    # carried r2=None -- and `assess_fit(decision, fit.r2, fit.backtest_mape)`
+    # is the obvious thing to write, silently disabling half the poor_fit gate
+    # (None cannot fail the R-squared condition). Production never hit it,
+    # because the pipeline reads the value out of __forecast_meta instead, but
+    # two test modules did write exactly that line and passed only because
+    # their series happened to route to OLS.
+    #
+    # This is the same number the chart captions and the same one MIN_R2 was
+    # calibrated against: how much of the movement a straight line explains.
+    # How well the MODEL predicts is backtest_mape, which is a separate field
+    # precisely because it answers a different question.
+    _slope, _intercept, trend_r2 = _ols_coefficients(values, xs)
     return Fit(
         fit.model, fit.predictions, fit.lower, fit.upper,
-        r2=fit.r2, backtest_mape=mape,
+        r2=trend_r2, backtest_mape=mape,
         fell_back_from=requested if requested != fit.model else "",
     )
 
