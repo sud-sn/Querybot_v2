@@ -2810,7 +2810,42 @@ function _parseDisplayDate(value) {
   const parsed = new Date(raw);
   return isNaN(parsed.getTime()) ? null : parsed;
 }
-function _formatDisplayValue(value, fmt, spec = {}) {
+// A calendar period written as an integer is a NAME, not an amount: 2025 is
+// "2025" and never "2,025". This mirrors core/result_renderer._is_period_label
+// exactly, because the server fixed the text channel and the portal draws its
+// own tables -- so the same year rendered correctly in Teams and wrongly on
+// screen. Two renderers, one rule.
+const _PERIOD_COLUMN_WORDS = new Set([
+  'year','years','month','months','quarter','quarters','week','weeks',
+  'day','days','date','dates','time','times','hour','hours','minute','minutes',
+  'second','seconds','period','periods','fiscal','fy','ytd','mtd','qtd',
+  'calendar','dt',
+]);
+function _isPeriodLabel(raw, column) {
+  if (!column) return false;
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) return false;
+  if (![4, 6, 8].includes(text.length)) return false;
+  const tokens = String(column)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[-_]/g, ' ').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.some(t => _PERIOD_COLUMN_WORDS.has(t))) return false;
+  // The value has to parse as a real period, so a surrogate key that merely
+  // sits in a date-ish column (CUSTOMER_PERIOD_KEY = 900001) keeps its
+  // separators -- 900001 is not a month of any year.
+  const y = Number(text.slice(0, 4));
+  if (y < 1900 || y > 2199) return false;
+  if (text.length >= 6) {
+    const mth = Number(text.slice(4, 6));
+    if (mth < 1 || mth > 12) return false;
+  }
+  if (text.length === 8) {
+    const d = Number(text.slice(6, 8));
+    if (d < 1 || d > 31) return false;
+  }
+  return true;
+}
+function _formatDisplayValue(value, fmt, spec = {}, column = '') {
   if (value === null || value === undefined || value === '') return '';
   const raw = String(value);
   const digits = Math.max(0, Math.min(6, Number(spec.fraction_digits ?? 2)));
@@ -2850,6 +2885,8 @@ function _formatDisplayValue(value, fmt, spec = {}) {
     const n = _parseDisplayNumber(raw);
     if (!isNaN(n)) return n.toLocaleString('en-US', numberOpts);
   }
+  // Before any separator logic: a period is a label, not a quantity.
+  if (_isPeriodLabel(raw, column)) return raw.trim();
   // Fallback: auto-format plain numeric strings with thousand separators (max 2 dp)
   // Matches SQL DECIMAL/FLOAT columns not yet classified by column_formats.
   if (!fmt && /^-?\d+(\.\d+)?$/.test(raw.trim())) {
@@ -2876,7 +2913,7 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   const bodyHtml = data.rows.map((r, rowIndex) =>
     '<tr>' + headers.map(h => {
       const fmt = colFormats.get(_normaliseColumnKey(h));
-      return `<td>${escHtml(_formatDisplayValue(r[h], fmt, _displayFormatSpec(data, h)))}</td>`;
+      return `<td>${escHtml(_formatDisplayValue(r[h], fmt, _displayFormatSpec(data, h), h))}</td>`;
     }).join('') + '</tr>'
   ).join('');
 
@@ -3135,7 +3172,7 @@ function _mountResultChat(cardEl, rcId) {
 
     function _fmtCell(h, val) {
       if (val === null || val === undefined || val === '') return '';
-      return escHtml(_formatDisplayValue(val, fmtMap.get(_normaliseColumnKey(h)), _displayFormatSpec({display_formats:displayFormats || {}}, h)));
+      return escHtml(_formatDisplayValue(val, fmtMap.get(_normaliseColumnKey(h)), _displayFormatSpec({display_formats:displayFormats || {}}, h), h));
     }
 
     const headHtml = headers.map(h => `<th>${escHtml(h)}</th>`).join('');

@@ -551,3 +551,54 @@ class TestOneVisualIdentity:
                / "logo-mark.svg").read_text(encoding="utf-8")
         assert "infinite" not in svg
         assert "prefers-reduced-motion" in svg
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PROMISE 5b — The two renderers agree about what a number is.
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestTheServerAndTheBrowserFormatAlike:
+    """Found live, after the server fix was verified through /api/ask and
+    declared done: the portal draws its OWN tables in JavaScript, so the same
+    year rendered "2025" in Teams and "2,025" on screen. One rule, two
+    implementations, and only one of them had been fixed.
+
+    These execute BOTH and require identical verdicts, so the next person to
+    change either has to change both.
+    """
+
+    CASES = [
+        (2025, "PERIOD"), (2026, "YEAR"), (202601, "MONTH"),
+        (20260117, "INVOICE_DATE"), (2025, "FISCAL_YEAR"),
+        (2025, "ORDER_COUNT"),              # a count keeps its separators
+        (12345, "PERIOD"),                  # not a period at all
+        (900001, "CUSTOMER_PERIOD_KEY"),    # a surrogate key, not a month
+        (1200, "DAYS_LATE"), (45000, "AMOUNT"),
+        (202613, "MONTH"),                  # month 13 does not exist
+        (2025, ""),                         # no column, no opinion
+    ]
+
+    def test_both_implementations_return_the_same_verdict(self):
+        dukpy = pytest.importorskip("dukpy")
+        from pathlib import Path
+
+        from core.result_renderer import _is_period_label
+
+        src = (Path(__file__).resolve().parents[1] / "portal" / "templates"
+               / "portal_chat.html").read_text(encoding="utf-8")
+        js = src[src.index("const _PERIOD_COLUMN_WORDS"):src.index("function _formatDisplayValue")]
+        payload = json.dumps([[str(v), c] for v, c in self.CASES])
+        client = json.loads(dukpy.evaljs(js + f"\nJSON.stringify({payload}.map(p => _isPeriodLabel(p[0], p[1])));"))
+
+        disagreements = [
+            (v, c, _is_period_label(v, c), cl)
+            for (v, c), cl in zip(self.CASES, client)
+            if _is_period_label(v, c) != cl
+        ]
+        assert not disagreements, f"server/browser disagree: {disagreements}"
+
+    def test_a_year_is_never_given_thousands_separators(self):
+        from core.result_renderer import _format_value
+
+        assert _format_value(2025, "PERIOD") == "2025"
+        assert _format_value(2025, "ORDER_COUNT") == "2,025"
