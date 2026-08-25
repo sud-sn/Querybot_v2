@@ -1,0 +1,135 @@
+{# Describe a calculation and get a reviewable proposal — the admin side of the
+   portal's metric authoring. Added by Phase 5; a partial from the start,
+   because 7a split this page up first. -#}
+<div id="author-chat" class="mc-chat">
+  <div class="metric-section-header">
+    <div>
+      <h2>Describe a metric</h2>
+      <p>
+        Say what to calculate — “revenue per active customer”, or paste
+        <code>Net Revenue = SUM(AMOUNT) - SUM(DISCOUNT) FROM DW.SALES_FACT</code>.
+        An explicit definition like that is parsed directly, with no model call.
+        Either way it is validated and run against the database before you see it.
+      </p>
+    </div>
+  </div>
+
+  <div class="mc-chat-log" id="authorChatLog" role="log" aria-live="polite"></div>
+
+  <form class="mc-chat-composer" id="authorChatForm" autocomplete="off">
+    <input id="authorChatInput" type="text" maxlength="4000"
+           placeholder="Describe the calculation, or paste name = SUM(COL) FROM TABLE"
+           aria-label="Describe the metric to compose">
+    <button type="submit" class="btn btn-primary btn-sm" id="authorChatSend">Compose</button>
+  </form>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const form  = document.getElementById('authorChatForm');
+  const input = document.getElementById('authorChatInput');
+  const log   = document.getElementById('authorChatLog');
+  const send  = document.getElementById('authorChatSend');
+  if (!form || !input || !log) return;
+
+  const ACCOUNT = "{{ client.account_id }}";
+  // Trimmed to eight turns, matching the graph chat and the portal handler.
+  // An unbounded history is a prompt that grows until it is refused.
+  const history = [];
+
+  function bubble(role, html) {
+    const el = document.createElement('div');
+    el.className = 'mc-chat-msg mc-chat-msg--' + role;
+    el.innerHTML = html;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    return el;
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  function renderProposal(data) {
+    const d = data.draft || {}, ev = data.evidence || {};
+    const probed = (ev.tables_probed || []).map(esc).join(', ');
+    return `
+      <div class="mc-chat-card">
+        <div class="mc-chat-card-hd">
+          <strong>${esc(d.name)}</strong>
+          <span class="mp-badge">${data.source === 'pasted' ? 'parsed' : 'composed'}</span>
+        </div>
+        <code class="mp-formula">${esc(d.sql_template)}</code>
+        <div class="mp-meta">
+          <span>${esc(d.base_table)}</span>
+          <span class="mp-ok">validated</span>
+          <span class="mp-ok">dry run passed${probed ? ' (' + probed + ')' : ''}</span>
+        </div>
+        <div class="mp-actions">
+          <button type="button" class="btn btn-primary btn-sm"
+                  data-accept="${data.proposal_id}">Accept as shared metric</button>
+          <a class="btn btn-secondary btn-sm" href="#proposals">Review in the queue</a>
+          <span class="mp-status" data-status="${data.proposal_id}"></span>
+        </div>
+      </div>`;
+  }
+
+  log.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-accept]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-accept');
+    const status = log.querySelector(`[data-status="${id}"]`);
+    btn.disabled = true;
+    if (status) status.textContent = 'Accepting…';
+    try {
+      const res = await fetch(
+        `/admin/clients/${ACCOUNT}/metrics/api/proposals/${id}/accept`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body.status === 'ok') { location.reload(); return; }
+      // A 409 is the drift guard and its detail names what moved; showing it is
+      // the whole point of refusing rather than overwriting someone's edit.
+      if (status) { status.textContent = body.detail || `Failed (${res.status})`;
+                    status.classList.add('mp-error'); }
+      btn.disabled = false;
+    } catch (err) {
+      if (status) { status.textContent = 'Request failed'; status.classList.add('mp-error'); }
+      btn.disabled = false;
+    }
+  });
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    bubble('user', esc(text));
+    input.value = '';
+    send.disabled = true;
+    const thinking = bubble('bot', '<em>Composing…</em>');
+
+    try {
+      const res = await fetch(`/admin/clients/${ACCOUNT}/metrics/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history: history.slice(-8) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.status === 'ok') {
+        thinking.innerHTML = renderProposal(data);
+        history.push({ role: 'user', content: text });
+        history.push({ role: 'assistant', content: data.reply || '' });
+      } else {
+        thinking.innerHTML = esc(data.reply || data.detail || 'That did not work.');
+      }
+    } catch (err) {
+      thinking.innerHTML = 'Request failed.';
+    } finally {
+      send.disabled = false;
+      input.focus();
+    }
+  });
+})();
+</script>

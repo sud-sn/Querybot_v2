@@ -420,3 +420,115 @@ def _parse_json_object(raw_response: str) -> dict | None:
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+# ── Deterministic paste form ────────────────────────────────────────────────
+# An administrator who already knows the answer should not have to wait for a
+# model to rediscover it. `Net Revenue = SUM(AMOUNT) - SUM(DISCOUNT) FROM
+# DW.SALES_FACT` is unambiguous, so it is parsed here, with no LLM call, no
+# token spend, and no chance of an invented column.
+#
+# The output is the SAME MetricDraft the model path produces, so everything
+# downstream -- validation, dry run, the proposal record, source_tables and the
+# ACL re-check that rides on them -- is identical either way. A second draft
+# shape would be a second set of governance holes.
+
+_EXPLICIT_RE = re.compile(
+    r"^\s*(?P<name>[^=]{1,120}?)\s*=\s*(?P<expr>.+?)\s+FROM\s+(?P<table>[\w\.\[\]`\"]+)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_AGG_CALL_RE = re.compile(
+    r"\b(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([A-Za-z_][\w]*)\s*\)",
+    re.IGNORECASE,
+)
+# Everything an expression may contain BESIDES aggregate calls. Anything else
+# -- a subselect, a semicolon, a second FROM, a function we have not vetted --
+# means this is not the simple paste form and must not be waved through.
+_EXPR_RESIDUE_RE = re.compile(r"^[\s\d\+\-\*/\(\)\.,]*$")
+
+
+def parse_explicit_metric_definition(
+    text: str,
+    schema_manifest: dict[str, list[str]],
+    *,
+    db_type: str = "azure_sql",
+) -> tuple[MetricDraft | None, str]:
+    """Parse ``name = <aggregates> FROM <table>`` without an LLM.
+
+    Returns ``(None, "")`` when the text simply is not this shape -- that is not
+    an error, it means "hand this to the planner". A non-empty reason means the
+    text LOOKED like the paste form and was rejected, which the caller should
+    show rather than silently retrying with the model.
+
+    ``schema_manifest`` must already be ACL-filtered: the table has to be one
+    the caller was offered, and every column has to exist on it. That is what
+    stops a pasted definition reaching a table the admin cannot see.
+    """
+    raw = str(text or "").strip()
+    if not raw or "=" not in raw:
+        return None, ""
+    match = _EXPLICIT_RE.match(raw)
+    if not match:
+        return None, ""
+
+    name = " ".join(match.group("name").split())
+    expr = " ".join(match.group("expr").split())
+    table_raw = match.group("table").strip().strip("[]`\"")
+
+    # Resolve the table against the manifest, accepting an unambiguous trailing
+    # qualification the way the SQL validator and the ACL layer already do.
+    by_full = {str(t).casefold(): t for t in (schema_manifest or {})}
+    resolved = by_full.get(table_raw.casefold(), "")
+    if not resolved:
+        bare = table_raw.split(".")[-1].casefold()
+        hits = [t for t in (schema_manifest or {}) if str(t).split(".")[-1].casefold() == bare]
+        if len(hits) == 1:
+            resolved = hits[0]
+        elif len(hits) > 1:
+            return None, f'"{table_raw}" is ambiguous — it matches {len(hits)} tables.'
+    if not resolved:
+        return None, f'"{table_raw}" is not a table you have access to.'
+
+    calls = _AGG_CALL_RE.findall(expr)
+    if not calls:
+        return None, ""      # no aggregate at all: not this form, try the planner
+
+    # Whatever is left once the aggregate calls are removed must be arithmetic.
+    if not _EXPR_RESIDUE_RE.match(_AGG_CALL_RE.sub("", expr)):
+        return None, (
+            "That formula has parts I will not accept from a paste. Describe it "
+            "in words instead and I will compose it."
+        )
+
+    available = {str(c).casefold(): str(c) for c in (schema_manifest.get(resolved) or [])}
+    columns: list[str] = []
+    for _agg, _distinct, column in calls:
+        actual = available.get(column.casefold())
+        if not actual:
+            return None, f'"{column}" is not a column on {resolved}.'
+        if actual not in columns:
+            columns.append(actual)
+
+    # Rebuild the expression from the RESOLVED column names rather than reusing
+    # the pasted text, so casing is canonical and nothing unparsed survives.
+    def _rebuild(m: re.Match[str]) -> str:
+        agg = m.group(1).upper()
+        distinct = "DISTINCT " if m.group(2) else ""
+        return f"{agg}({distinct}{available[m.group(3).casefold()]})"
+
+    formula = _AGG_CALL_RE.sub(_rebuild, expr)
+
+    return MetricDraft(
+        name=name[:120],
+        sql_template=formula,
+        required_columns=", ".join(columns),
+        base_table=resolved,
+        # No builder config: this is a hand-written expression, and claiming a
+        # structured config it does not have would make the metric editor show
+        # a builder that cannot round-trip it.
+        metric_builder_config="",
+        source_tables=(resolved,),
+        # Deterministic parse of an explicit statement. There is no model
+        # guessing here, so there is nothing to be less than certain about.
+        confidence=1.0,
+    ), ""

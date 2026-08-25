@@ -5863,6 +5863,196 @@ Rules:
 - If the definition cannot be expressed, return {"error": "<what is missing>"}."""
 
 
+@router.post("/clients/{account_id}/metrics/api/chat")
+async def metric_authoring_chat(request: Request, account_id: str):
+    """Describe a calculation in the metrics tab; get a reviewable proposal.
+
+    THE ADMIN SIDE of the same feature the portal already has, and it lands in
+    the same place: a metric_proposal, never the registry. That is deliberate
+    even though an administrator could just save the metric by hand, and the
+    reason is not ceremony.
+
+    A metric is the highest-authority layer in the semantic contract -- saving
+    one recompiles it synchronously and changes answers to questions nobody has
+    asked yet. Everything composed by a model therefore enters through ONE
+    door, the accept route, carrying the evidence it was judged on: what the
+    admin asked for, what validation said, what the live probe bound. Letting
+    this route write directly would create a second entry path that can drift
+    from the first, and would throw away the record of how the definition came
+    to exist.
+
+    The objection that an admin approving their own request is a rubber stamp
+    misreads what the review is. They still see the compiled formula, the
+    validation result and the dry-run evidence before anything becomes shared,
+    and the client shows Accept beside the answer -- so it costs one click, not
+    a queue round-trip.
+
+    DELIBERATE ASYMMETRY with the portal handler: no ACL filter. An
+    administrator's scope IS the client's schema. Every other gate is the same,
+    in the same order.
+    """
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    text = str(body.get("message") or "").strip()
+    history = body.get("history") if isinstance(body.get("history"), list) else []
+
+    if not text:
+        return JSONResponse({
+            "status": "clarify",
+            "reply": "Describe the calculation — which measure, from which table, "
+                     "and what to divide by if it is a ratio.",
+        })
+    if len(text) > 4000:
+        return JSONResponse({
+            "status": "error",
+            "detail": "That is too long. Describe the calculation in a sentence or two.",
+        })
+
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "detail": "Unknown client"}, status_code=404)
+
+    db_type = "azure_sql"
+    if client.get("db_config_id"):
+        raw_db = store.get_db_config(client["db_config_id"])
+        if raw_db:
+            db_type = raw_db.get("db_type", "azure_sql")
+
+    # The schema manifest. `startswith("__")` guards the same synthetic entries
+    # the graph chat filters -- they are not tables and must never be offered.
+    raw_schema = _load_metric_schema_columns(account_id)
+    manifest = {
+        fqn: sorted(cols)
+        for fqn, cols in (raw_schema or {}).items()
+        if not str(fqn).startswith("__") and cols
+    }
+    if not manifest:
+        return JSONResponse({
+            "status": "error",
+            "detail": "No discovered schema for this client — run Discover schema first.",
+        })
+
+    from core.metric_authoring import (
+        build_metric_plan_input,
+        compile_metric_plan_response,
+        parse_explicit_metric_definition,
+        schema_columns_for_draft,
+    )
+
+    # ── Deterministic first. An explicit definition needs no model. ──────────
+    draft, explicit_error = parse_explicit_metric_definition(
+        text, manifest, db_type=db_type,
+    )
+    if explicit_error:
+        return JSONResponse({"status": "clarify", "reply": explicit_error})
+
+    source = "pasted"
+    if draft is None:
+        source = "composed"
+        existing = [str(m.get("name") or "") for m in store.list_metrics(account_id, active_only=False)]
+        plan_input = build_metric_plan_input(text, manifest, existing, history[-8:])
+        try:
+            from core.llm import llm_complete, resolve_provider
+            from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
+
+            provider, model_name, api_key, az_kw = resolve_provider(client)
+            request_id = make_llm_audit_request_id()
+            with llm_audit_scope(
+                account_id=account_id,
+                question=text[:400],
+                enabled=bool(client.get("enable_llm_audit")),
+                request_id=request_id,
+                question_id=request_id,
+                component="metric_authoring_admin",
+            ):
+                raw, _, _ = await llm_complete(
+                    plan_input.system_prompt, plan_input.user_prompt,
+                    provider, model_name, api_key,
+                    max_tokens=1200, temperature=0.1, **az_kw,
+                )
+        except Exception as exc:
+            log.error("Metric authoring chat LLM call failed for %s: %s", account_id, exc)
+            return JSONResponse({"status": "error", "detail": f"LLM call failed: {exc}"})
+
+        draft, reason = compile_metric_plan_response(raw, plan_input, db_type=db_type)
+        if draft is None:
+            return JSONResponse({"status": "clarify", "reply": reason or "I could not build that."})
+
+    # ── Gates, in the portal's order. Any failure explains itself. ───────────
+    from core.metric_validator import validate_metric
+
+    schema_lists = {fqn: list(cols) for fqn, cols in manifest.items()}
+    validation = validate_metric(
+        draft.as_metric(), db_type=db_type,
+        schema_columns=schema_columns_for_draft(draft, schema_lists),
+    )
+    if not validation.valid:
+        return JSONResponse({
+            "status": "clarify",
+            "reply": "That did not validate: " + "; ".join(validation.errors[:3]),
+        })
+
+    from core.metric_dryrun import dry_run_metric_formula
+
+    outcome = await dry_run_metric_formula(
+        account_id, formula=draft.sql_template,
+        base_table=draft.base_table,
+        metric_builder_config=draft.metric_builder_config,
+    )
+    # "not an error" is not "verified" -- "skipped" means nothing was probed.
+    if outcome.status != "ok":
+        return JSONResponse({
+            "status": "clarify",
+            "reply": f"The formula could not be proven against the database "
+                     f"({outcome.status}): {(outcome.detail or '')[:160]}",
+        })
+
+    proposal_id = store.create_metric_proposal(
+        account_id,
+        payload=draft.as_metric(),
+        action="create_metric",
+        confidence_score=int(round(draft.confidence * 100)),
+        generated_by="admin_chat",
+        request_text=text[:1000],
+        source_question=text[:500],
+        validation={"valid": True},
+        # .value is ADMIN ONLY and this IS the admin surface, but it is still
+        # not recorded: a proposal row is read back by the queue renderer, and
+        # a real measured value has no business sitting in a durable record.
+        dryrun={"status": outcome.status, "probe_kind": outcome.probe_kind,
+                "tables_probed": list(outcome.tables_probed)},
+    )
+
+    return JSONResponse({
+        "status": "ok",
+        "source": source,
+        "proposal_id": proposal_id,
+        "draft": {
+            "name": draft.name,
+            "sql_template": draft.sql_template,
+            "base_table": draft.base_table,
+            "required_columns": draft.required_columns,
+            "result_format": draft.result_format,
+            "confidence": round(draft.confidence, 2),
+        },
+        "evidence": {
+            "validated": True,
+            "probe_kind": outcome.probe_kind,
+            "tables_probed": list(outcome.tables_probed),
+        },
+        "reply": (
+            f"{draft.name} = {draft.sql_template} on {draft.base_table}. "
+            "Validated and proven against the database. Accept it to make it a "
+            "shared metric."
+        ),
+    })
+
+
 @router.post("/clients/{account_id}/metrics/api/ai-import")
 async def metric_ai_import(request: Request, account_id: str):
     """
