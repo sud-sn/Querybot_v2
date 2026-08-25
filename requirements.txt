@@ -81,5 +81,16 @@ faker>=25.0.0
 # on every forecast question. It is covered by tests in both configurations.
 statsmodels>=0.14.0
 
+# ── Executing the portal's own JavaScript in tests ───────────────────────────
+# A tiny embedded Duktape interpreter (no Node, no browser). tests/ uses it to
+# RUN functions lifted out of portal_chat.html rather than asserting that
+# strings appear in the file -- which is the failure mode that let a forecast
+# gate pass for a full release while raising NameError on every call.
+#
+# Test-only, and the tests importorskip on it rather than hard-failing, so a
+# deploy that omits it still installs. But CI must have it: a suite that skips
+# is a suite that proves nothing.
+dukpy>=0.3.0
+
 # Golden-question evaluation files
 pyyaml>=6.0

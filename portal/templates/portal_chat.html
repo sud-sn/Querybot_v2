@@ -129,6 +129,18 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .agent-run-meta[data-status="blocked"] .agent-run-governed::before,.agent-run-meta[data-status="waiting_for_user"] .agent-run-governed::before{background:var(--amber)}
 .agent-run-meta[data-status="failed"] .agent-run-governed,.agent-run-meta[data-status="cancelled"] .agent-run-governed{color:var(--red)}
 .agent-run-meta[data-status="failed"] .agent-run-governed::before,.agent-run-meta[data-status="cancelled"] .agent-run-governed::before{background:var(--red)}
+.answer-progress-steps{display:grid;gap:1px;margin-top:.7rem;padding-top:.6rem;border-top:1px solid var(--line-subtle)}
+.stage-step{font-size:11.5px;color:var(--text-muted);line-height:1.5}
+.stage-step summary,.stage-step--plain{display:flex;align-items:baseline;gap:.45rem;padding:.16rem 0;cursor:default;list-style:none}
+.stage-step summary{cursor:pointer}
+.stage-step summary::-webkit-details-marker{display:none}
+/* Reuses the trust-box +/- language rather than inventing a second disclosure
+   idiom on the same card. */
+.stage-step summary::after{content:'+';margin-left:auto;font-weight:900;color:var(--line-subtle)}
+.stage-step[open] summary::after{content:'-'}
+.stage-step-tick{flex-shrink:0;width:5px;height:5px;border-radius:999px;background:var(--primary);opacity:.5;transform:translateY(-1px)}
+.stage-step-label{min-width:0}
+.stage-step-detail{padding:.1rem 0 .4rem 1rem;font-size:11px;color:var(--text-muted);opacity:.85}
 .answer-progress-skeleton{display:grid;gap:7px}
 .answer-progress-skeleton .skeleton{margin:0}
 /* ============================================================================
@@ -1101,8 +1113,7 @@ function _showSkeletonBubble(){
     + '<span class="agent-run-governed" id="agentRunState">Governed agent</span>'
     + '<span class="agent-run-tool" id="agentRunTool">query_data &middot; read only</span>'
     + '<span class="agent-run-id" id="agentRunId"></span></div>'
-    + '<div class="answer-progress-skeleton"><span class="skeleton skeleton-text sk-60"></span>'
-    + '<span class="skeleton skeleton-text"></span><span class="skeleton skeleton-text sk-40"></span></div>'
+    + '<div class="answer-progress-steps" id="answerProgressSteps" hidden></div>'
     + '</div></div>';
   t.appendChild(div);
   const sourceBrand = document.getElementById('processingBrand');
@@ -4320,12 +4331,56 @@ const STAGE_ORDER = [
 let _completedStages = [];
 let _currentStage = null;
 
+// The trail of what has already happened, oldest first. STAGE_ORDER,
+// _completedStages and _currentStage were all declared when this card was
+// built and none of them was ever read: every status frame overwrote one label
+// and one detail, so a pipeline that reports sixteen distinct stages showed
+// exactly one of them and then forgot it. A user watching a slow query learnt
+// nothing about where the time went.
+//
+// A stage can legitimately REPEAT -- validate, repair, validate again -- so
+// entries are appended rather than keyed by stage name. That repetition is the
+// most interesting thing the trail can show, and de-duplicating would hide it.
+function _renderStageTrail() {
+  const host = document.getElementById('answerProgressSteps');
+  if (!host) return;
+  if (!_completedStages.length) { host.innerHTML = ''; host.hidden = true; return; }
+  host.hidden = false;
+  host.innerHTML = _completedStages.map(step => {
+    const label = escHtml(step.label);
+    // Only steps that actually said something extra get a disclosure; a
+    // chevron that opens onto nothing is worse than no chevron.
+    if (!step.detail) {
+      return `<div class="stage-step stage-step--plain"><span class="stage-step-tick" aria-hidden="true"></span>`
+           + `<span class="stage-step-label">${label}</span></div>`;
+    }
+    return `<details class="stage-step"><summary><span class="stage-step-tick" aria-hidden="true"></span>`
+         + `<span class="stage-step-label">${label}</span></summary>`
+         + `<div class="stage-step-detail">${escHtml(step.detail)}</div></details>`;
+  }).join('');
+}
+
 function _updateStageSteps(stage, label, detail) {
   if (stage && BRAND_STAGE_STATES[stage]) _setStageState(stage);
-  if (stage) _currentStage = stage;
   const fallback = (stage && STATUS_FALLBACK[stage]) || ['Working on your answer', 'Preparing a trusted response.'];
   const primaryLabel = label || fallback[0];
   const detailLabel = detail || fallback[1];
+
+  // The step that WAS running is finished the moment another one starts, so it
+  // moves into the trail and the head becomes the new one. The head is
+  // therefore always "now" and the trail is always "already done" -- no entry
+  // appears in both.
+  if (_currentStage && _currentStage.label && _currentStage.label !== primaryLabel) {
+    _completedStages.push(_currentStage);
+    _renderStageTrail();
+  }
+  // The trail keeps the RAW detail, not the fallback. The head needs a
+  // subtitle so it never looks half-rendered, but a trail entry whose only
+  // "detail" is the generic filler would earn a chevron that opens onto
+  // nothing -- which is worse than having no chevron at all. Those become
+  // plain rows.
+  _currentStage = { stage: stage || '', label: primaryLabel, detail: String(detail || '').trim() };
+
   const sl = document.getElementById('stageLabel');
   if (sl) sl.textContent = primaryLabel + '…';
   const answerLabel = document.getElementById('answerStageLabel');
@@ -4359,6 +4414,7 @@ function _applyAgentRunEvent(msg) {
 function _resetStageSteps() {
   _completedStages = [];
   _currentStage = null;
+  _renderStageTrail();
 }
 
 function showMascotError() {
