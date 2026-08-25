@@ -222,8 +222,21 @@ body:has(.chat-page) .main { background: var(--bg); }
 .result-card,
 .answer-card,
 .chart-wrap { border-radius: var(--radius); box-shadow: none; }
+/* A soft tint, not a saturated fill. The user's own words are the quietest
+   thing they need to re-read, and a solid brand block made them the loudest
+   object in the thread -- which left nothing louder for the things that
+   actually need attention. */
 .msg-user .msg-bubble,
-.rc-bubble.user { background: var(--primary); border-color: var(--primary); }
+.rc-bubble.user {
+  background: var(--primary-soft);
+  border-color: var(--line-subtle);
+  color: var(--text);
+  /* Beats the inline .msg-user .msg-bubble glow, which was the same 0,2,0
+     specificity as this rule and won only on load order. Its colour was
+     rgba(13,115,119) -- #0D7377, a RETIRED brand teal -- so the halo was a
+     different hue from the fill it sat under. */
+  box-shadow: none;
+}
 .msg-user .msg-avatar { background: var(--primary); box-shadow: none; }
 .msg-bot .msg-bubble { box-shadow: none; }
 .chat-composer { padding: 12px clamp(16px, 4vw, 64px) 14px; }

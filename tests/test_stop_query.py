@@ -225,10 +225,44 @@ class FrontendWiringTests(unittest.TestCase):
         self.assertIn("tableHint?.fqn", body)
         self.assertIn("payload.table_hint = normalizedTableHint", body)
 
+    def _function_body(self, signature: str) -> str:
+        """The whole function, by brace balance.
+
+        Not a fixed character window: a window silently stops covering the code
+        it names the moment anything is inserted above the line it was aimed
+        at, which is how this test broke when the composer gained its
+        processing state -- the call it guards had not moved, the slice had.
+        """
+        start = self.html.index(signature)
+        depth, i = 0, self.html.index("{", start)
+        for j in range(i, len(self.html)):
+            if self.html[j] == "{":
+                depth += 1
+            elif self.html[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    return self.html[start:j + 1]
+        raise AssertionError(f"unbalanced braces after {signature!r}")
+
     def test_set_processing_drives_button_mode(self):
-        start = self.html.index("function setProcessing(active)")
-        body = self.html[start:start + 500]
+        body = self._function_body("function setProcessing(active)")
         self.assertIn("_setSendButtonMode(!!active)", body)
+
+    def test_set_processing_puts_the_composer_into_a_working_state(self):
+        """The stop control has existed for a while; nothing told the user it
+        was there. The composer now says what it is doing instead of silently
+        rejecting the next question with a toast."""
+        body = self._function_body("function setProcessing(active)")
+        self.assertIn("Processing your request", body)
+        self.assertIn("readOnly", body)
+        self.assertIn("_setComposerState", body)
+
+    def test_the_working_placeholder_is_restored_from_the_stashed_value(self):
+        """The placeholder is schema-dependent elsewhere ("Ask anything about
+        SALES data..."), so restoring a literal would overwrite it."""
+        body = self._function_body("function setProcessing(active)")
+        self.assertIn("_composerPlaceholder", body)
+        self.assertNotIn("placeholder = 'Ask anything", body)
 
     def test_send_message_blocked_while_processing(self):
         start = self.html.index("function sendMessage(tableHint)")

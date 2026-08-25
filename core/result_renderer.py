@@ -969,7 +969,12 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         # Uses a lightweight 160-token LLM call; failures are silent.
         # Regulated tenants get [] from generate_followup_suggestions itself
         # (with a proof-of-refusal audit row) — see result_llm_features_allowed.
-        if portal_user and rows and len(rows[0]) >= 2 if rows else False:
+        # >= 1, not >= 2. The two-column floor silently excluded every scalar
+        # and KPI answer -- exactly the results where "what could I ask next"
+        # matters most, because a single number offers the user no column to
+        # pivot on themselves. stat_signals decides whether it has anything
+        # worth suggesting; the row shape should not decide for it.
+        if portal_user and rows and len(rows[0]) >= 1 if rows else False:
             brief         = response_payload.get("data_brief") or {}
             result_scope  = response_payload.get("result_scope") or {}
             audit_rid     = response_payload.get("analysis_contract", {}).get("request_id", "") or question_id or ""
