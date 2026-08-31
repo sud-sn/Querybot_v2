@@ -1,3 +1,4 @@
+import datetime as _dt
 from decimal import Decimal
 
 from core.analytical_intent import AnalyticalPlan
@@ -208,3 +209,83 @@ def test_explicit_cached_chart_type_is_preserved_for_portal_renderer():
 
     assert outcome.ok
     assert outcome.snapshot["metadata"]["chart_type_override"] == "pie"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A grain word asks for a SHAPE, not for a column called "month"
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Live defect, captured 2026-08-25 on tenant Emco_test: "what is my revenue by
+# month this year" returned six correct monthly rows and carried the watch-out
+#
+#     Requested dimension is not visible in the output columns: month
+#
+# because `_column_matches` is pure substring matching and the period column was
+# not spelled with the word "month". The answer was right; the warning was not.
+#
+# These call `verify_result_shape` -- the real entry point -- and read the real
+# warning list, because the whole point is which warnings a user is shown.
+
+
+def _missing_dimension_warnings(rows, dimensions):
+    report = verify_result_shape(
+        rows,
+        analytical_plan=AnalyticalPlan(
+            intent="breakdown",
+            metrics=("Revenue",),
+            dimensions=tuple(dimensions),
+            time_range="this year",
+            output="table",
+        ),
+    )
+    return [w for w in report["warnings"] if "not visible in the output columns" in w]
+
+
+_MONTHLY_ROWS = [
+    {"PERIOD": _dt.date(2026, m, 1), "TOTAL_REVENUE": Decimal(1000 * m)}
+    for m in range(1, 7)
+]
+_DAILY_ROWS = [
+    {"DMS_DT": _dt.date(2026, 1, d), "TOTAL_REVENUE": Decimal(10 * d)}
+    for d in range(1, 15)
+]
+
+
+def test_a_monthly_series_satisfies_a_month_dimension_whatever_the_column_is_called():
+    """The live defect. PERIOD carries a monthly cadence, so "by month" is met."""
+    assert _missing_dimension_warnings(_MONTHLY_ROWS, ["month"]) == []
+
+
+def test_the_wrong_grain_is_still_reported():
+    """A daily series genuinely is not a monthly breakdown. Suppressing this
+    would trade a false warning for a missing one."""
+    assert _missing_dimension_warnings(_DAILY_ROWS, ["month"])
+
+
+def test_a_coarser_request_over_a_finer_series_is_still_reported():
+    assert _missing_dimension_warnings(_MONTHLY_ROWS, ["quarter"])
+
+
+def test_a_non_temporal_dimension_is_unaffected():
+    """"region" is not a grain word, so nothing about this change touches it."""
+    assert _missing_dimension_warnings(_MONTHLY_ROWS, ["region"])
+
+
+def test_a_named_period_column_still_matches_by_name():
+    """The substring path is untouched; it just is no longer the only path."""
+    rows = [{"MONTH_NAME": "Jan", "REV": Decimal(1)},
+            {"MONTH_NAME": "Feb", "REV": Decimal(2)}]
+    assert _missing_dimension_warnings(rows, ["month"]) == []
+
+
+def test_a_yearly_series_satisfies_a_year_dimension():
+    rows = [{"FISCAL_PERIOD": 2025, "REV": Decimal(1)},
+            {"FISCAL_PERIOD": 2026, "REV": Decimal(2)}]
+    assert _missing_dimension_warnings(rows, ["year"]) == []
+
+
+def test_a_single_row_cannot_establish_a_cadence():
+    """One period proves no grain, so the name check remains the only evidence
+    and the warning stands rather than being guessed away."""
+    rows = [{"PERIOD": _dt.date(2026, 1, 1), "REV": Decimal(1)}]
+    assert _missing_dimension_warnings(rows, ["month"])

@@ -14,6 +14,8 @@ from decimal import Decimal
 import re
 from typing import Any
 
+from core.temporal_columns import infer_series_grain
+
 
 _TIME_NAME_RE = re.compile(
     r"(?:^|_)(?:date|dt|day|week|month|quarter|year|period|prd|yyyymm|yyyymmdd|fiscal|calendar)(?:_|$)",
@@ -101,6 +103,52 @@ def _time_columns(rows: list[dict[str, Any]], columns: list[str]) -> list[str]:
     return found
 
 
+# A grain word names a SHAPE the time axis must have, not a column called
+# "month". `_column_matches` is pure substring matching, so "month" was only
+# ever satisfied when some column happened to be spelled with it -- and a
+# perfectly good monthly answer whose period column is called PERIOD, DMS_DT or
+# BAL_DT carried "Requested dimension is not visible in the output columns:
+# month" as a watch-out on an answer that was entirely correct.
+_GRAIN_TERMS = {
+    "day": "day", "days": "day", "daily": "day", "date": "day",
+    "week": "week", "weeks": "week", "weekly": "week",
+    "month": "month", "months": "month", "monthly": "month",
+    "quarter": "quarter", "quarters": "quarter", "quarterly": "quarter",
+    "year": "year", "years": "year", "yearly": "year",
+    "annual": "year", "annually": "year",
+}
+
+
+def _requested_grain(term: str) -> str:
+    """The calendar grain a dimension term asks for, or "" if it asks for none."""
+    return _GRAIN_TERMS.get(_normalise(term), "")
+
+
+def _temporal_dimension_satisfied(
+    term: str, rows: list[dict[str, Any]], temporal_columns: list[str]
+) -> bool:
+    """True when a grain term is met by a real time axis at THAT grain.
+
+    Deliberately requires the observed grain to EQUAL the requested one. A
+    daily column does not satisfy "by month": that answer really is at the
+    wrong grain and the warning is the correct output. Widening this to
+    "compatible" grains would suppress a warning that is right.
+    """
+    grain = _requested_grain(term)
+    if not grain or not temporal_columns:
+        return False
+    for column in temporal_columns:
+        labels = [row.get(column) for row in rows[:50] if row.get(column) is not None]
+        if len(labels) < 2:
+            # One row cannot establish a cadence. Fall back to the name check,
+            # which is what the caller does when this returns False.
+            continue
+        observed, confidence = infer_series_grain(labels)
+        if observed == grain and confidence >= 0.6:
+            return True
+    return False
+
+
 def _column_matches(term: str, columns: list[str]) -> bool:
     needle = _normalise(term)
     if not needle:
@@ -185,7 +233,11 @@ def verify_result_shape(
     intent = str(intent_plan.get("intent") or "").casefold()
     output = str(intent_plan.get("output") or "auto").casefold()
     dimensions = [str(value) for value in intent_plan.get("dimensions") or [] if str(value)]
-    missing_dimensions = [value for value in dimensions if not _column_matches(value, columns)]
+    missing_dimensions = [
+        value for value in dimensions
+        if not _column_matches(value, columns)
+        and not _temporal_dimension_satisfied(value, rows, temporal)
+    ]
     if missing_dimensions:
         warnings.append(
             "Requested dimension is not visible in the output columns: "
