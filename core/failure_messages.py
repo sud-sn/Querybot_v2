@@ -19,6 +19,27 @@ from typing import Any
 _MAX_TECH_CHARS = 300
 
 
+def _clip(text: Any, limit: int = _MAX_TECH_CHARS) -> str:
+    """Trim to `limit` without cutting a word in half, and say it was trimmed.
+
+    A bare slice cut Azure's paused-database message at "open the Compute and
+    Storage tab from the database menu on the Azur" -- the sentence that tells
+    an administrator exactly how to fix the outage, ending mid-word with no
+    sign anything was missing. A truncation that hides the fact that it
+    truncated is worse than a longer message.
+    """
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value
+    # Back up to the last word boundary, unless that would throw away most of
+    # the message (a single very long token).
+    cut = value[:limit]
+    space = cut.rfind(" ")
+    if space > limit * 0.6:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.") + "…"
+
+
 # ── DB error sanitizer ────────────────────────────────────────────────────────
 
 # Ordered: first match wins. Matchers run against the CLEANED error text
@@ -88,6 +109,27 @@ _DB_ERROR_MAP: list[tuple[str, str, str]] = [
         r"deadlock|\b1205\b",
         "The database was busy and cancelled this query to resolve a conflict.",
         "Try again in a moment.",
+    ),
+    # Service paused / quota exhausted. Without this the message fell through
+    # to the generic default, which tells the user to rephrase the question --
+    # advice that cannot possibly help, because no wording reaches a database
+    # that is switched off. Observed live: an Azure SQL free-tier allowance ran
+    # out mid-session and every question for the rest of the month was answered
+    # with "try rephrasing".
+    #
+    # Deliberately last: it is the broadest matcher here, and an error that
+    # also mentions a timeout or a login failure is better described by those.
+    (
+        r"free (?:amount )?(?:allowance|limit)|monthly free amount|"
+        r"database is paused|is paused for the remainder|auto-paused|"
+        r"resource limit (?:has been )?reached|quota (?:has been )?exceeded|"
+        r"service objective .* exhausted|\b40613\b",
+        "The database is paused or has reached a service limit, so it is not "
+        "accepting queries right now.",
+        "This is a database subscription limit rather than a problem with the "
+        "question — rephrasing will not help. Ask your administrator to check "
+        "the database's compute tier or billing status; the technical details "
+        "below name the limit and when it resets.",
     ),
 ]
 
@@ -467,7 +509,7 @@ def translate_failure(
             info = sanitize_db_error(exception_text or reason)
             technical = []
             if info["cleaned"]:
-                technical.append(f"Database error: {info['cleaned'][:_MAX_TECH_CHARS]}")
+                technical.append(f"Database error: {_clip(info['cleaned'])}")
             return {
                 "headline": "I could not run this query against your database.",
                 "most_likely_reason": info["plain_reason"],
@@ -480,7 +522,7 @@ def translate_failure(
             if code_key == "entity_field_unavailable" and reason:
                 # This guarded failure contains safe, schema-derived entity
                 # alternatives and is more useful than a generic translation.
-                plain = (reason or "").strip()[:_MAX_TECH_CHARS]
+                plain = _clip(reason)
             else:
                 plain = _VALIDATION_REASONS.get(
                     code_key,
@@ -490,7 +532,7 @@ def translate_failure(
             if code_key:
                 technical.append(f"Validation: {code_key}")
             if reason and code_key != "entity_field_unavailable":
-                technical.append((reason or "").strip()[:_MAX_TECH_CHARS])
+                technical.append(_clip(reason))
             next_step = _VALIDATION_NEXT_STEPS.get(code_key, _DEFAULT_VALIDATION_NEXT_STEP)
             if suggestions:
                 next_step += f" Closest known terms in your data: {', '.join(suggestions)}."
@@ -502,7 +544,7 @@ def translate_failure(
             }
 
         # Unknown kind — generic but safe.
-        technical = [t for t in [(reason or exception_text or "").strip()[:_MAX_TECH_CHARS]] if t]
+        technical = [t for t in [_clip(reason or exception_text)] if t]
         return {
             "headline": "I could not answer this question.",
             "most_likely_reason": "Something went wrong while preparing or running the query.",

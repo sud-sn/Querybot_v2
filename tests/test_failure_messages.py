@@ -157,3 +157,88 @@ class PipelineWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A paused database is not a badly-worded question
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Live, 25 Aug 2026: an Azure SQL free-tier allowance ran out mid-session. Every
+# question for the rest of the month was answered with "Try rephrasing the
+# question" — the generic default, because no pattern matched. No wording
+# reaches a database that is switched off, so the advice could not possibly
+# help, and the technical detail that said how to fix it was cut mid-word at
+# "...on the Azur".
+
+_AZURE_PAUSED = (
+    "[Microsoft][ODBC Driver 18 for SQL Server][SQL Server]This database has "
+    "reached the monthly free amount allowance for the month of August 2026 and "
+    "is paused for the remainder of the month. The free amount will renew at "
+    "12:00 AM (UTC) on September 01, 2026. To regain access immediately, open "
+    "the Compute and Storage tab from the database menu on the Azure portal."
+)
+
+
+class PausedDatabaseTests(unittest.TestCase):
+
+    def test_a_paused_database_is_named_as_such(self):
+        self.assertIn("paused", sanitize_db_error(_AZURE_PAUSED)["plain_reason"].lower())
+
+    def test_the_user_is_not_told_to_rephrase(self):
+        """The whole point. Rephrasing cannot reach a database that is off."""
+        step = sanitize_db_error(_AZURE_PAUSED)["next_step"].lower()
+        self.assertIn("rephrasing will not help", step)
+        self.assertIn("administrator", step)
+
+    def test_other_service_limit_wordings_are_covered(self):
+        for raw in (
+            "Database 'db' on server 's' is paused. (40613)",
+            "The resource limit has been reached for this subscription.",
+            "Quota has been exceeded for this database.",
+        ):
+            with self.subTest(raw=raw[:40]):
+                self.assertNotIn(
+                    "try rephrasing", sanitize_db_error(raw)["next_step"].lower())
+
+    def test_a_timeout_is_still_a_timeout(self):
+        """The paused matcher is the broadest in the table and runs last, so a
+        more specific class must keep winning."""
+        self.assertIn(
+            "too long",
+            sanitize_db_error("Timeout expired. The statement has been terminated.")["plain_reason"])
+
+    def test_an_unrecognised_error_still_falls_through(self):
+        self.assertIn(
+            "rephrasing",
+            sanitize_db_error("Something nobody has a pattern for.")["next_step"].lower())
+
+
+class TechnicalDetailTruncationTests(unittest.TestCase):
+    """The detail is where the remedy lives. A bare 300-char slice cut Azure's
+    message at "...from the database menu on the Azur" — ending mid-word, with
+    nothing to indicate anything had been removed."""
+
+    def test_a_long_detail_is_not_cut_mid_word(self):
+        from core.failure_messages import _clip
+        clipped = _clip(_AZURE_PAUSED)
+        self.assertTrue(clipped.endswith("…"))
+        self.assertFalse(clipped.rstrip("…").endswith("Azur"))
+        # The last kept token is a whole word.
+        self.assertIn(clipped.rstrip("…").split()[-1], _AZURE_PAUSED)
+
+    def test_a_short_detail_is_untouched(self):
+        from core.failure_messages import _clip
+        self.assertEqual(_clip("Login failed for user 'qb'."), "Login failed for user 'qb'.")
+
+    def test_a_single_enormous_token_still_gets_trimmed(self):
+        """Backing up to a word boundary must not throw the whole message away
+        when there is no boundary to back up to."""
+        from core.failure_messages import _clip
+        clipped = _clip("x" * 900)
+        self.assertTrue(clipped.endswith("…"))
+        self.assertGreater(len(clipped), 200)
+
+    def test_empty_input_stays_empty(self):
+        from core.failure_messages import _clip
+        self.assertEqual(_clip(None), "")
+        self.assertEqual(_clip(""), "")
