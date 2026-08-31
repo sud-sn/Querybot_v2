@@ -11,6 +11,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,10 +119,18 @@ class BuildValueIndexTests(unittest.TestCase):
         self.base = str(Path(self.tmp) / "clients")
 
     def _build(self, **kw):
-        return build_value_index(
-            "acct", {}, "azure_sql", str(self.schema_dir),
-            run_query_fn=_fake_run_query, base_dir=self.base, **kw,
-        )
+        # Ordinary non-regulated posture. Without a compliance profile
+        # store.compliance_profile_exists is False and is_regulated fails
+        # closed (core/compliance/policy_engine.py:36), which the build now
+        # honours by harvesting nothing. Production backfills a profile for
+        # every client, so a profile-less fixture models a state real tenants
+        # are not in. Regulated behaviour is covered by
+        # tests/test_value_index_write_gate.py.
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False):
+            return build_value_index(
+                "acct", {}, "azure_sql", str(self.schema_dir),
+                run_query_fn=_fake_run_query, base_dir=self.base, **kw,
+            )
 
     def test_build_writes_atomic_index_with_stats(self):
         stats = self._build()
@@ -143,10 +152,11 @@ class BuildValueIndexTests(unittest.TestCase):
             if "CUS_NM" in sql:
                 return [{"CUS_NM": f"user{i}@example.com"} for i in range(10)]
             return _fake_run_query(creds, db_type, sql, max_rows)
-        stats = build_value_index(
-            "acct2", {}, "azure_sql", str(self.schema_dir),
-            run_query_fn=rq, base_dir=self.base,
-        )
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False):
+            stats = build_value_index(
+                "acct2", {}, "azure_sql", str(self.schema_dir),
+                run_query_fn=rq, base_dir=self.base,
+            )
         self.assertEqual(stats["columns_skipped_pii"], 1)
         self.assertEqual(lookup_exact("acct2", "user1@example.com", base_dir=self.base), [])
 
@@ -155,10 +165,11 @@ class BuildValueIndexTests(unittest.TestCase):
             if "CUS_NM" in sql:
                 return [{"CUS_NM": f"Customer {i}"} for i in range(12)]
             return []
-        stats = build_value_index(
-            "acct3", {}, "azure_sql", str(self.schema_dir),
-            run_query_fn=rq, base_dir=self.base, per_column_cap=10,
-        )
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False):
+            stats = build_value_index(
+                "acct3", {}, "azure_sql", str(self.schema_dir),
+                run_query_fn=rq, base_dir=self.base, per_column_cap=10,
+            )
         self.assertIn("EMCODW.EMDW_DMART.CUS_DMS.CUS_NM", stats["truncated_columns"])
 
     def test_lookup_exact_case_insensitive_then_normalized(self):

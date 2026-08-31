@@ -1922,6 +1922,12 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 "comment":             tbl.get("COMMENT") or "",
                 "schema":              schema,
                 "database":            database,
+                # Columns whose DISTINCT VALUES were read and sent, as opposed
+                # to names and types. This is value-level egress and the one
+                # thing kb_data_egress_log.distinct_col_count exists to count;
+                # both call sites passed a hardcoded 0, so the field recorded
+                # nothing and no auditor could be shown what left the database.
+                "distinct_columns_sent": sorted(distinct_map),
                 "fields_sent":         [c["COLUMN_NAME"] for c in columns],
                 "row_count_sent":      len(sample),
                 "masked_fields":       sorted(_masked_set),
@@ -2185,6 +2191,12 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 "row_count":           tbl.get("ROW_COUNT"),
                 "comment":             tbl.get("COMMENT") or "",
                 "owner":               tbl_owner,
+                # Columns whose DISTINCT VALUES were read and sent, as opposed
+                # to names and types. This is value-level egress and the one
+                # thing kb_data_egress_log.distinct_col_count exists to count;
+                # both call sites passed a hardcoded 0, so the field recorded
+                # nothing and no auditor could be shown what left the database.
+                "distinct_columns_sent": sorted(distinct_map),
                 "fields_sent":         [c["COLUMN_NAME"] for c in columns],
                 "row_count_sent":      len(sample),
                 "masked_fields":       sorted(_masked_set),
@@ -2593,6 +2605,12 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     "comment":             "",
                     "schema":              schema,
                     "database":            db_upper,
+                    # Columns whose DISTINCT VALUES were read and sent, as opposed
+                    # to names and types. This is value-level egress and the one
+                    # thing kb_data_egress_log.distinct_col_count exists to count;
+                    # both call sites passed a hardcoded 0, so the field recorded
+                    # nothing and no auditor could be shown what left the database.
+                    "distinct_columns_sent": sorted(distinct_map),
                     "fields_sent":         [c["COLUMN_NAME"] for c in columns],
                     "row_count_sent":      len(sample),
                     "masked_fields":       sorted(_masked_set),

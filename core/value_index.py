@@ -105,14 +105,137 @@ def _is_string_type(col_type: str) -> bool:
     return any(t in base for t in _CATEGORICAL_TYPES)
 
 
-def select_filterable_columns(schema: dict, vocab=None) -> list[dict]:
+def _clearance_gate(account_id: str) -> tuple[Callable[[str, str], bool] | None, str]:
+    """Return (predicate, industry) governing what may be written to the index.
+
+    The predicate mirrors ``_cleared`` in core/value_resolver.py, which decides
+    what a regulated tenant may SEE. Until now nothing decided what a regulated
+    tenant may STORE: this module imported nothing from core.compliance, so an
+    admin-reviewed PHI classification did not stop the harvest, and up to
+    per_column_cap real values per column were written to a plain file on disk.
+
+    Deliberately STRICTER than the query-time rule in one place: a column with
+    no classification row at all is refused. At query time an unclassified
+    column merely fails to be cleared; here it would be persisted, and a
+    durable store must not inherit a fail-open default.
+
+    Returns (None, industry) for an unregulated tenant — no gate, unchanged
+    behaviour. Raises nothing: a tenant whose compliance state cannot be read
+    is treated as regulated-with-no-pack, which refuses everything.
+    """
+    try:
+        from core.compliance.policy_engine import is_regulated
+        if not is_regulated(account_id):
+            return None, ""
+    except Exception:
+        log.warning("value index: compliance state unreadable for %s; refusing to index",
+                    account_id, exc_info=True)
+        return (lambda _t, _c: False), ""
+
+    try:
+        import store
+        from core.compliance.packs import get_pack
+
+        profile = store.get_compliance_profile(account_id) or {}
+        industry = str(profile.get("industry") or "")
+        # get_pack is keyed by policy_pack_key, not by industry.
+        pack = get_pack(str(profile.get("policy_pack_key") or "")) or {}
+        sensitive = {str(t).upper() for t in (pack.get("sensitive_tags") or [])}
+        classifications = store.get_classification_map(account_id) or {}
+    except Exception:
+        log.warning("value index: policy pack unreadable for %s; refusing to index",
+                    account_id, exc_info=True)
+        return (lambda _t, _c: False), ""
+
+    if not sensitive:
+        # A regulated tenant with no resolvable pack has no definition of
+        # "sensitive", so nothing can be cleared as safe. Same reading as the
+        # query path takes, for the same reason.
+        log.warning("value index: regulated tenant %s has no resolvable policy pack "
+                    "(policy_pack_key=%r); indexing nothing",
+                    account_id, profile.get("policy_pack_key"))
+        return (lambda _t, _c: False), industry
+
+    def _cleared(table_fqn: str, column: str) -> bool:
+        row = classifications.get(f"{str(table_fqn).upper()}.{str(column).upper()}")
+        if not row or not row.get("reviewed"):
+            return False
+        tags = {str(t).upper() for t in (row.get("tags") or [])}
+        return not (tags & sensitive)
+
+    return _cleared, industry
+
+
+def purge_uncleared_columns(account_id: str, base_dir: str = _DEFAULT_BASE_DIR) -> dict:
+    """Re-apply the clearance gate to an index that already exists.
+
+    Building the index is the only moment the gate ran, so a column reclassified
+    as PHI after the build kept its values on disk indefinitely: the compliance
+    profile save rewrote classifications and never touched this file, making it
+    the one artifact where correcting a classification had no effect.
+
+    Called after any change to a tenant's posture or classifications. Deletes
+    rows only -- it can never add a value the gate would refuse -- so it is safe
+    to run on every such change, including ones that turn out to be no-ops.
+    """
+    path = _index_path(account_id, base_dir)
+    if not path.exists():
+        return {"purged_columns": 0, "purged_values": 0, "reason": "no_index"}
+
+    cleared, _industry = _clearance_gate(account_id)
+    if cleared is None:
+        return {"purged_columns": 0, "purged_values": 0, "reason": "tenant_not_regulated"}
+
+    conn = sqlite3.connect(path)
+    try:
+        pairs = conn.execute(
+            "SELECT DISTINCT table_fqn, column_name FROM column_value"
+        ).fetchall()
+        purged_columns = purged_values = 0
+        for table_fqn, column_name in pairs:
+            if cleared(table_fqn, column_name):
+                continue
+            cur = conn.execute(
+                "DELETE FROM column_value WHERE table_fqn=? AND column_name=?",
+                (table_fqn, column_name),
+            )
+            purged_columns += 1
+            purged_values += cur.rowcount or 0
+        if purged_columns:
+            conn.commit()
+            # Reclaim the pages so the removed values are not still readable in
+            # the file's free list. A delete that leaves the plaintext on disk
+            # is not a retraction.
+            conn.execute("VACUUM")
+            log.warning(
+                "value index purge for %s: removed %d columns (%d values) that are "
+                "no longer cleared", account_id, purged_columns, purged_values,
+            )
+        return {
+            "purged_columns": purged_columns,
+            "purged_values": purged_values,
+            "reason": "applied",
+        }
+    finally:
+        conn.close()
+
+
+def select_filterable_columns(
+    schema: dict, vocab=None, *, account_id: str = "", industry: str = "",
+    cleared: Callable[[str, str], bool] | None = None,
+) -> list[dict]:
     """
     Choose columns worth value-indexing from a normalized _schema.json dict.
 
     Included: string-typed columns whose naming role is display/code
     (_NM/_NAME/_DSC/_DESC/_CD/_CODE …) on dimension-classified tables, plus
     categorical columns discovery already scans (so the RCA matcher covers
-    them uniformly). Excluded: every masking signal (see module docstring).
+    them uniformly). Excluded: every masking signal (see module docstring),
+    and — for a regulated tenant — everything `cleared` does not clear.
+
+    `industry` reaches detect_sensitive_columns, whose third pass runs the
+    banking/healthcare classifier and only fires when it is set. Omitting it
+    silently disabled that pass for every regulated tenant.
     """
     from core.masking import detect_sensitive_columns
     from core.naming_convention import match_column_suffix
@@ -127,7 +250,22 @@ def select_filterable_columns(schema: dict, vocab=None) -> list[dict]:
         columns = meta.get("columns") or []
         col_defs = [c for c in columns if isinstance(c, dict) and c.get("name")]
         masked = {str(f).upper() for f in (meta.get("masked_fields") or [])}
-        sensitive = {str(c).upper() for c in detect_sensitive_columns(col_defs)}
+        sensitive = {str(c).upper() for c in detect_sensitive_columns(col_defs, industry)}
+
+        # NOT expanded before this check, and that is a decision rather than an
+        # oversight. Expanding first looks like the obvious fix for CUS_NM and
+        # PAT_NM slipping past patterns written in spelled-out English -- but
+        # the bare-name rule is `(?<![a-z])name(?![a-z])`, so "warehouse name",
+        # "region name" and "profit centre name" all match it too. Measured on
+        # the EMCO mart, expansion blocked WHS_NM, RGN_NM, PFT_CTR_NM and
+        # ITM_DSC: every dimension display column, which is the whole index.
+        #
+        # The abbreviated-PHI risk it was meant to address is already closed
+        # one layer up: a regulated tenant indexes only columns an admin has
+        # reviewed and cleared (see _clearance_gate), so PAT_NM is refused on
+        # classification, not on spelling. For an unregulated tenant, customer
+        # and warehouse names are ordinary business data and indexing them is
+        # the feature working.
 
         parts = str(fqn).split(".")
         bare_table = parts[-1]
@@ -135,7 +273,21 @@ def select_filterable_columns(schema: dict, vocab=None) -> list[dict]:
             name = str(col.get("name") or "")
             ctype = str(col.get("type") or "")
             upper = name.upper()
-            if upper in masked or upper in sensitive:
+            # A reviewed classification is a human decision about this exact
+            # column; `sensitive` is a regex over its name. Where both have an
+            # opinion the human wins, or the naming heuristic silently vetoes
+            # the admin -- which is what kept a pharmacy's drug catalog out of
+            # the index (GENERIC_NAME reads as "drug name" to the pattern) and
+            # so kept value grounding from working on the one column the
+            # question was about.
+            #
+            # This only ever RE-ADMITS a column the gate has already cleared,
+            # so it cannot widen anything for an unregulated tenant, where
+            # `cleared` is None and the heuristic remains the only check.
+            admin_cleared = cleared is not None and cleared(str(fqn), name)
+            if upper in masked and not admin_cleared:
+                continue
+            if upper in sensitive and not admin_cleared:
                 continue
             if not _is_string_type(ctype):
                 continue
@@ -145,6 +297,10 @@ def select_filterable_columns(schema: dict, vocab=None) -> list[dict]:
             is_state = bool(rule and rule.role in _FILTERABLE_ANY_TABLE_ROLES)
             is_cat = _is_categorical(name, ctype)
             if not (is_display or is_state or is_cat):
+                continue
+            # The write-time gate. Last check before a column becomes eligible
+            # to have its real values copied onto disk.
+            if cleared is not None and not cleared(str(fqn), name):
                 continue
 
             business_name = ""
@@ -227,7 +383,17 @@ def build_value_index(
         from core.schema import run_query as run_query_fn  # type: ignore[no-redef]
 
     schema = load_schema_json(schema_dir)
-    columns = select_filterable_columns(schema, vocab=vocab)
+    cleared, industry = _clearance_gate(account_id)
+    considered_ungated = len(select_filterable_columns(schema, vocab=vocab))
+    columns = select_filterable_columns(
+        schema, vocab=vocab, account_id=account_id, industry=industry, cleared=cleared,
+    )
+    if cleared is not None:
+        log.info(
+            "value index for regulated tenant %s: %d of %d otherwise-eligible "
+            "columns cleared for indexing",
+            account_id, len(columns), considered_ungated,
+        )
 
     final_path = _index_path(account_id, base_dir)
     final_path.parent.mkdir(parents=True, exist_ok=True)
@@ -239,6 +405,14 @@ def build_value_index(
         "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "per_column_cap": per_column_cap,
         "columns_considered": len(columns),
+        # Regulated tenants only: how many eligible columns the clearance gate
+        # refused. A build that indexes nothing is a governed outcome, not a
+        # failure, and the two must be distinguishable in the stats.
+        "regulated": cleared is not None,
+        "industry": industry,
+        "columns_refused_unclassified": (
+            considered_ungated - len(columns) if cleared is not None else 0
+        ),
         "columns_indexed": 0,
         "values_indexed": 0,
         "columns_skipped_pii": 0,

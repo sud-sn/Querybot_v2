@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,8 +69,15 @@ def _make_index(base_dir, values_by_col=None):
                 return [{col: v} for v in vlist]
         return []
 
-    build_value_index("acct", {}, "azure_sql", str(schema_dir),
-                      run_query_fn=rq, base_dir=base_dir)
+    # These are resolver tests, so the tenant needs an ordinary non-regulated
+    # posture. Without one, store.compliance_profile_exists is False and
+    # is_regulated fails closed (core/compliance/policy_engine.py:36), which
+    # the index build now honours by refusing to harvest anything. In
+    # production every client has an explicit profile — init_db backfills one
+    # — so a fixture with no profile models a state real tenants are not in.
+    with patch("core.compliance.policy_engine.is_regulated", return_value=False):
+        build_value_index("acct", {}, "azure_sql", str(schema_dir),
+                          run_query_fn=rq, base_dir=base_dir)
 
 
 class PhraseExtractionTests(unittest.TestCase):
@@ -481,8 +489,10 @@ class StatusValueGroundingTests(unittest.TestCase):
         def fake_run(creds, db_type, sql, max_rows=0):
             return [{"ORD_STS": v} for v in statuses]
 
-        build_value_index("acct", {}, "snowflake", str(schema_dir),
-                          run_query_fn=fake_run, base_dir=self.base)
+        # Non-regulated posture, for the same reason as _make_index above.
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False):
+            build_value_index("acct", {}, "snowflake", str(schema_dir),
+                              run_query_fn=fake_run, base_dir=self.base)
         self.known = build_known_terms("acct", {})
 
     def test_cancelled_resolves_to_verified_status_filter(self):
