@@ -34,6 +34,8 @@ _tmpdir = tempfile.mkdtemp(prefix="querybot_semiadd_")
 os.environ.setdefault("DB_PATH", str(Path(_tmpdir) / "test_querybot.db"))
 os.environ.setdefault("QUERYBOT_KEY_FILE", str(Path(_tmpdir) / "test_key"))
 
+from core.analysis_contract import _measure_class, measure_class_for_metric  # noqa: E402
+from core.contextual_dates import question_has_snapshot_intent  # noqa: E402
 from core.naming_convention import match_column_suffix  # noqa: E402
 from core.schema_enrichment import enrich_columns  # noqa: E402
 from core.semantic_model import _field_entry  # noqa: E402
@@ -126,6 +128,98 @@ class TestSnapshotMeasuresAreNotSummableAcrossTime(unittest.TestCase):
         aggregations = _aggregations(TRANSACTION)
         self.assertNotEqual(
             aggregations.get("SOP_CUS_IVC_LIN_AMT"), "semi_additive",
+        )
+
+
+class TestTheRegistryMetricPathSeesItToo(unittest.TestCase):
+    """The schema layer above learns semi-additivity from the TABLE's grain.
+
+    `measure_class_for_metric` cannot: a registry metric carries a formula and
+    a name, not a table role, so it classifies from the column name alone --
+    and it called `_measure_class(token, {})` with an empty field dict, so the
+    enrichment verdict proved above never reached it. On abbreviated ERP names
+    that fell straight through to the _AMT / _QTY rule and returned "additive".
+
+    That is not cosmetic. `metrics_are_semi_additive` is the GOVERNED half of
+    `question_has_snapshot_intent`, and its docstring promises it holds "for
+    any domain whose snapshot measure happens not to be called inventory or
+    balance (headcount, assets under management, open subscriptions)". Those
+    are exactly the domains with no wording fallback, so a wrong verdict here
+    left them with no snapshot detection at all.
+    """
+
+    def test_the_abbreviated_balance_column_is_semi_additive(self):
+        self.assertEqual(
+            measure_class_for_metric(
+                {"name": "Inventory Value", "sql_template": "SUM(BAL_VAL_AMT)"}
+            ),
+            "semi_additive",
+        )
+
+    def test_a_flow_measure_is_still_additive(self):
+        for formula in ("SUM(SOP_CUS_IVC_LIN_AMT)", "SUM(PCH_ORD_LIN_CAD_AMT)"):
+            with self.subTest(formula=formula):
+                self.assertEqual(
+                    measure_class_for_metric({"name": "m", "sql_template": formula}),
+                    "additive",
+                )
+
+    def test_an_admin_declaration_still_wins(self):
+        """Naming is the fallback, never an override of governed metadata."""
+        self.assertEqual(
+            measure_class_for_metric({
+                "name": "Inventory Value",
+                "sql_template": "SUM(BAL_VAL_AMT)",
+                "aggregation_semantics": "additive",
+            }),
+            "additive",
+        )
+
+    def test_tokens_match_whole_words_not_substrings(self):
+        """"BAL" as a substring also fires on GLOBAL_AMT, and a false
+        semi-additive verdict suppresses a legitimate SUM."""
+        for column in ("GLOBAL_AMT", "HANDLING_AMT", "VERBAL_SCORE_AMT"):
+            with self.subTest(column=column):
+                self.assertNotEqual(_measure_class(column, {}), "semi_additive")
+
+    def test_the_abbreviations_that_are_too_ambiguous_stay_out(self):
+        """INV is invoice far more often than inventory; CLS is class; OPN is
+        an open order. Claiming these would break additive flow measures."""
+        for column in ("INV_LIN_AMT", "CLS_CD_AMT", "OPN_ORD_AMT"):
+            with self.subTest(column=column):
+                self.assertEqual(_measure_class(column, {}), "additive")
+
+    def test_a_camel_case_mart_is_covered(self):
+        """The spelled-out set needs the underscore form: StockOnHandQty
+        tokenises to {STOCK, ON, HAND, QTY} and matches "ON_HAND" nowhere."""
+        self.assertEqual(_measure_class("StockOnHandQty", {}), "semi_additive")
+
+
+class TestTheGovernedSnapshotPromiseHolds(unittest.TestCase):
+    """End of the chain: the thing the pipeline actually calls.
+
+    These execute `question_has_snapshot_intent` rather than asserting on the
+    classifier, because the classifier being right is only useful if the
+    governed branch above the wording fallback consumes it.
+    """
+
+    HEADCOUNT = {"name": "Month-end headcount", "sql_template": "SUM(EOM_BAL_HC)"}
+
+    def test_a_domain_with_no_wording_cue_is_still_detected(self):
+        question = "what is my month-end headcount by division"
+        # The premise: wording alone cannot save this one.
+        self.assertFalse(question_has_snapshot_intent(question))
+        # The governed metric must.
+        self.assertTrue(
+            question_has_snapshot_intent(question, matched_metrics=[self.HEADCOUNT])
+        )
+
+    def test_a_flow_metric_does_not_acquire_snapshot_intent(self):
+        revenue = {"name": "Revenue", "sql_template": "SUM(SOP_CUS_IVC_LIN_AMT)"}
+        self.assertFalse(
+            question_has_snapshot_intent(
+                "what is my revenue by customer", matched_metrics=[revenue]
+            )
         )
 
 

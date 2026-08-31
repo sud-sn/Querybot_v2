@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from core.source_resolution import GENERIC_MEASURE_WORDS
+
 
 _STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "by", "each", "find", "for", "from",
@@ -70,7 +72,26 @@ def _phrase_score(metric: dict[str, Any], question: str) -> int:
         phrase_tokens = _tokens(phrase)
         if not phrase_tokens:
             continue
-        score = len(q_tokens & phrase_tokens) * 10
+        overlap = q_tokens & phrase_tokens
+        # Overlap on nothing but generic quantity words is not evidence about
+        # WHICH metric was meant. "show me the inventory value by warehouse"
+        # shared exactly one token with "purchase order value" -- "value" --
+        # and scored 10, enough to be the only matched metric, because the
+        # only floor anywhere in this matcher is score > 0. That pinned
+        # PCH_ORD_RCT_FCT as the measure fact and the validator then rejected
+        # the model's correct ITM_BAL_PRD_FCT SQL with source_fact_mismatch.
+        #
+        # Real matches are never this thin: the same metric scores 166 on
+        # "total amount of confirmed purchase orders by profit center" and
+        # Revenue scores 122 on "show total revenue by profit centre", both on
+        # subject words. Dropping generic-only overlap cannot reach them.
+        #
+        # The exact-phrase bonus below is deliberately still allowed: a metric
+        # literally named "Total Value" appearing verbatim in the question IS
+        # evidence, and that path requires the whole phrase, not one token.
+        if overlap and overlap <= GENERIC_MEASURE_WORDS:
+            overlap = set()
+        score = len(overlap) * 10
         if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", q):
             score += 100 + len(phrase_tokens) * 12
         best = max(best, score)

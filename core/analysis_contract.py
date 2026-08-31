@@ -20,11 +20,41 @@ _NON_ADDITIVE_RE = re.compile(r"(?:PCT|PERCENT|RATE|RATIO|AVG|AVERAGE)", re.I)
 _SEMI_ADDITIVE_RE = re.compile(
     r"(?:BALANCE|ON_HAND|INVENTORY|SNAPSHOT|ENDING|CLOSING)", re.I
 )
+# The spelled-out words above only ever match a mart that writes them out. Real
+# ERP marts abbreviate, so the very columns this classifier exists to protect
+# read as additive: BAL_VAL_AMT and OH_QTY both matched _ADDITIVE_RE on "AMT" /
+# "QTY" and were summed across snapshots. That is the failure this set closes.
+#
+# Matched per TOKEN, never as a substring, which is the whole reason it is a set
+# and not another alternation bolted onto the regex above: "BAL" as a substring
+# also fires on GLOBAL_AMT and VERBAL_SCORE, and a false semi-additive verdict
+# suppresses a legitimate SUM. Splitting on underscores and camel humps first
+# means GLOBAL_AMT tokenises to {GLOBAL, AMT} and never matches.
+#
+# Deliberately excluded: "INV" (invoice far more often than inventory), "CLS"
+# (class), "OPN" (open orders), and the qualifier-only names on a snapshot fact
+# such as AVL/ALC -- those are semi-additive because of the grain they sit at,
+# not because of what they are called, and guessing from the name would be the
+# kind of rule this module's contract says is worse than no rule.
+#
+# STOCK and HAND are here as well as in the spelled-out set above because that
+# one requires the underscore form: a camel-case mart writes StockOnHandQty,
+# which tokenises to {STOCK, ON, HAND, QTY} and matches "ON_HAND" nowhere.
+_SEMI_ADDITIVE_TOKENS = frozenset({
+    "BAL", "BALS", "OH", "QOH", "SOH", "STK", "STOCK", "HAND", "SNAP",
+    "EOD", "EOM", "EOP", "EOQ", "EOY", "CLSG", "OPNG",
+})
 _ADDITIVE_RE = re.compile(
     r"(?:AMT|AMOUNT|REVENUE|SALES|COST|SPEND|PROFIT|INCOME|EXPENSE|"
     r"QTY|QUANTITY|VOLUME|UNITS|COUNT|CNT)",
     re.I,
 )
+_TOKEN_SPLIT_RE = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _name_tokens(name: str) -> set[str]:
+    """Upper-cased tokens of a column name, split on separators and camel humps."""
+    return {token.upper() for token in _TOKEN_SPLIT_RE.split(str(name or "")) if token}
 
 
 def _measure_class(column: str, field: dict[str, Any]) -> str:
@@ -38,7 +68,10 @@ def _measure_class(column: str, field: dict[str, Any]) -> str:
     name = str(column or "")
     if _NON_ADDITIVE_RE.search(name):
         return "non_additive"
-    if _SEMI_ADDITIVE_RE.search(name):
+    # Semi-additive is checked before additive because a balance column almost
+    # always also carries an additive suffix (BAL_VAL_AMT, OH_QTY). Reversing
+    # these two lines is what made the abbreviation blind spot invisible.
+    if _SEMI_ADDITIVE_RE.search(name) or (_name_tokens(name) & _SEMI_ADDITIVE_TOKENS):
         return "semi_additive"
     if _ADDITIVE_RE.search(name):
         return "additive"

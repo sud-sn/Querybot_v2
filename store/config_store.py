@@ -1445,13 +1445,20 @@ def _score_metric_for_question(metric: dict, question: str) -> int:
     if not q_tokens:
         return 0
 
+    # Same rule as core.metric_scope._phrase_score, and for the same reason:
+    # sharing only a generic quantity word says nothing about which metric was
+    # meant. This scorer is the prefilter that builds the candidate list
+    # injected into the SQL prompt, so a metric that survives here on the word
+    # "value" alone offers the model a formula from an unrelated fact table.
+    from core.source_resolution import GENERIC_MEASURE_WORDS
+
     score = 0
     for phrase in _metric_phrases(metric):
         phrase_tokens = _metric_tokens(phrase)
         if phrase and phrase in q:
             score += 8
         overlap = q_tokens & phrase_tokens
-        if overlap:
+        if overlap and not overlap <= GENERIC_MEASURE_WORDS:
             score += len(overlap) * 3
 
     metadata_tokens = _metric_tokens(" ".join([

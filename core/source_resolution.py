@@ -15,10 +15,20 @@ _GENERIC_TABLE_WORDS = {
     "data", "dataset", "table", "fact", "facts", "view", "history",
     "transaction", "transactions", "record", "records",
 }
-_GENERIC_MEASURE_SUFFIXES = {
+# Words that name a QUANTITY rather than a subject. "Revenue" identifies a
+# business concept; "value" identifies nothing on its own -- every measure in
+# every registry is a value of something.
+#
+# Public because the metric matchers need the same list: scoring a metric
+# against a question on shared generic words alone bound "inventory value" to a
+# metric called Purchase Order Amount through its synonym "purchase order
+# value", one token of overlap, which then pinned the wrong measure fact and
+# made the validator reject correct SQL. See core/metric_scope._phrase_score.
+GENERIC_MEASURE_WORDS = frozenset({
     "amount", "amt", "value", "quantity", "qty", "count", "number",
     "total", "metric", "measure",
-}
+})
+_GENERIC_MEASURE_SUFFIXES = GENERIC_MEASURE_WORDS
 _GRAIN_WORDS = {
     "daily": "day", "day": "day", "monthly": "month", "month": "month",
     "quarterly": "quarter", "quarter": "quarter", "yearly": "year",
@@ -99,6 +109,13 @@ def _table_aliases(table: dict[str, Any], vocab=None) -> set[str]:
     if isinstance(entry, dict):
         aliases.add(_norm(entry.get("label") or ""))
         aliases.update(_norm(v) for v in (entry.get("synonyms") or []) if v)
+
+    # Terms the admin gave this table on the setup page. The vocabulary pack
+    # above knows the ERP vendor's language; only the tenant knows that THEIR
+    # month-end balance fact is the thing everyone in the building calls
+    # "inventory". Without this the pack is the only way to teach that, which
+    # means editing a shipped JSON file to onboard one client.
+    aliases.update(_norm(v) for v in (table.get("business_synonyms") or []) if v)
 
     # Some production models have weak/missing table-level entity metadata but
     # strong approved business identifiers (for example "Order Number"). Use

@@ -177,6 +177,18 @@
         "system values"
       ],
       "type": "dimension"
+    },
+    "ITM_BAL_PRD_FCT": {
+      "label": "Item Balance by Period",
+      "synonyms": [
+        "inventory",
+        "inventory balance",
+        "inventory by warehouse",
+        "stock balance",
+        "item balance",
+        "period end inventory"
+      ],
+      "type": "fact"
     }
   },
   "record_prefixes": {
@@ -1611,6 +1623,7 @@
     "ABC": "abc",
     "ACC": "account",
     "ACCT": "account",
+    "ACG": "accounting",
     "ACT": "active",
     "AGM": "agreement",
     "ALC": "allocated",
@@ -1618,10 +1631,12 @@
     "AMT": "amount",
     "ANN": "annual",
     "AP": "accounts payable",
-    "AR": "accounts receivable",
     "APV": "approved",
+    "AR": "accounts receivable",
     "ARA": "area",
+    "ASG": "assignment",
     "AVG": "average",
+    "AVL": "available",
     "BAL": "balance",
     "BCK": "back",
     "BIL": "billing",
@@ -1638,33 +1653,39 @@
     "CHG": "change",
     "CLS": "class",
     "CLU": "cluster",
-    "CO": "company",
+    "CNL": "cancelled",
     "CNT": "count",
+    "CO": "company",
     "CRN": "creation",
     "CST": "cost",
     "CTC": "contact",
+    "CTR": "centre",
     "CUR": "current",
     "CUS": "customer",
     "DCN": "discount",
     "DEL": "deleted",
+    "DESC": "description",
     "DLV": "delivery",
     "DLVD": "delivered",
+    "DLY": "delivery",
     "DMD": "demand",
     "DMS": "dimension",
     "DRC": "direct",
     "DSC": "description",
-    "DESC": "description",
     "DT": "date",
     "DVN": "division",
     "EMCO": "company",
+    "ENT": "entry",
     "EQP": "equipment",
-    "FCY": "facility",
     "FCT": "fact",
+    "FCY": "facility",
     "FIFO": "first in first out",
     "FRT": "freight",
+    "FST": "first",
     "GL": "general ledger",
     "GRP": "group",
     "GRS": "gross",
+    "HND": "hand",
     "HST": "highest",
     "IND": "indicator",
     "ISP": "inspection",
@@ -1673,29 +1694,34 @@
     "IVCD": "invoiced",
     "LIN": "line",
     "LIS": "list",
+    "LST": "last",
     "LWS": "lowest",
     "MDA": "media",
     "MDL": "model",
     "MFG": "manufacturing",
     "MGP": "margin profit",
     "MNL": "manual",
+    "MOD": "modified",
     "MSR": "measure",
     "NED": "needed",
+    "NET": "net",
     "NGV": "negative",
     "NM": "name",
     "NUM": "number",
+    "OH": "on hand",
     "ON": "on",
     "ORD": "order",
     "ORI": "origin",
     "PAY": "payment",
-    "PCE": "price",
     "PC": "profit center",
+    "PCE": "price",
     "PCH": "purchase",
     "PDC": "product",
     "PFT": "profit",
     "PHY": "physical",
     "PIK": "pick",
     "PLD": "planned",
+    "PLN": "planned",
     "PLU": "plus",
     "PRD": "period",
     "PRL": "profile",
@@ -1711,8 +1737,8 @@
     "RCT": "receipt",
     "REC": "record",
     "RET": "return",
-    "RJC": "rejected",
     "RGN": "region",
+    "RJC": "rejected",
     "RNL": "rental",
     "RPL": "replacement",
     "RPS": "responsible",
@@ -1732,40 +1758,58 @@
     "STK": "stock",
     "STL": "standard",
     "STS": "status",
-    "TOT": "total",
+    "SUP": "supplier",
     "TFR": "transfer",
     "TM": "time",
+    "TOT": "total",
     "TS": "timestamp",
     "TYP": "type",
     "UNT": "unit",
     "UOM": "unit of measure",
-    "USR": "user",
+    "UPD": "updated",
     "USD": "usd",
+    "USR": "user",
+    "VAL": "value",
     "VLD": "valid",
     "VOL": "volume",
     "WHS": "warehouse",
     "WRG": "wrong",
     "XCH": "exchange",
-    "XTR": "extra",
-    "ACG": "accounting",
-    "ASG": "assignment",
-    "CNL": "cancelled",
-    "DLY": "delivery",
-    "ENT": "entry",
-    "FST": "first",
-    "LST": "last",
-    "MOD": "modified",
-    "PLN": "planned",
-    "UPD": "updated"
+    "XTR": "extra"
   },
   "direct_aliases": {
-    "DIVI": [
-      "division"
+    "ALC_QTY": [
+      "allocated quantity",
+      "allocated stock",
+      "quantity allocated"
     ],
-    "ITM_GRP_DMS_KEY": [
-      "item group",
-      "item group key",
-      "product group"
+    "AVL_QTY": [
+      "available quantity",
+      "available stock",
+      "quantity available"
+    ],
+    "BAL_VAL_AMT": [
+      "inventory value",
+      "stock value",
+      "inventory balance value",
+      "balance value",
+      "value of inventory",
+      "value of stock"
+    ],
+    "CUAM": [
+      "billed amount",
+      "customer amount"
+    ],
+    "CUNO": [
+      "customer number"
+    ],
+    "CUR_ON_HND_QTY": [
+      "current on hand quantity",
+      "on hand quantity"
+    ],
+    "CUR_RPL_CST_AMT": [
+      "current replacement cost",
+      "replacement cost"
     ],
     "CUS_IVC_LIN_AMT": [
       "invoice amount",
@@ -1773,68 +1817,26 @@
       "sales amount",
       "total invoice line amount"
     ],
-    "SOP_CUS_LIN_GRS_PFT_AMT": [
-      "customer line gross profit",
-      "gross profit",
-      "sales gross profit"
+    "DIVI": [
+      "division"
     ],
-    "CUR_ON_HND_QTY": [
-      "current on hand quantity",
-      "on hand quantity"
+    "DLQT": [
+      "delivered qty",
+      "delivered quantity",
+      "shipped quantity"
     ],
-    "RCT_BUM_QTY": [
-      "purchase receipt quantity",
-      "receipt quantity"
+    "ITGR": [
+      "item group",
+      "product group"
     ],
-    "CUR_RPL_CST_AMT": [
-      "current replacement cost",
-      "replacement cost"
+    "ITM_GRP_DMS_KEY": [
+      "item group",
+      "item group key",
+      "product group"
     ],
-    "TRQT": [
-      "transaction qty",
-      "transaction quantity"
-    ],
-    "PCLA": [
-      "fifo layer",
-      "fifo margin",
-      "fifo profit",
-      "margin tier",
-      "pcla",
-      "profit class"
-    ],
-    "SUNO": [
-      "supplier number",
-      "vendor number"
-    ],
-    "CUNO": [
-      "customer number"
-    ],
-    "SMCD": [
-      "sales rep code",
-      "salesman code",
-      "salesperson code",
-      "smcd"
-    ],
-    "CUAM": [
-      "billed amount",
-      "customer amount"
-    ],
-    "SAAM": [
-      "gross sales amount",
-      "net sales amount"
-    ],
-    "UCOS": [
-      "cogs per unit",
-      "cost per unit",
-      "unit cost"
-    ],
-    "WHLO": [
-      "warehouse location",
-      "whs"
-    ],
-    "ORNO": [
-      "order number",
-      "sales order number"
+    "ITNO": [
+      "item number",
+      "part number"
     ],
     "IVNO": [
       "invoice number"
@@ -1844,27 +1846,73 @@
       "invoiced qty",
       "invoiced quantity"
     ],
+    "OH_QTY": [
+      "on hand quantity",
+      "quantity on hand",
+      "stock on hand",
+      "on hand stock",
+      "inventory quantity"
+    ],
+    "ORNO": [
+      "order number",
+      "sales order number"
+    ],
     "ORQT": [
       "order quantity",
       "ordered qty",
       "ordered quantity"
     ],
-    "DLQT": [
-      "delivered qty",
-      "delivered quantity",
-      "shipped quantity"
+    "PCLA": [
+      "fifo layer",
+      "fifo margin",
+      "fifo profit",
+      "margin tier",
+      "pcla",
+      "profit class"
+    ],
+    "RCT_BUM_QTY": [
+      "purchase receipt quantity",
+      "receipt quantity"
+    ],
+    "SAAM": [
+      "gross sales amount",
+      "net sales amount"
     ],
     "SAPR": [
       "list price",
       "sales price"
     ],
-    "ITNO": [
-      "item number",
-      "part number"
+    "SMCD": [
+      "sales rep code",
+      "salesman code",
+      "salesperson code",
+      "smcd"
     ],
-    "ITGR": [
-      "item group",
-      "product group"
+    "SOP_CUS_LIN_GRS_PFT_AMT": [
+      "customer line gross profit",
+      "gross profit",
+      "sales gross profit"
+    ],
+    "SUNO": [
+      "supplier number",
+      "vendor number"
+    ],
+    "TRQT": [
+      "transaction qty",
+      "transaction quantity"
+    ],
+    "UCOS": [
+      "cogs per unit",
+      "cost per unit",
+      "unit cost"
+    ],
+    "UNT_CST_AMT": [
+      "unit cost",
+      "cost per unit"
+    ],
+    "WHLO": [
+      "warehouse location",
+      "whs"
     ]
   },
   "join_synonyms": {
