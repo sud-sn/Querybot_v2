@@ -166,6 +166,37 @@ def _clearance_gate(account_id: str) -> tuple[Callable[[str, str], bool] | None,
     return _cleared, industry
 
 
+def column_is_complete(
+    account_id: str, table_fqn: str, column: str, base_dir: str = _DEFAULT_BASE_DIR,
+) -> bool:
+    """True when the index holds EVERY distinct value of this column.
+
+    A column truncated at the harvest cap holds a prefix, so a value missing
+    from it may exist perfectly well in the database. Absence is only evidence
+    when the list is complete.
+
+    Returns False for an unknown column and for an index built before this
+    table existed: not knowing is not the same as knowing it is complete, and
+    the caller's job is to stay quiet unless it can prove the claim.
+    """
+    path = _index_path(account_id, base_dir)
+    if not path.exists():
+        return False
+    conn = sqlite3.connect(path)
+    try:
+        row = conn.execute(
+            "SELECT complete FROM column_meta WHERE table_fqn=? AND column_name=?",
+            (str(table_fqn), str(column)),
+        ).fetchone()
+        return bool(row and row[0])
+    except sqlite3.Error:
+        # An index built before column_meta existed has no such table. Treat it
+        # as unproven rather than migrating in place.
+        return False
+    finally:
+        conn.close()
+
+
 def purge_uncleared_columns(account_id: str, base_dir: str = _DEFAULT_BASE_DIR) -> dict:
     """Re-apply the clearance gate to an index that already exists.
 
@@ -431,6 +462,16 @@ def build_value_index(
             CREATE INDEX ix_cv_norm ON column_value(value_norm);
             CREATE INDEX ix_cv_col ON column_value(table_fqn, column_name);
             CREATE TABLE value_index_meta (key TEXT PRIMARY KEY, value TEXT);
+            -- One row per indexed column. `complete` is load-bearing: saying
+            -- "X is not one of the values" is only honest when we hold ALL of
+            -- them, and a column truncated at the cap holds a prefix. Without
+            -- this the index could not tell those two states apart, so an
+            -- absence proved nothing and was asserted anyway.
+            CREATE TABLE column_meta (
+              table_fqn TEXT NOT NULL, column_name TEXT NOT NULL,
+              distinct_count INTEGER NOT NULL DEFAULT 0,
+              complete INTEGER NOT NULL DEFAULT 1,
+              PRIMARY KEY (table_fqn, column_name));
             """
         )
         for col in columns:
@@ -463,9 +504,16 @@ def build_value_index(
                 log.info("Value index: skipping %s.%s — values look like PII",
                          col["table_fqn"], col["column"])
                 continue
+            complete = True
             if len(values) > per_column_cap:
                 values = values[:per_column_cap]
+                complete = False
                 stats["truncated_columns"].append(f"{col['table_fqn']}.{col['column']}")
+            conn.execute(
+                "INSERT OR REPLACE INTO column_meta "
+                "(table_fqn, column_name, distinct_count, complete) VALUES (?, ?, ?, ?)",
+                (col["table_fqn"], col["column"], len(values), 1 if complete else 0),
+            )
 
             conn.executemany(
                 "INSERT INTO column_value (table_fqn, column_name, business_name, value, value_norm) "

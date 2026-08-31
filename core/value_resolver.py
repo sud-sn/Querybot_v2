@@ -25,6 +25,7 @@ silently rewrite the user's intent, which is worse than doing nothing):
 
 from __future__ import annotations
 
+import sqlite3
 import logging
 import re
 from difflib import SequenceMatcher
@@ -603,6 +604,23 @@ def find_unmatched_literals(
             row[0].upper()
             for row in conn.execute("SELECT DISTINCT column_name FROM column_value").fetchall()
         }
+        # Only columns whose value list is COMPLETE can support a claim of
+        # absence. A column truncated at the harvest cap holds a prefix, so a
+        # literal missing from it may exist perfectly well in the database --
+        # exactly the reasoning already applied to unindexed columns below.
+        # Reporting it anyway would tell the user their value does not exist
+        # on the strength of a list we know to be partial.
+        try:
+            complete_columns = {
+                row[0].upper()
+                for row in conn.execute(
+                    "SELECT column_name FROM column_meta WHERE complete = 1"
+                ).fetchall()
+            }
+        except sqlite3.Error:
+            # Index predates column_meta. Nothing is provably complete, so
+            # nothing is provably absent.
+            complete_columns = set()
     finally:
         conn.close()
 
@@ -617,6 +635,8 @@ def find_unmatched_literals(
             continue
         seen.add(key)
         if column.upper() not in indexed_columns:
+            continue
+        if column.upper() not in complete_columns:
             continue
         if lookup_exact(account_id, lit, allowed_tables, base_dir=base_dir):
             continue

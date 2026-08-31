@@ -355,3 +355,94 @@ class TestAReviewedClassificationOutranksTheNamingGuess(unittest.TestCase):
         """No classifications exist to consult, so the heuristic remains the
         only check and behaviour is exactly what it was."""
         self.assertEqual(self._columns(None), [])
+
+
+class TestAbsenceIsOnlyClaimedWhenItCanBeProven(_Harness):
+    """"Atropine is not one of the 40 values" is honest only when we hold all
+    40. A column truncated at the harvest cap holds a prefix, so a literal
+    missing from it may exist perfectly well in the database.
+
+    find_unmatched_literals already refused to report a miss on an UNINDEXED
+    column because "a miss proves nothing". A miss on a TRUNCATED column
+    proves nothing either -- the same rule, one case short.
+    """
+
+    def _column_meta(self):
+        path = Path(self.base) / self.account / "value_index.sqlite"
+        conn = sqlite3.connect(path)
+        try:
+            return {
+                (r[0], r[1]): {"distinct_count": r[2], "complete": bool(r[3])}
+                for r in conn.execute(
+                    "SELECT table_fqn, column_name, distinct_count, complete FROM column_meta")
+            }
+        finally:
+            conn.close()
+
+    def test_a_fully_harvested_column_is_recorded_complete(self):
+        self._build(regulated=False)
+        meta = self._column_meta()
+        self.assertTrue(meta[(DIM, "CLINIC_NM")]["complete"])
+        self.assertEqual(meta[(DIM, "CLINIC_NM")]["distinct_count"], 2)
+
+    def test_a_column_truncated_at_the_cap_is_recorded_incomplete(self):
+        many = [{"CLINIC_NM": f"Clinic {i}"} for i in range(12)]
+
+        def _query(_c, _d, sql, max_rows=0):
+            return many if "CLINIC_NM" in sql else _fake_query(_c, _d, sql, max_rows)
+
+        profile = {"policy_pack_key": "", "industry": ""}
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False), \
+             patch("store.get_compliance_profile", return_value=profile), \
+             patch("core.schema.load_schema_json", return_value=SCHEMA):
+            build_value_index(
+                self.account, {"x": 1}, "azure_sql", "unused",
+                run_query_fn=_query, base_dir=self.base, per_column_cap=10,
+            )
+        self.assertFalse(self._column_meta()[(DIM, "CLINIC_NM")]["complete"])
+
+    def test_column_is_complete_reports_the_flag(self):
+        from core.value_index import column_is_complete
+        self._build(regulated=False)
+        self.assertTrue(column_is_complete(self.account, DIM, "CLINIC_NM", base_dir=self.base))
+
+    def test_an_unknown_column_is_not_assumed_complete(self):
+        """Not knowing is not the same as knowing it is complete."""
+        from core.value_index import column_is_complete
+        self._build(regulated=False)
+        self.assertFalse(column_is_complete(self.account, DIM, "NO_SUCH_COL", base_dir=self.base))
+
+    def test_a_missing_index_is_not_assumed_complete(self):
+        from core.value_index import column_is_complete
+        self.assertFalse(column_is_complete("never_built", DIM, "X", base_dir=self.base))
+
+    def test_a_literal_missing_from_a_truncated_column_is_not_reported(self):
+        """The user-visible half: we must not say a value does not exist on the
+        strength of a list we know to be partial."""
+        from core.value_resolver import find_unmatched_literals
+        many = [{"CLINIC_NM": f"Clinic {i}"} for i in range(12)]
+
+        def _query(_c, _d, sql, max_rows=0):
+            return many if "CLINIC_NM" in sql else []
+
+        profile = {"policy_pack_key": "", "industry": ""}
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False), \
+             patch("store.get_compliance_profile", return_value=profile), \
+             patch("core.schema.load_schema_json", return_value=SCHEMA):
+            build_value_index(
+                self.account, {"x": 1}, "azure_sql", "unused",
+                run_query_fn=_query, base_dir=self.base, per_column_cap=10,
+            )
+        sql = "SELECT 1 FROM T WHERE CLINIC_NM = 'Riverside Annexe'"
+        self.assertEqual(
+            find_unmatched_literals(sql, self.account, base_dir=self.base), [],
+        )
+
+    def test_a_literal_missing_from_a_complete_column_is_still_reported(self):
+        """The guard must not silence the feature: a complete list DOES prove
+        absence, and that is the whole value of the zero-row explanation."""
+        from core.value_resolver import find_unmatched_literals
+        self._build(regulated=False)
+        sql = "SELECT 1 FROM T WHERE CLINIC_NM = 'Riverside Annexe'"
+        found = find_unmatched_literals(sql, self.account, base_dir=self.base)
+        self.assertEqual([f["literal"] for f in found], ["Riverside Annexe"])
