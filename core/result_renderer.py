@@ -39,6 +39,7 @@ from core.chart import detect_chart_type, build_chart_payload, build_chart_annot
 from core.response_builder import (
     build_assistant_response, build_column_formats,
     detect_null_metric_issue, detect_zero_match_result,
+    _format_display_value,
 )
 from core.insight import generate_followup_suggestions, compute_data_brief
 from core.answer_confidence import build_answer_confidence
@@ -179,7 +180,17 @@ def _format_value(val, col_name: str = "", format_hint: str = "") -> str:
     if val is None:
         return "—"
 
-    explicit_format = _FORMAT_ALIASES.get(str(format_hint or "").strip().lower())
+    hint = str(format_hint or "").strip().lower()
+    if hint == "date":
+        # _FORMAT_ALIASES carries no "date" key, so a declared date hint was
+        # dropped here and the value fell through to str(val) at the end of
+        # this function. Once a month bucket is declared a date the portal
+        # prints "2026-01" and this channel printed "2026-01-01" for the same
+        # cell -- the same split b57e03b caused in the other direction, where
+        # the server was fixed and the browser was not. Two renderers per
+        # channel is unavoidable; two different answers is not.
+        return _format_display_value(val, "date")
+    explicit_format = _FORMAT_ALIASES.get(hint)
     fmt = explicit_format or (
         _FORMAT_ALIASES[_detect_column_format(col_name)]
         if col_name

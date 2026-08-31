@@ -10,6 +10,7 @@ from typing import Any
 
 from core.display_formats import normalize_display_format
 from core.clarification import extract_original_question
+from core.temporal_columns import infer_series_grain, parse_period_label
 
 log = logging.getLogger("querybot.response_builder")
 
@@ -351,6 +352,59 @@ def build_column_formats(
             if row.get(header) not in (None, "")
         ]
         if values and all(_parse_compact_date_value(value) is not None for value in values):
+            formats[header] = "date"
+            continue
+
+        # The branch above only ever recognised a COMPACT ERP integer
+        # (202601 / 20260131 -- the regex admits no separators), so a genuine
+        # DATE column was never marked. It reaches the browser as the ISO
+        # string "2026-01-01", nothing declares it a date, and the portal
+        # prints it verbatim: a month bucket displayed as the first of the
+        # month, which reads as a single day's figure.
+        #
+        # Marked only at MONTH or QUARTER grain, and this restriction is
+        # load-bearing rather than cautious. The portal's date renderer falls
+        # through to `YYYY-MM` for any style it does not recognise
+        # (portal_chat.html), so declaring a DAILY column a date would collapse
+        # every day of a month onto one label and silently merge rows in the
+        # reader's eyes. A day-grain column already displays correctly.
+        #
+        # The test is the BUCKET SHAPE, not the cadence. A governed month or
+        # quarter bucket is always the FIRST DAY of its period -- every builder
+        # emits DATEFROMPARTS(YEAR(x), MONTH(x), 1), see
+        # core.contextual_dates.format_period_bucket_expression -- so day == 1
+        # is a shape the server itself created and can recognise.
+        #
+        # Cadence alone cannot tell a bucket from a real day, and the
+        # difference is destructive: invoices due on the 15th of each month,
+        # and month-END balance dates, both step ~30 days, and relabelling
+        # either one "2026-01" erases the exact thing the reader needs. Both
+        # were declared dates by a cadence test.
+        #
+        # Checked over EVERY rendered row rather than a sample, because the
+        # format is applied to every row: a page of month buckets followed by
+        # a daily tail would otherwise collapse the tail onto shared labels
+        # and silently merge rows on screen.
+        column_values = [row.get(header) for row in rows if row.get(header) not in (None, "")]
+        if len(column_values) != len(rows):
+            continue
+        parsed = [parse_period_label(value) for value in column_values]
+        if any(value is None or value.day != 1 for value in parsed):
+            continue
+        # Sorted and de-duplicated so a DESC result and a breakdown that
+        # repeats each period per category both read as one clean series.
+        ordered = sorted(set(parsed))
+        if len(ordered) < 2:
+            continue
+        grain, confidence = infer_series_grain(ordered)
+        if confidence < 0.8:
+            continue
+        # Year grain is excluded deliberately: the shared date renderer has no
+        # style that prints a year as a year by default, so 2026-01-01 would
+        # display as "2026-01" -- no better than the day stamp it replaced.
+        if grain == "month" or (
+            grain == "quarter" and all(value.month in (1, 4, 7, 10) for value in ordered)
+        ):
             formats[header] = "date"
 
     for metric in metrics:

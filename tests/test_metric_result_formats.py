@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from datetime import date as _date, timedelta as _timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -304,3 +305,169 @@ class MetricResultFormatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MonthBucketsAreDeclaredDatesTests(unittest.TestCase):
+    """A month bucket must not be displayed as the first of the month.
+
+    Live defect, tenant Emco_test, 2026-08-25: "what is my revenue by month
+    this year" returned six correct monthly rows whose period cells rendered
+    as "2026-01-01", "2026-02-01" ... A month displayed as a specific day
+    reads as one day's figure.
+
+    The portal draws its own tables, and it ALREADY formats a declared date
+    column as YYYY-MM. Nothing declared this one: `build_column_formats` only
+    recognised a compact ERP integer (202601 / 20260131 -- that regex admits
+    no separators), so a genuine DATE column, which reaches the browser as the
+    ISO string "2026-01-01", was never marked and was printed verbatim.
+
+    These call `build_column_formats` -- the real function whose output is
+    sent to the browser as `column_formats` -- rather than asserting on
+    template text.
+    """
+
+    def _monthly(self, column="PERIOD"):
+        return [
+            {column: _date(2026, month, 1), "TOTAL_REVENUE": Decimal(1000 * month)}
+            for month in range(1, 7)
+        ]
+
+    def test_a_monthly_date_column_is_declared_a_date(self):
+        self.assertEqual(build_column_formats(self._monthly()), {"PERIOD": "date"})
+
+    def test_the_iso_string_form_is_declared_too(self):
+        """By the time rows reach the browser the date has been isoformat()ed,
+        so the string form is the one that actually matters."""
+        rows = [
+            {"PERIOD": f"2026-{month:02d}-01", "TOTAL_REVENUE": Decimal(month)}
+            for month in range(1, 7)
+        ]
+        self.assertEqual(build_column_formats(rows), {"PERIOD": "date"})
+
+    def test_a_period_repeated_per_category_still_counts(self):
+        """"revenue by month by region" repeats each month once per region.
+        Reading the cadence rather than the row order is what makes this work."""
+        rows = [
+            {"PERIOD": _date(2026, month, 1), "REGION": region, "REV": Decimal(1)}
+            for month in range(1, 7)
+            for region in ("N", "S", "E", "W")
+        ]
+        self.assertEqual(build_column_formats(rows).get("PERIOD"), "date")
+
+    def test_a_true_daily_column_is_left_alone(self):
+        """Load-bearing. The portal falls through to YYYY-MM for any date style
+        it does not recognise, so declaring a daily column a date would collapse
+        every day of a month onto one label."""
+        rows = [
+            {"DMS_DT": _date(2026, 1, day), "REV": Decimal(day)}
+            for day in range(1, 20)
+        ]
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_irregular_real_dates_are_left_alone(self):
+        rows = [
+            {"ORDER_DT": value, "REV": Decimal(1)}
+            for value in (_date(2026, 1, 5), _date(2026, 1, 17),
+                          _date(2026, 3, 2), _date(2026, 7, 29))
+        ]
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_a_column_not_named_like_a_date_is_left_alone(self):
+        rows = [
+            {"AMOUNT": _date(2026, month, 1), "REV": Decimal(month)}
+            for month in range(1, 7)
+        ]
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_plain_numbers_in_a_day_named_column_are_not_dates(self):
+        """DAYS_LATE = 5 is a count, not a calendar value."""
+        rows = [{"DAYS_LATE": 5, "REV": Decimal(1)}, {"DAYS_LATE": 12, "REV": Decimal(2)}]
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_the_compact_erp_integer_path_still_works(self):
+        """The branch that already existed must be untouched."""
+        rows = [{"PRD_DMS_KEY": 202601, "REV": Decimal(1)},
+                {"PRD_DMS_KEY": 202602, "REV": Decimal(2)}]
+        self.assertEqual(build_column_formats(rows), {"PRD_DMS_KEY": "date"})
+
+    def test_an_explicit_caller_format_still_wins(self):
+        """Inference never overrides a declared format."""
+        self.assertEqual(
+            build_column_formats(self._monthly(), explicit_formats={"PERIOD": "text"}),
+            {"PERIOD": "text"},
+        )
+
+    # ── The distinction that matters: BUCKET SHAPE, not cadence ─────────────
+    #
+    # The first version of this fix asked whether the values stepped about a
+    # month apart. That is true of plenty of genuine day-precision data, and
+    # relabelling it "2026-01" erases the exact thing the reader needs. A
+    # governed bucket is always the FIRST day of its period, which is a shape
+    # the server itself emits (DATEFROMPARTS(YEAR(x), MONTH(x), 1)), so that is
+    # what these test.
+
+    def test_invoices_due_on_the_fifteenth_keep_their_day(self):
+        rows = [{"DUE_DATE": _date(2026, month, 15), "AMT": Decimal(1)}
+                for month in range(1, 7)]
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_month_end_balance_dates_keep_their_day(self):
+        """A snapshot's as-of date is the whole point of the snapshot, and
+        these step ~30 days exactly like a bucket does."""
+        rows = [{"BAL_DT": _date(2026, month, 1) - _timedelta(days=1), "AMT": Decimal(1)}
+                for month in range(2, 8)]
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_a_daily_tail_below_the_sample_window_is_not_collapsed(self):
+        """The format is applied to EVERY row, so it cannot be decided from a
+        sample. Twenty monthly rows followed by a daily tail would otherwise
+        merge 51 distinct dates onto 21 labels."""
+        rows = (
+            [{"ACTIVITY_DT": _date(2024, m, 1), "AMT": Decimal(1)} for m in range(1, 13)]
+            + [{"ACTIVITY_DT": _date(2025, m, 1), "AMT": Decimal(1)} for m in range(1, 9)]
+            + [{"ACTIVITY_DT": _date(2026, 1, d), "AMT": Decimal(1)} for d in range(1, 32)]
+        )
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_a_descending_result_is_still_recognised(self):
+        rows = [{"PERIOD": _date(2026, month, 1), "AMT": Decimal(1)}
+                for month in range(6, 0, -1)]
+        self.assertEqual(build_column_formats(rows), {"PERIOD": "date"})
+
+    def test_quarter_buckets_are_recognised(self):
+        rows = [{"PERIOD": _date(2026, month, 1), "AMT": Decimal(1)}
+                for month in (1, 4, 7, 10)]
+        self.assertEqual(build_column_formats(rows), {"PERIOD": "date"})
+
+    def test_weekly_and_year_buckets_are_left_alone(self):
+        """Weekly buckets are not month-firsts; year buckets are, but the
+        shared date renderer would print 2026-01-01 as "2026-01", which is no
+        better than the day stamp it replaced."""
+        weekly = [{"WK_DT": _date(2026, 1, d), "AMT": Decimal(1)} for d in (5, 12, 19, 26)]
+        yearly = [{"YR_DT": _date(y, 1, 1), "AMT": Decimal(1)} for y in (2024, 2025, 2026)]
+        self.assertEqual(build_column_formats(weekly), {})
+        self.assertEqual(build_column_formats(yearly), {})
+
+    def test_a_null_in_any_rendered_row_stands_the_column_down(self):
+        rows = [{"PERIOD": _date(2026, 1, 1), "AMT": Decimal(1)},
+                {"PERIOD": None, "AMT": Decimal(2)},
+                {"PERIOD": _date(2026, 2, 1), "AMT": Decimal(3)}]
+        self.assertEqual(build_column_formats(rows), {})
+
+    def test_the_text_channel_prints_the_same_month_the_browser_does(self):
+        """One classification, two separate renderers.
+
+        `_FORMAT_ALIASES` has no "date" key, so this channel silently dropped
+        the hint and fell through to str(val): the portal showed "2026-01" and
+        Teams / /api/ask showed "2026-01-01" for the same cell. That is commit
+        b57e03b's split in mirror image, and only a test that runs BOTH sides
+        catches it.
+        """
+        rows = self._monthly()
+        table = _rows_to_table(rows, build_column_formats(rows))
+        self.assertIn("2026-01", table)
+        self.assertNotIn("2026-01-01", table)
+
+    def test_an_undeclared_day_column_is_untouched_by_the_text_channel(self):
+        rows = [{"DMS_DT": _date(2026, 1, 17), "AMT": Decimal(1)}]
+        self.assertIn("2026-01-17", _rows_to_table(rows, build_column_formats(rows)))
