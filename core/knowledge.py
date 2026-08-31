@@ -160,10 +160,25 @@ def _parse_schema_descriptions(business_desc: str) -> tuple[str, dict[str, str]]
     return overall, schema_map
 
 
-def _build_table_business_desc(business_desc: str, schema_name: str) -> str:
+def _build_table_business_desc(
+    business_desc: str,
+    schema_name: str,
+    table_specific: str = "",
+    synonyms: str = "",
+) -> str:
     """
     Build the business context string to inject into a per-table KB prompt.
     If per-schema descriptions are present, combines overall + schema-specific.
+
+    `table_specific` is the admin's description of THIS table. Without it the
+    two levels above are the only ones there are, so every table in a schema
+    received byte-identical business context -- and the sentence that actually
+    distinguishes one table from its neighbours had nowhere to live.
+
+    It is appended last so it wins on recency in the prompt, and labelled as
+    being about this table specifically, because the two broader blocks are
+    about the client and the schema and the model has no other way to tell
+    which scope a given line is describing.
     """
     overall, schema_map = _parse_schema_descriptions(business_desc)
     schema_key = (schema_name or "").upper()
@@ -174,9 +189,23 @@ def _build_table_business_desc(business_desc: str, schema_name: str) -> str:
         if overall:
             parts.append(overall)
         parts.append(f"This table belongs to the [{schema_key}] schema: {schema_specific}")
-        return "\n".join(parts)
-    # No per-schema blocks — return as-is (single-schema or plain description)
-    return business_desc or ""
+        base = "\n".join(parts)
+    else:
+        # No per-schema blocks — as-is (single-schema or plain description)
+        base = business_desc or ""
+
+    tail: list[str] = []
+    table_text = str(table_specific or "").strip()
+    if table_text:
+        tail.append(f"What this specific table is used for: {table_text}")
+    # Synonyms are carried into the KB text as well as into resolution, so the
+    # generated document uses the words the business actually says.
+    terms = str(synonyms or "").strip()
+    if terms:
+        tail.append(f"The business refers to this table as: {terms}")
+    if not tail:
+        return base
+    return "\n".join([part for part in [base, *tail] if part])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -712,7 +741,23 @@ async def build_kb(
         _sql_parts = sql_table_name.strip("[]").replace("[", "").replace("]", "").split(".")
         if len(_sql_parts) >= 2:
             _schema_part = _sql_parts[-2]
-        table_biz_desc = _build_table_business_desc(business_desc, _schema_part)
+        # The admin's own words about THIS table, when they wrote any. Read per
+        # table rather than hoisted out of the loop so a description saved
+        # between two tables of the same build is still picked up, and so a
+        # store failure costs one table's extra context rather than the build.
+        _tbl_desc, _tbl_synonyms = "", ""
+        if account_id:
+            try:
+                from store.table_description_store import get_table_description
+                _entry = get_table_description(account_id, table_name) or {}
+                _tbl_desc = str(_entry.get("description") or "")
+                _tbl_synonyms = str(_entry.get("synonyms") or "")
+            except Exception:
+                log.debug("per-table description lookup failed for %r", table_name, exc_info=True)
+
+        table_biz_desc = _build_table_business_desc(
+            business_desc, _schema_part, _tbl_desc, _tbl_synonyms,
+        )
 
         # ── Entity type detection for scale-aware Stage 2 ─────────────────────
         entity_type = "unknown"

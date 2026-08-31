@@ -8,6 +8,10 @@ from store.metric_proposal_store import (
     review_metric_proposal, count_pending_metric_proposals,
     metric_has_drifted, GUARDED_METRIC_FIELDS,
 )
+from store.table_description_store import (
+    get_table_description, list_table_descriptions, save_table_description,
+    describe_selected_tables, description_coverage, split_synonyms,
+)
 from store.db import init_db, get_db
 from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (

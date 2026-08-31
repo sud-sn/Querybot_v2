@@ -702,6 +702,38 @@ CREATE INDEX IF NOT EXISTS idx_kb_egress_account_op
 CREATE INDEX IF NOT EXISTS idx_kb_egress_account_table
     ON kb_data_egress_log(account_id, table_name);
 
+-- ── Per-table business description ───────────────────────────────────────────
+-- What this table is FOR, in the admin's words, for the tables they selected.
+--
+-- Before this, core/knowledge._build_table_business_desc had two levels: one
+-- description for the whole client, plus optional per-SCHEMA blocks. Every
+-- table in a schema therefore received byte-identical business context in its
+-- KB prompt, so the one sentence worth writing about a specific table -- "this
+-- is the month-end stock snapshot, one row per item per warehouse" -- had
+-- nowhere to go.
+--
+-- Keyed on the table rather than on entity_graph.entity_name deliberately: a
+-- selected table does not necessarily have a graph entity, and the admin
+-- selects tables long before the graph exists.
+--
+-- `synonyms` is separate from `description` and is NOT prose. Source
+-- resolution never reads descriptions or KB text -- it matches on names,
+-- labels and synonyms (core/source_resolution._table_aliases) -- so prose
+-- alone improves the KB and changes nothing about which table gets picked.
+-- These are the terms that do.
+CREATE TABLE IF NOT EXISTS table_description (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   TEXT    NOT NULL,
+    table_name   TEXT    NOT NULL,          -- as selected: SCHEMA.TABLE
+    description  TEXT    NOT NULL DEFAULT '',
+    synonyms     TEXT    NOT NULL DEFAULT '',  -- comma-separated business terms
+    updated_by   TEXT    NOT NULL DEFAULT '',
+    updated_at   TEXT    DEFAULT (datetime('now')),
+    UNIQUE(account_id, table_name)
+);
+CREATE INDEX IF NOT EXISTS idx_table_description_account
+    ON table_description(account_id);
+
 -- ── Entity graph (structured join map) ───────────────────────────────────────
 -- Stores the business object model that drives deterministic SQL JOIN resolution.
 -- Each entity maps a business concept (Customer, Prescription) to a DB table.

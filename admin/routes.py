@@ -2978,6 +2978,7 @@ async def compliance_save_profile(request: Request, account_id: str):
             enforcement_mode="shadow",
         )
         _clear_masking_review(account_id)
+        _purge_value_index(account_id)
         return RedirectResponse(
             f"{redirect_base}?saved=standard", status_code=303
         )
@@ -3070,7 +3071,13 @@ async def compliance_save_classification(request: Request, account_id: str):
         account_id, lifecycle_state="POLICY_PENDING", enforcement_mode="shadow",
         invalidated_reason="Data classification changed.",
     )
-    return JSONResponse({"ok": True})
+    # A classification is a statement about data we may already be holding. The
+    # value index is built from a snapshot of real values, so reclassifying a
+    # column has to retract what was harvested under the old classification --
+    # synchronously, because the admin is entitled to assume the correction took
+    # effect when the request returns.
+    purged = _purge_value_index(account_id)
+    return JSONResponse({"ok": True, **({"purged": purged} if purged else {})})
 
 
 @router.post("/api/clients/{account_id}/compliance/policies")
@@ -7917,6 +7924,19 @@ async def client_setup_page(request: Request, account_id: str):
         log.debug("graph pending count skipped for %s: %s", account_id, exc)
         graph_pending_reviews = 0
 
+    # Per-table descriptions, scoped to the SELECTED tables. A table that has
+    # never had a KB built is reported as "new": that is the one the admin most
+    # needs surfaced, because it was added after they last looked and will
+    # otherwise reach users with no business context at all.
+    table_descriptions, table_desc_coverage = [], {}
+    try:
+        table_descriptions = store.describe_selected_tables(
+            account_id, kb_tables, built_tables=_kb_built_tables(account_id),
+        )
+        table_desc_coverage = store.description_coverage(table_descriptions)
+    except Exception:
+        log.warning("per-table description listing failed for %s", account_id, exc_info=True)
+
     return _resp(request, "client_setup.html", {
         "client":               client,
         "erp_packs_available":  _list_erp_packs(),
@@ -7934,11 +7954,130 @@ async def client_setup_page(request: Request, account_id: str):
         "schema_breakdown":     schema_breakdown,   # {schema_name: table_count}
         "biz_desc":             biz_desc,
         "biz_desc_parsed":      biz_desc_parsed,    # {overall, schemas: {SCHEMA: text}}
+        "table_descriptions":   table_descriptions,
+        "table_desc_coverage":  table_desc_coverage,
         "egress_summary":       egress_summary,
         "saved_masking_config": saved_masking_config,  # for JS init
         "schema_drift":         schema_drift,           # populated after re-discovery
         "saved":                request.query_params.get("saved"),
         "error":                request.query_params.get("error"),
+    })
+
+
+def _purge_value_index(account_id: str) -> dict | None:
+    """Retract value-index rows a changed classification no longer clears.
+
+    Best-effort and never fatal: failing to purge must not block the admin from
+    recording the classification, but it must be loud, because the gap between
+    "classified as PHI" and "still on disk" is the thing that matters here.
+    """
+    try:
+        from core.value_index import purge_uncleared_columns
+        result = purge_uncleared_columns(account_id)
+        return result if result.get("purged_columns") else None
+    except Exception:
+        log.error(
+            "Value index purge FAILED for %s after a classification change — "
+            "values harvested under the previous classification may still be on disk",
+            account_id, exc_info=True,
+        )
+        return None
+
+
+def _kb_built_tables(account_id: str) -> set[str]:
+    """Tables that already have a generated KB, from the egress log.
+
+    The KB documents live on disk rather than in a table, so the egress log --
+    which records one row per table per build -- is the durable per-table
+    record of what has actually been built.
+    """
+    try:
+        with _get_db() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT table_name FROM kb_data_egress_log "
+                " WHERE account_id=? AND operation='kb_build'",
+                (account_id,),
+            ).fetchall()
+        return {str(row["table_name"] or "") for row in rows if row["table_name"]}
+    except Exception:
+        log.debug("kb built-table lookup failed for %s", account_id, exc_info=True)
+        return set()
+
+
+@router.post("/clients/{account_id}/setup/table-description")
+async def admin_setup_save_table_description(request: Request, account_id: str):
+    """Save one table's business description and its business terms.
+
+    The two halves land at different times, and the difference is not cosmetic:
+
+      description — reaches the KB document, so it takes effect on the next KB
+                    build. Editing it changes that table's build fingerprint,
+                    so a partial rebuild picks up that table alone.
+      terms       — reach source resolution through the saved semantic model.
+                    The contract compiler LOADS that model from disk rather
+                    than rebuilding it, so the terms are written into it here
+                    and the contract is then recompiled. Without that write the
+                    recompile would publish a new version with no semantic
+                    delta and the terms would silently wait for a KB build.
+    """
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+    if not store.get_client(account_id):
+        return JSONResponse({"status": "error", "detail": "Client not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    table_name = str(body.get("table_name") or "").strip()
+    if not table_name:
+        return JSONResponse({"status": "error", "detail": "A table name is required."}, status_code=400)
+
+    # Scoped to the selection: a description for a table this client has not
+    # selected would never be read, and accepting it would imply otherwise.
+    client = store.get_client(account_id) or {}
+    state_data = json.loads(client.get("state_data") or "{}")
+    selected = {
+        str(t).strip().strip("[]").replace("[", "").replace("]", "").upper()
+        for t in _parse_selected_schema_tables(state_data.get("kb_tables"))
+    }
+    normalised = table_name.strip("[]").replace("[", "").replace("]", "").upper()
+    if selected and normalised not in selected:
+        return JSONResponse(
+            {"status": "error", "detail": f"{table_name} is not one of the selected tables."},
+            status_code=400,
+        )
+
+    try:
+        store.save_table_description(
+            account_id, table_name,
+            description=str(body.get("description") or ""),
+            synonyms=body.get("synonyms") or "",
+            updated_by="admin",
+        )
+    except ValueError as exc:
+        return JSONResponse({"status": "error", "detail": str(exc)}, status_code=400)
+
+    # Write the terms into the saved model BEFORE recompiling, or the compile
+    # reads a model that predates this edit and publishes an identical contract.
+    terms_live = False
+    try:
+        from core.semantic_model import refresh_table_synonyms
+        kb_dir = (store.get_client_state(account_id) or {}).get("kb_dir") or ""
+        terms_live = bool(refresh_table_synonyms(account_id, kb_dir))
+    except Exception:
+        log.warning("table synonym refresh failed for %s", account_id, exc_info=True)
+
+    _after_semantic_approval(account_id, f"table description updated: {table_name}")
+    entry = store.get_table_description(account_id, table_name) or {}
+    return JSONResponse({
+        "status": "ok",
+        "table_name": table_name,
+        "described": bool(str(entry.get("description") or "").strip()),
+        "synonym_list": entry.get("synonym_list") or [],
+        # False means the model had no entry for this table yet — the terms are
+        # saved but cannot route a question until the KB is built.
+        "terms_live": terms_live,
     })
 
 
@@ -9282,7 +9421,12 @@ async def admin_discover_schema(
                             database_name=_tdb,
                             schema_name=_tschema,
                             column_count=_col_count,
-                            distinct_col_count=0,
+                            # Value-level egress: how many columns had their
+                            # DISTINCT VALUES read and sent, not just names.
+                            # Hardcoded 0 until now, so the audit field that
+                            # exists to count exactly this recorded nothing.
+                            distinct_col_count=len(
+                                _tmeta.get("distinct_columns_sent") or []),
                             triggered_by="admin",
                             fields_sent=_tmeta.get("fields_sent") or [],
                             row_count_sent=_row_ct,
@@ -9378,6 +9522,18 @@ async def admin_refresh_value_index(
     db_type    = raw["db_type"]
     state_data = json.loads(client.get("state_data") or "{}")
     schema_dir = state_data.get("schema_dir") or str(Path("clients") / account_id / "schema")
+
+    # The discovery path checks this flag before harvesting; this route did not,
+    # so the one control an admin has over value harvesting could be bypassed by
+    # pressing Refresh. build_value_index applies the compliance clearance gate
+    # itself, but an explicit opt-out must be honoured before that.
+    from core.value_index import value_index_enabled
+    if not value_index_enabled(state_data):
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health?error="
+            f"{quote('Value indexing is turned off for this client')}",
+            status_code=303)
 
     async def _do_refresh():
         try:
@@ -9600,7 +9756,12 @@ async def admin_build_kb(
                             database_name=_tdb,
                             schema_name=_tschema,
                             column_count=_col_count,
-                            distinct_col_count=0,
+                            # Value-level egress: how many columns had their
+                            # DISTINCT VALUES read and sent, not just names.
+                            # Hardcoded 0 until now, so the audit field that
+                            # exists to count exactly this recorded nothing.
+                            distinct_col_count=len(
+                                _tmeta.get("distinct_columns_sent") or []),
                             triggered_by="admin",
                             fields_sent=_tmeta.get("fields_sent") or [],
                             row_count_sent=_tmeta.get("row_count_sent", 0),

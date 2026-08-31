@@ -807,6 +807,34 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
     table_roles = classify_schema_tables(schema)
     tables: list[dict[str, Any]] = []
     all_date_roles: list[dict[str, Any]] = []
+    # Admin-authored per-table terms, read once for the whole model. These are
+    # the half of a table description that reaches SOURCE RESOLUTION: prose goes
+    # to the KB prompt and is never matched against a question, so a table the
+    # business calls "inventory" stays unreachable no matter how well it is
+    # described in sentences.
+    _admin_terms: dict[str, dict[str, Any]] = {}
+    if account_id:
+        try:
+            from store.table_description_store import list_table_descriptions
+            _admin_terms = list_table_descriptions(account_id)
+        except Exception:
+            log.debug("per-table description lookup failed for %r", account_id, exc_info=True)
+
+    def _admin_synonyms(table_fqn: str, bare_table: str) -> list[str]:
+        """Terms for this table, whichever way the admin qualified its name.
+
+        The setup page stores what the table picker listed; this model is built
+        from the discovered schema. Matching those two on an exact string is
+        how the first version of this read nothing.
+        """
+        if not _admin_terms:
+            return []
+        from store.table_description_store import _match_key
+        for candidate in (table_fqn, bare_table):
+            key = _match_key(_admin_terms.keys(), candidate)
+            if key:
+                return list((_admin_terms.get(key) or {}).get("synonym_list") or [])
+        return []
 
     for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
@@ -858,6 +886,7 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
             "grain_confidence": grain_confidence,
             "grain_columns": list(classification.grain_columns) if classification else [],
             "fact_type": classification.fact_type if classification else "",
+            "business_synonyms": list(_admin_synonyms(fqn, table)),
             "classification_evidence": list(classification.evidence) if classification else [],
             "classifier_version": 2,
             "fields": fields,
@@ -998,6 +1027,52 @@ def load_semantic_model(kb_dir: str) -> dict[str, Any]:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def refresh_table_synonyms(account_id: str, kb_dir: str) -> int:
+    """Re-read admin table terms into the saved model. Returns tables changed.
+
+    The terms feed source resolution through the model, and the contract
+    compiler LOADS that model from disk rather than rebuilding it
+    (core.semantic_contract._compile_contract_internal). So without this, a
+    term saved on the setup page would sit in the store doing nothing until
+    the next full KB build -- a delay with no visible cause, on the one field
+    whose entire purpose is to change which table a question reaches.
+
+    Deliberately narrow: it rewrites `business_synonyms` and nothing else, so
+    it cannot disturb approvals, grain decisions or date roles held in the same
+    file.
+    """
+    if not kb_dir or not Path(kb_dir).exists():
+        return 0
+    model = load_semantic_model(kb_dir)
+    tables = model.get("tables") or []
+    if not tables:
+        return 0
+
+    from store.table_description_store import _match_key, list_table_descriptions
+    stored = list_table_descriptions(account_id)
+
+    changed = 0
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        terms: list[str] = []
+        for candidate in (table.get("fqn"), table.get("table")):
+            key = _match_key(stored.keys(), candidate) if candidate else None
+            if key:
+                terms = list((stored.get(key) or {}).get("synonym_list") or [])
+                break
+        if list(table.get("business_synonyms") or []) != terms:
+            table["business_synonyms"] = terms
+            changed += 1
+
+    if changed:
+        kb_path = Path(kb_dir)
+        (kb_path / MODEL_JSON).write_text(
+            json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+        (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return changed
 
 
 def preserve_approvals(

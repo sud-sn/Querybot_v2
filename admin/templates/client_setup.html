@@ -617,6 +617,164 @@
         </p>
       </div>
 
+      {# Per-table descriptions. The block above is one description for the whole
+         client, so every table in a schema used to receive identical business
+         context. This is where a table gets its own. -#}
+      {% if table_descriptions %}
+      <div class="form-group" id="tableDescriptions">
+        <label>
+          What each table is for
+          <span class="td-count" id="tdCoverage">{{ table_desc_coverage.described }}/{{ table_desc_coverage.total }}</span>
+        </label>
+        {% if table_desc_coverage.new %}
+        <div class="td-alert">
+          <strong>{{ table_desc_coverage.new }}</strong>
+          table{{ '' if table_desc_coverage.new == 1 else 's' }} added since the last
+          Knowledge Base build. Describe {{ 'it' if table_desc_coverage.new == 1 else 'them' }}
+          before rebuilding, or {{ 'it' if table_desc_coverage.new == 1 else 'they' }}
+          will reach users with no business context.
+        </div>
+        {% endif %}
+        <div class="td-list">
+          {% for row in table_descriptions %}
+          <details class="td-row td-row--{{ row.status }}" data-table="{{ row.table_name }}">
+            <summary>
+              <span class="td-name">{{ row.table_name }}</span>
+              <span class="td-badge td-badge--{{ row.status }}" data-badge>
+                {% if row.status == 'new' %}new — not yet built
+                {% elif row.status == 'described' %}described
+                {% else %}no description{% endif %}
+              </span>
+            </summary>
+            <div class="td-body">
+              <label class="td-label" for="td-desc-{{ loop.index }}">What is this table used for?</label>
+              <textarea id="td-desc-{{ loop.index }}" rows="2" data-desc
+                placeholder="e.g. Month-end stock snapshot — one row per item per warehouse per period. Never sum across months.">{{ row.description }}</textarea>
+
+              <label class="td-label" for="td-syn-{{ loop.index }}">
+                What does the business call it?
+                <span class="td-hint">comma separated — these decide which questions reach this table</span>
+              </label>
+              <input id="td-syn-{{ loop.index }}" type="text" data-syn
+                value="{{ row.synonyms }}" placeholder="inventory, stock balance">
+
+              <div class="td-actions">
+                <button type="button" class="btn btn-secondary btn-sm" data-save>Save</button>
+                <span class="td-status" data-status>
+                  {%- if row.updated_at %}last edited {{ row.updated_at }}{% endif -%}
+                </span>
+              </div>
+            </div>
+          </details>
+          {% endfor %}
+        </div>
+        <p class="form-note">
+          The description is written into this table's Knowledge Base document.
+          The business terms do something different — they decide which questions
+          can find this table at all, so a table everyone calls "inventory" needs
+          that word here even if no column says it.
+        </p>
+      </div>
+
+      <style>
+        #tableDescriptions .td-count{margin-left:.5rem;font-size:11px;font-weight:600;color:var(--text-dim)}
+        #tableDescriptions .td-alert{margin:.5rem 0;padding:.5rem .7rem;border-radius:var(--radius-sm);
+          background:color-mix(in srgb,var(--amber) 12%,transparent);
+          border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);font-size:12px;line-height:1.5}
+        #tableDescriptions .td-list{display:flex;flex-direction:column;gap:.3rem;max-height:22rem;overflow-y:auto}
+        #tableDescriptions .td-row{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
+        #tableDescriptions .td-row--new{border-color:color-mix(in srgb,var(--amber) 55%,transparent)}
+        #tableDescriptions summary{display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;
+          cursor:pointer;font-size:12px;list-style:none}
+        #tableDescriptions summary::-webkit-details-marker{display:none}
+        #tableDescriptions .td-name{font-family:var(--font-mono,monospace);flex:1;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        #tableDescriptions .td-badge{font-size:10px;font-weight:600;letter-spacing:.02em;
+          padding:.1rem .4rem;border-radius:999px;white-space:nowrap}
+        #tableDescriptions .td-badge--described{background:color-mix(in srgb,var(--green,#0e7c6b) 15%,transparent);color:var(--green,#0e7c6b)}
+        #tableDescriptions .td-badge--undescribed{background:var(--surface-2,#0001);color:var(--text-dim)}
+        #tableDescriptions .td-badge--new{background:color-mix(in srgb,var(--amber) 20%,transparent);color:var(--amber)}
+        #tableDescriptions .td-body{padding:.1rem .6rem .6rem;display:flex;flex-direction:column;gap:.3rem}
+        #tableDescriptions .td-label{font-size:11px;font-weight:600;color:var(--text-dim)}
+        #tableDescriptions .td-hint{font-weight:400;font-style:italic}
+        #tableDescriptions textarea,#tableDescriptions input[type=text]{width:100%;font-size:12px;
+          padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);
+          background:var(--bg,var(--surface));color:var(--text);resize:vertical}
+        #tableDescriptions .td-actions{display:flex;align-items:center;gap:.6rem}
+        #tableDescriptions .td-status{font-size:11px;color:var(--text-dim)}
+        #tableDescriptions .td-status.td-error{color:var(--danger)}
+      </style>
+
+      <script>
+      (function () {
+        "use strict";
+        const root = document.getElementById('tableDescriptions');
+        if (!root) return;
+        const ACCOUNT = "{{ client.account_id }}";
+
+        function recount() {
+          const rows = root.querySelectorAll('.td-row');
+          let described = 0;
+          rows.forEach(r => {
+            if (r.querySelector('[data-badge]').dataset.described === '1') described++;
+          });
+          const el = document.getElementById('tdCoverage');
+          if (el) el.textContent = described + '/' + rows.length;
+        }
+
+        root.querySelectorAll('.td-row').forEach(row => {
+          const badge = row.querySelector('[data-badge]');
+          // Seed from what the server rendered so the first recount is right.
+          badge.dataset.described = badge.classList.contains('td-badge--described') ? '1' : '0';
+
+          row.querySelector('[data-save]').addEventListener('click', async () => {
+            const status = row.querySelector('[data-status]');
+            const button = row.querySelector('[data-save]');
+            button.disabled = true;
+            status.classList.remove('td-error');
+            status.textContent = 'Saving…';
+            try {
+              const res = await fetch(`/admin/clients/${ACCOUNT}/setup/table-description`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  table_name: row.dataset.table,
+                  description: row.querySelector('[data-desc]').value,
+                  synonyms: row.querySelector('[data-syn]').value,
+                }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok || body.status !== 'ok') {
+                status.textContent = body.detail || `Failed (${res.status})`;
+                status.classList.add('td-error');
+              } else {
+                // A saved description does not clear the "new" state: the table
+                // still has no Knowledge Base until the next build, and saying
+                // otherwise would hide the rebuild the admin still owes.
+                if (!row.classList.contains('td-row--new')) {
+                  badge.className = 'td-badge td-badge--' + (body.described ? 'described' : 'undescribed');
+                  badge.textContent = body.described ? 'described' : 'no description';
+                }
+                badge.dataset.described = body.described ? '1' : '0';
+                status.textContent = 'Saved' + (
+                  (body.synonym_list || []).length
+                    ? ` · ${body.synonym_list.length} term${body.synonym_list.length === 1 ? '' : 's'}`
+                    : '');
+                recount();
+              }
+            } catch (err) {
+              status.textContent = 'Request failed';
+              status.classList.add('td-error');
+            } finally {
+              button.disabled = false;
+            }
+          });
+        });
+        recount();
+      })();
+      </script>
+      {% endif %}
+
       <div style="display:flex;gap:.625rem;align-items:center;flex-wrap:wrap">
         <button type="submit" class="btn btn-primary" id="kbBuildButton"
           {% if not schema_files or state == 'KB_BUILDING' %}
