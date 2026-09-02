@@ -3367,7 +3367,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # closed. Record the decision itself so an absent arbitration log can be
     # read as "the gate was shut" rather than "the hook is broken".
     _temporal_intent = question_has_temporal_intent(_semantic_plan_question)
-    _snapshot_intent = question_has_snapshot_intent(_semantic_plan_question)
+    # The resolved measure column decides this, not the question's wording.
+    # "stockholding value by warehouse" resolved to a periodic-snapshot column
+    # and summed it across every month on file -- sixteen times the true
+    # figure, at full confidence -- because "stockholding" is not "stock" to a
+    # word-boundary regex and no registered metric matched.
+    _snapshot_measure_fields = list((_semantic_plan or {}).get("fields") or [])
+    _snapshot_intent = question_has_snapshot_intent(
+        _semantic_plan_question,
+        matched_metrics=_matched_metrics,
+        measure_fields=_snapshot_measure_fields,
+    )
     log.info(
         "Date-context gate for %r: temporal_intent=%s snapshot_intent=%s -> %s",
         (_semantic_plan_question or "")[:80], _temporal_intent, _snapshot_intent,
@@ -3457,7 +3467,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                                 99,
                             ) <= _grain_order.get(_requested_grain, 0)
                         ]
-                    elif question_has_snapshot_intent(_semantic_plan_question):
+                    elif question_has_snapshot_intent(
+                        _semantic_plan_question,
+                        matched_metrics=_matched_metrics,
+                        measure_fields=_snapshot_measure_fields,
+                    ):
                         _known_grains = [
                             str(role.get("temporal_grain") or "")
                             or date_key_temporal_grain(role.get("date_key_type"))

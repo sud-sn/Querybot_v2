@@ -225,3 +225,77 @@ class TestTheGovernedSnapshotPromiseHolds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestTheColumnDecidesNotTheWording(unittest.TestCase):
+    """Live on EMCO, 2026-09-02, and the worst answer the product has produced:
+
+        what is my stockholding value by warehouse
+        Halifax Branch Store   13,557,410      High confidence 100/100
+
+    The true figure is 815,497. It summed a periodic snapshot across every
+    month on file -- sixteen times over -- with no repair retry and nothing in
+    the answer suggesting a problem. The identical question phrased "inventory
+    value by warehouse" produced correct SQL with a MAX-period filter.
+
+    Nothing about the table differed. `question_has_snapshot_intent` had two
+    signals and neither applied: no registered metric matched, and
+    "stockholding" is not "stock" to a word-boundary regex. So protection
+    depended on the user's vocabulary.
+
+    Additivity is a property of the column. These execute the real predicate
+    the pipeline calls.
+    """
+
+    SNAPSHOT_FIELD = [{"role": "measure", "column": "BAL_VAL_AMT",
+                       "table": "EMDW_DMART.ITM_BAL_PRD_FCT"}]
+    FLOW_FIELD = [{"role": "measure", "column": "SOP_CUS_IVC_LIN_AMT",
+                   "table": "EMDW_DMART.CUS_ORD_IVC_FCT"}]
+
+    def test_the_live_failure(self):
+        question = "what is my stockholding value by warehouse"
+        # The premise: neither existing signal fires.
+        self.assertFalse(question_has_snapshot_intent(question))
+        # The column does.
+        self.assertTrue(question_has_snapshot_intent(
+            question, measure_fields=self.SNAPSHOT_FIELD))
+
+    def test_vocabulary_no_longer_decides_correctness(self):
+        """Any wording resolving to the same column gets the same protection."""
+        for question in ("what is my closing position by warehouse",
+                         "holdings by depot",
+                         "asset balance by branch",
+                         "what are my goods on site"):
+            with self.subTest(question=question):
+                self.assertTrue(question_has_snapshot_intent(
+                    question, measure_fields=self.SNAPSHOT_FIELD))
+
+    def test_a_flow_measure_is_never_promoted(self):
+        """The dangerous direction. Treating revenue as a snapshot would filter
+        an additive measure to one period and UNDER-report it."""
+        for question in ("what is my revenue by customer",
+                         "total sales by month",
+                         "order amount by supplier"):
+            with self.subTest(question=question):
+                self.assertFalse(question_has_snapshot_intent(
+                    question, measure_fields=self.FLOW_FIELD))
+
+    def test_a_non_measure_field_is_ignored(self):
+        """Only measures decide this; a dimension that happens to be named like
+        a balance must not flip the query into snapshot mode."""
+        dimension = [{"role": "dimension", "column": "BAL_VAL_AMT",
+                      "table": "EMDW_DMART.ITM_BAL_PRD_FCT"}]
+        self.assertFalse(question_has_snapshot_intent(
+            "what is my stockholding value by warehouse", measure_fields=dimension))
+
+    def test_the_wording_path_still_works_without_fields(self):
+        """Nothing here may weaken the detection that already existed."""
+        self.assertTrue(question_has_snapshot_intent(
+            "show me the inventory value by warehouse"))
+
+    def test_an_admin_declaration_still_overrides(self):
+        """A column an admin declared additive stays additive."""
+        declared = [{"role": "measure", "column": "BAL_VAL_AMT",
+                     "aggregation_semantics": "additive"}]
+        self.assertFalse(question_has_snapshot_intent(
+            "what is my stockholding value by warehouse", measure_fields=declared))

@@ -125,6 +125,7 @@ def question_has_snapshot_intent(
     question: str,
     *,
     matched_metrics: list[dict] | None = None,
+    measure_fields: list[dict] | None = None,
 ) -> bool:
     """Detect semi-additive stock/balance questions that imply latest data.
 
@@ -146,10 +147,51 @@ def question_has_snapshot_intent(
     """
     if metrics_are_semi_additive(matched_metrics):
         return True
+    if measures_are_semi_additive(measure_fields):
+        return True
     q = normalize_date_role_text(question)
     if not q or re.search(r"\b(?:revenue|sales|sold|orders?|invoices?)\b", q):
         return False
     return bool(re.search(r"\b(?:inventory|stock|on hand|balance|warehouse balance)\b", q))
+
+
+def measures_are_semi_additive(measure_fields: list[dict] | None) -> bool:
+    """True when a RESOLVED measure column is itself a snapshot measure.
+
+    The two signals above it were both conditional on things a question may not
+    have. `matched_metrics` needs a registered metric, and the wording branch
+    needs the user to have said one of five words. Neither held for
+
+        what is my stockholding value by warehouse
+
+    which resolved to ITM_BAL_PRD_FCT.BAL_VAL_AMT -- a periodic snapshot -- and
+    summed it across every month on file. The answer came back at 13,557,410
+    against a true 815,497: sixteen times over, at full confidence, with a
+    clean bill of health. "stockholding" simply is not "stock" to a word-
+    boundary regex, and there was no metric to consult.
+
+    Additivity is a property of the COLUMN, not of the phrasing, so ask the
+    column. core.analysis_contract already classifies it and already knows the
+    abbreviated ERP spellings; this just puts that verdict where the decision
+    is made rather than leaving it to whether the user's vocabulary happened to
+    match a five-word list.
+    """
+    from core.analysis_contract import _measure_class
+
+    for field in measure_fields or []:
+        if not isinstance(field, dict):
+            continue
+        if str(field.get("role") or "").lower() not in {"measure", "measure_candidate"}:
+            continue
+        column = str(field.get("column") or "")
+        if not column:
+            continue
+        try:
+            if _measure_class(column, field) == "semi_additive":
+                return True
+        except Exception:  # never let classification break date resolution
+            log.debug("semi-additive classification failed for %r", field, exc_info=True)
+    return False
 
 
 def _role_temporal_grain(role: dict) -> str:
