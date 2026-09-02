@@ -85,6 +85,28 @@
   display:flex;align-items:center;gap:.4rem;
   padding:.45rem .6rem;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s;
 }
+/* Role-playing dimensions: one physical table joined once per business role.
+   Collapsed by default so the standalone tables above stay readable. */
+.sb-rolegroup{border-bottom:1px solid var(--border)}
+.sb-rolegroup>summary{
+  display:flex;align-items:center;gap:.4rem;
+  padding:.45rem .6rem;cursor:pointer;list-style:none;
+  font-size:12px;color:var(--text-muted);transition:background .1s;
+}
+.sb-rolegroup>summary::-webkit-details-marker{display:none}
+.sb-rolegroup>summary::before{
+  content:'▸';font-size:9px;color:var(--text-muted);transition:transform .12s;
+}
+.sb-rolegroup[open]>summary::before{transform:rotate(90deg)}
+.sb-rolegroup>summary:hover{background:var(--surface-2,rgba(127,127,127,.08))}
+.sb-rolegroup .sb-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-rolehint{
+  font-size:10px;font-weight:600;letter-spacing:.03em;
+  padding:.05rem .35rem;border-radius:999px;
+  background:var(--surface-2,rgba(127,127,127,.12));color:var(--text-muted);white-space:nowrap;
+}
+.sb-rolegroup .sb-row{padding-left:1.5rem;border-bottom:none}
+.sb-rolegroup[open]>summary{border-bottom:1px solid var(--border)}
 .sb-row:hover{background:var(--surface-2)}
 .sb-row.active{
   background:color-mix(in srgb,var(--primary) 8%,var(--surface));
@@ -865,11 +887,25 @@ function buildSidebar() {
   const typ = activeTypeFilter;
   let visible = 0;
 
+  // Several entities over ONE physical table is a role-playing dimension: the
+  // same calendar joined once per business date, once per address type, and so
+  // on. EMCO has thirteen date roles over DT_DMS, so half this list was one
+  // table wearing different hats and the actual table-to-table joins were
+  // buried among them.
+  //
+  // Keyed on the physical table rather than on anything date-shaped, because
+  // the pattern is not about dates -- a role-playing party or location
+  // dimension groups for exactly the same reason.
+  const _entityKey = (e) =>
+    [e.schema_name, e.table_name].filter(Boolean).join('.').toUpperCase();
+  const _byTable = {};
   graphData.entities.forEach(e => {
-    const name = (e.display_name || e.entity_name).toLowerCase();
-    if (q && !name.includes(q) && !e.entity_name.toLowerCase().includes(q)) return;
-    if (typ && e.entity_type !== typ) return;
-    visible++;
+    const key = _entityKey(e);
+    if (!key) return;
+    (_byTable[key] = _byTable[key] || []).push(e.entity_name);
+  });
+
+  const _rowFor = (e) => {
     const et    = e.entity_type || 'dimension';
     const color = e.color || TYPE_COLORS[et] || TYPE_COLORS.dimension;
     const jc    = graphData.relationships.filter(r => r.from_entity===e.entity_name || r.to_entity===e.entity_name).length;
@@ -885,7 +921,48 @@ function buildSidebar() {
     row.onclick      = () => focusNode(e.entity_name);
     row.onmouseenter = () => cy.getElementById(e.entity_name).addClass('canvas-hover');
     row.onmouseleave = () => cy.getElementById(e.entity_name).removeClass('canvas-hover');
-    list.appendChild(row);
+    return row;
+  };
+
+  const _passes = (e) => {
+    const name = (e.display_name || e.entity_name).toLowerCase();
+    if (q && !name.includes(q) && !e.entity_name.toLowerCase().includes(q)) return false;
+    if (typ && e.entity_type !== typ) return false;
+    return true;
+  };
+
+  const grouped = {};
+  graphData.entities.forEach(e => {
+    if (!_passes(e)) return;
+    visible++;
+    const key = _entityKey(e);
+    // A role group needs at least two SIBLINGS in the model, not just two
+    // survivors of the current filter -- otherwise a search narrowing the list
+    // would silently change how the remainder is organised.
+    if (key && (_byTable[key] || []).length > 1) {
+      (grouped[key] = grouped[key] || []).push(e);
+    } else {
+      list.appendChild(_rowFor(e));
+    }
+  });
+
+  // Roles last: the standalone tables above are the joins an admin came to read.
+  Object.keys(grouped).sort().forEach(key => {
+    const members = grouped[key];
+    const bare = key.split('.').pop();
+    const wrap = document.createElement('details');
+    wrap.className = 'sb-rolegroup';
+    // Open while searching, so a match is never hidden behind a closed group.
+    wrap.open = !!q;
+    const sum = document.createElement('summary');
+    sum.innerHTML = `
+      <span class="sb-dot" style="background:${TYPE_COLORS.dimension}"></span>
+      <span class="sb-name">${_esc(bare)}</span>
+      <span class="sb-rolehint">${members.length} roles</span>
+    `;
+    wrap.appendChild(sum);
+    members.forEach(e => wrap.appendChild(_rowFor(e)));
+    list.appendChild(wrap);
   });
 
   if (cnt) cnt.textContent = visible;
