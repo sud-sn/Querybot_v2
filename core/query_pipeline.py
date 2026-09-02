@@ -3429,8 +3429,30 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             # dimension itself. Infer that fact deterministically from the
             # governed graph, but only when no stronger metric or explicit
             # role has already established the business event.
+            # A snapshot question whose fact IS known still needs a period, and
+            # this branch used to refuse it: gated on `not _date_fact_scope`, the
+            # inference ran only when nobody knew which fact we were on.
+            #
+            # "stockholding value by warehouse" resolved its measure, so the
+            # scope was known, so the inference was skipped, so no period role
+            # was chosen and BAL_VAL_AMT was summed across eighteen months. The
+            # same question worded "inventory value by warehouse" left the scope
+            # empty, took this branch, found PRD_DMS_KEY and filtered correctly.
+            # Knowing MORE about the question produced the worse answer.
+            #
+            # So a known scope with no governed role of its own may also infer,
+            # but only for a snapshot measure -- where summing across periods is
+            # not a stylistic preference but a wrong number. The three stronger
+            # signals below still win outright, and this never overrides an
+            # approved role: _default_fact_tables is checked immediately after.
+            _scope_has_governed_role = any(
+                str(role.get("status") or "") == "approved"
+                and str(role.get("fact_table") or "") in _date_fact_scope
+                for role in _date_roles
+            )
             if (
-                not _date_fact_scope
+                (not _date_fact_scope
+                 or (_snapshot_intent and not _scope_has_governed_role))
                 and not _matched_metrics
                 and not _date_bindings
                 and not _explicit_date_roles
