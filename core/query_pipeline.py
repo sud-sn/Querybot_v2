@@ -6108,7 +6108,35 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # loop permits a distinct next question. Blind LLM ambiguity checks
     # on every empty result set waste tokens and confuse users whose filter
     # was legitimately correct but the data genuinely has no rows.
-    if len(rows) == 0 and event.user_id and can_request_clarification(event):
+    # A filter value that exists nowhere in the column produces a diagnostic
+    # aggregate -- one physical row reading MatchedRows 0, Revenue $0.00 -- so
+    # `len(rows) == 0` is false and the whole explanation below was skipped.
+    # The user was told $0.00 at high confidence for a customer that does not
+    # exist, which is the worst shape an answer can take: confident, plausible
+    # and wrong. detect_zero_match_result exists to recognise exactly this.
+    #
+    # Deliberately narrow. The diversion needs BOTH the zero-match shape AND a
+    # literal the value index can prove is absent, so a genuinely-zero answer
+    # whose filters are all real ("how many orders did X cancel today") keeps
+    # its clean $0.00 and is not rewritten into a fault report.
+    _zero_match_diagnostic = False
+    if rows and event.user_id:
+        try:
+            from core.response_builder import detect_zero_match_result
+            from core.value_resolver import find_unmatched_literals
+            _zero_match_diagnostic = bool(
+                detect_zero_match_result(rows)
+                and find_unmatched_literals(sql, account_id)
+            )
+            if _zero_match_diagnostic:
+                log.info(
+                    "Zero-match diagnostic for %s: a WHERE literal is absent from the "
+                    "value index; explaining rather than reporting a zero", account_id,
+                )
+        except Exception:
+            log.debug("Zero-match literal check skipped", exc_info=True)
+
+    if (len(rows) == 0 or _zero_match_diagnostic) and event.user_id and can_request_clarification(event):
         _zr_matches = store.match_terms_in_question(account_id, question, query_scope_tables)
         _zr_has_required = any(
             m.get("requires_clarification") and m.get("clarification_options")

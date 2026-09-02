@@ -181,6 +181,43 @@ def _format_display_value(
     return _format_number(value, fmt, spec)
 
 
+def narrative_period_labels(labels: list) -> list[str]:
+    """Format a series of period labels the way the table and KPI show them.
+
+    Periods reach the user through THREE paths, not two: the rendered table,
+    the KPI headline, and the sentences written about the series. The first two
+    go through the display formatter via column_formats; narration did not, so
+    the same answer said "2026-06 closed at $7.4M" in its headline and
+    "trended flat from 2026-01-01 to 2026-06-01" three lines below it.
+
+    Same bucket-shape rule as build_column_formats, and for the same reason: a
+    month bucket is always the first day of its period, so day == 1 across the
+    whole series distinguishes a bucket from a real date. Invoices due on the
+    15th and month-end balance dates both step ~30 days and must be left alone.
+
+    Returns the labels unchanged unless every one of them is a month or quarter
+    bucket -- narration is prose, and a half-formatted series reads worse than
+    an unformatted one.
+    """
+    raw = [str(label) if label is not None else "" for label in labels]
+    if len(raw) < 2:
+        return raw
+    parsed = [parse_period_label(label) for label in raw]
+    if any(value is None or value.day != 1 for value in parsed):
+        return raw
+    ordered = sorted(set(parsed))
+    if len(ordered) < 2:
+        return raw
+    grain, confidence = infer_series_grain(ordered)
+    if confidence < 0.8:
+        return raw
+    if grain == "month" or (
+        grain == "quarter" and all(value.month in (1, 4, 7, 10) for value in ordered)
+    ):
+        return [value.strftime("%Y-%m") for value in parsed]
+    return raw
+
+
 def _numeric_cols(rows: list[dict]) -> list[str]:
     cols: list[str] = []
     if not rows:
@@ -1119,7 +1156,10 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
     if numeric_cols and text_cols:
         label_col = text_cols[0]
         value_col = numeric_cols[0]
-        labels = [str(r.get(label_col, "")) for r in rows]
+        # Formatted here, at the one place the series is read, so every
+        # sentence written about it downstream inherits the same labels the
+        # table and the KPI show.
+        labels = narrative_period_labels([r.get(label_col, "") for r in rows])
         values = [_to_float_z(r.get(value_col)) for r in rows]
         ctx.update({
             "label_col": label_col,

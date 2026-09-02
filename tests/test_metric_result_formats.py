@@ -471,3 +471,81 @@ class MonthBucketsAreDeclaredDatesTests(unittest.TestCase):
     def test_an_undeclared_day_column_is_untouched_by_the_text_channel(self):
         rows = [{"DMS_DT": _date(2026, 1, 17), "AMT": Decimal(1)}]
         self.assertIn("2026-01-17", _rows_to_table(rows, build_column_formats(rows)))
+
+
+class NarrationShowsTheSamePeriodAsTheTableTests(unittest.TestCase):
+    """Periods reach the user through THREE paths, not two.
+
+    Live on EMCO, 2026-09-02: one answer's KPI headline read "2026-06 closed at
+    $7,439,558.42" while its Key insights, three lines below, read "trended flat
+    0.7% from 2026-01-01 to 2026-06-01". The table and KPI go through the
+    display formatter via column_formats; the sentences written ABOUT the
+    series never did.
+
+    These execute `narrative_period_labels`, the function both narrators now
+    build their label list from.
+    """
+
+    def _labels(self, values):
+        from core.response_builder import narrative_period_labels
+        return narrative_period_labels(values)
+
+    def test_month_buckets_are_narrated_as_months(self):
+        self.assertEqual(
+            self._labels([_date(2026, m, 1) for m in range(1, 7)]),
+            ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"],
+        )
+
+    def test_the_iso_string_form_is_covered(self):
+        """By narration time the value has usually been stringified."""
+        self.assertEqual(
+            self._labels([f"2026-{m:02d}-01" for m in range(1, 4)]),
+            ["2026-01", "2026-02", "2026-03"],
+        )
+
+    def test_a_true_daily_series_is_left_alone(self):
+        """Collapsing real days onto month labels would make consecutive rows
+        read as duplicates of each other."""
+        self.assertEqual(
+            self._labels([_date(2026, 1, d) for d in range(1, 5)]),
+            ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"],
+        )
+
+    def test_dates_that_merely_step_monthly_are_left_alone(self):
+        """Invoices due on the 15th, and month-END balance dates, both step
+        ~30 days. Cadence cannot tell those from a bucket; day == 1 can."""
+        for label, values in (
+            ("due on the 15th", [_date(2026, m, 15) for m in range(1, 5)]),
+            ("month end", [_date(2026, m, 1) - _timedelta(days=1) for m in range(2, 6)]),
+        ):
+            with self.subTest(shape=label):
+                self.assertEqual(self._labels(values), [str(v) for v in values])
+
+    def test_non_temporal_labels_pass_through(self):
+        self.assertEqual(self._labels(["Halifax", "Toronto"]), ["Halifax", "Toronto"])
+
+    def test_a_single_period_is_not_reformatted(self):
+        """One label establishes no cadence, so there is nothing to infer."""
+        self.assertEqual(self._labels([_date(2026, 1, 1)]), ["2026-01-01"])
+
+    def test_the_trend_sentence_itself_says_the_month(self):
+        """Executes the real narrator rather than scanning it for a call.
+
+        The whole defect was a formatted headline sitting above an unformatted
+        sentence, so the assertion has to be on the sentence a user reads.
+        """
+        from core.insight import compute_data_brief
+
+        rows = [{"PERIOD": _date(2026, m, 1), "REVENUE": Decimal(1000 * m)}
+                for m in range(1, 7)]
+        brief = str(compute_data_brief(rows, "revenue by month") or "")
+        self.assertIn("2026-01", brief)
+        self.assertNotIn("2026-01-01", brief)
+
+    def test_a_daily_brief_still_shows_the_day(self):
+        from core.insight import compute_data_brief
+
+        rows = [{"ORDER_DT": _date(2026, 1, d), "REVENUE": Decimal(10 * d)}
+                for d in range(1, 8)]
+        brief = str(compute_data_brief(rows, "revenue by day") or "")
+        self.assertIn("2026-01-0", brief)

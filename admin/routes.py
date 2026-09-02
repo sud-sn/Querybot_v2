@@ -7985,12 +7985,36 @@ def _purge_value_index(account_id: str) -> dict | None:
 
 
 def _kb_built_tables(account_id: str) -> set[str]:
-    """Tables that already have a generated KB, from the egress log.
+    """Tables that already have a generated KB document.
 
-    The KB documents live on disk rather than in a table, so the egress log --
-    which records one row per table per build -- is the durable per-table
-    record of what has actually been built.
+    The documents themselves are the authority: core/knowledge.py writes one
+    markdown file per table and names it by the table, so the file existing IS
+    the fact that the table was built.
+
+    This originally read kb_data_egress_log for operation='kb_build', which was
+    wrong in a way that showed up immediately on a real client. That log is an
+    AUDIT TRAIL of what was sent to the model, so it is empty for any KB built
+    before the logging existed -- and EMCO, with fourteen built tables, had
+    every one of them reported as "new, not yet built" above a banner claiming
+    fourteen tables had just been added.
+
+    The egress log is still unioned in: a table whose document has been tidied
+    away but which the audit says was built is still a table we have built.
     """
+    built: set[str] = set()
+
+    try:
+        client = store.get_client(account_id) or {}
+        state_data = json.loads(client.get("state_data") or "{}")
+        kb_dir = state_data.get("kb_dir") or ""
+        if kb_dir and Path(kb_dir).is_dir():
+            built |= {
+                path.stem for path in Path(kb_dir).glob("*.md")
+                if not path.stem.startswith("_")
+            }
+    except Exception:
+        log.debug("kb document listing failed for %s", account_id, exc_info=True)
+
     try:
         with _get_db() as conn:
             rows = conn.execute(
@@ -7998,10 +8022,11 @@ def _kb_built_tables(account_id: str) -> set[str]:
                 " WHERE account_id=? AND operation='kb_build'",
                 (account_id,),
             ).fetchall()
-        return {str(row["table_name"] or "") for row in rows if row["table_name"]}
+        built |= {str(row["table_name"] or "") for row in rows if row["table_name"]}
     except Exception:
         log.debug("kb built-table lookup failed for %s", account_id, exc_info=True)
-        return set()
+
+    return built
 
 
 @router.post("/clients/{account_id}/setup/table-description")

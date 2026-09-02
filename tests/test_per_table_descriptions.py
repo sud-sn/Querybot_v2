@@ -25,6 +25,7 @@ would be no better off than before.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -279,3 +280,57 @@ class TestTermsReachSourceResolution(_Base):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestWhichTablesCountAsBuilt(_Base):
+    """"New" must mean "selected since the last KB build", not "we have no
+    audit row for it".
+
+    Live on EMCO, 2026-09-02: all fourteen tables displayed "new — not yet
+    built" under a banner reading "14 tables added since the last Knowledge
+    Base build", on a client whose KB was fully built. The lookup read
+    kb_data_egress_log for operation='kb_build' -- an audit trail of what was
+    sent to the model, and therefore empty for any KB built before that logging
+    existed. The KB documents themselves are the authority.
+    """
+
+    def _built(self, kb_dir):
+        # Patched on admin.routes.store, not on "store": another test file in
+        # this suite purges and re-imports the store package, so admin.routes
+        # can hold a different module object than `import store` resolves to,
+        # and patching the latter silently misses.
+        import admin.routes as routes
+        from unittest.mock import patch
+        client = {"state_data": json.dumps({"kb_dir": str(kb_dir)})}
+        with patch.object(routes.store, "get_client", return_value=client):
+            return routes._kb_built_tables(self.account)
+
+    def test_a_written_kb_document_counts_as_built(self):
+        kb = Path(tempfile.mkdtemp(prefix="kb_"))
+        (kb / "ITM_BAL_PRD_FCT.md").write_text("# doc", encoding="utf-8")
+        (kb / "CUS_DMS.md").write_text("# doc", encoding="utf-8")
+        self.assertEqual(self._built(kb), {"ITM_BAL_PRD_FCT", "CUS_DMS"})
+
+    def test_internal_files_are_not_tables(self):
+        """_schema.json and friends share the directory; only table docs count."""
+        kb = Path(tempfile.mkdtemp(prefix="kb_"))
+        (kb / "CUS_DMS.md").write_text("# doc", encoding="utf-8")
+        (kb / "_index.md").write_text("# not a table", encoding="utf-8")
+        self.assertEqual(self._built(kb), {"CUS_DMS"})
+
+    def test_an_empty_kb_directory_means_nothing_is_built(self):
+        self.assertEqual(self._built(Path(tempfile.mkdtemp(prefix="kb_"))), set())
+
+    def test_a_missing_directory_does_not_raise(self):
+        self.assertEqual(self._built(Path("/no/such/kb/dir")), set())
+
+    def test_a_built_table_is_not_reported_as_new(self):
+        """The user-visible consequence, asserted end to end."""
+        kb = Path(tempfile.mkdtemp(prefix="kb_"))
+        (kb / "ITM_BAL_PRD_FCT.md").write_text("# doc", encoding="utf-8")
+        rows = describe_selected_tables(
+            self.account, [SNAPSHOT, WAREHOUSE], built_tables=self._built(kb),
+        )
+        status = {r["table_name"]: r["status"] for r in rows}
+        self.assertNotEqual(status[SNAPSHOT], "new")
+        self.assertEqual(status[WAREHOUSE], "new")

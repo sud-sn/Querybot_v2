@@ -557,3 +557,64 @@ class RcaBranchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ZeroMatchDiagnosticIsExplainedNotReportedTests(unittest.TestCase):
+    """A filter value that exists nowhere produces ONE row, not zero.
+
+    Live on EMCO, 2026-09-02: "what is my revenue for customer 'Atropine
+    Holdings Ltd'" -- a customer that does not exist -- answered
+
+        MatchedRows | NonNullMetricRows | Revenue
+                  0 |                 0 |   $0.00
+        Confidence: High confidence (80/100)
+
+    The zero-row explanation, which would have named the closest real
+    customers, is gated on `len(rows) == 0`. A diagnostic aggregate returns one
+    physical row however little it matched, so the gate never opened and the
+    user got a confident, plausible, wrong number.
+
+    The pipeline now diverts when BOTH predicates hold. These test that pair,
+    because either one alone is the wrong rule: the shape alone would rewrite
+    every legitimate zero into a fault report, and the literal check alone
+    would fire on answers that did match rows.
+    """
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        _make_index(self.base)
+
+    def _diverts(self, rows, sql):
+        from core.response_builder import detect_zero_match_result
+        from core.value_resolver import find_unmatched_literals
+        return bool(detect_zero_match_result(rows)
+                    and find_unmatched_literals(sql, "acct", base_dir=self.base))
+
+    ZERO_MATCH = [{"MatchedRows": 0, "NonNullMetricRows": 0, "Revenue": 0.0}]
+
+    def test_an_absent_value_is_diverted_to_the_explanation(self):
+        self.assertTrue(self._diverts(
+            self.ZERO_MATCH,
+            "SELECT COUNT(*) AS MatchedRows FROM CUS_DMS WHERE CUS_NM = 'Atropine Holdings Ltd'",
+        ))
+
+    def test_a_real_value_that_matched_nothing_is_left_alone(self):
+        """The literal exists, so the zero is about the data, not the filter.
+        Rewriting it would blame the user for a correct answer."""
+        self.assertFalse(self._diverts(
+            self.ZERO_MATCH,
+            "SELECT COUNT(*) AS MatchedRows FROM CUS_DMS WHERE CUS_NM = 'EMCO Corporation'",
+        ))
+
+    def test_an_ordinary_answer_is_never_diverted(self):
+        """Rows matched, so nothing is being explained away."""
+        self.assertFalse(self._diverts(
+            [{"MatchedRows": 334, "Revenue": 3959025.04}],
+            "SELECT COUNT(*) AS MatchedRows FROM CUS_DMS WHERE CUS_NM = 'Nobody At All'",
+        ))
+
+    def test_a_plain_result_set_is_never_diverted(self):
+        self.assertFalse(self._diverts(
+            [{"PERIOD": "2026-01", "REVENUE": 1.0}],
+            "SELECT PERIOD, REVENUE FROM X WHERE CUS_NM = 'Nobody At All'",
+        ))

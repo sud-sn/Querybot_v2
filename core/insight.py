@@ -390,7 +390,10 @@ def compute_data_brief(
     if text_cols and numeric_cols:
         label_col = text_cols[0]
         value_col = numeric_cols[0]
-        labels = [str(r.get(label_col, "")) for r in rows]
+        # Same formatting the table and KPI apply, so a trend sentence does
+        # not print 2026-01-01 beside a headline that says 2026-01.
+        from core.response_builder import narrative_period_labels
+        labels = narrative_period_labels([r.get(label_col, "") for r in rows])
         values = [_to_float(r.get(value_col)) or 0.0 for r in rows]
         paired = sorted(zip(labels, values), key=lambda x: x[1], reverse=True)
 

@@ -163,7 +163,15 @@ def describe_selected_tables(
     business context at all.
     """
     stored = list_table_descriptions(account_id)
-    built = {_norm_table(name) for name in (built_tables or set())}
+    # Built-table names arrive from the KB directory, where each document is
+    # named by the BARE table, while the selection is fully qualified. Comparing
+    # the two directly matched nothing, so every table on a fully-built client
+    # reported as "new" -- the same qualification mismatch _match_key exists to
+    # absorb. Both forms are held so either spelling resolves.
+    built: set[str] = set()
+    for name in (built_tables or set()):
+        built.add(_norm_table(name))
+        built.add(_bare_name(name))
     out: list[dict[str, Any]] = []
     for table in selected_tables or []:
         name = str(table or "").strip()
@@ -172,7 +180,7 @@ def describe_selected_tables(
         key = _norm_table(name)
         entry = stored.get(key) or {}
         has_text = bool(str(entry.get("description") or "").strip())
-        is_new = bool(built) and key not in built
+        is_new = bool(built) and key not in built and _bare_name(name) not in built
         out.append({
             "table_name": name,
             "description": str(entry.get("description") or ""),
