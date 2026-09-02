@@ -23,8 +23,27 @@
 .dr-stat span{display:block;font-size:10px;font-weight:900;letter-spacing:.08em;
   text-transform:uppercase;color:var(--text-muted);margin-bottom:.3rem}
 .dr-stat strong{display:block;font-size:22px;font-weight:900;color:var(--text)}
+/* overflow:hidden clipped the last column instead of letting it be reached.
+   This table carries ten columns and ends in Approve / Edit, so on a narrower
+   window the one cell the page exists for was the one cut off, with no scroll
+   to recover it. Horizontal scroll on the wrapper; the header keeps its own
+   overflow so the rounded corners still clip. */
 .dr-table-wrap{border:1px solid var(--border);border-radius:var(--radius);
-  background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+  background:var(--surface);box-shadow:var(--shadow);overflow-x:auto;overflow-y:hidden}
+/* Below this the columns are squeezed rather than scrolled, which is what
+   makes the actions unreadable rather than merely off-screen. */
+table.dr-tbl--roles{min-width:60rem}
+/* The actions are why an admin opened this page: keep them pinned to the right
+   edge while the rest scrolls, so they are reachable at any window width. */
+table.dr-tbl--roles th:last-child,
+table.dr-tbl--roles td:last-child{
+  position:sticky;right:0;background:var(--surface);
+  box-shadow:-6px 0 6px -6px rgba(0,0,0,.18);white-space:nowrap;
+}
+table.dr-tbl--roles th:last-child{background:var(--surface-2)}
+table.dr-tbl--roles tr:hover td:last-child{
+  background:color-mix(in srgb,var(--primary) 4%,var(--surface));
+}
 .dr-table-header{padding:.75rem 1rem;background:var(--surface-2);
   border-bottom:1px solid var(--border);display:flex;align-items:center;
   justify-content:space-between;gap:.75rem}
@@ -281,7 +300,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
       <h2>Detected Date Roles</h2>
       <span style="font-size:12px;color:var(--text-muted)">{{ date_roles | length }} role{{ "s" if date_roles | length != 1 }}</span>
     </div>
-    <table class="dr-tbl">
+    <table class="dr-tbl dr-tbl--roles">
       <thead>
         <tr>
           <th>Source Table</th>
