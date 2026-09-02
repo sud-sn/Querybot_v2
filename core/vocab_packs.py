@@ -430,8 +430,44 @@ def vocab_for_account(account_id: str) -> MergedVocab:
         except Exception as exc:
             log.warning("Client vocab overlay for %s is invalid: %s", account_id, exc)
 
+    # Column terms an admin typed on the setup page, merged last so they are
+    # the final authority for this tenant -- the same precedence the file
+    # overlay above already has, and for the same reason.
+    #
+    # These reach the planner as direct_aliases, which is the mechanism that
+    # resolves a MEASURE. Table synonyms decide which table a question can
+    # reach and stop there: "stockholding value by warehouse" still failed with
+    # "cannot resolve the governed measure" while "inventory value by
+    # warehouse" worked, purely because the shipped pack aliases BAL_VAL_AMT to
+    # the phrase "inventory value" and nothing aliased the admin's word.
+    #
+    # Not part of cache_key: the store is not a file with an mtime, so a saved
+    # term has to invalidate this cache explicitly (see forget_account_vocab).
+    try:
+        from store.table_description_store import list_table_descriptions
+
+        aliases: dict[str, list[str]] = {}
+        for entry in (list_table_descriptions(account_id) or {}).values():
+            for column, terms in (entry.get("column_synonym_map") or {}).items():
+                aliases.setdefault(column, []).extend(terms)
+        if aliases:
+            _merge_pack(vocab, {"direct_aliases": aliases}, f"table_description/{account_id}")
+    except Exception as exc:
+        log.warning("Client column terms for %s could not be merged: %s", account_id, exc)
+
     _account_cache[account_id] = (cache_key, vocab)
     return vocab
+
+
+def forget_account_vocab(account_id: str) -> None:
+    """Drop the cached vocabulary for one tenant.
+
+    The cache key is built from file mtimes, so a term saved to the DATABASE
+    changes nothing it watches and the stale vocabulary would be served until
+    the process restarted -- which is exactly the "I saved it and nothing
+    happened" failure this feature exists to avoid.
+    """
+    _account_cache.pop(account_id, None)
 
 
 # ── Request/build scoping ─────────────────────────────────────────────────────

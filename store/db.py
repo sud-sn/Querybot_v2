@@ -727,6 +727,17 @@ CREATE TABLE IF NOT EXISTS table_description (
     table_name   TEXT    NOT NULL,          -- as selected: SCHEMA.TABLE
     description  TEXT    NOT NULL DEFAULT '',
     synonyms     TEXT    NOT NULL DEFAULT '',  -- comma-separated business terms
+    -- Terms for individual COLUMNS on this table, as JSON {COLUMN: [term, ...]}.
+    --
+    -- Table synonyms decide which table a question can reach; they cannot make
+    -- it answerable. "stockholding value by warehouse" still failed with "cannot
+    -- resolve the governed measure" while "inventory value by warehouse" worked,
+    -- because the vocabulary pack aliases a COLUMN there -- BAL_VAL_AMT carries
+    -- the phrase "inventory value" -- and a measure is what a question needs
+    -- before it can be compiled. These are that same lever, per tenant, so an
+    -- admin can teach the product their own measure vocabulary without a
+    -- developer editing a shipped pack file.
+    column_synonyms TEXT NOT NULL DEFAULT '',
     updated_by   TEXT    NOT NULL DEFAULT '',
     updated_at   TEXT    DEFAULT (datetime('now')),
     UNIQUE(account_id, table_name)
@@ -1089,6 +1100,11 @@ def _run_migrations() -> None:
     Safe to run on every startup — skips columns that already exist.
     """
     migrations = [
+        # Per-column business terms on a described table. The table-level
+        # synonyms shipped first and could only steer WHICH table a question
+        # reached; a question also needs a measure before it compiles, and that
+        # is a column-level alias.
+        ("table_description", "column_synonyms", "TEXT NOT NULL DEFAULT ''"),
         # v10: chat UI toggle per client
         ("client", "chat_ui_enabled", "INTEGER NOT NULL DEFAULT 0"),
         # v11: per-client LLM audit toggle

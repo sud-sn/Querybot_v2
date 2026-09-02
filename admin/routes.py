@@ -8078,6 +8078,7 @@ async def admin_setup_save_table_description(request: Request, account_id: str):
             account_id, table_name,
             description=str(body.get("description") or ""),
             synonyms=body.get("synonyms") or "",
+            column_synonyms=body.get("column_synonyms") or "",
             updated_by="admin",
         )
     except ValueError as exc:
@@ -8085,6 +8086,15 @@ async def admin_setup_save_table_description(request: Request, account_id: str):
 
     # Write the terms into the saved model BEFORE recompiling, or the compile
     # reads a model that predates this edit and publishes an identical contract.
+    # Column terms are served from a per-account vocabulary cache keyed on file
+    # mtimes, which a database write does not touch. Without this the admin
+    # saves a term and nothing changes until the process restarts.
+    try:
+        from core.vocab_packs import forget_account_vocab
+        forget_account_vocab(account_id)
+    except Exception:
+        log.warning("Vocabulary cache not cleared for %s", account_id, exc_info=True)
+
     terms_live = False
     try:
         from core.semantic_model import refresh_table_synonyms
@@ -8100,6 +8110,7 @@ async def admin_setup_save_table_description(request: Request, account_id: str):
         "table_name": table_name,
         "described": bool(str(entry.get("description") or "").strip()),
         "synonym_list": entry.get("synonym_list") or [],
+        "column_terms": entry.get("column_synonym_map") or {},
         # False means the model had no entry for this table yet — the terms are
         # saved but cannot route a question until the KB is built.
         "terms_live": terms_live,

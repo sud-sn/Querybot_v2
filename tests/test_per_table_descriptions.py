@@ -45,6 +45,7 @@ from core.source_resolution import _table_aliases  # noqa: E402
 from store.db import init_db  # noqa: E402
 from store.table_description_store import (  # noqa: E402
     describe_selected_tables,
+    parse_column_synonyms,
     description_coverage,
     get_table_description,
     list_table_descriptions,
@@ -334,3 +335,87 @@ class TestWhichTablesCountAsBuilt(_Base):
         status = {r["table_name"]: r["status"] for r in rows}
         self.assertNotEqual(status[SNAPSHOT], "new")
         self.assertEqual(status[WAREHOUSE], "new")
+
+
+class TestColumnTermsMakeAQuestionAnswerable(_Base):
+    """Table terms route a question; column terms let it be answered.
+
+    Live on EMCO: an admin added "stockholding" as a term for
+    ITM_BAL_PRD_FCT, and "what is my stockholding value by warehouse" still
+    returned "I cannot compile a trusted query until the semantic layer
+    resolves the governed measure" -- while "inventory value by warehouse"
+    worked. The difference was never the table: the shipped pack aliases the
+    COLUMN BAL_VAL_AMT to the phrase "inventory value", and a measure is what
+    a question needs before it compiles.
+
+    These execute the planner's own alias lookup, because a term that is
+    stored but never reaches _aliases_for_column changes nothing.
+    """
+
+    def test_the_editable_form_parses(self):
+        self.assertEqual(
+            parse_column_synonyms("BAL_VAL_AMT = stockholding value, stock value\n"
+                                  "OH_QTY = units on hand"),
+            {"BAL_VAL_AMT": ["stockholding value", "stock value"],
+             "OH_QTY": ["units on hand"]},
+        )
+
+    def test_a_line_without_a_column_is_ignored_not_guessed(self):
+        """A term attached to the wrong column moves questions onto the wrong
+        measure, which is worse than a term that does nothing."""
+        self.assertEqual(parse_column_synonyms("just some words\nOH_QTY = units"),
+                         {"OH_QTY": ["units"]})
+
+    def test_it_round_trips_to_what_the_admin_typed(self):
+        save_table_description(self.account, SNAPSHOT,
+                               column_synonyms="BAL_VAL_AMT = stockholding value")
+        entry = get_table_description(self.account, SNAPSHOT)
+        self.assertEqual(entry["column_synonym_map"], {"BAL_VAL_AMT": ["stockholding value"]})
+        self.assertEqual(entry["column_synonyms_text"], "BAL_VAL_AMT = stockholding value")
+
+    def test_column_terms_alone_are_enough_to_keep_the_row(self):
+        """Someone may name a measure without describing the table."""
+        save_table_description(self.account, SNAPSHOT,
+                               column_synonyms="BAL_VAL_AMT = stockholding value")
+        self.assertIsNotNone(get_table_description(self.account, SNAPSHOT))
+
+    def test_the_term_reaches_the_planners_alias_lookup(self):
+        """The whole point: this is the lookup that resolves a measure."""
+        from core.semantic_planner import _aliases_for_column
+        from core.vocab_packs import forget_account_vocab, vocab_for_account
+
+        save_table_description(self.account, SNAPSHOT,
+                               column_synonyms="BAL_VAL_AMT = stockholding value")
+        forget_account_vocab(self.account)
+        vocab = vocab_for_account(self.account)
+        self.assertIn("stockholding value", _aliases_for_column("BAL_VAL_AMT", vocab=vocab))
+
+    def test_a_column_nobody_named_is_unaffected(self):
+        from core.semantic_planner import _aliases_for_column
+        from core.vocab_packs import forget_account_vocab, vocab_for_account
+
+        save_table_description(self.account, SNAPSHOT,
+                               column_synonyms="BAL_VAL_AMT = stockholding value")
+        forget_account_vocab(self.account)
+        vocab = vocab_for_account(self.account)
+        self.assertNotIn("stockholding value", _aliases_for_column("OH_QTY", vocab=vocab))
+
+    def test_saving_invalidates_the_cached_vocabulary(self):
+        """The cache key is built from file mtimes, so a database write changes
+        nothing it watches. Without the explicit drop the admin saves a term
+        and nothing happens until the process restarts."""
+        from core.vocab_packs import forget_account_vocab, vocab_for_account
+
+        forget_account_vocab(self.account)
+        before = set(vocab_for_account(self.account).direct_aliases.get("BAL_VAL_AMT", set()))
+        save_table_description(self.account, SNAPSHOT,
+                               column_synonyms="BAL_VAL_AMT = stockholding value")
+        self.assertEqual(
+            set(vocab_for_account(self.account).direct_aliases.get("BAL_VAL_AMT", set())),
+            before, "stale cache should still be served until it is dropped",
+        )
+        forget_account_vocab(self.account)
+        self.assertIn(
+            "stockholding value",
+            vocab_for_account(self.account).direct_aliases.get("BAL_VAL_AMT", set()),
+        )

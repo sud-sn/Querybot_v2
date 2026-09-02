@@ -18,6 +18,7 @@ mistake this module is shaped to prevent.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -78,9 +79,54 @@ def split_synonyms(raw: Any) -> list[str]:
     return out
 
 
+def parse_column_synonyms(raw: Any) -> dict[str, list[str]]:
+    """Parse `COLUMN = term, term` lines into {COLUMN: [terms]}.
+
+    One line per column, because the admin is naming measures they already see
+    in the table and a free-form blob would give no signal about which column a
+    term belongs to. A line with no `=` is ignored rather than guessed at: a
+    term attached to the wrong column moves questions onto the wrong measure,
+    which is worse than a term that does nothing.
+    """
+    if isinstance(raw, dict):
+        return {
+            str(col).strip().upper(): split_synonyms(terms)
+            for col, terms in raw.items()
+            if str(col).strip() and split_synonyms(terms)
+        }
+    out: dict[str, list[str]] = {}
+    for line in re.split(r"[\n;]+", str(raw or "")):
+        if "=" not in line:
+            continue
+        column, _, terms = line.partition("=")
+        column = re.sub(r"[^A-Za-z0-9_]", "", column.strip()).upper()
+        parsed = split_synonyms(terms)
+        if column and parsed:
+            out.setdefault(column, [])
+            for term in parsed:
+                if term.casefold() not in {t.casefold() for t in out[column]}:
+                    out[column].append(term)
+    return out
+
+
+def format_column_synonyms(mapping: dict[str, list[str]] | None) -> str:
+    """Render back to the editable form the admin typed."""
+    return "\n".join(
+        f"{column} = {', '.join(terms)}"
+        for column, terms in sorted((mapping or {}).items())
+        if terms
+    )
+
+
 def _row_to_dict(row) -> dict[str, Any]:
     entry = dict(row)
     entry["synonym_list"] = split_synonyms(entry.get("synonyms"))
+    try:
+        stored = json.loads(entry.get("column_synonyms") or "{}")
+    except Exception:
+        stored = {}
+    entry["column_synonym_map"] = parse_column_synonyms(stored)
+    entry["column_synonyms_text"] = format_column_synonyms(entry["column_synonym_map"])
     return entry
 
 
@@ -116,6 +162,7 @@ def save_table_description(
     *,
     description: str = "",
     synonyms: Any = "",
+    column_synonyms: Any = "",
     updated_by: str = "",
 ) -> None:
     """Upsert one table's description. Blanking both fields removes the row, so
@@ -125,8 +172,10 @@ def save_table_description(
         raise ValueError("A table name is required.")
     text = str(description or "").strip()
     terms = ", ".join(split_synonyms(synonyms))
+    columns = parse_column_synonyms(column_synonyms)
+    columns_json = json.dumps(columns, separators=(",", ":")) if columns else ""
     with get_db() as conn:
-        if not text and not terms:
+        if not text and not terms and not columns:
             conn.execute(
                 "DELETE FROM table_description WHERE account_id=? AND UPPER(table_name)=?",
                 (account_id, _norm_table(table)),
@@ -135,15 +184,17 @@ def save_table_description(
         conn.execute(
             """
             INSERT INTO table_description
-                (account_id, table_name, description, synonyms, updated_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'))
+                (account_id, table_name, description, synonyms, column_synonyms,
+                 updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
             ON CONFLICT(account_id, table_name) DO UPDATE SET
-                description = excluded.description,
-                synonyms    = excluded.synonyms,
-                updated_by  = excluded.updated_by,
-                updated_at  = datetime('now')
+                description     = excluded.description,
+                synonyms        = excluded.synonyms,
+                column_synonyms = excluded.column_synonyms,
+                updated_by      = excluded.updated_by,
+                updated_at      = datetime('now')
             """,
-            (account_id, table, text, terms, str(updated_by or "")),
+            (account_id, table, text, terms, columns_json, str(updated_by or "")),
         )
 
 

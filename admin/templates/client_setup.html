@@ -652,11 +652,19 @@
                 placeholder="e.g. Month-end stock snapshot — one row per item per warehouse per period. Never sum across months.">{{ row.description }}</textarea>
 
               <label class="td-label" for="td-syn-{{ loop.index }}">
-                What does the business call it?
+                What does the business call this table?
                 <span class="td-hint">comma separated — these decide which questions reach this table</span>
               </label>
               <input id="td-syn-{{ loop.index }}" type="text" data-syn
                 value="{{ row.synonyms }}" placeholder="inventory, stock balance">
+
+              <label class="td-label" for="td-col-{{ loop.index }}">
+                What does the business call its figures?
+                <span class="td-hint">one COLUMN = term, term per line — these are what let a
+                  question be answered, not just routed here</span>
+              </label>
+              <textarea id="td-col-{{ loop.index }}" rows="2" data-col
+                placeholder="BAL_VAL_AMT = inventory value, stock value">{{ row.column_synonyms_text }}</textarea>
 
               <div class="td-actions">
                 <button type="button" class="btn btn-secondary btn-sm" data-save>Save</button>
@@ -741,6 +749,7 @@
                   table_name: row.dataset.table,
                   description: row.querySelector('[data-desc]').value,
                   synonyms: row.querySelector('[data-syn]').value,
+                  column_synonyms: row.querySelector('[data-col]').value,
                 }),
               });
               const body = await res.json().catch(() => ({}));
