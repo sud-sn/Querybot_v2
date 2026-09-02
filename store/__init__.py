@@ -11,6 +11,8 @@ from store.metric_proposal_store import (
 from store.table_description_store import (
     get_table_description, list_table_descriptions, save_table_description,
     describe_selected_tables, description_coverage, split_synonyms,
+    parse_column_synonyms, format_column_synonyms,
+    save_suggestion, clear_suggestion,
 )
 from store.db import init_db, get_db
 from store.crypto import encrypt, decrypt, decrypt_json, mask

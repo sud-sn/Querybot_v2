@@ -666,8 +666,31 @@
               <textarea id="td-col-{{ loop.index }}" rows="2" data-col
                 placeholder="BAL_VAL_AMT = inventory value, stock value">{{ row.column_synonyms_text }}</textarea>
 
+              {# A proposal, shown only until someone acts on it. Never applied:
+                 accepting means clicking Use, which fills the boxes above and
+                 still requires Save. -#}
+              <div class="td-suggestion" data-suggestion
+                   {% if not row.has_suggestion %}hidden{% endif %}>
+                <div class="td-sug-head">
+                  <strong>Suggested</strong>
+                  <span class="td-hint">not applied &mdash; review, then Use or Dismiss</span>
+                </div>
+                <div class="td-sug-body" data-sug-body>
+                  {% if row.has_suggestion %}
+                    {% if row.suggestion.description %}<p>{{ row.suggestion.description }}</p>{% endif %}
+                    {% if row.suggestion.synonyms %}<p><em>Table terms:</em> {{ row.suggestion.synonyms }}</p>{% endif %}
+                    {% if row.suggestion.column_synonyms_text %}<pre>{{ row.suggestion.column_synonyms_text }}</pre>{% endif %}
+                  {% endif %}
+                </div>
+                <div class="td-sug-actions">
+                  <button type="button" class="btn btn-primary btn-sm" data-use>Use these</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-dismiss>Dismiss</button>
+                </div>
+              </div>
+
               <div class="td-actions">
                 <button type="button" class="btn btn-secondary btn-sm" data-save>Save</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-suggest>Suggest</button>
                 <span class="td-status" data-status>
                   {%- if row.updated_at %}last edited {{ row.updated_at }}{% endif -%}
                 </span>
@@ -708,6 +731,16 @@
         #tableDescriptions textarea,#tableDescriptions input[type=text]{width:100%;font-size:12px;
           padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);
           background:var(--bg,var(--surface));color:var(--text);resize:vertical}
+        #tableDescriptions .td-suggestion{margin:.35rem 0;padding:.55rem .65rem;border-radius:var(--radius-sm);
+          background:color-mix(in srgb,var(--primary) 7%,transparent);
+          border:1px solid color-mix(in srgb,var(--primary) 30%,transparent)}
+        #tableDescriptions .td-sug-head{display:flex;align-items:baseline;gap:.45rem;margin-bottom:.3rem}
+        #tableDescriptions .td-sug-head strong{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--primary)}
+        #tableDescriptions .td-sug-body p{margin:0 0 .25rem;font-size:12px;line-height:1.5}
+        #tableDescriptions .td-sug-body pre{margin:.2rem 0 0;padding:.35rem .5rem;font-size:11px;
+          background:var(--surface);border:1px solid var(--border);border-radius:4px;
+          white-space:pre-wrap;overflow-x:auto}
+        #tableDescriptions .td-sug-actions{display:flex;gap:.4rem;margin-top:.45rem}
         #tableDescriptions .td-actions{display:flex;align-items:center;gap:.6rem}
         #tableDescriptions .td-status{font-size:11px;color:var(--text-dim)}
         #tableDescriptions .td-status.td-error{color:var(--danger)}
@@ -734,6 +767,74 @@
           const badge = row.querySelector('[data-badge]');
           // Seed from what the server rendered so the first recount is right.
           badge.dataset.described = badge.classList.contains('td-badge--described') ? '1' : '0';
+
+          const panel  = row.querySelector('[data-suggestion]');
+          const sugBody = row.querySelector('[data-sug-body]');
+          const status2 = row.querySelector('[data-status]');
+          let pending = null;   // the proposal currently on screen
+
+          function showSuggestion(s) {
+            pending = s;
+            const bits = [];
+            if (s.description) bits.push(`<p>${escapeHtml(s.description)}</p>`);
+            if (s.synonyms) bits.push(`<p><em>Table terms:</em> ${escapeHtml(s.synonyms)}</p>`);
+            if (s.column_synonyms_text) bits.push(`<pre>${escapeHtml(s.column_synonyms_text)}</pre>`);
+            sugBody.innerHTML = bits.join('');
+            panel.hidden = false;
+          }
+          function escapeHtml(t) {
+            return String(t == null ? '' : t).replace(/[&<>"']/g,
+              c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+          }
+
+          row.querySelector('[data-suggest]').addEventListener('click', async () => {
+            const button = row.querySelector('[data-suggest]');
+            button.disabled = true;
+            status2.classList.remove('td-error');
+            status2.textContent = 'Reading the schema…';
+            try {
+              const res = await fetch(`/admin/clients/${ACCOUNT}/setup/table-description/suggest`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table_name: row.dataset.table }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok || body.status !== 'ok') {
+                status2.textContent = body.detail || `Failed (${res.status})`;
+                status2.classList.add('td-error');
+              } else {
+                showSuggestion(body.suggestion || {});
+                status2.textContent = 'Suggested — nothing applied yet';
+              }
+            } catch (err) {
+              status2.textContent = 'Request failed';
+              status2.classList.add('td-error');
+            } finally {
+              button.disabled = false;
+            }
+          });
+
+          // "Use" fills the boxes and stops. The admin still presses Save, so a
+          // proposal never becomes live without a second, deliberate action.
+          row.querySelector('[data-use]').addEventListener('click', () => {
+            if (!pending) return;
+            if (pending.description) row.querySelector('[data-desc]').value = pending.description;
+            if (pending.synonyms) row.querySelector('[data-syn]').value = pending.synonyms;
+            if (pending.column_synonyms_text) row.querySelector('[data-col]').value = pending.column_synonyms_text;
+            panel.hidden = true;
+            status2.classList.remove('td-error');
+            status2.textContent = 'Filled in — edit if needed, then Save';
+          });
+
+          row.querySelector('[data-dismiss]').addEventListener('click', async () => {
+            panel.hidden = true;
+            pending = null;
+            try {
+              await fetch(`/admin/clients/${ACCOUNT}/setup/table-description/dismiss`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table_name: row.dataset.table }),
+              });
+            } catch (err) { /* the panel is already hidden; nothing to recover */ }
+          });
 
           row.querySelector('[data-save]').addEventListener('click', async () => {
             const status = row.querySelector('[data-status]');

@@ -419,3 +419,114 @@ class TestColumnTermsMakeAQuestionAnswerable(_Base):
             "stockholding value",
             vocab_for_account(self.account).direct_aliases.get("BAL_VAL_AMT", set()),
         )
+
+
+class TestASuggestionNeverTakesEffectOnItsOwn(_Base):
+    """The panel shipped empty and stayed empty -- one table of fourteen -- so
+    the model proposes. The proposal is held in its own columns and nothing
+    reads it: table terms decide which table a question reaches and column
+    terms decide which measure it resolves, so an auto-applied term would move
+    answers without anyone choosing to.
+    """
+
+    def test_a_suggestion_does_not_become_live(self):
+        from store.table_description_store import save_suggestion
+        save_suggestion(self.account, SNAPSHOT,
+                        description="Month-end snapshot.",
+                        synonyms="inventory, stockholding",
+                        column_synonyms="BAL_VAL_AMT = inventory value")
+        entry = get_table_description(self.account, SNAPSHOT)
+        # Offered...
+        self.assertTrue(entry["has_suggestion"])
+        self.assertEqual(entry["suggestion"]["description"], "Month-end snapshot.")
+        # ...and not in force.
+        self.assertEqual(entry["description"], "")
+        self.assertEqual(entry["synonym_list"], [])
+        self.assertEqual(entry["column_synonym_map"], {})
+
+    def test_a_suggestion_does_not_overwrite_what_an_admin_wrote(self):
+        """Otherwise Suggest would be a destructive button."""
+        from store.table_description_store import save_suggestion
+        save_table_description(self.account, SNAPSHOT,
+                               description="Mine.", synonyms="my term")
+        save_suggestion(self.account, SNAPSHOT,
+                        description="The model's.", synonyms="its term")
+        entry = get_table_description(self.account, SNAPSHOT)
+        self.assertEqual(entry["description"], "Mine.")
+        self.assertEqual(entry["synonym_list"], ["my term"])
+        self.assertEqual(entry["suggestion"]["description"], "The model's.")
+
+    def test_a_suggestion_reaches_neither_the_kb_nor_resolution(self):
+        """The two consumers, checked directly rather than assumed."""
+        from core.vocab_packs import forget_account_vocab, vocab_for_account
+        from store.table_description_store import save_suggestion
+
+        save_suggestion(self.account, SNAPSHOT,
+                        description="Month-end snapshot.",
+                        column_synonyms="BAL_VAL_AMT = inventory value")
+        forget_account_vocab(self.account)
+        vocab = vocab_for_account(self.account)
+        self.assertNotIn("inventory value",
+                         vocab.direct_aliases.get("BAL_VAL_AMT", set()))
+        entry = get_table_description(self.account, SNAPSHOT) or {}
+        self.assertEqual(
+            _build_table_business_desc("Client.", "EMDW_DMART",
+                                       entry.get("description", ""),
+                                       entry.get("synonyms", "")),
+            "Client.",
+        )
+
+    def test_accepting_is_an_ordinary_save(self):
+        from store.table_description_store import clear_suggestion, save_suggestion
+        save_suggestion(self.account, SNAPSHOT, description="Proposed.")
+        save_table_description(self.account, SNAPSHOT, description="Proposed.")
+        clear_suggestion(self.account, SNAPSHOT)
+        entry = get_table_description(self.account, SNAPSHOT)
+        self.assertEqual(entry["description"], "Proposed.")
+        self.assertFalse(entry["has_suggestion"])
+
+    def test_dismissing_leaves_the_live_values_alone(self):
+        from store.table_description_store import clear_suggestion, save_suggestion
+        save_table_description(self.account, SNAPSHOT, description="Mine.")
+        save_suggestion(self.account, SNAPSHOT, description="Theirs.")
+        clear_suggestion(self.account, SNAPSHOT)
+        entry = get_table_description(self.account, SNAPSHOT)
+        self.assertEqual(entry["description"], "Mine.")
+        self.assertFalse(entry["has_suggestion"])
+
+
+class TestTheProposalIsGroundedInTheSchema(unittest.TestCase):
+    """A term on a column that does not exist cannot help and can only mislead
+    a later reader, so it is dropped rather than stored."""
+
+    COLUMNS = {"BAL_VAL_AMT", "OH_QTY", "WHS_DMS_KEY"}
+
+    def _parse(self, reply):
+        from core.table_description_author import parse_proposal
+        return parse_proposal(reply, self.COLUMNS)
+
+    def test_terms_for_an_unknown_column_are_discarded(self):
+        out = self._parse('{"description":"d","synonyms":["s"],'
+                          '"column_terms":{"BAL_VAL_AMT":["inventory value"],'
+                          '"NOT_A_COLUMN":["bogus"]}}')
+        self.assertEqual(list(out["column_terms"]), ["BAL_VAL_AMT"])
+
+    def test_prose_around_the_json_is_tolerated(self):
+        out = self._parse('Sure! {"description":"d","synonyms":[],"column_terms":{}} Hope that helps.')
+        self.assertEqual(out["description"], "d")
+
+    def test_an_unparseable_reply_proposes_nothing(self):
+        out = self._parse("I could not do that.")
+        self.assertEqual(out, {"description": "", "synonyms": [], "column_terms": {}})
+
+    def test_the_evidence_carries_the_aggregation_verdict(self):
+        """It is what lets the description say "do not sum across periods",
+        which is the sentence this whole feature exists to capture."""
+        from core.table_description_author import build_evidence
+        evidence = build_evidence(
+            "S.ITM_BAL_PRD_FCT",
+            [{"name": "BAL_VAL_AMT", "type": "decimal", "aggregation": "semi_additive"}],
+            entity_type="fact", fact_type="periodic_snapshot",
+        )
+        self.assertIn("semi_additive", evidence)
+        self.assertIn("periodic_snapshot", evidence)

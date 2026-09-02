@@ -738,6 +738,18 @@ CREATE TABLE IF NOT EXISTS table_description (
     -- admin can teach the product their own measure vocabulary without a
     -- developer editing a shipped pack file.
     column_synonyms TEXT NOT NULL DEFAULT '',
+    -- A model's PROPOSAL, held apart from the three fields above so it can
+    -- never take effect on its own. Nothing reads these: KB generation and
+    -- the vocabulary merge use the confirmed fields only, and accepting a
+    -- suggestion copies it across through the ordinary save path.
+    --
+    -- Separate columns rather than a status flag on the row, because a
+    -- suggestion must not overwrite what an admin already wrote -- the two
+    -- coexist until a human chooses.
+    suggested_description     TEXT NOT NULL DEFAULT '',
+    suggested_synonyms        TEXT NOT NULL DEFAULT '',
+    suggested_column_synonyms TEXT NOT NULL DEFAULT '',
+    suggested_at              TEXT NOT NULL DEFAULT '',
     updated_by   TEXT    NOT NULL DEFAULT '',
     updated_at   TEXT    DEFAULT (datetime('now')),
     UNIQUE(account_id, table_name)
@@ -1105,6 +1117,11 @@ def _run_migrations() -> None:
         # reached; a question also needs a measure before it compiles, and that
         # is a column-level alias.
         ("table_description", "column_synonyms", "TEXT NOT NULL DEFAULT ''"),
+        # Model-proposed description/terms, awaiting a human decision.
+        ("table_description", "suggested_description", "TEXT NOT NULL DEFAULT ''"),
+        ("table_description", "suggested_synonyms", "TEXT NOT NULL DEFAULT ''"),
+        ("table_description", "suggested_column_synonyms", "TEXT NOT NULL DEFAULT ''"),
+        ("table_description", "suggested_at", "TEXT NOT NULL DEFAULT ''"),
         # v10: chat UI toggle per client
         ("client", "chat_ui_enabled", "INTEGER NOT NULL DEFAULT 0"),
         # v11: per-client LLM audit toggle

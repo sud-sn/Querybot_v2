@@ -8029,6 +8029,158 @@ def _kb_built_tables(account_id: str) -> set[str]:
     return built
 
 
+@router.post("/clients/{account_id}/setup/table-description/suggest")
+async def admin_suggest_table_description(request: Request, account_id: str):
+    """Ask the model to propose a description and terms for one table.
+
+    The proposal is STORED AS A SUGGESTION and nothing reads it until a human
+    accepts. Table terms decide which table a question reaches and column terms
+    decide which measure it resolves, so applying either automatically would
+    move answers without anyone choosing to -- the failure this whole panel
+    exists to make deliberate.
+
+    Only names and structure are sent: no sampled values, so there is no
+    value-level egress and a regulated tenant needs no extra clearance.
+    """
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "detail": "Client not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    table_name = str(body.get("table_name") or "").strip()
+    if not table_name:
+        return JSONResponse({"status": "error", "detail": "A table name is required."}, status_code=400)
+
+    state_data = json.loads(client.get("state_data") or "{}")
+    selected = {
+        str(t).strip().strip("[]").replace("[", "").replace("]", "").upper()
+        for t in _parse_selected_schema_tables(state_data.get("kb_tables"))
+    }
+    normalised = table_name.strip("[]").replace("[", "").replace("]", "").upper()
+    if selected and normalised not in selected:
+        return JSONResponse(
+            {"status": "error", "detail": f"{table_name} is not one of the selected tables."},
+            status_code=400,
+        )
+
+    # ── Evidence: structure only, from what the model build already knows ────
+    from core.table_description_author import (
+        build_evidence, format_column_terms, parse_proposal, _SYSTEM,
+    )
+
+    columns: list[dict] = []
+    entity_type = fact_type = grain = ""
+    joins: list[dict] = []
+    kb_excerpt = ""
+    bare = normalised.split(".")[-1]
+
+    try:
+        from core.semantic_model import load_semantic_model
+        kb_dir = (store.get_client_state(account_id) or {}).get("kb_dir") or ""
+        model = load_semantic_model(kb_dir) if kb_dir else {}
+        for table in (model.get("tables") or []):
+            fqn = str(table.get("fqn") or "")
+            if fqn.upper() != normalised and str(table.get("table") or "").upper() != bare:
+                continue
+            entity_type = str(table.get("type") or "")
+            fact_type = str(table.get("fact_type") or "")
+            grain = str(table.get("grain") or "")
+            columns = [
+                {"name": f.get("column"), "type": f.get("data_type") or f.get("type"),
+                 "aggregation": f.get("aggregation")}
+                for f in (table.get("fields") or []) if f.get("column")
+            ]
+            break
+    except Exception:
+        log.warning("semantic model unavailable for %s", account_id, exc_info=True)
+
+    try:
+        for rel in store.list_relationships(account_id):
+            if str(rel.get("from_entity") or "").upper() in (normalised, bare):
+                joins.append({"to_entity": rel.get("to_entity")})
+    except Exception:
+        log.debug("relationship lookup failed for %s", account_id, exc_info=True)
+
+    try:
+        kb_dir = (store.get_client_state(account_id) or {}).get("kb_dir") or ""
+        doc = Path(kb_dir) / f"{bare}.md" if kb_dir else None
+        if doc and doc.is_file():
+            kb_excerpt = doc.read_text(encoding="utf-8")[:1200]
+    except Exception:
+        log.debug("KB excerpt unavailable for %s", table_name, exc_info=True)
+
+    if not columns:
+        return JSONResponse({
+            "status": "error",
+            "detail": "No schema is available for this table yet — run discovery first.",
+        }, status_code=400)
+
+    evidence = build_evidence(
+        table_name, columns, entity_type=entity_type, fact_type=fact_type,
+        grain=grain, joins=joins, kb_excerpt=kb_excerpt,
+    )
+
+    from core.llm import llm_complete, resolve_provider
+    from core.llm_audit import llm_audit_component
+
+    provider, model_name, api_key, az_kw = resolve_provider(client)
+    try:
+        with llm_audit_component("table_description_author", question=table_name):
+            raw, _, _ = await llm_complete(
+                _SYSTEM, evidence, provider, model_name, api_key,
+                max_tokens=700, temperature=0.2, **az_kw,
+            )
+    except Exception as exc:
+        log.error("Table description proposal failed for %s: %s", table_name, exc)
+        return JSONResponse(
+            {"status": "error", "detail": "The model could not be reached."}, status_code=502)
+
+    proposal = parse_proposal(raw, {str(c.get("name") or "") for c in columns})
+    if not (proposal["description"] or proposal["synonyms"] or proposal["column_terms"]):
+        return JSONResponse({
+            "status": "error",
+            "detail": "The model had too little to work from to propose anything useful.",
+        }, status_code=422)
+
+    column_text = format_column_terms(proposal["column_terms"])
+    store.save_suggestion(
+        account_id, table_name,
+        description=proposal["description"],
+        synonyms=proposal["synonyms"],
+        column_synonyms=column_text,
+    )
+    return JSONResponse({
+        "status": "ok",
+        "table_name": table_name,
+        "suggestion": {
+            "description": proposal["description"],
+            "synonyms": ", ".join(proposal["synonyms"]),
+            "column_synonyms_text": column_text,
+        },
+    })
+
+
+@router.post("/clients/{account_id}/setup/table-description/dismiss")
+async def admin_dismiss_table_description(request: Request, account_id: str):
+    """Discard a proposal without applying it."""
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    table_name = str(body.get("table_name") or "").strip()
+    if not table_name:
+        return JSONResponse({"status": "error", "detail": "A table name is required."}, status_code=400)
+    store.clear_suggestion(account_id, table_name)
+    return JSONResponse({"status": "ok"})
+
+
 @router.post("/clients/{account_id}/setup/table-description")
 async def admin_setup_save_table_description(request: Request, account_id: str):
     """Save one table's business description and its business terms.
@@ -8083,6 +8235,15 @@ async def admin_setup_save_table_description(request: Request, account_id: str):
         )
     except ValueError as exc:
         return JSONResponse({"status": "error", "detail": str(exc)}, status_code=400)
+
+    # Saving IS the accept: whatever the admin kept or rewrote is now the live
+    # value, so the proposal has nothing left to offer. Clearing it here also
+    # means Suggest is never destructive -- a proposal only ever disappears
+    # because a human acted on it.
+    try:
+        store.clear_suggestion(account_id, table_name)
+    except Exception:
+        log.debug("suggestion clear failed for %s", table_name, exc_info=True)
 
     # Write the terms into the saved model BEFORE recompiling, or the compile
     # reads a model that predates this edit and publishes an identical contract.

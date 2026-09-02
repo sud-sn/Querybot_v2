@@ -127,7 +127,72 @@ def _row_to_dict(row) -> dict[str, Any]:
         stored = {}
     entry["column_synonym_map"] = parse_column_synonyms(stored)
     entry["column_synonyms_text"] = format_column_synonyms(entry["column_synonym_map"])
+    try:
+        sug_cols = json.loads(entry.get("suggested_column_synonyms") or "{}")
+    except Exception:
+        sug_cols = {}
+    entry["suggestion"] = {
+        "description": str(entry.get("suggested_description") or ""),
+        "synonyms": str(entry.get("suggested_synonyms") or ""),
+        "column_synonyms_text": format_column_synonyms(parse_column_synonyms(sug_cols)),
+        "at": str(entry.get("suggested_at") or ""),
+    }
+    entry["has_suggestion"] = any(
+        entry["suggestion"][k] for k in ("description", "synonyms", "column_synonyms_text")
+    )
     return entry
+
+
+def save_suggestion(
+    account_id: str,
+    table_name: str,
+    *,
+    description: str = "",
+    synonyms: Any = "",
+    column_synonyms: Any = "",
+) -> None:
+    """Record a model's proposal WITHOUT touching what is live.
+
+    Written to its own columns for the reason the schema comment gives: a
+    suggestion that overwrote the admin's own text would make "suggest" a
+    destructive button, and a suggestion that landed in the live fields would
+    be an auto-applied change to which table a question reaches.
+    """
+    table = str(table_name or "").strip()
+    if not table:
+        raise ValueError("A table name is required.")
+    columns = parse_column_synonyms(column_synonyms)
+    payload = (
+        str(description or "").strip(),
+        ", ".join(split_synonyms(synonyms)),
+        json.dumps(columns, separators=(",", ":")) if columns else "",
+    )
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO table_description
+                (account_id, table_name, suggested_description, suggested_synonyms,
+                 suggested_column_synonyms, suggested_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(account_id, table_name) DO UPDATE SET
+                suggested_description     = excluded.suggested_description,
+                suggested_synonyms        = excluded.suggested_synonyms,
+                suggested_column_synonyms = excluded.suggested_column_synonyms,
+                suggested_at              = datetime('now')
+            """,
+            (account_id, table, *payload),
+        )
+
+
+def clear_suggestion(account_id: str, table_name: str) -> None:
+    """Drop a proposal once it has been accepted or dismissed."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE table_description SET suggested_description='', "
+            "suggested_synonyms='', suggested_column_synonyms='', suggested_at='' "
+            "WHERE account_id=? AND UPPER(table_name)=?",
+            (account_id, _norm_table(table_name)),
+        )
 
 
 def get_table_description(account_id: str, table_name: str) -> dict[str, Any] | None:
@@ -237,6 +302,9 @@ def describe_selected_tables(
             "description": str(entry.get("description") or ""),
             "synonyms": str(entry.get("synonyms") or ""),
             "synonym_list": entry.get("synonym_list") or [],
+            "column_synonyms_text": entry.get("column_synonyms_text") or "",
+            "suggestion": entry.get("suggestion") or {},
+            "has_suggestion": bool(entry.get("has_suggestion")),
             "updated_at": entry.get("updated_at") or "",
             "updated_by": entry.get("updated_by") or "",
             "described": has_text,
