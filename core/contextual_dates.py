@@ -186,8 +186,28 @@ def measures_are_semi_additive(measure_fields: list[dict] | None) -> bool:
         column = str(field.get("column") or "")
         if not column:
             continue
+        # An ADMIN's declaration is authoritative and overrides everything.
+        # `aggregation`, by contrast, is machine-derived and PERSISTED into the
+        # semantic model, so it is only as good as the build that wrote it --
+        # EMCO's said "additive" for BAL_VAL_AMT because the model predates the
+        # classifier learning abbreviated ERP names, and that stale guess was
+        # enough to keep summing a snapshot across eighteen months.
+        #
+        # So a stale machine verdict does not get to overrule a fresh one. Both
+        # are guesses; when they disagree the safer reading wins, because the
+        # cost of the two errors is not symmetric -- treating a snapshot as
+        # additive multiplies the answer, while the reverse merely scopes it to
+        # one period and says so. This must not depend on when the KB was last
+        # rebuilt.
+        declared = str(
+            field.get("aggregation_semantics") or ""
+        ).strip().lower().replace("-", "_")
+        if declared in {"additive", "semi_additive", "non_additive"}:
+            if declared == "semi_additive":
+                return True
+            continue
         try:
-            if _measure_class(column, field) == "semi_additive":
+            if _measure_class(column, {}) == "semi_additive":
                 return True
         except Exception:  # never let classification break date resolution
             log.debug("semi-additive classification failed for %r", field, exc_info=True)

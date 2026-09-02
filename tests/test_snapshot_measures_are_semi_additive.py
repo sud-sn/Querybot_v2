@@ -299,3 +299,54 @@ class TestTheColumnDecidesNotTheWording(unittest.TestCase):
                      "aggregation_semantics": "additive"}]
         self.assertFalse(question_has_snapshot_intent(
             "what is my stockholding value by warehouse", measure_fields=declared))
+
+
+class TestAStaleModelCannotReintroduceTheError(unittest.TestCase):
+    """The fix above was correct and still did nothing, live.
+
+    `aggregation` is machine-derived and PERSISTED into the semantic model, and
+    EMCO's model predates the classifier learning abbreviated ERP names. It
+    said "additive" for BAL_VAL_AMT, `_measure_class` gives a declared value
+    precedence, and the snapshot was summed across eighteen months exactly as
+    before -- the answer stayed 13,557,410 after deploying the fix.
+
+    A KB rebuild would have corrected the data, but a safety property that
+    prevents a sixteen-fold error must not depend on when the KB was last
+    built. So a stale machine verdict no longer overrules a fresh one: both are
+    guesses, and when they disagree the safer reading wins, because the errors
+    are not symmetric. Treating a snapshot as additive multiplies the answer;
+    the reverse scopes it to one period and says so.
+
+    A human's declaration is a different thing and still wins outright.
+    """
+
+    QUESTION = "what is my stockholding value by warehouse"
+
+    def _intent(self, field):
+        return question_has_snapshot_intent(self.QUESTION, measure_fields=[field])
+
+    def test_a_stale_additive_verdict_does_not_win(self):
+        self.assertTrue(self._intent(
+            {"role": "measure", "column": "BAL_VAL_AMT", "aggregation": "additive"}))
+
+    def test_a_field_with_no_verdict_is_classified_fresh(self):
+        self.assertTrue(self._intent({"role": "measure", "column": "BAL_VAL_AMT"}))
+
+    def test_an_admin_declaration_still_overrides(self):
+        """The one verdict that is not a guess."""
+        self.assertFalse(self._intent({
+            "role": "measure", "column": "BAL_VAL_AMT",
+            "aggregation_semantics": "additive"}))
+        self.assertTrue(self._intent({
+            "role": "measure", "column": "SOP_CUS_IVC_LIN_AMT",
+            "aggregation_semantics": "semi_additive"}))
+
+    def test_a_flow_measure_is_unaffected_by_any_of_this(self):
+        """The dangerous direction stays shut: scoping revenue to one period
+        would under-report it."""
+        for aggregation in ({}, {"aggregation": "additive"}, {"aggregation": "semi_additive"}):
+            with self.subTest(aggregation=aggregation):
+                self.assertFalse(question_has_snapshot_intent(
+                    "what is my revenue by customer",
+                    measure_fields=[{"role": "measure",
+                                     "column": "SOP_CUS_IVC_LIN_AMT", **aggregation}]))
