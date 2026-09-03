@@ -32,12 +32,20 @@ from dataclasses import dataclass
 log = logging.getLogger("querybot.prompt_cache")
 
 # Anthropic's minimum cacheable prefix varies by model: 512 tokens on Opus 5,
-# 1,024 on Sonnet, 4,096 on the Haiku and Opus 4.5 generation. Rather than keep
-# a model table that goes stale (see _ANTHROPIC_NO_SAMPLING_PARAMS in core/llm.py
-# for how that ages), clear the largest of them. A breakpoint below the model's
-# own minimum is not an error, it just silently caches nothing -- and a silent
-# no-op is the failure mode worth designing out.
-_MIN_CACHEABLE_TOKENS = 4096
+# 1,024 on Sonnet, 4,096 on the Haiku and Opus 4.5 generation.
+#
+# This was 4,096 -- the largest of them -- on the reasoning that clearing every
+# model's floor avoids a stale model table. That was the wrong trade. The query
+# path defaults to `claude-sonnet-4-6` (_default_model in core/llm.py), whose
+# real minimum is 1,024, so a 4,096 floor declined to cache prefixes that would
+# have cached perfectly well -- turning the conservative choice into the very
+# silent no-op it was meant to prevent, four times over.
+#
+# 1,024 covers Sonnet and Opus. Below a model's own floor the API does not
+# error, it just caches nothing -- so `anthropic_system_blocks` logs every
+# decision instead, and a prefix that never pays shows up in the log rather
+# than in the bill.
+_MIN_CACHEABLE_TOKENS = 1024
 
 # Deliberately crude, and deliberately an under-estimate of tokens per char, so
 # a block only qualifies when it clears the minimum with room to spare. Getting
@@ -101,7 +109,18 @@ def anthropic_system_blocks(system: str | CachedPrompt) -> str | list[dict]:
     being cached is an account's rules and knowledge base, which is warm across
     a working session and stone cold between them.
     """
-    if not isinstance(system, CachedPrompt) or not system.cacheable:
+    if not isinstance(system, CachedPrompt):
+        return as_prompt_text(system)
+    if not system.cacheable:
+        # Said out loud. Declining silently is how a breakpoint ends up never
+        # firing for a whole release while the code reads as though caching is
+        # on -- there is no error from the API either way.
+        log.warning(
+            "No cache breakpoint taken: the stable block is %d chars, below the "
+            "%d needed (%d tokens). The prompt is sent unsplit and nothing is "
+            "cached.",
+            len(system.stable), MIN_CACHEABLE_CHARS, _MIN_CACHEABLE_TOKENS,
+        )
         return as_prompt_text(system)
     return [
         {

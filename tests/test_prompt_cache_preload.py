@@ -38,12 +38,18 @@ _DOCS = {
 }
 
 
+_GLOBALS = ["# Join map\nSALES_FCT.CUST_ID -> CUST_DMS.CUST_ID\n"]
+
+
 def _fake_fetch(account_id, fqn, sections=None):
     return _DOCS.get(fqn.upper())
 
 
-def _preload(account_id, tables, **kwargs):
-    with patch("core.vector_store.fetch_docs_for_fqn", _fake_fetch):
+def _preload(account_id, tables, globals_=None, **kwargs):
+    """Both fetches must be patched, or the global-doc scroll hits real Qdrant."""
+    with patch("core.vector_store.fetch_docs_for_fqn", _fake_fetch), \
+         patch("core.vector_store.fetch_global_docs",
+               lambda _a: list(_GLOBALS if globals_ is None else globals_)):
         return preload_account_kb(account_id, tables, **kwargs)
 
 
@@ -75,14 +81,46 @@ class ThePreloadedBlockIsStable(unittest.TestCase):
 
     def test_an_account_with_no_documents_returns_nothing_to_send(self):
         """So the caller falls back to retrieval instead of prompting blind."""
-        with patch("core.vector_store.fetch_docs_for_fqn", lambda *a, **k: None):
+        with patch("core.vector_store.fetch_docs_for_fqn", lambda *a, **k: None), \
+             patch("core.vector_store.fetch_global_docs", lambda _a: []):
             context, tables = preload_account_kb("empty", {"DW.DBO.SALES_FCT"})
         self.assertEqual((context, tables), ("", []))
+
+    def test_global_docs_alone_are_not_a_knowledge_base(self):
+        """They name no columns, so this must fall back to retrieval."""
+        with patch("core.vector_store.fetch_docs_for_fqn", lambda *a, **k: None), \
+             patch("core.vector_store.fetch_global_docs", lambda _a: list(_GLOBALS)):
+            context, tables = preload_account_kb("empty", {"DW.DBO.SALES_FCT"})
+        self.assertEqual((context, tables), ("", []))
+
+    def test_the_account_wide_documents_come_too_and_come_first(self):
+        """Retrieval pinned them ahead of every ranked doc; fetch_docs_for_fqn
+        cannot reach them, so replacing retrieval must fetch them separately or
+        the prompt quietly loses the join map."""
+        context, _tables = _preload("acct", set(_DOCS))
+        self.assertIn("SALES_FCT.CUST_ID -> CUST_DMS.CUST_ID", context)
+        self.assertLess(context.index("Join map"), context.index("AMOUNT decimal"))
+
+    def test_one_oversized_table_does_not_drop_the_ones_behind_it(self):
+        """The budget skips, it does not stop.
+
+        Documents are assembled in a fixed order so the prefix is byte-stable.
+        An early `break` turned that fixed order into a selection rule: one
+        oversized table near the front of the alphabet dropped every table
+        after it, however small.
+        """
+        docs = {"A_HUGE": "#" * 9000, "B_SMALL": "#" * 100, "C_SMALL": "#" * 100}
+        with patch("core.vector_store.fetch_docs_for_fqn",
+                   lambda a, fqn, sections=None: docs.get(fqn.upper())), \
+             patch("core.vector_store.fetch_global_docs", lambda _a: []):
+            _context, tables = preload_account_kb("acct", set(docs), cap=1000)
+        self.assertEqual(tables, ["B_SMALL", "C_SMALL"])
 
     def test_the_budget_stops_before_a_document_is_cut_in_half(self):
         big = {f"T{i}": "#" * 5000 for i in range(10)}
         with patch("core.vector_store.fetch_docs_for_fqn",
-                   lambda a, fqn, sections=None: big.get(fqn.upper())):
+                   lambda a, fqn, sections=None: big.get(fqn.upper())), \
+             patch("core.vector_store.fetch_global_docs", lambda _a: []):
             context, tables = preload_account_kb("acct", set(big), cap=12000)
         self.assertLess(len(tables), len(big))
         self.assertLessEqual(len(context), 12000)
@@ -91,7 +129,8 @@ class ThePreloadedBlockIsStable(unittest.TestCase):
         first, _ = _preload("acct", set(_DOCS))
         invalidate_account_kb("acct")
         with patch("core.vector_store.fetch_docs_for_fqn",
-                   lambda a, fqn, sections=None: "# CHANGED\n"):
+                   lambda a, fqn, sections=None: "# CHANGED\n"), \
+             patch("core.vector_store.fetch_global_docs", lambda _a: []):
             second, _ = preload_account_kb("acct", set(_DOCS))
         self.assertNotEqual(first, second)
         self.assertIn("CHANGED", second)
@@ -112,10 +151,12 @@ class ThePreloadedBlockIsStable(unittest.TestCase):
         _preload("acct", {"DW.DBO.SALES_FCT"})
         self.assertEqual(len([k for k in _cache if k[0] == "acct"]), 2)
 
-        with patch("core.vector_store.fetch_docs_for_fqn") as fetch:
+        with patch("core.vector_store.fetch_docs_for_fqn") as fetch, \
+             patch("core.vector_store.fetch_global_docs") as fetch_globals:
             wide, _ = preload_account_kb("acct", set(_DOCS))
             narrow, _ = preload_account_kb("acct", {"DW.DBO.SALES_FCT"})
         fetch.assert_not_called()
+        fetch_globals.assert_not_called()
         self.assertIn("CUST_NAME", wide)
         self.assertNotIn("CUST_NAME", narrow)
 
@@ -159,6 +200,67 @@ class TheBreakpointFallsBetweenStableAndVarying(unittest.TestCase):
         prompt = self._prompt("total revenue", return_parts=True)
         self.assertIn("AMOUNT (decimal) invoice amount", prompt.stable)
         self.assertIn("STRICT RULES", prompt.volatile)
+
+
+class EverySqlPromptInTheRequestCarriesTheKnowledgeBase(unittest.TestCase):
+    """The repair prompts are the same request and the same question.
+
+    Wiring, not behaviour: reaching those call sites means running the whole of
+    `_handle_query_impl`. Only the first of the three passed `stable_context`,
+    so under a preload both repair prompts went out with an empty knowledge
+    base -- while the repair message instructs the model to use "only tables
+    and columns that appear in the provided knowledge base context".
+    """
+
+    def test_no_sql_prompt_is_built_without_the_preloaded_block(self):
+        import inspect
+        import core.query_pipeline as query_pipeline
+
+        source = inspect.getsource(query_pipeline._handle_query_impl)
+        self.assertEqual(
+            source.count("build_sql_system_prompt("),
+            source.count("stable_context=_preloaded_kb"),
+            "every SQL prompt in the request must carry the same knowledge base",
+        )
+
+
+class RuleGatesStillSeeTheKnowledgeBase(unittest.TestCase):
+    """Several rules decide whether they apply by reading the KB text.
+
+    Moving the knowledge base into `stable_context` emptied `table_context`,
+    which is what those gates read -- so the governed date-role rules dropped
+    out of the prompt with nothing logged. The gates must follow the knowledge
+    base wherever it lives; only what is EMITTED stays keyed to table_context.
+    """
+
+    KB = (
+        "### EMDW.CUS_ORD_IVC_FCT\n"
+        "- ORDER_DT_DMS_KEY (int) date role key\n"
+        "- AMOUNT (decimal) invoice amount\n"
+    ) * 200
+
+    def test_date_role_rules_survive_the_move_into_stable_context(self):
+        question = "revenue by month this year"
+        # The KB in its historical position, which is what the gates were
+        # written against.
+        before = build_sql_system_prompt("azure_sql", self.KB, question=question)
+        # The same KB, preloaded.
+        after = build_sql_system_prompt(
+            "azure_sql", "", question=question, stable_context=self.KB,
+        )
+        self.assertIn("_DT_DMS_KEY", before)
+        self.assertIn(
+            "_DT_DMS_KEY", after,
+            "the date-role rules are gated on KB text and must follow it",
+        )
+
+    def test_the_knowledge_base_is_never_emitted_twice(self):
+        """The gates read both halves; only table_context is rendered."""
+        prompt = build_sql_system_prompt(
+            "azure_sql", "TERM: revenue -> AMOUNT",
+            question="revenue by month", stable_context=self.KB,
+        )
+        self.assertEqual(prompt.count("### EMDW.CUS_ORD_IVC_FCT"), 200)
 
 
 class ShapingForTheProvider(unittest.TestCase):

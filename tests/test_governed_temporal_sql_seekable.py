@@ -536,7 +536,8 @@ class TestGapFillIsNotRepeated(unittest.TestCase):
             fetched.append(fqn)
             return f"# KB doc for {fqn}"
 
-        with patch("core.vector_store.fetch_docs_for_fqn", _fake_fetch):
+        with patch("core.vector_store.fetch_docs_for_fqn", _fake_fetch), \
+             patch("core.vector_store.fetch_global_docs", lambda _a: []):
             _context, preloaded = preload_account_kb("acct", set(self.REQUIRED))
             self.assertEqual(sorted(preloaded), sorted(self.REQUIRED))
             fetched.clear()

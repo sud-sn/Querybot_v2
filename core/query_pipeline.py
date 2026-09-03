@@ -5827,6 +5827,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         graph_context=_graph_ctx or None,
                         semantic_plan=_retry_plan,
                         question=question,
+                        # Same request, same question, same knowledge base. Under
+                        # a preload `context_with_terms` carries no KB at all, so
+                        # omitting this sent the repair prompt out with an empty
+                        # knowledge base while `retry_user` below instructs the
+                        # model to use "only tables and columns that appear in
+                        # the provided knowledge base context".
+                        stable_context=_preloaded_kb,
+                        return_parts=bool(_preloaded_kb),
                     ),
                     retry_user, provider, model, api_key,
                     temperature=0.0,
@@ -5956,6 +5964,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         # the repair prompt arrives carrying every optional rule —
                         # broader than the prompt that just failed.
                         question=question,
+                        # And without this the progressive repair loses the
+                        # knowledge base entirely under a preload.
+                        stable_context=_preloaded_kb,
+                        return_parts=bool(_preloaded_kb),
                     ),
                     _progressive_user,
                     provider,
@@ -6583,7 +6595,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
-                        rag_context=context, question_id=audit_request_id,
+                        rag_context=_preloaded_kb or context, question_id=audit_request_id,
                         confidence_context=_confidence_context,
                         display_context={
                             "format_scope": "metric_context",
@@ -6625,7 +6637,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             adapter, event,
             question=question, rows=rows, sql=sql,
             client=client, account_id=account_id, db_cfg=db_cfg,
-            rag_context=context,
+            # Whichever knowledge base actually reached this question. A
+            # preload leaves `context` empty by design, and the result card's
+            # follow-up features read this back to answer without re-querying.
+            rag_context=_preloaded_kb or context,
             known_tables=all_known,
             query_executor=lambda _cfg, _s: _execute_with_policy(_s),
             question_id=audit_request_id,

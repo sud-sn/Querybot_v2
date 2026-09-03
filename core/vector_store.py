@@ -1586,6 +1586,44 @@ def fetch_docs_for_fqn(
     return None
 
 
+def fetch_global_docs(account_id: str) -> list[str]:
+    """Every account-wide KB document, in a fixed order.
+
+    The global docs -- the business vocabulary, the join map, the naming
+    convention -- are indexed under fqn "_global" with doc_type "global"
+    (see upsert_kb_directory: any file whose stem starts with "_"). They are
+    not per-table, so `fetch_docs_for_fqn` cannot reach them: it filters
+    doc_type to ("kb", "queries").
+
+    Retrieval always admitted them -- `QdrantKBRetriever._is_global` pins them
+    ahead of the ranked table docs -- so anything replacing retrieval has to
+    fetch them separately or the prompt quietly loses the join map.
+
+    Ordered by source_file so a caller assembling a cache prefix gets the same
+    bytes every time.
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    try:
+        results, _ = _qdrant().scroll(
+            collection_name=_COLLECTION,
+            scroll_filter=Filter(must=[
+                FieldCondition(key="account_id", match=MatchValue(value=account_id)),
+                FieldCondition(key="doc_type", match=MatchValue(value="global")),
+            ]),
+            limit=32,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception as exc:
+        log.warning("fetch_global_docs: Qdrant scroll failed for %s — %s", account_id, exc)
+        return []
+
+    payloads = [r.payload for r in results if r.payload and r.payload.get("content")]
+    payloads.sort(key=lambda p: str(p.get("source_file") or ""))
+    return [str(p["content"]) for p in payloads]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Convenience factory — mirrors load_retriever in core/knowledge.py
 # ══════════════════════════════════════════════════════════════════════════════

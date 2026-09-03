@@ -526,9 +526,21 @@ def build_sql_system_prompt(
     """
     from core.sql_prompt_rules import RuleContext, rule_applies
 
+    # Several rules decide whether they apply by reading the knowledge base
+    # text -- looking for date-role key columns, for `_DT_DMS_KEY`, for column
+    # names a rule only makes sense alongside. Those gates must see the KB
+    # wherever it currently lives: a preload moves it out of `table_context`
+    # and into `stable_context`, which silently emptied every one of them and
+    # dropped the governed date-role rules from the prompt with nothing logged.
+    #
+    # Only the gates read this. What gets EMITTED under the "Knowledge Base"
+    # heading is still `table_context` alone, so the KB is never sent twice.
+    _kb_gate_text = "\n\n".join(part for part in (stable_context, table_context) if part)
+    _kb_gate_upper = _kb_gate_text.upper()
+
     _rule_ctx = RuleContext(
         question=question,
-        table_context=table_context or "",
+        table_context=_kb_gate_text,
         semantic_plan=semantic_plan or {},
         graph_context=graph_context or {},
     )
@@ -539,7 +551,7 @@ def build_sql_system_prompt(
     label  = _DB_LABELS.get(db_type, db_type)
     syntax = _SQL_SYNTAX.get(db_type, "- Use standard ANSI SQL\n")
 
-    _date_role_tokens = _find_date_role_tokens(table_context)
+    _date_role_tokens = _find_date_role_tokens(_kb_gate_text)
     _governed_key_types = _governed_date_key_types(semantic_plan)
     _has_plain_date_role_key = any(
         _is_plain_surrogate_date_key(tok, _governed_key_types)
@@ -827,7 +839,7 @@ def build_sql_system_prompt(
             "  WHERE TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112) >= "
             "DATEADD(month, -1, (SELECT MAX(TRY_CONVERT(date, CONVERT(varchar(8), DATE_KEY_COL), 112)) "
             "FROM [schema].[table] WHERE DATE_KEY_COL > 0))\n"
-            if ("_DT_DMS_KEY" in table_context.upper() or "_DATE_DMS_KEY" in table_context.upper())
+            if ("_DT_DMS_KEY" in _kb_gate_upper or "_DATE_DMS_KEY" in _kb_gate_upper)
             else ""
         )
         + (
@@ -839,7 +851,7 @@ def build_sql_system_prompt(
             "Exclude NULL decoded values (including sentinels such as month 00), "
             "anchor latest-snapshot questions on MAX of the decoded expression, and "
             "never sum semi-additive inventory/balance values across periods.\n"
-            if ("_PRD_DMS_KEY" in table_context.upper() or "_PERIOD_DMS_KEY" in table_context.upper())
+            if ("_PRD_DMS_KEY" in _kb_gate_upper or "_PERIOD_DMS_KEY" in _kb_gate_upper)
             else ""
         )
         + (
@@ -853,7 +865,7 @@ def build_sql_system_prompt(
             "(dt.YR), or\n"
             "  (b) derive the period from the integer YYYYMMDD key itself: year = key / 10000 "
             "(integer division), or the TRY_CONVERT pattern above.\n"
-            if ("_DT_DMS_KEY" in table_context.upper() or "_DATE_DMS_KEY" in table_context.upper())
+            if ("_DT_DMS_KEY" in _kb_gate_upper or "_DATE_DMS_KEY" in _kb_gate_upper)
             else ""
         )
         + (
