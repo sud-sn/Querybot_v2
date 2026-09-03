@@ -404,7 +404,11 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
             reply, _, _ = await llm_complete(
                 system, f'User message: "{text}"',
                 provider, model, api_key,
-                max_tokens=200, temperature=0.2, **extra,
+                max_tokens=200, temperature=0.2,
+                # Conversational prose. A cut-off reply reads awkwardly; no
+                # reply at all reads as a broken product.
+                allow_truncated=True,
+                **extra,
             )
         reply = reply.strip()
         # This is an internal routing marker, never user-facing content.

@@ -492,13 +492,68 @@ class TestGapFillIsNotRepeated(unittest.TestCase):
         self.assertEqual(len(fetched), len(self.REQUIRED) * len(self.STAGES))
 
     def test_the_pipeline_shares_one_ledger_across_every_stage(self):
-        source = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("_injected_kb_tables: set[str] = set()", source)
+        """Wiring, not behaviour -- there is no way to see this from outside.
+
+        Reaching these call sites means running the whole of
+        `_handle_query_impl`. The previous version of this test also asserted
+        the literal `_injected_kb_tables: set[str] = set()`, which broke the
+        moment the ledger gained a seed and had never said anything about
+        whether the seeding worked. What it should pin is that the ledger the
+        preload fills is the ledger coverage reads.
+        """
+        import inspect
+        import core.query_pipeline as query_pipeline
+
+        source = inspect.getsource(query_pipeline)
         self.assertEqual(
             source.count("guarantee_table_coverage("),
             source.count("already_injected"),
             "every coverage call site must share the request ledger",
         )
+        self.assertIn(
+            "_injected_kb_tables: set[str] = set(_preloaded_tables)",
+            inspect.getsource(query_pipeline._handle_query_impl),
+            "the ledger must start holding what the preload already sent",
+        )
+
+    def test_a_preloaded_table_is_never_gap_filled_on_top_of_itself(self):
+        """A ledger seeded from the preload has to suppress the re-fetch.
+
+        Preloading appends every permitted table's document up front, so
+        coverage fetching one again is a duplicated 90 kB document, not a gap
+        being filled.
+        """
+        from unittest.mock import patch
+        import core.table_coverage as table_coverage
+        from core.kb_preload import _cache, preload_account_kb
+
+        _cache.clear()
+        self.addCleanup(_cache.clear)
+
+        fetched: list[str] = []
+
+        def _fake_fetch(account_id, fqn, sections=None):
+            fetched.append(fqn)
+            return f"# KB doc for {fqn}"
+
+        with patch("core.vector_store.fetch_docs_for_fqn", _fake_fetch):
+            _context, preloaded = preload_account_kb("acct", set(self.REQUIRED))
+            self.assertEqual(sorted(preloaded), sorted(self.REQUIRED))
+            fetched.clear()
+
+            ledger: set[str] = set(preloaded)
+            for _stage in self.STAGES:
+                self.assertEqual(
+                    table_coverage.guarantee_table_coverage(
+                        account_id="acct",
+                        required_fqns=set(self.REQUIRED),
+                        retrieved_docs=[],
+                        rag_filter=None,
+                        already_injected=ledger,
+                    ),
+                    [],
+                )
+        self.assertEqual(fetched, [], "a preloaded document must not be fetched again")
 
     def test_variants_of_the_same_table_count_as_covered(self):
         from unittest.mock import patch

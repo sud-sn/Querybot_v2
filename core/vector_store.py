@@ -425,6 +425,14 @@ def _invalidate_bm25_cache(account_id: str) -> None:
     if stale:
         log.debug("BM25 cache invalidated for %s (%d entries removed)", account_id, len(stale))
 
+    # The preloaded knowledge base is derived from the same points and goes
+    # stale at exactly the same moment. Expiring it here rather than at each
+    # call site means a future write path cannot invalidate one and forget the
+    # other -- and a stale preload is worse than a stale BM25 index, because it
+    # is what the model reads as the current schema.
+    from core.kb_preload import invalidate_account_kb
+    invalidate_account_kb(account_id)
+
 
 def _get_bm25(
     account_id: str,
@@ -913,6 +921,10 @@ def delete_kb_for_client(account_id: str) -> None:
             FieldCondition(key="account_id", match=MatchValue(value=account_id))
         ]),
     )
+    # Nothing was upserted, so the usual post-upsert invalidation never runs --
+    # and after this call every cached document describes tables the index no
+    # longer holds.
+    _invalidate_bm25_cache(account_id)
     log.info("Qdrant: deleted all KB points for %s", account_id)
 
 

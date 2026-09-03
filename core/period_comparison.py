@@ -536,6 +536,8 @@ async def generate_period_comparison(
             provider, model, api_key,
             max_tokens=500,
             temperature=0.3,
+            # Narrative only -- the compared figures themselves come from SQL.
+            allow_truncated=True,
             **extra_kwargs,
         )
     except Exception as exc:

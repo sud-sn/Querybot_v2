@@ -621,6 +621,7 @@
             <option value="">All</option>
             <option value="success" {% if audit_status == "success" %}selected{% endif %}>Success</option>
             <option value="error"   {% if audit_status == "error"   %}selected{% endif %}>Error</option>
+            <option value="truncated" {% if audit_status == "truncated" %}selected{% endif %}>Truncated (kept anyway)</option>
             <option value="blocked" {% if audit_status == "blocked" %}selected{% endif %}>Blocked (regulated)</option>
           </select>
         </div>

@@ -22,6 +22,12 @@ from typing import Literal
 
 from core.date_roles import is_date_role_column
 from core.llm_audit import record_llm_call
+from core.prompt_cache import (
+    CachedPrompt,
+    anthropic_system_blocks,
+    as_prompt_text,
+    cache_usage,
+)
 
 log = logging.getLogger("querybot.llm")
 
@@ -58,6 +64,8 @@ _OPTIONAL_SQL_RULE_MARKERS: dict[str, str] = {
     "null_aggregate": "- NULL-AWARE FILTERED AGGREGATE RULE",
     "ranking": "- RANKING RULE:",
 }
+
+_KB_SECTION_MARKER = "Knowledge Base — available tables and their business context:"
 
 _CORE_SQL_RULE_BOUNDARY_MARKERS: tuple[str, ...] = (
     "- NAME CONCATENATION RULE:",
@@ -225,7 +233,7 @@ def _filter_sql_rules_for_compiled_plan(
         pos = prompt.find(marker)
         if pos >= 0:
             boundary_positions.append(pos)
-    kb_pos = prompt.find("Knowledge Base — available tables and their business context:")
+    kb_pos = prompt.find(_KB_SECTION_MARKER)
     boundaries = sorted(boundary_positions + ([kb_pos] if kb_pos >= 0 else []))
     removals: list[tuple[int, int]] = []
     for pos, feature, _ in positions:
@@ -236,6 +244,44 @@ def _filter_sql_rules_for_compiled_plan(
     for start, end in sorted(removals, reverse=True):
         prompt = prompt[:start] + prompt[end:]
     return prompt
+
+
+# The prompt ends up with two sections that could each be read as "the tables",
+# because the later one keeps its historical heading while now carrying only
+# this question's plan, term mappings and examples. Renaming that heading is not
+# an option -- _filter_sql_rules_for_compiled_plan uses it as a rule boundary --
+# so this header says outright which of the two is the table list.
+_PRELOADED_KB_HEADER = (
+    "ACCOUNT KNOWLEDGE BASE — every table you are permitted to query, in full.\n"
+    "This is the complete set. If a concept is not documented here, it does not\n"
+    "exist in this account's data, and the answer is CANNOT_GENERATE.\n"
+    'The later section headed "Knowledge Base" carries this question\'s resolved\n'
+    "plan, term mappings and examples. It narrows which of the tables above to\n"
+    "use; it never adds one.\n\n"
+)
+
+
+def split_sql_system_prompt(prompt: str, stable_end: int) -> CachedPrompt:
+    """Cut the assembled SQL prompt at its cache breakpoint.
+
+    The preloaded knowledge base is emitted first and is the same for every
+    question on an account, so it is the prefix. Everything after it -- the
+    rules, which are gated on the question, and the resolved plan -- varies,
+    and behind the breakpoint that variance is free.
+
+    The cut is a recorded offset, never a search for a section header. The
+    question-specific hints are merged into one string well upstream of here,
+    so a header hunt would happily put varying text on the cached side and
+    then cache nothing, silently, for as long as nobody checked.
+    """
+    stable_end = max(0, min(int(stable_end), len(prompt)))
+    if not stable_end:
+        # Nothing was preloaded, so there is no stable half to cache.
+        return CachedPrompt(stable="", volatile=prompt)
+    return CachedPrompt(
+        stable=prompt[:stable_end].rstrip(),
+        volatile=prompt[stable_end:].strip(),
+    )
 
 
 def _find_date_role_tokens(table_context: str) -> list[str]:
@@ -452,8 +498,17 @@ def build_sql_system_prompt(
     graph_context: dict | None = None,
     semantic_plan: dict | None = None,
     question: str = "",
-) -> str:
+    stable_context: str = "",
+    return_parts: bool = False,
+) -> str | CachedPrompt:
     """System prompt for SQL generation — used on every user query.
+
+    stable_context: the account's whole knowledge base, preloaded rather than
+    retrieved. It is byte-identical for every question on the account, so it is
+    emitted first and is what a cache breakpoint can hold. `table_context` keeps
+    its meaning either way — the question-specific hints, examples and plan.
+    return_parts: return a CachedPrompt split at that breakpoint instead of one
+    string. The concatenation is identical to what this returns without it.
 
     graph_context: dict from graph_resolver.resolve_for_question().
     conversation_history: list of {question, sql, columns, row_count} dicts.
@@ -1284,6 +1339,19 @@ def build_sql_system_prompt(
                 "base CTE. If you cannot use the plan with the available schema, return "
                 "CANNOT_GENERATE."
             )
+    # The preloaded knowledge base goes on the front LAST, after the rule
+    # filter has finished with the prompt. The filter locates rules by
+    # searching for their opening words and deletes from there to the next
+    # boundary, so a KB document that happens to quote one of those phrases
+    # would take a bite out of itself if it were already in the string.
+    _stable_end = 0
+    if stable_context:
+        _prefix = _PRELOADED_KB_HEADER + stable_context.strip() + "\n\n"
+        base = _prefix + base
+        _stable_end = len(_prefix)
+
+    if return_parts:
+        return split_sql_system_prompt(base, _stable_end)
     return base
 
 
@@ -1621,8 +1689,128 @@ def build_biz_vocab_prompt(
 # Core completion function
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Truncated completions ────────────────────────────────────────────────────
+# Both vendor SDKs report whether the model finished or ran into the token
+# ceiling, and this codebase threw that field away: `stop_reason` and
+# `finish_reason` appeared nowhere. A truncated completion is not a shorter
+# answer, it is a different one. Generated SQL loses its tail -- a WHERE, the
+# back half of a GROUP BY -- and what is left can still parse, so it reaches
+# the validator looking like a legitimate query with a governed shape it never
+# actually had.
+#
+# Every caller assumes it is holding a complete response, so refusing is the
+# default. The few whose output is prose a person reads, where half a sentence
+# still beats nothing, opt in with allow_truncated=True.
+
+
+class LLMTruncatedError(RuntimeError):
+    """The provider stopped at the token ceiling instead of finishing.
+
+    Carries the partial payload, so ``llm_complete`` can hand it back to a
+    caller that has explicitly said a cut-off answer is still useful rather
+    than having to make the request twice.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        text: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ):
+        super().__init__(message)
+        self.text = text
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+def _truncated(
+    provider: str, model: str, max_tokens: int,
+    text: str, tok_in: int, tok_out: int,
+) -> LLMTruncatedError:
+    """Build the error, and log it -- a caller may choose to swallow it."""
+    log.warning(
+        "%s completion for %s stopped at the %d-token ceiling after %d chars; "
+        "the response is incomplete.",
+        provider, model, max_tokens, len(text),
+    )
+    return LLMTruncatedError(
+        f"{provider} completion for {model} was truncated at the "
+        f"{max_tokens}-token ceiling; the response is incomplete.",
+        text=text, input_tokens=tok_in, output_tokens=tok_out,
+    )
+
+
+# ── Anthropic sampling parameters ────────────────────────────────────────────
+# Claude models from the Opus 4.7 / Sonnet 5 generation onward removed
+# `temperature`, `top_p` and `top_k`. The API rejects them with a 400 rather
+# than ignoring them, so sending one makes the model impossible to select at
+# all -- the first call fails and there is nothing in the error a client would
+# read as "pick a different model".
+#
+# Where the parameter IS still accepted it is worth sending: Anthropic's own
+# default is 1.0 and none of the callers here want that much variance. So this
+# is a capability check, not a removal.
+#
+# The list is what is known at the time of writing. Anything newer is learned
+# from its first rejection rather than guessed, because a hardcoded list of
+# model names is exactly the thing that goes stale between releases.
+_ANTHROPIC_NO_SAMPLING_PARAMS = (
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+)
+
+_anthropic_temperature_rejected: set[str] = set()
+
+# Prompt caching needs a recent SDK as well as a recent model, and this repo
+# still declares `anthropic>=0.28.0`. Rather than raise the floor and break an
+# install that works, the first rejection turns the breakpoint off for the
+# process and the request is retried as a plain string -- which is exactly what
+# it was before this existed, so the cost of guessing wrong is one retry.
+_anthropic_prompt_cache_supported = True
+
+
+def _is_prompt_cache_rejection(exc: Exception) -> bool:
+    """Did this error come from the cache breakpoint rather than the prompt?"""
+    blob = f"{type(exc).__name__} {exc}".lower()
+    if any(word in blob for word in ("cache_control", "ephemeral", "cache-control")):
+        return True
+    # An SDK too old to model a structured `system` rejects it locally, before
+    # any request is made, as a validation error rather than an API one.
+    return isinstance(exc, (TypeError, ValueError)) and "system" in blob
+
+
+def _anthropic_accepts_temperature(model: str) -> bool:
+    name = str(model or "").strip().lower()
+    if name in _anthropic_temperature_rejected:
+        return False
+    return not name.startswith(_ANTHROPIC_NO_SAMPLING_PARAMS)
+
+
+def _is_temperature_rejection(exc: Exception) -> bool:
+    """Does this error say the model refused the sampling parameter?
+
+    Deliberately narrow. A false positive costs one retried call without
+    `temperature`; a false negative just surfaces the error as it does today.
+    """
+    blob = f"{type(exc).__name__} {exc}".lower()
+    if "temperature" not in blob:
+        return False
+    return (
+        getattr(exc, "status_code", None) == 400
+        or "badrequest" in blob
+        or "invalid_request" in blob
+        or "unexpected value" in blob
+    )
+
+
 async def llm_complete(
-    system: str,
+    system: str | CachedPrompt,
     user: str,
     provider: Provider,
     model: str,
@@ -1631,23 +1819,51 @@ async def llm_complete(
     azure_endpoint: str = "",
     azure_api_version: str = "2024-02-01",
     temperature: float = 0.7,
+    allow_truncated: bool = False,
 ) -> tuple[str, int, int]:
+    """Complete against the configured provider.
+
+    Raises ``LLMTruncatedError`` when the model stopped at the token ceiling,
+    unless ``allow_truncated`` says a partial answer is still worth having.
+    An accepted truncation is recorded as its own audit status rather than
+    passing for a clean success.
+
+    ``system`` may be a ``CachedPrompt``, which asks the Anthropic path for an
+    explicit cache breakpoint between its two halves. Every other provider --
+    and the audit trail, which must record what was actually sent -- sees the
+    concatenated text, exactly as before.
+    """
+    truncated = False
+    system_text = as_prompt_text(system)
     try:
         if provider == "anthropic":
             result = await _anthropic_complete(system, user, model, api_key, max_tokens, temperature)
         elif provider == "openai":
-            result = await _openai_complete(system, user, model, api_key, max_tokens, temperature)
+            result = await _openai_complete(system_text, user, model, api_key, max_tokens, temperature)
         elif provider == "azure_openai":
             result = await _azure_openai_complete(
-                system, user, model, api_key, max_tokens, azure_endpoint, azure_api_version, temperature
+                system_text, user, model, api_key, max_tokens, azure_endpoint, azure_api_version, temperature
             )
         else:
             raise ValueError(f"Unknown LLM provider: {provider!r}")
+    except LLMTruncatedError as exc:
+        if not allow_truncated:
+            record_llm_call(
+                llm_provider=provider,
+                llm_model=model,
+                system=system_text,
+                user=user,
+                status="error",
+                error_msg=str(exc),
+            )
+            raise
+        truncated = True
+        result = (exc.text, exc.input_tokens, exc.output_tokens)
     except Exception as exc:
         record_llm_call(
             llm_provider=provider,
             llm_model=model,
-            system=system,
+            system=system_text,
             user=user,
             status="error",
             error_msg=str(exc),
@@ -1657,9 +1873,12 @@ async def llm_complete(
     record_llm_call(
         llm_provider=provider,
         llm_model=model,
-        system=system,
+        system=system_text,
         user=user,
-        status="success",
+        # A kept-anyway truncation is not a clean success and must not read as
+        # one in the audit trail; it is the row an admin needs to find when an
+        # answer trails off mid-sentence.
+        status="truncated" if truncated else "success",
         response=result[0] if isinstance(result, tuple) else str(result or ""),
     )
     return result
@@ -1762,17 +1981,77 @@ def _get_azure_client(api_key: str, endpoint: str, api_version: str):
 
 
 async def _anthropic_complete(system, user, model, api_key, max_tokens, temperature=0.7):
+    global _anthropic_prompt_cache_supported
     client = _get_anthropic_client(api_key)
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": (
+            anthropic_system_blocks(system)
+            if _anthropic_prompt_cache_supported
+            else as_prompt_text(system)
+        ),
+        "messages": [{"role": "user", "content": user}],
+    }
+    if _anthropic_accepts_temperature(model):
+        kwargs["temperature"] = temperature
+
     try:
-        resp = await client.messages.create(
-            model=model, max_tokens=max_tokens, system=system,
-            temperature=temperature,
-            messages=[{"role": "user", "content": user}],
-        )
-        return resp.content[0].text.strip(), resp.usage.input_tokens, resp.usage.output_tokens
+        resp = await client.messages.create(**kwargs)
     except Exception as e:
-        log.error("Anthropic API error: %s", e)
-        raise RuntimeError(f"Anthropic API error: {e}") from e
+        # Two things here can be unsupported, and both are recoverable by
+        # dropping them. Neither is a reason to fail a question.
+        recovered = ""
+        if "temperature" in kwargs and _is_temperature_rejection(e):
+            # Remembered, so an unrecognised model costs one rejected call per
+            # process rather than one per question.
+            _anthropic_temperature_rejected.add(str(model or "").strip().lower())
+            kwargs.pop("temperature", None)
+            recovered = "`temperature`"
+        elif isinstance(kwargs.get("system"), list) and _is_prompt_cache_rejection(e):
+            _anthropic_prompt_cache_supported = False
+            kwargs["system"] = as_prompt_text(system)
+            recovered = "the prompt cache breakpoint"
+
+        if not recovered:
+            log.error("Anthropic API error: %s", e)
+            raise RuntimeError(f"Anthropic API error: {e}") from e
+
+        log.warning(
+            "Model %s rejected %s; retrying without it and leaving it off for "
+            "the rest of the process.", model, recovered,
+        )
+        try:
+            resp = await client.messages.create(**kwargs)
+        except Exception as e2:
+            log.error("Anthropic API error: %s", e2)
+            raise RuntimeError(f"Anthropic API error: {e2}") from e2
+
+    # The only honest answer to "is the breakpoint actually paying". A prefix
+    # that is still varying per question reads as a permanent zero here, and
+    # that is a bug to go and find rather than a reason to give up on caching.
+    if isinstance(kwargs.get("system"), list):
+        counters = cache_usage(resp.usage)
+        if counters:
+            log.info("Anthropic prompt cache for %s: %s", model, counters)
+        else:
+            log.warning(
+                "Anthropic prompt cache for %s reported neither a read nor a "
+                "write on a %d-char prefix. Expected once, on the first call "
+                "of a session with an SDK too old to report the counters; "
+                "every question after that means the prefix is still varying.",
+                model, len(getattr(system, "stable", "") or ""),
+            )
+
+    # Joined rather than content[0]: a response can carry more than one text
+    # block, and a truncated one can carry none at all.
+    text = "".join(
+        getattr(block, "text", "") or "" for block in (resp.content or [])
+    ).strip()
+    tok_in, tok_out = resp.usage.input_tokens, resp.usage.output_tokens
+    if getattr(resp, "stop_reason", "") == "max_tokens":
+        raise _truncated("Anthropic", model, max_tokens, text, tok_in, tok_out)
+    return text, tok_in, tok_out
 
 
 async def _openai_complete(system, user, model, api_key, max_tokens, temperature=0.7):
@@ -1784,11 +2063,16 @@ async def _openai_complete(system, user, model, api_key, max_tokens, temperature
             messages=[{"role": "system", "content": system},
                       {"role": "user",   "content": user}],
         )
-        text = (resp.choices[0].message.content or "").strip()
-        return text, resp.usage.prompt_tokens, resp.usage.completion_tokens
     except Exception as e:
         log.error("OpenAI API error: %s", e)
         raise RuntimeError(f"OpenAI API error: {e}") from e
+
+    choice = resp.choices[0]
+    text = (choice.message.content or "").strip()
+    tok_in, tok_out = resp.usage.prompt_tokens, resp.usage.completion_tokens
+    if getattr(choice, "finish_reason", "") == "length":
+        raise _truncated("OpenAI", model, max_tokens, text, tok_in, tok_out)
+    return text, tok_in, tok_out
 
 
 async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpoint, api_version, temperature=0.7):
@@ -1805,14 +2089,19 @@ async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpo
             messages=[{"role": "system", "content": system},
                       {"role": "user",   "content": user}],
         )
-        text = (resp.choices[0].message.content or "").strip()
-        return text, resp.usage.prompt_tokens, resp.usage.completion_tokens
     except Exception as e:
         log.error("Azure OpenAI error: %s", e)
         raise RuntimeError(
             f"Azure OpenAI error: {e}\n\n"
             "Check your endpoint URL, API key, and deployment name in Admin → System."
         ) from e
+
+    choice = resp.choices[0]
+    text = (choice.message.content or "").strip()
+    tok_in, tok_out = resp.usage.prompt_tokens, resp.usage.completion_tokens
+    if getattr(choice, "finish_reason", "") == "length":
+        raise _truncated("Azure OpenAI", model, max_tokens, text, tok_in, tok_out)
+    return text, tok_in, tok_out
 
 
 # ══════════════════════════════════════════════════════════════════════════════

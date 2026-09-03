@@ -18,6 +18,8 @@ import time
 import store
 from gateway import PlatformEvent
 from core.llm import llm_complete, build_sql_system_prompt, resolve_provider
+from core.prompt_cache import prompt_cache_enabled
+from core.kb_preload import preload_account_kb
 from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     check_ambiguity_glossary_first, save_pending,
@@ -1926,65 +1928,77 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _n = 10 if _grouping else 8
 
         rag_filter = query_scope_tables
-        relevant_kbs = retriever.retrieve(question, n=_n, allowed_tables=rag_filter)
-        _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
-        _retrieval_unscored = bool(getattr(retriever, "last_retrieval_unscored", False))
+        # A preloaded knowledge base already holds every table this user may
+        # query, so there is nothing left for a re-ranker to choose between.
+        # Skipping the search is the whole point of preloading: on a live
+        # account it cost ~12.9 s a question, and the deterministic
+        # table-coverage pass then overrode its verdict anyway.
+        _preloaded_kb, _preloaded_tables = "", []
+        if prompt_cache_enabled():
+            _preloaded_kb, _preloaded_tables = preload_account_kb(account_id, effective)
+        if _preloaded_kb:
+            relevant_kbs = []
+            context = ""
+        else:
+            relevant_kbs = retriever.retrieve(question, n=_n, allowed_tables=rag_filter)
+            _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
+            _retrieval_unscored = bool(getattr(retriever, "last_retrieval_unscored", False))
 
-        pinned    = [d for d in relevant_kbs if retriever._is_global(d)]
-        table_kbs = [d for d in relevant_kbs if not retriever._is_global(d)]
+            pinned    = [d for d in relevant_kbs if retriever._is_global(d)]
+            table_kbs = [d for d in relevant_kbs if not retriever._is_global(d)]
 
-        if _grouping:
-            fact_patterns = retriever.retrieve_fact_patterns(
-                question, n=2, allowed_tables=rag_filter,
-            )
-            for fp in fact_patterns:
-                if fp not in (pinned + table_kbs):
-                    table_kbs.insert(0, fp)
+            if _grouping:
+                fact_patterns = retriever.retrieve_fact_patterns(
+                    question, n=2, allowed_tables=rag_filter,
+                )
+                for fp in fact_patterns:
+                    if fp not in (pinned + table_kbs):
+                        table_kbs.insert(0, fp)
 
-        # ── Multi-schema coherence (no schema_hint = "All" mode) ─────────────
-        # When the user is in "All" mode across multiple schemas, the semantic
-        # search can return KB docs from different schemas. If one schema
-        # dominates the top results (≥60%, ≥2 docs), do a focused re-retrieval
-        # scoped only to that schema's tables so the LLM gets clean, single-
-        # schema context instead of a mix.
-        if not schema_hint and table_kbs:
-            _schema_votes: dict[str, int] = {}
-            for _doc in table_kbs:
-                _first_line = _doc.splitlines()[0].strip().lstrip("#").strip()
-                _parts = _first_line.upper().split(".")
-                if len(_parts) >= 2:
-                    _sch = _parts[-2].strip("[]")
-                    if _sch and _sch not in {"DBO", "SYS", "INFORMATION_SCHEMA", "GUEST"}:
-                        _schema_votes[_sch] = _schema_votes.get(_sch, 0) + 1
-            if _schema_votes:
-                _dominant_sch = max(_schema_votes, key=_schema_votes.get)
-                _total_votes  = sum(_schema_votes.values())
-                _dom_ratio    = _schema_votes[_dominant_sch] / _total_votes
-                if _dom_ratio >= 0.6 and _total_votes >= 2 and len(_schema_votes) > 1:
-                    # Build a focused filter for just the dominant schema
-                    _base_pool = effective if effective else all_known
-                    _focused = {
-                        t for t in _base_pool
-                        if len(t.split(".")) >= 2
-                        and t.upper().split(".")[-2].strip("[]") == _dominant_sch
-                    }
-                    if _focused:
-                        _focused_kbs = retriever.retrieve(
-                            question, n=_n, allowed_tables=_focused
-                        )
-                        _focused_table_kbs = [
-                            d for d in _focused_kbs if not retriever._is_global(d)
-                        ]
-                        if len(_focused_table_kbs) >= 2:
-                            table_kbs = _focused_table_kbs
-                            log.info(
-                                "Multi-schema: re-retrieved focused on %s "
-                                "(ratio=%.0f%%, schemas_seen=%d)",
-                                _dominant_sch, _dom_ratio * 100, len(_schema_votes),
+            # ── Multi-schema coherence (no schema_hint = "All" mode) ─────────────
+            # When the user is in "All" mode across multiple schemas, the semantic
+            # search can return KB docs from different schemas. If one schema
+            # dominates the top results (≥60%, ≥2 docs), do a focused re-retrieval
+            # scoped only to that schema's tables so the LLM gets clean, single-
+            # schema context instead of a mix.
+            if not schema_hint and table_kbs:
+                _schema_votes: dict[str, int] = {}
+                for _doc in table_kbs:
+                    _first_line = _doc.splitlines()[0].strip().lstrip("#").strip()
+                    _parts = _first_line.upper().split(".")
+                    if len(_parts) >= 2:
+                        _sch = _parts[-2].strip("[]")
+                        if _sch and _sch not in {"DBO", "SYS", "INFORMATION_SCHEMA", "GUEST"}:
+                            _schema_votes[_sch] = _schema_votes.get(_sch, 0) + 1
+                if _schema_votes:
+                    _dominant_sch = max(_schema_votes, key=_schema_votes.get)
+                    _total_votes  = sum(_schema_votes.values())
+                    _dom_ratio    = _schema_votes[_dominant_sch] / _total_votes
+                    if _dom_ratio >= 0.6 and _total_votes >= 2 and len(_schema_votes) > 1:
+                        # Build a focused filter for just the dominant schema
+                        _base_pool = effective if effective else all_known
+                        _focused = {
+                            t for t in _base_pool
+                            if len(t.split(".")) >= 2
+                            and t.upper().split(".")[-2].strip("[]") == _dominant_sch
+                        }
+                        if _focused:
+                            _focused_kbs = retriever.retrieve(
+                                question, n=_n, allowed_tables=_focused
                             )
+                            _focused_table_kbs = [
+                                d for d in _focused_kbs if not retriever._is_global(d)
+                            ]
+                            if len(_focused_table_kbs) >= 2:
+                                table_kbs = _focused_table_kbs
+                                log.info(
+                                    "Multi-schema: re-retrieved focused on %s "
+                                    "(ratio=%.0f%%, schemas_seen=%d)",
+                                    _dominant_sch, _dom_ratio * 100, len(_schema_votes),
+                                )
 
-        relevant_kbs = [_clamp_kb_doc(d) for d in (pinned + table_kbs)[:7]]
-        context = "\n\n---\n\n".join(relevant_kbs)
+            relevant_kbs = [_clamp_kb_doc(d) for d in (pinned + table_kbs)[:7]]
+            context = "\n\n---\n\n".join(relevant_kbs)
         # Per-table retrieval telemetry: which tables were candidates, their
         # best cross-encoder score, and whether the relevance floor kept them.
         # Re-read weak flag too — the focused re-retrieval above may have
@@ -1992,9 +2006,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # what matters. Persisted on the trace so every "wrong table" report
         # is diagnosable, and aggregated by store.get_kb_doc_quality for the
         # Model Health KB doc-quality ranking.
-        _retrieval_stats = list(getattr(retriever, "last_retrieval_stats", []) or [])
-        _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
-        _retrieval_unscored = bool(getattr(retriever, "last_retrieval_unscored", False))
+        if _preloaded_kb:
+            # No search ran, so there are no scores to report and nothing to
+            # call weak. Stated rather than inherited: these read off the
+            # retriever, which under a preload was never asked anything, and
+            # "weak retrieval" is what quarantines an answer from the learning
+            # loop — a stale True here would silently stop the system learning.
+            _retrieval_stats = []
+            _weak_retrieval = False
+            _retrieval_unscored = False
+        else:
+            _retrieval_stats = list(getattr(retriever, "last_retrieval_stats", []) or [])
+            _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
+            _retrieval_unscored = bool(getattr(retriever, "last_retrieval_unscored", False))
         _trace_update(
             trace_id,
             route="normal_sql",
@@ -2021,7 +2045,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             kb_dir=state.get("kb_dir", ""),
         )
         if examples:
-            context = format_examples_for_prompt(examples, account_id) + "\n\n---\n\n" + context
+            # A preload leaves `context` empty by design, and joining onto
+            # nothing left a bare "---" rule dangling at the end of the block.
+            context = "\n\n---\n\n".join(
+                part for part in
+                (format_examples_for_prompt(examples, account_id), context)
+                if part
+            )
             log.info("Injected %d validated examples into prompt", len(examples))
             _trace_step(
                 trace_id, "retrieve_examples",
@@ -2189,7 +2219,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Scan already-retrieved KB for Business Synonyms / Key Metrics → compact map.
     # This runs even when the glossary DB is empty and guards against the LLM
     # inventing CamelCase column names for well-known business terms.
-    kb_synonym_injection = _extract_kb_synonym_injection(context)
+    # Reads whichever knowledge base actually reached this question. Under a
+    # preload `context` is empty by design, and taking the synonym map from it
+    # would quietly drop the one section that stops the model inventing a
+    # CamelCase column for a business term.
+    kb_synonym_injection = _extract_kb_synonym_injection(_preloaded_kb or context)
 
     context_parts = [
         part for part in (
@@ -2212,7 +2246,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # planner reconciliation) and each call only sees the RAG docs, so without a
     # shared ledger the same table is re-fetched from Qdrant and re-appended
     # every stage — one 90 kB fact document went in four times on the live trace.
-    _injected_kb_tables: set[str] = set()
+    _injected_kb_tables: set[str] = set(_preloaded_tables)
 
     # Value-resolution ambiguity across DIFFERENT columns ("Emco" matches a
     # customer name AND an item description) can't be settled deterministically
@@ -4798,6 +4832,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         graph_context=_graph_ctx or None,
         semantic_plan=_semantic_plan or None,
         question=question,
+        # Empty unless the knowledge base was preloaded, in which case this is
+        # the half that is identical for every question and worth caching.
+        stable_context=_preloaded_kb,
+        return_parts=bool(_preloaded_kb),
     )
     _sql_generation_max_tokens = _sql_completion_token_budget(
         question,

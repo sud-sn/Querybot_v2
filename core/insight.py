@@ -1179,7 +1179,12 @@ async def generate_insight(
         with llm_audit_component("analysis_narrative"):
             raw_response, tok_in, tok_out = await llm_complete(
                 system, user_msg, provider, model, api_key,
-                max_tokens=600, temperature=0.3, **extra_kwargs,
+                max_tokens=600, temperature=0.3,
+                # Prose a person reads: a narrative that stops mid-sentence is
+                # still worth more than no narrative, and nothing downstream
+                # parses it for a governed decision.
+                allow_truncated=True,
+                **extra_kwargs,
             )
         parsed = parse_insight_response(raw_response)
     except Exception as e:
