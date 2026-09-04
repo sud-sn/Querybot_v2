@@ -37,12 +37,16 @@ Entry points
 ────────────
   detect_multi_period_intent(question) → MultiPeriodIntent | None
   extract_period_specs(question) → list[PeriodSpec]
+  question_names_comparable_periods(question) → bool
+  build_period_plan(intent, question, semantic_plan, db_type) → PeriodPlan | None
 """
 
 from __future__ import annotations
 
+import calendar as _calendar
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -297,3 +301,278 @@ def _generate_relative_specs(n: int, unit: str) -> list[PeriodSpec]:
             specs.append(PeriodSpec(label=f"{abbr} {year}", raw_text=f"{abbr} {year}"))
 
     return specs[::-1]  # chronological order (oldest first)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Period vocabulary — parsing one label into calendar parts
+# ══════════════════════════════════════════════════════════════════════════════
+
+_MONTH_ABBR = {name.lower(): n for n, name in enumerate(_calendar.month_abbr) if name}
+_MONTH_FULL = {name.lower(): n for n, name in enumerate(_calendar.month_name) if name}
+
+# Above this, portal_chat.html silently drops y-keys past the palette length,
+# so a 12-period request would render fewer series than were asked for --
+# the same silent incompleteness this whole change exists to remove. Capping
+# in SQL narrows the request, but it does so visibly.
+_MAX_PERIODS = 6
+
+
+@dataclass(frozen=True)
+class PeriodPlan:
+    """A compiled, governed instruction for comparing named periods.
+
+    Every field is derived from a date role that actually resolved. If no
+    governed date field is available this object is never built, because a
+    hint that forbids YEAR()/DATEPART() while naming no sanctioned alternative
+    is an instruction nothing can follow.
+    """
+    labels: list[str]        # chronological, oldest first
+    aliases: list[str]       # column-name suffixes, parallel to labels
+    predicates: list[str]    # SQL boolean expressions, parallel to labels
+    grain: str               # "yearly" | "quarterly" | "monthly"
+    date_field: dict         # the date_key_policy this was compiled against
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def oldest(self) -> str:
+        return self.labels[0]
+
+    @property
+    def newest(self) -> str:
+        return self.labels[-1]
+
+
+def period_parts(label: str) -> tuple[int, int, int] | None:
+    """Parse a period label into (year, kind, ordinal).
+
+    kind is 0 for a year, 1 for a quarter, 2 for a month, which is also the
+    sort order within a year, so the tuple sorts chronologically as-is.
+    Returns None for anything unparseable -- the caller must refuse rather
+    than guess.
+    """
+    text = str(label or "").strip()
+    if not text:
+        return None
+
+    m = re.fullmatch(r"(\d{4})", text)
+    if m:
+        return (int(m.group(1)), 0, 0)
+
+    m = re.fullmatch(r"Q([1-4])\s+(\d{4})", text, re.I)
+    if m:
+        return (int(m.group(2)), 1, int(m.group(1)))
+
+    m = re.fullmatch(r"([A-Za-z]{3,9})\s+(\d{4})", text)
+    if m:
+        name = m.group(1).lower()
+        month = _MONTH_ABBR.get(name[:3]) if name[:3] in _MONTH_ABBR else None
+        if _MONTH_FULL.get(name):
+            month = _MONTH_FULL[name]
+        if month:
+            return (int(m.group(2)), 2, month)
+    return None
+
+
+def period_sort_key(label: str) -> tuple[int, int, int]:
+    """Chronological ordering. The detector returns question order, and the
+    target question asks for 2025 before 2024, so every consumer must sort."""
+    return period_parts(label) or (0, 0, 0)
+
+
+def period_alias_suffix(label: str) -> str:
+    """A column-name-safe suffix: "Q1 2024" -> "Q1_2024", "Jan 2024" -> "JAN_2024"."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", str(label or "").strip()).strip("_").upper()
+
+
+def period_bounds(label: str) -> tuple[date, date] | None:
+    """The half-open [start, end) span of a period.
+
+    Half-open deliberately: a closed upper bound on a datetime column silently
+    drops the last day's rows, and this is the fallback used when no calendar
+    attribute is available, so it is the path with the least other checking.
+    """
+    parts = period_parts(label)
+    if not parts:
+        return None
+    year, kind, ordinal = parts
+    if kind == 0:
+        return date(year, 1, 1), date(year + 1, 1, 1)
+    if kind == 1:
+        start_month = (ordinal - 1) * 3 + 1
+        end_year, end_month = (year, start_month + 3) if start_month + 3 <= 12 else (year + 1, 1)
+        return date(year, start_month, 1), date(end_year, end_month, 1)
+    end_year, end_month = (year, ordinal + 1) if ordinal < 12 else (year + 1, 1)
+    return date(year, ordinal, 1), date(end_year, end_month, 1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Plan compilation
+# ══════════════════════════════════════════════════════════════════════════════
+
+def question_names_comparable_periods(question: str) -> bool:
+    """Does this question name two or more periods and ask them to be compared?
+
+    Used by core/contextual_dates to widen the date-binding gate. Deliberately
+    narrower than question_has_explicit_date_filter, whose bare four-digit-year
+    pattern would widen the gate on any question containing a number.
+    """
+    intent = detect_multi_period_intent(question)
+    if intent is None or intent.source != "named":
+        return False
+    if not (2 <= len(intent.period_specs) <= _MAX_PERIODS):
+        return False
+    if not _wants_comparison(question):
+        return False
+    return all(period_parts(spec.label) for spec in intent.period_specs)
+
+
+def _wants_comparison(question: str) -> bool:
+    """Reuse the one live comparison vocabulary rather than adding a sixth.
+
+    core/query_semantics.analyze_query_intent already lists against, relative
+    to, contrast, delta, variance and benchmark. This product has a documented
+    habit of growing parallel detectors for the same concept and letting them
+    drift.
+    """
+    try:
+        from core.query_semantics import analyze_query_intent
+        return bool(analyze_query_intent(question).get("wants_comparison"))
+    except Exception:
+        return False
+
+
+def _date_policy(semantic_plan: dict | None) -> dict:
+    """The governed date field the plan bound, or {}."""
+    for policy in (semantic_plan or {}).get("date_key_policies") or []:
+        if policy.get("column") and (policy.get("table") or policy.get("role_alias")):
+            return dict(policy)
+    return {}
+
+
+def _period_predicate(
+    label: str,
+    policy: dict,
+    grain: str,
+    db_type: str,
+) -> str:
+    """Compile one period into a governed SQL boolean expression.
+
+    Preference order is the calendar dimension's own validated attributes,
+    then a half-open range on the approved date value. There is deliberately
+    no third option: wrapping the date column in YEAR()/DATEPART()/CONVERT()
+    is what the surrogate_date_conversion rules in core/validator.py refuse,
+    and emitting it here would produce SQL the product then rejects.
+    """
+    from core.contextual_dates import (
+        format_calendar_attribute_ref,
+        format_date_value_expression,
+    )
+
+    parts = period_parts(label)
+    if not parts:
+        return ""
+    year, kind, ordinal = parts
+    alias = str(policy.get("role_alias") or "")
+    attrs = dict(policy.get("calendar_attributes") or {})
+
+    def attr(name: str) -> str:
+        return format_calendar_attribute_ref(alias, attrs, name, db_type)
+
+    year_ref = attr("year")
+    if kind == 0 and year_ref:
+        return f"{year_ref} = {year}"
+    if kind == 1 and year_ref and attr("quarter"):
+        return f"{year_ref} = {year} AND {attr('quarter')} = {ordinal}"
+    if kind == 2 and year_ref and attr("month_number"):
+        return f"{year_ref} = {year} AND {attr('month_number')} = {ordinal}"
+    if kind == 2 and attr("year_month"):
+        return f"{attr('year_month')} = {year}{ordinal:02d}"
+
+    bounds = period_bounds(label)
+    if not bounds:
+        return ""
+
+    # The calendar dimension is joined under role_alias, so the reference must
+    # be alias-qualified exactly as core/pipeline_helpers builds it -- naming
+    # the physical table here produces SQL that will not resolve.
+    value_column = str(policy.get("date_value_column") or "")
+    if alias and value_column:
+        qualified = f"{alias}.{_quote_identifier(value_column, db_type)}"
+    elif policy.get("table") and policy.get("column"):
+        qualified = (f"{policy['table']}."
+                     f"{_quote_identifier(str(policy['column']), db_type)}")
+    else:
+        return ""
+
+    # Carries the yyyymmdd/yyyymm integer conversion when the role needs one,
+    # and returns the reference untouched otherwise.
+    date_ref = format_date_value_expression(
+        "", qualified, str(policy.get("date_key_type") or "surrogate_fk"), db_type)
+
+    start, end = bounds
+    return f"{date_ref} >= '{start.isoformat()}' AND {date_ref} < '{end.isoformat()}'"
+
+
+def _quote_identifier(column: str, db_type: str) -> str:
+    """Dialect quoting for one bare column name."""
+    name = str(column or "").strip().strip("[]\"`")
+    dialect = str(db_type or "azure_sql").lower()
+    if dialect in {"azure_sql", "sqlserver", "mssql"}:
+        return f"[{name}]"
+    if dialect in {"snowflake", "oracle"}:
+        return f'"{name}"'
+    return name
+
+
+def build_period_plan(
+    intent: MultiPeriodIntent | None,
+    question: str,
+    semantic_plan: dict | None,
+    db_type: str = "azure_sql",
+) -> PeriodPlan | None:
+    """Compile a detected intent into governed period predicates, or None.
+
+    Returns None -- meaning "behave exactly as before" -- unless every gate
+    holds. There is no partial mode: a plan that names some periods and
+    guesses at others produces arithmetic across incomparable columns.
+    """
+    if intent is None or intent.source != "named":
+        return None
+
+    labels = [spec.label for spec in intent.period_specs]
+    if not (2 <= len(labels) <= _MAX_PERIODS):
+        return None
+
+    parsed = [period_parts(label) for label in labels]
+    if not all(parsed):
+        return None
+    if len({p[1] for p in parsed}) != 1:          # mixed grains are not comparable
+        return None
+    if len(set(labels)) != len(labels):
+        return None
+
+    # Every label must be the user's own words. This is belt-and-braces over
+    # intent.source, and it is cheap.
+    lowered = (question or "").lower()
+    if not all(str(spec.raw_text or "").lower() in lowered for spec in intent.period_specs):
+        return None
+    if not _wants_comparison(question):
+        return None
+
+    policy = _date_policy(semantic_plan)
+    if not policy:
+        return None
+
+    ordered = sorted(labels, key=period_sort_key)
+    predicates = [_period_predicate(label, policy, intent.grain, db_type)
+                  for label in ordered]
+    if not all(predicates):
+        return None
+
+    return PeriodPlan(
+        labels=ordered,
+        aliases=[period_alias_suffix(label) for label in ordered],
+        predicates=predicates,
+        grain=intent.grain,
+        date_field=policy,
+    )

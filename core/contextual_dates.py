@@ -806,6 +806,22 @@ def _metric_default_time_role_bindings(
     return matches
 
 
+def _question_names_comparable_periods(question: str) -> bool:
+    """Two or more named calendar periods, asked to be compared.
+
+    Imported inside the function: core.multi_period reads nothing from this
+    module at import time, but keeping the edge one-directional here avoids
+    creating a cycle if that ever changes. A failure to import must not take
+    down date binding, so it degrades to "no opinion".
+    """
+    try:
+        from core.multi_period import question_names_comparable_periods
+        return question_names_comparable_periods(question)
+    except Exception:  # pragma: no cover - defensive
+        log.debug("multi-period gate check failed", exc_info=True)
+        return False
+
+
 def resolve_contextual_date_binding(
     question: str,
     *,
@@ -828,11 +844,27 @@ def resolve_contextual_date_binding(
     # An approved business synonym is temporal intent even when the phrase is
     # abbreviated (for example, "inv dt") and contains none of the generic
     # date words recognized by question_has_temporal_intent().
+    #
+    # Naming two calendar periods to be compared is also temporal intent, and
+    # question_has_temporal_intent does not see it. Executed: it returns False
+    # for "Compare 2025 against 2024 by revenue category", so this function
+    # returned {"status": "none"}, no date role bound, and the field plan
+    # carried no date field at all -- leaving the model to guess a date column
+    # with no governed join. That is the root cause of a two-period question
+    # coming back with one period of data.
+    #
+    # Deliberately narrow. This admits only questions that name two or more
+    # comparable periods AND ask for a comparison. Single-period absolute
+    # questions ("revenue in 2024") bind no role today and are left exactly as
+    # they are: widening those changes behaviour for every tenant and can turn
+    # working answers into date-role clarification prompts, which is a much
+    # larger bet than the defect being fixed here.
     if (
         not question_has_temporal_intent(question)
         and not question_has_snapshot_intent(
             question, matched_metrics=matched_metrics
         )
+        and not _question_names_comparable_periods(question)
         and not explicit
     ):
         return {"status": "none", "reason": "no temporal intent"}
@@ -1470,6 +1502,34 @@ def format_date_value_expression(
     return ref
 
 
+def format_calendar_attribute_ref(
+    role_alias: str,
+    calendar_attributes: dict[str, str] | None,
+    name: str,
+    db_type: str = "azure_sql",
+) -> str:
+    """Quote one validated calendar-dimension attribute for a dialect.
+
+    Returns "" when the attribute is not configured, which every caller must
+    treat as "this grain cannot be expressed through the calendar dimension"
+    rather than falling back to wrapping the date column in YEAR()/DATEPART().
+    Those wrappers are what the surrogate_date_conversion rules in
+    core/validator.py exist to refuse.
+
+    Lifted verbatim out of format_period_bucket_expression's inner closure so
+    the period compiler can build a `<role>.[CALENDAR_YEAR] = 2024` predicate
+    from the same source of truth as the period bucket, instead of a second
+    quoting implementation that can drift from it.
+    """
+    dialect = str(db_type or "azure_sql").lower()
+    column = str((calendar_attributes or {}).get(name) or "").strip().strip("[]\"`")
+    if column and dialect in {"azure_sql", "sqlserver", "mssql"}:
+        column = f"[{column}]"
+    elif column and dialect in {"snowflake", "oracle"}:
+        column = f'"{column}"'
+    return f"{role_alias}.{column}" if column and role_alias else column
+
+
 def format_period_bucket_expression(
     date_ref: str,
     grain: str,
@@ -1488,12 +1548,7 @@ def format_period_bucket_expression(
     dialect = str(db_type or "azure_sql").lower()
 
     def attr(name: str) -> str:
-        column = str(attrs.get(name) or "").strip().strip("[]\"`")
-        if column and dialect in {"azure_sql", "sqlserver", "mssql"}:
-            column = f"[{column}]"
-        elif column and dialect in {"snowflake", "oracle"}:
-            column = f'"{column}"'
-        return f"{role_alias}.{column}" if column and role_alias else column
+        return format_calendar_attribute_ref(role_alias, attrs, name, dialect)
 
     if grain == "year" and attr("year"):
         return attr("year")
