@@ -4400,6 +4400,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # emits the correct syntax without needing general training on window funcs.
     _analytic_hints: list[str] = []
     _analysis_contract: dict = {"enabled": False, "mode": "none"}
+    # The compiled PeriodPlan, once one exists. Both the hint branch below and
+    # the post-execution annotation key off THIS object rather than off
+    # _intents["multi_period"]: "what did each region contribute to revenue in
+    # 2023, 2024 and 2025" has a truthy multi_period intent, no comparison
+    # word, and a contribution intent, so gating on the raw intent would
+    # suppress the contribution answer for a question that literally asks for
+    # one. None means "behave exactly as before".
+    _mp_plan = None
     try:
         from core.insight import detect_analytical_intents
         from core.window_analytics import build_window_sql_hint
@@ -4438,7 +4446,50 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _analytic_hints.append(build_anomaly_sql_hint(db_cfg.get("db_type", "azure_sql")))
             log.info("analytic_intent: anomaly=True")
 
-        if _intents.get("contribution"):
+        # Named periods pivoted into side-by-side columns. Its own try/except
+        # deliberately: the enclosing handler logs at debug, wipes _intents and
+        # resets the analysis contract, which would silently disable the
+        # composition validator and the whole post-execution analytics dispatch
+        # if a fault in this branch reached it.
+        try:
+            from core.multi_period import (
+                build_multi_period_sql_hint,
+                build_period_plan,
+                detect_multi_period_intent,
+            )
+            _mp_candidate = build_period_plan(
+                detect_multi_period_intent(_semantic_plan_question),
+                _semantic_plan_question,
+                _semantic_plan,
+                db_cfg.get("db_type", "azure_sql"),
+            )
+            _mp_hint = build_multi_period_sql_hint(
+                _mp_candidate, db_cfg.get("db_type", "azure_sql")
+            )
+            if _mp_hint:
+                _analytic_hints.append(_mp_hint)
+                _mp_plan = _mp_candidate
+                log.info(
+                    "analytic_intent: multi_period periods=%d grain=%s",
+                    len(_mp_plan.labels), _mp_plan.grain,
+                )
+            elif _intents.get("multi_period"):
+                # Detected but not compilable — no governed date field, mixed
+                # grains, clock-derived labels, no comparison word. Emitting a
+                # hint whose period expressions are placeholders would be an
+                # instruction nothing can follow.
+                log.info("analytic_intent: multi_period hint withheld")
+        except Exception as _mp_exc:
+            log.warning(
+                "Multi-period hint skipped: %s", _mp_exc, exc_info=True
+            )
+            _mp_plan = None
+
+        # Suppressed when the period plan fired: build_contribution_sql_hint
+        # emits SUM(metric_col) OVER () with no PARTITION BY, which on a
+        # widened result is each category's share of the COMBINED periods --
+        # neither a per-period mix nor a share of the change.
+        if _intents.get("contribution") and not _mp_plan:
             _analytic_hints.append(build_contribution_sql_hint())
             log.info("analytic_intent: contribution=True")
 
@@ -4539,6 +4590,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # Store intents on event so _send_results can post-process the result
         if hasattr(event, '__dict__'):
             event.__dict__['_analytic_intents'] = _intents
+            event.__dict__['_multi_period_plan'] = _mp_plan
     except Exception as _ai_exc:
         log.debug("Analytical intent detection skipped: %s", _ai_exc)
         _intents = {}

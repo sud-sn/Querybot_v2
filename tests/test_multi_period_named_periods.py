@@ -35,6 +35,7 @@ from datetime import date
 
 from core.multi_period import (
     MultiPeriodIntent,
+    build_multi_period_sql_hint,
     build_period_plan,
     detect_multi_period_intent,
     extract_period_specs,
@@ -419,6 +420,194 @@ class TheCalendarAttributeFormatterWasExtractedIntact(unittest.TestCase):
         from core.contextual_dates import format_calendar_attribute_ref as ref
         self.assertEqual(ref("invoice_date", self.ATTRS, "week_number", "azure_sql"), "")
         self.assertEqual(ref("invoice_date", None, "year", "azure_sql"), "")
+
+
+class TheHintIsGroundedAndPromptSafe(unittest.TestCase):
+    """The hint is the only thing that makes the model pivot, and it sits after
+    _KB_SECTION_MARKER -- the last boundary _filter_sql_rules_for_compiled_plan
+    knows about. A rule marker in this text makes that filter delete from the
+    match to the end of the prompt, taking the field plan and the schema with
+    it, so the text is constrained as tightly as the SQL it prescribes."""
+
+    def _plan(self, question=TARGET, attrs=None, db="azure_sql"):
+        return build_period_plan(
+            detect_multi_period_intent(question), question,
+            _semantic_plan(ATTRS if attrs is None else attrs), db)
+
+    def _hint(self, **kw):
+        return build_multi_period_sql_hint(self._plan(**kw), kw.get("db", "azure_sql"))
+
+    def test_hint_text_is_grounded_and_prompt_safe(self):
+        from core.llm import _OPTIONAL_SQL_RULE_MARKERS
+
+        hint = self._hint()
+        plan = self._plan()
+
+        # Grounded: the governed predicates appear verbatim, so the model is
+        # never left to invent a period expression.
+        for predicate in plan.predicates:
+            self.assertIn(predicate, hint)
+        self.assertIn("2024", hint)
+        self.assertIn("2025", hint)
+
+        # A star anywhere -- the CTE included -- is refused by
+        # _production_shape_errors, which walks every Select scope.
+        self.assertNotIn("SELECT *", hint)
+        self.assertNotIn("select *", hint.lower())
+
+        for line in hint.split("\n"):
+            self.assertFalse(line.startswith("- "), line)
+        for feature, marker in _OPTIONAL_SQL_RULE_MARKERS.items():
+            with self.subTest(rule=feature):
+                self.assertNotIn(marker, hint)
+
+    def test_no_plan_means_no_prose(self):
+        """Forbidding YEAR()/DATEPART() while naming no sanctioned alternative
+        is an unfollowable instruction, so a withheld plan emits nothing."""
+        self.assertEqual(build_multi_period_sql_hint(None, "azure_sql"), "")
+        self.assertEqual(
+            build_multi_period_sql_hint(
+                self._plan("compare warehouse 2024 stock to warehouse 2025 stock"),
+                "azure_sql"),
+            "")
+
+    def test_the_hint_carries_the_dialect_of_the_plan(self):
+        self.assertIn('invoice_date."CALENDAR_YEAR" = 2024', self._hint(db="snowflake"))
+
+    def test_period_columns_keep_the_measure_name(self):
+        """A generic P_2024 with whole-number values is classified 'identifier'
+        by core/chart_spec.py and the chart loses the series entirely."""
+        hint = self._hint()
+        self.assertIn("<MEASURE>_2024", hint)
+        self.assertIn("<MEASURE>_2025", hint)
+        self.assertNotIn("P_2024", hint)
+
+    def test_hint_survives_the_rule_filter(self):
+        """Executed both ways: the real hint leaves the prompt tail intact, and
+        the same prompt with one marker added to the hint loses it. Without the
+        second half this test passes on any string at all."""
+        import core.llm as llm
+
+        hint = self._hint()
+        semantic_plan = _compiled_request_plan()
+        prompt = llm.build_sql_system_prompt(
+            "azure_sql",
+            "DBO.F_SALES: sales facts.\n\n---\n\n" + hint,
+            semantic_plan=semantic_plan,
+            question=TARGET,
+        )
+        self.assertIn(hint, prompt)
+        self.assertIn("FIELD PLAN RULE:", prompt)
+
+        filtered = llm._filter_sql_rules_for_compiled_plan(prompt, semantic_plan, None)
+        self.assertIn(hint, filtered)
+        self.assertIn("FIELD PLAN RULE:", filtered)
+
+        poisoned_prompt = llm.build_sql_system_prompt(
+            "azure_sql",
+            "DBO.F_SALES: sales facts.\n\n---\n\n" + hint
+            + "\n- RANKING RULE: a marker inside a hint.\n",
+            semantic_plan=semantic_plan,
+            question=TARGET,
+        )
+        poisoned = llm._filter_sql_rules_for_compiled_plan(
+            poisoned_prompt, semantic_plan, None)
+        self.assertNotIn(
+            "FIELD PLAN RULE:", poisoned,
+            "the control did not fail, so the real assertion above proves nothing",
+        )
+
+
+# Obviously synthetic schema -- no tenant tables anywhere in this file.
+_HINT_TABLE_COLUMNS = {
+    "DBO.F_SALES": {"NET_AMOUNT": "decimal", "CAT_KEY": "int", "DATE_KEY": "int"},
+    "DBO.D_CATEGORY": {"CAT_KEY": "int", "REVENUE_CATEGORY": "varchar"},
+    "DBO.D_DATE": {"DATE_KEY": "int", "FULL_DATE": "date", "CALENDAR_YEAR": "int",
+                   "CAL_QUARTER": "int", "MONTH_NUM": "int"},
+}
+
+_HINT_FROM = (
+    "DBO.F_SALES f "
+    "JOIN DBO.D_CATEGORY c ON c.CAT_KEY = f.CAT_KEY "
+    "JOIN DBO.D_DATE invoice_date ON invoice_date.DATE_KEY = f.DATE_KEY"
+)
+
+
+def _compiled_request_plan():
+    """A semantic plan trustworthy enough for _compiled_sql_rule_features to
+    return a set. With None it keeps the legacy full prompt and the rule filter
+    is a no-op, which would make the filter test vacuous."""
+    policy = _semantic_plan(ATTRS)["date_key_policies"][0]
+    return {
+        "enabled": True,
+        "date_key_policies": [policy],
+        "fields": [{"term": "revenue", "table": "DBO.F_SALES", "column": "NET_AMOUNT",
+                    "role": "measure", "enforcement": "required"}],
+        "analytical_request_plan": {
+            "status": "compiled", "question": TARGET, "intent": "comparison",
+            "dimensions": [{"name": "REVENUE_CATEGORY"}],
+            "measures": [{"name": "NET_AMOUNT"}],
+            "source_facts": ["DBO.F_SALES"],
+        },
+    }
+
+
+def _sql_the_hint_prescribes(hint: str) -> str:
+    """The hint's own SQL sketch with its placeholders filled in.
+
+    Lifted out of the returned string rather than retyped, so the statement
+    validated below is the one the model is actually being shown.
+    """
+    start = hint.index("WITH period_totals")
+    end = hint.index("\n\n", start)
+    return (
+        hint[start:end]
+        .replace("<the fact table and its approved joins>", _HINT_FROM)
+        .replace("<MEASURE>", "NET_AMOUNT")
+        .replace("<measure>", "f.NET_AMOUNT")
+        .replace("<category>", "REVENUE_CATEGORY")
+    )
+
+
+class ThePrescribedShapeIsAcceptedAsGenerated(unittest.TestCase):
+    """The hint is only worth sending if the SQL it describes survives the
+    validators the product then applies to it. Composition mode is on, because
+    the analysis contract is hint index 0 and its 'one row per requested
+    business category' is what periods-as-columns satisfies and
+    periods-as-rows fights."""
+
+    def _sql(self):
+        plan = build_period_plan(
+            detect_multi_period_intent(TARGET), TARGET, _semantic_plan(ATTRS), "azure_sql")
+        return _sql_the_hint_prescribes(build_multi_period_sql_hint(plan, "azure_sql"))
+
+    def test_prescribed_shape_validates(self):
+        from core.validator import validate_sql_detailed
+
+        result = validate_sql_detailed(
+            self._sql(),
+            set(_HINT_TABLE_COLUMNS),
+            "azure_sql",
+            set(_HINT_TABLE_COLUMNS),
+            _HINT_TABLE_COLUMNS,
+            {"production_sql": True,
+             "analysis_contract": {"enabled": True, "mode": "composition"}},
+        )
+        self.assertTrue(result.ok, result.reason)
+        self.assertEqual(result.code, "ok")
+
+    def test_the_lineage_is_aggregate_only_and_starless(self):
+        """Pins the compliance read of the same statement: no star in any
+        scope, and every emitted measure traces to an aggregate rather than to
+        a raw row value."""
+        from core.compliance.sql_guard import analyze_sql
+
+        analysis = analyze_sql(self._sql(), "azure_sql")
+        self.assertFalse(analysis.has_star)
+        for column in ("NET_AMOUNT_2024", "NET_AMOUNT_2025",
+                       "CHANGE_ABS", "CHANGE_PCT", "SHARE_OF_CHANGE_PCT"):
+            with self.subTest(column=column):
+                self.assertIn(column, analysis.aggregate_outputs)
 
 
 if __name__ == "__main__":

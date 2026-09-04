@@ -576,3 +576,99 @@ def build_period_plan(
         grain=intent.grain,
         date_field=policy,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Prompt hint — one governed query, periods as columns
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_multi_period_sql_hint(plan: PeriodPlan | None,
+                                db_type: str = "azure_sql") -> str:
+    """The SQL-generation hint for a compiled PeriodPlan, or "" for no plan.
+
+    "" means "emit nothing and behave exactly as before". A hint that forbids
+    YEAR()/DATEPART() while naming no sanctioned alternative is an instruction
+    nothing can follow, so no plan means no prose.
+
+    Three constraints shape the text, each pinned by a test:
+
+    * The block must not contain any string in
+      core.llm._OPTIONAL_SQL_RULE_MARKERS, and no line may start with "- ".
+      Hints are appended after _KB_SECTION_MARKER, the last boundary
+      _filter_sql_rules_for_compiled_plan knows about, so a marker appearing
+      here makes that filter delete from the match to the end of the prompt --
+      taking the field plan and the schema with it.
+    * No SELECT *, inside the CTE included. _production_shape_errors walks
+      every Select scope and production_sql is set on every generated
+      statement, so a star anywhere is refused.
+    * Period columns are named <MEASURE>_<LABEL>, never a generic P_<LABEL>.
+      core/chart_spec.py demotes a whole-number column whose name matches
+      none of its currency/percent/count patterns to an identifier, and the
+      chart then loses the series entirely.
+
+    The text also has to override step 2 of the year-over-year rule, which
+    tells the model to take the two most recent years from MAX(year). That
+    rule may or may not be in the prompt -- it is one of the optional blocks --
+    so the override is stated unconditionally.
+    """
+    if plan is None or len(plan.labels) < 2 or len(plan.aliases) != len(plan.labels):
+        return ""
+    if len(plan.predicates) != len(plan.labels) or not all(plan.predicates):
+        return ""
+
+    aliases = list(plan.aliases)
+    oldest, newest = aliases[0], aliases[-1]
+    change = f"<MEASURE>_{newest} - <MEASURE>_{oldest}"
+
+    cases = ",\n".join(
+        f"      SUM(CASE WHEN {predicate} THEN <measure> ELSE 0 END)"
+        f" AS <MEASURE>_{alias}"
+        for predicate, alias in zip(plan.predicates, aliases)
+    )
+    outputs = ",\n".join(f"    <MEASURE>_{alias}" for alias in aliases)
+    where = " OR ".join(f"({predicate})" for predicate in plan.predicates)
+
+    sketch = (
+        "WITH period_totals AS (\n"
+        "    SELECT\n"
+        "      <category>,\n"
+        f"{cases}\n"
+        "    FROM <the fact table and its approved joins>\n"
+        f"    WHERE {where}\n"
+        "    GROUP BY <category>\n"
+        "  )\n"
+        "  SELECT\n"
+        "    <category>,\n"
+        f"{outputs},\n"
+        f"    {change} AS CHANGE_ABS,\n"
+        f"    ROUND(({change}) * 100.0"
+        f" / NULLIF(ABS(<MEASURE>_{oldest}), 0), 2) AS CHANGE_PCT,\n"
+        f"    ROUND(({change}) * 100.0"
+        f" / NULLIF(SUM({change}) OVER (), 0), 2) AS SHARE_OF_CHANGE_PCT\n"
+        "  FROM period_totals\n"
+        f"  ORDER BY ABS({change}) DESC"
+    )
+
+    labels = ", ".join(plan.labels)
+    return (
+        "MULTI-PERIOD COMPARISON HINT:\n"
+        f"The question names {len(plan.labels)} periods ({labels}) and asks how they "
+        "changed. Return ONE row per business category, one column per period, side "
+        "by side. Not one row per period.\n\n"
+        f"  {sketch}\n\n"
+        f"* Compare exactly these periods: {labels}. Do NOT derive them from "
+        "MAX(year), from the newest row, or from today. This overrides any other "
+        "instruction to take the most recent periods from the data.\n"
+        "* Use each period expression above exactly as written; it comes from this "
+        "tenant's approved date role. Do not wrap the date column in YEAR(), "
+        "DATEPART(), FORMAT() or CONVERT().\n"
+        "* Keep the measure, joins, filters and row grain exactly as the field plan "
+        "and entity graph specify. Add no table and no join.\n"
+        "* Replace <measure> with the aggregated measure expression, <MEASURE> with "
+        "its column name, <category> with the business category column. Each period "
+        "column keeps the measure's own name.\n"
+        "* Qualify columns inside the CTE only; the outer SELECT reads the CTE's "
+        "own output names.\n"
+        "* List every output column by name in both SELECT clauses. Never use a "
+        "star, in the CTE either."
+    )
