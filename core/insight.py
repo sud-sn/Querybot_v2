@@ -3,9 +3,17 @@ core/insight.py
 
 Dynamic LLM-powered analysis engine.
 
-Design principle: the LLM NEVER sees raw data rows. It only receives a
-statistical "data brief" — aggregated summaries, trend metrics, distribution
-shapes, and category breakdowns. The LLM interprets these patterns and
+Design principle: the LLM never receives the ROW SET. It receives a "data
+brief" — aggregated summaries, trend metrics, distribution shapes and category
+breakdowns.
+
+Stated precisely, because the older wording ("NEVER sees raw data") was not
+true and invited people to widen the brief on the strength of it: the brief
+DOES carry individual cell values where the aggregate IS a cell — a
+single-value result passes its number, and a category breakdown passes its
+labels. What it never carries is the rows themselves, and for a regulated
+tenant it is not built at all: `result_llm_features_allowed` gates every one
+of these entry points and returns a static response instead. The LLM interprets these patterns and
 generates a business-language narrative.
 
 Two entry points:
@@ -621,6 +629,33 @@ def _build_safe_llm_payload(
         numeric_summaries = data_brief.get("numeric_summaries", {})
         first_key = next(iter(numeric_summaries.keys()), "")
         payload["distribution_stats"] = numeric_summaries.get(first_key, {})
+    elif data_brief.get("mode") == "single_value":
+        # The one shape where the omission was total. A single-cell result has
+        # no ranking, no series and no distribution, so every branch above
+        # missed it and the payload carried NO NUMBER AT ALL -- the model was
+        # asked to explain a figure it had never been shown, and answered from
+        # the question wording alone.
+        payload["single_value_stats"] = {
+            "column": data_brief.get("value_column"),
+            "value": data_brief.get("value"),
+        }
+    else:
+        # `table` and `text_table` fall here. A table of numbers still has
+        # summaries worth reasoning about; a table of text genuinely has none,
+        # and then this stays empty rather than inventing something.
+        numeric_summaries = data_brief.get("numeric_summaries", {})
+        if numeric_summaries:
+            first_key = next(iter(numeric_summaries.keys()), "")
+            payload["distribution_stats"] = numeric_summaries.get(first_key, {})
+
+    # Shape-independent: how many rows the reader is looking at, and how wide.
+    # Without it an answer cannot say "across 3 categories" or "over 57 rows",
+    # which is the difference between a description and a summary.
+    payload["result_shape"] = {
+        "row_count": data_brief.get("row_count"),
+        "column_count": data_brief.get("column_count"),
+        "columns": data_brief.get("columns", {}),
+    }
 
     return payload
 
@@ -631,6 +666,7 @@ def build_action_contract(
     data_brief: dict,
     *,
     follow_up: str = "",
+    grounding: dict | None = None,
 ) -> dict:
     payload = _build_safe_llm_payload(action, question, data_brief, follow_up=follow_up)
     semantics = payload.get("metric_semantics", {})
@@ -641,6 +677,15 @@ def build_action_contract(
         "mode": payload.get("mode"),
         "result_scope": scope,
         "metric_semantics": semantics,
+        # How much the reader is actually looking at. Every action wants it —
+        # "across 3 categories", "over 57 rows" — so it is set once here
+        # rather than in each branch below.
+        "result_shape": payload.get("result_shape", {}),
+        # How the number was governed: which business date it resolved to,
+        # what scope was applied. The product computes all of this and then
+        # told the model none of it, so an answer could state a total but
+        # never what the total was OF.
+        "grounding": dict(grounding or {}),
     }
 
     if action == "explain":
@@ -654,6 +699,10 @@ def build_action_contract(
             ts = payload.get("time_series_stats", {})
             contract["headline_number"] = ts.get("last_value")
             contract["top_item"] = ts.get("last_period")
+        elif payload.get("mode") == "single_value":
+            single = payload.get("single_value_stats", {})
+            contract["headline_number"] = single.get("value")
+            contract["top_item"] = single.get("column")
     elif action == "analyze":
         contract["task"] = "Describe pattern shape, spread, concentration, or volatility in the returned result."
         contract["distribution_stats"] = payload.get("distribution_stats", {})
@@ -685,6 +734,118 @@ def build_action_contract(
     if follow_up:
         contract["follow_up"] = follow_up
     return contract
+
+
+def build_answer_grounding(
+    *,
+    semantic_plan: dict | None = None,
+    result_scope: dict | None = None,
+    row_count: int = 0,
+    truncated: bool = False,
+    tables: set[str] | list[str] | None = None,
+) -> dict:
+    """Collect how a figure was governed, for the answer to restate.
+
+    Every fact here is already computed somewhere in the pipeline and was
+    simply never carried to the model. Nothing is derived or guessed: a key is
+    present only when the pipeline actually established it, because
+    `_format_grounding_for_prompt` renders whatever it is given and the model
+    is told to treat it as true.
+
+    Deliberately total-failure-tolerant. This decorates an answer; it must
+    never be the reason a question fails, so a malformed plan yields fewer
+    facts rather than an exception.
+    """
+    grounding: dict[str, Any] = {}
+    plan = semantic_plan or {}
+
+    try:
+        disclosures = [d for d in (plan.get("date_disclosures") or []) if isinstance(d, dict)]
+        # The label is the sentence the date layer already wrote for a human
+        # ("year to date, to the newest date present in CUS_ORD_IVC_FCT").
+        labels = [str(d.get("label") or "").strip() for d in disclosures]
+        labels = [label for label in labels if label]
+        if labels:
+            grounding["date_context"] = labels[:3]
+        anchored = next(
+            (d for d in disclosures if d.get("resolution_source") or d.get("inference_source")),
+            None,
+        )
+        if anchored:
+            source = anchored.get("resolution_source") or anchored.get("inference_source")
+            table = anchored.get("table") or ""
+            grounding["business_date"] = (
+                f"{source} on {table}" if table else str(source)
+            )
+    except Exception:  # noqa: BLE001 — decoration, never a failure path
+        pass
+
+    try:
+        scope = result_scope or {}
+        badge = str(scope.get("badge") or scope.get("kind") or "").strip()
+        if badge:
+            grounding["scope"] = badge
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Completeness is stated only when we know it is INCOMPLETE. Saying "full
+    # read" on every other answer trains the reader to stop reading the line,
+    # which is exactly when the truncation notice needs to land.
+    if truncated:
+        grounding["completeness"] = (
+            f"TRUNCATED — only the first {row_count} rows were read, so totals "
+            "and averages below cover that subset, not the whole result"
+        )
+
+    try:
+        names = sorted({str(t).strip() for t in (tables or []) if str(t).strip()})
+        if names and len(names) <= 6:
+            grounding["tables"] = names
+    except Exception:  # noqa: BLE001
+        pass
+
+    return grounding
+
+
+def _format_grounding_for_prompt(grounding: dict) -> str:
+    """Render how the figure was produced, for the answer to restate.
+
+    A governed product computes all of this — which business date the query
+    resolved to, what scope was applied, whether the read was complete — and
+    then told the model none of it. So an answer could state a total and never
+    say what the total was OF, which is the difference between a number and a
+    defensible number.
+
+    Only non-empty facts are emitted. A half-filled provenance block invites
+    the model to fill the gaps, which is the opposite of the point.
+    """
+    if not grounding:
+        return ""
+    labels = (
+        ("business_date", "Business date the query resolved to"),
+        ("date_context", "Date context"),
+        ("period_label", "Period covered"),
+        ("scope", "Scope applied"),
+        ("completeness", "Completeness"),
+        ("metric_source", "Metric definition"),
+        ("tables", "Tables read"),
+    )
+    lines = []
+    for key, label in labels:
+        value = grounding.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (list, tuple)):
+            value = ", ".join(str(item) for item in value if item)
+            if not value:
+                continue
+        lines.append(f"- {label}: {value}")
+    if not lines:
+        return ""
+    return (
+        "\nHOW THIS RESULT WAS PRODUCED — state the relevant parts in your "
+        "answer, and never invent one that is absent here:\n" + "\n".join(lines)
+    )
 
 
 def build_insight_prompt_from_contract(
@@ -857,6 +1018,15 @@ def build_insight_prompt_from_contract(
 
     # ── User message — structured data brief ─────────────────────────────────
     system += (
+        "\nHOW TO WRITE IT\n"
+        "- Open by naming what the figures cover — the period, the filter, the "
+        "date the data runs to — using only what the provenance block states. "
+        "A reader should never have to ask what the total was OF.\n"
+        "- Use the actual figures. \"Revenue rose 12% to $13.1M\" is an answer; "
+        "\"revenue increased significantly\" is not.\n"
+        "- Say what it means, not only what it is. The number is already on "
+        "screen in the table above your answer.\n"
+        "- No preamble. Start with the finding.\n"
         "\nRESPONSE FORMAT (required):\n"
         "HEADLINE: ...\n"
         "BODY: ...\n"
@@ -883,6 +1053,9 @@ def build_insight_prompt_from_contract(
         f"Scope: {scope_badge}",
         f"\nData brief:\n{_format_brief_for_prompt(action_contract)}",
     ]
+    grounding_block = _format_grounding_for_prompt(action_contract.get("grounding") or {})
+    if grounding_block:
+        user_parts.append(grounding_block)
     if follow_up:
         user_parts.insert(1, f"Follow-up context: {follow_up}")
     if drilldown_briefs:
@@ -907,7 +1080,8 @@ def build_insight_prompt(
     """
     Build the system + user prompt for LLM insight generation.
     
-    The LLM receives ONLY statistical briefs — never raw data rows.
+    The LLM receives the data brief, never the row set. See the module
+    docstring for what that does and does not include.
     business_context provides the KB/RAG documents so the LLM
     understands what the business does, what columns mean, and
     what metrics represent — without this, it would hallucinate.
@@ -1190,12 +1364,14 @@ async def generate_insight(
     drilldown_briefs: list[dict] | None = None,
     business_context: str = "",
     original_sql: str = "",
+    grounding: dict | None = None,
     **extra_kwargs,
 ) -> dict:
     """
     Generate a dynamic LLM-powered insight from query results.
     
-    The LLM receives ONLY statistical summaries — never raw data.
+    The LLM receives the data brief, never the row set. See the module
+    docstring for what that does and does not include.
     business_context provides KB/RAG docs so the LLM understands
     the domain, column meanings, and business terminology.
     
@@ -1229,6 +1405,7 @@ async def generate_insight(
         question,
         brief,
         follow_up=follow_up,
+        grounding=grounding,
     )
     system, user_msg = build_insight_prompt_from_contract(
         action_contract,
@@ -1311,7 +1488,7 @@ async def generate_drilldown_insight(
     4. Compute data briefs from drill-down results
     5. Send all briefs to LLM for causal interpretation
     
-    The LLM NEVER sees raw data at any step.
+    The LLM never sees the row set at any step — see the module docstring.
     """
     from core.llm import llm_complete
     from core.llm_audit import llm_audit_component

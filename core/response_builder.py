@@ -1938,6 +1938,10 @@ async def generate_analysis_response(
     context: str = "",
     known_tables: set[str] | None = None,
     query_executor=None,
+    # Explicit, NOT via extra_kwargs: generate_drilldown_insight forwards
+    # **extra_kwargs straight into llm_complete, so an unexpected key there
+    # raises TypeError rather than being ignored.
+    grounding: dict | None = None,
     **extra_kwargs,
 ) -> dict:
     """
@@ -1993,6 +1997,7 @@ async def generate_analysis_response(
             api_key=api_key,
             business_context=context,
             original_sql=original_sql,
+            grounding=grounding,
             **extra_kwargs,
         )
 

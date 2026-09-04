@@ -1352,7 +1352,12 @@ function formatBotText(text){
     inlineCodes.push(`<code>${code}</code>`);
     return `@@INLINECODE${idx}@@`;
   });
-  h = h.replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>');
+  // **bold** BEFORE *italic*, or the single-asterisk rule eats the inner pair
+  // and leaves the outer two behind: "**10.6%**" rendered as "*10.6%*" with
+  // the asterisks visible. Models emit ** constantly, so this was on ordinary
+  // answers, not edge cases.
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
   h = h.replace(/(^|[\s(])_([^_\n]+)_($|[\s).,!?:;])/g, '$1<em>$2</em>$3');
   h = h.replace(/^[-•]\s+(.+)$/gm, '• $1');
   h = h.replace(/─{3,}/g, '<hr style="border:none;border-top:1px solid var(--border);margin:.65rem 0">');

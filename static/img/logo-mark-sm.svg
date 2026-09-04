@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="QueryBot">
+  <!--
+    QueryBot mark — REDUCED, for 24px and below.
+
+    Identical bubble and tail to logo-mark.svg. The only change is the answer
+    inside it: two bars instead of three, drawn at 5 units wide with a 2.5-unit
+    gap instead of 3.4 and 1.5.
+
+    Why a second file exists. The full mark is drawn on a 40-unit grid and this
+    product renders it at 16-32px and nowhere larger. At the 16px favicon that
+    put the three bars at 1.36px wide separated by 0.60px — sub-pixel, so they
+    blurred into one block or vanished depending on how the browser rounded.
+    The one feature that makes the mark ours was the one feature that never
+    survived. At the same 16px these two are 2.0px apart by 1.0px, which
+    resolves on every display.
+
+    Two bars still read as ascending, and the silhouette, the tail and the
+    palette are untouched, so it is recognisably the same mark rather than a
+    different one. Serve this below 24px and logo-mark.svg above.
+
+    Bars share the 24.6 baseline of the full mark, and are centred on the same
+    x=20 axis, so swapping between the two at a breakpoint does not shift the
+    optical centre.
+  -->
+  <defs>
+    <linearGradient id="qbTileSm" x1="0" y1="0" x2="0" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16332B"/>
+      <stop offset="1" stop-color="#0B1A15"/>
+    </linearGradient>
+    <linearGradient id="qbGlyphSm" x1="9" y1="8" x2="33" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3FDCBD"/>
+      <stop offset="1" stop-color="#10A088"/>
+    </linearGradient>
+  </defs>
+
+  <!--
+    No animation here on purpose. This variant exists for the favicon and for
+    16-24px chrome, where a pop-and-rise is invisible at best and, in a browser
+    tab, not rendered at all.
+  -->
+
+  <rect width="40" height="40" rx="9" fill="url(#qbTileSm)"/>
+  <rect x="0.5" y="0.5" width="39" height="39" rx="8.5" fill="none" stroke="#FFFFFF" stroke-opacity=".07"/>
+
+  <path fill="url(#qbGlyphSm)"
+        d="M31.32 24.72 A12.6 12.6 0 1 0 24.31 31.04 Q27.6 32.36 33.05 33.69 Q32.61 29.05 31.32 24.72 Z"/>
+
+  <!-- The answer: two bars cut through to the tile, on the shared 24.6 baseline -->
+  <rect x="13.75" y="16.6" width="5" height="8"  rx="2.5" fill="url(#qbTileSm)"/>
+  <rect x="21.25" y="11.6" width="5" height="13" rx="2.5" fill="url(#qbTileSm)"/>
+</svg>

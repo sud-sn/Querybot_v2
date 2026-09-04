@@ -68,6 +68,11 @@
      most common size in the stylesheets and was not a token at
      all, so most declarations had no token to reach for and
      went raw. --font-xl was 20px and consumed by nothing. */
+  /* The caption tier: badges, eyebrows, table meta. Used ~124 times in the
+     templates with no token to reach for, which is why those declarations
+     went raw and why a sweep to the scale could not start -- without this
+     rung, "snap to the nearest token" meant enlarging every caption. */
+  --font-2xs:  10px;
   --font-xs:   11px;
   --font-sm:   12px;
   --font-base: 13px;   /* de-facto body size */

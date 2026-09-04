@@ -518,6 +518,7 @@ async def _send_why_insight(
     known_tables: set | None = None,
     query_executor=None,
     question_id: str = "",
+    grounding: dict | None = None,
 ) -> None:
     """Generate and send a causal analysis of `rows` after the factual answer.
     Best-effort: the factual answer is already on the wire, so any failure
@@ -567,6 +568,7 @@ async def _send_why_insight(
                 context=rag_context,
                 known_tables=known_tables,
                 query_executor=query_executor,
+                grounding=grounding,
                 **az_kwargs,
             )
         _send_analysis = getattr(adapter, "send_analysis_response", None)
@@ -6654,8 +6656,30 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _date_preference_exc,
             )
     if _why_mode and rows:
+        # How this figure was governed, assembled here because this is the one
+        # place every piece is in scope at once: the compiled plan's date
+        # disclosures, the result scope, and whether the read was truncated.
+        # Every one of these was already computed and none of it reached the
+        # model, so an answer could state a total and never say what the total
+        # was OF.
+        try:
+            from core.insight import build_answer_grounding
+            # No result_scope here on purpose: the prompt already emits a
+            # "Scope:" line from the data brief, and repeating it would give
+            # the model the same fact twice under two names.
+            _answer_grounding = build_answer_grounding(
+                semantic_plan=_semantic_plan,
+                row_count=len(rows),
+                truncated=_rows_truncated,
+                tables=_graph_ctx.get("detected") if _graph_ctx else None,
+            )
+        except Exception as _grounding_exc:
+            # Decoration, never a failure path — an ungrounded answer beats none.
+            log.debug("Answer grounding skipped: %s", _grounding_exc)
+            _answer_grounding = {}
         await _send_why_insight(
             adapter, event,
+            grounding=_answer_grounding,
             question=question, rows=rows, sql=sql,
             client=client, account_id=account_id, db_cfg=db_cfg,
             # Whichever knowledge base actually reached this question. A
