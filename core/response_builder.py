@@ -808,6 +808,203 @@ def _period_comparison_from_rows(rows: list[dict]) -> dict | None:
     }
 
 
+def _plural(phrase: str) -> str:
+    """"revenue category" -> "revenue categories". Enough English for a count
+    sentence; a phrase that already reads as plural is left alone."""
+    words = str(phrase or "").split()
+    if not words or words[-1].endswith("s"):
+        return phrase
+    last = words[-1]
+    if len(last) > 1 and last.endswith("y") and last[-2] not in "aeiou":
+        last = last[:-1] + "ies"
+    elif last.endswith(("x", "z", "ch", "sh")):
+        last += "es"
+    else:
+        last += "s"
+    return " ".join(words[:-1] + [last])
+
+
+def _safe_category_label(label: Any, label_column: str) -> str:
+    """The category's own name, or "" when the value redactor replaced it.
+
+    core.insight._display_label is imported under an alias here and in every
+    other caller: this module already defines a one-argument _display_label
+    column prettifier used in five places, and an unaliased import would shadow
+    it and raise TypeError on a path with no protection around it.
+    """
+    from core.insight import _display_label as _redact_value_label
+
+    text = _redact_value_label(str(label or ""), label_column)
+    return "" if not text or text == "redacted segment" else text
+
+
+def _measure_prefix(column: str, label: str) -> str:
+    """"NET_AMOUNT_2025" with the label "2025" -> "NET_AMOUNT".
+
+    Empty when the column IS the period label, which is what makes the caller
+    say "Total" rather than name a measure it cannot see.
+    """
+    from core.multi_period import period_alias_suffix
+
+    suffix = period_alias_suffix(label)
+    name = str(column or "")
+    if suffix and name.upper().endswith("_" + suffix):
+        return name[: -(len(suffix) + 1)]
+    return "" if name.upper() == suffix else name
+
+
+def _period_pair_facts(rows: list[dict], plan_labels: list[str] | None) -> dict | None:
+    """The arithmetic behind every period-comparison sentence, or None.
+
+    None means "this is not a named-period comparison" and every caller falls
+    straight through to the behaviour it had before. The gate is strict on
+    purpose: at least two of the plan's OWN period aliases must be present as
+    result columns, and every label must parse as a real calendar period.
+
+    Column matching is delegated to core/multi_period.py rather than repeated
+    here. The hint, the post-processor and this all have to agree on which
+    columns are the periods; two matchers would drift, and the loose one would
+    start reading ERP columns like P_QTY as a period.
+    """
+    if not rows or not plan_labels or len(plan_labels) < 2:
+        return None
+    try:
+        from core.multi_period import (
+            PeriodPlan, period_columns_for_plan, period_alias_suffix, period_parts,
+        )
+    except Exception:
+        return None
+
+    labels = [str(label) for label in plan_labels]
+    if not all(period_parts(label) for label in labels):
+        return None
+    aliases = [period_alias_suffix(label) for label in labels]
+    found = period_columns_for_plan(
+        rows,
+        PeriodPlan(labels=labels, aliases=aliases, predicates=[""] * len(labels),
+                   grain="", date_field={}),
+    )
+    if len(found) < 2:
+        return None
+
+    present = [(label, found[alias]) for label, alias in zip(labels, aliases)
+               if alias in found]
+    (oldest_label, oldest_col), (newest_label, newest_col) = present[0], present[-1]
+
+    numeric_cols = _numeric_cols(rows)
+    text_cols = _text_cols(rows, numeric_cols)
+    label_col = text_cols[0] if text_cols else ""
+
+    movers: list[dict] = []
+    oldest_total = newest_total = 0.0
+    for row in rows:
+        before, after = _to_float(row.get(oldest_col)), _to_float(row.get(newest_col))
+        if before is None or after is None:
+            continue          # masked or missing; excluded from every total
+        oldest_total += before
+        newest_total += after
+        movers.append({
+            "label": str(row.get(label_col, "")) if label_col else "",
+            "change": after - before,
+            "pct": ((after - before) * 100.0 / abs(before)) if before else None,
+        })
+    if not movers:
+        return None
+
+    net = sum(mover["change"] for mover in movers)
+    gross = sum(abs(mover["change"]) for mover in movers)
+    grew = sum(1 for mover in movers if mover["change"] > 0)
+    shrank = sum(1 for mover in movers if mover["change"] < 0)
+    risers = [mover for mover in movers if mover["change"] > 0]
+    fallers = [mover for mover in movers if mover["change"] < 0]
+    top_riser = max(risers, key=lambda m: m["change"]) if risers else None
+    top_faller = min(fallers, key=lambda m: m["change"]) if fallers else None
+
+    return {
+        "labels": [label for label, _ in present],
+        "oldest_label": oldest_label, "newest_label": newest_label,
+        "oldest_column": oldest_col, "newest_column": newest_col,
+        "label_column": label_col,
+        "oldest_total": oldest_total, "newest_total": newest_total,
+        "total_pct": (net * 100.0 / abs(oldest_total)) if oldest_total else None,
+        "net": net,
+        # Below this the gains and losses have cancelled and a share of the net
+        # is not a number worth printing -- the same floor annotate_period_change
+        # applies to SHARE_OF_CHANGE_PCT.
+        "share_holds": gross > 0 and abs(net) >= 0.05 * gross,
+        "row_count": len(movers), "grew": grew, "shrank": shrank,
+        "flat": len(movers) - grew - shrank,
+        "top_riser": top_riser, "top_faller": top_faller,
+    }
+
+
+def _period_comparison_summary(
+    rows: list[dict],
+    plan_labels: list[str] | None,
+    column_formats: dict | None = None,
+    display_formats: dict | None = None,
+) -> str:
+    """The note under the card for a named-period comparison, or "".
+
+    "Across 12 revenue categories, 7 grew and 5 shrank between 2024 and 2025.
+    Pumps added the most (+400,000, 46% of the total increase); Valves fell the
+    most (-180,000)."
+
+    Category labels go through core.insight's value redactor, imported under an
+    alias: this module already defines a one-argument _display_label column
+    prettifier used in five places, and an unaliased import would shadow it and
+    raise TypeError on an unprotected path.
+    """
+    facts = _period_pair_facts(rows, plan_labels)
+    if not facts:
+        return ""
+    column_formats = column_formats or {}
+    display_formats = display_formats or {}
+
+    def money(value: float) -> str:
+        return _format_display_value(
+            value,
+            column_formats.get(facts["newest_column"]),
+            display_formats.get(facts["newest_column"]),
+        )
+
+    def signed(value: float) -> str:
+        return ("+" if value > 0 else "") + money(value)
+
+    def named(mover: dict) -> str:
+        return _safe_category_label(mover["label"], facts["label_column"])
+
+    counted = (_plural(_display_label(facts["label_column"]).lower())
+               if facts["label_column"] else "groups")
+    opening = (
+        f"Across {facts['row_count']} {counted}, {facts['grew']} grew and "
+        f"{facts['shrank']} shrank between {facts['oldest_label']} and "
+        f"{facts['newest_label']}."
+    )
+
+    clauses: list[str] = []
+    riser, faller = facts["top_riser"], facts["top_faller"]
+    if riser:
+        share = ""
+        if facts["share_holds"] and facts["net"]:
+            share = f", {abs(riser['change'] * 100.0 / facts['net']):.0f}% of the net change"
+        who = named(riser)
+        clauses.append(
+            f"{who} added the most ({signed(riser['change'])}{share})" if who
+            else f"the largest increase was {signed(riser['change'])}{share}"
+        )
+    if faller:
+        who = named(faller)
+        clauses.append(
+            f"{who} fell the most ({signed(faller['change'])})" if who
+            else f"the largest decrease was {signed(faller['change'])}"
+        )
+    if not clauses:
+        return f"{opening} No category moved between the two periods."
+    detail = "; ".join(clauses)
+    return f"{opening} {detail[0].upper()}{detail[1:]}."
+
+
 def detect_zero_match_result(rows: list[dict]) -> bool:
     """
     True for a single-row diagnostic aggregate whose match-count column is
@@ -985,6 +1182,7 @@ def build_answer(
     result_scope: dict | None = None,
     column_formats: dict | None = None,
     display_formats: dict | None = None,
+    period_labels: list[str] | None = None,
 ) -> dict:
     scope = result_scope or infer_result_scope(rows, question)
     column_formats = column_formats or {}
@@ -1044,6 +1242,43 @@ def build_answer(
         }
 
     if numeric_cols and text_cols:
+        # A named-period comparison, before the ranking path. Fixing the SQL
+        # alone does not fix the answer: build_answer took numeric_cols[0] --
+        # the OLDEST period column on a widened result -- and opened the card
+        # with "Pumps leads at 3,800,000." and a cross-category gap chip that
+        # reads exactly like a year-over-year delta. The target question is not
+        # causal, so no narration runs and these deterministic sentences ARE
+        # the answer the reader gets.
+        _pair = _period_pair_facts(rows, period_labels)
+        if _pair:
+            newest_col = _pair["newest_column"]
+            measure = _display_label(
+                _measure_prefix(newest_col, _pair["newest_label"])) or "Total"
+            pct = _pair["total_pct"]
+            direction = ("rose" if _pair["net"] > 0
+                         else "fell" if _pair["net"] < 0 else "was flat")
+            movement = (f"{direction} {abs(pct):.1f}%" if pct is not None
+                        else direction)
+            headline = (f"{measure} {movement} from {_pair['oldest_label']} "
+                        f"to {_pair['newest_label']}")
+            riser = _pair["top_riser"] or _pair["top_faller"]
+            if riser:
+                mover = _safe_category_label(riser["label"], _pair["label_column"])
+                change = ("+" if riser["change"] > 0 else "") + format_value(
+                    riser["change"], newest_col)
+                headline += (f"; {mover} moved the most, {change}" if mover
+                             else f"; the largest single move was {change}")
+            comparison = (f"{pct:+.1f}% versus {_pair['oldest_label']}"
+                          if pct is not None
+                          else f"compared with {_pair['oldest_label']}")
+            return {
+                "headline": headline + ".",
+                "short_value": format_value(_pair["newest_total"], newest_col),
+                "comparison": comparison,
+                "scope_badge": scope.get("badge", ""),
+                "scope_note": scope.get("note", ""),
+            }
+
         label_col = text_cols[0]
         value_col = numeric_cols[0]
         value_fmt = column_formats.get(value_col)
@@ -1454,6 +1689,15 @@ def _build_insight_summary(
         val = brief.get("value", "")
         return f"{col}: {format_value(val, raw_col)}." if col else ""
 
+    # A comparison of periods the USER named, which arrives as one row per
+    # category with a column per period. Deliberately ahead of the single-wide-
+    # row check below: that one recognises CURRENT_x/PREVIOUS_x pairs from the
+    # compare_prior chip and has no idea what 2024 and 2025 are.
+    _period_note = _period_comparison_summary(
+        rows, ctx.get("period_labels"), column_formats, display_formats)
+    if _period_note:
+        return _period_note
+
     # A period comparison arrives as ONE wide row (current/previous pairs), not
     # a series. Classified as time_series it narrated "trended flat 0.0% from
     # 2026-03 to 2026-03" -- first and last period of a single-row series are
@@ -1661,6 +1905,12 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         or {} when there is nothing decision-relevant to say.
     """
     mode = brief.get("mode") or ctx.get("mode", "table")
+
+    # A named-period comparison is ranked by MOVEMENT, and every sentence below
+    # is about a level: "X alone holds 62% of the total" computed over the
+    # oldest period's column would read as a claim about today.
+    if ctx.get("period_labels"):
+        return {}
 
     if mode == "ranking":
         cat = brief.get("category_breakdown") or {}
@@ -2038,10 +2288,22 @@ def build_assistant_response(
     visible_rows = visible_result_rows(raw_rows)
     analysis_rows = _chronological_analysis_rows(visible_rows)
     ctx = summarize_result_context(analysis_rows, display_question, sql=sql)
+    # The periods the user named, published by the pipeline once the widened
+    # result actually arrived. Empty for every other answer in the product, and
+    # every branch that reads it falls through to its previous behaviour.
+    _period_labels = [
+        str(label) for label in
+        (((display_context or {}).get("period_comparison") or {}).get("labels") or [])
+    ]
+    if _period_labels:
+        ctx["period_labels"] = _period_labels
     result_operation = str((display_context or {}).get("result_operation") or "")
-    if result_operation in {"keep_top", "sort", "contribution"} and ctx.get("mode") == "time_series":
+    if (result_operation in {"keep_top", "sort", "contribution"}
+            and ctx.get("mode") == "time_series" and not _period_labels):
         # Period labels sorted by a measure are a ranking, not a chronology.
         # Treating them as a series creates false trend claims from sort order.
+        # Not applied to a named-period comparison: its periods are COLUMNS, so
+        # the downgrade would relabel a change result as a leaderboard.
         ctx["mode"] = "ranking"
         ctx["result_scope"] = infer_result_scope(visible_rows, display_question, sql, mode="ranking")
     resolved_column_formats = build_column_formats(
@@ -2062,6 +2324,7 @@ def build_assistant_response(
         ctx.get("result_scope"),
         column_formats=resolved_column_formats,
         display_formats=resolved_display_formats,
+        period_labels=_period_labels,
     )
     brief = compute_data_brief(
         analysis_rows,

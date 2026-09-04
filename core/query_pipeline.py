@@ -6798,14 +6798,30 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             metadata={"shape_verified": False},
         )
 
+    _display_context = {
+        "format_scope": "metric_context",
+        "metrics": _matched_metrics,
+    }
+    # Only when the widened result actually arrived. The answer surface reads
+    # these labels to describe the CHANGE instead of ranking the oldest period.
+    if _mp_rows_applied:
+        _mp_plan_display = getattr(event, '_multi_period_plan', None)
+        try:
+            _display_context["period_comparison"] = {
+                "labels": list(_mp_plan_display.labels),
+                "aliases": list(_mp_plan_display.aliases),
+            }
+        except Exception as _mp_disp_exc:
+            log.warning(
+                "Multi-period display context skipped: %s",
+                _mp_disp_exc, exc_info=True,
+            )
+
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
                         rag_context=_preloaded_kb or context, question_id=audit_request_id,
                         confidence_context=_confidence_context,
-                        display_context={
-                            "format_scope": "metric_context",
-                            "metrics": _matched_metrics,
-                        },
+                        display_context=_display_context,
                         contract_version=_contract_version)
     # Only a successful query turns the clarification choice into a thread
     # preference. Failed validation/execution must not teach the session a
