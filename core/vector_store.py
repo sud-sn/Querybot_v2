@@ -349,26 +349,59 @@ def _group_chunks_by_table(hits: list[dict]) -> list[str]:
     return result
 
 
-def _delete_points_for_fqn_doctype(account_id: str, fqn: str, doc_type: str) -> None:
+def _delete_points_for_fqn_doctype(
+    account_id: str, fqn: str, doc_type: str, source_file: str = "",
+) -> None:
     """
     Delete all Qdrant points for a specific (account_id, fqn, doc_type) triple.
 
     Called before re-embedding a single KB file so stale section chunks from
     the old version don't accumulate (section count can change after edits).
+
+    source_file narrows it to one document. That matters for the account-wide
+    docs, which all share fqn "_global" and doc_type "global": deleting the
+    triple would take the join map out with the business vocabulary.
     """
     from qdrant_client.models import Filter, FieldCondition, MatchValue
+    must = [
+        FieldCondition(key="account_id", match=MatchValue(value=account_id)),
+        FieldCondition(key="fqn",        match=MatchValue(value=fqn)),
+        FieldCondition(key="doc_type",   match=MatchValue(value=doc_type)),
+    ]
+    if source_file:
+        must.append(
+            FieldCondition(key="source_file", match=MatchValue(value=source_file))
+        )
     try:
         _qdrant().delete(
             collection_name=_COLLECTION,
-            points_selector=Filter(must=[
-                FieldCondition(key="account_id", match=MatchValue(value=account_id)),
-                FieldCondition(key="fqn",        match=MatchValue(value=fqn)),
-                FieldCondition(key="doc_type",   match=MatchValue(value=doc_type)),
-            ]),
+            points_selector=Filter(must=must),
         )
-        log.debug("Deleted old points: %s / %s / %s", account_id, fqn, doc_type)
+        log.debug(
+            "Deleted old points: %s / %s / %s%s",
+            account_id, fqn, doc_type, f" / {source_file}" if source_file else "",
+        )
     except Exception as exc:
         log.warning("_delete_points_for_fqn_doctype failed: %s", exc)
+
+
+def _delete_legacy_whole_doc_point(account_id: str, fqn: str, doc_type: str) -> None:
+    """Remove the pre-fix, id-collided point for a whole-doc file.
+
+    Whole-doc points used to be keyed without `source_file`, so an index built
+    before that fix holds one merged point per (account, fqn, doc_type) that no
+    new write will ever overwrite -- it would linger and keep serving whichever
+    document happened to win the collision. Deleting the old id by hand means
+    the fix takes effect on the next write instead of requiring a full KB
+    rebuild.
+    """
+    try:
+        _qdrant().delete(
+            collection_name=_COLLECTION,
+            points_selector=[_point_id(account_id, fqn, doc_type)],
+        )
+    except Exception as exc:
+        log.debug("legacy whole-doc point cleanup skipped for %s/%s: %s", fqn, doc_type, exc)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -750,7 +783,13 @@ def _build_whole_doc_point(
     db, schema, table = _parse_fqn(fqn) if fqn != "_global" else ("", "", "")
     vector = _embed([content])[0]
     return PointStruct(
-        id=_point_id(account_id, fqn, doc_type),
+        # `source_file` is load-bearing, not decoration. Every account-wide
+        # document is indexed under the SAME fqn "_global" and doc_type
+        # "global" (upsert_kb_directory: any file whose stem starts with "_"),
+        # so without a per-file part they all resolved to one id and each
+        # upsert overwrote the last. Only the alphabetically final _*.md
+        # survived -- on most accounts that silently discarded the join map.
+        id=_point_id(account_id, fqn, doc_type, extra=source_file),
         vector=vector,
         payload={
             "account_id":   account_id,
@@ -804,6 +843,8 @@ def upsert_kb_file(
                 len(points), account_id, fqn,
             )
     else:
+        _delete_points_for_fqn_doctype(account_id, fqn, doc_type, source_file=source_file)
+        _delete_legacy_whole_doc_point(account_id, fqn, doc_type)
         point = _build_whole_doc_point(account_id, fqn, doc_type, content, source_file)
         _qdrant().upsert(collection_name=_COLLECTION, points=[point])
         log.debug("Upserted whole-doc %s / %s / %s", account_id, fqn, doc_type)
@@ -1601,6 +1642,11 @@ def fetch_global_docs(account_id: str) -> list[str]:
 
     Ordered by source_file so a caller assembling a cache prefix gets the same
     bytes every time.
+
+    On an index written before whole-doc points gained a per-file id this
+    returns ONE document however many `_*.md` files the account has, because
+    they all collided on a single point. Re-index the account (a KB build, or
+    re-embedding each global file) to recover the rest.
     """
     from qdrant_client.models import Filter, FieldCondition, MatchValue
 

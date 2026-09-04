@@ -59,6 +59,15 @@ def allow_progressive_sql_repair(
 #   _clamp_prompt_context — final hard cap on the fully assembled string
 import os as _os
 
+# Pinned account-wide docs and ranked table docs get separate budgets. They
+# used to share one [:7], which was safe only while a point-id collision meant
+# at most ONE account-wide document could be indexed at a time. With the join
+# map, business vocabulary and naming convention each holding their own point,
+# a shared budget would have cut the ranked table documents from six to four —
+# so fixing an indexing bug would have surfaced as worse answers.
+_MAX_PINNED_DOCS = 3
+_MAX_TABLE_DOCS = 6
+
 _PER_DOC_CHAR_CAP = int(_os.getenv("QUERYBOT_KB_DOC_CHAR_CAP", "9000"))
 _PROMPT_CONTEXT_CHAR_CAP = int(_os.getenv("QUERYBOT_PROMPT_CONTEXT_CHAR_CAP", "120000"))
 
@@ -86,6 +95,19 @@ _DROP_ORDER = (
 _DROPPABLE_SECTION_RE = re.compile(
     r"(?i)^##\s*(business\s+synonyms|sample\s+data|query\s+patterns|patterns|overview)\b"
 )
+
+
+def select_prompt_documents(
+    pinned: list[str], table_docs: list[str],
+) -> list[str]:
+    """Choose the KB documents that go in the prompt, pinned ones first.
+
+    `pinned` is bounded as well as budgeted: the retriever identifies a global
+    document by sniffing its opening text, not by its indexed doc_type, so an
+    ordinary table document whose first lines mention a join can land here.
+    Without a cap one misclassification could take the whole allowance.
+    """
+    return list(pinned[:_MAX_PINNED_DOCS]) + list(table_docs[:_MAX_TABLE_DOCS])
 
 
 def _clamp_kb_doc(doc: str, cap: int = 0) -> str:

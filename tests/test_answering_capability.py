@@ -256,9 +256,33 @@ class PromptClampTests(unittest.TestCase):
         self.assertIn("truncated for prompt size", out)
         self.assertLess(len(out), 51000)
 
+    def test_the_document_budget_bounds_both_kinds_of_document(self):
+        """Executed, not read. The budget used to be an inline slice, which
+        could only be tested by restating it -- and restating a slice tests the
+        restatement. It also had to be split in two: pinned account-wide docs
+        and ranked table docs no longer share one allowance, or indexing the
+        join map correctly would have cost the model two tables."""
+        from core.pipeline_helpers import select_prompt_documents
+
+        chosen = select_prompt_documents(
+            [f"pinned {i}" for i in range(9)],
+            [f"table {i}" for i in range(9)],
+        )
+        self.assertEqual(len([d for d in chosen if d.startswith("pinned")]), 3)
+        self.assertEqual(len([d for d in chosen if d.startswith("table")]), 6)
+        self.assertTrue(chosen[0].startswith("pinned"), "globals lead the prompt")
+
     def test_pipeline_applies_clamps(self):
+        import inspect
+        import core.query_pipeline as query_pipeline
+
         src = _src("core/query_pipeline.py")
-        self.assertIn("_clamp_kb_doc(d) for d in (pinned + table_kbs)[:7]", src)
+        # The relationship, not the expression: every selected document is
+        # per-doc clamped before it reaches the prompt.
+        self.assertIn(
+            "_clamp_kb_doc(d) for d in select_prompt_documents(",
+            inspect.getsource(query_pipeline._handle_query_impl),
+        )
         self.assertIn("context_with_terms = _clamp_prompt_context(context_with_terms)", src)
         # final clamp must run before the system prompt is built
         self.assertLess(

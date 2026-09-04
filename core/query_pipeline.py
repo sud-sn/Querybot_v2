@@ -105,6 +105,7 @@ from core.pipeline_helpers import (
     _build_row_metric_join_sql, attempt_field_plan_repair,
     attempt_governed_temporal_metric_repair, compile_governed_temporal_metric_sql,
     _clamp_kb_doc, _clamp_prompt_context, reused_plan_is_stale_for_graph,
+    select_prompt_documents,
     reused_plan_semantic_staleness_code,
     allow_progressive_sql_repair,
 )
@@ -1997,7 +1998,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                                     _dominant_sch, _dom_ratio * 100, len(_schema_votes),
                                 )
 
-            relevant_kbs = [_clamp_kb_doc(d) for d in (pinned + table_kbs)[:7]]
+            # Pinned and ranked documents get separate budgets, because they
+            # are not competing for the same thing. A shared [:7] was safe only
+            # while a point-id collision meant at most ONE account-wide document
+            # could exist; with the join map, business vocabulary and naming
+            # convention all indexed, pinning them inside the same seven would
+            # have quietly cut the ranked table documents from six to four —
+            # fixing the index bug would have shown up as worse answers.
+            relevant_kbs = [
+                _clamp_kb_doc(d) for d in select_prompt_documents(pinned, table_kbs)
+            ]
             context = "\n\n---\n\n".join(relevant_kbs)
         # Per-table retrieval telemetry: which tables were candidates, their
         # best cross-encoder score, and whether the relevance floor kept them.
