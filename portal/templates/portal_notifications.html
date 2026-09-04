@@ -18,8 +18,8 @@
           <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
             padding:.6rem 0;border-bottom:1px solid var(--border)">
             <div>
-              <div style="font-size:13px;font-weight:600">{{ a.question }}</div>
-              <div style="font-size:11px;color:var(--gray-500)">
+              <div style="font-size:var(--font-base);font-weight:600">{{ a.question }}</div>
+              <div style="font-size:var(--font-xs);color:var(--gray-500)">
                 {{ a.metric_col }} {{ a.condition }} {{ a.threshold }}
                 {% if a.condition == 'change_pct' %}%{% endif %}
                 &middot; checks every {{ a.check_interval_minutes or 60 }} min
@@ -35,7 +35,7 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:12px;color:var(--gray-500)">
+        <div style="font-size:var(--font-sm);color:var(--gray-500)">
           No alerts set up yet — ask a question in Chat, then use "Alert me on changes" on the result.
         </div>
       {% endif %}
@@ -48,7 +48,7 @@
       <a href="/portal/reports/new" class="btn btn-primary btn-sm">+ New report</a>
     </div>
     <div class="card-body" style="padding:1rem">
-      <div style="font-size:11px;color:var(--gray-500);margin-bottom:.75rem">
+      <div style="font-size:var(--font-xs);color:var(--gray-500);margin-bottom:.75rem">
         Or describe it in chat — try "build a report with net revenue and top
         customers, scheduled every Monday at 9am".
       </div>
@@ -57,8 +57,8 @@
           <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
             padding:.5rem 0;border-bottom:1px solid var(--border)">
             <div>
-              <div style="font-size:13px;font-weight:600">{{ r.name }}</div>
-              {% if r.description %}<div style="font-size:11px;color:var(--gray-500)">{{ r.description }}</div>{% endif %}
+              <div style="font-size:var(--font-base);font-weight:600">{{ r.name }}</div>
+              {% if r.description %}<div style="font-size:var(--font-xs);color:var(--gray-500)">{{ r.description }}</div>{% endif %}
             </div>
             <form method="post" action="/portal/reports/{{ r.id }}/delete" style="display:inline"
               id="del-my-report-{{ r.id }}">
@@ -68,7 +68,7 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:12px;color:var(--gray-500)">
+        <div style="font-size:var(--font-sm);color:var(--gray-500)">
           You haven't created any reports yet — group a few metrics you check
           often into one you can ask for or subscribe to.
         </div>
@@ -85,8 +85,8 @@
           <div style="padding:.75rem 0;border-bottom:1px solid var(--border)">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
               <div>
-                <div style="font-size:13px;font-weight:600">{{ r.name }}</div>
-                {% if r.description %}<div style="font-size:11px;color:var(--gray-500)">{{ r.description }}</div>{% endif %}
+                <div style="font-size:var(--font-base);font-weight:600">{{ r.name }}</div>
+                {% if r.description %}<div style="font-size:var(--font-xs);color:var(--gray-500)">{{ r.description }}</div>{% endif %}
               </div>
               {% if sub %}
                 <form method="post" action="/portal/notifications/unsubscribe" style="display:inline">
@@ -96,7 +96,7 @@
               {% endif %}
             </div>
             {% if sub %}
-              <div style="font-size:11px;color:var(--gray-500);margin-top:.3rem">
+              <div style="font-size:var(--font-xs);color:var(--gray-500);margin-top:.3rem">
                 Subscribed &middot; {{ sub.cadence }}
                 {% if sub.cadence == 'weekly' %}(day {{ sub.day_of_week }}){% endif %}
                 at {{ sub.hour }}:00
@@ -127,7 +127,7 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:12px;color:var(--gray-500)">
+        <div style="font-size:var(--font-sm);color:var(--gray-500)">
           No reports have been set up for this account yet — ask your admin to create one.
         </div>
       {% endif %}

@@ -18,20 +18,20 @@
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
 .report-card-body{padding:1rem}
 .report-title{font-size:15px;font-weight:800;color:var(--text)}
-.report-sub{font-size:12px;color:var(--text-muted);margin-top:2px}
+.report-sub{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px}
 .default-badge{display:inline-block;padding:2px 8px;border-radius:999px;
-  font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;
+  font-size:var(--font-2xs);font-weight:700;text-transform:uppercase;letter-spacing:.03em;
   background:var(--blue-light);color:var(--blue)}
 .inactive-badge{display:inline-block;padding:2px 8px;border-radius:999px;
-  font-size:10px;font-weight:700;background:var(--red-light);color:var(--red)}
+  font-size:var(--font-2xs);font-weight:700;background:var(--red-light);color:var(--red)}
 .report-metric-row{display:flex;align-items:center;justify-content:space-between;
   gap:.5rem;padding:.5rem .625rem;border:1px solid var(--border);border-radius:var(--radius-sm);
-  background:var(--surface-2);margin-bottom:.4rem;font-size:12px}
+  background:var(--surface-2);margin-bottom:.4rem;font-size:var(--font-sm)}
 .report-metric-row .name{font-weight:700;color:var(--text)}
-.report-metric-row .table{color:var(--text-muted);font-family:Consolas,monospace;font-size:11px}
+.report-metric-row .table{color:var(--text-muted);font-family:Consolas,monospace;font-size:var(--font-xs)}
 .action-btns{display:flex;gap:.4rem;flex-wrap:wrap}
 details.edit-panel{margin-top:.6rem}
-details.edit-panel summary{cursor:pointer;font-size:12px;font-weight:600;
+details.edit-panel summary{cursor:pointer;font-size:var(--font-sm);font-weight:600;
   color:var(--gray-600);padding:.35rem .6rem;border-radius:6px;
   background:var(--gray-50);display:inline-block;user-select:none}
 details[open].edit-panel summary{background:var(--gray-100)}
@@ -45,7 +45,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
   margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
   <div>
     <h1 style="font-size:20px;font-weight:700">Reports</h1>
-    <p style="font-size:13px;color:var(--gray-500)">
+    <p style="font-size:var(--font-base);color:var(--gray-500)">
       A named group of metrics users can ask about live in chat ("what's my
       report?") or subscribe to on a schedule. Each metric still respects
       the asking user's own table access — a report grants no extra access.
@@ -64,24 +64,24 @@ details[open].edit-panel summary{background:var(--gray-100)}
 
 <details style="margin-bottom:1.5rem;background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);padding:1rem">
-  <summary style="cursor:pointer;font-weight:700;font-size:14px;color:var(--gray-900)">
+  <summary style="cursor:pointer;font-weight:700;font-size:var(--font-md);color:var(--gray-900)">
     Create a new report
   </summary>
   <form method="post" action="/admin/clients/{{ client.account_id }}/reports/create"
     class="inline-form" style="margin-top:1rem">
     <div class="form-grid">
       <div>
-        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Report name</label>
+        <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Report name</label>
         <input name="name" type="text" required placeholder="e.g. Daily Ops Report"
           style="width:100%">
       </div>
       <div>
-        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Description</label>
+        <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Description</label>
         <input name="description" type="text" placeholder="What this report covers"
           style="width:100%">
       </div>
     </div>
-    <label style="display:flex;align-items:center;gap:.4rem;font-weight:600;font-size:12px;margin-top:.5rem">
+    <label style="display:flex;align-items:center;gap:.4rem;font-weight:600;font-size:var(--font-sm);margin-top:.5rem">
       <input type="checkbox" name="is_default" value="1">
       Make this the default report (used when a user asks for "my report" and several exist)
     </label>
@@ -112,7 +112,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
         </div>
       </div>
       <div class="report-card-body">
-        <div style="font-size:11px;font-weight:700;color:var(--gray-500);
+        <div style="font-size:var(--font-xs);font-weight:700;color:var(--gray-500);
           text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">
           Metrics in this report ({{ r.metrics|length }})
         </div>
@@ -132,7 +132,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
             </div>
           {% endfor %}
         {% else %}
-          <div style="font-size:12px;color:var(--gray-500)">No metrics assigned yet.</div>
+          <div style="font-size:var(--font-sm);color:var(--gray-500)">No metrics assigned yet.</div>
         {% endif %}
 
         {% if all_metrics %}
@@ -157,11 +157,11 @@ details[open].edit-panel summary{background:var(--gray-100)}
               <input name="name" type="text" required value="{{ r.name }}">
               <input name="description" type="text" placeholder="Description" value="{{ r.description }}">
             </div>
-            <label style="display:flex;align-items:center;gap:.4rem;font-weight:600;font-size:12px;margin-top:.4rem">
+            <label style="display:flex;align-items:center;gap:.4rem;font-weight:600;font-size:var(--font-sm);margin-top:.4rem">
               <input type="checkbox" name="is_default" value="1" {% if r.is_default %}checked{% endif %}>
               Default report
             </label>
-            <label style="display:flex;align-items:center;gap:.4rem;font-size:12px;margin-top:.3rem">
+            <label style="display:flex;align-items:center;gap:.4rem;font-size:var(--font-sm);margin-top:.3rem">
               <input type="checkbox" name="is_active" value="1" {% if r.is_active %}checked{% endif %}>
               Active
             </label>
@@ -175,10 +175,10 @@ details[open].edit-panel summary{background:var(--gray-100)}
   {% endfor %}
 {% else %}
   <div style="text-align:center;padding:3rem 1rem;color:var(--gray-500)">
-    <div style="font-size:14px;font-weight:600;margin-bottom:.5rem">
+    <div style="font-size:var(--font-md);font-weight:600;margin-bottom:.5rem">
       No reports defined yet
     </div>
-    <div style="font-size:12px">
+    <div style="font-size:var(--font-sm)">
       Create one above and assign metrics from the registry to it.
       {% if not all_metrics %}
         <br>You'll need to add metrics to the <a href="/admin/clients/{{ client.account_id }}/metrics">Metric Registry</a> first.

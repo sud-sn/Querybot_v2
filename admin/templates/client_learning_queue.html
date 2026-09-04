@@ -12,31 +12,31 @@
 {% block head %}
 <style>
 .lq-filters{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.1rem}
-.lq-filter{border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
+.lq-filter{border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:var(--font-xs);font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
 .lq-filter.active{background:var(--blue-light,color-mix(in srgb,var(--blue) 12%,var(--surface)));border-color:color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)}
-.lq-table{width:100%;border-collapse:collapse;font-size:12px}
+.lq-table{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
 /* Figures in a column line up and read as data. The blanket text-align:left on
    every th put Score and Votes under left-ragged headers. */
 .lq-table th.num, .lq-table td.num{text-align:right;font-variant-numeric:tabular-nums}
-.lq-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:800;white-space:nowrap}
+.lq-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:var(--font-2xs);text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:800;white-space:nowrap}
 .lq-table td{padding:.75rem;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text-soft)}
 .lq-table tr:last-child td{border-bottom:none}
 .lq-table tr:hover td{background:var(--row-hover)}
-.score-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap}
+.score-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:var(--font-xs);font-weight:800;white-space:nowrap}
 .score-positive{background:color-mix(in srgb, var(--success) 14%, transparent);color:var(--success);border:1px solid color-mix(in srgb, var(--success) 32%, transparent)}
 .score-review{background:color-mix(in srgb, var(--warning) 14%, transparent);color:var(--warning);border:1px solid color-mix(in srgb, var(--warning) 32%, transparent)}
 .score-negative{background:color-mix(in srgb, var(--danger) 14%, transparent);color:var(--danger);border:1px solid color-mix(in srgb, var(--danger) 32%, transparent)}
 .type-positive{color:var(--success);font-weight:800}
 .type-review{color:var(--warning);font-weight:800}
 .type-negative{color:var(--danger);font-weight:800}
-.source-pill{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
+.source-pill{display:inline-block;padding:1px 6px;border-radius:4px;font-size:var(--font-2xs);font-weight:700;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
 .votes-up{color:var(--success);font-weight:700}
 .votes-down{color:var(--danger);font-weight:700}
 .question-cell{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-weight:600}
-.sql-preview{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-muted);cursor:pointer}
+.sql-preview{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:var(--font-xs);color:var(--text-muted);cursor:pointer}
 .sql-preview:hover{color:var(--text)}
 .candidate-actions{display:flex;gap:.35rem;flex-wrap:wrap}
-.lq-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:11px;font-weight:800;cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
+.lq-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:var(--font-xs);font-weight:800;cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
 .lq-btn:hover{background:var(--surface-3);color:var(--text)}
 .lq-btn-approve{border-color:color-mix(in srgb, var(--success) 40%, transparent);color:var(--success)}
 .lq-btn-approve:hover{background:color-mix(in srgb, var(--success) 10%, transparent)}
@@ -47,21 +47,21 @@
 .expand-detail{display:none}
 .expand-detail.open{display:table-row}
 .detail-panel{background:var(--surface-2);padding:.85rem 1rem;border-radius:var(--radius-sm);border:1px solid var(--border)}
-.detail-sql{font-family:monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--code-text,var(--text-soft));background:var(--code-bg,var(--surface));border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem .75rem;max-height:200px;overflow-y:auto;margin:.5rem 0}
-.detail-evidence{font-size:11px;color:var(--text-muted);margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.5rem}
+.detail-sql{font-family:monospace;font-size:var(--font-xs);white-space:pre-wrap;word-break:break-word;color:var(--code-text,var(--text-soft));background:var(--code-bg,var(--surface));border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem .75rem;max-height:200px;overflow-y:auto;margin:.5rem 0}
+.detail-evidence{font-size:var(--font-xs);color:var(--text-muted);margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.5rem}
 .evidence-item{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 7px}
 .correct-sql-form{margin-top:.75rem}
-.correct-sql-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:.35rem}
-.correct-sql-input{width:100%;min-height:80px;font-family:monospace;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.5rem .65rem;background:var(--surface);color:var(--text);resize:vertical}
+.correct-sql-label{font-size:var(--font-xs);font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:.35rem}
+.correct-sql-input{width:100%;min-height:80px;font-family:monospace;font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.5rem .65rem;background:var(--surface);color:var(--text);resize:vertical}
 .correct-sql-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(13,115,119,.1)}
-.reviewer-note-input{width:100%;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.4rem .65rem;background:var(--surface);color:var(--text)}
-.lq-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:14px}
+.reviewer-note-input{width:100%;font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.4rem .65rem;background:var(--surface);color:var(--text)}
+.lq-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:var(--font-md)}
 .lq-stats{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem}
 .lq-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
-.lq-stat-n{font-size:22px;font-weight:900;color:var(--text)}
-.lq-stat-l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-top:.15rem}
+.lq-stat-n{font-size:var(--font-2xl);font-weight:900;color:var(--text)}
+.lq-stat-l{font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-top:.15rem}
 .feedback-votes{display:flex;gap:.25rem;align-items:center}
-.flag-off-notice{padding:.85rem 1rem;background:color-mix(in srgb,var(--warning,var(--warning)) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--warning,var(--warning)) 30%,transparent);border-radius:var(--radius);font-size:13px;color:var(--text-soft);margin-bottom:1.25rem}
+.flag-off-notice{padding:.85rem 1rem;background:color-mix(in srgb,var(--warning,var(--warning)) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--warning,var(--warning)) 30%,transparent);border-radius:var(--radius);font-size:var(--font-base);color:var(--text-soft);margin-bottom:1.25rem}
 </style>
 {% endblock %}
 {% block content %}
@@ -121,7 +121,7 @@
   </div>
   {% if stats.positive > governed_count %}
   <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/backfill-governed" style="margin:0;align-self:center">
-    <button type="submit" class="lq-btn" style="font-size:11px" title="Sync {{ stats.positive - governed_count }} approved candidate(s) that are not yet in the vector store">
+    <button type="submit" class="lq-btn" style="font-size:var(--font-xs)" title="Sync {{ stats.positive - governed_count }} approved candidate(s) that are not yet in the vector store">
       Sync {{ stats.positive - governed_count }} missing →
     </button>
   </form>
@@ -170,7 +170,7 @@
   {% set cid = c.candidate_id %}
   <tr class="lq-row" data-cid="{{ cid }}">
     <td>
-      <button type="button" class="lq-btn" style="padding:2px 6px;font-size:10px"
+      <button type="button" class="lq-btn" style="padding:2px 6px;font-size:var(--font-2xs)"
         onclick="toggleDetail('{{ cid }}')">+</button>
     </td>
     <td>
@@ -233,9 +233,9 @@
         </form>
       </div>
       {% elif c.status == 'approved' %}
-        <span style="font-size:11px;color:var(--text-muted)">Approved {{ c.promoted_at[:10] if c.promoted_at else '' }}</span>
+        <span style="font-size:var(--font-xs);color:var(--text-muted)">Approved {{ c.promoted_at[:10] if c.promoted_at else '' }}</span>
       {% else %}
-        <span style="font-size:11px;color:var(--text-muted)">{{ c.reviewed_at[:10] if c.reviewed_at else '—' }}</span>
+        <span style="font-size:var(--font-xs);color:var(--text-muted)">{{ c.reviewed_at[:10] if c.reviewed_at else '—' }}</span>
       {% endif %}
     </td>
   </tr>
@@ -259,7 +259,7 @@
         {% endif %}
 
         {% if c.reviewer_note %}
-        <div style="margin-top:.5rem;font-size:12px;color:var(--text-muted)">
+        <div style="margin-top:.5rem;font-size:var(--font-sm);color:var(--text-muted)">
           <strong>Reviewer note:</strong> {{ c.reviewer_note }}
         </div>
         {% endif %}
@@ -268,7 +268,7 @@
         <div class="correct-sql-form">
           <div class="correct-sql-label" style="margin-top:.75rem">
             Enter corrected SQL
-            <span style="font-weight:400;font-size:10px;color:var(--text-muted)">
+            <span style="font-weight:400;font-size:var(--font-2xs);color:var(--text-muted)">
               — sets score to 85 and marks source as admin_correction
             </span>
           </div>

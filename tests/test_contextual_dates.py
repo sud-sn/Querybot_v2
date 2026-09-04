@@ -2017,9 +2017,9 @@ class TemporalAnchorScopeValidatorTests(unittest.TestCase):
         # missing from query_pipeline.py's retryable-codes set while
         # investigating a live "why no answer" report (the query would
         # otherwise go straight to a terminal failure with zero retries).
-        src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(encoding="utf-8")
-        retryable_line = next(line for line in src.splitlines() if line.strip().startswith("retryable ="))
-        self.assertIn('"temporal_anchor_unscoped"', retryable_line)
+        from core.validator import REPAIRABLE_REASON_CODES
+
+        self.assertIn("temporal_anchor_unscoped", REPAIRABLE_REASON_CODES)
 
     def test_bracketed_tsql_identifiers_do_not_false_positive_as_unscoped(self):
         # Live-bug reproduction: real Azure SQL output from the LLM always

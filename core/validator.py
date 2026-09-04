@@ -40,6 +40,65 @@ class SqlValidationResult:
     errors: list[dict] = field(default_factory=list)
 
 
+# ── Reason codes, and which of them a repair may attempt ─────────────────────
+# This module emits 46 distinct rejection codes. The repair ladder used to hold
+# its own hand-maintained list of which ones were worth retrying — twice, in two
+# places that had already drifted apart (one held `order_alias_mismatch`, the
+# other did not), with no test tying either to the codes actually emitted.
+#
+# The consequence was silent and one-directional: a code absent from both lists
+# defaults to unrepairable, so every rejection added here since those lists were
+# written became a dead end the moment it shipped. 21 of the 46 were in that
+# state — including cartesian_join, select_star and every multi_fact contract,
+# all of which say exactly what is wrong and are the easiest things in the file
+# for a model to fix.
+#
+# So the lists are inverted: everything is repairable unless it is named
+# terminal, and a test enumerates this module's own emitted codes against
+# ALL_REASON_CODES so a new one cannot be added without landing in the registry.
+TERMINAL_REASON_CODES = frozenset({
+    # A policy refusal, not a defect in the SQL. The user lacks access to the
+    # table; rewriting the query cannot change that, and retrying would burn a
+    # model call to arrive at the same refusal.
+    "access_denied",
+    # The model already declined, in its own words. Asking again asks the same
+    # question of the same context and gets the same answer.
+    "cannot_generate",
+    # Terminal as a governance stance, not because it is unfixable. A model
+    # that emitted DROP or INSERT against a governed warehouse is an anomaly
+    # worth surfacing; retrying normalises it, and a second attempt that also
+    # emits DDL means we asked twice. `not_select` and `multi_statement` are
+    # repairable because they are shape slips — this is intent.
+    "ddl",
+})
+
+ALL_REASON_CODES = frozenset({
+    "access_denied", "anti_join_shape", "bridge_allocation_missing",
+    "bridge_allocation_unresolved", "cannot_generate", "cartesian_join",
+    "composition_shape", "date_key_format", "ddl", "derived_measure_mismatch",
+    "dialect_mismatch", "fanout_aggregate", "field_plan_join_missing",
+    "field_plan_mismatch", "graph_join_missing", "graph_join_type_mismatch",
+    "graph_plan_mismatch", "join_plan_unresolved", "locking_select",
+    "metric_formula_mismatch", "missing_join_condition", "multi_fact_cte_contract",
+    "multi_fact_missing_subplan", "multi_fact_not_aggregated",
+    "multi_fact_not_isolated", "multi_fact_shared_cte", "multi_statement",
+    "not_select", "null_aggregate_diagnostic", "observed_period_shape",
+    "order_alias_mismatch", "parse", "period_comparison_shape",
+    "production_shape", "raw_fact_to_fact_join", "select_star",
+    "source_fact_mismatch", "surrogate_date_conversion",
+    "temporal_anchor_mismatch", "temporal_anchor_missing",
+    "temporal_anchor_ungoverned", "temporal_anchor_unscoped",
+    "temporal_role_mismatch", "top_n_shape", "unknown_column", "unknown_table",
+})
+
+# Raised by the pipeline rather than this module, but repairable all the same.
+PIPELINE_REASON_CODES = frozenset({"reused_plan_empty", "zero_row_fresh"})
+
+REPAIRABLE_REASON_CODES = frozenset(
+    (ALL_REASON_CODES | PIPELINE_REASON_CODES) - TERMINAL_REASON_CODES
+)
+
+
 _DDL_DML = re.compile(
     r"""\b(
         CREATE | DROP    | ALTER   | INSERT  | UPDATE  | DELETE  |

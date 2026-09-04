@@ -25,10 +25,10 @@ class ZeroRowFreshRetryWiringTests(unittest.TestCase):
         self.source = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
 
     def test_zero_row_fresh_is_a_retryable_code(self):
-        pos = self.source.index('retryable = (not ok and (last_code or code) in (')
-        line_end = self.source.index("\n", pos)
-        line = self.source[pos:line_end]
-        self.assertIn('"zero_row_fresh"', line)
+        """Raised by the pipeline rather than the validator, but repairable."""
+        from core.validator import REPAIRABLE_REASON_CODES
+
+        self.assertIn("zero_row_fresh", REPAIRABLE_REASON_CODES)
 
     def test_detection_requires_not_reused_plan(self):
         start = self.source.index('last_code = "zero_row_fresh"')
@@ -58,17 +58,33 @@ class ZeroRowFreshRetryWiringTests(unittest.TestCase):
         self.assertIn("\n    elif (", between)
         self.assertIn("not _reused_plan", between)
 
-    def test_repair_note_branch_reuses_governed_date_anchor_lines(self):
+    def _zero_row_branch(self) -> str:
+        """The whole branch, bounded by real code rather than a byte count.
+
+        This used to slice a fixed 800 characters from the `elif`, which meant
+        a comment added inside the branch could push the assertions' target out
+        of the window and fail a test about text that had not changed.
+        """
         start = self.source.index('elif last_code == "zero_row_fresh":')
-        block = self.source[start:start + 800]
-        self.assertIn("_governed_date_anchor_repair_lines(_semantic_plan or {})", block)
+        end = self.source.index("retry_user = (", start)
+        return self.source[start:end]
+
+    def test_repair_note_branch_reuses_governed_date_anchor_lines(self):
+        self.assertIn("_governed_date_anchor_repair_lines(_semantic_plan or {})",
+                      self._zero_row_branch())
 
     def test_repair_note_tells_llm_to_try_a_different_approach(self):
-        start = self.source.index('elif last_code == "zero_row_fresh":')
-        block = self.source[start:start + 800]
+        block = self._zero_row_branch()
         self.assertIn("Try a different table, join path, or date anchor", block)
         self.assertIn("do not repeat the", block)
         self.assertIn("same restrictive filter", block)
+
+    def test_the_note_also_carries_the_proven_wrong_filter_value(self):
+        """The value index can prove a WHERE literal absent and name the real
+        values; that proof used to be spent only on the user-facing apology."""
+        block = self._zero_row_branch()
+        self.assertIn("_unmatched_literal_repair_lines(sql, account_id)", block)
+        self.assertIn("+ _literal_lines", block)
 
 
 if __name__ == "__main__":

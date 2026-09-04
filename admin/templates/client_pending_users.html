@@ -12,17 +12,17 @@
 {% block head %}
 <style>
 .pu-filters{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.1rem}
-.pu-filter{border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
+.pu-filter{border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:var(--font-xs);font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
 .pu-filter.active{background:color-mix(in srgb, var(--danger) 10%, transparent);border-color:color-mix(in srgb, var(--danger) 28%, transparent);color:var(--danger)}
-.pu-table{width:100%;border-collapse:collapse;font-size:12px}
-.pu-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:800;white-space:nowrap}
+.pu-table{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
+.pu-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:var(--font-2xs);text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:800;white-space:nowrap}
 .pu-table td{padding:.75rem;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text-soft)}
 .pu-table tr:last-child td{border-bottom:none}
 .pu-table tr:hover td{background:var(--row-hover,rgba(0,0,0,.025))}
 .pu-name{color:var(--text);font-weight:600}
-.pu-uid{font-family:monospace;font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
-.pu-platform{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em}
-.pu-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:11px;font-weight:800;cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
+.pu-uid{font-family:monospace;font-size:var(--font-xs);color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.pu-platform{display:inline-block;padding:1px 6px;border-radius:4px;font-size:var(--font-2xs);font-weight:700;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em}
+.pu-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:var(--font-xs);font-weight:800;cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
 .pu-btn:hover{background:var(--surface-3,var(--surface-2));color:var(--text)}
 .pu-btn-approve{border-color:color-mix(in srgb, var(--success) 40%, transparent);color:var(--success)}
 .pu-btn-approve:hover{background:color-mix(in srgb, var(--success) 10%, transparent)}
@@ -30,20 +30,20 @@
 .pu-btn-reject:hover{background:color-mix(in srgb, var(--danger) 10%, transparent)}
 .pu-stats{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem}
 .pu-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
-.pu-stat-n{font-size:22px;font-weight:900;color:var(--text)}
-.pu-stat-l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-top:.15rem}
-.pu-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:14px}
+.pu-stat-n{font-size:var(--font-2xl);font-weight:900;color:var(--text)}
+.pu-stat-l{font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-top:.15rem}
+.pu-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:var(--font-md)}
 .expand-detail{display:none}
 .expand-detail.open{display:table-row}
 .detail-panel{background:var(--surface-2);padding:.85rem 1rem;border-radius:var(--radius-sm);border:1px solid var(--border)}
 .approve-section{border-left:3px solid color-mix(in srgb, var(--success) 40%, transparent);padding-left:.75rem}
 .reject-section{border-left:3px solid color-mix(in srgb, var(--danger) 40%, transparent);padding-left:.75rem}
-.detail-section-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem}
-.group-select{font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.4rem}
+.detail-section-label{font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem}
+.group-select{font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.4rem}
 .group-select:focus{outline:none;border-color:var(--blue,#0d7377);box-shadow:0 0 0 3px rgba(13,115,119,.08)}
-.detail-note-input{font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.5rem}
+.detail-note-input{font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.5rem}
 .detail-note-input:focus{outline:none;border-color:var(--blue,#0d7377);box-shadow:0 0 0 3px rgba(13,115,119,.08)}
-.field-label{font-size:11px;color:var(--text-muted);display:block;margin-bottom:.25rem}
+.field-label{font-size:var(--font-xs);color:var(--text-muted);display:block;margin-bottom:.25rem}
 </style>
 {% endblock %}
 {% block content %}
@@ -108,7 +108,7 @@
   {% for u in pending_users %}
   <tr class="pu-row" data-uid="{{ u.id }}">
     <td>
-      <button type="button" class="pu-btn" style="padding:2px 6px;font-size:10px"
+      <button type="button" class="pu-btn" style="padding:2px 6px;font-size:var(--font-2xs)"
         onclick="togglePuDetail('{{ u.id }}')">+</button>
     </td>
     <td><span class="pu-name">{{ u.display_name or '—' }}</span></td>
@@ -168,7 +168,7 @@
         </div>
         {% elif u.status == 'approved' %}
         <div style="display:flex;gap:1.25rem;align-items:flex-start">
-          <div style="flex:1;font-size:12px;color:var(--text-muted)">
+          <div style="flex:1;font-size:var(--font-sm);color:var(--text-muted)">
             {% if u.reviewer_note %}
             <strong>Reviewer note:</strong> {{ u.reviewer_note }}
             {% else %}
@@ -196,7 +196,7 @@
 
         {% elif u.status == 'rejected' %}
         <div style="display:flex;gap:1.25rem;align-items:flex-start">
-          <div style="flex:1;font-size:12px;color:var(--text-muted)">
+          <div style="flex:1;font-size:var(--font-sm);color:var(--text-muted)">
             {% if u.reviewer_note %}
             <strong>Reviewer note:</strong> {{ u.reviewer_note }}
             {% else %}

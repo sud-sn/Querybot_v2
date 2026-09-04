@@ -16,32 +16,32 @@
       <form method="post" action="/portal/reports/create">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
           <div>
-            <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Report name</label>
+            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Report name</label>
             <input name="name" type="text" required placeholder="e.g. My Territory Snapshot" style="width:100%">
           </div>
           <div>
-            <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Description</label>
+            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Description</label>
             <input name="description" type="text" placeholder="What this report covers" style="width:100%">
           </div>
         </div>
 
         <div style="margin-top:1rem">
-          <div style="font-size:11px;font-weight:700;color:var(--gray-500);
+          <div style="font-size:var(--font-xs);font-weight:700;color:var(--gray-500);
             text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">
             Metrics to include
           </div>
           {% if all_metrics %}
             {% for m in all_metrics %}
               <label style="display:flex;align-items:center;gap:.5rem;padding:.4rem 0;
-                border-bottom:1px solid var(--border);font-size:13px">
+                border-bottom:1px solid var(--border);font-size:var(--font-base)">
                 <input type="checkbox" name="metric_ids" value="{{ m.id }}">
                 <span style="font-weight:600">{{ m.name }}</span>
                 {% if m.base_table %}<span style="color:var(--gray-500);font-family:Consolas,monospace;
-                  font-size:11px"> — {{ m.base_table }}</span>{% endif %}
+                  font-size:var(--font-xs)"> — {{ m.base_table }}</span>{% endif %}
               </label>
             {% endfor %}
           {% else %}
-            <div style="font-size:12px;color:var(--gray-500)">
+            <div style="font-size:var(--font-sm);color:var(--gray-500)">
               No metrics are available to you yet — ask your admin to grant table access
               or add metrics to the registry.
             </div>

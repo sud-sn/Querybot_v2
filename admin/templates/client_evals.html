@@ -8,11 +8,11 @@
 .eval-item{display:block;padding:.75rem;border-bottom:1px solid var(--border);color:var(--text);text-decoration:none}
 .eval-item:hover{background:var(--row-hover);text-decoration:none}
 .eval-item.active{background:var(--blue-light)}
-.eval-meta{font-size:11px;color:var(--text-muted);margin-top:4px}
-.eval-table{width:100%;border-collapse:collapse;font-size:12px}
+.eval-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:4px}
+.eval-table{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
 .eval-table th{padding:.6rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left}
 .eval-table td{padding:.65rem;border-bottom:1px solid var(--border);vertical-align:top}
-.eval-sql{white-space:pre-wrap;word-break:break-word;max-width:420px;font-family:Consolas,monospace;font-size:11px}
+.eval-sql{white-space:pre-wrap;word-break:break-word;max-width:420px;font-family:Consolas,monospace;font-size:var(--font-xs)}
 .eval-table-wrap{max-width:100%;overflow:auto}
 @media(max-width:800px){
   .eval-grid{grid-template-columns:minmax(0,1fr)}
@@ -105,7 +105,7 @@
         <span class="badge badge-{% if selected.status == 'passed' %}green{% else %}red{% endif %}">{{ selected.status }}</span>
       </div>
       <div class="card-body">
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:.75rem">
+        <p style="font-size:var(--font-base);color:var(--text-muted);margin-bottom:.75rem">
           {{ selected.passed_cases }}/{{ selected.total_cases }} passed. Average score {{ selected.avg_score }}.
           {% if selected.report_path %}<br>Report: <code>{{ selected.report_path }}</code>{% endif %}
         </p>

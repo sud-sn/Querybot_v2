@@ -297,22 +297,24 @@ class TestRepairWiring(unittest.TestCase):
 
     def test_a_mechanically_fixable_slip_is_repaired(self):
         """ORDER BY on an undeclared alias is a one-line fix, not terminal."""
-        self.assertIn('"order_alias_mismatch"', self.source)
+        from core.validator import REPAIRABLE_REASON_CODES
+
+        self.assertIn("order_alias_mismatch", REPAIRABLE_REASON_CODES)
 
     def test_governed_compiler_declines_are_visible(self):
         """~90 guard clauses return "" silently; a skipped contract must log."""
         self.assertIn("Governed compiler declined for", self.source)
 
     def test_deliberately_terminal_codes_stay_terminal(self):
-        import re
+        """Each is terminal for its own reason, recorded beside it in the
+        registry: a policy refusal, an explicit decline, and DDL — which is
+        terminal as a governance stance rather than because it is unfixable."""
+        from core.validator import REPAIRABLE_REASON_CODES, TERMINAL_REASON_CODES
 
-        retryable = re.search(
-            r"retryable = \(not ok and \(last_code or code\) in \(([^)]*)\)",
-            self.source, re.S,
-        ).group(1)
         for code in ("access_denied", "ddl", "cannot_generate"):
             with self.subTest(code=code):
-                self.assertNotIn(f'"{code}"', retryable)
+                self.assertIn(code, TERMINAL_REASON_CODES)
+                self.assertNotIn(code, REPAIRABLE_REASON_CODES)
 
 
 if __name__ == "__main__":

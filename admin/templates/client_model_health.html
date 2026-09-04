@@ -18,7 +18,7 @@
   box-shadow:var(--shadow);display:flex;align-items:flex-start;gap:1.5rem;flex-wrap:wrap}
 .mh-hero-body{flex:1}
 .mh-hero h1{font-size:20px;font-weight:900;margin:0}
-.mh-hero p{font-size:13px;color:var(--text-muted);line-height:1.6;margin:.4rem 0 0;max-width:740px}
+.mh-hero p{font-size:var(--font-base);color:var(--text-muted);line-height:1.6;margin:.4rem 0 0;max-width:740px}
 /* ── score circle ───────────────────────────────────────── */
 .mh-score-wrap{flex-shrink:0;text-align:center}
 .mh-score-circle{width:88px;height:88px;border-radius:50%;display:flex;flex-direction:column;
@@ -30,56 +30,56 @@
 .mh-score-num.high{color:var(--green)}
 .mh-score-num.mid {color:var(--amber)}
 .mh-score-num.low {color:var(--red)}
-.mh-score-label{font-size:10px;font-weight:700;text-transform:uppercase;
+.mh-score-label{font-size:var(--font-2xs);font-weight:700;text-transform:uppercase;
   letter-spacing:.06em;color:var(--text-muted);margin-top:3px}
 /* ── stat grid ──────────────────────────────────────────── */
 .mh-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem}
 .mh-stat{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);
   padding:.8rem .9rem;box-shadow:var(--shadow-sm)}
-.mh-stat-label{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;
+.mh-stat-label{font-size:var(--font-2xs);font-weight:900;text-transform:uppercase;letter-spacing:.08em;
   color:var(--text-muted);margin-bottom:.25rem}
-.mh-stat-value{font-size:22px;font-weight:900;color:var(--text);line-height:1}
-.mh-stat-sub{font-size:11px;color:var(--text-muted);margin-top:3px}
+.mh-stat-value{font-size:var(--font-2xl);font-weight:900;color:var(--text);line-height:1}
+.mh-stat-sub{font-size:var(--font-xs);color:var(--text-muted);margin-top:3px}
 /* ── coverage card ──────────────────────────────────────── */
 .mh-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);
   box-shadow:var(--shadow);overflow:hidden}
 .mh-card-header{padding:.7rem 1rem;background:var(--surface-2);border-bottom:1px solid var(--border);
   display:flex;align-items:center;justify-content:space-between}
-.mh-card-header h2{font-size:14px;font-weight:900;margin:0}
+.mh-card-header h2{font-size:var(--font-md);font-weight:900;margin:0}
 .mh-card-body{padding:1rem}
 .cov-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.65rem}
 .cov-row:last-child{margin-bottom:0}
-.cov-label{font-size:12px;font-weight:600;color:var(--text);width:130px;flex-shrink:0}
+.cov-label{font-size:var(--font-sm);font-weight:600;color:var(--text);width:130px;flex-shrink:0}
 .cov-bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);
   border-radius:999px;height:12px;overflow:hidden}
 .cov-fill{height:100%;border-radius:999px;transition:width .3s}
 .cov-fill.high{background:linear-gradient(90deg,var(--green),color-mix(in srgb,var(--green) 70%,var(--blue)))}
 .cov-fill.mid {background:linear-gradient(90deg,var(--amber),color-mix(in srgb,var(--amber) 60%,var(--green)))}
 .cov-fill.low {background:linear-gradient(90deg,var(--red),var(--amber))}
-.cov-pct{font-size:12px;font-weight:700;width:46px;text-align:right;flex-shrink:0;color:var(--text-soft)}
-.cov-counts{font-size:11px;color:var(--text-muted);width:72px;text-align:right;flex-shrink:0}
+.cov-pct{font-size:var(--font-sm);font-weight:700;width:46px;text-align:right;flex-shrink:0;color:var(--text-soft)}
+.cov-counts{font-size:var(--font-xs);color:var(--text-muted);width:72px;text-align:right;flex-shrink:0}
 /* ── drift section ──────────────────────────────────────── */
 .drift-clean{padding:.65rem .9rem;border:1px solid color-mix(in srgb,var(--green) 28%,var(--border));
   background:color-mix(in srgb,var(--green-light) 35%,var(--surface));border-radius:var(--radius-sm);
-  font-size:12px;color:var(--text-soft);display:flex;align-items:center;gap:.5rem}
+  font-size:var(--font-sm);color:var(--text-soft);display:flex;align-items:center;gap:.5rem}
 .drift-alert{padding:.65rem .9rem;border:1px solid color-mix(in srgb,var(--red) 28%,var(--border));
   background:color-mix(in srgb,var(--red-light,#ffe4e4) 35%,var(--surface));
   border-radius:var(--radius-sm);margin-bottom:.5rem}
-.drift-alert-title{font-size:12px;font-weight:800;color:var(--red,#c0392b);margin-bottom:.4rem}
-.drift-list{margin:0;padding-left:1.25rem;font-size:12px;color:var(--text-soft)}
+.drift-alert-title{font-size:var(--font-sm);font-weight:800;color:var(--red,#c0392b);margin-bottom:.4rem}
+.drift-list{margin:0;padding-left:1.25rem;font-size:var(--font-sm);color:var(--text-soft)}
 .drift-list li{margin:.2rem 0}
-.drift-list code{font-family:Consolas,monospace;font-size:11px;
+.drift-list code{font-family:Consolas,monospace;font-size:var(--font-xs);
   background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 5px}
-.drift-timestamp{font-size:11px;color:var(--text-muted)}
+.drift-timestamp{font-size:var(--font-xs);color:var(--text-muted)}
 /* ── per-table breakdown ─────────────────────────────────── */
-table.mh-tbl{width:100%;border-collapse:collapse;font-size:13px}
-table.mh-tbl th{padding:.5rem .75rem;text-align:left;font-size:10px;font-weight:800;
+table.mh-tbl{width:100%;border-collapse:collapse;font-size:var(--font-base)}
+table.mh-tbl th{padding:.5rem .75rem;text-align:left;font-size:var(--font-2xs);font-weight:800;
   text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);
   background:var(--surface-2);border-bottom:1px solid var(--border)}
 table.mh-tbl td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle}
 table.mh-tbl tr:last-child td{border-bottom:none}
 table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
-.type-pill{display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;
+.type-pill{display:inline-block;padding:2px 7px;border-radius:999px;font-size:var(--font-2xs);font-weight:800;
   text-transform:uppercase;letter-spacing:.03em}
 .type-fact{background:var(--blue-light);color:var(--blue)}
 .type-dimension{background:var(--violet-light,#ede9fe);color:var(--violet,#7c3aed)}
@@ -89,8 +89,8 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
 .mini-bar-fill.full{background:var(--green)}
 .mini-bar-fill.some{background:var(--amber)}
 .mini-bar-fill.none{background:var(--red)}
-.mini-bar-num{font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums}
-.mono{font-family:Consolas,monospace;font-size:11px;
+.mini-bar-num{font-size:var(--font-xs);color:var(--text-muted);font-variant-numeric:tabular-nums}
+.mono{font-family:Consolas,monospace;font-size:var(--font-xs);
   background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
 </style>
 {% endblock %}
@@ -153,15 +153,15 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
       {% endif %}
       <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/compiler/mode"
             id="compiler-mode-form" style="margin-top:1rem;padding-top:.85rem;border-top:1px solid var(--border);display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
-        <label for="compiler-mode-select" style="font-size:12px;font-weight:700;color:var(--text-muted)">Enforcement mode</label>
-        <select name="mode" id="compiler-mode-select" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px">
+        <label for="compiler-mode-select" style="font-size:var(--font-sm);font-weight:700;color:var(--text-muted)">Enforcement mode</label>
+        <select name="mode" id="compiler-mode-select" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-sm)">
           <option value="off" {% if compiler_state.mode == 'off' %}selected{% endif %}>Off — record only, no compiler checks surfaced</option>
           <option value="shadow" {% if not compiler_state.mode or compiler_state.mode == 'shadow' %}selected{% endif %}>Shadow — record conflicts, always publish anyway (default)</option>
           <option value="enforce" {% if compiler_state.mode == 'enforce' %}selected{% endif %}>Enforce — reject a compile with any open ERROR conflict</option>
         </select>
         <button type="submit" class="btn btn-primary btn-xs">Save mode</button>
         {% if compile_counts.errors %}
-        <span style="font-size:11px;color:var(--red)">
+        <span style="font-size:var(--font-xs);color:var(--red)">
           {{ compile_counts.errors }} open ERROR conflict(s) right now — switching to Enforce will block the next compile until they're resolved.
         </span>
         {% endif %}
@@ -256,7 +256,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         <span class="mh-score-num {{ score_cls }}">{{ health.approval_coverage.pct }}%</span>
       </div>
       <div class="mh-score-label">Approved</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;text-align:center">
+      <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px;text-align:center">
         {{ health.approval_coverage.approved }}&nbsp;/&nbsp;{{ health.approval_coverage.total }}
       </div>
     </div>
@@ -314,12 +314,12 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   <div class="mh-card">
     <div class="mh-card-header">
       <h2>KB Readiness</h2>
-      <span class="badge" style="background:{% if kbq.status == 'ready' %}var(--green-soft){% elif kbq.status == 'blocked' %}var(--red-soft){% else %}var(--amber-soft){% endif %};color:{% if kbq.status == 'ready' %}var(--green){% elif kbq.status == 'blocked' %}var(--red){% else %}var(--amber){% endif %}">
+      <span class="badge" style="background:{% if kbq.status == 'ready' %}var(--green-light){% elif kbq.status == 'blocked' %}var(--red-light){% else %}var(--amber-light){% endif %};color:{% if kbq.status == 'ready' %}var(--green){% elif kbq.status == 'blocked' %}var(--red){% else %}var(--amber){% endif %}">
         {{ kbq.status|replace('_', ' ')|title }}
       </span>
     </div>
     <div class="mh-card-body">
-      <p style="margin:0 0 .75rem;font-size:13px;color:var(--text-soft)">
+      <p style="margin:0 0 .75rem;font-size:var(--font-base);color:var(--text-soft)">
         Deterministic quality checks for table grain, display fields, date roles, joins, and generated query examples.
         Score: <strong>{{ kbq.score }}/100</strong>.
       </p>
@@ -334,7 +334,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         {% endfor %}
       </ul>
       {% if kbq.issues|length > 8 %}
-      <p style="margin:.6rem 0 0;font-size:12px;color:var(--text-muted)">Showing the first 8 of {{ kbq.issues|length }} checks.</p>
+      <p style="margin:.6rem 0 0;font-size:var(--font-sm);color:var(--text-muted)">Showing the first 8 of {{ kbq.issues|length }} checks.</p>
       {% endif %}
       {% else %}
       <div class="drift-clean">All deterministic KB checks passed.</div>
@@ -378,7 +378,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         <div class="cov-pct">{{ vc.pct }}%</div>
         <div class="cov-counts">{{ vc.covered }} / {{ vc.total }}</div>
       </div>
-      <p style="margin:.4rem 0 0;font-size:12px;color:var(--text-muted)">
+      <p style="margin:.4rem 0 0;font-size:var(--font-sm);color:var(--text-muted)">
         Share of columns the terminology layer confidently understands (ERP dictionary,
         naming conventions, or admin approval). Low coverage means weak business-name
         matching for questions touching those columns.
@@ -394,12 +394,12 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   <div class="mh-card">
     <div class="mh-card-header">
       <h2>Naming Intelligence</h2>
-      <span style="font-size:12px;color:var(--text-muted)">
+      <span style="font-size:var(--font-sm);color:var(--text-muted)">
         {{ naming.primary_style | replace('_', ' ') | title }} · {{ naming.style_confidence }}% style confidence
       </span>
     </div>
     <div class="mh-card-body">
-      <p style="margin:0 0 .7rem;font-size:13px;color:var(--text-soft)">
+      <p style="margin:0 0 .7rem;font-size:var(--font-base);color:var(--text-soft)">
         QueryBot inspected {{ naming.field_count }} physical fields and confidently expanded
         {{ naming.vocabulary_coverage_pct }}%. High-confidence vendor detection is applied only
         when no terminology pack was selected manually; ambiguous matches remain review-only.
@@ -419,7 +419,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
       {% endif %}
       {% if naming.pack_recommendations %}
       <div style="overflow-x:auto;margin-top:.7rem">
-        <table class="data-table" style="font-size:12px">
+        <table class="data-table" style="font-size:var(--font-sm)">
           <thead><tr><th>Pack</th><th>Confidence</th><th>Exact fields</th><th>Exact tables</th><th>Unique evidence</th></tr></thead>
           <tbody>
           {% for pack in naming.pack_recommendations[:3] %}
@@ -444,10 +444,10 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   <div class="mh-card">
     <div class="mh-card-header">
       <h2>Columns Needing Context</h2>
-      <span style="font-size:12px;color:var(--text-muted)">worst first · showing up to 30</span>
+      <span style="font-size:var(--font-sm);color:var(--text-muted)">worst first · showing up to 30</span>
     </div>
     <div class="mh-card-body">
-      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+      <p style="margin:0 0 .6rem;font-size:var(--font-base);color:var(--text-soft)">
         These columns had no confident vocabulary match. Add a short business meaning
         via the column context editor, or enable a matching ERP terminology pack, then
         rebuild the KB.
@@ -457,7 +457,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         <li>
           <code>{{ col.table }}.{{ col.column }}</code>
           <span style="color:var(--text-muted)">confidence {{ col.confidence }}</span>
-          <a href="/admin/clients/{{ client.account_id }}/kb?view=fields&table={{ col.table | urlencode }}" style="font-size:12px">add context →</a>
+          <a href="/admin/clients/{{ client.account_id }}/kb?view=fields&table={{ col.table | urlencode }}" style="font-size:var(--font-sm)">add context →</a>
         </li>
         {% endfor %}
       </ul>
@@ -471,10 +471,10 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   <div class="mh-card">
     <div class="mh-card-header">
       <h2>Fact Table Grain Review</h2>
-      <span style="font-size:12px;color:var(--text-muted)">{{ unapproved_grains | length }} awaiting approval</span>
+      <span style="font-size:var(--font-sm);color:var(--text-muted)">{{ unapproved_grains | length }} awaiting approval</span>
     </div>
     <div class="mh-card-body">
-      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+      <p style="margin:0 0 .6rem;font-size:var(--font-base);color:var(--text-soft)">
         Confirm what one row represents in each fact table. Grain errors are the most
         common cause of duplicated totals after joins — an approved grain survives KB rebuilds.
       </p>
@@ -486,7 +486,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         <input type="text" name="grain" required
                value="{{ '' if t.grain == 'needs_admin_context' else t.grain }}"
                placeholder="e.g. one row per invoice line"
-               style="flex:1;min-width:220px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px">
+               style="flex:1;min-width:220px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-sm)">
         <button type="submit" class="btn btn-secondary btn-xs">Approve grain</button>
       </form>
       {% endfor %}
@@ -498,11 +498,11 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   <div class="mh-card">
     <div class="mh-card-header">
       <h2>KB Doc Quality — Where Edits Pay Off Most</h2>
-      <span style="font-size:12px;color:var(--text-muted)">last 30 days of live questions</span>
+      <span style="font-size:var(--font-sm);color:var(--text-muted)">last 30 days of live questions</span>
     </div>
     <div class="mh-card-body">
       {% if kb_doc_quality %}
-      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+      <p style="margin:0 0 .6rem;font-size:var(--font-base);color:var(--text-soft)">
         Ranked by <strong>attention score</strong> — tables pulled into many prompts but
         rarely used in working SQL, often failing, or matching only weakly. Editing the
         top doc's wording (Overview / Business Synonyms) gives the biggest answer-quality
@@ -534,7 +534,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         </tbody>
       </table>
       {% else %}
-      <p style="margin:0;font-size:13px;color:var(--text-muted)">
+      <p style="margin:0;font-size:var(--font-base);color:var(--text-muted)">
         No retrieval telemetry yet — this fills in as users ask questions. Each answered
         question records which tables were retrieved, their relevance scores, and whether
         the question succeeded, so this ranking gets sharper with use.
@@ -548,12 +548,12 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
     <div class="mh-card-header">
       <h2>Value Index</h2>
       {% if value_index_stats.built_at %}
-      <span style="font-size:12px;color:var(--text-muted)">built {{ value_index_stats.built_at }}</span>
+      <span style="font-size:var(--font-sm);color:var(--text-muted)">built {{ value_index_stats.built_at }}</span>
       {% endif %}
     </div>
     <div class="mh-card-body">
       {% if value_index_stats %}
-      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+      <p style="margin:0 0 .6rem;font-size:var(--font-base);color:var(--text-soft)">
         <strong>{{ value_index_stats.values_indexed }}</strong> values across
         <strong>{{ value_index_stats.columns_indexed }}</strong> filterable columns are
         indexed for literal grounding — user-typed filter values ("emco corp") get
@@ -566,7 +566,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         {% endif %}
       </p>
       {% else %}
-      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-muted)">
+      <p style="margin:0 0 .6rem;font-size:var(--font-base);color:var(--text-muted)">
         No value index yet — run schema discovery, or refresh below.
       </p>
       {% endif %}
@@ -586,7 +586,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
     </div>
     <div class="mh-card-body">
       {% if not health.drift %}
-      <p style="font-size:13px;color:var(--text-muted)">
+      <p style="font-size:var(--font-base);color:var(--text-muted)">
         No drift data yet. Rebuild the Knowledge Base to run schema drift detection.
       </p>
       {% elif health.drift.clean %}
@@ -639,7 +639,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   <div class="mh-card">
     <div class="mh-card-header">
       <h2>Per-Table Breakdown</h2>
-      <span style="font-size:12px;color:var(--text-muted)">{{ health.table_summaries | length }} table{{ "s" if health.table_summaries | length != 1 }}</span>
+      <span style="font-size:var(--font-sm);color:var(--text-muted)">{{ health.table_summaries | length }} table{{ "s" if health.table_summaries | length != 1 }}</span>
     </div>
     <table class="mh-tbl">
       <thead>
@@ -665,7 +665,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         {% endmacro %}
         <tr>
           <td><span class="mono">{{ t.table }}</span></td>
-          <td style="font-size:12px;color:var(--text-muted)">{{ t.schema }}</td>
+          <td style="font-size:var(--font-sm);color:var(--text-muted)">{{ t.schema }}</td>
           <td><span class="type-pill type-{{ t.type }}">{{ t.type }}</span></td>
           <td>{{ mini(t.fields.approved, t.fields.total) }}</td>
           <td>{{ mini(t.measures.approved, t.measures.total) }}</td>

@@ -18,42 +18,42 @@
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
 .term-card-body{padding:1rem}
 .term-title{font-size:15px;font-weight:800;color:var(--text)}
-.term-sub{font-size:12px;color:var(--text-muted);margin-top:2px}
+.term-sub{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px}
 .kind-badge{display:inline-block;padding:2px 8px;border-radius:4px;
-  font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+  font-size:var(--font-2xs);font-weight:700;text-transform:uppercase;letter-spacing:.03em}
 .kind-metric{background:var(--blue-light);color:var(--blue)}
 .kind-dimension{background:var(--green-light);color:var(--green)}
 .kind-filter{background:var(--amber-light);color:var(--amber)}
 .kind-entity{background:var(--violet-light);color:var(--violet)}
 .source-badge{display:inline-block;padding:2px 8px;border-radius:999px;
-  font-size:10px;font-weight:700;background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
+  font-size:var(--font-2xs);font-weight:700;background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
 .source-manual{background:var(--green-light);color:var(--green)}
 .source-kb_extracted{background:var(--blue-light);color:var(--blue)}
-.expr-preview{font-family:monospace;font-size:11px;background:var(--surface-2);
+.expr-preview{font-family:monospace;font-size:var(--font-xs);background:var(--surface-2);
   border:1px solid var(--border);border-radius:var(--radius-sm);padding:.625rem .875rem;
   white-space:pre-wrap;word-break:break-all;color:var(--text-soft);margin-top:.5rem}
 .alias-pill{display:inline-block;background:var(--blue-light);color:var(--blue);
-  font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;
+  font-size:var(--font-2xs);font-weight:600;padding:2px 8px;border-radius:4px;
   margin:2px;font-family:monospace}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
   gap:.75rem;margin-bottom:1.25rem}
 .stat-tile{background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);padding:.75rem}
-.stat-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;
+.stat-label{font-size:var(--font-xs);color:var(--text-muted);text-transform:uppercase;
   letter-spacing:.04em;font-weight:700}
-.stat-value{font-size:22px;font-weight:800;color:var(--text);margin-top:2px}
+.stat-value{font-size:var(--font-2xl);font-weight:800;color:var(--text);margin-top:2px}
 .clarif-opts{margin-top:.5rem;padding:.5rem .75rem;background:var(--amber-light);
-  border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius-sm);font-size:12px}
+  border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius-sm);font-size:var(--font-sm)}
 .clarif-opts-title{font-weight:700;color:var(--amber);margin-bottom:.25rem}
 .clarif-opts ul{margin:0;padding-left:1.25rem}
 .action-btns{display:flex;gap:.4rem;flex-wrap:wrap}
 details.edit-panel{margin-top:.6rem}
-details.edit-panel summary{cursor:pointer;font-size:12px;font-weight:600;
+details.edit-panel summary{cursor:pointer;font-size:var(--font-sm);font-weight:600;
   color:var(--gray-600);padding:.35rem .6rem;border-radius:6px;
   background:var(--gray-50);display:inline-block;user-select:none}
 details[open].edit-panel summary{background:var(--gray-100)}
 .inline-form .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
-.inline-form textarea{font-family:monospace;font-size:12px;min-height:70px}
+.inline-form textarea{font-family:monospace;font-size:var(--font-sm);min-height:70px}
 </style>
 {% endblock %}
 {% block content %}
@@ -63,7 +63,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
   margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
   <div>
     <h1 style="font-size:20px;font-weight:700">Business Glossary</h1>
-    <p style="font-size:13px;color:var(--gray-500)">
+    <p style="font-size:var(--font-base);color:var(--gray-500)">
       The semantic layer — business terms, synonyms, and metric definitions.
       Used by the clarification loop and the SQL generator to ground every
       query in real domain meaning.
@@ -117,19 +117,19 @@ details[open].edit-panel summary{background:var(--gray-100)}
 
 <details style="margin-bottom:1.5rem;background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);padding:1rem">
-  <summary style="cursor:pointer;font-weight:700;font-size:14px;color:var(--gray-900)">
+  <summary style="cursor:pointer;font-weight:700;font-size:var(--font-md);color:var(--gray-900)">
     Add a new term
   </summary>
   <form method="post" action="/admin/clients/{{ client.account_id }}/glossary/create"
     class="inline-form" style="margin-top:1rem">
     <div class="form-grid">
       <div>
-        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Term</label>
+        <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Term</label>
         <input name="term" type="text" required placeholder="A business term your users ask about"
           style="width:100%">
       </div>
       <div>
-        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Kind</label>
+        <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Kind</label>
         <select name="kind" style="width:100%">
           <option value="metric">metric (a measurable number)</option>
           <option value="dimension">dimension (a way to group)</option>
@@ -139,14 +139,14 @@ details[open].edit-panel summary{background:var(--gray-100)}
       </div>
     </div>
     <div style="margin-top:.5rem">
-      <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+      <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">
         Aliases (comma-separated plain-English synonyms)
       </label>
       <input name="aliases" type="text"
         placeholder="Other words users might use for the same concept" style="width:100%">
     </div>
     <div style="margin-top:.5rem">
-      <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+      <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">
         Canonical SQL expression
       </label>
       <textarea name="canonical_expression" placeholder="Structure (fill in with your own column names):
@@ -156,14 +156,14 @@ details[open].edit-panel summary{background:var(--gray-100)}
     </div>
     <div class="form-grid" style="margin-top:.5rem">
       <div>
-        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+        <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">
           Tables involved (comma-separated)
         </label>
         <input name="tables_involved" type="text" placeholder="Table names this term depends on"
           style="width:100%">
       </div>
       <div>
-        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+        <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">
           Definition (plain English)
         </label>
         <input name="definition" type="text"
@@ -172,12 +172,12 @@ details[open].edit-panel summary{background:var(--gray-100)}
     </div>
     <div style="margin-top:.6rem;padding:.6rem .75rem;background:var(--amber-light);
       border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:6px">
-      <label style="display:flex;align-items:center;gap:.4rem;font-weight:600;font-size:12px">
+      <label style="display:flex;align-items:center;gap:.4rem;font-weight:600;font-size:var(--font-sm)">
         <input type="checkbox" name="requires_clarification" value="1">
         This term needs clarification when asked — user must pick between options
       </label>
       <div style="margin-top:.4rem">
-        <label style="font-size:11px;font-weight:600;color:var(--gray-600)">
+        <label style="font-size:var(--font-xs);font-weight:600;color:var(--gray-600)">
           Clarification options (JSON array — shown to user when they use this term)
         </label>
         <textarea name="clarification_options_json" placeholder='Structure — define each meaning this term could have:
@@ -225,7 +225,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
       <div class="term-card-body">
         {% if t.aliases %}
           <div style="margin-bottom:.4rem">
-            <span style="font-size:11px;font-weight:700;color:var(--gray-500);
+            <span style="font-size:var(--font-xs);font-weight:700;color:var(--gray-500);
               text-transform:uppercase;letter-spacing:.04em">Aliases:</span>
             {% for a in t.aliases.split(',') %}
               {% if a.strip() %}<span class="alias-pill">{{ a.strip() }}</span>{% endif %}
@@ -233,7 +233,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
           </div>
         {% endif %}
         {% if t.tables_involved %}
-          <div style="font-size:12px;color:var(--gray-600);margin-bottom:.4rem">
+          <div style="font-size:var(--font-sm);color:var(--gray-600);margin-bottom:.4rem">
             <strong>Tables:</strong> {{ t.tables_involved }}
             {% if t.grain %} &nbsp; <strong>Grain:</strong> {{ t.grain }}{% endif %}
           </div>
@@ -249,7 +249,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
                 <li>
                   <strong>{{ opt.label }}</strong>
                   {% if opt.expression %}
-                    <code style="font-size:10px;color:var(--gray-600)">
+                    <code style="font-size:var(--font-2xs);color:var(--gray-600)">
                       — {{ opt.expression[:80] }}{% if opt.expression|length > 80 %}…{% endif %}
                     </code>
                   {% endif %}
@@ -284,7 +284,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
                 placeholder="Definition" value="{{ t.definition }}">
             </div>
             <label style="display:flex;align-items:center;gap:.4rem;
-              font-weight:600;font-size:12px;margin-top:.4rem">
+              font-weight:600;font-size:var(--font-sm);margin-top:.4rem">
               <input type="checkbox" name="requires_clarification" value="1"
                 {% if t.requires_clarification %}checked{% endif %}>
               Requires clarification
@@ -293,7 +293,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
               placeholder="Clarification options JSON"
               style="margin-top:.4rem">{% if t.clarification_options_parsed %}{{ t.clarification_options|safe }}{% endif %}</textarea>
             <div style="margin-top:.4rem">
-              <label style="font-size:12px">
+              <label style="font-size:var(--font-sm)">
                 <input type="checkbox" name="is_active" value="1"
                   {% if t.is_active %}checked{% endif %}>
                 Active
@@ -308,10 +308,10 @@ details[open].edit-panel summary{background:var(--gray-100)}
   {% endfor %}
 {% else %}
   <div style="text-align:center;padding:3rem 1rem;color:var(--gray-500)">
-    <div style="font-size:14px;font-weight:600;margin-bottom:.5rem">
+    <div style="font-size:var(--font-md);font-weight:600;margin-bottom:.5rem">
       No business terms defined yet
     </div>
-    <div style="font-size:12px">
+    <div style="font-size:var(--font-sm)">
       Click <strong>Auto-populate from KB</strong> above to extract terms
       from the Knowledge Base, or add them manually.
     </div>

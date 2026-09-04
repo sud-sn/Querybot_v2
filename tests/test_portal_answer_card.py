@@ -47,13 +47,36 @@ def chat_source() -> str:
     return CHAT.read_text(encoding="utf-8")
 
 
+def _type_scale() -> dict[str, float]:
+    """The rungs, in pixels, read from the one file that defines them."""
+    tokens = (ROOT / "static" / "css" / "tokens.css").read_text(encoding="utf-8")
+    return {
+        name: float(value)
+        for name, value in re.findall(r"(--font-[a-z0-9-]+):\s*([\d.]+)px", tokens)
+    }
+
+
 def _font_size(source: str, selector: str) -> float:
-    """Read font-size off a single-line CSS rule in the template's style block."""
+    """Read font-size off a single-line CSS rule, resolving a token if used.
+
+    The template used to carry literal pixels here. Now it carries scale
+    tokens, so this resolves them through tokens.css — which makes the check
+    stronger than it was: the hierarchy is now asserted in terms of the scale
+    the rest of the product uses, so moving a rung moves the assertion with it.
+    """
     rule = re.search(re.escape(selector) + r"\{([^}]*)\}", source)
     assert rule, f"no CSS rule for {selector}"
-    size = re.search(r"font-size:\s*([\d.]+)px", rule.group(1))
-    assert size, f"{selector} declares no font-size"
-    return float(size.group(1))
+
+    literal = re.search(r"font-size:\s*([\d.]+)px", rule.group(1))
+    if literal:
+        return float(literal.group(1))
+
+    token = re.search(r"font-size:\s*var\(\s*(--[a-z0-9-]+)\s*\)", rule.group(1))
+    assert token, f"{selector} declares no font-size"
+    scale = _type_scale()
+    name = token.group(1)
+    assert name in scale, f"{selector} uses {name}, which tokens.css does not define"
+    return scale[name]
 
 
 def test_the_answer_is_the_largest_thing_on_the_card(chat_source):

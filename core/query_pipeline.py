@@ -770,6 +770,58 @@ def _date_option_labels(bindings: list[dict]) -> dict[tuple[str, str], str]:
     return resolved
 
 
+def _unmatched_literal_repair_lines(sql: str, account_id: str) -> str:
+    """Turn a proven-absent filter value into an instruction, not an apology.
+
+    `find_unmatched_literals` parses the executed SQL's WHERE clauses and tests
+    each string literal against the per-tenant value index, reporting only
+    columns the index actually covers — so a hit here is proof the value is not
+    in the data, not a guess. It also carries the closest real values.
+
+    All of that was already computed on the zero-row path and spent entirely on
+    the message the user reads. Handing it to the repair first costs nothing and
+    turns "no matching records" into a second attempt that knows which predicate
+    to change and what to change it to.
+
+    Returns "" whenever the index cannot prove anything — no index built, an
+    unindexed column, or a literal that does exist. Silence is correct there:
+    an unproven suggestion would send the repair chasing a filter that was fine.
+    """
+    if not sql or not account_id:
+        return ""
+    try:
+        from core.value_resolver import find_unmatched_literals
+        unmatched = find_unmatched_literals(sql, account_id)
+    except Exception as exc:  # noqa: BLE001 — a repair hint, never a failure path
+        log.debug("Unmatched-literal repair lines skipped: %s", exc)
+        return ""
+    if not unmatched:
+        return ""
+
+    lines = ["\nFILTER VALUE NOT PRESENT IN THE DATA — this is why zero rows came back:"]
+    for item in unmatched[:3]:
+        column = str(item.get("business_name") or item.get("column") or "").strip()
+        literal = str(item.get("literal") or "").strip()
+        closest = [str(value) for value in (item.get("closest") or []) if str(value).strip()]
+        if not column or not literal:
+            continue
+        lines.append(
+            f"- {column} has no value '{literal}'. "
+            + (
+                f"Real values in that column include: {', '.join(closest[:5])}."
+                if closest else
+                "Do not filter on that value."
+            )
+        )
+    if len(lines) == 1:
+        return ""
+    lines.append(
+        "- Use one of the real values above verbatim, or drop that predicate "
+        "if the question did not actually ask for it. Do not invent a variant."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _governed_date_anchor_repair_lines(
     semantic_plan: dict, db_type: str = "azure_sql"
 ) -> str:
@@ -5478,23 +5530,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         rows = None
         ok = False
 
-    _sql_repair_reason_codes = {
-        "unknown_table", "unknown_column", "date_key_format", "dialect_mismatch",
-        "production_shape", "period_comparison_shape", "composition_shape",
-        "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch",
-        "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic",
-        "parse", "multi_statement", "not_select", "reused_plan_empty",
-        "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing",
-        "temporal_anchor_mismatch", "temporal_role_mismatch",
-        "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch",
-    }
+    # One source of truth, in the module that emits the codes. These two lists
+    # used to be maintained by hand HERE, in two copies, and had already drifted
+    # from each other by one code.
+    from core.validator import REPAIRABLE_REASON_CODES as _sql_repair_reason_codes
     _initial_repair_code = str(last_code or code or "").strip().casefold()
     _repair_reason_codes_seen = {_initial_repair_code} if _initial_repair_code else set()
     _llm_repair_attempts = 0
-    # Keep the explicit tuple on this assignment for the established wiring
-    # guards that audit newly-added validator codes. The normalized set above
-    # is reused by the progressive-repair gate below.
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch", "order_alias_mismatch")) or (exec_error is not None)
+    retryable = (
+        not ok
+        and str(last_code or code or "").strip().casefold() in _sql_repair_reason_codes
+    ) or (exec_error is not None)
 
     # A statement timeout is not a defect in the SQL, so there is nothing for a
     # repair to fix. Rewriting it cannot make the database faster: the retry
@@ -5806,6 +5852,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
             elif last_code == "zero_row_fresh":
                 _date_contract_lines = _governed_date_anchor_repair_lines(_semantic_plan or {})
+                # A filter value absent from the value index is the most
+                # actionable zero-row cause there is, and the index can name the
+                # real values it should have been. That proof was already being
+                # computed — for the apology the user reads. Spending it on the
+                # repair first is strictly better: a retry that knows the
+                # literal is wrong does not have to guess what to change.
+                _literal_lines = _unmatched_literal_repair_lines(sql, account_id)
                 validation_repair_note = (
                     "\nZERO-ROW DATE-FILTERED QUERY — REGENERATION REQUIRED:\n"
                     "- Your SQL was valid and executed successfully but returned zero rows for "
@@ -5814,6 +5867,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "same restrictive filter unless the semantic plan explicitly requires it.\n"
                     "- Preserve the user's metric, date range, and requested grain.\n"
                     + (_date_contract_lines if _date_contract_lines else "")
+                    + _literal_lines
                 )
             retry_user = (
                 f"The following SQL failed validation with: {last_reason}\n"
@@ -5843,13 +5897,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question_id=audit_request_id,
                 component="sql_repair",
             ):
-                sql_retry, _, _ = await llm_complete(
+                sql_retry, _retry_tok_in, _retry_tok_out = await llm_complete(
                     build_sql_system_prompt(
                         db_cfg["db_type"],
                         context_with_terms,
                         graph_context=_graph_ctx or None,
                         semantic_plan=_retry_plan,
                         question=question,
+                        # And the session context the repair note points at.
+                        # `col_fix_note` tells the model to "check the 'Session
+                        # context' section — if the previous turn returned a
+                        # column that represents the same concept, reuse that
+                        # EXACT column name". That section is built only when
+                        # conversation_history is passed, so the instruction was
+                        # directing the model to a heading that was not there.
+                        conversation_history=_conv_history or None,
                         # Same request, same question, same knowledge base. Under
                         # a preload `context_with_terms` carries no KB at all, so
                         # omitting this sent the repair prompt out with an empty
@@ -5864,6 +5926,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     max_tokens=_sql_repair_max_tokens,
                     **az_kwargs,
                 )
+            # The repair ladder can run up to three LLM calls after the
+            # first attempt, and their tokens were dropped on the floor at
+            # the call site — so the cost signal was blind to exactly the
+            # calls that make a question expensive.
+            tok_in += _retry_tok_in
+            tok_out += _retry_tok_out
             # Retry timings accumulate onto the same buckets as the first
             # attempt (bucket aggregation sums by step_name), not separate rows.
             _trace_step(trace_id, "llm_generate_sql", output_summary={"retry": True},
@@ -5977,7 +6045,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 question_id=audit_request_id,
                 component="sql_repair_progressive",
             ):
-                _progressive_sql, _, _ = await llm_complete(
+                _progressive_sql, _prog_tok_in, _prog_tok_out = await llm_complete(
                     build_sql_system_prompt(
                         db_cfg["db_type"],
                         context_with_terms,
@@ -5987,6 +6055,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         # the repair prompt arrives carrying every optional rule —
                         # broader than the prompt that just failed.
                         question=question,
+                        # And the session context the repair note points at.
+                        # `col_fix_note` tells the model to "check the 'Session
+                        # context' section — if the previous turn returned a
+                        # column that represents the same concept, reuse that
+                        # EXACT column name". That section is built only when
+                        # conversation_history is passed, so the instruction was
+                        # directing the model to a heading that was not there.
+                        conversation_history=_conv_history or None,
                         # And without this the progressive repair loses the
                         # knowledge base entirely under a preload.
                         stable_context=_preloaded_kb,
@@ -6000,6 +6076,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     max_tokens=_sql_repair_max_tokens,
                     **az_kwargs,
                 )
+            # Same reason as the first repair: these were discarded.
+            tok_in += _prog_tok_in
+            tok_out += _prog_tok_out
             _trace_step(
                 trace_id,
                 "llm_generate_sql",

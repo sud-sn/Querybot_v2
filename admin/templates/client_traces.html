@@ -7,21 +7,21 @@
 .trace-item{display:block;padding:.75rem;border-bottom:1px solid var(--border);color:var(--text);text-decoration:none}
 .trace-item:hover{background:var(--row-hover);text-decoration:none}
 .trace-item.active{background:var(--blue-light)}
-.trace-q{font-size:12px;font-weight:800;line-height:1.35}
-.trace-meta{font-size:11px;color:var(--text-muted);margin-top:4px}
-.trace-kv{display:grid;grid-template-columns:150px 1fr;gap:.45rem .75rem;font-size:12px}
+.trace-q{font-size:var(--font-sm);font-weight:800;line-height:1.35}
+.trace-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:4px}
+.trace-kv{display:grid;grid-template-columns:150px 1fr;gap:.45rem .75rem;font-size:var(--font-sm)}
 .trace-kv div:nth-child(odd){color:var(--text-muted);font-weight:800}
-.trace-pre{white-space:pre-wrap;word-break:break-word;background:var(--code-bg);color:var(--code-text);padding:.75rem;border-radius:var(--radius-sm);font-size:12px;max-height:280px;overflow:auto}
+.trace-pre{white-space:pre-wrap;word-break:break-word;background:var(--code-bg);color:var(--code-text);padding:.75rem;border-radius:var(--radius-sm);font-size:var(--font-sm);max-height:280px;overflow:auto}
 .step{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem;margin-bottom:.55rem;background:var(--surface-2)}
-.step-head{display:flex;justify-content:space-between;gap:.75rem;font-size:12px;font-weight:850}
-.step-body{font-size:11px;color:var(--text-muted);margin-top:.45rem;white-space:pre-wrap;word-break:break-word}
+.step-head{display:flex;justify-content:space-between;gap:.75rem;font-size:var(--font-sm);font-weight:850}
+.step-body{font-size:var(--font-xs);color:var(--text-muted);margin-top:.45rem;white-space:pre-wrap;word-break:break-word}
 .duration-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem}
 .duration-row.duration-total{margin-top:.65rem;padding-top:.65rem;border-top:1px solid var(--border);font-weight:850}
-.duration-label{flex:0 0 130px;font-size:12px;color:var(--text-muted)}
+.duration-label{flex:0 0 130px;font-size:var(--font-sm);color:var(--text-muted)}
 .duration-total .duration-label{color:var(--text)}
 .duration-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
 .duration-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--green));transition:width .2s}
-.duration-val{flex:0 0 60px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums}
+.duration-val{flex:0 0 60px;text-align:right;font-size:var(--font-sm);font-variant-numeric:tabular-nums}
 </style>
 {% endblock %}
 {% block content %}
@@ -61,7 +61,7 @@
           <div>Duration</div><div>{{ selected.query_duration_ms }} ms</div>
         </div>
         {% if selected.generated_sql %}
-        <h3 style="font-size:12px;margin:1rem 0 .45rem">Generated SQL</h3>
+        <h3 style="font-size:var(--font-sm);margin:1rem 0 .45rem">Generated SQL</h3>
         <pre class="trace-pre">{{ selected.generated_sql }}</pre>
         {% endif %}
       </div>

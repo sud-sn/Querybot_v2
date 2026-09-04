@@ -8,15 +8,15 @@
 .step-head{padding:.875rem 1.25rem;display:flex;align-items:center;gap:.75rem;
   border-bottom:1px solid var(--border);background:var(--surface-2);}
 .step-num{width:28px;height:28px;border-radius:50%;background:var(--text-soft);color:var(--on-primary);
-  font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  font-size:var(--font-sm);font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .step-num.done{background:var(--green);}
 .step-num.active{background:var(--blue);}
-.step-title{font-size:14px;font-weight:700;}
+.step-title{font-size:var(--font-md);font-weight:700;}
 .step-body{padding:1.25rem;}
-.file-list{font-family:monospace;font-size:11px;color:var(--text-soft);
+.file-list{font-family:monospace;font-size:var(--font-xs);color:var(--text-soft);
   background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
   padding:.625rem .875rem;max-height:140px;overflow-y:auto;line-height:1.8;}
-.status-badge{font-size:11px;font-weight:800;padding:3px 10px;border-radius:999px;
+.status-badge{font-size:var(--font-xs);font-weight:800;padding:3px 10px;border-radius:999px;
   font-family:monospace;letter-spacing:.04em;}
 .badge-ready{background:var(--green-light);color:var(--green);}
 .badge-building{background:var(--amber-light);color:var(--amber);}
@@ -24,32 +24,32 @@
 .badge-schema{background:var(--blue-light);color:var(--blue);}
 .scope-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
 .scope-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);background:var(--surface)}
-.scope-title{font-size:13px;font-weight:800;color:var(--text-soft)}
-.scope-note{font-size:12px;color:var(--text-muted);margin-top:.2rem}
+.scope-title{font-size:var(--font-base);font-weight:800;color:var(--text-soft)}
+.scope-note{font-size:var(--font-sm);color:var(--text-muted);margin-top:.2rem}
 .scope-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-.scope-status{display:none;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border)}
+.scope-status{display:none;padding:.7rem 1rem;font-size:var(--font-sm);border-bottom:1px solid var(--border)}
 .scope-tree{display:none;padding:1rem;background:var(--surface)}
-.scope-summary{font-size:12px;color:var(--text-muted);margin-bottom:.85rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)}
+.scope-summary{font-size:var(--font-sm);color:var(--text-muted);margin-bottom:.85rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)}
 .scope-db,.scope-schema{margin-bottom:.45rem}
 .scope-row{display:flex;align-items:center;gap:.5rem;padding:.34rem .45rem;border-radius:var(--radius-sm);color:var(--text-soft)}
 .scope-row:hover{background:var(--row-hover)}
 .scope-name{font-weight:800;color:var(--text)}
 .scope-schema-name{font-weight:700;color:var(--text-soft)}
-.scope-count{margin-left:auto;font-size:11px;color:var(--text-muted);white-space:nowrap}
+.scope-count{margin-left:auto;font-size:var(--font-xs);color:var(--text-muted);white-space:nowrap}
 .scope-objects{margin-left:1.65rem}
-.scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:12px;color:var(--text-soft)}
+.scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:var(--font-sm);color:var(--text-soft)}
 .scope-object:hover{background:var(--row-hover)}
 .scope-check{width:14px;height:14px;accent-color:var(--blue)}
-.mask-field-row{display:flex;align-items:center;gap:.4rem;padding:.22rem 0;font-size:11px;color:var(--text-soft)}
-.mask-field-pii{color:var(--amber);font-size:10px;font-weight:700}
+.mask-field-row{display:flex;align-items:center;gap:.4rem;padding:.22rem 0;font-size:var(--font-xs);color:var(--text-soft)}
+.mask-field-pii{color:var(--amber);font-size:var(--font-2xs);font-weight:700}
 /* ── New masking section ── */
 .mask-item{border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem;background:var(--surface);overflow:hidden}
 .mask-item-hd{display:flex;align-items:center;gap:.5rem;padding:.55rem .85rem;cursor:pointer;user-select:none;background:var(--surface-2)}
 .mask-item-hd:hover{background:var(--row-hover)}
-.mask-item-chev{font-size:10px;color:var(--gray-400);transition:transform .15s;display:inline-block;flex-shrink:0}
-.mask-item-name{font-size:12px;font-weight:700;color:var(--text)}
-.mask-item-fqn{font-size:10px;color:var(--text-muted);font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mask-item-badge{flex-shrink:0;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
+.mask-item-chev{font-size:var(--font-2xs);color:var(--gray-400);transition:transform .15s;display:inline-block;flex-shrink:0}
+.mask-item-name{font-size:var(--font-sm);font-weight:700;color:var(--text)}
+.mask-item-fqn{font-size:var(--font-2xs);color:var(--text-muted);font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mask-item-badge{flex-shrink:0;font-size:var(--font-2xs);font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
 .mask-item-badge.has-mask{background:color-mix(in srgb,var(--amber) 12%,var(--surface));border-color:color-mix(in srgb,var(--amber) 35%,transparent);color:var(--amber)}
 .mask-item-body{max-height:0;overflow:hidden;border-top:1px solid transparent;transition:max-height .22s ease,border-top-color .22s}
 .mask-item-body.open{max-height:600px;border-top-color:var(--border)}
@@ -57,16 +57,16 @@
 .mask-preview-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:1rem}
 .mask-preview-modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.35)}
 .mask-preview-head{display:flex;align-items:center;justify-content:space-between;padding:.875rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
-.mask-preview-title{font-size:14px;font-weight:800}
+.mask-preview-title{font-size:var(--font-md);font-weight:800}
 .mask-preview-body{overflow:auto;padding:1rem 1.25rem;flex:1}
-.mask-preview-table{width:100%;border-collapse:collapse;font-size:11px;font-family:monospace}
-.mask-preview-table th{padding:.35rem .6rem;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border-bottom:2px solid var(--border);white-space:nowrap}
+.mask-preview-table{width:100%;border-collapse:collapse;font-size:var(--font-xs);font-family:monospace}
+.mask-preview-table th{padding:.35rem .6rem;text-align:left;font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border-bottom:2px solid var(--border);white-space:nowrap}
 .mask-preview-table td{padding:.32rem .6rem;border-bottom:1px solid var(--border);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
 .mask-preview-table tr:last-child td{border-bottom:none}
 .mp-real{color:var(--text)}
 .mp-fake{color:var(--green);font-weight:700}
 .mp-masked-col{background:color-mix(in srgb,var(--amber) 5%,var(--surface))}
-.scope-section{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
+.scope-section{font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
 .scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
 .kb-live-status{display:none;align-items:center;gap:.75rem;flex-wrap:wrap;margin-top:.9rem;padding:.8rem 1rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)}
 .kb-live-status.show{display:flex}
@@ -74,36 +74,36 @@
 .kb-live-status.failed{border-color:color-mix(in srgb,var(--red) 30%,transparent);background:var(--red-light);color:var(--red)}
 .kb-progress-track{height:8px;min-width:190px;flex:1;border-radius:999px;background:color-mix(in srgb,var(--surface) 66%,transparent);overflow:hidden;border:1px solid color-mix(in srgb,currentColor 24%,transparent)}
 .kb-progress-fill{height:100%;width:0%;border-radius:999px;background:currentColor;transition:width .25s ease}
-.kb-progress-text{font-size:12px;font-weight:800}
-.kb-progress-percent{font-size:12px;font-weight:850;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
-.kb-progress-step{font-size:12px;font-weight:650;color:inherit;opacity:.9}
+.kb-progress-text{font-size:var(--font-sm);font-weight:800}
+.kb-progress-percent{font-size:var(--font-sm);font-weight:850;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.kb-progress-step{font-size:var(--font-sm);font-weight:650;color:inherit;opacity:.9}
 /* ── Setup wizard step indicator ─────────────────────────── */
 .wizard-steps{display:flex;align-items:center;margin-bottom:1.5rem;padding:.75rem 1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 .wizard-step{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
-.wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
+.wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:var(--font-xs);font-weight:800;flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
 .wizard-step.done .wizard-step-circle{background:var(--green);border-color:var(--green);color:var(--on-primary)}
 .wizard-step.active .wizard-step-circle{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
-.wizard-step-label{font-size:12px;font-weight:700;color:var(--text-muted);white-space:nowrap}
+.wizard-step-label{font-size:var(--font-sm);font-weight:700;color:var(--text-muted);white-space:nowrap}
 .wizard-step.done .wizard-step-label{color:var(--green)}
 .wizard-step.active .wizard-step-label{color:var(--blue)}
 .wizard-step-line{flex:1;height:2px;background:var(--border);margin:0 .65rem;border-radius:1px;min-width:16px;transition:background .2s}
 .wizard-step-line.done{background:var(--green)}
 /* ── Table field preview panel ── */
 .tbl-fields-body{padding:.35rem .5rem .5rem 1.5rem;background:var(--surface-2);border-top:1px solid var(--border);border-radius:0 0 var(--radius-sm) var(--radius-sm)}
-.tbl-field-row{display:flex;align-items:center;gap:.4rem;padding:.18rem .25rem;font-size:11px;color:var(--text-soft);border-radius:3px}
+.tbl-field-row{display:flex;align-items:center;gap:.4rem;padding:.18rem .25rem;font-size:var(--font-xs);color:var(--text-soft);border-radius:3px}
 .tbl-field-row:hover{background:var(--row-hover)}
-.tbl-fields-btn{font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:3px;background:var(--surface);color:var(--text-muted);cursor:pointer;white-space:nowrap;flex-shrink:0;line-height:1.5}
+.tbl-fields-btn{font-size:var(--font-2xs);padding:2px 8px;border:1px solid var(--border);border-radius:3px;background:var(--surface);color:var(--text-muted);cursor:pointer;white-space:nowrap;flex-shrink:0;line-height:1.5}
 .tbl-fields-btn:hover{border-color:var(--blue);color:var(--blue)}
 /* ── Schema discovery card grid ── */
 .schema-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.45rem;margin-bottom:.875rem}
 .schema-card{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden}
 .schema-card-hd{display:flex;align-items:center;gap:.45rem;padding:.45rem .65rem;background:var(--surface-2);min-height:36px}
-.schema-card-name{font-size:11px;font-weight:700;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.schema-card-name{font-size:var(--font-xs);font-weight:700;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .schema-card-drift{font-size:9px;font-weight:800;color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
 .schema-card-new{font-size:9px;font-weight:800;color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--green) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
 /* ── Wizard step tooltip ── */
 .wizard-step-circle{position:relative;cursor:default}
-.wizard-step-circle[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);font-size:10px;font-weight:600;padding:4px 8px;border-radius:4px;white-space:nowrap;z-index:10;pointer-events:none}
+.wizard-step-circle[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);font-size:var(--font-2xs);font-weight:600;padding:4px 8px;border-radius:4px;white-space:nowrap;z-index:10;pointer-events:none}
 </style>
 {% endblock %}
 {% block breadcrumb %}
@@ -148,7 +148,7 @@
     <div class="wizard-step-circle" title="Review auto-suggested entities, joins and fields — unreviewed suggestions can steer SQL joins">{% if _w5 %}✓{% else %}5{% endif %}</div>
     <div class="wizard-step-label">
       <a href="/admin/clients/{{ client.account_id }}/graph" style="color:inherit;text-decoration:none">
-        Semantic Review{% if (graph_pending_reviews | default(0) | int) > 0 %} <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--warning);color:var(--on-primary);font-size:10px;font-weight:800">{{ graph_pending_reviews }}</span>{% endif %}
+        Semantic Review{% if (graph_pending_reviews | default(0) | int) > 0 %} <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--warning);color:var(--on-primary);font-size:var(--font-2xs);font-weight:800">{{ graph_pending_reviews }}</span>{% endif %}
       </a>
     </div>
   </div>
@@ -193,7 +193,7 @@
     </div>
     <div>
       <div class="step-title">Database connection</div>
-      <div style="font-size:12px;color:var(--text-muted)">
+      <div style="font-size:var(--font-sm);color:var(--text-muted)">
         Assign a database in the client Settings tab first
       </div>
     </div>
@@ -204,11 +204,11 @@
   </div>
   <div class="step-body">
     {% if db_cfg %}
-    <p style="font-size:13px;color:var(--green);font-weight:600">
+    <p style="font-size:var(--font-base);color:var(--green);font-weight:600">
       ✓ Connected to <strong>{{ db_cfg.name }}</strong> ({{ db_cfg.db_type }})
     </p>
     {% else %}
-    <p style="font-size:13px;color:var(--text-muted)">
+    <p style="font-size:var(--font-base);color:var(--text-muted)">
       No database assigned. Go to the client Settings tab, assign a database, then return here.
     </p>
     {% endif %}
@@ -223,11 +223,11 @@
     </div>
     <div>
       <div class="step-title">ERP / CRM source system</div>
-      <div style="font-size:12px;color:var(--text-muted)">
+      <div style="font-size:var(--font-sm);color:var(--text-muted)">
         Apply the correct product vocabulary before schema discovery and KB generation
       </div>
     </div>
-    <span style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:700">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:700">
       {% if client_source_pack == 'other' %}Other / custom database
       {% elif client_source_pack == 'multiple' %}Multiple packs
       {% else %}
@@ -281,12 +281,12 @@
     </div>
     <div>
       <div class="step-title">Regulated industry (optional)</div>
-      <div style="font-size:12px;color:var(--text-muted)">
+      <div style="font-size:var(--font-sm);color:var(--text-muted)">
         Picking Banking or Healthcare here auto-classifies columns the moment schema discovery finishes — no separate trip to Compliance needed
       </div>
     </div>
     {% if compliance_profile.mode == 'regulated' %}
-    <span style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:700">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:700">
       {{ compliance_profile.industry|replace('_',' ')|title }}
     </span>
     {% endif %}
@@ -297,15 +297,15 @@
       <div class="profile-grid" style="display:grid;grid-template-columns:repeat(3,minmax(200px,1fr));gap:.75rem">
         <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">
           <input type="radio" name="industry" value="standard" {% if compliance_profile.industry != 'banking' and compliance_profile.industry != 'healthcare_pharmacy' %}checked{% endif %}>
-          <strong> Standard</strong><p style="font-size:12px;margin:.25rem 0 0">No regulated default-deny controls.</p>
+          <strong> Standard</strong><p style="font-size:var(--font-sm);margin:.25rem 0 0">No regulated default-deny controls.</p>
         </label>
         <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">
           <input type="radio" name="industry" value="banking" {% if compliance_profile.industry == 'banking' %}checked{% endif %}>
-          <strong> Banking &amp; Financial</strong><p style="font-size:12px;margin:.25rem 0 0">PII, PCI, KYC/AML, financial-data controls.</p>
+          <strong> Banking &amp; Financial</strong><p style="font-size:var(--font-sm);margin:.25rem 0 0">PII, PCI, KYC/AML, financial-data controls.</p>
         </label>
         <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">
           <input type="radio" name="industry" value="healthcare_pharmacy" {% if compliance_profile.industry == 'healthcare_pharmacy' %}checked{% endif %}>
-          <strong> Healthcare &amp; Pharmacy</strong><p style="font-size:12px;margin:.25rem 0 0">PHI, prescription, compounding, payment controls.</p>
+          <strong> Healthcare &amp; Pharmacy</strong><p style="font-size:var(--font-sm);margin:.25rem 0 0">PHI, prescription, compounding, payment controls.</p>
         </label>
       </div>
       <button class="btn btn-secondary btn-sm" type="submit" style="margin-top:.85rem">Save industry profile</button>
@@ -322,12 +322,12 @@
     </div>
     <div>
       <div class="step-title">Select tables for KB</div>
-      <div style="font-size:12px;color:var(--text-muted)">
+      <div style="font-size:var(--font-sm);color:var(--text-muted)">
         Browse all schemas in your database and check exactly which tables to include
       </div>
     </div>
     {% if kb_table_count %}
-    <span style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:700">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:700">
       {{ kb_table_count }} table{{ "s" if kb_table_count != 1 else "" }} saved
       {% if kb_table_source == 'database' %} (from DB default){% endif %}
       {% if schema_breakdown and schema_breakdown|length > 1 %}
@@ -339,11 +339,11 @@
   <div class="step-body">
     {% if db_cfg %}
     <!-- Saved selection summary — visible before user opens the browser -->
-    <div id="setup-saved-summary" style="display:none;margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--blue)">
+    <div id="setup-saved-summary" style="display:none;margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--blue)">
       <strong id="setup-saved-count"></strong> tables currently saved for KB generation.
       Open the browser below to review or change the selection.
     </div>
-    <div id="setup-no-selection-warn" style="display:none;margin-bottom:.75rem;padding:.65rem .875rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--amber)">
+    <div id="setup-no-selection-warn" style="display:none;margin-bottom:.75rem;padding:.65rem .875rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--amber)">
       ⚠ No tables selected yet. Browse schemas and save a selection before running discovery —
       otherwise <strong>all</strong> tables in the database will be included in the KB.
     </div>
@@ -367,13 +367,13 @@
       <div id="setup-scope-tree" class="scope-tree"></div>
       <div id="setup-scope-footer" class="scope-footer">
         <strong id="setup-scope-count" style="color:var(--blue)"></strong>
-        <span style="font-size:12px;color:var(--text-muted)">tables selected.</span>
+        <span style="font-size:var(--font-sm);color:var(--text-muted)">tables selected.</span>
         <button type="button" class="btn btn-primary btn-sm" id="setup-scope-save" style="margin-left:auto">Save selection</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="_setupScopeClear()">Clear all</button>
       </div>
     </div>
     {% else %}
-    <p style="font-size:13px;color:var(--text-muted)">
+    <p style="font-size:var(--font-base);color:var(--text-muted)">
       Assign a database first (Settings tab), then return here to select tables.
     </p>
     {% endif %}
@@ -388,12 +388,12 @@
       <div class="step-title">
         Field Masking
         {% if compliance_profile.mode == 'regulated' %}
-        &nbsp;<span style="font-size:11px;font-weight:700;color:var(--red)">(Required — {{ compliance_profile.industry|replace('_',' ')|title }})</span>
+        &nbsp;<span style="font-size:var(--font-xs);font-weight:700;color:var(--red)">(Required — {{ compliance_profile.industry|replace('_',' ')|title }})</span>
         {% else %}
-        &nbsp;<span style="font-size:11px;font-weight:600;color:var(--text-muted)">(Optional)</span>
+        &nbsp;<span style="font-size:var(--font-xs);font-weight:600;color:var(--text-muted)">(Optional)</span>
         {% endif %}
       </div>
-      <div style="font-size:12px;color:var(--text-muted)">
+      <div style="font-size:var(--font-sm);color:var(--text-muted)">
         {% if compliance_profile.mode == 'regulated' %}
         This client is tagged <strong>{{ compliance_profile.industry|replace('_',' ')|title }}</strong> — sensitive fields
         (including industry-specific categories like diagnosis/prescription or account/KYC columns) are auto-detected
@@ -404,19 +404,19 @@
         {% endif %}
       </div>
     </div>
-    <span id="mask-done-badge" style="display:none;font-size:12px;color:var(--amber);font-weight:700;flex-shrink:0;margin-left:1rem">✓ Masking configured</span>
+    <span id="mask-done-badge" style="display:none;font-size:var(--font-sm);color:var(--amber);font-weight:700;flex-shrink:0;margin-left:1rem">✓ Masking configured</span>
   </div>
   <div class="step-body">
     {% if compliance_profile.mode == 'regulated' and not masking_reviewed_at %}
-    <div style="margin-bottom:.85rem;padding:.65rem .875rem;background:var(--red-light,var(--danger-soft));border:1px solid color-mix(in srgb,var(--red) 30%,transparent);border-radius:var(--radius);font-size:12px;color:var(--red)">
+    <div style="margin-bottom:.85rem;padding:.65rem .875rem;background:var(--red-light,var(--danger-soft));border:1px solid color-mix(in srgb,var(--red) 30%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--red)">
       ⚠ Schema Discovery is locked until this review is confirmed.
     </div>
     {% elif compliance_profile.mode == 'regulated' %}
-    <div style="margin-bottom:.85rem;padding:.65rem .875rem;background:var(--green-light,var(--success-soft));border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:12px;color:var(--green)">
+    <div style="margin-bottom:.85rem;padding:.65rem .875rem;background:var(--green-light,var(--success-soft));border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--green)">
       ✓ Masking reviewed and confirmed — Schema Discovery is unlocked.
     </div>
     {% endif %}
-    <div id="mask-no-tables" style="font-size:13px;color:var(--text-muted)">
+    <div id="mask-no-tables" style="font-size:var(--font-base);color:var(--text-muted)">
       No tables selected yet — save a table selection in Step 2 above, then this section will populate automatically.
     </div>
     <div id="mask-panel" style="display:none">
@@ -430,11 +430,11 @@
           Skip masking →
         </button>
         {% endif %}
-        <span id="mask-apply-status" style="font-size:12px"></span>
+        <span id="mask-apply-status" style="font-size:var(--font-sm)"></span>
       </div>
       <!-- Discovery progress bar — shown while polling -->
       <div id="mask-progress-bar" style="display:none;margin-top:.85rem;align-items:center;gap:.75rem;padding:.65rem .875rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)">
-        <span id="mask-disc-text" style="font-size:12px;font-weight:700;min-width:260px">Discovering schema…</span>
+        <span id="mask-disc-text" style="font-size:var(--font-sm);font-weight:700;min-width:260px">Discovering schema…</span>
         <div style="flex:1;height:8px;border-radius:999px;background:color-mix(in srgb,var(--surface) 60%,transparent);overflow:hidden;border:1px solid color-mix(in srgb,var(--blue) 25%,transparent)">
           <div id="mask-disc-fill" style="height:100%;width:0%;border-radius:999px;background:currentColor;transition:width .4s ease"></div>
         </div>
@@ -453,19 +453,19 @@
     </div>
     <div>
       <div class="step-title">Schema discovery</div>
-      <div style="font-size:12px;color:var(--text-muted)">
+      <div style="font-size:var(--font-sm);color:var(--text-muted)">
         Writes one schema file per selected table — needed before KB generation
       </div>
     </div>
     {% if schema_files %}
-    <span style="margin-left:auto;font-size:12px;color:var(--green);font-weight:600">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--green);font-weight:600">
       {{ schema_files|length }} table(s) found
     </span>
     {% endif %}
   </div>
   <div class="step-body">
     {% if kb_table_count %}
-    <div id="discovery-scope-hint" style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--blue)">
+    <div id="discovery-scope-hint" style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--blue)">
       Will discover <strong>{{ kb_table_count }}</strong> selected table{{ "s" if kb_table_count != 1 else "" }} only.
       {% if schema_breakdown %}
       Schemas included:
@@ -476,7 +476,7 @@
       To change the scope go back to Step 2.
     </div>
     {% elif db_cfg %}
-    <div style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--amber)">
+    <div style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--amber)">
       ⚠ No table selection saved. Discovery will scan <strong>all</strong> tables in the default schema.
       Return to Step 2 to select specific tables first.
     </div>
@@ -505,7 +505,7 @@
     </div>
 
     {% if schema_drift and schema_drift.has_changes %}
-    <div style="margin-top:.875rem;padding:.75rem 1rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:var(--radius);font-size:12px;color:var(--amber)">
+    <div style="margin-top:.875rem;padding:.75rem 1rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--amber)">
       <strong>Schema drift detected</strong> compared to the previous discovery:
       {% if schema_drift.added_tables %}
       <br>• <strong>{{ schema_drift.added_tables|length }} new table(s):</strong>
@@ -521,7 +521,7 @@
           {{ fqn.split('.')[-1] }}: {% if ch.added %}+{{ ch.added|length }} col{% endif %}{% if ch.removed %} -{{ ch.removed|length }} col{% endif %}{% if ch.type_changes %} {{ ch.type_changes|length }} type change{% endif %}{% if not loop.last %}, {% endif %}
         {% endfor %})
       {% endif %}
-      <br><span style="font-size:11px;opacity:.75">Detected {{ schema_drift.detected_at[:16]|replace('T',' ') }} UTC — rebuild the KB to pick up these changes.</span>
+      <br><span style="font-size:var(--font-xs);opacity:.75">Detected {{ schema_drift.detected_at[:16]|replace('T',' ') }} UTC — rebuild the KB to pick up these changes.</span>
     </div>
     {% endif %}
 
@@ -536,7 +536,7 @@
       </form>
     </div>
     {% else %}
-    <p style="font-size:13px;color:var(--text-muted);margin-bottom:.875rem">
+    <p style="font-size:var(--font-base);color:var(--text-muted);margin-bottom:.875rem">
       No schema files yet. Complete Step 2 first, then run discovery.
     </p>
     {% set _masking_gate_locked = compliance_profile.mode == 'regulated' and not masking_reviewed_at %}
@@ -560,12 +560,12 @@
     </div>
     <div>
       <div class="step-title">Knowledge Base generation</div>
-      <div style="font-size:12px;color:var(--text-muted)">
+      <div style="font-size:var(--font-sm);color:var(--text-muted)">
         Uses the LLM to generate business context for each table — takes 5–10 minutes
       </div>
     </div>
     {% if kb_files %}
-    <span style="margin-left:auto;font-size:12px;color:var(--green);font-weight:600">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--green);font-weight:600">
       {{ kb_files|length }} KB file(s)
     </span>
     {% endif %}
@@ -589,17 +589,17 @@
         <div id="schema-desc-blocks" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:.5rem">
           {% for schema_name, tbl_count in schema_breakdown.items() %}
           <div style="display:flex;gap:.5rem;align-items:flex-start">
-            <span style="font-size:11px;font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">{{ schema_name }}<br><span style="font-weight:400;color:var(--text-muted)">{{ tbl_count }} table{{ 's' if tbl_count != 1 else '' }}</span></span>
+            <span style="font-size:var(--font-xs);font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">{{ schema_name }}<br><span style="font-weight:400;color:var(--text-muted)">{{ tbl_count }} table{{ 's' if tbl_count != 1 else '' }}</span></span>
             <textarea class="schema-desc-input" data-schema="{{ schema_name }}" rows="2"
               placeholder="e.g. Contains profitability and cost data for orders and invoices."
-              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.schemas.get(schema_name, '') }}</textarea>
+              style="flex:1;font-size:var(--font-sm);padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.schemas.get(schema_name, '') }}</textarea>
           </div>
           {% endfor %}
           <div style="display:flex;gap:.5rem;align-items:flex-start">
-            <span style="font-size:11px;font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">Overall<br><span style="font-weight:400;color:var(--text-muted)">optional</span></span>
+            <span style="font-size:var(--font-xs);font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">Overall<br><span style="font-weight:400;color:var(--text-muted)">optional</span></span>
             <textarea id="overall-biz-desc" rows="2"
               placeholder="e.g. We are a manufacturing company tracking sales and costs."
-              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.overall }}</textarea>
+              style="flex:1;font-size:var(--font-sm);padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.overall }}</textarea>
           </div>
         </div>
         {# Hidden textarea that gets populated on submit with the combined value #}
@@ -608,7 +608,7 @@
         {# Single schema: plain textarea #}
         <textarea name="business_desc" rows="3" required
           placeholder="e.g. We are a compounding pharmacy managing prescriptions, patients, drug inventory, and insurance claims."
-          style="font-size:13px">{{ biz_desc or '' }}</textarea>
+          style="font-size:var(--font-base)">{{ biz_desc or '' }}</textarea>
         {% endif %}
 
         <p class="form-note">
@@ -708,41 +708,41 @@
       </div>
 
       <style>
-        #tableDescriptions .td-count{margin-left:.5rem;font-size:11px;font-weight:600;color:var(--text-dim)}
+        #tableDescriptions .td-count{margin-left:.5rem;font-size:var(--font-xs);font-weight:600;color:var(--text-muted)}
         #tableDescriptions .td-alert{margin:.5rem 0;padding:.5rem .7rem;border-radius:var(--radius-sm);
           background:color-mix(in srgb,var(--amber) 12%,transparent);
-          border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);font-size:12px;line-height:1.5}
+          border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);font-size:var(--font-sm);line-height:1.5}
         #tableDescriptions .td-list{display:flex;flex-direction:column;gap:.3rem;max-height:22rem;overflow-y:auto}
         #tableDescriptions .td-row{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
         #tableDescriptions .td-row--new{border-color:color-mix(in srgb,var(--amber) 55%,transparent)}
         #tableDescriptions summary{display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;
-          cursor:pointer;font-size:12px;list-style:none}
+          cursor:pointer;font-size:var(--font-sm);list-style:none}
         #tableDescriptions summary::-webkit-details-marker{display:none}
         #tableDescriptions .td-name{font-family:var(--font-mono,monospace);flex:1;
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        #tableDescriptions .td-badge{font-size:10px;font-weight:600;letter-spacing:.02em;
+        #tableDescriptions .td-badge{font-size:var(--font-2xs);font-weight:600;letter-spacing:.02em;
           padding:.1rem .4rem;border-radius:999px;white-space:nowrap}
         #tableDescriptions .td-badge--described{background:color-mix(in srgb,var(--green,#0e7c6b) 15%,transparent);color:var(--green,#0e7c6b)}
-        #tableDescriptions .td-badge--undescribed{background:var(--surface-2,#0001);color:var(--text-dim)}
+        #tableDescriptions .td-badge--undescribed{background:var(--surface-2,#0001);color:var(--text-muted)}
         #tableDescriptions .td-badge--new{background:color-mix(in srgb,var(--amber) 20%,transparent);color:var(--amber)}
         #tableDescriptions .td-body{padding:.1rem .6rem .6rem;display:flex;flex-direction:column;gap:.3rem}
-        #tableDescriptions .td-label{font-size:11px;font-weight:600;color:var(--text-dim)}
+        #tableDescriptions .td-label{font-size:var(--font-xs);font-weight:600;color:var(--text-muted)}
         #tableDescriptions .td-hint{font-weight:400;font-style:italic}
-        #tableDescriptions textarea,#tableDescriptions input[type=text]{width:100%;font-size:12px;
+        #tableDescriptions textarea,#tableDescriptions input[type=text]{width:100%;font-size:var(--font-sm);
           padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);
           background:var(--bg,var(--surface));color:var(--text);resize:vertical}
         #tableDescriptions .td-suggestion{margin:.35rem 0;padding:.55rem .65rem;border-radius:var(--radius-sm);
           background:color-mix(in srgb,var(--primary) 7%,transparent);
           border:1px solid color-mix(in srgb,var(--primary) 30%,transparent)}
         #tableDescriptions .td-sug-head{display:flex;align-items:baseline;gap:.45rem;margin-bottom:.3rem}
-        #tableDescriptions .td-sug-head strong{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--primary)}
-        #tableDescriptions .td-sug-body p{margin:0 0 .25rem;font-size:12px;line-height:1.5}
-        #tableDescriptions .td-sug-body pre{margin:.2rem 0 0;padding:.35rem .5rem;font-size:11px;
+        #tableDescriptions .td-sug-head strong{font-size:var(--font-xs);letter-spacing:.04em;text-transform:uppercase;color:var(--primary)}
+        #tableDescriptions .td-sug-body p{margin:0 0 .25rem;font-size:var(--font-sm);line-height:1.5}
+        #tableDescriptions .td-sug-body pre{margin:.2rem 0 0;padding:.35rem .5rem;font-size:var(--font-xs);
           background:var(--surface);border:1px solid var(--border);border-radius:4px;
           white-space:pre-wrap;overflow-x:auto}
         #tableDescriptions .td-sug-actions{display:flex;gap:.4rem;margin-top:.45rem}
         #tableDescriptions .td-actions{display:flex;align-items:center;gap:.6rem}
-        #tableDescriptions .td-status{font-size:11px;color:var(--text-dim)}
+        #tableDescriptions .td-status{font-size:var(--font-xs);color:var(--text-muted)}
         #tableDescriptions .td-status.td-error{color:var(--danger)}
       </style>
 
@@ -897,15 +897,15 @@
           onclick="stopKbBuild()">⏹ Stop KB build</button>
         {% endif %}
         {% if state == 'KB_BUILDING' %}
-        <span id="kbInlineStatus" style="font-size:12px;color:var(--amber);font-weight:600">
+        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--amber);font-weight:600">
           ⏳ Building… live progress will update here
         </span>
         {% elif state == 'READY' %}
-        <span id="kbInlineStatus" style="font-size:12px;color:var(--green);font-weight:600">
+        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--green);font-weight:600">
           ✓ KB is ready — users can start querying
         </span>
         {% else %}
-        <span id="kbInlineStatus" style="font-size:12px;color:var(--text-muted);font-weight:600"></span>
+        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--text-muted);font-weight:600"></span>
         {% endif %}
       </div>
       <div id="kbLiveStatus" class="kb-live-status {% if state == 'KB_BUILDING' %}show{% elif state == 'READY' %}show ready{% endif %}">
@@ -918,8 +918,8 @@
       <div id="kbValidationEvidence" style="display:none;margin-top:.75rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);padding:.75rem .875rem">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;flex-wrap:wrap">
           <div>
-            <div style="font-size:12px;font-weight:800;color:var(--text)">SQL validation evidence</div>
-            <div id="kbValidationSummary" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+            <div style="font-size:var(--font-sm);font-weight:800;color:var(--text)">SQL validation evidence</div>
+            <div id="kbValidationSummary" style="font-size:var(--font-xs);color:var(--text-muted);margin-top:2px"></div>
           </div>
           <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
             <button type="button" class="btn btn-primary btn-xs" id="kbValidationOverrideButton" style="display:none">Accept validated examples and activate</button>
@@ -934,10 +934,10 @@
       <div id="kbBuildLog" style="display:{% if state == 'KB_BUILDING' %}block{% else %}none{% endif %};margin-top:.85rem">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem">
           <span class="text-xs text-muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.05em">Build log</span>
-          <button type="button" class="btn btn-ghost btn-xs" onclick="clearKbLog()" style="font-size:10px">Clear</button>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="clearKbLog()" style="font-size:var(--font-2xs)">Clear</button>
         </div>
         <div id="kbBuildLogEntries"
-             style="font-family:var(--font-mono,monospace);font-size:11px;line-height:1.7;
+             style="font-family:var(--font-mono,monospace);font-size:var(--font-xs);line-height:1.7;
                     background:var(--surface-2);border:1px solid var(--border);
                     border-radius:var(--radius-sm);padding:.6rem .875rem;
                     max-height:220px;overflow-y:auto;color:var(--text-soft)">
@@ -950,8 +950,8 @@
     {% if kb_files or state == 'READY' %}
     <div style="margin-top:.875rem;padding:.75rem 1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:700;color:var(--text)">Delete generated KB</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
+        <div style="font-size:var(--font-sm);font-weight:700;color:var(--text)">Delete generated KB</div>
+        <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:2px">
           Removes all KB files, vector embeddings, and cached query examples for this client.
           Schema discovery files are <strong>kept</strong> — you can rebuild the KB immediately.
         </div>
@@ -995,7 +995,7 @@
 
     {% if state == 'READY' %}
     <div style="margin-top:1rem;padding:.75rem 1rem;background:var(--green-light);
-      border:1px solid color-mix(in srgb,var(--green) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--green)">
+      border:1px solid color-mix(in srgb,var(--green) 28%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--green)">
       <strong>Knowledge Base is active.</strong>
       Users can now ask data questions in Zoom, Teams, Slack, or the Internal Chat UI.
       Use the Rebuild button above whenever the database schema changes or you want
@@ -1067,7 +1067,7 @@
       kbValidationCategories.innerHTML = '';
       Object.entries(summary.categories || {}).sort((a, b) => Number(b[1]) - Number(a[1])).forEach(([name, count]) => {
         const chip = document.createElement('span');
-        chip.style.cssText = 'font-size:10px;border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text-soft);background:var(--surface)';
+        chip.style.cssText = 'font-size:var(--font-2xs);border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text-soft);background:var(--surface)';
         chip.textContent = `${name.replaceAll('_', ' ')}: ${count}`;
         kbValidationCategories.appendChild(chip);
       });
@@ -1122,13 +1122,13 @@
         const item = document.createElement('details');
         item.style.cssText = 'border-top:1px solid var(--border);padding:.5rem 0';
         const title = document.createElement('summary');
-        title.style.cssText = 'cursor:pointer;font-size:11px;font-weight:700;color:var(--text)';
+        title.style.cssText = 'cursor:pointer;font-size:var(--font-xs);font-weight:700;color:var(--text)';
         title.textContent = `${index + 1}. ${failure.table_name || 'Database'} · ${failure.category || 'other'} · ${failure.question || 'Unknown question'}`;
         const error = document.createElement('div');
-        error.style.cssText = 'font-size:11px;color:var(--red);margin:.45rem 0;white-space:pre-wrap';
+        error.style.cssText = 'font-size:var(--font-xs);color:var(--red);margin:.45rem 0;white-space:pre-wrap';
         error.textContent = failure.error || 'No database error was recorded.';
         const sql = document.createElement('pre');
-        sql.style.cssText = 'font-size:10px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--border);padding:.55rem;border-radius:4px;color:var(--text-soft)';
+        sql.style.cssText = 'font-size:var(--font-2xs);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--border);padding:.55rem;border-radius:4px;color:var(--text-soft)';
         sql.textContent = failure.sql || '';
         item.append(title, error, sql);
         kbValidationFailures.appendChild(item);
@@ -1305,18 +1305,18 @@
       _renderTblFields(fqn, panel, _tblFieldsCache.get(fqn));
       return;
     }
-    panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">Loading columns…</div>';
+    panel.innerHTML = '<div style="padding:.4rem;font-size:var(--font-xs);color:var(--text-muted)">Loading columns…</div>';
     try {
       const resp = await fetch(_columnSensitivityUrl(fqn), {credentials: 'same-origin'});
       const data = await resp.json();
       if (data.status !== 'ok') {
-        panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--amber)">⚠ Could not load columns — run Schema Discovery first or check DB connection.</div>';
+        panel.innerHTML = '<div style="padding:.4rem;font-size:var(--font-xs);color:var(--amber)">⚠ Could not load columns — run Schema Discovery first or check DB connection.</div>';
         return;
       }
       _tblFieldsCache.set(fqn, data);
       _renderTblFields(fqn, panel, data);
     } catch(e) {
-      panel.innerHTML = `<div style="padding:.4rem;font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+      panel.innerHTML = `<div style="padding:.4rem;font-size:var(--font-xs);color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
   };
 
@@ -1334,18 +1334,18 @@
     btn.textContent = open ? '▼ Fields' : '▶ Fields';
     if (!open) return;
     if (_tblFieldsCache.has(fqn)) { _renderTblFields(fqn, panel, _tblFieldsCache.get(fqn)); return; }
-    panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">Loading columns…</div>';
+    panel.innerHTML = '<div style="padding:.4rem;font-size:var(--font-xs);color:var(--text-muted)">Loading columns…</div>';
     try {
       const resp = await fetch(_columnSensitivityUrl(fqn), {credentials: 'same-origin'});
       const data = await resp.json();
       if (data.status !== 'ok') {
-        panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--amber)">⚠ Could not load columns — check DB connection.</div>';
+        panel.innerHTML = '<div style="padding:.4rem;font-size:var(--font-xs);color:var(--amber)">⚠ Could not load columns — check DB connection.</div>';
         return;
       }
       _tblFieldsCache.set(fqn, data);
       _renderTblFields(fqn, panel, data);
     } catch(e) {
-      panel.innerHTML = `<div style="padding:.4rem;font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+      panel.innerHTML = `<div style="padding:.4rem;font-size:var(--font-xs);color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
   };
 
@@ -1354,7 +1354,7 @@
     const piiSet   = new Set((data.auto_masked || []).map(f => f.toUpperCase()));
     const stratMap = data.strategy_map || {};
     if (!cols.length) {
-      panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">No columns found.</div>';
+      panel.innerHTML = '<div style="padding:.4rem;font-size:var(--font-xs);color:var(--text-muted)">No columns found.</div>';
       return;
     }
 
@@ -1371,7 +1371,7 @@
 
     let html =
       `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem;flex-wrap:wrap">` +
-      `<span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">` +
+      `<span style="font-size:var(--font-2xs);font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">` +
       `${cols.length} column${cols.length!==1?'s':''}` +
       (piiCount ? ` &nbsp;·&nbsp; <span style="color:var(--amber)">${piiCount} PII</span>` : '') +
       `</span>` +
@@ -1392,7 +1392,7 @@
           ? `<input type="checkbox" class="scope-check" ${isMasked ? 'checked' : ''} onclick='_tblFieldMaskToggle(${JSON.stringify(fqn)},${JSON.stringify(col.name)},this.checked,${JSON.stringify(panel.id)})'>`
           : '') +
         `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
-        `<span style="font-size:10px;color:var(--text-muted);font-family:monospace;margin-right:.3rem">${esc(col.type||'')}</span>` +
+        `<span style="font-size:var(--font-2xs);color:var(--text-muted);font-family:monospace;margin-right:.3rem">${esc(col.type||'')}</span>` +
         (isPii
           ? `<span style="font-size:9px;font-weight:700;color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:0 5px;white-space:nowrap">` +
             `PII${strat ? ' · ' + strat : ''}` +
@@ -1403,7 +1403,7 @@
 
     if (canMask) {
       html +=
-        `<div style="margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted)">` +
+        `<div style="margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--border);font-size:var(--font-2xs);color:var(--text-muted)">` +
         `<span id="tblmask-count-${fqn.replace(/[^A-Z0-9_]/g,'_')}">${maskedCount}</span> of ${cols.length} fields marked for masking` +
         (maskedCount ? ` — saved automatically when you <strong>Save selection</strong>` : '') +
         `</div>`;
@@ -1626,11 +1626,11 @@
       item.innerHTML =
         `<div class="mask-item-hd" onclick="_toggleMaskItem('${fqn}')">` +
           `<span class="mask-item-chev" id="mask-chev-${key}">▶</span>` +
-          `<span style="font-size:12px;flex-shrink:0">🗒</span>` +
+          `<span style="font-size:var(--font-sm);flex-shrink:0">🗒</span>` +
           `<span class="mask-item-name">${esc(tableName)}</span>` +
           `<span class="mask-item-fqn">&nbsp;${esc(fqn)}</span>` +
           `<span class="mask-item-badge" id="mask-badge-${key}">No masking</span>` +
-          `<button class="btn-xs btn-ghost" id="mask-preview-btn-${key}" style="display:none;flex-shrink:0;font-size:10px;padding:2px 8px" onclick="event.stopPropagation();previewMasking('${fqn}')">👁 Preview</button>` +
+          `<button class="btn-xs btn-ghost" id="mask-preview-btn-${key}" style="display:none;flex-shrink:0;font-size:var(--font-2xs);padding:2px 8px" onclick="event.stopPropagation();previewMasking('${fqn}')">👁 Preview</button>` +
         `</div>` +
         `<div class="mask-item-body" id="mask-body-${key}"></div>`;
       listEl.appendChild(item);
@@ -1662,7 +1662,7 @@
       _renderMaskFields(fqn, bodyEl, _maskFieldsCache.get(fqn));
       return;
     }
-    bodyEl.innerHTML = '<div style="padding:.6rem 1rem;font-size:12px;color:var(--text-muted)">Loading fields…</div>';
+    bodyEl.innerHTML = '<div style="padding:.6rem 1rem;font-size:var(--font-sm);color:var(--text-muted)">Loading fields…</div>';
     try {
       const resp = await fetch(_columnSensitivityUrl(fqn), {credentials: 'same-origin'});
       const data = await resp.json();
@@ -1672,14 +1672,14 @@
         else if (data.status === 'timeout') msg = '⚠ DB query timed out. Check your database connection.';
         else if (data.status === 'not_found') msg = '⚠ Table not found. Run Schema Discovery first.';
         bodyEl.innerHTML =
-          `<div style="padding:.6rem 1rem;font-size:12px;color:var(--amber)">${msg}</div>`;
+          `<div style="padding:.6rem 1rem;font-size:var(--font-sm);color:var(--amber)">${msg}</div>`;
         _maskPanelOpened.delete(fqn);
         return;
       }
       _maskFieldsCache.set(fqn, data);
       _renderMaskFields(fqn, bodyEl, data);
     } catch(e) {
-      bodyEl.innerHTML = `<div style="padding:.6rem 1rem;font-size:12px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+      bodyEl.innerHTML = `<div style="padding:.6rem 1rem;font-size:var(--font-sm);color:var(--red)">Error: ${esc(e.message)}</div>`;
       _maskPanelOpened.delete(fqn);
     }
   }
@@ -1703,7 +1703,7 @@
     const allSelected = columns.length > 0 && cfg.masked_fields.size === columns.length;
 
     let html =
-      `<div style="padding:.45rem 1rem;border-bottom:1px solid var(--border);background:var(--surface-2);display:flex;align-items:center;gap:1rem;font-size:11px;color:var(--text-muted)">` +
+      `<div style="padding:.45rem 1rem;border-bottom:1px solid var(--border);background:var(--surface-2);display:flex;align-items:center;gap:1rem;font-size:var(--font-xs);color:var(--text-muted)">` +
       `<span><strong>${columns.length}</strong> fields total &nbsp;·&nbsp; <strong style="color:var(--amber)">${autoSet.size}</strong> PII auto-detected</span>` +
       `<label style="margin-left:auto;cursor:pointer;display:flex;align-items:center;gap:.35rem">` +
         `<input type="checkbox" ${allSelected ? 'checked' : ''} onchange="_maskSelectAll('${fqn}',this.checked)"> Select all` +
@@ -1722,12 +1722,12 @@
         `<input type="checkbox" class="scope-check" ${checked ? 'checked' : ''} ` +
           `onchange="_toggleMaskField2('${fqn}','${col.name}',this.checked)">` +
         `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
-        `<span style="font-size:10px;color:var(--text-muted);margin-right:.3rem">${esc(col.type||'')}</span>` +
-        (stratLbl ? `<span style="font-size:10px;color:var(--blue);font-style:italic;margin-right:.3rem;white-space:nowrap">${esc(stratLbl)}</span>` : '') +
+        `<span style="font-size:var(--font-2xs);color:var(--text-muted);margin-right:.3rem">${esc(col.type||'')}</span>` +
+        (stratLbl ? `<span style="font-size:var(--font-2xs);color:var(--blue);font-style:italic;margin-right:.3rem;white-space:nowrap">${esc(stratLbl)}</span>` : '') +
         (isPii ? `<span class="mask-field-pii" title="Auto-detected PII field">PII</span>` : '') +
         `</label>`;
     });
-    if (!columns.length) html += '<div style="padding:.5rem;font-size:12px;color:var(--text-muted)">No columns found.</div>';
+    if (!columns.length) html += '<div style="padding:.5rem;font-size:var(--font-sm);color:var(--text-muted)">No columns found.</div>';
     html += '</div>';
     bodyEl.innerHTML = html;
     _updateMaskBadge(fqn);
@@ -1888,7 +1888,7 @@
     if (!summaryEl) return;
     let html =
       `<div style="margin-top:.85rem;padding:.85rem 1rem;background:var(--green-light);` +
-      `border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:12px">` +
+      `border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:var(--font-sm)">` +
       `<div style="font-weight:700;color:var(--green);margin-bottom:.6rem">` +
         `${selected.size} table${selected.size!==1?'s are':' is'} ready for KB generation` +
       `</div>`;
@@ -1903,7 +1903,7 @@
         `<span style="flex-shrink:0;margin-top:1px">${count > 0 ? '🔒' : '📋'}</span>` +
         `<div style="flex:1">` +
           `<span style="font-weight:700">${esc(tName)}</span>` +
-          `<span style="color:var(--text-muted);margin-left:.35rem;font-size:11px">${esc(fqn)}</span>`;
+          `<span style="color:var(--text-muted);margin-left:.35rem;font-size:var(--font-xs)">${esc(fqn)}</span>`;
       if (count > 0) {
         const fields = cfg.masked_fields || [];
         const cache  = _maskFieldsCache.get(fqn) || {};
@@ -1915,13 +1915,13 @@
           html +=
             `<span style="background:color-mix(in srgb,var(--amber) 14%,var(--surface));` +
             `border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);` +
-            `border-radius:3px;padding:1px 5px;font-size:10px;color:var(--amber)">` +
+            `border-radius:3px;padding:1px 5px;font-size:var(--font-2xs);color:var(--amber)">` +
             `${esc(f)}${label ? ' <span style="color:var(--blue);font-style:italic">' + esc(label) + '</span>' : ''}` +
             `</span>`;
         });
         html += `</div>`;
       } else {
-        html += `<div style="font-size:11px;color:var(--text-muted);margin-top:.15rem">No masking — real sample rows</div>`;
+        html += `<div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.15rem">No masking — real sample rows</div>`;
       }
       html += `</div></div>`;
     });
@@ -1970,14 +1970,14 @@
             `<button class="btn-xs btn-ghost" onclick="document.getElementById('mask-preview-overlay').remove()">✕ Close</button>` +
           `</div>` +
           `<div class="mask-preview-body" id="mask-preview-body">` +
-            `<div style="padding:2rem;text-align:center;color:var(--text-muted);font-size:13px">Loading preview…</div>` +
+            `<div style="padding:2rem;text-align:center;color:var(--text-muted);font-size:var(--font-base)">Loading preview…</div>` +
           `</div>` +
         `</div>`;
       document.body.appendChild(modal);
       modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
     } else {
       document.getElementById('mask-preview-body').innerHTML =
-        `<div style="padding:2rem;text-align:center;color:var(--text-muted);font-size:13px">Loading preview…</div>`;
+        `<div style="padding:2rem;text-align:center;color:var(--text-muted);font-size:var(--font-base)">Loading preview…</div>`;
     }
     document.getElementById('mask-preview-title').textContent = `Masking Preview — ${fqn}`;
 
@@ -2007,7 +2007,7 @@
         error:      data.message || 'Unknown error.',
       };
       bodyEl.innerHTML =
-        `<div style="padding:1.5rem;color:var(--amber);font-size:13px">⚠ ${esc(msgs[data.status] || data.message || data.status)}</div>`;
+        `<div style="padding:1.5rem;color:var(--amber);font-size:var(--font-base)">⚠ ${esc(msgs[data.status] || data.message || data.status)}</div>`;
       return;
     }
 
@@ -2018,7 +2018,7 @@
 
     // Legend
     let html =
-      `<div style="display:flex;align-items:center;gap:1.5rem;margin-bottom:.85rem;font-size:11px;flex-wrap:wrap">` +
+      `<div style="display:flex;align-items:center;gap:1.5rem;margin-bottom:.85rem;font-size:var(--font-xs);flex-wrap:wrap">` +
         `<span><span style="color:var(--text)">■</span> Original value</span>` +
         `<span><span style="color:var(--green);font-weight:700">■</span> Masked value (sent to LLM)</span>` +
         `<span style="color:var(--text-muted)">${maskedSet.size} of ${columns.length} fields masked</span>` +
@@ -2041,7 +2041,7 @@
       const aRow = afterRows[i] || {};
 
       // BEFORE row
-      html += `<tr><td rowspan="2" style="font-size:10px;color:var(--text-muted);text-align:center;vertical-align:middle">Row ${i+1}</td>`;
+      html += `<tr><td rowspan="2" style="font-size:var(--font-2xs);color:var(--text-muted);text-align:center;vertical-align:middle">Row ${i+1}</td>`;
       for (const col of columns) {
         const isMasked = maskedSet.has(col);
         const val = bRow[col];
@@ -2073,7 +2073,7 @@
 
     html += `</tbody></table></div>`;
     html +=
-      `<p style="margin-top:.85rem;font-size:11px;color:var(--text-muted)">` +
+      `<p style="margin-top:.85rem;font-size:var(--font-xs);color:var(--text-muted)">` +
       `These are the exact values the LLM will receive for sample rows of <strong>${esc(fqn)}</strong>. ` +
       `Original values never leave your database.` +
       `</p>`;
@@ -2139,7 +2139,7 @@
     const palette = type === 'error'
       ? 'background:var(--red-light);color:var(--red)'
       : 'background:var(--blue-light);color:var(--blue)';
-    el.setAttribute('style', `display:block;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border);${palette}`);
+    el.setAttribute('style', `display:block;padding:.7rem 1rem;font-size:var(--font-sm);border-bottom:1px solid var(--border);${palette}`);
     el.textContent = msg;
   }
 
@@ -2239,7 +2239,7 @@
     wrap.style.display = 'block';
     const dbs = Object.keys(tree).sort();
     if (!dbs.length) {
-      wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted)">No schemas or tables were visible with this database connection.</p>';
+      wrap.innerHTML = '<p style="font-size:var(--font-sm);color:var(--text-muted)">No schemas or tables were visible with this database connection.</p>';
       return;
     }
 
@@ -2261,7 +2261,7 @@
     summary.innerHTML = `
       <span><strong>${dbs.length}</strong> db | <strong>${schemaCount}</strong> schemas | <strong style="color:var(--green)">${tableCount}</strong> tables | <strong style="color:var(--violet)">${viewCount}</strong> views</span>
       <input id="scope-tree-search" type="text" placeholder="Filter tables by name…"
-        style="margin-left:auto;padding:5px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;outline:none;width:220px;background:var(--surface)"
+        style="margin-left:auto;padding:5px 9px;border:1px solid var(--border);border-radius:5px;font-size:var(--font-sm);outline:none;width:220px;background:var(--surface)"
         oninput="filterScopeTree(this.value)">
     `;
     wrap.appendChild(summary);
@@ -2290,7 +2290,7 @@
               + `<div style="display:flex;align-items:center;gap:.4rem;padding:.12rem 0">`
               + `<label style="display:flex;align-items:center;gap:.45rem;flex:1;cursor:pointer;min-width:0" for="${checkboxId(value)}">`
               + `<input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange='setupScopeCheck(${JSON.stringify(value)}, this.checked)'>`
-              + `<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</span>`
+              + `<span style="flex:1;font-size:var(--font-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</span>`
               + `</label>`
               + `<button class="tbl-fields-btn" onclick='event.stopPropagation();_toggleTableFields(${JSON.stringify(value)}, this)'>▶ Fields</button>`
               + `</div>`
@@ -2324,7 +2324,7 @@
   <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
     <div>
       <h2 style="margin:0">Data egress transparency</h2>
-      <p style="font-size:12px;color:var(--text-muted);margin:.2rem 0 0">
+      <p style="font-size:var(--font-sm);color:var(--text-muted);margin:.2rem 0 0">
         Every table processed during schema discovery and KB build is recorded here.
         This log shows exactly what data was sent to the LLM and what was protected.
         The egress log is automatically included in the <strong>External Log Export</strong>
@@ -2360,13 +2360,13 @@
     </div>
     <div class="metric">
       <div class="metric-label">Last discovery</div>
-      <div class="metric-value" style="font-size:11px;font-weight:600">
+      <div class="metric-value" style="font-size:var(--font-xs);font-weight:600">
         {{ egress_summary.last_discovery_at[:16] if egress_summary.last_discovery_at else '—' }}
       </div>
     </div>
     <div class="metric">
       <div class="metric-label">Last KB build</div>
-      <div class="metric-value" style="font-size:11px;font-weight:600">
+      <div class="metric-value" style="font-size:var(--font-xs);font-weight:600">
         {{ egress_summary.last_kb_build_at[:16] if egress_summary.last_kb_build_at else '—' }}
       </div>
     </div>
@@ -2374,7 +2374,7 @@
 
   <!-- Real rows warning -->
   {% if egress_summary.real_sample_count and egress_summary.real_sample_count > 0 %}
-  <div class="alert alert-warning" style="margin:.75rem 1rem 0;border-radius:6px;font-size:12px">
+  <div class="alert alert-warning" style="margin:.75rem 1rem 0;border-radius:6px;font-size:var(--font-sm)">
     <strong>⚠ {{ egress_summary.real_sample_count }} table{{ 's' if egress_summary.real_sample_count != 1 else '' }}
     sent unmasked real rows to the LLM</strong> during the last KB build.
     Review the tables below — if they contain personal or sensitive data,
@@ -2385,8 +2385,8 @@
   <!-- Most recent KB build detail -->
   {% if egress_summary.kb_build_rows %}
   <div style="padding:.75rem 1rem .25rem">
-    <h3 style="font-size:12px;font-weight:700;margin-bottom:.5rem">Most recent KB build — per-table detail</h3>
-    <table class="table" style="font-size:12px">
+    <h3 style="font-size:var(--font-sm);font-weight:700;margin-bottom:.5rem">Most recent KB build — per-table detail</h3>
+    <table class="table" style="font-size:var(--font-sm)">
       <thead>
         <tr>
           <th>Table</th>
@@ -2405,7 +2405,7 @@
         {% set mfields = row.masked_fields_list or [] %}
         <tr>
           <td style="font-family:Consolas,monospace;font-weight:700">{{ row.table_name }}</td>
-          <td style="font-size:11px;color:var(--text-muted)">{{ row.schema_name or '—' }}<br><span style="font-size:10px">{{ row.database_name or '' }}</span></td>
+          <td style="font-size:var(--font-xs);color:var(--text-muted)">{{ row.schema_name or '—' }}<br><span style="font-size:var(--font-2xs)">{{ row.database_name or '' }}</span></td>
           <td>{{ row.column_count or '—' }}</td>
           <td style="font-weight:700;text-align:center">
             {% if row.sample_mode == 'synthetic' %}
@@ -2416,28 +2416,28 @@
           </td>
           <td>
             {% if row.sample_mode == 'synthetic' %}
-            <span style="color:var(--green);font-weight:700;font-size:11px">🔒 Synthetic</span>
+            <span style="color:var(--green);font-weight:700;font-size:var(--font-xs)">🔒 Synthetic</span>
             {% elif row.sample_mode == 'masked' %}
-            <span style="color:var(--amber);font-weight:700;font-size:11px">✎ Masked</span>
+            <span style="color:var(--amber);font-weight:700;font-size:var(--font-xs)">✎ Masked</span>
             {% elif row.sample_mode == 'real' %}
-            <span style="color:var(--red);font-weight:700;font-size:11px">⚠ Real rows</span>
+            <span style="color:var(--red);font-weight:700;font-size:var(--font-xs)">⚠ Real rows</span>
             {% else %}
-            <span style="font-size:11px;color:var(--text-muted)">Schema only</span>
+            <span style="font-size:var(--font-xs);color:var(--text-muted)">Schema only</span>
             {% endif %}
           </td>
-          <td style="font-size:10px;max-width:240px">
+          <td style="font-size:var(--font-2xs);max-width:240px">
             {% if fields %}
             <details>
               <summary style="cursor:pointer;color:var(--text-muted)">{{ fields|length }} field{{ 's' if fields|length != 1 else '' }}</summary>
               <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:3px">
               {% for f in fields %}
-              <code style="background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px;{% if f in mfields %}background:color-mix(in srgb,var(--amber) 12%,var(--surface));border-color:color-mix(in srgb,var(--amber) 30%,transparent);{% endif %}">{{ f }}</code>
+              <code style="background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:var(--font-2xs);{% if f in mfields %}background:color-mix(in srgb,var(--amber) 12%,var(--surface));border-color:color-mix(in srgb,var(--amber) 30%,transparent);{% endif %}">{{ f }}</code>
               {% endfor %}
               </div>
             </details>
             {% else %}<span style="color:var(--text-muted)">—</span>{% endif %}
           </td>
-          <td style="font-size:10px;max-width:220px">
+          <td style="font-size:var(--font-2xs);max-width:220px">
             {% if mfields %}
             {% set rmap = row.replacement_map_parsed or {} %}
             <details>
@@ -2445,7 +2445,7 @@
               <div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">
               {% for f in mfields %}
               <div style="display:flex;align-items:center;gap:3px">
-                <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:10px;color:var(--amber)">{{ f }}</code>
+                <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:var(--font-2xs);color:var(--amber)">{{ f }}</code>
                 {% if rmap.get(f) or rmap.get(f.upper()) %}
                 <span style="font-size:9px;color:var(--blue);font-style:italic">
                   {{ rmap.get(f) or rmap.get(f.upper()) }}
@@ -2456,12 +2456,12 @@
               </div>
             </details>
             {% elif row.sample_mode == 'synthetic' %}
-            <span style="color:var(--green);font-size:11px">all synthetic</span>
+            <span style="color:var(--green);font-size:var(--font-xs)">all synthetic</span>
             {% else %}
             <span style="color:var(--text-muted)">none</span>
             {% endif %}
           </td>
-          <td style="font-size:10px;color:var(--text-muted)">{{ row.created_at[:16] if row.created_at else '—' }}</td>
+          <td style="font-size:var(--font-2xs);color:var(--text-muted)">{{ row.created_at[:16] if row.created_at else '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -2472,10 +2472,10 @@
   <!-- Most recent discovery detail (collapsed by default) -->
   {% if egress_summary.discovery_rows %}
   <details style="padding:.75rem 1rem">
-    <summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--text-muted)">
+    <summary style="font-size:var(--font-sm);font-weight:700;cursor:pointer;color:var(--text-muted)">
       Most recent schema discovery — {{ egress_summary.discovery_rows|length }} tables (click to expand)
     </summary>
-    <table class="table" style="font-size:11px;margin-top:.5rem">
+    <table class="table" style="font-size:var(--font-xs);margin-top:.5rem">
       <thead>
         <tr>
           <th>Table</th><th>Schema / DB</th><th>Cols</th><th>Rows sampled</th><th>Sample mode</th><th>Fields sent</th><th>Masked &amp; replacement</th><th>Timestamp</th>
@@ -2487,7 +2487,7 @@
         {% set dmfields = row.masked_fields_list or [] %}
         <tr>
           <td style="font-family:Consolas,monospace;font-weight:700">{{ row.table_name }}</td>
-          <td style="color:var(--text-muted)">{{ row.schema_name or '—' }}<br><span style="font-size:10px">{{ row.database_name or '' }}</span></td>
+          <td style="color:var(--text-muted)">{{ row.schema_name or '—' }}<br><span style="font-size:var(--font-2xs)">{{ row.database_name or '' }}</span></td>
           <td>{{ row.column_count or '—' }}</td>
           <td style="text-align:center">
             {% if row.sample_mode == 'synthetic' %}<span style="color:var(--green)">0</span>
@@ -2499,22 +2499,22 @@
             {% elif row.sample_mode == 'real' %}<span style="color:var(--red);font-weight:700">⚠ Real</span>
             {% else %}<span style="color:var(--text-muted)">Schema only</span>{% endif %}
           </td>
-          <td style="font-size:10px">
+          <td style="font-size:var(--font-2xs)">
             {% if dfields %}
             <details><summary style="cursor:pointer;color:var(--text-muted)">{{ dfields|length }} fields</summary>
               <div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:2px">
-              {% for f in dfields %}<code style="background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px">{{ f }}</code>{% endfor %}
+              {% for f in dfields %}<code style="background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:var(--font-2xs)">{{ f }}</code>{% endfor %}
               </div></details>
             {% else %}<span style="color:var(--text-muted)">—</span>{% endif %}
           </td>
-          <td style="font-size:10px">
+          <td style="font-size:var(--font-2xs)">
             {% if dmfields %}
             {% set drmap = row.replacement_map_parsed or {} %}
             <details><summary style="cursor:pointer;color:var(--amber);font-weight:700">{{ dmfields|length }} masked</summary>
               <div style="margin-top:3px;display:flex;flex-direction:column;gap:2px">
               {% for f in dmfields %}
               <div style="display:flex;align-items:center;gap:3px">
-                <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:10px;color:var(--amber)">{{ f }}</code>
+                <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:var(--font-2xs);color:var(--amber)">{{ f }}</code>
                 {% if drmap.get(f) or drmap.get(f.upper()) %}
                 <span style="font-size:9px;color:var(--blue);font-style:italic">{{ drmap.get(f) or drmap.get(f.upper()) }}</span>
                 {% endif %}
@@ -2532,7 +2532,7 @@
   {% endif %}
 
   {% else %}
-  <div class="card-body" style="color:var(--text-muted);text-align:center;padding:2rem;font-size:13px">
+  <div class="card-body" style="color:var(--text-muted);text-align:center;padding:2rem;font-size:var(--font-base)">
     No egress data recorded yet.<br>
     Run <strong>Schema Discovery</strong> and <strong>Build KB</strong> above
     to populate this log.

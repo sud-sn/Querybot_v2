@@ -270,13 +270,13 @@ window.qbToast = (function(){
       'border-left:4px solid '+c.bar,'border-radius:10px',
       'box-shadow:var(--shadow-md)','padding:10px 14px',
       'display:flex','align-items:flex-start','gap:10px','color:'+c.text,
-      'font-size:13px','font-weight:600','line-height:1.45',
+      'font-size:var(--font-base)','font-weight:600','line-height:1.45',
       'pointer-events:auto','opacity:0','transform:translateX(12px)',
       'transition:opacity .18s,transform .18s'
     ].join(';');
     toast.innerHTML = '<span style="flex-shrink:0;margin-top:1px;color:'+c.bar+'">'+(icons[type]||'')+
       '</span><span style="flex:1">'+message+'</span>'+
-      '<button onclick="this.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:'+c.text+';opacity:.5;font-size:16px;line-height:1;padding:0 0 0 6px;flex-shrink:0">&times;</button>';
+      '<button onclick="this.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:'+c.text+';opacity:.5;font-size:var(--font-lg);line-height:1;padding:0 0 0 6px;flex-shrink:0">&times;</button>';
     container.appendChild(toast);
     requestAnimationFrame(function(){ toast.style.opacity='1'; toast.style.transform='translateX(0)'; });
     if(duration > 0){

@@ -13,7 +13,7 @@
 
   {% if not token %}
   <div class="alert alert-error">{{ error }}</div>
-  <p style="text-align:center;font-size:13px;color:var(--gray-500);margin-top:1rem">
+  <p style="text-align:center;font-size:var(--font-base);color:var(--gray-500);margin-top:1rem">
     Message your QueryBot in Zoom to receive a new registration link.
   </p>
   {% else %}
@@ -24,7 +24,7 @@
       <div class="alert alert-info" style="margin-bottom:1.25rem">
         <div>
           <strong>One-time registration link</strong><br>
-          <span style="font-size:12px">This link expires in 48 hours and can only be used once.</span>
+          <span style="font-size:var(--font-sm)">This link expires in 48 hours and can only be used once.</span>
         </div>
       </div>
       <form method="post" action="/portal/register">
@@ -54,7 +54,7 @@
       </form>
     </div>
   </div>
-  <p style="text-align:center;font-size:12px;color:var(--gray-500);margin-top:1rem">
+  <p style="text-align:center;font-size:var(--font-sm);color:var(--gray-500);margin-top:1rem">
     After registering, your administrator will assign you to a group so you can start querying data.
   </p>
   {% endif %}

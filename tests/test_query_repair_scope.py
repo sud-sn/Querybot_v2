@@ -11,7 +11,7 @@ def test_pipeline_promotes_entity_conflict_to_terminal_validation_code():
         encoding="utf-8"
     )
     guard = source.index('code = "entity_field_unavailable"')
-    retry = source.index("retryable = (not ok")
+    retry = source.index("retryable = (")
 
     assert guard < retry
     assert "_entity_field_reason = _entity_field_unavailable_reason(" in source

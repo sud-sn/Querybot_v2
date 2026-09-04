@@ -9,26 +9,26 @@
 .llm-setup-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden;margin-bottom:1rem}
 .llm-progress-step{display:flex;align-items:center;gap:.7rem;padding:.85rem 1rem;border-right:1px solid var(--border);min-width:0}
 .llm-progress-step:last-child{border-right:0}
-.llm-progress-dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:11px;font-weight:850}
+.llm-progress-dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:var(--font-xs);font-weight:850}
 .llm-progress-copy{min-width:0}
-.llm-progress-copy strong{display:block;font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.llm-progress-copy span{display:block;margin-top:2px;font-size:10px;color:var(--text-muted)}
-.llm-progress-step.complete .llm-progress-dot{background:var(--success-light);border-color:color-mix(in srgb,var(--success) 38%,var(--border));color:var(--success)}
-.llm-progress-step.active{background:var(--primary-light)}
+.llm-progress-copy strong{display:block;font-size:var(--font-sm);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.llm-progress-copy span{display:block;margin-top:2px;font-size:var(--font-2xs);color:var(--text-muted)}
+.llm-progress-step.complete .llm-progress-dot{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 38%,var(--border));color:var(--success)}
+.llm-progress-step.active{background:var(--primary-soft)}
 .llm-progress-step.active .llm-progress-dot{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
 .llm-stage-heading{display:flex;align-items:flex-start;gap:.75rem;min-width:0}
-.llm-stage-number{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--primary);color:var(--on-primary);font-size:12px;font-weight:850}
-.llm-stage-title{font-size:14px;font-weight:800;color:var(--text)}
-.llm-stage-description{font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.5}
-.llm-stage-status{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:750;color:var(--text-muted);white-space:nowrap}
-.llm-stage-status.configured{background:var(--success-light);border-color:color-mix(in srgb,var(--success) 35%,var(--border));color:var(--success)}
-.llm-provider-change{display:flex;align-items:flex-start;gap:.7rem;padding:.8rem .9rem;border:1px solid color-mix(in srgb,var(--warning) 45%,var(--border));border-radius:var(--radius-sm);background:var(--warning-light);color:var(--text);font-size:12px;line-height:1.5;margin-bottom:1rem}
+.llm-stage-number{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--primary);color:var(--on-primary);font-size:var(--font-sm);font-weight:850}
+.llm-stage-title{font-size:var(--font-md);font-weight:800;color:var(--text)}
+.llm-stage-description{font-size:var(--font-xs);color:var(--text-muted);margin-top:3px;line-height:1.5}
+.llm-stage-status{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font-size:var(--font-2xs);font-weight:750;color:var(--text-muted);white-space:nowrap}
+.llm-stage-status.configured{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 35%,var(--border));color:var(--success)}
+.llm-provider-change{display:flex;align-items:flex-start;gap:.7rem;padding:.8rem .9rem;border:1px solid color-mix(in srgb,var(--warning) 45%,var(--border));border-radius:var(--radius-sm);background:var(--warning-soft);color:var(--text);font-size:var(--font-sm);line-height:1.5;margin-bottom:1rem}
 .llm-provider-change[hidden]{display:none}
-.llm-provider-name{display:inline-flex;align-items:center;gap:.45rem;font-size:12px;font-weight:800;color:var(--primary);padding:5px 9px;border-radius:999px;background:var(--primary-light);border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border))}
-.llm-azure-model-note{display:none;padding:.8rem .9rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);font-size:12px;color:var(--text-muted);line-height:1.5}
+.llm-provider-name{display:inline-flex;align-items:center;gap:.45rem;font-size:var(--font-sm);font-weight:800;color:var(--primary);padding:5px 9px;border-radius:999px;background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border))}
+.llm-azure-model-note{display:none;padding:.8rem .9rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);font-size:var(--font-sm);color:var(--text-muted);line-height:1.5}
 .llm-azure-model-note.visible{display:block}
-.provider-panel.is-dirty .provider-test-row{background:var(--warning-light);border-radius:var(--radius-sm);padding:.75rem}
-.credential-dirty-note{display:none;font-size:11px;color:var(--warning);font-weight:700}
+.provider-panel.is-dirty .provider-test-row{background:var(--warning-soft);border-radius:var(--radius-sm);padding:.75rem}
+.credential-dirty-note{display:none;font-size:var(--font-xs);color:var(--warning);font-weight:700}
 .provider-panel.is-dirty .credential-dirty-note{display:inline}
 .provider-panel.is-dirty .provider-test-result{display:none}
 .llm-save-row{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;margin-top:1rem}
@@ -45,12 +45,12 @@
 /* Azure deployment picker */
 .az-steps{display:flex;flex-direction:column;gap:1.25rem}
 .az-step{display:flex;gap:.875rem;align-items:flex-start}
-.az-step-num{width:26px;height:26px;border-radius:50%;background:var(--blue);color:var(--on-primary);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.az-step-num{width:26px;height:26px;border-radius:50%;background:var(--blue);color:var(--on-primary);font-size:var(--font-sm);font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
 .az-step-body{flex:1;min-width:0}
-.az-step-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:.5rem}
+.az-step-title{font-size:var(--font-base);font-weight:700;color:var(--text);margin-bottom:.5rem}
 .az-fetch-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 .az-fetch-row input{flex:1;min-width:180px}
-.btn-fetch{display:inline-flex;align-items:center;gap:.4rem;padding:8px 14px;background:var(--blue);color:var(--on-primary);border:none;border-radius:var(--radius-sm);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.btn-fetch{display:inline-flex;align-items:center;gap:.4rem;padding:8px 14px;background:var(--blue);color:var(--on-primary);border:none;border-radius:var(--radius-sm);font-size:var(--font-sm);font-weight:700;cursor:pointer;white-space:nowrap}
 .btn-fetch:hover{filter:brightness(1.1)}
 .btn-fetch:disabled{opacity:.55;cursor:not-allowed}
 .btn-fetch .spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
@@ -58,7 +58,7 @@
 .btn-fetch.loading .btn-fetch-label{display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-#az-fetch-status{font-size:12px;margin-top:.5rem}
+#az-fetch-status{font-size:var(--font-sm);margin-top:.5rem}
 #az-fetch-status.ok{color:var(--green,#16a34a)}
 #az-fetch-status.err{color:var(--red,#dc2626)}
 
@@ -66,24 +66,24 @@
 .az-deploy-card{border:1.5px solid var(--border);border-radius:8px;padding:.65rem .875rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;background:var(--surface)}
 .az-deploy-card.succeeded{border-color:var(--green,#16a34a)}
 .az-deploy-info{display:flex;flex-direction:column;gap:2px}
-.az-deploy-name{font-size:13px;font-weight:700;color:var(--text)}
-.az-deploy-meta{font-size:11px;color:var(--text-muted)}
+.az-deploy-name{font-size:var(--font-base);font-weight:700;color:var(--text)}
+.az-deploy-meta{font-size:var(--font-xs);color:var(--text-muted)}
 .az-deploy-actions{display:flex;gap:.4rem;flex-shrink:0}
-.btn-use{font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:600;white-space:nowrap}
+.btn-use{font-size:var(--font-xs);padding:4px 10px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:600;white-space:nowrap}
 .btn-use:hover{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
 .btn-use.selected{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
-.az-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600}
+.az-badge{display:inline-flex;align-items:center;gap:3px;font-size:var(--font-2xs);padding:2px 7px;border-radius:8px;font-weight:600}
 .az-badge.succeeded{background:var(--success-soft);color:var(--success)}
 .az-badge.failed{background:var(--danger-soft);color:var(--danger)}
 .az-badge.updating{background:var(--warning-soft);color:var(--warning)}
 
-.az-selected-summary{margin-top:.75rem;padding:.65rem .875rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)}
+.az-selected-summary{margin-top:.75rem;padding:.65rem .875rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:var(--font-sm);color:var(--text-muted)}
 .az-selected-summary strong{color:var(--text)}
-.az-empty{text-align:center;padding:1.5rem;color:var(--text-muted);font-size:12px;border:1.5px dashed var(--border);border-radius:8px;margin-top:.5rem}
+.az-empty{text-align:center;padding:1.5rem;color:var(--text-muted);font-size:var(--font-sm);border:1.5px dashed var(--border);border-radius:8px;margin-top:.5rem}
 
 /* ── Provider extras ── */
 .provider-ext-link {
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--primary);
   display: inline-flex;
   align-items: center;
@@ -101,7 +101,7 @@
   border-top: 1px solid var(--border);
 }
 .provider-test-result {
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 600;
 }
 .provider-test-result.ok  { color: var(--success); }
@@ -117,37 +117,37 @@
 .svc-dot.down{background:var(--danger)}
 .svc-dot.checking{background:var(--warning);animation:svc-pulse 1s ease-in-out infinite}
 @keyframes svc-pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.svc-name{font-size:13px;font-weight:700;color:var(--text);min-width:80px}
-.svc-meta{font-size:11px;color:var(--text-muted);flex:1}
+.svc-name{font-size:var(--font-base);font-weight:700;color:var(--text);min-width:80px}
+.svc-meta{font-size:var(--font-xs);color:var(--text-muted);flex:1}
 .svc-actions{display:flex;align-items:center;gap:.5rem;flex-shrink:0}
-.btn-svc{font-size:11px;padding:5px 12px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:600;white-space:nowrap}
+.btn-svc{font-size:var(--font-xs);padding:5px 12px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:600;white-space:nowrap}
 .btn-svc:hover{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
 .btn-svc:disabled{opacity:.5;cursor:not-allowed}
-.svc-result{font-size:11px;font-weight:600}
+.svc-result{font-size:var(--font-xs);font-weight:600}
 .svc-result.ok{color:var(--success)}
 .svc-result.err{color:var(--danger)}
 
 /* ── Database backend section ── */
 .db-backend-switch{display:inline-flex;gap:.35rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);box-shadow:var(--shadow)}
-.db-backend-switch button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:700;font-size:12px;border-radius:var(--radius-sm);padding:8px 14px;cursor:pointer}
+.db-backend-switch button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:700;font-size:var(--font-sm);border-radius:var(--radius-sm);padding:8px 14px;cursor:pointer}
 .db-backend-switch button:hover{background:var(--surface);color:var(--text)}
 .db-backend-switch button.active{background:var(--blue);border-color:var(--blue);color:var(--on-primary);box-shadow:var(--shadow)}
 .db-panel{display:none;margin-top:1.25rem}
 .db-panel.active{display:block}
-.db-active-status{display:inline-flex;align-items:center;gap:.5rem;font-size:12px;padding:.4rem .75rem;border-radius:6px;background:var(--surface-2);border:1px solid var(--border);margin-bottom:1rem}
+.db-active-status{display:inline-flex;align-items:center;gap:.5rem;font-size:var(--font-sm);padding:.4rem .75rem;border-radius:6px;background:var(--surface-2);border:1px solid var(--border);margin-bottom:1rem}
 .db-active-status .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .db-active-status .dot.sqlite{background:var(--text-muted)}
 .db-active-status .dot.postgres{background:var(--success)}
-.db-restart-notice{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);font-size:12px;color:var(--warning);margin-top:1rem}
-.btn-restart{margin-left:auto;flex-shrink:0;padding:6px 14px;background:#92400e;color:#fff;border:none;border-radius:var(--radius-sm);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.db-restart-notice{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);font-size:var(--font-sm);color:var(--warning);margin-top:1rem}
+.btn-restart{margin-left:auto;flex-shrink:0;padding:6px 14px;background:#92400e;color:#fff;border:none;border-radius:var(--radius-sm);font-size:var(--font-sm);font-weight:700;cursor:pointer;white-space:nowrap}
 .btn-restart:hover{filter:brightness(1.15)}
 .btn-restart:disabled{opacity:.55;cursor:not-allowed}
-.restart-strip{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;font-size:12px;margin-top:.5rem}
+.restart-strip{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;font-size:var(--font-sm);margin-top:.5rem}
 .restart-strip.inprogress{background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning)}
 .restart-strip.success{background:#dcfce7;border:1px solid #86efac;color:#166534}
 .restart-strip.error{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
 @keyframes restart-spin{to{transform:rotate(360deg)}}
-.restart-spin{display:inline-block;animation:restart-spin .8s linear infinite;font-size:14px}
+.restart-spin{display:inline-block;animation:restart-spin .8s linear infinite;font-size:var(--font-md)}
 </style>
 {% endblock %}
 {% block content %}
@@ -327,7 +327,7 @@
         <div><div class="llm-stage-title">Connect Azure OpenAI</div><div class="llm-stage-description">Save the resource credentials before testing or fetching deployments.</div></div>
         <span class="llm-stage-status {{ 'configured' if azure_configured else '' }}">{{ ic('check-circle', 12) if azure_configured else ic('key', 12) }} {{ 'Configured' if azure_configured else 'Not configured' }}</span>
       </div>
-      <a href="https://oai.azure.com" target="_blank" style="font-size:12px;color:var(--blue)">Azure OpenAI Studio ↗</a>
+      <a href="https://oai.azure.com" target="_blank" style="font-size:var(--font-sm);color:var(--blue)">Azure OpenAI Studio ↗</a>
     </div>
     <div class="card-body">
 
@@ -383,7 +383,7 @@
           <div class="az-step-num">3</div>
           <div class="az-step-body">
             <div class="az-step-title">Fetch and select deployments</div>
-            <p style="font-size:12px;color:var(--text-muted);margin-bottom:.65rem;line-height:1.55">
+            <p style="font-size:var(--font-sm);color:var(--text-muted);margin-bottom:.65rem;line-height:1.55">
               Save your credentials first, then click the button to pull the list of model deployments
               directly from your Azure resource. No guessing — pick from what's actually deployed.
             </p>
@@ -421,10 +421,10 @@
           <div class="az-step-body">
             <div class="az-step-title" style="color:var(--text-muted)">
               Or type deployment names manually
-              <span style="font-weight:400;font-size:11px">(only if fetch doesn't work)</span>
+              <span style="font-weight:400;font-size:var(--font-xs)">(only if fetch doesn't work)</span>
             </div>
             <details style="margin-top:.4rem">
-              <summary style="font-size:12px;color:var(--blue);cursor:pointer">Show manual fields</summary>
+              <summary style="font-size:var(--font-sm);color:var(--blue);cursor:pointer">Show manual fields</summary>
               <div class="form-grid" style="margin-top:.65rem">
                 <div class="form-group" style="margin-bottom:0">
                   <label>Query deployment name</label>
@@ -458,7 +458,7 @@
     <div class="card-header">
       <h2>Database backend</h2>
       {% if restart_needed %}
-      <span class="badge" style="background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning);font-size:11px">Restart required</span>
+      <span class="badge" style="background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning);font-size:var(--font-xs)">Restart required</span>
       {% endif %}
     </div>
     <div class="card-body">
@@ -486,7 +486,7 @@
 
       <!-- ── SQLite panel ── -->
       <div class="db-panel" data-db-panel="sqlite">
-        <p style="font-size:13px;color:var(--text-muted);margin:.75rem 0 .4rem">
+        <p style="font-size:var(--font-base);color:var(--text-muted);margin:.75rem 0 .4rem">
           SQLite is the default backend — zero config, single file on disk.
           Best for evaluation and single-user deployments.
         </p>
@@ -499,7 +499,7 @@
 
       <!-- ── PostgreSQL panel ── -->
       <div class="db-panel" data-db-panel="postgres">
-        <p style="font-size:13px;color:var(--text-muted);margin:.75rem 0 .75rem">
+        <p style="font-size:var(--font-base);color:var(--text-muted);margin:.75rem 0 .75rem">
           PostgreSQL supports concurrent writers and is recommended for production.
           All SQL translations are handled automatically — no code changes needed.
         </p>

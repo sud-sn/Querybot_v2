@@ -42,12 +42,12 @@
   <div class="chip-row" style="margin-top:.6rem">
     <span class="text-xs text-muted" style="padding:4px 0">Filters:</span>
     {% if state_filter %}
-    <a href="/admin/clients?q={{ search }}" class="ui-chip active" style="font-size:11px">
+    <a href="/admin/clients?q={{ search }}" class="ui-chip active" style="font-size:var(--font-xs)">
       State: {{ state_filter }} {{ ic("x-circle", 12) }}
     </a>
     {% endif %}
     {% if platform_filter %}
-    <a href="/admin/clients?q={{ search }}" class="ui-chip active" style="font-size:11px">
+    <a href="/admin/clients?q={{ search }}" class="ui-chip active" style="font-size:var(--font-xs)">
       Platform: {{ platform_filter }} {{ ic("x-circle", 12) }}
     </a>
     {% endif %}
@@ -168,7 +168,7 @@
   padding: 8px 36px 8px 34px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--font-base);
   color: var(--text);
   background: var(--surface);
   outline: none;
@@ -212,7 +212,7 @@
 .health-bar-fill.warning { background: var(--warning); }
 .health-bar-fill.danger  { background: var(--danger); }
 .health-bar-label {
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: 800;
   white-space: nowrap;
   flex-shrink: 0;

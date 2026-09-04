@@ -12,23 +12,23 @@
 <style>
 .scope-panel{margin-top:1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
 .scope-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);background:var(--surface)}
-.scope-title{font-size:13px;font-weight:800;color:var(--text-soft)}
-.scope-note{font-size:12px;color:var(--text-muted);margin-top:.2rem}
+.scope-title{font-size:var(--font-base);font-weight:800;color:var(--text-soft)}
+.scope-note{font-size:var(--font-sm);color:var(--text-muted);margin-top:.2rem}
 .scope-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-.scope-status{display:none;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border)}
+.scope-status{display:none;padding:.7rem 1rem;font-size:var(--font-sm);border-bottom:1px solid var(--border)}
 .scope-tree{display:none;padding:1rem;background:var(--surface)}
-.scope-summary{font-size:12px;color:var(--text-muted);margin-bottom:.85rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)}
+.scope-summary{font-size:var(--font-sm);color:var(--text-muted);margin-bottom:.85rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)}
 .scope-db,.scope-schema{margin-bottom:.45rem}
 .scope-row{display:flex;align-items:center;gap:.5rem;padding:.34rem .45rem;border-radius:var(--radius-sm);color:var(--text-soft)}
 .scope-row:hover{background:var(--row-hover)}
 .scope-name{font-weight:800;color:var(--text)}
 .scope-schema-name{font-weight:700;color:var(--text-soft)}
-.scope-count{margin-left:auto;font-size:11px;color:var(--text-muted);white-space:nowrap}
+.scope-count{margin-left:auto;font-size:var(--font-xs);color:var(--text-muted);white-space:nowrap}
 .scope-objects{margin-left:1.65rem}
-.scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:12px;color:var(--text-soft)}
+.scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:var(--font-sm);color:var(--text-soft)}
 .scope-object:hover{background:var(--row-hover)}
 .scope-check{width:14px;height:14px;accent-color:var(--blue)}
-.scope-section{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
+.scope-section{font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
 .scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
 </style>
 {% endblock %}
@@ -65,7 +65,7 @@
 
       <!-- ══ SNOWFLAKE — all fields prefixed sf_ ══ -->
       <div id="db-snowflake" style="display:none">
-        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:12px">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:var(--font-sm)">
           Snowflake — format: <code>orgname-accountname</code> (no .snowflakecomputing.com)
         </div>
         <div class="form-grid">
@@ -97,7 +97,7 @@
 
       <!-- ══ ORACLE — all fields prefixed ora_ ══ -->
       <div id="db-oracle" style="display:none">
-        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:12px">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:var(--font-sm)">
           Oracle — Thin mode (no Oracle Client installation required on the server)
         </div>
         <div class="form-group"><label>DSN *</label>
@@ -118,7 +118,7 @@
 
       <!-- ══ AZURE SQL — all fields prefixed az_ ══ -->
       <div id="db-azure_sql" style="display:none">
-        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:12px">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:var(--font-sm)">
           Azure SQL — requires ODBC Driver 18 installed on the VM
           (<a href="https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server" target="_blank">install guide</a>)
         </div>
@@ -186,7 +186,7 @@
         <div id="db-scope-tree" class="scope-tree"></div>
         <div id="db-scope-footer" class="scope-footer">
           <strong id="db-scope-count" style="color:var(--blue)"></strong>
-          <span style="font-size:12px;color:var(--text-muted)">will be saved as the default KB scope for this database.</span>
+          <span style="font-size:var(--font-sm);color:var(--text-muted)">will be saved as the default KB scope for this database.</span>
         </div>
       </div>
 
@@ -194,9 +194,9 @@
         <button type="submit" class="btn btn-primary" id="save-btn" disabled>Save database</button>
         <button type="button" class="btn btn-secondary" id="test-btn" disabled>Test connection</button>
         <button type="button" class="btn btn-secondary" id="cancel-edit-btn" style="display:none" onclick="cancelEdit()">Cancel</button>
-        <span id="hint" style="font-size:12px;color:var(--gray-500)">Select a database type above</span>
+        <span id="hint" style="font-size:var(--font-sm);color:var(--gray-500)">Select a database type above</span>
       </div>
-      <div id="db-test-result" style="display:none;margin-top:.75rem;font-size:12px"></div>
+      <div id="db-test-result" style="display:none;margin-top:.75rem;font-size:var(--font-sm)"></div>
     </form>
   </div>
 </div>
@@ -210,7 +210,7 @@
     <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds='{{ d.edit_creds|tojson }}' data-db-log='{{ d.edit_log|tojson }}' data-db-scope='{{ d.selected_schema_tables|tojson }}'>
       <td style="font-weight:600">{{ d.name }}</td>
       <td><span class="badge badge-blue">{{ d.label }}</span></td>
-      <td style="font-size:11px;color:var(--gray-500)">
+      <td style="font-size:var(--font-xs);color:var(--gray-500)">
         {% if d.db_type == "snowflake" %}
           {{ d.credentials.get("account","—") }} / {{ d.credentials.get("database","—") }} / {{ d.credentials.get("schema","PUBLIC") }}
         {% elif d.db_type == "oracle" %}
@@ -219,14 +219,14 @@
           {{ d.credentials.get("server","—") }} / {{ d.credentials.get("database","—") }}
         {% endif %}
       </td>
-      <td style="font-size:11px;color:var(--gray-500)">
+      <td style="font-size:var(--font-xs);color:var(--gray-500)">
         {% if d.selected_schema_count %}
           <span class="badge badge-blue">{{ d.selected_schema_count }} table{{ 's' if d.selected_schema_count != 1 else '' }}</span>
         {% else %}
           <span class="badge badge-gray">Default schema</span>
         {% endif %}
       </td>
-      <td style="font-size:11px;color:var(--gray-500)">
+      <td style="font-size:var(--font-xs);color:var(--gray-500)">
         {% if d.log_export_enabled %}
           <div><span class="badge badge-green">Enabled</span> {{ d.log_schema }} at {{ d.log_export_time }}</div>
           {% if d.log_export_state %}
@@ -259,7 +259,7 @@
           <span class="badge badge-gray">Disabled</span>
         {% endif %}
       </td>
-      <td style="color:var(--gray-500);font-size:12px">{{ d.created_at[:10] }}</td>
+      <td style="color:var(--gray-500);font-size:var(--font-sm)">{{ d.created_at[:10] }}</td>
       <td>
         <div style="display:flex;gap:.35rem">
           <button type="button" class="btn btn-secondary btn-sm" onclick="editDbRow(this)">Edit</button>
@@ -298,7 +298,7 @@ document.getElementById('test-btn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Testing...';
   result.style.display = 'block';
-  result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)');
+  result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)');
   result.textContent = 'Opening a test connection...';
   try {
     const resp = await fetch('/admin/databases/test', {
@@ -311,14 +311,14 @@ document.getElementById('test-btn').addEventListener('click', async () => {
       const detailText = data.details
         ? Object.entries(data.details).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(' · ')
         : '';
-      result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--green-light);border:1px solid color-mix(in srgb,var(--green) 28%,transparent);color:var(--green)');
+      result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--green-light);border:1px solid color-mix(in srgb,var(--green) 28%,transparent);color:var(--green)');
       result.textContent = detailText ? `${data.message} ${detailText}` : data.message;
     } else {
-      result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)');
+      result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)');
       result.textContent = data.message || 'Connection test failed.';
     }
   } catch (e) {
-    result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)');
+    result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)');
     result.textContent = 'Network error: ' + e.message;
   } finally {
     btn.disabled = !document.getElementById('db_type_sel').value;
@@ -370,7 +370,7 @@ function dbScopeStatus(type, msg) {
   const palette = type === 'error'
     ? 'background:var(--red-light);color:var(--red)'
     : 'background:var(--blue-light);color:var(--blue)';
-  el.setAttribute('style', `display:block;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border);${palette}`);
+  el.setAttribute('style', `display:block;padding:.7rem 1rem;font-size:var(--font-sm);border-bottom:1px solid var(--border);${palette}`);
   el.textContent = msg;
 }
 
@@ -433,7 +433,7 @@ function dbScopeRender(tree) {
   wrap.style.display = 'block';
   const dbs = Object.keys(tree).sort();
   if (!dbs.length) {
-    wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted)">No schemas or tables were visible with these credentials.</p>';
+    wrap.innerHTML = '<p style="font-size:var(--font-sm);color:var(--text-muted)">No schemas or tables were visible with these credentials.</p>';
     return;
   }
 
@@ -501,10 +501,10 @@ async function diagnoseLogs(dbId) {
     modal.innerHTML = `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;min-width:420px;max-width:640px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
-          <strong style="font-size:14px;display:flex;align-items:center;gap:.4rem">{{ ic("search", 15) }} Log Export Diagnostic</strong>
-          <button onclick="document.getElementById('diag-modal').remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted)">✕</button>
+          <strong style="font-size:var(--font-md);display:flex;align-items:center;gap:.4rem">{{ ic("search", 15) }} Log Export Diagnostic</strong>
+          <button onclick="document.getElementById('diag-modal').remove()" style="background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted)">✕</button>
         </div>
-        <div id="diag-body" style="font-size:13px;color:var(--text-muted)">Checking…</div>
+        <div id="diag-body" style="font-size:var(--font-base);color:var(--text-muted)">Checking…</div>
       </div>`;
     document.body.appendChild(modal);
     modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
@@ -527,7 +527,7 @@ async function diagnoseLogs(dbId) {
     const warn = v => `<span style="color:var(--amber);font-weight:700">${v}</span>`;
     const bad  = v => `<span style="color:var(--red);font-weight:700">${v}</span>`;
 
-    let html = `<table style="width:100%;border-collapse:collapse;font-size:12px">`;
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:var(--font-sm)">`;
     html += row('Local egress rows',   d.local_egress_count > 0 ? ok(d.local_egress_count) : warn(d.local_egress_count));
     html += row('Local max id',        d.local_egress_max_id);
     html += row('External table exists', d.external_table_exists ? ok('Yes') : bad('No — run Provision first'));
@@ -556,17 +556,17 @@ async function diagnoseLogs(dbId) {
     const extMax2 = d.external_egress_max_id || 0;
     const locMax2 = d.local_egress_max_id || 0;
     if (d.local_egress_count === 0) {
-      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:11px">
+      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:var(--font-xs)">
         ⚠ No egress rows in local DB yet. Run Schema Discovery or KB Build first —
         masking config alone does not create egress rows.</p>`;
     } else if (d.external_table_exists && extMax2 > locMax2) {
-      html += `<p style="margin-top:.75rem;color:var(--red);font-size:11px">
+      html += `<p style="margin-top:.75rem;color:var(--red);font-size:var(--font-xs)">
         ⚠ <strong>External table has rows from a previous server installation</strong>
         (SOURCE_ID ${extMax2} vs local max ${locMax2}).
         Click <strong>↺ Reset egress</strong> to truncate the external table and
         re-export all ${d.local_egress_count} current local rows cleanly.</p>`;
     } else if (d.external_table_exists && d.missing_columns && d.missing_columns.length > 0) {
-      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:11px">
+      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:var(--font-xs)">
         ⚠ External table is missing columns. Click <strong>Provision log tables</strong>
         to add them, then sync again.</p>`;
     }

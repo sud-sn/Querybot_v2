@@ -16,13 +16,13 @@
   background:linear-gradient(180deg,color-mix(in srgb,var(--primary-soft) 42%,var(--surface)),var(--surface));
   box-shadow:var(--shadow)}
 .dr-hero h1{font-size:20px;font-weight:900;margin:0}
-.dr-hero p{font-size:13px;color:var(--text-muted);max-width:780px;line-height:1.6;margin:.4rem 0 0}
+.dr-hero p{font-size:var(--font-base);color:var(--text-muted);max-width:780px;line-height:1.6;margin:.4rem 0 0}
 .dr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}
 .dr-stat{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);
   padding:.75rem .9rem;box-shadow:var(--shadow-sm)}
-.dr-stat span{display:block;font-size:10px;font-weight:900;letter-spacing:.08em;
+.dr-stat span{display:block;font-size:var(--font-2xs);font-weight:900;letter-spacing:.08em;
   text-transform:uppercase;color:var(--text-muted);margin-bottom:.3rem}
-.dr-stat strong{display:block;font-size:22px;font-weight:900;color:var(--text)}
+.dr-stat strong{display:block;font-size:var(--font-2xl);font-weight:900;color:var(--text)}
 /* overflow:hidden clipped the last column instead of letting it be reached.
    This table carries ten columns and ends in Approve / Edit, so on a narrower
    window the one cell the page exists for was the one cut off, with no scroll
@@ -48,26 +48,26 @@ table.dr-tbl--roles tr:hover td:last-child{
   border-bottom:1px solid var(--border);display:flex;align-items:center;
   justify-content:space-between;gap:.75rem}
 .dr-table-header h2{font-size:15px;font-weight:900;margin:0}
-table.dr-tbl{width:100%;border-collapse:collapse;font-size:13px}
-table.dr-tbl th{padding:.55rem .75rem;text-align:left;font-size:10px;font-weight:800;
+table.dr-tbl{width:100%;border-collapse:collapse;font-size:var(--font-base)}
+table.dr-tbl th{padding:.55rem .75rem;text-align:left;font-size:var(--font-2xs);font-weight:800;
   text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);
   background:var(--surface-2);border-bottom:1px solid var(--border)}
 table.dr-tbl td{padding:.6rem .75rem;border-bottom:1px solid var(--border);
   vertical-align:top;color:var(--text)}
 table.dr-tbl tr:last-child td{border-bottom:none}
 table.dr-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
-.mono{font-family:Consolas,monospace;font-size:11px;
+.mono{font-family:Consolas,monospace;font-size:var(--font-xs);
   background:var(--surface-2);border:1px solid var(--border);border-radius:4px;
   padding:1px 5px;white-space:nowrap}
 .status-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
-  border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase}
+  border-radius:999px;font-size:var(--font-2xs);font-weight:800;text-transform:uppercase}
 .status-approved{background:var(--green-light);color:var(--green)}
 .status-generated{background:var(--blue-light);color:var(--blue)}
 .status-needs_review{background:var(--amber-light);color:var(--amber)}
 .conf-bar{display:inline-block;width:60px;height:6px;border-radius:3px;
   background:var(--border);vertical-align:middle;margin-left:4px;overflow:hidden}
 .conf-fill{height:100%;border-radius:3px;background:var(--green)}
-details.dr-edit summary{cursor:pointer;font-size:11px;font-weight:700;
+details.dr-edit summary{cursor:pointer;font-size:var(--font-xs);font-weight:700;
   color:var(--text-muted);padding:3px 7px;border-radius:4px;
   background:var(--surface-2);border:1px solid var(--border);
   display:inline-block;user-select:none;margin-top:.35rem}
@@ -75,40 +75,40 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 .dr-edit-form{margin-top:.5rem;padding:.65rem .75rem;background:var(--surface-2);
   border:1px solid var(--border);border-radius:var(--radius-sm)}
 .dr-edit-form .row{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem}
-.dr-edit-form label{font-size:11px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:2px}
-.dr-edit-form input{width:100%;padding:4px 7px;font-size:12px;font-family:Consolas,monospace;
+.dr-edit-form label{font-size:var(--font-xs);font-weight:700;color:var(--text-muted);display:block;margin-bottom:2px}
+.dr-edit-form input{width:100%;padding:4px 7px;font-size:var(--font-sm);font-family:Consolas,monospace;
   border:1px solid var(--border);border-radius:4px;background:var(--surface);
   color:var(--text);box-sizing:border-box}
 .dr-edit-form input:focus{outline:none;border-color:var(--primary)}
 .dr-edit-form .dr-role-phrases{margin-top:.4rem}
-.dr-edit-form .dr-field-help{display:block;margin-top:3px;font-size:10px;line-height:1.35;
+.dr-edit-form .dr-field-help{display:block;margin-top:3px;font-size:var(--font-2xs);line-height:1.35;
   color:var(--text-muted);font-weight:500}
 .btn-approve{background:var(--green);color:var(--on-primary);border:none;border-radius:5px;
-  padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  padding:4px 12px;font-size:var(--font-sm);font-weight:700;cursor:pointer;white-space:nowrap}
 .btn-approve:hover{background:var(--green-dark,var(--green));filter:brightness(.9)}
 .btn-approve.approved{background:var(--surface-2);color:var(--green);
   border:1px solid var(--green);cursor:default}
 .guidance-box{border:1px solid color-mix(in srgb,var(--primary) 20%,var(--border));
   background:color-mix(in srgb,var(--primary-soft) 35%,var(--surface));
-  border-radius:var(--radius-sm);padding:.65rem .9rem;font-size:12px;
+  border-radius:var(--radius-sm);padding:.65rem .9rem;font-size:var(--font-sm);
   color:var(--text-soft);line-height:1.55}
 .dr-workbench{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(320px,.8fr);gap:.85rem}
 .dr-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
 .dr-panel-head{padding:.75rem .9rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
-.dr-panel-head h2{font-size:14px;margin:0 0 .15rem}.dr-panel-head p{font-size:11px;color:var(--text-muted);margin:0;line-height:1.45}
+.dr-panel-head h2{font-size:var(--font-md);margin:0 0 .15rem}.dr-panel-head p{font-size:var(--font-xs);color:var(--text-muted);margin:0;line-height:1.45}
 .dr-panel-body{padding:.85rem}.dr-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.65rem}
-.dr-field label{display:block;font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.25rem}
-.dr-field input,.dr-field select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:.5rem .6rem;font-size:12px}
+.dr-field label{display:block;font-size:var(--font-xs);font-weight:800;color:var(--text-soft);margin-bottom:.25rem}
+.dr-field input,.dr-field select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:.5rem .6rem;font-size:var(--font-sm)}
 .dr-field input:focus,.dr-field select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
-.dr-span-2{grid-column:span 2}.dr-check{display:flex;align-items:center;gap:.5rem;font-size:12px;color:var(--text-soft)}
+.dr-span-2{grid-column:span 2}.dr-check{display:flex;align-items:center;gap:.5rem;font-size:var(--font-sm);color:var(--text-soft)}
 .dr-check input{width:16px;height:16px;accent-color:var(--primary)}
-.dr-primary{border:0;border-radius:6px;background:var(--primary);color:var(--on-primary);font-weight:800;font-size:12px;padding:.55rem .85rem;cursor:pointer}
+.dr-primary{border:0;border-radius:6px;background:var(--primary);color:var(--on-primary);font-weight:800;font-size:var(--font-sm);padding:.55rem .85rem;cursor:pointer}
 .dr-binding{padding:.65rem .75rem;border:1px solid var(--border);border-radius:7px;margin-bottom:.55rem;background:var(--surface)}
 .dr-binding:last-child{margin-bottom:0}.dr-binding-top{display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem}
-.dr-binding strong{font-size:12px}.dr-binding-meta{font-size:11px;color:var(--text-muted);margin-top:.25rem;line-height:1.45}
-.dr-danger{border:0;background:transparent;color:var(--red);font-size:11px;font-weight:800;cursor:pointer}
+.dr-binding strong{font-size:var(--font-sm)}.dr-binding-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:.25rem;line-height:1.45}
+.dr-danger{border:0;background:transparent;color:var(--red);font-size:var(--font-xs);font-weight:800;cursor:pointer}
 .dr-mode-help{grid-column:span 2;margin:-.2rem 0 0;padding:.55rem .65rem;border-radius:6px;
-  background:var(--surface-2);color:var(--text-muted);font-size:11px;line-height:1.45}
+  background:var(--surface-2);color:var(--text-muted);font-size:var(--font-xs);line-height:1.45}
 .dr-surrogate-only[hidden],.dr-surrogate-edit[hidden]{display:none!important}
 @media(max-width:900px){.dr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.dr-workbench{grid-template-columns:1fr}.dr-form-grid{grid-template-columns:1fr}.dr-span-2{grid-column:auto}}
 </style>
@@ -193,7 +193,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   {% if date_role_coverage and date_role_coverage.review_candidates %}
   <div class="dr-table-wrap">
     <div class="dr-table-header">
-      <div><h2>Date-like columns needing review</h2><span style="font-size:11px;color:var(--text-muted)">Schema metadata found these candidates but did not guess a business date role.</span></div>
+      <div><h2>Date-like columns needing review</h2><span style="font-size:var(--font-xs);color:var(--text-muted)">Schema metadata found these candidates but did not guess a business date role.</span></div>
       <span class="status-pill status-needs_review">{{ date_role_coverage.review_candidate_count }} review</span>
     </div>
     <table class="dr-tbl">
@@ -204,7 +204,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           <td><span class="mono">{{ candidate.table }}</span></td>
           <td><span class="mono">{{ candidate.column }}</span></td>
           <td>{{ candidate.data_type }}</td>
-          <td style="color:var(--text-muted);font-size:12px">{{ candidate.reason }}</td>
+          <td style="color:var(--text-muted);font-size:var(--font-sm)">{{ candidate.reason }}</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -251,7 +251,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           <div class="dr-span-2"><button class="dr-primary" type="submit">Save date context</button></div>
         </form>
         {% else %}
-        <p style="font-size:12px;color:var(--text-muted);margin:0">Create a metric and approve at least one discovered date role to add a context binding.</p>
+        <p style="font-size:var(--font-sm);color:var(--text-muted);margin:0">Create a metric and approve at least one discovered date role to add a context binding.</p>
         {% endif %}
 
         {% if context_bindings %}
@@ -298,7 +298,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   <div class="dr-table-wrap">
     <div class="dr-table-header">
       <h2>Detected Date Roles</h2>
-      <span style="font-size:12px;color:var(--text-muted)">{{ date_roles | length }} role{{ "s" if date_roles | length != 1 }}</span>
+      <span style="font-size:var(--font-sm);color:var(--text-muted)">{{ date_roles | length }} role{{ "s" if date_roles | length != 1 }}</span>
     </div>
     <table class="dr-tbl dr-tbl--roles">
       <thead>
@@ -321,8 +321,8 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           <td><span class="mono">{{ dr.fact_table }}</span></td>
           <td><span class="mono">{{ dr.fact_column }}</span></td>
           <td>
-            <span style="font-size:12px;font-weight:600">{{ dr.name }}</span>
-            {% if dr.business_role %}<br><span class="mono" style="font-size:10px">{{ dr.business_role }}</span>{% endif %}
+            <span style="font-size:var(--font-sm);font-weight:600">{{ dr.name }}</span>
+            {% if dr.business_role %}<br><span class="mono" style="font-size:var(--font-2xs)">{{ dr.business_role }}</span>{% endif %}
           </td>
           <td><span class="mono">{{ dr.dimension_table or "Same table" }}</span></td>
           <td><span class="mono">{{ dr.dimension_key or "Direct value" }}</span></td>
@@ -332,7 +332,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
             <span class="status-pill status-{{ dr.status }}">{{ dr.status }}</span>
           </td>
           <td>
-            <span style="font-size:12px;font-weight:700">{{ dr.confidence }}%</span>
+            <span style="font-size:var(--font-sm);font-weight:700">{{ dr.confidence }}%</span>
             <span class="conf-bar"><span class="conf-fill" style="width:{{ dr.confidence }}%"></span></span>
           </td>
           <td>

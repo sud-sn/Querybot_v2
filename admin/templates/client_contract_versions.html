@@ -15,18 +15,18 @@
 .cv-shell{display:flex;flex-direction:column;gap:1rem}
 .cv-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
 .cv-tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);
-  font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted)}
+  font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted)}
 .cv-tbl td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
 .cv-tbl tr:last-child td{border-bottom:none}
-.cv-version{font-family:Consolas,monospace;font-size:12px}
+.cv-version{font-family:Consolas,monospace;font-size:var(--font-sm)}
 .cv-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow)}
 .cv-diff-bar{display:flex;align-items:center;gap:.6rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);flex-wrap:wrap}
-.cv-diff-bar select{padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px}
+.cv-diff-bar select{padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-sm)}
 .cv-diff-body{padding:.85rem 1rem}
 .cv-diff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.6rem}
 .cv-diff-cell{border:1px solid var(--border);border-radius:8px;padding:.6rem .7rem}
-.cv-diff-cell h5{margin:0 0 6px;font-size:11px;text-transform:uppercase;color:var(--text-muted);font-weight:800}
-.cv-diff-num{font-size:11px}
+.cv-diff-cell h5{margin:0 0 6px;font-size:var(--font-xs);text-transform:uppercase;color:var(--text-muted);font-weight:800}
+.cv-diff-num{font-size:var(--font-xs)}
 .cv-diff-num.added{color:var(--green)}
 .cv-diff-num.removed{color:var(--red)}
 </style>
@@ -43,18 +43,18 @@
 
   <div class="cv-card">
     <div class="cv-diff-bar">
-      <strong style="font-size:13px">Diff two versions</strong>
+      <strong style="font-size:var(--font-base)">Diff two versions</strong>
       <select id="cv-base">
         {% for v in versions %}<option value="{{ v.version }}" {{ 'selected' if loop.index0 == 1 else '' }}>{{ v.version }} ({{ v.status }})</option>{% endfor %}
       </select>
-      <span style="color:var(--text-muted);font-size:12px">vs</span>
+      <span style="color:var(--text-muted);font-size:var(--font-sm)">vs</span>
       <select id="cv-compare">
         {% for v in versions %}<option value="{{ v.version }}" {{ 'selected' if loop.first else '' }}>{{ v.version }} ({{ v.status }})</option>{% endfor %}
       </select>
       <button type="button" id="cv-diff-run" class="btn btn-primary btn-xs">Compare</button>
     </div>
     <div class="cv-diff-body" id="cv-diff-out">
-      <span style="color:var(--text-muted);font-size:12px">Pick two versions above and compare.</span>
+      <span style="color:var(--text-muted);font-size:var(--font-sm)">Pick two versions above and compare.</span>
     </div>
   </div>
 
@@ -105,7 +105,7 @@
   async function run() {
     var base = baseSel.value, compare = compareSel.value;
     if (!base || !compare) return;
-    out.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Comparing…</span>';
+    out.innerHTML = '<span style="color:var(--text-muted);font-size:var(--font-sm)">Comparing…</span>';
     try {
       var url = window.location.pathname + '/diff?base=' + encodeURIComponent(base) + '&compare=' + encodeURIComponent(compare);
       var resp = await fetch(url);
