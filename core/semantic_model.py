@@ -1839,6 +1839,120 @@ def _model_source(model: dict[str, Any] | None, kb_dir: str) -> dict[str, Any]:
     return fallback
 
 
+# ── Table grain, stated out loud ─────────────────────────────────────────────
+# What one row of a fact table represents is the difference between "average
+# price per fill" and "average price per revenue line", and the model cannot
+# infer it from column names. The product already derives it -- and on an
+# Infor M3 schema the `_LIN_`/`PONR`/`POSX` rules resolve real fact tables to
+# "one row per transaction line" -- but nothing ever put it in front of the
+# model or the reader.
+#
+# This is ADVISORY, deliberately. It is not a validator gate, because the
+# evidence underneath does not support one:
+#   - `grain_columns` is `pk_columns` renamed, not a derived grain, and is
+#     dropped before it reaches the entity graph;
+#   - `grain_confidence` on the classifier branch is the ROLE score, not a
+#     grain score;
+#   - run over a real schema the classifier calls an order header a dimension.
+# Gating on any of that would reject correct SQL. Saying it out loud costs
+# nothing and is the part that was actually missing.
+
+_GRAIN_PLACEHOLDER = "needs_admin_context"
+
+# An admin wrote it, so it outranks anything inferred. patch_grain_approval
+# stamps confidence 100 and its own status; treat any non-generated,
+# non-review status as human-entered rather than enumerating spellings.
+_GRAIN_INFERRED_STATUSES = {"generated", "needs_review", ""}
+
+# The sentences every table of a given role receives. They are true, and they
+# carry no information the entity registry has not already given the model.
+_GENERIC_GRAINS = {
+    "one row per lookup member",
+    "one row per business member",
+    "one row per calendar date",
+}
+
+
+def _table_grain_claim(table: dict[str, Any]) -> tuple[str, bool]:
+    """The grain worth stating for one table, and whether a human set it.
+
+    Returns ("", False) when nothing has been established -- which is the
+    common case on a fresh account and must stay silent rather than assert a
+    grain nobody confirmed.
+    """
+    grain = str(table.get("grain") or "").strip()
+    status = str(table.get("grain_status") or "").strip().lower()
+    if not grain or grain == _GRAIN_PLACEHOLDER:
+        return "", False
+    if status == "needs_review":
+        return "", False
+    return grain, status not in _GRAIN_INFERRED_STATUSES
+
+
+def grain_is_sub_event(grain: str) -> bool:
+    """Is this grain FINER than the business event a user would name?
+
+    "one row per transaction line" is the case worth warning about: a user
+    asking for an average per order gets an average per line unless the query
+    aggregates first. Deliberately narrow -- a false positive here puts a
+    misleading caveat on a correct answer.
+    """
+    return "line" in str(grain or "").strip().lower()
+
+
+def build_grain_context(
+    model: dict[str, Any] | None,
+    tables: set[str] | list[str] | None,
+    *,
+    max_tables: int = 6,
+) -> str:
+    """State what one row means, for the tables this question actually touches."""
+    if not model or not tables:
+        return ""
+    wanted = {str(name).strip().upper() for name in tables if str(name).strip()}
+    if not wanted:
+        return ""
+
+    lines: list[str] = []
+    warn_sub_event = False
+    informative = False
+    for table in (model.get("tables") or []):
+        qualified = str(table.get("qualified_name") or table.get("table") or "")
+        bare = str(table.get("table") or "").upper()
+        if qualified.upper() not in wanted and bare not in wanted:
+            continue
+        grain, approved = _table_grain_claim(table)
+        if not grain:
+            continue
+        lines.append(
+            f"- {qualified}: {grain}" + (" (confirmed by an administrator)" if approved else "")
+        )
+        warn_sub_event = warn_sub_event or grain_is_sub_event(grain)
+        # Every dimension gets the same generated sentence, so a block of
+        # nothing but those says only "these are dimensions", which the entity
+        # registry already said. Spending prompt on it trains the reader to
+        # skip the section on the questions where it matters.
+        informative = informative or approved or grain not in _GENERIC_GRAINS
+        if len(lines) >= max_tables:
+            break
+
+    if not lines or not informative:
+        return ""
+    header = (
+        "TABLE GRAIN — what one row of each table represents. Aggregations "
+        "count ROWS, so this decides what a COUNT or an AVG is measuring:"
+    )
+    footer = ""
+    if warn_sub_event:
+        footer = (
+            "\nA table whose grain is a LINE holds several rows per business "
+            "event. If the question asks per order, per fill or per customer, "
+            "aggregate to that unit first — SUM(...) / COUNT(DISTINCT <key>) — "
+            "rather than averaging the joined rows."
+        )
+    return header + "\n" + "\n".join(lines) + footer
+
+
 def build_runtime_semantic_context(
     kb_dir: str,
     *,

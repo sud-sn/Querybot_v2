@@ -74,6 +74,7 @@ from core.count_target_resolver import (
 )
 from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
+    build_grain_context,
     build_field_plan_repair_note,
 )
 from core.date_roles import (
@@ -2312,6 +2313,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             model=_contract_model,
             glossary=_planner_terms,
         )
+        # What one row of each table in play actually represents. Advisory, and
+        # silent unless something was established: it decides whether an AVG is
+        # per order or per order LINE, which the model cannot read off column
+        # names and which nothing previously told it.
+        _grain_context = build_grain_context(_contract_model, effective)
+        if _grain_context:
+            _semantic_model_context = (
+                (_semantic_model_context + "\n\n" + _grain_context)
+                if _semantic_model_context else _grain_context
+            )
         if _semantic_model_context:
             context_with_terms = _semantic_model_context + "\n\n" + context_with_terms
             _trace_step(

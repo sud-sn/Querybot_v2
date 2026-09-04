@@ -316,7 +316,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .rc-kpi .result-kpi-value{font-size:30px}
 .rc-scope-strip{display:flex;gap:.45rem;flex-wrap:wrap;padding:.6rem .9rem .15rem;background:color-mix(in srgb,var(--surface-2) 40%,transparent);border-top:1px solid var(--border)}
 .rc-scope-chip{display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;font-weight:800;color:var(--text-soft)}
-.action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}.analysis-next{margin-top:.8rem;padding:.7rem .85rem;border-radius:var(--radius);background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-left:3px solid var(--primary);font-size:12.5px;line-height:1.6;color:var(--text)}.analysis-next-label{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--primary);margin-bottom:.2rem}
+.action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}.analysis-section{margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border)}.analysis-section-title{font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:.35rem}.analysis-next{margin-top:.8rem;padding:.7rem .85rem;border-radius:var(--radius);background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-left:3px solid var(--primary);font-size:12.5px;line-height:1.6;color:var(--text)}.analysis-next-label{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--primary);margin-bottom:.2rem}
 /* ── The answer ───────────────────────────────────────────────────────────
    The value the question asked for, at the size that says so. It used to be an
    11px chip in the top-right corner — the same size as the word "Result" above
@@ -3881,6 +3881,17 @@ function appendAnalysisResponse(msg, opts = {}){
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   const bullets = Array.isArray(msg.bullets) ? msg.bullets : [];
+  // Titled parts, present only when the question asked more than one thing.
+  // Empty for every single-part answer, so this renders nothing extra.
+  const sections = Array.isArray(msg.sections) ? msg.sections : [];
+  const sectionsHtml = sections.length ? sections.map(s => {
+    const sb = Array.isArray(s.bullets) ? s.bullets : [];
+    return `<div class="analysis-section">`
+      + `<div class="analysis-section-title">${escHtml(s.title || '')}</div>`
+      + (s.body ? `<div class="analysis-body">${escHtml(s.body)}</div>` : '')
+      + (sb.length ? `<ul class="analysis-list">${sb.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : '')
+      + `</div>`;
+  }).join('') : '';
   const resultScope = msg.result_scope || {};
   const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` • ${escHtml(resultScope.note)}` : ''}</div>` : '';
   // Reconcile-style analysis cards (and any future analysis type) can offer
@@ -3892,13 +3903,15 @@ function appendAnalysisResponse(msg, opts = {}){
         ${analysisFollowUps.map(q => `<button class="suggestion-chip follow-up-chip" type="button">${escHtml(q)}</button>`).join('')}
       </div>`
     : '';
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
     div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
   }
   div.querySelector('[data-copy="analysis"]')?.addEventListener('click', async (e) => {
-    const payload = [msg.title || '', msg.body || '', msg.secondary || '', ...(msg.bullets || []), msg.next_step ? ('Next step: ' + msg.next_step) : ''].filter(Boolean).join('\n');
+    // Sections belong in the copy too, or copying a two-part answer takes half of it.
+    const sectionText = (msg.sections || []).flatMap(s => [s.title || '', s.body || '', ...(s.bullets || [])]);
+    const payload = [msg.title || '', msg.body || '', ...sectionText, msg.secondary || '', ...(msg.bullets || []), msg.next_step ? ('Next step: ' + msg.next_step) : ''].filter(Boolean).join('\n');
     const ok = await copyText(payload);
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';

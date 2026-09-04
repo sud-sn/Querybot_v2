@@ -862,6 +862,18 @@ def build_insight_prompt_from_contract(
         "BODY: ...\n"
         "DETAIL:\n- ...\n- ...\n- ...\n"
         "NEXT: ...\n"
+        "\nBODY may run to several lines; they are kept.\n"
+        "\nIf the question asked TWO OR MORE distinct things, answer each under "
+        "its own heading instead of running them together in one BODY:\n"
+        "HEADLINE: ...\n"
+        "SECTION: <the first thing asked, as a heading>\n"
+        "BODY: ...\n"
+        "DETAIL:\n- ...\n"
+        "SECTION: <the second thing asked>\n"
+        "BODY: ...\n"
+        "NEXT: ...\n"
+        "Use SECTION only for parts the reader actually asked about — never to "
+        "subdivide a single question, and never more than four.\n"
     )
 
     user_parts = [
@@ -1082,29 +1094,79 @@ def _format_brief_for_prompt(brief: dict) -> str:
 
 
 def parse_insight_response(raw: str) -> dict:
-    """Parse the structured LLM response into a dict."""
-    result = {"headline": "", "body": "", "bullets": [], "next_step": ""}
+    """Parse the structured LLM response into a dict.
+
+    Two things this used to do badly, both silently.
+
+    Every line that did not open with a known label was DISCARDED — the if/elif
+    chain had no else — so a BODY written across several lines kept only its
+    first, and there was no way to tell from the output that anything had been
+    lost. Continuation lines now attach to whatever block is open.
+
+    And there was no way to answer a question that has two parts. A reader
+    asking "are they priced at a premium, and how much revenue depends on
+    them?" wants both answered under their own headings; the contract had one
+    flat body, so the model was told to pick. `SECTION: <title>` opens a titled
+    block, and `sections` carries them. The four original keys keep their exact
+    old meaning, so every existing renderer is unaffected by a response that
+    does not use sections.
+    """
+    result: dict = {
+        "headline": "", "body": "", "bullets": [], "next_step": "", "sections": [],
+    }
+    # The block that continuation lines and bullets belong to: the answer
+    # itself, or the section currently open.
+    current: dict = result
+    # Did the model use the format at all? This used to be inferred from "no
+    # headline and no body", which stops working once unlabelled prose fills
+    # the body — the salvage path would never fire again, and a reply with no
+    # labels would arrive with no headline.
+    saw_label = False
+
+    def _append_body(container: dict, text: str) -> None:
+        container["body"] = f"{container['body']} {text}".strip() if container["body"] else text
 
     for line in raw.splitlines():
         stripped = line.strip()
-        if stripped.upper().startswith("HEADLINE:"):
+        if not stripped:
+            continue
+        upper = stripped.upper()
+        if upper.startswith("HEADLINE:"):
+            saw_label = True
             result["headline"] = stripped[len("HEADLINE:"):].strip()
-        elif stripped.upper().startswith("BODY:"):
-            result["body"] = stripped[len("BODY:"):].strip()
-        elif stripped.upper().startswith("DETAIL:"):
+            current = result
+        elif upper.startswith("SECTION:"):
+            saw_label = True
+            title = stripped[len("SECTION:"):].strip()
+            current = {"title": title, "body": "", "bullets": []}
+            result["sections"].append(current)
+        elif upper.startswith("BODY:"):
+            saw_label = True
+            _append_body(current, stripped[len("BODY:"):].strip())
+        elif upper.startswith("DETAIL:"):
+            saw_label = True
             detail_text = stripped[len("DETAIL:"):].strip()
             # Parse bullet points — could be on same line or following lines
             if detail_text.startswith("- ") or detail_text.startswith("• "):
-                result["bullets"].append(detail_text.lstrip("-•").strip())
+                current["bullets"].append(detail_text.lstrip("-•").strip())
             elif detail_text:
-                result["bullets"].append(detail_text)
+                current["bullets"].append(detail_text)
         elif stripped.startswith("- ") or stripped.startswith("• "):
-            result["bullets"].append(stripped.lstrip("-•").strip())
-        elif stripped.upper().startswith("NEXT:"):
+            saw_label = True
+            current["bullets"].append(stripped.lstrip("-•").strip())
+        elif upper.startswith("NEXT:"):
+            saw_label = True
+            # One per answer, never per section: it is what the reader does
+            # next, and a list of them is a menu rather than a suggestion.
             result["next_step"] = stripped[len("NEXT:"):].strip()
+        else:
+            # Unlabelled prose. Previously dropped on the floor, which is how a
+            # three-sentence explanation arrived as one sentence.
+            _append_body(current, stripped)
 
-    # Fallback — if parsing failed, treat entire response as body
-    if not result["headline"] and not result["body"]:
+    # Salvage — the model ignored the format entirely, so the whole reply is
+    # the answer and its first line is the closest thing to a headline it has.
+    if not saw_label:
         result["body"] = raw.strip()
         lines = raw.strip().splitlines()
         if lines:
@@ -1212,6 +1274,9 @@ async def generate_insight(
         "headline": parsed.get("headline", ""),
         "body": parsed.get("body", ""),
         "bullets": parsed.get("bullets", []),
+        # Titled parts, when the question had more than one. Empty for every
+        # single-part answer, so a renderer that ignores it loses nothing.
+        "sections": parsed.get("sections", []),
         "next_step": parsed.get("next_step", ""),
         "secondary": parsed.get("next_step", ""),  # compat with existing UI
         "data_brief": brief,
