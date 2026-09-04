@@ -1794,17 +1794,19 @@ async def dispatch(
                 session_id=clarification_session_id(adapter, event),
             )
             _prompt = (
-                "That looks like two questions in one — I answer them best "
-                "one at a time. Which should I run first?"
+                "That is two questions — answering the first now. "
+                "The second is one click away when you want it."
             )
             send_prompt = getattr(adapter, "send_clarification_prompt", None)
             if callable(send_prompt):
-                await send_prompt(event, _prompt, _split_opts)
+                # The second half stays on screen as a one-click chip, so it is
+                # never retyped and never lost.
+                await send_prompt(event, _prompt, [_split_opts[1]])
             else:
-                await adapter.send_message(
-                    event,
-                    f"{_prompt}\n  1. {_q1}\n  2. {_q2}\n\n"
-                    "Reply with the one you want (or ask it directly).")
+                await adapter.send_message(event, _prompt)
+            _enqueue_query(
+                bg, account_id, event, adapter, _q1, portal_user, client_row,
+            )
             return
 
         _enqueue_query(bg, account_id, event, adapter, text, portal_user, client_row)

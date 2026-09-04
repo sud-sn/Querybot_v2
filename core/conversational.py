@@ -224,9 +224,25 @@ def detect_conversational(text: str) -> str | None:
 # a joiner, and the right side must read like an independent ask.
 
 _COMPOUND_JOINER_RE = re.compile(
-    r"\s*(?:;|\band\s+also\b|\bas\s+well\s+as\b|\band\s+then\b|\bplus\b)\s*",
+    r"\s*(?:;|\band\s+also\b|\bas\s+well\s+as\b|\band\s+then\b|\bplus\b"
+    # A bare "and" after a comma. This is how people actually bundle two asks
+    # -- "are they priced at a premium, AND how much revenue depends on them?"
+    # -- and the five explicit joiners above all missed it, so the commonest
+    # two-part question in the product was never detected at all.
+    #
+    # The comma is doing real work: without it "revenue and tax by region" is
+    # one intent, and splitting it would hijack a valid query. The right-hand
+    # side is additionally required to open like a question (see
+    # _COMMA_AND_JOINER below), which is what keeps "sales, and by region"
+    # from splitting.
+    r"|,\s+and\b)\s*",
     re.IGNORECASE,
 )
+
+# The subset of joiners that only count when the right-hand side reads as a
+# fresh ask. "plus" has always been in this set; a bare comma-and joins two
+# clauses far more often than it joins two questions.
+_COMMA_AND_JOINER = ", and"
 
 # The right-hand part must not be a grouping/filter continuation of the left
 # ("…and also by region", "…and then for Q3" continue one intent).
@@ -262,7 +278,9 @@ def detect_compound_question(text: str) -> tuple[str, str] | None:
     if _CONTINUATION_START_RE.match(right):
         return None
     joiner = m.group(0).strip().lower()
-    if joiner == "plus" and not _ASK_START_RE.match(right):
+    # The permissive joiners need the right-hand side to look like a question
+    # in its own right, or an ordinary sentence gets torn in half.
+    if joiner in {"plus", _COMMA_AND_JOINER} and not _ASK_START_RE.match(right):
         return None
     # A second joiner inside the right half means 3+ asks — still offer the
     # first split; the remainder stays bundled and can be split again next turn.
