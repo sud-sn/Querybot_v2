@@ -469,6 +469,75 @@ def _aggregate_is_distinct(aggregate) -> bool:
     return isinstance(target, sg_exp.Distinct) or bool(aggregate.args.get("distinct"))
 
 
+# Which relationships multiply the rows of the entity you traverse them FROM.
+#
+# `_direction` records which way the join path walks an edge: "forward" is
+# from_entity -> to_entity (the FK owner to the table it references),
+# "backward" is the reverse. So a plain many_to_one edge — the ordinary
+# fact-to-dimension shape — is safe forwards and a fan-out backwards, because
+# read from the "one" side it is one-to-many. That backwards case is exactly
+# "one order has many order lines", the error class this detector exists for.
+#
+# This reads `relationship_type` because that is the only cardinality column
+# `entity_relationships` has (store/db.py:790), and every row carries it. The
+# detector previously read `edge["cardinality"]` and `edge["many_to_many"]`,
+# neither of which is a column and neither of which anything ever wrote — a
+# repo-wide grep finds only reads. Three of its four trigger conditions were
+# therefore permanently false, and the fourth needs a `fanout_ratio` that stays
+# at its -1 sentinel until an admin runs a live profile. The detector was
+# fully wired, correct, and inert.
+_ANCHOR_MULTIPLYING_TYPES = {
+    "forward": {"one_to_many", "many_to_many"},
+    "backward": {"many_to_one", "many_to_many"},
+}
+
+
+def _edge_direction(edge: dict) -> str:
+    direction = str(edge.get("direction") or "forward").lower()
+    return direction if direction in _ANCHOR_MULTIPLYING_TYPES else "forward"
+
+
+def _edge_multiplies_grain(edge: dict) -> bool:
+    """Does traversing this edge return more rows than it started with?"""
+    direction = _edge_direction(edge)
+    relationship_type = str(
+        # `cardinality` is the legacy key: never written, kept as a fallback
+        # only so an externally-supplied edge dict still works.
+        edge.get("relationship_type") or edge.get("cardinality") or ""
+    ).strip().lower().replace("-", "_")
+    if relationship_type in _ANCHOR_MULTIPLYING_TYPES[direction]:
+        return True
+    if edge.get("many_to_many"):
+        return True
+    # A live profile outranks the declared type: fanout_ratio is measured
+    # against real rows in the forward direction, and is -1 until profiled.
+    if direction == "forward":
+        try:
+            return float(edge.get("fanout_ratio") or 0) > 1.01
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _fanout_explanation(edge: dict) -> str:
+    """Say which relationship multiplies the rows, in the user's own nouns.
+
+    A rejection the reader cannot act on is only marginally better than a wrong
+    answer, and this one has a genuinely useful thing to say: which two things
+    are related, and which side has more of them.
+    """
+    from_entity = str(edge.get("from_entity") or "").strip()
+    to_entity = str(edge.get("to_entity") or "").strip()
+    if not from_entity or not to_entity:
+        return ""
+    if _edge_direction(edge) == "backward":
+        # Read from the "one" side: each to_entity has many from_entity.
+        one, many = to_entity, from_entity
+    else:
+        one, many = from_entity, to_entity
+    return f"each {one} can match many {many}"
+
+
 def _fanout_aggregate_errors(
     tree,
     graph_context: dict | None,
@@ -490,24 +559,10 @@ def _fanout_aggregate_errors(
             str(anchor_meta.get("table_name") or ""),
         ) if part
     )
-    risky_edges: list[dict] = []
-    for edge in graph.get("resolved_edges") or []:
-        cardinality = str(edge.get("cardinality") or "").lower().replace("-", "_")
-        direction = str(edge.get("direction") or "forward").lower()
-        try:
-            fanout_ratio = float(edge.get("fanout_ratio") or 0)
-        except (TypeError, ValueError):
-            fanout_ratio = 0.0
-        if (
-            edge.get("many_to_many")
-            or (direction == "forward" and fanout_ratio > 1.01)
-            or (
-                direction == "forward"
-                and cardinality in {"one_to_many", "one_to_many_or_many_to_many"}
-            )
-            or cardinality == "many_to_many"
-        ):
-            risky_edges.append(edge)
+    risky_edges = [
+        edge for edge in (graph.get("resolved_edges") or [])
+        if _edge_multiplies_grain(edge)
+    ]
     if not risky_edges and not graph.get("fanout_risk_facts"):
         return []
 
@@ -539,13 +594,23 @@ def _fanout_aggregate_errors(
             unsafe.append(aggregate.sql())
     if not unsafe:
         return []
+    # Name the relationship that multiplies, not just the fact that one does.
+    # This message is what the repair attempt is given, and what the user sees
+    # if repair fails, so "each ORDER can match many ORDER_LINE" is worth more
+    # than every other word in it.
+    explanations = [
+        text for text in (_fanout_explanation(edge) for edge in risky_edges[:3]) if text
+    ]
+    because = f" ({'; '.join(explanations)})" if explanations else ""
     return [{
         "code": "fanout_aggregate",
         "message": (
             f"Raw aggregate(s) over anchor entity {anchor_name or anchor_fqn} cross a "
-            "relationship that can multiply its grain. Aggregate the child first, use "
-            "EXISTS, or count a distinct governed anchor key."
+            f"relationship that multiplies its rows{because}, so the figure counts the "
+            "joined rows rather than the thing being measured. Aggregate the child "
+            "first, use EXISTS, or count a distinct governed anchor key."
         ),
+        "fanout_reason": "; ".join(explanations),
         "anchor_entity": anchor_name,
         "anchor_table": anchor_fqn,
         "aggregates": unsafe[:5],

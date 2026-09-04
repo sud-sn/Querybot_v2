@@ -1706,6 +1706,12 @@ def _resolve_on_graph(
             "provenance": edge.get("generated_by", ""),
             "validation_status": edge.get("validation_status", "untested"),
             "status": edge.get("status", ""),
+            # The cardinality the product actually records. `entity_relationships`
+            # has exactly one such column (store/db.py:790) and every row carries
+            # it; `cardinality` and `many_to_many` below are NOT columns and are
+            # never written by anything, so they arrive empty on every edge.
+            # They are kept only so an edge dict stays shape-compatible.
+            "relationship_type": edge.get("relationship_type", ""),
             "cardinality": edge.get("cardinality", ""),
             "fanout_ratio": edge.get("fanout_ratio"),
             "orphan_rate": edge.get("orphan_rate"),
