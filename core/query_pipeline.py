@@ -6594,10 +6594,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         f"about ({', '.join(_mp_plan_post.labels)}); the query "
                         "returned a single period."
                     )
-                _mp_caveats.extend(
+                # Materialised before extending: a generator that reads the
+                # list it is appending to is a trap for the next editor.
+                _mp_caveats.extend([
                     note for note in _mp_plan_post.warnings
                     if note not in _mp_caveats
-                )
+                ])
 
             if (_post_intents.get("contribution") and not _mp_rows_applied
                     and not any("contribution_pct" in r for r in rows[:1])):

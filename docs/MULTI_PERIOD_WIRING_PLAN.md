@@ -49,12 +49,16 @@ chip after an answer. Do not drag it to question time.
 
 ---
 
-## Done — steps 1 to 5
+## Done — steps 1 to 9
 
 | Commit | What |
 |---|---|
 | `004a33a` | Detector hardened; nine dead symbols deleted |
 | `c5647a1` | Date-binding gate widened; `PeriodPlan` compiler added |
+| `b6c7962` | Step 6 — `build_multi_period_sql_hint` and its pipeline branch |
+| `eff1b64` | Step 7 — `annotate_period_change`, the miss caveat, the renderer line |
+| `a3ea540` | Step 8 — the answer surface leads with the change |
+| `ebe11ac` | Step 9 — chart series and the carried period formats |
 
 **Step 1 — detector hardened.** It called part numbers years. Executed against
 the unguarded version: `list SKUs 2001 2002 2003` gave 3 "periods";
@@ -140,7 +144,7 @@ measure — and it needs no chart change.
 
 ---
 
-## Remaining — steps 6 to 10
+## Steps 6 to 9 — shipped, and step 10 — remaining
 
 ### Step 6 — core/multi_period.py, core/query_pipeline.py
 
@@ -181,6 +185,53 @@ measure — and it needs no chart change.
 **Change.** (a) In the ranking/breakdown branch, when >=2 non-percent measures exist, exclude percent-formatted measures from the default y_cols (they stay in allowed columns and in the table; they simply stop being default series). This is a general improvement for any result mixing a money and a rate column, not a multi-period special case. (b) Have the multi-period step publish {alias: 'number'} (or the base measure's own resolved format when known) for its period columns via display_context, and merge that into the explicit_formats passed to build_column_formats at core/result_renderer.py:719 and core/response_builder.py:2047 — the existing explicit_formats channel, no new mechanism.
 
 **Test.** tests/test_chart_spec.py::test_percent_measures_are_not_default_series — call build_chart_payload on the wide rows and assert y_keys == ['NET_AMOUNT_2024','NET_AMOUNT_2025'] exactly (today it returns four keys — assert the pre-state in the same test). ::test_generic_measure_name_stays_a_measure — call build_chart_payload on the TONNAGE_2024/TONNAGE_2025 variant WITH the carried formats and assert y_keys == ['TONNAGE_2024','TONNAGE_2025'] (today, without formats, infer_chart_spec returns recommended_type 'table' and build_chart_payload returns None for the two-column case — assert that pre-state too). ::test_unrelated_single_measure_chart_unchanged — a result with one currency measure and one pct measure and one dimension: assert y_keys is unchanged from today.
+
+### Steps 6 to 9 as built
+
+Each was implemented as specified above, with these notes.
+
+**Step 6.** `build_multi_period_sql_hint(plan, db_type)` in `core/multi_period.py`;
+the branch sits between the anomaly and contribution branches with its own
+`try/except` at `log.warning(exc_info=True)`, and `_intents.get('contribution')`
+became `_intents.get('contribution') and not _mp_plan`. The SQL the hint
+prescribes was executed through `validate_sql_detailed` (ok / code `ok`, with
+`production_sql` and a composition contract) and through
+`compliance.sql_guard.analyze_sql` (`has_star` False; all five measure columns
+in `aggregate_outputs`). Hint length is roughly 480 tokens.
+
+**Step 7.** `annotate_period_change(rows, plan, truncated)`. Its guard messages
+go on `PeriodPlan.warnings` — the mutable channel the frozen dataclass already
+declares — and the pipeline copies them into the `multi_period_caveats` entry of
+`_confidence_context`, the same list object it keeps appending to, which
+`core/result_renderer.py` renders beside the forecast caveats. Two additions
+beyond the specification: `CHANGE_PCT` is recomputed alongside `CHANGE_ABS` so
+the derived columns cannot be half the model's and half ours, and a plan whose
+periods only PARTLY came back computes over the ones present and says which are
+missing, rather than returning `None` as if nothing had landed.
+
+**Step 8.** `_period_pair_facts` holds the arithmetic; `_period_comparison_summary`,
+`build_answer`, `_build_insight_summary` and `_build_decision_signal` all read
+it. Which columns are the plan's periods is decided only by
+`core/multi_period.period_columns_by_alias`, shared with the post-processor and
+the pipeline. The labels reach `build_assistant_response` on
+`display_context['period_comparison']`, published only when the annotation
+actually applied.
+
+**Step 9.** `_default_series` in `core/chart_spec.py` drops percent-formatted
+measures from the default y-columns once at least two others remain; the period
+columns' formats are merged into `build_column_formats`' explicit-format map
+from the `display_context` both of its call sites already pass. Both defects
+were reproduced before the change (`y_keys` of four keys; `build_chart_payload`
+returning `None` for the TONNAGE variant) and both pre-states are pinned in the
+tests.
+
+Suite: **5847 passed** locally, four pre-existing failures unrelated to this
+work (that container runs Python 3.11, where `dis.Instruction.line_number` does
+not exist, and duckdb 1.5, which returns `datetime` where two tests expect
+`date`).
+
+Every test executes the real function and asserts on its return value, and each
+was watched going red with its defect reintroduced.
 
 ### Step 10 — (no file — live verification)
 

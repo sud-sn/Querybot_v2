@@ -879,7 +879,7 @@ def _period_pair_facts(rows: list[dict], plan_labels: list[str] | None) -> dict 
         return None
     try:
         from core.multi_period import (
-            PeriodPlan, period_columns_for_plan, period_alias_suffix, period_parts,
+            period_alias_suffix, period_columns_by_alias, period_parts,
         )
     except Exception:
         return None
@@ -888,11 +888,7 @@ def _period_pair_facts(rows: list[dict], plan_labels: list[str] | None) -> dict 
     if not all(period_parts(label) for label in labels):
         return None
     aliases = [period_alias_suffix(label) for label in labels]
-    found = period_columns_for_plan(
-        rows,
-        PeriodPlan(labels=labels, aliases=aliases, predicates=[""] * len(labels),
-                   grain="", date_field={}),
-    )
+    found = period_columns_by_alias(rows, aliases)
     if len(found) < 2:
         return None
 
@@ -956,7 +952,7 @@ def _period_comparison_summary(
     """The note under the card for a named-period comparison, or "".
 
     "Across 12 revenue categories, 7 grew and 5 shrank between 2024 and 2025.
-    Pumps added the most (+400,000, 46% of the total increase); Valves fell the
+    Pumps added the most (+400,000, 46% of the net change); Valves fell the
     most (-180,000)."
 
     Category labels go through core.insight's value redactor, imported under an

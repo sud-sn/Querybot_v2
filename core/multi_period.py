@@ -41,6 +41,7 @@ Entry points
   build_period_plan(intent, question, semantic_plan, db_type) → PeriodPlan | None
   build_multi_period_sql_hint(plan, db_type) → str
   annotate_period_change(rows, plan, truncated) → list[dict] | None
+  period_columns_by_alias(rows, aliases) → dict[str, str]
   period_columns_for_plan(rows, plan) → dict[str, str]
 
 The last two are the two halves of the fix, and both key off the PeriodPlan
@@ -845,15 +846,20 @@ def annotate_period_change(
     return annotated
 
 
-def period_columns_for_plan(rows: list[dict], plan: PeriodPlan | None) -> dict[str, str]:
+def period_columns_by_alias(rows: list[dict], aliases: list[str]) -> dict[str, str]:
     """alias -> the result column carrying that period, for the ones present.
 
-    The one place the product decides which result columns are this plan's
+    The one place the product decides which result columns are a plan's
     periods. The pipeline uses it to publish a display format for those
     columns, and core/response_builder.py uses it to decide whether the answer
     surface is looking at a period comparison at all. Two matchers would drift,
     and this one is deliberately strict.
     """
-    if not rows or plan is None or not isinstance(rows[0], dict):
+    if not rows or not aliases or not isinstance(rows[0], dict):
         return {}
-    return _period_columns(list(rows[0].keys()), plan.aliases)
+    return _period_columns(list(rows[0].keys()), aliases)
+
+
+def period_columns_for_plan(rows: list[dict], plan: PeriodPlan | None) -> dict[str, str]:
+    """period_columns_by_alias for a compiled plan."""
+    return {} if plan is None else period_columns_by_alias(rows, plan.aliases)
