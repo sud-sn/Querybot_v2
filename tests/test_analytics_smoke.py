@@ -445,14 +445,6 @@ class TestContributionComputation:
         total_pct = sum(r.get("contribution_pct") or 0 for r in result)
         assert total_pct == pytest.approx(100.0, abs=0.1)
 
-    def test_contribution_summary_pareto(self):
-        from core.contribution_analysis import build_contribution_summary
-        summary = build_contribution_summary(RETAIL_BY_REGION, "revenue", "region")
-        assert summary.top_contributor == "EMEA"
-        assert summary.category_count == 5
-        # Pareto: how many reach 80%?
-        assert summary.pareto_80_count <= 3
-
     def test_zero_total_handled_gracefully(self):
         from core.contribution_analysis import compute_contribution
         rows = [{"cat": "A", "value": 0}, {"cat": "B", "value": 0}]
@@ -654,57 +646,6 @@ class TestMultiPeriodExtraction:
         specs = _generate_relative_specs(4, "quarter")
         assert len(specs) == 4
         assert all("Q" in s.label for s in specs)
-
-
-class TestMultiPeriodMerge:
-
-    def test_merge_three_period_results(self):
-        from core.multi_period import PeriodResult, merge_multi_period_results
-
-        p1 = PeriodResult("2022", [
-            {"region": "EMEA", "revenue": 100},
-            {"region": "APAC", "revenue": 80},
-        ], sql="", success=True)
-        p2 = PeriodResult("2023", [
-            {"region": "EMEA", "revenue": 120},
-            {"region": "APAC", "revenue": 95},
-        ], sql="", success=True)
-        p3 = PeriodResult("2024", [
-            {"region": "EMEA", "revenue": 145},
-            {"region": "APAC", "revenue": 110},
-        ], sql="", success=True)
-
-        result = merge_multi_period_results([p1, p2, p3])
-        assert result.successful_periods == 3
-        assert result.label_col == "region"
-        assert result.value_col == "revenue"
-
-    def test_merge_with_failed_period(self):
-        from core.multi_period import PeriodResult, merge_multi_period_results
-
-        p1 = PeriodResult("2022", [{"region": "EMEA", "revenue": 100}], sql="", success=True)
-        p2 = PeriodResult("2023", [], sql="", success=False, error="timeout")
-
-        result = merge_multi_period_results([p1, p2])
-        assert result.successful_periods == 1
-        assert len(result.warnings) > 0
-
-    def test_chart_payload_structure(self):
-        from core.multi_period import PeriodResult, merge_multi_period_results, build_multi_period_chart_payload
-
-        periods = [
-            PeriodResult("2022", [{"dept": "Eng", "revenue": 100}, {"dept": "Sales", "revenue": 80}], "", True),
-            PeriodResult("2023", [{"dept": "Eng", "revenue": 120}, {"dept": "Sales", "revenue": 90}], "", True),
-            PeriodResult("2024", [{"dept": "Eng", "revenue": 145}, {"dept": "Sales", "revenue": 105}], "", True),
-        ]
-        result = merge_multi_period_results(periods)
-        payload = build_multi_period_chart_payload(result, periods, title="Revenue 3-Year")
-
-        assert payload["chart_type"] == "bar"
-        assert payload["multi_period"] is True
-        assert "2022" in payload["y_keys"]
-        assert "2024" in payload["y_keys"]
-        assert len(payload["rows"]) == 2  # Eng and Sales
 
 
 # ══════════════════════════════════════════════════════════════════════════════

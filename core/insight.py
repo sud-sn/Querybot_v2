@@ -106,7 +106,7 @@ def detect_analytical_intents(question: str) -> dict:
     relative_date   RelativeDateIntent | None — last N days / this week vs last week
     contribution    bool                  — % share / mix analysis
     anomaly         bool                  — outlier / spike detection
-    multi_period    MultiPeriodIntent | None — 3+ period comparison
+    multi_period    MultiPeriodIntent | None — 2+ named periods to compare
     budget_vs_actual bool                 — variance to budget/target/plan
     cohort          bool                  — cohort retention analysis
     correlation     bool                  — correlation / scatter between metrics
@@ -156,32 +156,6 @@ def detect_analytical_intents(question: str) -> dict:
         "boxplot":          detect_boxplot_intent(question),
         "whatif":           detect_whatif_intent(question),
     }
-
-
-def detect_comparison_intent(question: str) -> dict:
-    """Detect if the question compares two time periods or categories."""
-    q = question.lower()
-    result = {"has_comparison": False, "type": None}
-
-    time_compare = re.search(
-        r"(this\s+(?:year|month|quarter|week))\s+(?:vs?\.?|versus|compared?\s+to|from)\s+"
-        r"(last\s+(?:year|month|quarter|week))",
-        q,
-    )
-    if time_compare:
-        result.update({"has_comparison": True, "type": "time",
-                        "period_a": time_compare.group(1),
-                        "period_b": time_compare.group(2)})
-        return result
-
-    general_compare = re.search(
-        r"(.+?)\s+(?:vs?\.?|versus|compared?\s+to)\s+(.+?)(?:\?|$)", q
-    )
-    if general_compare:
-        result.update({"has_comparison": True, "type": "general",
-                        "side_a": general_compare.group(1).strip(),
-                        "side_b": general_compare.group(2).strip()})
-    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -1,44 +1,48 @@
 """
 core/multi_period.py
 ─────────────────────
-Multi-period comparison engine — side-by-side comparison of 3 or more periods.
+Question-time detection of named calendar periods to be compared.
 
-Fills the gap in period_comparison.py which handles exactly 2 periods.
-
-Supported patterns
-──────────────────
+  "Compare 2025 against 2024 by revenue category"
   "Compare Q1 2024, Q1 2023, and Q1 2022"
-  "Revenue for January across the last 5 years"
-  "Show the last 3 years side by side"
-  "Compare this quarter, last quarter, and the quarter before"
-  "3-year trend by department"
-  "Year over year for the last 4 years"
+  "Revenue in 2023, 2024 and 2025 by product"
 
-Design
-──────
-• Period extraction: a dedicated parser pulls structured period specs
-  from the question — named periods, relative references, or year lists.
-• SQL rewriting: reuses the same narrow LLM rewrite approach as
-  period_comparison.py — one rewrite per additional period, then executed
-  in parallel (asyncio.gather).
-• Result merging: period results are merged into a multi-series payload
-  where each period becomes a series in a grouped bar or line chart.
-• Graceful degradation: if any period fails, the others still render;
-  failed periods are noted in a warning list.
+Scope, and why it is narrower than it looks
+───────────────────────────────────────────
+This module OWNS question-time named-period detection. It does not execute
+anything, and it must not grow an executor.
+
+It was originally written around a different design: one LLM rewrite of the
+base SQL per period, N governed executions in parallel, then a merge. That
+design was built (merge_multi_period_results, build_multi_period_chart_payload,
+build_multi_period_rewrite_prompt) and never connected to anything — and when
+it was finally examined, two independent objections landed. The rewrite prompt
+would have sent the row-policy-INJECTED SQL to the model, carrying user id,
+group membership and policy literals outside the compliance boundary; and N
+separately-validated statements are each legal without being commensurable,
+so the arithmetic across them can be confidently wrong. The whole N-execution
+half was deleted rather than wired.
+
+What replaced it is one governed query that pivots the named periods into
+side-by-side columns, which needs no second execution and no rewrite. This
+module supplies the detection and the period vocabulary for that; the SQL is
+compiled elsewhere.
+
+core/period_comparison.py stays separate and stays narrow: it derives its
+second period by shifting a window backwards from an existing result, has no
+parameter for a period the user named, and runs from the compare_prior chip
+after an answer. It should not be dragged to question time.
 
 Entry points
 ────────────
   detect_multi_period_intent(question) → MultiPeriodIntent | None
   extract_period_specs(question) → list[PeriodSpec]
-  merge_multi_period_results(period_rows) → MultiPeriodResult
-  build_multi_period_chart_payload(result) → dict
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -57,24 +61,17 @@ class MultiPeriodIntent:
     grain: str          # "monthly" | "quarterly" | "yearly"
     compare_count: int  # number of periods to compare
     raw_match: str = ""
-
-
-@dataclass
-class PeriodResult:
-    label: str
-    rows: list[dict]
-    sql: str
-    success: bool
-    error: str = ""
-
-
-@dataclass
-class MultiPeriodResult:
-    periods: list[PeriodResult]
-    label_col: str      # the common dimension column
-    value_col: str      # the common metric column
-    successful_periods: int
-    warnings: list[str] = field(default_factory=list)
+    # Where the labels came from. "named" means every label was written by the
+    # user; "relative" means they were derived from the server clock by
+    # _generate_relative_specs.
+    #
+    # This has to be a flag rather than a substring test. "compare revenue for
+    # the last 2 years for warehouse 2025 and warehouse 2024" produces
+    # clock-derived labels that DO appear in the question -- as warehouse IDs --
+    # so asking "is this label in the question?" fails open on exactly the case
+    # the check exists to catch. Anything that compiles a period into a SQL
+    # predicate must require source == "named".
+    source: str = "named"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -82,7 +79,31 @@ class MultiPeriodResult:
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Named year references: "2022", "2023", "2024"
-_YEAR_RE = re.compile(r"\b(20\d{2})\b")
+#
+# A bare four-digit integer is the weakest period signal in the language, and
+# on an ERP schema it is usually not a period at all. Executed against the
+# unguarded version, "list SKUs 2001 2002 2003" yielded three periods and
+# "compare warehouse 2024 stock to warehouse 2025 stock" yielded two. Both are
+# part numbers. Two gates below narrow it: a plausible-calendar range, and a
+# cue word immediately before the number.
+_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
+
+# A literal range, deliberately NOT derived from date.today(). Choosing the
+# vocabulary of what looks like a year must not make period detection depend on
+# the server clock -- that dependency is what `source` exists to track.
+_YEAR_MIN, _YEAR_MAX = 1990, 2039
+
+# A word that can plausibly precede a period reference. "in 2024", "against
+# 2023", "between 2020 and 2024" are periods; "warehouse 2024", "SKU 2001",
+# "priced 2020" are not.
+_PERIOD_CUE_WORDS = frozenset({
+    "in", "for", "during", "since", "until", "through", "of", "from", "to",
+    "between", "and", "vs", "vs.", "versus", "against", "compare", "compared",
+    "comparing", "year", "years", "fy", "cy",
+})
+
+# Trailing punctuation that can separate items in a list of periods.
+_PERIOD_LIST_PUNCT = frozenset({",", ";", ":", "(", "[", "-", "/", "&"})
 
 # Quarter references: "Q1 2024", "2024 Q1", "Q1/2024"
 _QUARTER_RE = re.compile(r"\bQ([1-4])[\s\-/]?(20\d{2})\b|\b(20\d{2})[\s\-/]?Q([1-4])\b", re.I)
@@ -98,10 +119,6 @@ _MONTH_RE = re.compile(
 # "last N years / quarters / months"
 _LAST_N_PERIODS = re.compile(r"\blast\s+(\d+)\s+(year|quarter|month)s?\b", re.I)
 
-# Relative quarter references: "this quarter", "last quarter", "quarter before"
-_REL_QUARTER = re.compile(r"\b(this|last|previous|prior)\s+quarter\b", re.I)
-_REL_YEAR    = re.compile(r"\b(this|last|previous|prior)\s+year\b", re.I)
-
 # Multi-period signals: "compare X, Y, and Z" or "across the last N"
 _MULTI_SIGNAL = re.compile(
     r"\b(compare|contrast|side.by.side|vs\.?\s|versus|across\s+(?:the\s+)?last\s+\d+|"
@@ -112,8 +129,12 @@ _MULTI_SIGNAL = re.compile(
 
 def detect_multi_period_intent(question: str) -> MultiPeriodIntent | None:
     """
-    Return a MultiPeriodIntent if the question implies comparing 3+ periods.
-    Returns None if it's a 2-period or single-period question.
+    Return a MultiPeriodIntent if the question names two or more periods to be
+    compared, else None.
+
+    (The docstring used to say "3+ periods ... None if it's a 2-period
+    question". The code below has had a two-period branch since the initial
+    commit, so the docstring was describing a rule the function never had.)
     """
     q = question.strip()
 
@@ -130,6 +151,7 @@ def detect_multi_period_intent(question: str) -> MultiPeriodIntent | None:
                 grain=grain,
                 compare_count=n,
                 raw_match=m.group(0),
+                source="relative",   # labels came from date.today(), not the user
             )
 
     # Named period extraction
@@ -179,15 +201,52 @@ def extract_period_specs(question: str) -> list[PeriodSpec]:
             label = f"{m.group(1).capitalize()} {m.group(2)}"
             found.append((m.start(), m.end(), PeriodSpec(label=label, raw_text=m.group(0))))
 
-    # Bare year matches — only where no quarter/month match covers them
+    # Bare year matches — only where no quarter/month match covers them, and
+    # only where the number is actually being used as a period. Left to right,
+    # because a comma is only a period separator once a period has been named.
+    bare_year_accepted = bool(found)
     for m in _YEAR_RE.finditer(question):
-        if not any(s <= m.start() < e for s, e, _ in found):
-            label = m.group(1)
-            found.append((m.start(), m.end(), PeriodSpec(label=label, raw_text=m.group(0))))
+        if any(s <= m.start() < e for s, e, _ in found):
+            continue
+        if not _bare_year_is_a_period(question, m, bare_year_accepted):
+            continue
+        bare_year_accepted = True
+        found.append((m.start(), m.end(),
+                      PeriodSpec(label=m.group(1), raw_text=m.group(0))))
 
     # Sort by position in text and deduplicate
     found.sort(key=lambda x: x[0])
     return [spec for _, _, spec in found]
+
+
+def _bare_year_is_a_period(question: str, match: re.Match, seen_a_period: bool) -> bool:
+    """Is this four-digit integer being used as a calendar period?
+
+    Two independent gates, both required:
+
+    1. It falls inside a plausible calendar range. A part number like 2050 or
+       an SKU like 1974 can pass this; the point is only to reject the obvious
+       non-years cheaply.
+    2. The token immediately before it can introduce a period. This is the gate
+       that does the real work: "warehouse 2024" and "SKU 2001" are rejected
+       because "warehouse" and "SKU" are not period cues, while "against 2024"
+       and "in 2023" are accepted.
+
+    A separating comma counts only once some period has already been named, so
+    "in 2023, 2024 and 2025" reads as three periods while "items priced 2020,
+    2030" reads as none -- the comma in the second is separating part numbers.
+    """
+    if not (_YEAR_MIN <= int(match.group(1)) <= _YEAR_MAX):
+        return False
+
+    before = question[: match.start()].rstrip()
+    if not before:
+        return True                      # the question opens with the year
+    if before[-1] in _PERIOD_LIST_PUNCT:
+        return seen_a_period
+    if before[-1] in {".", "?", "!"}:
+        return True                      # start of a new sentence
+    return before.split()[-1].lower().strip("\"'([-") in _PERIOD_CUE_WORDS
 
 
 def _infer_grain(specs: list[PeriodSpec]) -> str:
@@ -238,173 +297,3 @@ def _generate_relative_specs(n: int, unit: str) -> list[PeriodSpec]:
             specs.append(PeriodSpec(label=f"{abbr} {year}", raw_text=f"{abbr} {year}"))
 
     return specs[::-1]  # chronological order (oldest first)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Result merging
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _to_float(v: Any) -> float | None:
-    try:
-        return float(str(v).replace(",", ""))
-    except (TypeError, ValueError):
-        return None
-
-
-def _infer_columns(rows: list[dict]) -> tuple[str, str]:
-    """Infer (label_col, value_col) from the first row."""
-    if not rows:
-        return "", ""
-    keys = list(rows[0].keys())
-    value_col = ""
-    label_col = keys[0]
-    for k in keys:
-        # First fully-numeric column is the value
-        if all(_to_float(r.get(k)) is not None for r in rows[:5] if r.get(k) is not None):
-            value_col = k
-            break
-    return label_col, value_col
-
-
-def merge_multi_period_results(period_results: list[PeriodResult]) -> MultiPeriodResult:
-    """
-    Merge results from multiple period queries into a unified multi-series structure.
-
-    The merged structure has one row per unique label_col value, with one
-    value column per period.
-
-    E.g. for 3 years of regional sales:
-      [{"region": "EMEA", "2022": 1200, "2023": 1450, "2024": 1680}, ...]
-    """
-    successful = [p for p in period_results if p.success and p.rows]
-    warnings   = [f"Period '{p.label}' failed: {p.error}" for p in period_results if not p.success]
-
-    if not successful:
-        return MultiPeriodResult(
-            periods=period_results,
-            label_col="",
-            value_col="",
-            successful_periods=0,
-            warnings=["No periods returned data."] + warnings,
-        )
-
-    # Infer column names from first successful result
-    label_col, value_col = _infer_columns(successful[0].rows)
-    if not value_col:
-        return MultiPeriodResult(
-            periods=period_results,
-            label_col=label_col,
-            value_col="",
-            successful_periods=len(successful),
-            warnings=["Could not identify a numeric value column."] + warnings,
-        )
-
-    # Build merged lookup: label_value → {period_label: metric_value}
-    merged: dict[Any, dict[str, Any]] = {}
-    for period in successful:
-        for row in period.rows:
-            key = row.get(label_col, "")
-            if key not in merged:
-                merged[key] = {label_col: key}
-            v = _to_float(row.get(value_col))
-            merged[key][period.label] = v
-
-    merged_rows = list(merged.values())
-
-    return MultiPeriodResult(
-        periods=period_results,
-        label_col=label_col,
-        value_col=value_col,
-        successful_periods=len(successful),
-        warnings=warnings,
-    )
-
-
-def build_multi_period_chart_payload(
-    result: MultiPeriodResult,
-    period_results: list[PeriodResult],
-    title: str = "",
-) -> dict:
-    """
-    Build a chart payload compatible with the existing portal_dashboard.js
-    buildDashboardOption() format.
-
-    Uses a grouped bar chart: x-axis = dimension labels, one series per period.
-    """
-    successful = [p for p in period_results if p.success and p.rows]
-    if not successful:
-        return {}
-
-    label_col, value_col = _infer_columns(successful[0].rows)
-    if not label_col or not value_col:
-        return {}
-
-    # Collect all unique x-axis labels (dimension values)
-    all_labels: list[str] = []
-    seen: set[str] = set()
-    for period in successful:
-        for row in period.rows:
-            lbl = str(row.get(label_col, ""))
-            if lbl not in seen:
-                all_labels.append(lbl)
-                seen.add(lbl)
-
-    # Build one row-dict per label with a column per period
-    lookup: dict[str, dict[str, Any]] = {lbl: {label_col: lbl} for lbl in all_labels}
-    for period in successful:
-        for row in period.rows:
-            lbl = str(row.get(label_col, ""))
-            lookup[lbl][period.label] = _to_float(row.get(value_col))
-
-    merged_rows = [lookup[lbl] for lbl in all_labels]
-
-    period_labels = [p.label for p in successful]
-
-    return {
-        "type": "chart",
-        "chart_type": "bar",
-        "title": title or f"Comparison: {', '.join(period_labels)}",
-        "x_key": label_col,
-        "y_keys": period_labels,
-        "rows": merged_rows,
-        "multi_period": True,
-        "period_labels": period_labels,
-        "warnings": result.warnings or [],
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SQL rewrite prompt (one per additional period)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_multi_period_rewrite_prompt(
-    original_sql: str,
-    target_period: PeriodSpec,
-    current_period_label: str = "",
-    date_col_hint: str = "",
-) -> tuple[str, str]:
-    """
-    Build (system, user) prompt to rewrite base SQL for a specific named period.
-    Mirrors the approach in period_comparison.py for consistency.
-    """
-    hint = f"\nDate column hint: {date_col_hint}" if date_col_hint else ""
-    system = (
-        "You are a SQL date-range modifier. "
-        "Your ONLY task is to rewrite the date filter to target the specified period. "
-        "RULES:\n"
-        "1. Change ONLY the date/period filter — nothing else.\n"
-        "2. Return ONLY the SQL — no explanation, no markdown fences.\n"
-        "3. If you cannot rewrite safely, return: CANNOT_REWRITE\n"
-        "4. Preserve all aliases and table qualifiers exactly."
-    )
-    current_note = (
-        f"The original SQL currently targets: {current_period_label}\n" if current_period_label else ""
-    )
-    user = (
-        f"Original SQL:\n{original_sql}\n\n"
-        f"{current_note}"
-        f"Rewrite the date filter to target period: {target_period.label}"
-        f"{hint}\n\n"
-        f"Return only the rewritten SQL."
-    )
-    return system, user
