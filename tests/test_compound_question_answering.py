@@ -20,6 +20,7 @@ the detection is.
 """
 
 import unittest
+from pathlib import Path
 
 from core.conversational import detect_compound_question
 
@@ -94,6 +95,88 @@ class TheFirstHalfIsAnswered(unittest.TestCase):
         self.assertNotIn("Which should I run first", block,
                          "the dead-end prompt must be gone")
 
+
+class OneResultSetIsNotTwoQuestions(unittest.TestCase):
+    """The comma-and joiner was broad enough to tear a single analytical
+    question in half.
+
+    "Compare 2025 against 2024 by revenue category which grew, which shrank,
+    and what did each contribute to the overall change?" splits on ", and" and
+    the right half opens with "what", so every earlier gate passed it. But
+    "each" ranges over the rows the LEFT half produces. Run alone it asks about
+    nothing, and the reader gets a contribution answer with no categories in it.
+
+    The distinction that matters is not "does the right half refer back" -- it
+    is whether it refers to a NAMED THING or to the left half's RESULT SET.
+    """
+
+    def test_a_set_quantifier_keeps_the_question_whole(self):
+        self.assertIsNone(detect_compound_question(
+            "Compare 2025 against 2024 by revenue category which grew, "
+            "which shrank, and what did each contribute to the overall change?"
+        ))
+
+    def test_ordinary_anaphora_still_splits(self):
+        """Guards the guard. "them" names controlled compounds, which the left
+        half introduced and the session context carries forward -- a separate
+        query about them is well defined, so blocking it would cost a real
+        split."""
+        self.assertIsNotNone(detect_compound_question(
+            "are controlled compounds priced at a premium, "
+            "and how much of our revenue depends on them?"
+        ))
+
+    def test_the_other_set_quantifiers(self):
+        for question in (
+            "show sales by region, and how did both compare",
+            "top 10 customers, and what did the rest contribute",
+            "revenue by month, and list them respectively",
+            "show margin by product, and which beat the same last year",
+        ):
+            with self.subTest(question=question):
+                self.assertIsNone(detect_compound_question(question))
+
+    def test_the_quantifiers_are_whole_words(self):
+        """"each" inside "reach", "both" inside "bothered" -- a substring match
+        would silently suppress splits that have no back-reference at all."""
+        split = detect_compound_question(
+            "what is our revenue, and which regions reach target"
+        )
+        self.assertIsNotNone(split)
+
+
+class NoSourceFileCarriesAMangledEscape(unittest.TestCase):
+    """A shell heredoc on this machine collapses a doubled backslash before
+    Python sees it, so an intended word boundary is written to the file as a
+    literal backspace (0x08). The regex still compiles and still runs -- it
+    just can never match.
+
+    It has done this three times: the guard above, a comment in core/llm.py,
+    and test_production_ui's hardcoded-white check, which was dead from the day
+    it was written and passed every run because its offender list was always
+    empty. Nothing else in the suite can see this class of damage.
+    """
+
+    def test_no_python_file_contains_a_literal_backspace(self):
+        root = Path(__file__).resolve().parents[1]
+        skip = {".git", "__pycache__", ".venv", "venv", "node_modules", "build", "dist"}
+        offenders = []
+        for path in root.rglob("*.py"):
+            if skip & set(path.parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if chr(8) in text:
+                line = next(n for n, l in enumerate(text.splitlines(), 1)
+                            if chr(8) in l)
+                offenders.append(f"{path.relative_to(root)}:{line}")
+        self.assertEqual(
+            offenders, [],
+            "literal backspace where a word boundary was intended: "
+            + ", ".join(offenders),
+        )
 
 if __name__ == "__main__":
     unittest.main()

@@ -244,6 +244,27 @@ _COMPOUND_JOINER_RE = re.compile(
 # clauses far more often than it joins two questions.
 _COMMA_AND_JOINER = ", and"
 
+# A right-hand side that quantifies over the LEFT half's result set is a
+# continuation of one question, however much it reads like a fresh ask.
+#
+#   "compare 2025 against 2024 by category which grew, which shrank,
+#    and what did each contribute to the overall change?"
+#
+# splits cleanly on ", and" and the right half opens with "what" — but "each"
+# ranges over the rows the left half produces, so running it alone asks about
+# nothing. One analytical question about one result set, not two questions;
+# stage 2's SECTION support is what answers it whole.
+#
+# Deliberately NOT ordinary anaphora. "…and how much of our revenue depends on
+# THEM" refers to a noun phrase named on the left ("controlled compounds"), and
+# a separate query about controlled compounds is perfectly well defined — the
+# pipeline's session context already carries that referent across turns. Only
+# the set-quantifiers below are unanswerable in isolation.
+_RESULT_SET_REFERENCE_RE = re.compile(
+    r"\b(?:each|respectively|both|the\s+rest|the\s+same|the\s+above)\b",
+    re.IGNORECASE,
+)
+
 # The right-hand part must not be a grouping/filter continuation of the left
 # ("…and also by region", "…and then for Q3" continue one intent).
 _CONTINUATION_START_RE = re.compile(
@@ -281,6 +302,11 @@ def detect_compound_question(text: str) -> tuple[str, str] | None:
     # The permissive joiners need the right-hand side to look like a question
     # in its own right, or an ordinary sentence gets torn in half.
     if joiner in {"plus", _COMMA_AND_JOINER} and not _ASK_START_RE.match(right):
+        return None
+    # Applies to every joiner: a half that quantifies over the left half's rows
+    # cannot stand alone, and answering it in isolation produces an answer about
+    # nothing.
+    if _RESULT_SET_REFERENCE_RE.search(right):
         return None
     # A second joiner inside the right half means 3+ asks — still offer the
     # first split; the remainder stays bundled and can be split again next turn.

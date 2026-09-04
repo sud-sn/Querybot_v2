@@ -167,7 +167,7 @@ def _compiled_sql_rule_features(semantic_plan: dict | None) -> set[str] | None:
 # own parallel phrase lists for the same concepts — which drifted.
 #
 # "show customers with no invoices" is the plain case: gate 1 matches it
-# (_ANTI_JOIN_WORDS carries "with no") and emits the ANTI-JOIN RULE; gate 2's
+# (_ANTI_JOIN_WORDS carries "with no") and emits the ANTI-JOIN RULE; gate 2's
 # private regex lists "have no" but not "with no", so it deleted the block gate
 # 1 had just decided the question needed, and the model wrote an inner join
 # that silently returns the opposite set of customers. A sweep of the two

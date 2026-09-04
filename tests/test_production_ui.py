@@ -275,7 +275,7 @@ def test_no_rule_puts_bare_white_on_a_brand_fill():
         r"background(?:-color)?\s*:[^;}]*var\(\s*--(?:primary|primary-hover|blue|blue-mid"
         r"|blue-soft|teal-600|teal-700)\s*\)"
     )
-    white = re.compile(r"color\s*:\s*#(?:fff|ffffff)", re.I)
+    white = re.compile(r"color\s*:\s*#(?:fff|ffffff)\b", re.I)
 
     offenders = []
     for name in ("base", "admin", "portal", "chat_workspace", "production", "brand-motion"):
