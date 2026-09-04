@@ -362,7 +362,16 @@ def build_column_formats(
     by_norm = {_normalise_key(h): h for h in headers}
     formats: dict[str, str] = {}
 
-    for raw_col, raw_fmt in (explicit_formats or {}).items():
+    # A named-period comparison publishes a format for its own period columns.
+    # Without one, core/chart_spec.py demotes a whole-number column whose name
+    # matches none of its currency/percent/count patterns (TONNAGE_2024) to an
+    # identifier, and the chart loses the series entirely. Merged UNDER the
+    # caller's explicit formats, which still win.
+    period_formats = (
+        ((display_context or {}).get("period_comparison") or {}).get("column_formats")
+        if isinstance(display_context, dict) else None
+    )
+    for raw_col, raw_fmt in {**(period_formats or {}), **(explicit_formats or {})}.items():
         header = by_norm.get(_normalise_key(raw_col))
         fmt = _normalise_result_format(raw_fmt)
         # Allow explicit "number" through — it lets callers override currency

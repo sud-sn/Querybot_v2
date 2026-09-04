@@ -244,6 +244,25 @@ def _rank_measures_for_question(measures: list[str], question: str) -> list[str]
     return [col for _, col in indexed]
 
 
+def _default_series(measures: list[str], roles: dict[str, dict]) -> list[str]:
+    """The measures a bar chart should draw by default.
+
+    A rate and a money column cannot share a y-axis: on a scale of millions a
+    percentage is a flat line along the bottom. Executed on the period-
+    comparison shape, the axis came back as two money columns plus CHANGE_PCT
+    and SHARE_OF_CHANGE_PCT.
+
+    Percent-formatted measures are dropped only once at least two others
+    remain, so a result whose only measures are rates still charts. They stay
+    in `allowed` and in the table -- they simply stop being drawn against the
+    wrong scale. A general improvement for any result mixing a money column and
+    a rate column, not a multi-period special case.
+    """
+    plain = [col for col in measures
+             if (roles.get(col) or {}).get("format") != "percentage"]
+    return plain if len(plain) >= 2 else measures
+
+
 def _composition_measures(measures: list[str]) -> list[str]:
     """Prefer the business value over an auxiliary calculated share column."""
     primary = [
@@ -518,7 +537,7 @@ def infer_chart_spec(
         if len(measures) >= 2:
             allowed.append("scatter")
         x_col = _primary_dimension(dimensions, roles)
-        y_cols = measures[:4]
+        y_cols = _default_series(measures, roles)[:4]
     elif temporals and measures:
         # Time axis + measures is chartable even without trend wording in the
         # question ("show revenue for each of the last 3 months" used to fall

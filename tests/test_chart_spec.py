@@ -964,3 +964,107 @@ class TestAPassthroughPayloadCanActuallyBeSent(unittest.TestCase):
         )["rows"][0]
         self.assertIn("is_forecast", first)
         self.assertIn("forecast_value", first)
+
+
+class PeriodComparisonChartTests(unittest.TestCase):
+    """Two defects found by executing infer_chart_spec on the shape the
+    multi-period hint produces, both of which made the chart worse than the
+    table it sits above.
+
+    Each test asserts the pre-state as well, because "the chart is fine" was
+    the prediction that turned out to be wrong twice.
+    """
+
+    QUESTION = ("Compare 2025 against 2024 by revenue category which grew, "
+                "which shrank, and what did each contribute to the overall "
+                "change?")
+
+    WIDE = [
+        {"REVENUE_CATEGORY": "Pumps", "NET_AMOUNT_2024": 3400000,
+         "NET_AMOUNT_2025": 3800000, "CHANGE_ABS": 400000,
+         "CHANGE_PCT": 11.76, "SHARE_OF_CHANGE_PCT": 46.0},
+        {"REVENUE_CATEGORY": "Valves", "NET_AMOUNT_2024": 2400000,
+         "NET_AMOUNT_2025": 2220000, "CHANGE_ABS": -180000,
+         "CHANGE_PCT": -7.5, "SHARE_OF_CHANGE_PCT": -20.7},
+        {"REVENUE_CATEGORY": "Seals", "NET_AMOUNT_2024": 1000000,
+         "NET_AMOUNT_2025": 1650000, "CHANGE_ABS": 650000,
+         "CHANGE_PCT": 65.0, "SHARE_OF_CHANGE_PCT": 74.7},
+    ]
+
+    TONNAGE = [
+        {"REGION": "North", "TONNAGE_2024": 3400, "TONNAGE_2025": 3800},
+        {"REGION": "South", "TONNAGE_2024": 2400, "TONNAGE_2025": 2220},
+        {"REGION": "East", "TONNAGE_2024": 1000, "TONNAGE_2025": 1650},
+    ]
+
+    def test_percent_measures_are_not_default_series(self):
+        """Money and a rate cannot share one y-axis: against a scale of
+        millions a percentage draws as a flat line on the floor."""
+        payload = build_chart_payload(self.WIDE, None, "Revenue", self.QUESTION)
+        self.assertEqual(payload["y_keys"], ["NET_AMOUNT_2024", "NET_AMOUNT_2025"])
+
+        # The percent columns are still offered and still in the table -- they
+        # stopped being DEFAULT series, they were not hidden.
+        spec = infer_chart_spec(self.WIDE, question=self.QUESTION)
+        self.assertEqual(spec["column_roles"]["CHANGE_PCT"]["role"], "measure")
+        self.assertNotIn("CHANGE_PCT", [c["column"] for c in spec["y"]])
+
+    def test_a_single_non_percent_measure_keeps_its_percent_series(self):
+        """The rule only fires with at least two measures left, so a result
+        whose measures are mostly rates still charts them."""
+        rows = [{"REGION": "North", "REVENUE": 100, "MARGIN_PCT": 10.0},
+                {"REGION": "South", "REVENUE": 80, "MARGIN_PCT": 8.0}]
+        payload = build_chart_payload(rows, None, "Revenue", "revenue by region")
+        self.assertEqual(payload["y_keys"], ["REVENUE", "MARGIN_PCT"])
+
+    def test_generic_measure_name_stays_a_measure(self):
+        """_looks_identifier demotes an all-integer, high-uniqueness column
+        unless its NAME matches one of the currency/percent/count patterns.
+        TONNAGE_2024 matches none of them, so without a carried format the
+        chart loses both series and disappears entirely."""
+        question = "compare 2025 against 2024 tonnage by region"
+
+        # Pre-state, executed: no chart at all.
+        self.assertIsNone(build_chart_payload(self.TONNAGE, None, "Tonnage", question))
+        self.assertEqual(
+            infer_chart_spec(self.TONNAGE, question=question)["recommended_type"],
+            "table",
+        )
+
+        # The formats the multi-period step publishes, carried through the
+        # display_context channel that both build_column_formats call sites
+        # already pass.
+        from core.response_builder import build_column_formats
+
+        formats = build_column_formats(
+            self.TONNAGE,
+            display_context={"period_comparison": {
+                "labels": ["2024", "2025"],
+                "column_formats": {"TONNAGE_2024": "number",
+                                   "TONNAGE_2025": "number"},
+            }},
+        )
+        self.assertEqual(formats,
+                         {"TONNAGE_2024": "number", "TONNAGE_2025": "number"})
+        payload = build_chart_payload(
+            self.TONNAGE, None, "Tonnage", question, column_formats=formats)
+        self.assertEqual(payload["y_keys"], ["TONNAGE_2024", "TONNAGE_2025"])
+
+    def test_an_explicit_caller_format_still_wins(self):
+        """The period formats are merged UNDER explicit_formats, not over it."""
+        from core.response_builder import build_column_formats
+
+        formats = build_column_formats(
+            self.TONNAGE,
+            display_context={"period_comparison": {
+                "column_formats": {"TONNAGE_2024": "number"}}},
+            explicit_formats={"TONNAGE_2024": "currency"},
+        )
+        self.assertEqual(formats["TONNAGE_2024"], "currency")
+
+    def test_unrelated_single_measure_chart_unchanged(self):
+        rows = [{"WAREHOUSE": "North", "REVENUE": 1000, "MARGIN_PCT": 12.5},
+                {"WAREHOUSE": "South", "REVENUE": 800, "MARGIN_PCT": 9.0},
+                {"WAREHOUSE": "West", "REVENUE": 600, "MARGIN_PCT": 15.0}]
+        payload = build_chart_payload(rows, None, "Revenue", "revenue by warehouse")
+        self.assertEqual(payload["y_keys"], ["REVENUE", "MARGIN_PCT"])

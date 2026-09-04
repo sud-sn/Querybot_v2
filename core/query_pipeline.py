@@ -860,6 +860,32 @@ def _governed_date_anchor_repair_lines(
     return "\n".join(lines)
 
 
+def _multi_period_column_formats(
+    period_columns: dict[str, str],
+    matched_metrics: list[dict] | None,
+) -> dict[str, str]:
+    """A display format for each of the plan's period columns.
+
+    Executed against core/chart_spec.py: rows keyed TONNAGE_2024/TONNAGE_2025
+    with whole-number values come back as role='identifier', because the
+    all-integer high-uniqueness rule only spares names matching its
+    currency/percent/count patterns -- and the chart loses both series. Passing
+    a format for those columns restores role='measure'.
+
+    The measure's own registered format when exactly one metric matched,
+    "number" otherwise. It travels on the existing explicit_formats channel;
+    build_column_formats lets an explicit "number" override its own currency
+    heuristics, which is the point.
+    """
+    if not period_columns:
+        return {}
+    metrics = [metric for metric in (matched_metrics or []) if isinstance(metric, dict)]
+    fmt = "number"
+    if len(metrics) == 1:
+        fmt = str(metrics[0].get("result_format") or "number").strip().lower() or "number"
+    return {column: fmt for column in period_columns.values()}
+
+
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
     # Set from every governed execution below. Row-level statistics (quartiles,
@@ -6803,13 +6829,20 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "metrics": _matched_metrics,
     }
     # Only when the widened result actually arrived. The answer surface reads
-    # these labels to describe the CHANGE instead of ranking the oldest period.
+    # these labels to describe the CHANGE instead of ranking the oldest period,
+    # and the formats keep the period columns classified as measures rather
+    # than identifiers when the measure has a generic name.
     if _mp_rows_applied:
         _mp_plan_display = getattr(event, '_multi_period_plan', None)
         try:
+            from core.multi_period import period_columns_for_plan
             _display_context["period_comparison"] = {
                 "labels": list(_mp_plan_display.labels),
                 "aliases": list(_mp_plan_display.aliases),
+                "column_formats": _multi_period_column_formats(
+                    period_columns_for_plan(rows, _mp_plan_display),
+                    _matched_metrics,
+                ),
             }
         except Exception as _mp_disp_exc:
             log.warning(

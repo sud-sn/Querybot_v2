@@ -911,5 +911,40 @@ class TheCaveatsReachTheRenderedCard(unittest.TestCase):
         self.assertNotIn("coverage_caveats", payload)
 
 
+class ThePeriodColumnsCarryADisplayFormat(unittest.TestCase):
+    """core/chart_spec.py demotes a whole-number column whose name matches none
+    of its currency/percent/count patterns to an identifier, and the chart then
+    loses both period series. The pipeline publishes a format for exactly the
+    columns the plan owns, on the explicit_formats channel that already
+    exists."""
+
+    ROWS = [{"REGION": "North", "TONNAGE_2024": 3400, "TONNAGE_2025": 3800}]
+
+    def _formats(self, metrics):
+        from core.multi_period import period_columns_for_plan
+        from core.query_pipeline import _multi_period_column_formats
+
+        return _multi_period_column_formats(
+            period_columns_for_plan(self.ROWS, _fresh_plan()), metrics)
+
+    def test_a_generic_measure_gets_number(self):
+        self.assertEqual(self._formats([]),
+                         {"TONNAGE_2024": "number", "TONNAGE_2025": "number"})
+
+    def test_one_matched_metric_lends_its_own_format(self):
+        self.assertEqual(
+            self._formats([{"name": "Net revenue", "result_format": "currency"}]),
+            {"TONNAGE_2024": "currency", "TONNAGE_2025": "currency"})
+
+    def test_several_metrics_are_ambiguous_so_number_wins(self):
+        self.assertEqual(
+            self._formats([{"result_format": "currency"}, {"result_format": "percentage"}]),
+            {"TONNAGE_2024": "number", "TONNAGE_2025": "number"})
+
+    def test_no_period_columns_publishes_nothing(self):
+        from core.query_pipeline import _multi_period_column_formats
+        self.assertEqual(_multi_period_column_formats({}, []), {})
+
+
 if __name__ == "__main__":
     unittest.main()
