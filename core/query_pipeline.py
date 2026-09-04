@@ -6474,6 +6474,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             if _edge.get("many_to_many") or _edge_fanout > 1.01:
                 _graph_fanout_risk = True
                 break
+    # Sentences the reader gets when a named-period comparison came back
+    # incomplete: the hint did not land, the fetch was truncated, or gains and
+    # losses cancelled. The list object is put into _confidence_context below
+    # and appended to afterwards, so the renderer sees whatever the
+    # post-processing adds.
+    _mp_caveats: list[str] = []
+    # Whether the period annotation ACTUALLY applied, as opposed to whether a
+    # plan existed. The contribution post-processor is gated on this, so a
+    # question that asked "what did each contribute" still gets
+    # contribution_pct when the pivot did not arrive.
+    _mp_rows_applied = False
     _confidence_context = {
         "validation_code": last_code or code or "ok",
         "retry_count": retry_count,
@@ -6515,6 +6526,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # "resolved_edges") -- lets _send_results check for a known-lossy
         # join (core/join_coverage.py) without re-parsing the generated SQL.
         "graph_edges": (_graph_ctx or {}).get("resolved_edges") or [],
+        # Same list object as _mp_caveats above, so entries added by the
+        # post-processing below still reach the renderer.
+        "multi_period_caveats": _mp_caveats,
     }
 
     # ── Post-processing: apply contribution / anomaly analytics ──────────────
@@ -6523,7 +6537,44 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _post_intents = getattr(event, '_analytic_intents', None) or _intents if '_intents' in dir() else {}
     if rows and _post_intents:
         try:
-            if _post_intents.get("contribution") and not any("contribution_pct" in r for r in rows[:1]):
+            # First, because the contribution branch below is gated on whether
+            # this one applied. Gated on the stashed PeriodPlan, never on
+            # _post_intents["multi_period"]: that intent is truthy for "what
+            # did each region contribute to revenue in 2023, 2024 and 2025",
+            # which wants a contribution answer and no pivot.
+            _mp_plan_post = getattr(event, '_multi_period_plan', None)
+            if _mp_plan_post is not None:
+                from core.multi_period import annotate_period_change
+                _mp_rows = annotate_period_change(rows, _mp_plan_post, _rows_truncated)
+                if isinstance(_mp_rows, list):
+                    rows = _mp_rows
+                    _mp_rows_applied = True
+                    log.info(
+                        "post_process: change contribution added periods=%d grain=%s",
+                        len(_mp_plan_post.labels), _mp_plan_post.grain,
+                    )
+                else:
+                    # The original defect was a confident answer explaining a
+                    # change the query never fetched. A miss is loud here and
+                    # reaches the reader as a caveat, and the contribution
+                    # post-processor below is left armed.
+                    log.warning(
+                        "post_process: multi_period hint did not land — the result "
+                        "carries no side-by-side period columns for %s",
+                        ", ".join(_mp_plan_post.labels),
+                    )
+                    _mp_caveats.append(
+                        "This answer covers only part of the periods you asked "
+                        f"about ({', '.join(_mp_plan_post.labels)}); the query "
+                        "returned a single period."
+                    )
+                _mp_caveats.extend(
+                    note for note in _mp_plan_post.warnings
+                    if note not in _mp_caveats
+                )
+
+            if (_post_intents.get("contribution") and not _mp_rows_applied
+                    and not any("contribution_pct" in r for r in rows[:1])):
                 from core.contribution_analysis import compute_contribution, infer_numeric_col as _inc
                 _val_col = _inc(rows)
                 if _val_col:

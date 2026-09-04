@@ -893,6 +893,15 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         str(note) for note in (confidence_context.get("forecast_caveats") or []) if note
     )
 
+    # The named-period comparison came back incomplete: the model returned one
+    # period instead of the pivot, the fetch stopped at its row cap, or gains
+    # and losses cancelled so a share of the net change would be meaningless.
+    # Same channel and same shape as the forecast caveats -- "this answer
+    # covers less than you asked for, and here is what is missing".
+    coverage_caveats.extend(
+        str(note) for note in (confidence_context.get("multi_period_caveats") or []) if note
+    )
+
     _graph_edges = confidence_context.get("graph_edges") or []
     if _graph_edges:
         try:

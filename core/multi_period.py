@@ -39,6 +39,13 @@ Entry points
   extract_period_specs(question) → list[PeriodSpec]
   question_names_comparable_periods(question) → bool
   build_period_plan(intent, question, semantic_plan, db_type) → PeriodPlan | None
+  build_multi_period_sql_hint(plan, db_type) → str
+  annotate_period_change(rows, plan, truncated) → list[dict] | None
+
+The last two are the two halves of the fix, and both key off the PeriodPlan
+rather than off the raw intent. The hint persuades the model to widen the
+result; the annotation is what runs afterwards regardless, and what tells the
+reader when the widening did not happen.
 """
 
 from __future__ import annotations
@@ -672,3 +679,166 @@ def build_multi_period_sql_hint(plan: PeriodPlan | None,
         "* List every output column by name in both SELECT clauses. Never use a "
         "star, in the CTE either."
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Post-execution — the half that does not depend on the model
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Below this, gains and losses have cancelled to the point where "share of the
+# net change" stops meaning anything: five categories that moved a million each
+# and net to twenty thousand would report shares in the thousands of percent.
+# This is the requires_positive_total guard core/analysis_contract.py declares
+# and nothing has read until now.
+_SHARE_FLOOR = 0.05
+
+_TRUNCATED_WARNING = (
+    "The result stopped at its row cap, so I did not compute the change "
+    "between periods or each category's share of it -- both would be "
+    "statistics over the first rows only, not the whole result."
+)
+_CANCELLING_WARNING = (
+    "Gains and losses across these categories almost cancel out, so each "
+    "category's share of the net change would be misleading. I left that "
+    "column empty and kept the per-category changes themselves."
+)
+
+
+def _to_float(value) -> float | None:
+    """The numeric value of a result cell, or None.
+
+    None for a masked cell as well as for a genuinely absent one.
+    core/compliance/result_guard.py replaces a masked value with a string --
+    "[REDACTED]", "TKN-<digest>", "****1234" -- and coercing those to zero
+    would report a masked category as flat.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _period_columns(headers: list, aliases: list[str]) -> dict[str, str]:
+    """alias -> the result column carrying that period, for the ones present.
+
+    Exact alias match: a column qualifies only when its name IS the alias or
+    ends with "_" + the alias. Deliberately not a regex over four-digit
+    suffixes -- that is what keeps ERP columns like P_CODE, P_QTY and QTY out
+    of the arithmetic.
+
+    Every chosen column must also share one measure prefix, because
+    NET_AMOUNT_2024 beside ORDER_COUNT_2025 is two measures, not one measure
+    in two periods.
+    """
+    targets = [str(alias or "").strip().upper() for alias in aliases]
+    if not all(targets):
+        return {}
+
+    by_prefix: dict[str, dict[str, str]] = {}
+    for header in headers:
+        name = str(header).strip().upper()
+        for target in targets:
+            if name == target:
+                prefix = ""
+            elif name.endswith("_" + target):
+                prefix = name[: -(len(target) + 1)]
+            else:
+                continue
+            by_prefix.setdefault(prefix, {}).setdefault(target, header)
+
+    if not by_prefix:
+        return {}
+    # Header order decides ties, so the choice is deterministic.
+    best = max(by_prefix.values(), key=len)
+    return best if len(best) >= 2 else {}
+
+
+def _warn(plan: PeriodPlan, message: str) -> None:
+    """PeriodPlan is frozen, but `warnings` is the mutable channel it declares
+    for exactly this. The pipeline copies it into the confidence context and
+    the renderer prints it beside the other coverage caveats, so a guard that
+    fires is a sentence the reader sees rather than a log line nobody reads."""
+    if message not in plan.warnings:
+        plan.warnings.append(message)
+
+
+def annotate_period_change(
+    rows: list[dict],
+    plan: PeriodPlan | None,
+    truncated: bool = False,
+) -> list[dict] | None:
+    """Recompute the period-over-period change from the returned columns.
+
+    Returns new rows carrying CHANGE_ABS, CHANGE_PCT and SHARE_OF_CHANGE_PCT,
+    or None when the result does not carry the plan's periods side by side --
+    which is the signal that the hint did not land, and which the caller turns
+    into a coverage caveat rather than a silent single-period answer.
+
+    Recomputed rather than trusted, because the derived columns are the ones
+    the model is most likely to get subtly wrong, and because this is also the
+    only path that can see a masked cell.
+
+    SHARE_OF_CHANGE_PCT, never contribution_pct. Every other answer in the
+    product uses contribution_pct for share-of-current-total; overloading the
+    name for share-of-the-change would put two different numbers under one
+    label.
+    """
+    if not rows or plan is None or len(plan.aliases) < 2:
+        return None
+    if not isinstance(rows[0], dict):
+        return None
+
+    found = _period_columns(list(rows[0].keys()), plan.aliases)
+    if len(found) < 2:
+        return None
+
+    ordered = [found[alias.strip().upper()]
+               for alias in plan.aliases if alias.strip().upper() in found]
+    missing = [label for label, alias in zip(plan.labels, plan.aliases)
+               if alias.strip().upper() not in found]
+    if missing:
+        _warn(plan, "The result did not come back with a column for "
+                    f"{', '.join(missing)}, so the change shown below is "
+                    f"between {plan.labels[0]} and {plan.labels[-1]} only.")
+
+    annotated = [dict(row) for row in rows]
+
+    # core/compliance/governed_query.py tells consumers that aggregate across
+    # rows to refuse on a truncated prefix. A share of a 200-row head is
+    # exactly that, so the shape is recognised (the caller must not raise a
+    # miss caveat) but nothing is derived.
+    if truncated:
+        _warn(plan, _TRUNCATED_WARNING)
+        return annotated
+
+    oldest_col, newest_col = ordered[0], ordered[-1]
+    changes: list[float | None] = []
+    for row in annotated:
+        values = [_to_float(row.get(column)) for column in ordered]
+        changes.append(None if any(value is None for value in values)
+                       else values[-1] - values[0])
+
+    readable = [change for change in changes if change is not None]
+    net = sum(readable)
+    gross = sum(abs(change) for change in readable)
+    shares_hold = gross > 0 and abs(net) >= _SHARE_FLOOR * gross
+    if gross > 0 and not shares_hold:
+        _warn(plan, _CANCELLING_WARNING)
+
+    for row, change in zip(annotated, changes):
+        if change is None:
+            row["CHANGE_ABS"] = None
+            row["CHANGE_PCT"] = None
+            row["SHARE_OF_CHANGE_PCT"] = None
+            continue
+        base = _to_float(row.get(oldest_col))
+        row["CHANGE_ABS"] = round(change, 4)
+        row["CHANGE_PCT"] = (
+            round(change * 100.0 / abs(base), 2) if base else None
+        )
+        row["SHARE_OF_CHANGE_PCT"] = (
+            round(change * 100.0 / net, 2) if shares_hold else None
+        )
+    return annotated

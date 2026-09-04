@@ -35,6 +35,8 @@ from datetime import date
 
 from core.multi_period import (
     MultiPeriodIntent,
+    PeriodPlan,
+    annotate_period_change,
     build_multi_period_sql_hint,
     build_period_plan,
     detect_multi_period_intent,
@@ -608,6 +610,305 @@ class ThePrescribedShapeIsAcceptedAsGenerated(unittest.TestCase):
                        "CHANGE_ABS", "CHANGE_PCT", "SHARE_OF_CHANGE_PCT"):
             with self.subTest(column=column):
                 self.assertIn(column, analysis.aggregate_outputs)
+
+
+def _wide(pairs, label_key="REVENUE_CATEGORY",
+          columns=("NET_AMOUNT_2024", "NET_AMOUNT_2025")):
+    """Rows in the shape the hint asks the model for."""
+    return [dict(zip((label_key,) + tuple(columns), row)) for row in pairs]
+
+
+_WIDE_PLAN = PeriodPlan(
+    labels=["2024", "2025"], aliases=["2024", "2025"],
+    predicates=["invoice_date.[CALENDAR_YEAR] = 2024",
+                "invoice_date.[CALENDAR_YEAR] = 2025"],
+    grain="yearly", date_field={},
+)
+
+
+def _fresh_plan(**overrides):
+    """A plan per test: `warnings` is the mutable channel annotate writes to,
+    so a shared instance would leak state between cases."""
+    fields = {"labels": ["2024", "2025"], "aliases": ["2024", "2025"],
+              "predicates": ["a", "b"], "grain": "yearly", "date_field": {}}
+    fields.update(overrides)
+    return PeriodPlan(**fields)
+
+
+class TheChangeIsRecomputedFromTheReturnedColumns(unittest.TestCase):
+    """The half of the fix that does not depend on the model.
+
+    It also disarms a proven wrong-answer path: infer_numeric_col's metric-word
+    tie-break picks the EARLIER column, so on a NET_AMOUNT_2024 /
+    NET_AMOUNT_2025 shape compute_contribution would have shipped a
+    share-of-2024 number under the label contribution_pct.
+    """
+
+    def test_compliant_wide_rows_get_the_change_and_its_share(self):
+        rows = _wide([("Pumps", 1000, 1600),
+                      ("Valves", 900, 700),
+                      ("Seals", 500, 600)])
+        plan = _fresh_plan()
+        out = annotate_period_change(rows, plan)
+
+        self.assertEqual([r["CHANGE_ABS"] for r in out], [600.0, -200.0, 100.0])
+        for row in out:
+            self.assertAlmostEqual(
+                row["CHANGE_ABS"],
+                row["NET_AMOUNT_2025"] - row["NET_AMOUNT_2024"], places=6)
+        self.assertAlmostEqual(
+            sum(r["SHARE_OF_CHANGE_PCT"] for r in out), 100.0, places=1)
+        self.assertEqual(plan.warnings, [])
+
+    def test_the_input_rows_are_never_mutated(self):
+        rows = _wide([("Pumps", 1000, 1600)])
+        annotate_period_change(rows, _fresh_plan())
+        self.assertEqual(rows, [{"REVENUE_CATEGORY": "Pumps",
+                                 "NET_AMOUNT_2024": 1000,
+                                 "NET_AMOUNT_2025": 1600}])
+
+    def test_a_single_period_result_returns_none(self):
+        """The signal that the hint did not land. The caller turns it into a
+        coverage caveat instead of a confident single-period answer."""
+        rows = [{"REVENUE_CATEGORY": "Pumps", "NET_AMOUNT": 1600},
+                {"REVENUE_CATEGORY": "Valves", "NET_AMOUNT": 700}]
+        self.assertIsNone(annotate_period_change(rows, _fresh_plan()))
+
+    def test_only_one_of_the_two_periods_came_back(self):
+        rows = _wide([("Pumps", 1000, 1600)], columns=("NET_AMOUNT_2025", "OTHER"))
+        self.assertIsNone(annotate_period_change(rows, _fresh_plan()))
+
+    def test_near_cancelling_movements_suppress_the_share(self):
+        """Gains and losses that cancel make a share of the NET meaningless:
+        five categories moving a million each and netting twenty thousand would
+        report shares in the thousands of percent. This is the
+        requires_positive_total guard core/analysis_contract.py declares and
+        nothing read until now."""
+        rows = _wide([("Pumps", 1000, 2000),
+                      ("Valves", 2000, 1000),
+                      ("Seals", 500, 520)])
+        plan = _fresh_plan()
+        out = annotate_period_change(rows, plan)
+
+        self.assertTrue(all(r["SHARE_OF_CHANGE_PCT"] is None for r in out))
+        self.assertTrue(plan.warnings)
+        # The per-category changes themselves are still real and still shown.
+        self.assertEqual([r["CHANGE_ABS"] for r in out], [1000.0, -1000.0, 20.0])
+
+    def test_a_masked_cell_is_carried_through_rather_than_zeroed(self):
+        """protect_rows replaces a masked value with a string. Coercing it to
+        zero would report a masked category as flat and would drag every other
+        category's share off."""
+        rows = _wide([("Pumps", 1000, 1600),
+                      ("Redacted", "[REDACTED]", "[REDACTED]"),
+                      ("Valves", 900, 700),
+                      ("Seals", 500, 600)])
+        plan = _fresh_plan()
+        out = annotate_period_change(rows, plan)
+
+        masked = out[1]
+        self.assertIsNone(masked["CHANGE_ABS"])
+        self.assertIsNone(masked["CHANGE_PCT"])
+        self.assertIsNone(masked["SHARE_OF_CHANGE_PCT"])
+        self.assertAlmostEqual(
+            sum(r["SHARE_OF_CHANGE_PCT"] for r in out
+                if r["SHARE_OF_CHANGE_PCT"] is not None),
+            100.0, places=1)
+
+    def test_a_truncated_result_derives_nothing(self):
+        """core/compliance/governed_query.py tells consumers that aggregate
+        across rows to refuse on a truncated prefix. A share over a 200-row
+        head is exactly that."""
+        rows = _wide([("Pumps", 1000, 1600), ("Valves", 900, 700)])
+        plan = _fresh_plan()
+        out = annotate_period_change(rows, plan, truncated=True)
+
+        self.assertEqual(len(out), 2)
+        for row in out:
+            self.assertNotIn("CHANGE_ABS", row)
+            self.assertNotIn("CHANGE_PCT", row)
+            self.assertNotIn("SHARE_OF_CHANGE_PCT", row)
+        self.assertTrue(plan.warnings)
+
+    def test_erp_part_columns_are_not_hijacked(self):
+        """Exact alias match, not a regex over four-digit suffixes. P_CODE and
+        P_QTY are the columns this guard exists for."""
+        rows = [{"P_CODE": "A-1", "P_QTY": 12, "QTY": 3},
+                {"P_CODE": "A-2", "P_QTY": 40, "QTY": 9}]
+        self.assertIsNone(annotate_period_change(
+            rows, _fresh_plan(aliases=["NET_AMOUNT_2024", "NET_AMOUNT_2025"])))
+        self.assertIsNone(annotate_period_change(rows, _fresh_plan()))
+
+    def test_two_different_measures_are_not_treated_as_one(self):
+        """NET_AMOUNT_2024 beside ORDER_COUNT_2025 is two measures, not one
+        measure in two periods, and subtracting them is nonsense."""
+        rows = [{"REVENUE_CATEGORY": "Pumps",
+                 "NET_AMOUNT_2024": 1000, "ORDER_COUNT_2025": 4}]
+        self.assertIsNone(annotate_period_change(rows, _fresh_plan()))
+
+    def test_a_zero_baseline_leaves_the_percent_empty_not_infinite(self):
+        rows = _wide([("Pumps", 0, 1600), ("Valves", 900, 700)])
+        out = annotate_period_change(rows, _fresh_plan())
+        self.assertIsNone(out[0]["CHANGE_PCT"])
+        self.assertEqual(out[0]["CHANGE_ABS"], 1600.0)
+
+    def test_quarterly_aliases_match_their_own_columns(self):
+        rows = [{"REGION": "North", "REVENUE_Q1_2023": 100, "REVENUE_Q1_2024": 150}]
+        plan = _fresh_plan(labels=["Q1 2023", "Q1 2024"],
+                           aliases=["Q1_2023", "Q1_2024"], grain="quarterly")
+        out = annotate_period_change(rows, plan)
+        self.assertEqual(out[0]["CHANGE_ABS"], 50.0)
+
+
+class AMissedPivotStillAnswersTheContributionQuestion(unittest.TestCase):
+    """Design 1 gated the hint on the plan and the post-processor on the raw
+    intent, and shipped a confident single-period answer when the model ignored
+    the hint. Both halves are fixed here, and both are executed: the real
+    post-processing block is compiled out of core/query_pipeline.py and run.
+    """
+
+    START = "            # First, because the contribution branch below is gated"
+    END = '            if _post_intents.get("anomaly")'
+
+    def _block(self):
+        import textwrap
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1]
+                  / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        block = textwrap.dedent(source[source.index(self.START):source.index(self.END)])
+        for marker in ("annotate_period_change", "_mp_rows_applied",
+                       "compute_contribution", "_mp_caveats"):
+            assert marker in block, f"stale or truncated read: {marker!r} missing"
+        return block
+
+    def _run(self, rows, plan, truncated=False):
+        import core.query_pipeline as qp
+
+        logged: dict[str, list[str]] = {}
+
+        class _Log:
+            def info(self, msg, *a):
+                logged.setdefault("info", []).append(msg % a if a else msg)
+
+            def warning(self, msg, *a, **kw):
+                logged.setdefault("warning", []).append(msg % a if a else msg)
+
+        class _Event:
+            pass
+
+        event = _Event()
+        event._multi_period_plan = plan
+        env = {
+            **vars(qp),
+            "rows": rows,
+            "event": event,
+            "_post_intents": {"contribution": True, "multi_period": object()},
+            "_rows_truncated": truncated,
+            "_mp_caveats": [],
+            "_mp_rows_applied": False,
+            "log": _Log(),
+        }
+        exec(compile(self._block(), "<multi-period-block>", "exec"), env)
+        return env, logged
+
+    def test_contribution_survives_a_multi_period_miss(self):
+        """The model returned one period. contribution_pct must NOT be lost --
+        the question literally asks what each category contributed -- and the
+        reader must be told the answer covers less than was asked for."""
+        rows = [{"REVENUE_CATEGORY": "Pumps", "NET_AMOUNT": 600},
+                {"REVENUE_CATEGORY": "Valves", "NET_AMOUNT": 400}]
+        env, logged = self._run(rows, _fresh_plan())
+
+        self.assertFalse(env["_mp_rows_applied"])
+        self.assertEqual([r["contribution_pct"] for r in env["rows"]], [60.0, 40.0])
+        self.assertTrue(env["_mp_caveats"])
+        self.assertIn("2024", env["_mp_caveats"][0])
+        self.assertIn("2025", env["_mp_caveats"][0])
+        self.assertTrue(logged.get("warning"))
+
+    def test_a_landed_pivot_suppresses_the_contribution_column(self):
+        """compute_contribution's SUM(...) OVER () has no PARTITION BY, so on a
+        widened result it would be each category's share of the COMBINED 2024
+        and 2025 total -- neither a per-period mix nor a share of the change."""
+        rows = _wide([("Pumps", 1000, 1600), ("Valves", 900, 700)])
+        env, logged = self._run(rows, _fresh_plan())
+
+        self.assertTrue(env["_mp_rows_applied"])
+        self.assertNotIn("contribution_pct", env["rows"][0])
+        self.assertEqual(env["rows"][0]["CHANGE_ABS"], 600.0)
+        self.assertEqual(env["_mp_caveats"], [])
+        self.assertTrue(any("change contribution added" in m
+                            for m in logged.get("info", [])))
+
+    def test_an_ordinary_contribution_question_is_untouched(self):
+        """No plan stashed: "what did each region contribute to revenue in
+        2023, 2024 and 2025" has a truthy multi_period intent, no comparison
+        word, and must keep behaving exactly as it did."""
+        rows = [{"REGION": "North", "REVENUE": 750},
+                {"REGION": "South", "REVENUE": 250}]
+        env, _ = self._run(rows, None)
+
+        self.assertFalse(env["_mp_rows_applied"])
+        self.assertEqual([r["contribution_pct"] for r in env["rows"]], [75.0, 25.0])
+        self.assertEqual(env["_mp_caveats"], [])
+
+    def test_a_truncated_pivot_says_so_and_keeps_the_periods(self):
+        rows = _wide([("Pumps", 1000, 1600), ("Valves", 900, 700)])
+        env, _ = self._run(rows, _fresh_plan(), truncated=True)
+
+        self.assertTrue(env["_mp_rows_applied"])
+        self.assertNotIn("CHANGE_ABS", env["rows"][0])
+        self.assertNotIn("contribution_pct", env["rows"][0])
+        self.assertTrue(env["_mp_caveats"])
+
+
+class TheCaveatsReachTheRenderedCard(unittest.TestCase):
+    """A guard that fires has to become a sentence the reader sees. The
+    renderer collects the pipeline's multi_period_caveats on the same channel
+    as the forecast caveats, and the rendered payload is what this asserts on
+    -- _send_results is executed, not read."""
+
+    ROWS = [{"REVENUE_CATEGORY": "Pumps",
+             "NET_AMOUNT_2024": 1000, "NET_AMOUNT_2025": 1600}]
+    NOTE = ("This answer covers only part of the periods you asked about "
+            "(2024, 2025); the query returned a single period.")
+
+    def _render(self, confidence_context):
+        import asyncio
+
+        payload: dict = {}
+
+        class _Adapter:
+            async def send_assistant_response(self, event, response):
+                payload.update(response)
+
+            async def send_message(self, event, text):
+                payload["text"] = text
+
+        class _Event:
+            platform = "portal"
+            schema_hint = ""
+
+        import core.result_renderer as rr
+        asyncio.run(rr._send_results(
+            _Event(), _Adapter(), "compare 2025 against 2024 by revenue category",
+            list(self.ROWS), "SELECT 1", 10, None, "acct",
+            {"db_type": "azure_sql", "id": 1},
+            confidence_context=confidence_context,
+            cache_result=False,
+        ))
+        return payload
+
+    def test_multi_period_caveats_become_coverage_caveats(self):
+        payload = self._render({"multi_period_caveats": [self.NOTE]})
+        self.assertIn(self.NOTE, payload.get("coverage_caveats") or [])
+
+    def test_an_answer_with_no_caveats_gains_none(self):
+        """The control. Without it the assertion above would pass on a
+        renderer that appended that sentence to every answer."""
+        payload = self._render({})
+        self.assertNotIn("coverage_caveats", payload)
 
 
 if __name__ == "__main__":
