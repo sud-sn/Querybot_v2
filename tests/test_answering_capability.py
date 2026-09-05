@@ -358,7 +358,18 @@ class CausalRouteTests(unittest.TestCase):
 
     def test_pipeline_hooks_after_both_success_paths(self):
         src = _src("core/query_pipeline.py")
-        self.assertIn("_why_mode = bool(not is_clarification and is_causal_question(question))", src)
+        # The causal gate reads the CANONICAL question now: "Pourquoi les
+        # ventes ont-elles baissé ?" carries no "why" for is_causal_question
+        # to find, so a French reader never reached this route at all.
+        self.assertIn(
+            "_why_mode = bool(not is_clarification and is_causal_question(_analysis_question))",
+            src,
+        )
+        from core.insight import is_causal_question
+        from core.question_normalizer import canonical_question
+        self.assertFalse(is_causal_question("Pourquoi les ventes ont-elles baissé ?"))
+        self.assertTrue(is_causal_question(
+            canonical_question("Pourquoi les ventes ont-elles baissé ?", "fr")))
         self.assertEqual(src.count("await _send_why_insight("), 2)  # metric + main paths
         # insight is sent after the factual answer, never instead of it
         self.assertLess(

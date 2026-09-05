@@ -913,8 +913,28 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # answer first (normal pipeline below), then a causal analysis of the
     # fresh rows as a second message. Clarification replies are exempt — the
     # causal wording there belongs to the original question, already handled.
+    # The text the DETECTORS read. For an English reader it is `question`,
+    # byte for byte. For a French one it is the product's own canonical English
+    # phrasing of the same question -- because every intent detector in this
+    # pipeline is a hand-written English regex that runs before any model sees
+    # the text, so a French question reaches SQL generation with almost nothing
+    # detected and no error anywhere to say so.
+    #
+    # An ADDED name, never a replacement: `question` stays the reader's own
+    # words and keeps flowing to the chart title, the dashboard tile, the
+    # answer trace and the audit log. See core/question_normalizer.py.
+    from core.question_normalizer import canonical_question
+    _analysis_question = canonical_question(
+        question, (portal_user or {}).get("lang"),
+    )
+    if _analysis_question != question:
+        log.info(
+            "Question canonicalised for detection (%s): %r -> %r",
+            account_id, question[:120], _analysis_question[:120],
+        )
+
     from core.insight import is_causal_question
-    _why_mode = bool(not is_clarification and is_causal_question(question))
+    _why_mode = bool(not is_clarification and is_causal_question(_analysis_question))
 
     # Identity passed through every query-log row for audit + billing.
     pu_id  = portal_user.get("id") if portal_user else None
@@ -1998,7 +2018,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
         _grouping = bool(_re.search(
             r"\b(by|per|grouped by|breakdown|split by|each|for each)\s+\w",
-            question.lower()
+            _analysis_question.lower()
         ))
         _n = 10 if _grouping else 8
 
@@ -2015,7 +2035,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             relevant_kbs = []
             context = ""
         else:
-            relevant_kbs = retriever.retrieve(question, n=_n, allowed_tables=rag_filter)
+            relevant_kbs = retriever.retrieve(_analysis_question, n=_n, allowed_tables=rag_filter)
             _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
             _retrieval_unscored = bool(getattr(retriever, "last_retrieval_unscored", False))
 
@@ -2024,7 +2044,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
             if _grouping:
                 fact_patterns = retriever.retrieve_fact_patterns(
-                    question, n=2, allowed_tables=rag_filter,
+                    _analysis_question, n=2, allowed_tables=rag_filter,
                 )
                 for fp in fact_patterns:
                     if fp not in (pinned + table_kbs):
@@ -2059,7 +2079,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         }
                         if _focused:
                             _focused_kbs = retriever.retrieve(
-                                question, n=_n, allowed_tables=_focused
+                                _analysis_question, n=_n, allowed_tables=_focused
                             )
                             _focused_table_kbs = [
                                 d for d in _focused_kbs if not retriever._is_global(d)
@@ -2123,7 +2143,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # Examples now live in Qdrant alongside KB docs — no chroma_dir needed
         _examples_t0 = time.time()
         examples = retrieve_similar_examples(
-            question, account_id, n=3,
+            _analysis_question, account_id, n=3,
             allowed_tables=rag_filter,
             schema_scope=schema_hint,
             kb_dir=state.get("kb_dir", ""),
@@ -2219,9 +2239,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
     except Exception as _vr_exc:
         log.debug("Value resolution skipped: %s", _vr_exc)
-    generic_hints = build_generic_query_hints(question)
-    query_intent = analyze_query_intent(question)
-    top_n_intent = detect_top_n_intent(question)
+    generic_hints = build_generic_query_hints(_analysis_question)
+    query_intent = analyze_query_intent(_analysis_question)
+    top_n_intent = detect_top_n_intent(_analysis_question)
     # Candidate metrics are account-wide. We delay injecting/enforcing them
     # until graph + semantic planning has inferred the question's schema/domain.
     _metric_candidates = store.list_metric_formula_context(
@@ -2604,8 +2624,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _raw_temporal_window = _event_raw.get("_clarification_temporal_window")
         if isinstance(_raw_temporal_window, dict) and _raw_temporal_window.get("kind"):
             _structured_temporal_window = dict(_raw_temporal_window)
-    _semantic_plan_question = (
-        _structured_semantic_question or extract_original_question(question)
+    _semantic_plan_question = canonical_question(
+        _structured_semantic_question or extract_original_question(question),
+        (portal_user or {}).get("lang"),
     )
 
     _semantic_plan = {}
@@ -4437,7 +4458,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             format_analysis_contract,
         )
 
-        _intents = detect_analytical_intents(question)
+        _intents = detect_analytical_intents(_analysis_question)
         _analysis_contract = build_analysis_contract(
             question,
             analytical_intents=_intents,
