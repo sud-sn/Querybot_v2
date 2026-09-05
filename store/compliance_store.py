@@ -555,12 +555,23 @@ def log_policy_decision(
 ) -> str:
     audit_id = str(uuid.uuid4())
     with get_db() as conn:
+        # Ordered by seq, not by (created_at, id). created_at has one-second
+        # resolution and id is a random UUID, so a burst of decisions inside
+        # one second all chained off whichever UUID happened to sort highest
+        # -- two records claiming the same predecessor, a chain that forks
+        # instead of extending, and an integrity check that cannot detect a
+        # deleted branch. seq is assigned inside this transaction, so it is
+        # the true insertion order.
         previous = conn.execute(
             "SELECT record_hash FROM policy_decision_log WHERE account_id=? "
-            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            "ORDER BY seq DESC, created_at DESC, id DESC LIMIT 1",
             (account_id,),
         ).fetchone()
         previous_hash = previous["record_hash"] if previous else ""
+        next_seq = (conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) AS m FROM policy_decision_log "
+            "WHERE account_id=?", (account_id,),
+        ).fetchone()["m"] or 0) + 1
         canonical = json.dumps(
             {
                 "id": audit_id,
@@ -585,14 +596,14 @@ def log_policy_decision(
             INSERT INTO policy_decision_log (
                 id, account_id, user_id, action, purpose_id, channel, allowed,
                 reason_code, resource_json, obligation_json, policy_version,
-                previous_hash, record_hash
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                previous_hash, record_hash, seq
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 audit_id, account_id, user_id, action, purpose_id, channel,
                 int(bool(allowed)), reason_code, json.dumps(resources),
                 json.dumps(obligations, sort_keys=True), policy_version,
-                previous_hash, record_hash,
+                previous_hash, record_hash, next_seq,
             ),
         )
     return audit_id

@@ -136,6 +136,16 @@
       <button class="btn btn-primary" type="submit">Save egress posture</button>
     </form>
   </div></div>
+
+  <div class="card" style="margin-top:1rem"><div class="card-header"><h2>Evidence pack</h2></div><div class="card-body">
+    <p>A generated record of what this workspace actually did: every model call and whether it carried a data value, every call the product refused and why, how much of the schema is classified, and whether the decision log's hash chain still verifies. It is built from the audit trail rather than written by hand, and carries a fingerprint so two copies can be compared.</p>
+    <p class="form-note">Contains counts, table and column names, and the reasons the product recorded &mdash; no data values.</p>
+    <p>
+      <a class="btn btn-primary" href="/admin/clients/{{ client.account_id }}/compliance/proof-pack?days=30">Download last 30 days</a>
+      <a class="btn" href="/admin/clients/{{ client.account_id }}/compliance/proof-pack?days=90" style="margin-left:.5rem">Last 90 days</a>
+      <a class="btn" href="/admin/clients/{{ client.account_id }}/compliance/proof-pack?days=365" style="margin-left:.5rem">Last year</a>
+    </p>
+  </div></div>
 </section>
 
 <section class="compliance-panel" id="panel-classification">

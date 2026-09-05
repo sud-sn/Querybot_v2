@@ -3015,6 +3015,31 @@ async def compliance_save_egress(request: Request, account_id: str):
     )
 
 
+@router.get("/clients/{account_id}/compliance/proof-pack")
+async def compliance_proof_pack(request: Request, account_id: str):
+    """The artefact a customer hands to their auditor.
+
+    Generated from logs the product already writes, so it is a measurement
+    rather than a promise. Served as a downloadable JSON document: the
+    fingerprint makes it tamper-evident on its own terms, which a rendered
+    HTML page would not be.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.compliance.proof_pack import build_proof_pack
+
+    try:
+        days = max(1, min(365, int(request.query_params.get("days") or 30)))
+    except (TypeError, ValueError):
+        days = 30
+    pack = build_proof_pack(account_id, days=days)
+    filename = f"querybot-proof-pack-{account_id}-{pack['generated_at'][:10]}.json"
+    return JSONResponse(
+        pack,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/clients/{account_id}/compliance/profile")
 async def compliance_save_profile(request: Request, account_id: str):
     if not _is_auth(request):

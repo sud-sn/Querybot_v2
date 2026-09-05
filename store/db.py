@@ -1337,6 +1337,21 @@ def _run_migrations() -> None:
         #
         # Declared HERE ONLY, not in _SCHEMA, for the reason above it.
         ("compliance_profile", "egress_posture", "TEXT NOT NULL DEFAULT ''"),
+        # Insertion order for the hash-chained decision log.
+        #
+        # created_at has one-second resolution and the primary key is a random
+        # UUID, so "the previous record" was resolved with
+        # ORDER BY created_at DESC, id DESC -- which, for several decisions
+        # logged inside the same second (a single question logs several),
+        # returns whichever UUID sorts highest rather than the true
+        # predecessor. Two records then chain off the same one and the chain
+        # FORKS. A forked chain cannot prove ordering and cannot detect the
+        # deletion of a branch, which is most of what it exists for.
+        #
+        # Existing rows keep seq 0 and their old relative order; new rows get
+        # MAX(seq)+1 inside the inserting transaction, so ordering is exact
+        # from here on. Declared HERE ONLY, not in _SCHEMA.
+        ("policy_decision_log", "seq", "INTEGER NOT NULL DEFAULT 0"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
