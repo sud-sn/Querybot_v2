@@ -1312,6 +1312,22 @@ def _run_migrations() -> None:
         # went to the model on this call, and did any data values go with it".
         ("llm_call_log", "egress_manifest", "TEXT NOT NULL DEFAULT ''"),
         ("kb_data_egress_log", "request_id", "TEXT NOT NULL DEFAULT ''"),
+        # v39: the portal language this user reads and writes in. NOT NULL with
+        # a default so every existing row is backfilled and no read needs a
+        # None guard.
+        #
+        # Default 'en', deliberately, even though the first client for this is
+        # French: 'fr' as the column default would silently flip every existing
+        # tenant on upgrade. A per-client default belongs on `client`, later.
+        #
+        # No CHECK constraint. SQLite enforces one on ADD COLUMN but cannot drop
+        # it, so a third language would need a table rebuild; set_user_language
+        # validates instead.
+        #
+        # Declared HERE ONLY, not in _SCHEMA. init_db() runs migrations on fresh
+        # databases too -- that is how last_active_at (v36) reaches a brand-new
+        # DB -- and two definitions of one column drift.
+        ("portal_user", "lang", "TEXT NOT NULL DEFAULT 'en'"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

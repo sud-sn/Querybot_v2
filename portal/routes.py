@@ -39,15 +39,75 @@ from core.chart import detect_chart_type, build_chart_payload, build_chart_annot
 from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
 from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
+from core.i18n import catalogue_for, translator_for
 
 log = logging.getLogger("querybot.portal")
 
 router    = APIRouter(prefix="/portal")
 templates = Jinja2Templates(
-    directory=str(Path(__file__).parent / "templates")
+    directory=str(Path(__file__).parent / "templates"),
+    # Portal only. admin/ has its own Jinja2Templates and its own ~1546 strings,
+    # which stay out of scope for free by not registering this there.
+    context_processors=[lambda request: _language_context(request)],
 )
 
 _COOKIE = "qb_portal_session"  # different from admin cookie
+
+# The portal language, mirrored out of portal_user.lang into a plain cookie.
+#
+# Two readers, deliberately, because they have different needs. The PIPELINE
+# reads portal_user["lang"] -- the row is authoritative and is already loaded on
+# every answer path. The PAGE CHROME reads this cookie, because the alternative
+# is one extra store.get_user() on every render (there is no middleware and
+# nothing populates request.state), and because the login and registration pages
+# render with no user in context at all: without the cookie a French customer
+# would meet an English login screen every single time, which is the first
+# screen they ever see.
+#
+# Not httponly: the inline scripts read it to pick their own strings.
+_LANG_COOKIE = "qb_lang"
+_LANG_COOKIE_MAX_AGE = 31536000  # one year
+
+
+def _set_language_cookie(resp, request: Request, lang: str) -> None:
+    resp.set_cookie(
+        _LANG_COOKIE,
+        store.normalise_language(lang),
+        max_age=_LANG_COOKIE_MAX_AGE,
+        samesite="lax",
+        secure=_cookie_secure(request),
+    )
+
+
+def _request_language(request: Request) -> str:
+    """The language this page should render in.
+
+    Cookie first, then the browser's Accept-Language, then English. A user who
+    has never chosen gets their browser's preference on the login screen, which
+    is the only signal available before they authenticate.
+    """
+    cookie = request.cookies.get(_LANG_COOKIE)
+    if cookie:
+        return store.normalise_language(cookie)
+    header = request.headers.get("accept-language") or ""
+    for part in header.split(","):
+        tag = store.normalise_language(part.split(";")[0])
+        if tag != "en":
+            return tag
+    return "en"
+
+
+def _language_context(request: Request) -> dict:
+    """Injected into every portal template render.
+
+    Registered as a Jinja2Templates context processor so none of the ~24 _resp
+    call sites change. Note the consequence: Starlette applies context
+    processors AFTER the route's own context, so a processor key WINS over a
+    route-supplied one. No route supplies these today; if one ever needs to, it
+    has to be renamed rather than passed here.
+    """
+    lang = _request_language(request)
+    return {"lang": lang, "i18n_catalogue": catalogue_for(lang), "t": translator_for(lang)}
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -702,10 +762,56 @@ async def portal_login_submit(
     if user.get("is_temp_pw"):
         resp = RedirectResponse("/portal/change-password?forced=1", status_code=303)
         _set_portal_cookie(resp, request, user["id"])
+        _set_language_cookie(resp, request, (user or {}).get("lang"))
         return resp
 
     resp = RedirectResponse("/portal/dashboard", status_code=303)
     _set_portal_cookie(resp, request, user["id"])
+    # The row is authoritative; refresh the chrome cookie from it on every
+    # login so a preference set on one device follows the user to the next.
+    _set_language_cookie(resp, request, (user or {}).get("lang"))
+    return resp
+
+
+@router.post("/api/language")
+async def portal_set_language(request: Request):
+    """Set the signed-in user's portal language.
+
+    Writes the row (authoritative, read by the answer pipeline) and the cookie
+    (read by the page chrome, and the only signal the pre-auth pages have).
+    Accepts either JSON or a form post so the switcher works with or without
+    JavaScript.
+    """
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    requested = ""
+    try:
+        body = await request.json()
+        requested = str((body or {}).get("lang") or "")
+    except Exception:
+        try:
+            requested = str((await request.form()).get("lang") or "")
+        except Exception:
+            requested = ""
+
+    try:
+        stored = store.set_user_language(user["id"], requested)
+    except Exception as exc:
+        # The exact failure on a deployment where the v39 ALTER did not run.
+        # store/db.py logs a failed migration at debug and continues, so the
+        # app boots with the column missing and this is the first place anyone
+        # would notice. Say so rather than returning a misleading 200.
+        log.error("Language preference could not be stored: %s", exc, exc_info=True)
+        return JSONResponse(
+            {"error": "unavailable",
+             "detail": "The language preference could not be saved."},
+            status_code=503,
+        )
+
+    resp = JSONResponse({"lang": stored})
+    _set_language_cookie(resp, request, stored)
     return resp
 
 

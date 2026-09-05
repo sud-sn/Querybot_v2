@@ -333,6 +333,35 @@ def get_allowed_tables(user: dict) -> Optional[set[str]]:
     return tables if tables else set()  # empty set = no access
 
 
+# The portal languages this build ships. Anything else is refused rather than
+# stored, because the column carries no CHECK constraint by design.
+SUPPORTED_LANGUAGES = ("en", "fr")
+
+
+def normalise_language(value) -> str:
+    """A supported language tag, or "en".
+
+    Accepts "fr-FR"/"FR" as "fr" so a browser Accept-Language header or a stale
+    cookie cannot put an unsupported value into the column.
+    """
+    tag = str(value or "").strip().lower().replace("_", "-").split("-")[0]
+    return tag if tag in SUPPORTED_LANGUAGES else "en"
+
+
+def set_user_language(user_id: int, lang: str) -> str:
+    """Persist the user's portal language and return what was actually stored.
+
+    Separate from update_user because that builds its SET clause from a
+    four-field whitelist and silently ignores anything else -- a language
+    passed to it would look accepted and never be written.
+    """
+    stored = normalise_language(lang)
+    with get_db() as conn:
+        conn.execute("UPDATE portal_user SET lang=? WHERE id=?", (stored, int(user_id)))
+        conn.commit()
+    return stored
+
+
 def touch_user_activity(user_id: int, *, gap_minutes: int = 30) -> bool:
     """
     Update last_active_at for the portal user and return whether this message
