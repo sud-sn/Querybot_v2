@@ -313,8 +313,16 @@ class TestChartResizeObserver(unittest.TestCase):
 class TestDashboardMaximize(unittest.TestCase):
 
     def test_expand_button_present(self):
-        tmpl = _read(DASH_TMPL)
-        self.assertIn("⤢ Expand", tmpl)
+        # The label moved into the message catalogue, so the source now holds
+        # it whatever renders. Assert the rendered button instead -- which also
+        # covers the fact that it is only drawn on a card that can expand.
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+        from dashboard_render import CHART, render, visible
+
+        markup = visible(render(charts=[CHART]))
+        self.assertIn("⤢ Expand", markup)
+        self.assertIn("openChartModal(this.closest('.chart-card'))", markup)
 
     def test_openChartModal_function_present(self):
         tmpl = _read(DASH_TMPL)

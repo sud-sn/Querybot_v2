@@ -180,9 +180,17 @@ def test_portal_has_ana_style_split_workspace_contract():
     assert "citation-strip" in chat
     assert "@media(max-width:820px)" in chat
 
+    # Rendered, not grepped: these labels live in the message catalogue now,
+    # and the catalogue is injected into the page as JSON -- so a source grep
+    # would pass whether or not the drawers render.
+    import sys
+    sys.path.insert(0, str(ROOT / "tests"))
+    from dashboard_render import CHART, render, visible
+
+    dashboard_markup = visible(render(charts=[CHART]))
+    assert "Revision history" in dashboard_markup
+    assert "Data sources" in dashboard_markup
     dashboard = (ROOT / "portal/templates/portal_dashboard.html").read_text(encoding="utf-8")
-    assert "Revision history" in dashboard
-    assert "Data sources" in dashboard
     assert "sortDashboardTable" in dashboard
 
 

@@ -404,7 +404,17 @@ class RouteRegistrationTests(unittest.TestCase):
         client_detail_html = _read("admin/templates/client_detail.html")
 
         self.assertIn("get_monthly_token_status", portal_src)
-        self.assertIn("Remaining tokens", dashboard_html)
+        # Rendered, not grepped. The label is in the message catalogue now and
+        # the catalogue is injected into the page as JSON, so a source grep
+        # would be true no matter what the page showed -- and this test exists
+        # to prove the portal SHOWS the same allowance admin does.
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from dashboard_render import CHART, render, visible
+
+        rendered = visible(render(charts=[CHART]))
+        self.assertIn("Remaining tokens", rendered)
+        self.assertIn("900K", rendered)          # token_status.remaining_label
         self.assertIn("remaining_label", dashboard_html)
         self.assertIn("token_limit_monthly", store_src)
         self.assertIn("Monthly token limit", client_detail_html)
@@ -420,7 +430,13 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("def _query_limit_status", portal_src)
         self.assertIn('"/api/query-limit-status"', portal_src)
         self.assertIn("get_monthly_query_count", portal_src)
-        self.assertIn("Query limit", dashboard_html)
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from dashboard_render import CHART, render, visible
+
+        rendered = visible(render(charts=[CHART]))
+        self.assertIn("Query limit", rendered)
+        self.assertIn("497", rendered)           # query_status.remaining_label
         self.assertIn("query_status.remaining_label", dashboard_html)
         self.assertIn("query-kpi-pill", chat_html)
         self.assertIn("refreshQueryLimitStatus", chat_html)
@@ -518,11 +534,20 @@ class RouteRegistrationTests(unittest.TestCase):
         dashboard_html = _read("portal/templates/portal_dashboard.html")
         kb_html = _read("portal/templates/portal_kb.html")
 
-        self.assertIn("Browse Semantic Layer", dashboard_html)
-        self.assertIn("View Semantic Layer", dashboard_html)
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from dashboard_render import CHART, render, visible
+
+        # Both labels appear on different states of the page: "View Semantic
+        # Layer" on the table-access card, "Browse Semantic Layer" only in the
+        # no-visuals empty state.
+        with_charts = visible(render(charts=[CHART]))
+        empty = visible(render(charts=[]))
+        self.assertIn("View Semantic Layer", with_charts)
+        self.assertIn("Browse Semantic Layer", empty)
         self.assertIn("live Semantic Layer directly", kb_html)
-        self.assertNotIn("Browse Knowledge Base", dashboard_html)
-        self.assertNotIn("View KB docs", dashboard_html)
+        self.assertNotIn("Browse Knowledge Base", with_charts)
+        self.assertNotIn("View KB docs", with_charts)
 
     def test_business_terms_box_wired_end_to_end(self):
         """Business terms: portal input -> route -> store -> admin review

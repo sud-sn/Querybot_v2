@@ -910,7 +910,13 @@ class TestDashboardMaximizeModal(unittest.TestCase):
     """Maximize button + fullscreen modal."""
 
     def test_expand_button_present(self):
-        self.assertIn("⤢ Expand", _src(DASH_TMPL))
+        # Rendered, not grepped: the label is in the catalogue now, which is
+        # injected into the page as JSON.
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        from dashboard_render import CHART, render, visible
+
+        self.assertIn("⤢ Expand", visible(render(charts=[CHART])))
 
     def test_open_modal_function(self):
         self.assertIn("function openChartModal", _src(DASH_TMPL))

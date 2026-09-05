@@ -174,7 +174,11 @@ class TestTheCatalogueIsWellFormed:
     # Ids whose two languages legitimately coincide. Every entry here is a word
     # that is spelled the same in French, and listing them explicitly is what
     # makes the test below able to catch a copy-paste that was never translated.
-    IDENTICAL_BY_DESIGN = {"ui.pin.description_label"}
+    IDENTICAL_BY_DESIGN = {
+        "ui.pin.description_label",
+        "ui.dash.version",              # "Version" is the same word
+        "ui.enum.charttype.kpi",        # an international acronym
+    }
 
     def test_french_is_actually_french(self):
         """A guard against a catalogue whose 'fr' entries were copied from 'en'

@@ -80,7 +80,36 @@ def _chart(**overrides) -> dict:
     return base
 
 
-def _render(charts=None, *, can_edit=True, dashboards=True) -> str:
+class _URL:
+    path = "/portal/dashboard"
+
+
+class _Req:
+    """Enough of a Request for the language context processor and the base
+    template. cookies/headers are what _request_language actually reads."""
+
+    url = _URL()
+    query_params: dict = {}
+
+    def __init__(self, lang=None):
+        self.cookies = {"qb_lang": lang} if lang else {}
+        self.headers = {}
+
+
+def _language_context(lang=None) -> dict:
+    """The language keys a real render gets, built by the PRODUCTION function.
+
+    Not a hand-written fixture: portal.routes registers _language_context as a
+    Jinja context processor, and a direct env.render() does not run it. Calling
+    the real one means the fixture cannot drift from what the page is served.
+    """
+    import portal.routes as pr
+
+    return pr._language_context(_Req(lang))
+
+
+def _render(charts=None, *, can_edit=True, dashboards=True, lang=None,
+            artifact=None, library=None) -> str:
     from jinja2 import ChainableUndefined
 
     import portal.routes as pr
@@ -88,7 +117,7 @@ def _render(charts=None, *, can_edit=True, dashboards=True) -> str:
     env = pr.templates.env
     previous, env.undefined = env.undefined, ChainableUndefined
     try:
-        artifact = {
+        artifact = artifact if artifact is not None else {
             "id": 5, "name": "Pharmacy performance", "description": "",
             "status": "published", "visibility": "team", "version": 3,
             "can_edit": 1 if can_edit else 0, "refresh_schedule": "daily",
@@ -97,19 +126,15 @@ def _render(charts=None, *, can_edit=True, dashboards=True) -> str:
             "published_at": "", "thread_id": "t", "user_id": 1, "account_id": "a",
         }
 
-        class _URL:
-            path = "/portal/dashboard"
-
-        class _Req:
-            url = _URL(); cookies = {}; headers = {}; query_params = {}
 
         return env.get_template("portal_dashboard.html").render(
-            request=_Req(),
+            request=_Req(lang),
             user={"id": 1, "name": "Ada Lovelace", "account_id": "a", "role": "analyst"},
             client={"client_name": "Acme"},
             charts=charts if charts is not None else [],
-            dashboard_artifact=artifact,
-            dashboards=[dict(artifact, chart_count=2)] if dashboards else [],
+            dashboard_artifact=artifact or None,
+            dashboards=library if library is not None else (
+                [dict(artifact, chart_count=2)] if (artifact and dashboards) else []),
             dashboard_filters=[], dashboard_sources=[], dashboard_tabs=["Overview"],
             dashboard_versions=[], dashboard_subscription=None,
             selected_tab="Overview", welcome=False,
@@ -119,7 +144,7 @@ def _render(charts=None, *, can_edit=True, dashboards=True) -> str:
             token_status={"limit": 1, "limit_label": "1M", "limit_pct": 1,
                           "remaining": 1, "remaining_label": "900K",
                           "total_tokens": 1, "unlimited": False, "used_label": "100K"},
-            lang="en",
+            **_language_context(lang),
         )
     finally:
         env.undefined = previous
@@ -202,7 +227,7 @@ class TestTheTableTile:
     def test_cells_render_the_formatted_value_not_the_raw_float(self):
         markup = _render([self._table_chart()])
         assert "$1,234.50" in markup
-        assert ">1234.5<" not in markup
+        assert ">1234.5<" not in _visible(markup)
 
     def test_cells_carry_the_raw_value_for_sorting(self):
         markup = _render([self._table_chart()])
@@ -213,7 +238,7 @@ class TestTheTableTile:
         assert "Showing 1 of 5000 rows" in markup
 
     def test_an_untruncated_tile_does_not(self):
-        assert "Showing" not in _render([self._table_chart()])
+        assert "Showing" not in _visible(_render([self._table_chart()]))
 
     def test_the_sort_button_keeps_a_focus_ring(self):
         """It was style="all:unset", which also unset the outline -- and it is
@@ -240,7 +265,7 @@ class TestTheCardChrome:
             _chart(chart_type="table", table_columns=["a"],
                    table_rows=[{"a": {"d": "1", "v": 1}}]),
         ):
-            assert "⤢ Expand" not in _render([dead])
+            assert "Expand</button>" not in _visible(_render([dead]))
 
     def _title_element(self, markup: str) -> str:
         start = markup.index('<div class="chart-card-title')
@@ -266,7 +291,7 @@ class TestTheCardChrome:
         build_chart_payload then recovers a real type -- so the card announced
         AUTO above a rendered area chart."""
         markup = _render([_chart(chart_type="auto", chart_json='{"type":"area"}')])
-        assert ">AUTO<" not in markup
+        assert ">AUTO<" not in _visible(markup)
         assert ">CHART<" in markup
 
     def test_a_real_stored_type_is_still_shown(self):
@@ -475,6 +500,18 @@ JSON.stringify({{rendered: _rendered, failed: _failed,
 # The redesign
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _visible(markup: str) -> str:
+    """The page's markup with its <script> blocks removed.
+
+    The message catalogue is injected as `const I18N = {...}`, so EVERY English
+    string is present in the page source regardless of what renders. Any
+    assertion of the form "this text is not on the page" has to look at the
+    markup only, or it passes forever -- which is precisely the false assurance
+    this file exists to avoid.
+    """
+    return re.sub(r"<script\b.*?</script>", " ", markup, flags=re.S | re.I)
+
+
 def _headings(markup: str) -> list[tuple[str, str]]:
     return [(m.group(1), re.sub(r"<[^>]+>", "", m.group(2)).strip())
             for m in re.finditer(r"<(h[1-3])[^>]*>(.*?)</\1>", markup, re.S)]
@@ -491,41 +528,16 @@ class TestThePageLeadsWithTheDashboard:
 
     def test_the_generic_heading_is_gone_when_a_dashboard_is_open(self):
         markup = _render([_chart(chart_json='{"type":"bar"}')])
-        assert "<h1>Dashboards</h1>" not in markup
+        assert ">Dashboards</h1>" not in _visible(markup)
 
     def test_the_library_view_still_leads_with_dashboards(self):
         """On the library view the account IS the subject, so it keeps the
         generic heading and the KPI strip up front."""
-        from jinja2 import ChainableUndefined
-
-        import portal.routes as pr
-        env = pr.templates.env
-        previous, env.undefined = env.undefined, ChainableUndefined
-        try:
-            class _URL:
-                path = "/portal/dashboard"
-
-            class _Req:
-                url = _URL(); cookies = {}; headers = {}; query_params = {}
-
-            markup = env.get_template("portal_dashboard.html").render(
-                request=_Req(),
-                user={"id": 1, "name": "Ada", "account_id": "a", "role": "analyst"},
-                client={"client_name": "Acme"}, charts=[], dashboard_artifact=None,
-                dashboards=[{"id": 5, "name": "Ops", "status": "published",
-                             "version": 2, "chart_count": 3, "can_edit": 1}],
-                dashboard_filters=[], dashboard_sources=[], dashboard_tabs=[],
-                dashboard_versions=[], dashboard_subscription=None,
-                selected_tab="Overview", welcome=False, allowed_tables=["DW.SALES"],
-                group_tables=[], monthly_count=1,
-                query_status={"blocked": False, "warning": "", "limit_label": "1",
-                              "limit_pct": 1, "remaining_label": "1", "used_label": "1"},
-                token_status={"unlimited": True, "limit_pct": 1, "remaining_label": "—",
-                              "used_label": "0", "limit_label": "0"},
-                lang="en",
-            )
-        finally:
-            env.undefined = previous
+        markup = _render(
+            [], artifact={},
+            library=[{"id": 5, "name": "Ops", "status": "published",
+                      "version": 2, "chart_count": 3, "can_edit": 1}],
+        )
         assert _headings(markup)[0] == ("h1", "Dashboards")
         assert "Ops" in markup
 
@@ -545,40 +557,14 @@ class TestTheUnpublishedTeamDashboardIsVisible:
     from every teammate's portal. The page said nothing, and publishing was a
     chat command only."""
 
-    def _render_status(self, status, visibility, can_edit=True):
-        from jinja2 import ChainableUndefined
-
-        import portal.routes as pr
-        env = pr.templates.env
-        previous, env.undefined = env.undefined, ChainableUndefined
-        try:
-            class _URL:
-                path = "/portal/dashboard"
-
-            class _Req:
-                url = _URL(); cookies = {}; headers = {}; query_params = {}
-
-            return env.get_template("portal_dashboard.html").render(
-                request=_Req(),
-                user={"id": 1, "name": "Ada", "account_id": "a", "role": "analyst"},
-                client={"client_name": "Acme"},
-                charts=[_chart(chart_json='{"type":"bar"}')],
-                dashboard_artifact={"id": 5, "name": "Ops", "status": status,
-                                    "visibility": visibility, "version": 3,
-                                    "can_edit": 1 if can_edit else 0,
-                                    "refresh_schedule": "daily", "thread_id": "t"},
-                dashboards=[], dashboard_filters=[], dashboard_sources=[],
-                dashboard_tabs=["Overview"], dashboard_versions=[],
-                dashboard_subscription=None, selected_tab="Overview", welcome=False,
-                allowed_tables=[], group_tables=[], monthly_count=1,
-                query_status={"blocked": False, "warning": "", "limit_label": "1",
-                              "limit_pct": 1, "remaining_label": "1", "used_label": "1"},
-                token_status={"unlimited": True, "limit_pct": 1, "remaining_label": "—",
-                              "used_label": "0", "limit_label": "0"},
-                lang="en",
-            )
-        finally:
-            env.undefined = previous
+    def _render_status(self, status, visibility, can_edit=True, lang=None):
+        return _render(
+            [_chart(chart_json='{"type":"bar"}')], lang=lang, library=[],
+            artifact={"id": 5, "name": "Ops", "status": status,
+                      "visibility": visibility, "version": 3,
+                      "can_edit": 1 if can_edit else 0,
+                      "refresh_schedule": "daily", "thread_id": "t"},
+        )
 
     def test_a_draft_team_dashboard_says_teammates_cannot_see_it(self):
         markup = self._render_status("draft", "team")
@@ -587,17 +573,17 @@ class TestTheUnpublishedTeamDashboardIsVisible:
 
     def test_a_published_team_dashboard_says_nothing(self):
         markup = self._render_status("published", "team")
-        assert "teammates cannot see" not in markup.lower()
-        assert "/publish" not in markup
+        assert "teammates cannot see" not in _visible(markup).lower()
+        assert "/publish" not in _visible(markup)
 
     def test_a_personal_draft_says_nothing(self):
         """A personal dashboard has no audience to lose."""
         markup = self._render_status("draft", "personal")
-        assert "teammates cannot see" not in markup.lower()
+        assert "teammates cannot see" not in _visible(markup).lower()
 
     def test_a_viewer_who_cannot_edit_is_not_asked_to_publish(self):
         markup = self._render_status("draft", "team", can_edit=False)
-        assert "/publish" not in markup
+        assert "/publish" not in _visible(markup)
 
     def test_the_status_is_a_pill_not_a_run_on_sentence(self):
         markup = self._render_status("draft", "team")
@@ -691,3 +677,131 @@ class TestLandmarksAndTableSemantics:
         assert "translateY(-1px)" not in body
         assert "shadow-md" not in body
         assert "linear-gradient(135deg" not in body
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# French
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestThePageRendersInFrench:
+
+    def test_the_dashboard_header_is_french(self):
+        markup = _visible(_render([_chart(chart_json='{"type":"bar"}')], lang="fr"))
+        assert "Tableau de bord" in markup            # the kicker
+        assert "Discuter du tableau de bord" in markup
+        assert "Chat with dashboard" not in markup
+
+    def test_the_empty_state_is_french(self):
+        markup = _visible(_render([], lang="fr"))
+        assert "Aucun visuel dans ce tableau de bord" in markup
+
+    def test_the_workspace_drawer_is_french(self):
+        markup = _visible(_render([_chart(chart_json='{"type":"bar"}')], lang="fr"))
+        assert "Jetons restants" in markup            # was "Remaining tokens"
+        assert "Limite de requêtes" in markup         # was "Query limit"
+        assert "Remaining tokens" not in markup
+
+    def test_no_english_label_survives_on_a_french_page(self):
+        markup = _visible(_render([_chart(chart_json='{"type":"bar"}')], lang="fr"))
+        for literal in ("Dashboard artifact", "Read only", "Subscribe",
+                        "Apply filters", "Live governed data", "Remove",
+                        "Queries this month", "Tables access",
+                        "Workspace usage and table access"):
+            assert literal not in markup, f"still English: {literal!r}"
+
+
+class TestServerEnumsAreTranslatedNotCapitalised:
+    """|capitalize cannot translate, and it also mangles whatever case the
+    database happens to hold."""
+
+    def test_status_and_visibility(self):
+        markup = _visible(_render([_chart(chart_json='{"type":"bar"}')], lang="fr"))
+        assert "Publié" in markup
+        assert "Équipe" in markup
+        assert ">Published<" not in markup
+
+    def test_the_refresh_schedule_agrees_in_gender(self):
+        """French adjectives agree with the noun. "Actualisation quotidienne",
+        not "Actualisation quotidien" -- which is why the schedule has its own
+        enum group rather than sharing the cadence one."""
+        markup = _visible(_render([_chart(chart_json='{"type":"bar"}')], lang="fr"))
+        assert "Actualisation quotidienne" in markup
+
+    def test_an_unknown_enum_value_never_renders_as_a_message_id(self):
+        """These come from the database. A new status must not put
+        "ui.enum.status.archived" on a customer's screen."""
+        from core import i18n
+        assert i18n.enum_label("status", "archived", lang="fr") == "Archived"
+        assert i18n.enum_label("status", "", lang="fr") == ""
+
+    def test_the_chart_badge_translates_but_keeps_the_acronym(self):
+        table = _chart(chart_type="table", table_columns=["a"],
+                       table_rows=[{"a": {"d": "1", "v": 1}}])
+        assert ">TABLEAU<" in _visible(_render([table], lang="fr"))
+        kpi = _chart(chart_type="kpi", kpi={"label": "x", "value": 1}, kpi_display="1")
+        assert ">KPI<" in _visible(_render([kpi], lang="fr"))
+
+
+class TestCountsUseTheRightPluralRule:
+    """The page had the rule inline as `{% if n != 1 %}s{% endif %}`, which is
+    right for English and wrong for French: French takes the SINGULAR at zero,
+    so that markup rendered "0 visuels"."""
+
+    def test_french_treats_zero_as_singular(self):
+        from core import i18n
+        assert i18n.plural("ui.dash.visuals", 0, lang="fr") == "0 visuel"
+        assert i18n.plural("ui.dash.visuals", 1, lang="fr") == "1 visuel"
+        assert i18n.plural("ui.dash.visuals", 2, lang="fr") == "2 visuels"
+
+    def test_english_does_not(self):
+        from core import i18n
+        assert i18n.plural("ui.dash.visuals", 0, lang="en") == "0 visuals"
+        assert i18n.plural("ui.dash.visuals", 1, lang="en") == "1 visual"
+
+    def test_it_reaches_the_rendered_row_count(self):
+        one = _visible(_render([_chart(row_count=1, chart_json='{"type":"bar"}')], lang="fr"))
+        many = _visible(_render([_chart(row_count=12, chart_json='{"type":"bar"}')], lang="fr"))
+        assert "1 ligne" in one and "1 lignes" not in one
+        assert "12 lignes" in many
+
+    def test_a_non_numeric_count_does_not_raise(self):
+        """row_count comes off a database row and this runs inside a render."""
+        from core import i18n
+        assert i18n.plural("ui.dash.visuals", None, lang="fr")
+        assert i18n.plural("ui.dash.visuals", "many", lang="en")
+
+
+class TestTheAccountBlockExistsOnce:
+
+    def test_it_is_a_macro_not_two_copies(self):
+        """The restructure left the KPI strip and table-access card rendered
+        twice -- once in the dashboard view's drawer and once on the library
+        view -- which would have meant translating and maintaining both."""
+        source = TEMPLATE.read_text(encoding="utf-8")
+        assert source.count('<div class="metrics">') == 1
+        assert "{% macro workspace_usage(" in source
+
+    def test_both_views_still_show_it(self):
+        dashboard_view = _visible(_render([_chart(chart_json='{"type":"bar"}')]))
+        library_view = _visible(_render([], artifact={}, library=[]))
+        for markup in (dashboard_view, library_view):
+            assert "Remaining tokens" in markup
+            assert "Query limit" in markup
+
+
+class TestTheTranslatorIsNotShadowedInTheScript:
+
+    def test_the_chart_type_buttons_call_the_translator(self):
+        """`DASH_TYPES.map(t => ...)` shadowed the page's own t() inside the
+        template literal, so calling t('ui.enum...') there would have invoked
+        the loop variable -- a string -- as a function."""
+        source = TEMPLATE.read_text(encoding="utf-8")
+        script = source[source.index("<script>"):]
+        assert "DASH_TYPES.filter(t =>" not in script
+        assert "DASH_TYPES.filter(kind =>" in script
+        assert script.count("t('ui.enum.charttype.' + kind)") == 2
+
+    def test_the_page_has_an_html_escaper_now(self):
+        """Every innerHTML on this page was built without one."""
+        source = TEMPLATE.read_text(encoding="utf-8")
+        assert "function escHtmlDash(" in source

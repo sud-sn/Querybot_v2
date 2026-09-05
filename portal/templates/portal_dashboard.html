@@ -12,16 +12,67 @@
 <link rel="stylesheet" href="/static/css/dashboard.css?v=20260905-1">
 {% endblock %}
 {% block content %}
+{% macro workspace_usage(user, charts, monthly_count, query_status,
+                        token_status, allowed_tables, t, plural) %}
+<div class="metrics">
+  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_visuals') }}</div><div class="metric-value">{{ charts|length }}</div></div>
+  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_queries') }}</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
+  <div class="metric">
+    <div class="metric-label">{{ t('ui.dash.kpi_query_limit') }}</div>
+    <div class="metric-value" style="font-size:var(--font-xl);color:{% if query_status.blocked %}var(--danger){% elif query_status.warning %}var(--warning){% else %}var(--success){% endif %}">
+      {{ t('ui.dash.kpi_left', count=query_status.remaining_label) }}
+    </div>
+    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
+      {{ t('ui.dash.kpi_used', used=query_status.used_label, limit=query_status.limit_label) }}
+    </div>
+    <div class="metric-progress {% if query_status.blocked %}blocked{% elif query_status.warning %}warning{% endif %}">
+      <span style="width:{{ query_status.limit_pct }}%"></span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">{{ t('ui.dash.kpi_tokens') }}</div>
+    <div class="metric-value" style="font-size:var(--font-xl);color:{% if token_status.unlimited or token_status.limit_pct < 80 %}var(--success){% else %}var(--warning){% endif %}">
+      {{ token_status.remaining_label }}
+    </div>
+    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
+      {% if token_status.unlimited %}{{ t('ui.dash.kpi_no_cap') }}{% else %}{{ t('ui.dash.kpi_used', used=token_status.used_label, limit=token_status.limit_label) }}{% endif %}
+    </div>
+  </div>
+  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_group') }}</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
+  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_tables') }}</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}{{ t('ui.dash.kpi_all') }}{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
+</div>
+
+{% if query_status.blocked %}
+{{ alert(t('ui.dash.limit_reached', used=query_status.used_label, limit=query_status.limit_label), 'error', 'x-circle') }}
+{% elif query_status.warning %}
+{{ alert(t('ui.dash.limit_warning', used=query_status.used_label, limit=query_status.limit_label), 'amber', 'exclamation-triangle') }}
+{% endif %}
+
+{% if allowed_tables %}
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header">
+    <h2>{{ t('ui.dash.table_access', count=allowed_tables|length) }}</h2>
+    <a href="/portal/kb" class="btn btn-secondary btn-sm">{{ t('ui.dash.view_semantic') }}</a>
+  </div>
+  <div class="card-body" style="padding:.875rem 1.25rem">
+    {% for t in allowed_tables %}<span class="table-pill">{{ t }}</span>{% endfor %}
+  </div>
+</div>
+{% elif allowed_tables is not none and allowed_tables|length == 0 %}
+<div class="alert alert-amber">{{ t('ui.dash.no_group') }}</div>
+{% endif %}
+{% endmacro %}
+
 
 <div class="dashboard-page" data-dashboard-user="{{ user.id if user.id is defined else user.name }}">
 
 {% if welcome %}
 <div class="welcome-banner">
   <div>
-    <div style="font-size:20px;font-weight:800;margin-bottom:4px">Welcome to QueryBot, {{ user.name.split()[0] }}</div>
-    <div style="opacity:.9;font-size:var(--font-base)">Your account is ready. Add governed results to named dashboards and refresh them with live data.</div>
+    <div class="welcome-banner-title">{{ t('ui.dash.welcome', name=user.name.split()[0]) }}</div>
+    <div style="opacity:.9;font-size:var(--font-base)">{{ t('ui.dash.welcome_body') }}</div>
   </div>
-  <a href="/portal/chat" class="btn btn-secondary btn-sm" style="flex-shrink:0">Open chat →</a>
+  <a href="/portal/chat" class="btn btn-secondary btn-sm" style="flex-shrink:0">{{ t('ui.dash.open_chat_arrow') }}</a>
 </div>
 {% endif %}
 
@@ -34,31 +85,31 @@
    was organised around the account rather than around the thing you opened. #}
 <header class="dash-header">
   <div>
-    <div class="dash-header-kicker">Dashboard artifact</div>
+    <div class="dash-header-kicker">{{ t('ui.dash.kicker') }}</div>
     <h1>{{ dashboard_artifact.name }}</h1>
     <div class="dash-header-meta">
-      <span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ dashboard_artifact.status|capitalize }}</span>
-      <span>Version {{ dashboard_artifact.version }}</span>
+      <span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ enum_label('status', dashboard_artifact.status) }}</span>
+      <span>{{ t('ui.dash.version', version=dashboard_artifact.version) }}</span>
       <span aria-hidden="true">·</span>
-      <span>{{ dashboard_artifact.visibility|capitalize }}</span>
+      <span>{{ enum_label('visibility', dashboard_artifact.visibility) }}</span>
       <span aria-hidden="true">·</span>
-      <span>{{ dashboard_artifact.refresh_schedule|capitalize }} refresh</span>
-      {% if not _editable %}<span aria-hidden="true">·</span><span>Read only</span>{% endif %}
+      <span>{{ t('ui.dash.refresh', schedule=enum_label('schedule', dashboard_artifact.refresh_schedule)|lower) }}</span>
+      {% if not _editable %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.read_only') }}</span>{% endif %}
     </div>
   </div>
   <div class="dash-header-actions">
     {% if dashboard_subscription %}
     <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe" style="margin:0">
-      <button class="btn btn-secondary" type="submit" title="Stop following this dashboard">Following · {{ dashboard_subscription.cadence|capitalize }}</button>
+      <button class="btn btn-secondary" type="submit" title="{{ t('ui.dash.unfollow_hint') }}">{{ t('ui.dash.following', cadence=enum_label('cadence', dashboard_subscription.cadence)) }}</button>
     </form>
     {% else %}
     <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" style="margin:0;display:flex;gap:.4rem">
-      <select name="cadence" aria-label="Dashboard subscription cadence" style="min-width:92px;padding:.45rem .55rem"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+      <select name="cadence" aria-label="{{ t('ui.dash.cadence_label') }}" style="min-width:92px;padding:.45rem .55rem"><option value="daily">{{ enum_label('cadence','daily') }}</option><option value="weekly">{{ enum_label('cadence','weekly') }}</option><option value="monthly">{{ enum_label('cadence','monthly') }}</option></select>
       <input type="hidden" name="channel" value="in_app">
-      <button class="btn btn-secondary" type="submit">Subscribe</button>
+      <button class="btn btn-secondary" type="submit">{{ t('ui.dash.subscribe') }}</button>
     </form>
     {% endif %}
-    <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-secondary">Chat with dashboard</a>
+    <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-secondary">{{ t('ui.dash.chat_with') }}</a>
   </div>
 </header>
 
@@ -70,30 +121,30 @@
 {% if _editable and _is_draft and dashboard_artifact.visibility == 'team' %}
 <div class="dash-unpublished">
   <div style="flex:1;min-width:0">
-    <strong>Your teammates cannot see this dashboard.</strong>
-    It has unpublished changes, and a team dashboard is only visible to others while it is published.
+    <strong>{{ t('ui.dash.unpublished_title') }}</strong>
+    {{ t('ui.dash.unpublished_body') }}
   </div>
   <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/publish">
-    <button class="btn btn-primary btn-sm" type="submit">Publish</button>
+    <button class="btn btn-primary btn-sm" type="submit">{{ t('ui.dash.publish') }}</button>
   </form>
 </div>
 {% endif %}
 
-{% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="Dashboard tabs">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
+{% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="{{ t('ui.dash.tabs_label') }}">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
 
 {% if dashboard_filters %}
 <form class="dashboard-controls" method="get" action="/portal/dashboard">
   <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id }}"><input type="hidden" name="tab" value="{{ selected_tab }}">
-  {% for filter in dashboard_filters %}<div class="dashboard-filter"><label for="dashboard-filter-{{ loop.index0 }}">{{ filter.label or filter.field }}</label><input id="dashboard-filter-{{ loop.index0 }}" name="filter_{{ loop.index0 }}" value="{{ request.query_params.get('filter_' ~ loop.index0) or '' }}" placeholder="Filter {{ filter.field }}"></div>{% endfor %}
-  <button class="btn btn-primary" type="submit">Apply filters</button><a class="btn btn-secondary" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ selected_tab|urlencode }}">Clear</a>
+  {% for filter in dashboard_filters %}<div class="dashboard-filter"><label for="dashboard-filter-{{ loop.index0 }}">{{ filter.label or filter.field }}</label><input id="dashboard-filter-{{ loop.index0 }}" name="filter_{{ loop.index0 }}" value="{{ request.query_params.get('filter_' ~ loop.index0) or '' }}" placeholder="{{ t('ui.dash.filter_placeholder', field=filter.field) }}"></div>{% endfor %}
+  <button class="btn btn-primary" type="submit">{{ t('ui.dash.apply_filters') }}</button><a class="btn btn-secondary" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ selected_tab|urlencode }}">{{ t('ui.dash.clear') }}</a>
 </form>
 {% endif %}
 
 {% endif %}
 {% if charts %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
-  <h2 style="font-size:15px;font-weight:700">{{ selected_tab }} visuals</h2>
-  <span style="font-size:var(--font-sm);color:var(--gray-500)">{% if dashboard_artifact.can_edit %}Drag or resize to edit placement · {% endif %}Live governed data</span>
+  <h2 style="font-size:15px;font-weight:700">{{ t('ui.dash.tab_visuals', tab=selected_tab) }}</h2>
+  <span style="font-size:var(--font-sm);color:var(--gray-500)">{% if dashboard_artifact.can_edit %}{{ t('ui.dash.drag_hint') }} · {% endif %}{{ t('ui.dash.live_data') }}</span>
 </div>
 <div class="chart-grid">
   {% for chart in charts %}
@@ -110,30 +161,30 @@
            ondblclick, so a team viewer was told to double-click to rename and
            nothing happened. #}
         <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}"
-             {% if _can_edit %}title="Double-click to rename" ondblclick="startRenameChart(this, {{ chart.id }})"{% endif %}
+             {% if _can_edit %}title="{{ t('ui.dash.rename_hint') }}" ondblclick="startRenameChart(this, {{ chart.id }})"{% endif %}
              id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
-        <div class="chart-card-sub">{% if chart.table_truncated %}Showing {{ chart.table_shown }} of {{ chart.row_count }} rows{% else %}{{ chart.row_count }} rows{% endif %} · {% if chart.from_cache %}Protected cache {{ chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '' }}{% else %}Live governed refresh{% endif %}</div>
+        <div class="chart-card-sub">{% if chart.table_truncated %}{{ t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) }}{% else %}{{ plural('ui.dash.rows', chart.row_count) }}{% endif %} · {% if chart.from_cache %}{{ t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') }}{% else %}{{ t('ui.dash.live_refresh') }}{% endif %}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
-        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="Drag to reorder or resize from the card corner" aria-label="Drag chart to reorder">⋮⋮</button>{% endif %}
+        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="{{ t('ui.dash.drag_handle_title') }}" aria-label="{{ t('ui.dash.drag_handle_label') }}">⋮⋮</button>{% endif %}
         {# Only a card that HAS a chart node can expand: openChartModal does
            `querySelector('[data-chart]'); if (!node) return;`, so on error, KPI
            and table cards this was a button that did nothing and said nothing. #}
         {% if chart.chart_json %}<button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
-          title="Expand chart" style="font-size:var(--font-sm);padding:4px 8px">⤢ Expand</button>{% endif %}
+          title="{{ t('ui.dash.expand_title') }}" style="font-size:var(--font-sm);padding:4px 8px">⤢ {{ t('ui.dash.expand') }}</button>{% endif %}
         <form method="post" action="/portal/unpin" style="margin:0;display:none" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
           <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id if dashboard_artifact else 0 }}">
         </form>
         {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
-          onclick="unpinChart({{ chart.id }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>Remove</button>
+          onclick="unpinChart({{ chart.id }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>{{ t('ui.dash.remove') }}</button>
         {% endif %}
       </div>
     </div>
     <div class="chart-card-body">
       {% if chart.error %}
-      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
+      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:600;margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
       {% elif chart.kpi %}
       <div style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
         <div style="font-size:var(--font-sm);font-weight:700;color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
@@ -154,7 +205,7 @@
     had no try/catch, every chart AFTER it stayed a shimmering skeleton too. #}
       <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart="{{ chart.chart_json }}"><div class="skeleton skeleton-chart" data-chart-skeleton></div></div>
       {% else %}
-      <div class="chart-error">No data returned for this query.</div>
+      <div class="chart-error">{{ t('ui.dash.no_data') }}</div>
       {% endif %}
       {% for warning in chart.filter_warnings or [] %}<div class="chart-warning">{{ warning }}</div>{% endfor %}
       <div class="chart-meta">
@@ -163,7 +214,7 @@
     chosen, so the card announced AUTO above a rendered area chart. The JS
     overwrites this from the payload once the chart mounts; the server-side
     fallback below is only what shows before that. #}
-        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:700;color:var(--primary);flex-shrink:0">{% if chart.chart_type and chart.chart_type != 'auto' %}{{ chart.chart_type|upper }}{% elif chart.kpi %}KPI{% elif chart.table_rows %}TABLE{% else %}CHART{% endif %}</span>
+        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:700;color:var(--primary);flex-shrink:0">{% if chart.chart_type and chart.chart_type != 'auto' %}{{ enum_label('charttype', chart.chart_type)|upper }}{% elif chart.kpi %}{{ enum_label('charttype','kpi')|upper }}{% elif chart.table_rows %}{{ enum_label('charttype','table')|upper }}{% else %}{{ enum_label('charttype','chart')|upper }}{% endif %}</span>
       </div>
       {% if chart.chart_json and (not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
@@ -178,135 +229,43 @@
 {% elif dashboard_artifact %}
 <div class="empty-state">
   <div class="empty-state-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg></div>
-  <h3 class="empty-state-title">No visuals in this dashboard yet</h3>
-  <p class="empty-state-body">Ask QueryBot for an analysis, then use <strong>Add to dashboard</strong> and select this dashboard.</p>
+  <h3 class="empty-state-title">{{ t('ui.dash.empty_title') }}</h3>
+  <p class="empty-state-body">{{ t('ui.dash.empty_body') }}</p>
   <div class="empty-state-actions">
-    <a href="/portal/kb" class="btn btn-secondary">Browse Semantic Layer</a>
-    <a href="/portal/chat" class="btn btn-primary">Open Chat</a>
+    <a href="/portal/kb" class="btn btn-secondary">{{ t('ui.dash.browse_semantic') }}</a>
+    <a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a>
   </div>
 </div>
 {% elif not dashboards %}
-<div class="empty-state"><h3 class="empty-state-title">No dashboards yet</h3><p class="empty-state-body">Create an analysis in Chat and add the resulting KPI, chart, or table to a new named dashboard.</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">Open Chat</a></div></div>
+<div class="empty-state"><h3 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h3><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
 {% endif %}
 {# Provenance is a footnote to the charts, not a two-column block above
    them: it used to be the third thing on the page while the charts were
    the fifth. #}
-<section class="artifact-details" aria-label="Dashboard provenance">
-  <details class="artifact-detail"><summary>Data sources · {{ dashboard_sources|length }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ source.source_type|replace('_',' ')|capitalize }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>No reusable sources yet</span></div>{% endfor %}</div></details>
-  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>Revision history · {{ dashboard_versions|length }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">Restore</button></form>{% else %}<span>Current</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:800">Published team dashboard</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">You can view and filter this dashboard. Only its owner can edit or restore it.</div></div>{% endif %}
+<section class="artifact-details" aria-label="{{ t('ui.dash.provenance_label') }}">
+  <details class="artifact-detail"><summary>{{ t('ui.dash.sources', count=dashboard_sources|length) }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ enum_label('source', source.source_type) }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>{{ t('ui.dash.no_sources') }}</span></div>{% endfor %}</div></details>
+  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>{{ t('ui.dash.history', count=dashboard_versions|length) }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">{{ t('ui.dash.restore') }}</button></form>{% else %}<span>{{ t('ui.dash.current') }}</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:800">{{ t('ui.dash.published_team') }}</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">{{ t('ui.dash.published_team_body') }}</div></div>{% endif %}
 </section>
 
 {# The account's own numbers are context for the artifact above, not the
    headline. On the library view below they lead, because there they ARE
    the subject. #}
-<details class="artifact-detail" style="margin-bottom:1rem"><summary>Workspace usage and table access</summary><div style="margin-top:.9rem">
+<details class="artifact-detail" style="margin-bottom:1rem"><summary>{{ t('ui.dash.workspace_drawer') }}</summary><div style="margin-top:.9rem">
 
-<div class="metrics">
-  <div class="metric"><div class="metric-label">Dashboard visuals</div><div class="metric-value">{{ charts|length }}</div></div>
-  <div class="metric"><div class="metric-label">Queries this month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
-  <div class="metric">
-    <div class="metric-label">Query limit</div>
-    <div class="metric-value" style="font-size:var(--font-xl);color:{% if query_status.blocked %}var(--danger){% elif query_status.warning %}var(--warning){% else %}var(--success){% endif %}">
-      {{ query_status.remaining_label }} left
-    </div>
-    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
-      {{ query_status.used_label }} / {{ query_status.limit_label }} used
-    </div>
-    <div class="metric-progress {% if query_status.blocked %}blocked{% elif query_status.warning %}warning{% endif %}">
-      <span style="width:{{ query_status.limit_pct }}%"></span>
-    </div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Remaining tokens</div>
-    <div class="metric-value" style="font-size:var(--font-xl);color:{% if token_status.unlimited or token_status.limit_pct < 80 %}var(--success){% else %}var(--warning){% endif %}">
-      {{ token_status.remaining_label }}
-    </div>
-    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
-      {% if token_status.unlimited %}No monthly token cap{% else %}{{ token_status.used_label }} / {{ token_status.limit_label }} used{% endif %}
-    </div>
-  </div>
-  <div class="metric"><div class="metric-label">Group</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
-  <div class="metric"><div class="metric-label">Tables access</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}All{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
-</div>
-
-{% if query_status.blocked %}
-{{ alert('Monthly query limit reached: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used. Ask your administrator to increase the workspace limit.', 'error', 'x-circle') }}
-{% elif query_status.warning %}
-{{ alert('Query usage is above 80%: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used this month.', 'amber', 'exclamation-triangle') }}
-{% endif %}
-
-{% if allowed_tables %}
-<div class="card" style="margin-bottom:1.5rem">
-  <div class="card-header">
-    <h2>Your table access ({{ allowed_tables|length }} tables)</h2>
-    <a href="/portal/kb" class="btn btn-secondary btn-sm">View Semantic Layer →</a>
-  </div>
-  <div class="card-body" style="padding:.875rem 1.25rem">
-    {% for t in allowed_tables %}<span class="table-pill">{{ t }}</span>{% endfor %}
-  </div>
-</div>
-{% elif allowed_tables is not none and allowed_tables|length == 0 %}
-<div class="alert alert-amber">You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
-{% endif %}
+{{ workspace_usage(user, charts, monthly_count, query_status, token_status, allowed_tables, t, plural) }}
 
 </div></details>
 {% else %}
 <div class="page-header">
-  <h1>Dashboards</h1>
-  <p>Organize governed KPIs, charts, and tables for the decisions your team follows.</p>
+  <h1>{{ t('ui.dash.title') }}</h1>
+  <p>{{ t('ui.dash.subtitle') }}</p>
 </div>
 
-<div class="metrics">
-  <div class="metric"><div class="metric-label">Dashboard visuals</div><div class="metric-value">{{ charts|length }}</div></div>
-  <div class="metric"><div class="metric-label">Queries this month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
-  <div class="metric">
-    <div class="metric-label">Query limit</div>
-    <div class="metric-value" style="font-size:var(--font-xl);color:{% if query_status.blocked %}var(--danger){% elif query_status.warning %}var(--warning){% else %}var(--success){% endif %}">
-      {{ query_status.remaining_label }} left
-    </div>
-    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
-      {{ query_status.used_label }} / {{ query_status.limit_label }} used
-    </div>
-    <div class="metric-progress {% if query_status.blocked %}blocked{% elif query_status.warning %}warning{% endif %}">
-      <span style="width:{{ query_status.limit_pct }}%"></span>
-    </div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Remaining tokens</div>
-    <div class="metric-value" style="font-size:var(--font-xl);color:{% if token_status.unlimited or token_status.limit_pct < 80 %}var(--success){% else %}var(--warning){% endif %}">
-      {{ token_status.remaining_label }}
-    </div>
-    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
-      {% if token_status.unlimited %}No monthly token cap{% else %}{{ token_status.used_label }} / {{ token_status.limit_label }} used{% endif %}
-    </div>
-  </div>
-  <div class="metric"><div class="metric-label">Group</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
-  <div class="metric"><div class="metric-label">Tables access</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}All{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
-</div>
-
-{% if query_status.blocked %}
-{{ alert('Monthly query limit reached: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used. Ask your administrator to increase the workspace limit.', 'error', 'x-circle') }}
-{% elif query_status.warning %}
-{{ alert('Query usage is above 80%: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used this month.', 'amber', 'exclamation-triangle') }}
-{% endif %}
-
-{% if allowed_tables %}
-<div class="card" style="margin-bottom:1.5rem">
-  <div class="card-header">
-    <h2>Your table access ({{ allowed_tables|length }} tables)</h2>
-    <a href="/portal/kb" class="btn btn-secondary btn-sm">View Semantic Layer →</a>
-  </div>
-  <div class="card-body" style="padding:.875rem 1.25rem">
-    {% for t in allowed_tables %}<span class="table-pill">{{ t }}</span>{% endfor %}
-  </div>
-</div>
-{% elif allowed_tables is not none and allowed_tables|length == 0 %}
-<div class="alert alert-amber">You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
-{% endif %}
+{{ workspace_usage(user, charts, monthly_count, query_status, token_status, allowed_tables, t, plural) }}
 
 {% if not dashboard_artifact and dashboards %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:15px;font-weight:800">Your dashboard artifacts</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ dashboards|length }} saved</span></div>
-<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:800">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}Shared with team · {% endif %}{{ item.status|capitalize }} · v{{ item.version }} · {{ item.chart_count }} visual{% if item.chart_count != 1 %}s{% endif %}</div></a>{% endfor %}</div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:15px;font-weight:800">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=dashboards|length) }}</span></div>
+<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:800">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_with_team') }} · {% endif %}{{ enum_label('status', item.status) }} · v{{ item.version }} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
 {% endif %}
 
 {% endif %}
@@ -315,6 +274,22 @@
 </div>
 
 <script>
+// The message catalogue for this user's language. Same shape and same t() as
+// portal_chat.html, so the two pages resolve an id identically -- _fmtNum and
+// the stage labels have both already drifted by each page keeping its own copy.
+const I18N = {{ i18n_catalogue|tojson }};
+function t(id, vars){
+  let out = Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id;
+  if (vars) for (const k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
+  return out;
+}
+// This page had no HTML escaper at all -- every innerHTML was built from
+// server-controlled values. The catalogue is ours too, but interpolating it
+// unescaped would set the precedent for the next string that is not.
+function escHtmlDash(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 const CAN_EDIT_DASHBOARD = {{ (dashboard_artifact.can_edit if dashboard_artifact else true)|tojson }};
 const ACTIVE_DASHBOARD_ID = {{ (dashboard_artifact.id if dashboard_artifact else 0)|tojson }};
 function sortDashboardTable(button, columnIndex){
@@ -755,10 +730,12 @@ function mountDashChartControls(ctrlRow) {
   const allowed = Array.isArray(payload.renderable_types) && payload.renderable_types.length
     ? payload.renderable_types
     : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
-  const visibleTypes = DASH_TYPES.filter(t => allowed.includes(t));
+  const visibleTypes = DASH_TYPES.filter(kind => allowed.includes(kind));
 
-  const typeHtml = visibleTypes.map(t =>
-    `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
+  // `kind`, not `t`: t is the translator on this page now, and an arrow
+  // parameter named t would shadow it inside the template literal below.
+  const typeHtml = visibleTypes.map(kind =>
+    `<button class="dctt-btn${ct===kind?' dctt-active':''}" data-type="${kind}">${escHtmlDash(t('ui.enum.charttype.' + kind))}</button>`
   ).join('');
   const palHtml = Object.entries(_PALETTES).map(([n,modes]) => {
     const c = modes;
@@ -873,9 +850,9 @@ function openChartModal(cardEl) {
   const modalAllowed = Array.isArray(payload.renderable_types) && payload.renderable_types.length
     ? payload.renderable_types
     : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
-  const modalTypes = DASH_TYPES.filter(t => modalAllowed.includes(t));
-  ctrlEl.innerHTML = modalTypes.map(t =>
-    `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
+  const modalTypes = DASH_TYPES.filter(kind => modalAllowed.includes(kind));
+  ctrlEl.innerHTML = modalTypes.map(kind =>
+    `<button class="dctt-btn${ct===kind?' dctt-active':''}" data-type="${kind}">${escHtmlDash(t('ui.enum.charttype.' + kind))}</button>`
   ).join('')
   + `<span class="dash-ctrl-sep"></span>`
   + Object.entries(_PALETTES).map(([n,modes]) => {

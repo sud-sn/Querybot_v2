@@ -196,6 +196,181 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Already added to {dashboard}. Run the question again to add it a second time.",
         "fr": "Déjà ajouté à {dashboard}. Relancez la question pour l'ajouter une seconde fois.",
     },
+    # ── The dashboard page ───────────────────────────────────────────────────
+    "ui.dash.kicker": {"en": "Dashboard artifact", "fr": "Tableau de bord"},
+    "ui.dash.version": {"en": "Version {version}", "fr": "Version {version}"},
+    "ui.dash.refresh": {"en": "{schedule} refresh", "fr": "Actualisation {schedule}"},
+    "ui.dash.read_only": {"en": "Read only", "fr": "Lecture seule"},
+    "ui.dash.following": {"en": "Following · {cadence}", "fr": "Abonné · {cadence}"},
+    "ui.dash.unfollow_hint": {
+        "en": "Stop following this dashboard",
+        "fr": "Ne plus suivre ce tableau de bord",
+    },
+    "ui.dash.subscribe": {"en": "Subscribe", "fr": "S'abonner"},
+    "ui.dash.cadence_label": {
+        "en": "Dashboard subscription cadence",
+        "fr": "Fréquence de l'abonnement au tableau de bord",
+    },
+    "ui.dash.chat_with": {"en": "Chat with dashboard", "fr": "Discuter du tableau de bord"},
+    "ui.dash.unpublished_title": {
+        "en": "Your teammates cannot see this dashboard.",
+        "fr": "Vos collègues ne voient pas ce tableau de bord.",
+    },
+    "ui.dash.unpublished_body": {
+        "en": "It has unpublished changes, and a team dashboard is only visible "
+              "to others while it is published.",
+        "fr": "Il contient des modifications non publiées, et un tableau de bord "
+              "d'équipe n'est visible par les autres que lorsqu'il est publié.",
+    },
+    "ui.dash.publish": {"en": "Publish", "fr": "Publier"},
+    "ui.dash.tabs_label": {"en": "Dashboard tabs", "fr": "Onglets du tableau de bord"},
+    "ui.dash.filter_placeholder": {"en": "Filter {field}", "fr": "Filtrer {field}"},
+    "ui.dash.apply_filters": {"en": "Apply filters", "fr": "Appliquer les filtres"},
+    "ui.dash.clear": {"en": "Clear", "fr": "Effacer"},
+    "ui.dash.tab_visuals": {"en": "{tab} visuals", "fr": "Visuels : {tab}"},
+    "ui.dash.drag_hint": {
+        "en": "Drag or resize to edit placement",
+        "fr": "Faites glisser ou redimensionnez pour modifier la disposition",
+    },
+    "ui.dash.live_data": {"en": "Live governed data", "fr": "Données gouvernées en direct"},
+    "ui.dash.rename_hint": {"en": "Double-click to rename", "fr": "Double-cliquez pour renommer"},
+    "ui.dash.drag_handle_title": {
+        "en": "Drag to reorder or resize from the card corner",
+        "fr": "Faites glisser pour réordonner, ou redimensionnez par le coin de la carte",
+    },
+    "ui.dash.drag_handle_label": {
+        "en": "Drag chart to reorder",
+        "fr": "Déplacer le graphique pour le réordonner",
+    },
+    "ui.dash.showing_of": {
+        "en": "Showing {shown} of {total} rows",
+        "fr": "Affichage de {shown} sur {total} lignes",
+    },
+    "ui.dash.cache": {"en": "Protected cache {at}", "fr": "Cache protégé {at}"},
+    "ui.dash.live_refresh": {"en": "Live governed refresh", "fr": "Actualisation gouvernée en direct"},
+    "ui.dash.expand": {"en": "Expand", "fr": "Agrandir"},
+    "ui.dash.expand_title": {"en": "Expand chart", "fr": "Agrandir le graphique"},
+    "ui.dash.remove": {"en": "Remove", "fr": "Retirer"},
+    "ui.dash.chart_failed": {"en": "Chart could not refresh", "fr": "Le graphique n'a pas pu être actualisé"},
+    "ui.dash.no_data": {"en": "No data returned for this query.", "fr": "Aucune donnée renvoyée pour cette requête."},
+    "ui.dash.empty_title": {
+        "en": "No visuals in this dashboard yet",
+        "fr": "Aucun visuel dans ce tableau de bord",
+    },
+    "ui.dash.empty_body": {
+        "en": "Ask QueryBot for an analysis, then use “Add to dashboard” and "
+              "select this dashboard.",
+        "fr": "Demandez une analyse à QueryBot, puis utilisez « Ajouter au "
+              "tableau de bord » et choisissez ce tableau de bord.",
+    },
+    "ui.dash.browse_semantic": {"en": "Browse Semantic Layer", "fr": "Parcourir la couche sémantique"},
+    "ui.dash.open_chat": {"en": "Open Chat", "fr": "Ouvrir le chat"},
+    "ui.dash.no_dashboards_title": {"en": "No dashboards yet", "fr": "Aucun tableau de bord"},
+    "ui.dash.no_dashboards_body": {
+        "en": "Create an analysis in Chat and add the resulting KPI, chart, or "
+              "table to a new named dashboard.",
+        "fr": "Créez une analyse dans le chat puis ajoutez le KPI, le graphique "
+              "ou le tableau obtenu à un nouveau tableau de bord nommé.",
+    },
+    "ui.dash.sources": {"en": "Data sources · {count}", "fr": "Sources de données · {count}"},
+    "ui.dash.no_sources": {"en": "No reusable sources yet", "fr": "Aucune source réutilisable"},
+    "ui.dash.history": {"en": "Revision history · {count}", "fr": "Historique des révisions · {count}"},
+    "ui.dash.restore": {"en": "Restore", "fr": "Restaurer"},
+    "ui.dash.current": {"en": "Current", "fr": "Version actuelle"},
+    "ui.dash.published_team": {"en": "Published team dashboard", "fr": "Tableau de bord d'équipe publié"},
+    "ui.dash.published_team_body": {
+        "en": "You can view and filter this dashboard. Only its owner can edit "
+              "or restore it.",
+        "fr": "Vous pouvez consulter et filtrer ce tableau de bord. Seul son "
+              "propriétaire peut le modifier ou le restaurer.",
+    },
+    "ui.dash.provenance_label": {"en": "Dashboard provenance", "fr": "Provenance du tableau de bord"},
+    "ui.dash.workspace_drawer": {
+        "en": "Workspace usage and table access",
+        "fr": "Utilisation de l'espace de travail et accès aux tables",
+    },
+    "ui.dash.title": {"en": "Dashboards", "fr": "Tableaux de bord"},
+    "ui.dash.subtitle": {
+        "en": "Organize governed KPIs, charts, and tables for the decisions your "
+              "team follows.",
+        "fr": "Organisez les KPI, graphiques et tableaux gouvernés qui guident "
+              "les décisions de votre équipe.",
+    },
+    "ui.dash.library_title": {"en": "Your dashboard artifacts", "fr": "Vos tableaux de bord"},
+    "ui.dash.library_count": {"en": "{count} saved", "fr": "{count} enregistrés"},
+    "ui.dash.shared_with_team": {"en": "Shared with team", "fr": "Partagé avec l'équipe"},
+    "ui.dash.welcome": {"en": "Welcome to QueryBot, {name}", "fr": "Bienvenue sur QueryBot, {name}"},
+    "ui.dash.welcome_body": {
+        "en": "Your account is ready. Add governed results to named dashboards "
+              "and refresh them with live data.",
+        "fr": "Votre compte est prêt. Ajoutez des résultats gouvernés à des "
+              "tableaux de bord nommés et actualisez-les avec des données en direct.",
+    },
+    "ui.dash.open_chat_arrow": {"en": "Open chat →", "fr": "Ouvrir le chat →"},
+    # ── Workspace usage ──────────────────────────────────────────────────────
+    "ui.dash.kpi_visuals": {"en": "Dashboard visuals", "fr": "Visuels du tableau de bord"},
+    "ui.dash.kpi_queries": {"en": "Queries this month", "fr": "Requêtes ce mois-ci"},
+    "ui.dash.kpi_query_limit": {"en": "Query limit", "fr": "Limite de requêtes"},
+    "ui.dash.kpi_left": {"en": "{count} left", "fr": "{count} restantes"},
+    "ui.dash.kpi_used": {"en": "{used} / {limit} used", "fr": "{used} / {limit} utilisées"},
+    "ui.dash.kpi_tokens": {"en": "Remaining tokens", "fr": "Jetons restants"},
+    "ui.dash.kpi_no_cap": {"en": "No monthly token cap", "fr": "Aucun plafond mensuel de jetons"},
+    "ui.dash.kpi_group": {"en": "Group", "fr": "Groupe"},
+    "ui.dash.kpi_tables": {"en": "Tables access", "fr": "Accès aux tables"},
+    "ui.dash.kpi_all": {"en": "All", "fr": "Toutes"},
+    "ui.dash.table_access": {"en": "Your table access ({count} tables)", "fr": "Vos accès aux tables ({count} tables)"},
+    "ui.dash.view_semantic": {"en": "View Semantic Layer →", "fr": "Voir la couche sémantique →"},
+    "ui.dash.no_group": {
+        "en": "You haven't been assigned to a group yet. Contact your "
+              "administrator to get table access.",
+        "fr": "Vous n'êtes pas encore affecté à un groupe. Contactez votre "
+              "administrateur pour obtenir l'accès aux tables.",
+    },
+    "ui.dash.limit_reached": {
+        "en": "Monthly query limit reached: {used} / {limit} used. Ask your "
+              "administrator to increase the workspace limit.",
+        "fr": "Limite mensuelle de requêtes atteinte : {used} / {limit} "
+              "utilisées. Demandez à votre administrateur d'augmenter la limite.",
+    },
+    "ui.dash.limit_warning": {
+        "en": "Query usage is above 80%: {used} / {limit} used this month.",
+        "fr": "L'utilisation dépasse 80 % : {used} / {limit} utilisées ce mois-ci.",
+    },
+    # ── Counts. French makes ZERO singular, English makes it plural, so these
+    # cannot be one template with an inline `{% if n != 1 %}s{% endif %}` --
+    # which is what the page had, and which renders "0 visuels" in French.
+    "ui.dash.rows.one": {"en": "{count} row", "fr": "{count} ligne"},
+    "ui.dash.rows.other": {"en": "{count} rows", "fr": "{count} lignes"},
+    "ui.dash.visuals.one": {"en": "{count} visual", "fr": "{count} visuel"},
+    "ui.dash.visuals.other": {"en": "{count} visuals", "fr": "{count} visuels"},
+    # ── Server enums. Rendered with |capitalize before, which cannot translate
+    # and mangles anything the database happens to store in another case.
+    "ui.enum.status.draft": {"en": "Draft", "fr": "Brouillon"},
+    "ui.enum.status.published": {"en": "Published", "fr": "Publié"},
+    "ui.enum.visibility.personal": {"en": "Personal", "fr": "Personnel"},
+    "ui.enum.visibility.team": {"en": "Team", "fr": "Équipe"},
+    "ui.enum.cadence.daily": {"en": "Daily", "fr": "Quotidien"},
+    "ui.enum.cadence.weekly": {"en": "Weekly", "fr": "Hebdomadaire"},
+    "ui.enum.cadence.monthly": {"en": "Monthly", "fr": "Mensuel"},
+    "ui.enum.schedule.manual": {"en": "Manual", "fr": "Manuelle"},
+    "ui.enum.schedule.daily": {"en": "Daily", "fr": "Quotidienne"},
+    "ui.enum.schedule.weekly": {"en": "Weekly", "fr": "Hebdomadaire"},
+    "ui.enum.schedule.monthly": {"en": "Monthly", "fr": "Mensuelle"},
+    # Chart-type badges. KPI stays KPI -- it is an international acronym, and
+    # French finance uses it untranslated -- but "table" and "chart" are words.
+    "ui.enum.charttype.kpi": {"en": "KPI", "fr": "KPI"},
+    "ui.enum.charttype.table": {"en": "Table", "fr": "Tableau"},
+    "ui.enum.charttype.chart": {"en": "Chart", "fr": "Graphique"},
+    "ui.enum.charttype.bar": {"en": "Bar", "fr": "Barres"},
+    "ui.enum.charttype.line": {"en": "Line", "fr": "Courbe"},
+    "ui.enum.charttype.area": {"en": "Area", "fr": "Aires"},
+    "ui.enum.charttype.pie": {"en": "Pie", "fr": "Secteurs"},
+    "ui.enum.charttype.donut": {"en": "Donut", "fr": "Anneau"},
+    "ui.enum.charttype.scatter": {"en": "Scatter", "fr": "Nuage de points"},
+    "ui.enum.source.governed_query": {"en": "Governed query", "fr": "Requête gouvernée"},
+    "ui.enum.source.metric": {"en": "Metric", "fr": "Métrique"},
+    "ui.enum.source.report": {"en": "Report", "fr": "Rapport"},
+
     # ── The language switcher ────────────────────────────────────────────────
     "ui.lang.label": {"en": "Language", "fr": "Langue"},
     "ui.lang.en": {"en": "English", "fr": "Anglais"},
@@ -302,6 +477,53 @@ def catalogue_for(lang: str, prefix: str = "") -> dict[str, str]:
         for msg_id, entry in MESSAGES.items()
         if not prefix or msg_id.startswith(prefix)
     }
+
+
+def plural(msg_id_stem: str, count, lang: str | None = None, **kw) -> str:
+    """Pick the ``.one`` or ``.other`` form of a count message.
+
+    English and French disagree about zero, and the page had the rule inline as
+    ``{% if n != 1 %}s{% endif %}`` -- which is right for English and renders
+    "0 visuels" in French, where zero takes the singular. So the rule lives
+    here, once, and the two forms are separate catalogue entries rather than a
+    stem with a bolted-on "s".
+
+      en: 0 rows   1 row    2 rows
+      fr: 0 ligne  1 ligne  2 lignes
+
+    Deliberately only two forms. Neither language in this build needs more, and
+    a general CLDR plural engine would be scaffolding for a case that does not
+    exist yet -- add it with the language that needs it.
+    """
+    tag = normalise_language(lang if lang is not None else get_active_language())
+    try:
+        number = abs(float(count))
+    except (TypeError, ValueError):
+        number = 2.0
+    if tag == "fr":
+        one = number < 2          # French: 0 and 1 both take the singular
+    else:
+        one = number == 1
+    return t(f"{msg_id_stem}.{'one' if one else 'other'}", lang=tag,
+             count=count, **kw)
+
+
+def enum_label(group: str, value, lang: str | None = None) -> str:
+    """A translated label for a server enum -- status, visibility, cadence.
+
+    The templates rendered these with ``|capitalize``, which cannot translate
+    and also mangles whatever case the database happens to hold. An unknown
+    value falls back to the prettified raw value rather than an id, because
+    these come from the database and a new one must not render as
+    "ui.enum.status.archived" on a customer's screen.
+    """
+    key = str(value or "").strip().lower().replace(" ", "_")
+    if not key:
+        return ""
+    msg_id = f"ui.enum.{group}.{key}"
+    if msg_id in MESSAGES:
+        return t(msg_id, lang=lang)
+    return key.replace("_", " ").capitalize()
 
 
 def placeholders(msg_id: str) -> set[str]:

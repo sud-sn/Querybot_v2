@@ -39,7 +39,10 @@ from core.chart import detect_chart_type, build_chart_payload, build_chart_annot
 from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
 from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
-from core.i18n import catalogue_for, translator_for
+from core.i18n import (
+    catalogue_for, translator_for,
+    enum_label as i18n_enum_label, plural as i18n_plural,
+)
 
 log = logging.getLogger("querybot.portal")
 
@@ -107,7 +110,15 @@ def _language_context(request: Request) -> dict:
     has to be renamed rather than passed here.
     """
     lang = _request_language(request)
-    return {"lang": lang, "i18n_catalogue": catalogue_for(lang), "t": translator_for(lang)}
+    return {
+        "lang": lang,
+        "i18n_catalogue": catalogue_for(lang),
+        "t": translator_for(lang),
+        # Counts and server enums cannot go through t() alone: English and
+        # French disagree about zero, and |capitalize cannot translate.
+        "plural": lambda stem, count, **kw: i18n_plural(stem, count, lang=lang, **kw),
+        "enum_label": lambda group, value: i18n_enum_label(group, value, lang=lang),
+    }
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
