@@ -205,6 +205,39 @@ class TestTheSocketsOwnRepliesAreTranslated:
         assert reply["content"].startswith("That result is no longer available")
 
 
+class TestTheGreetingArrivesTranslated:
+    """The greeting is written in core/conversational.py, sent from
+    gateway/webhooks.py the moment the socket opens, and is the first thing a
+    new session ever sees. It is also the one reply that has to cross two
+    modules to get here, so it is the one worth driving end to end."""
+
+    def _greeting(self, lang):
+        client = _client_app()
+        account_id, user_id = _reader(lang)
+        # touch_user_activity returns True only on a genuinely new session, so
+        # the greeting is the FIRST connection's first frame.
+        with _connect(client, account_id, user_id) as ws:
+            return ws.receive_json()
+
+    def test_an_english_reader_is_greeted_in_english(self):
+        frame = self._greeting("en")
+        assert frame["role"] == "assistant"
+        assert frame["content"].startswith("Hello, Ada! 👋")
+        assert "I'm QueryBot" in frame["content"]
+
+    def test_a_french_reader_is_greeted_in_french(self):
+        """Fails on a socket that never activates the language, and on a
+        core/conversational.py still holding the sentence as a literal."""
+        frame = self._greeting("fr")
+        assert frame["content"].startswith("Bonjour Ada ! 👋")
+        assert "Je suis QueryBot" in frame["content"]
+        assert "ask me anything" not in frame["content"]
+
+    def test_the_help_command_survives_the_crossing(self):
+        """`help` is compared by equality in core/dispatcher.py."""
+        assert "`help`" in self._greeting("fr")["content"]
+
+
 class TestEveryMessageIdTheChatUsesExists:
     """lookup() returns the id itself when an entry is missing, so a typo ships
     as `reply.dash.no_publish` in the chat bubble rather than raising anywhere.
@@ -215,7 +248,9 @@ class TestEveryMessageIdTheChatUsesExists:
     each, in every shipped language.
     """
 
-    FILES = ("gateway/webhooks.py", "core/drill_dimension.py")
+    FILES = ("gateway/webhooks.py", "core/drill_dimension.py",
+             "core/conversational.py", "core/clarification.py",
+             "core/dispatcher.py")
 
     def _ids(self):
         import ast

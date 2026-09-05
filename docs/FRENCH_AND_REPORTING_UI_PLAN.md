@@ -229,11 +229,10 @@ Ordered by how often a reader sees it.
 2. **`core/answer_formatter.py`'s section markers** — deliberately English
    and deliberately out of the catalogue; see the note beside the
    `ui.chat.diag.*` ids.
-3. **`core/conversational.py`'s `build_reply`** — the login greeting, and
-   `core/clarification.py`'s `clarification_rejection_message`. Both are
-   called from `gateway/webhooks.py` but written elsewhere; the socket now
-   activates the language around them, so each is a catalogue pass in its own
-   module away from being done.
+3. **`core/workspace_guide.py`** — the six guide kinds `build_reply`
+   delegates to (capability overview, business overview, data inventory,
+   table meanings, semantic explainer, question examples), and the English
+   regexes in `core/conversational.py` that route to them. ~450 lines.
 4. **`core/result_renderer.py`'s `_build_cannot_generate_hint`** — the
    "I could not build SQL for that" hint, sent as `result_chat_error`.
 5. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
@@ -241,6 +240,52 @@ Ordered by how often a reader sees it.
    and have no `portal_user` to take a language from.
 6. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### The behavioural front door, and what it needed
+
+`core/conversational.py`'s six replies (greeting, thanks, goodbye,
+frustration, opinion, vague) and `core/clarification.py`'s three rejection
+sentences are done.
+
+The prerequisite this time was not the language — the socket already activates
+it — but the **detectors**. `core/dispatcher.py` catches small talk before any
+guard, because it used to fall through into the SQL pipeline ("thanks" was
+answered with "I couldn't find the right tables or columns"). The catch is a
+hand-written English regex, so for a French reader the front door was never
+there: "bonjour", "merci" and "au revoir" went straight to SQL generation, and
+"au revoir" arrived as "to revoir" after the normaliser had had a go at it.
+Translating the replies without extending the detectors would have been a
+catalogue of sentences no French reader could produce.
+
+Both detectors now match against accent-folded text, sharing
+`core/question_normalizer.py`'s `_fold` rather than reimplementing it —
+accents are the first thing a hurried typist drops, and in
+`is_clarification_rejection` an accent was worse than cosmetic: its tokenizer
+splits on anything outside `[a-z0-9]`, so "annulé" tokenized to `["annul"]`
+and "ça" to `["a"]`. Folding is a no-op on ASCII, so every English pattern
+classifies exactly what it classified before, asserted rather than assumed.
+
+The refusal detector's own docstring promises that a data question merely
+containing a negation is not a refusal. The French additions keep the same
+whole-utterance anchoring and the same eight-token bound, and
+`tests/test_conversational_language.py` holds nine French questions —
+"commandes annulées par mois", "clients sans commande", "aucun client n'a
+commandé ce mois-ci" — that must stay questions.
+
+Two patterns worth recognising:
+
+* **A name spliced into a shared sentence.** `f"Hello{', ' + name if name}"`
+  has a seam English can hide and French cannot: French greets a name without
+  the comma and puts a space before the exclamation mark. Two whole messages,
+  one named and one not.
+* **A command inside a sentence.** "Type `help` for commands" — `help` is
+  compared by equality in `core/dispatcher.py`, so it stays `help` in the
+  French string. A translated command is a command nobody can run.
+
+The fallback example questions ARE translated, because they go back through
+the pipeline when someone types one and `core/question_normalizer.py`
+canonicalises a French question to English before any detector reads it — the
+same path a typed French question takes.
 
 ### The chat socket, and what it needed
 
@@ -335,8 +380,9 @@ holds the list and asserts it matches what is on disk, so a page added later
 and not translated fails there rather than shipping.
 `tests/test_analysis_card_language.py`,
 `tests/test_coverage_caveat_language.py`,
-`tests/test_chat_socket_language.py` and
-`tests/test_drill_dimension_language.py` do the same for the surfaces above, by
+`tests/test_chat_socket_language.py`,
+`tests/test_drill_dimension_language.py` and
+`tests/test_conversational_language.py` do the same for the surfaces above, by
 executing the real producers in both languages — including the post-processing
 block compiled out of `core/query_pipeline.py` and a real `_send_results`
 render, so a sentence translated at its source but concatenated again

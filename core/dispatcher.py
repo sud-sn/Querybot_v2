@@ -23,6 +23,7 @@ import time
 import store
 from gateway import PlatformEvent
 from fastapi import BackgroundTasks
+from core.i18n import t as _t
 from core.pipeline_context import get_state, get_client_db, get_portal_base
 from core.pipeline_helpers import _looks_like_new_query
 from core.conversation_state import (
@@ -1428,7 +1429,7 @@ async def dispatch(
             _intro, _qs = build_reply_split(_conv_kind, account_id, portal_user)
             await adapter.send_message(event, _intro)
             if _qs:
-                await _send_sq(event, "Here are some questions to get you started:", _qs)
+                await _send_sq(event, _t("reply.greeting.starters"), _qs)
         else:
             await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
         return
@@ -1758,7 +1759,7 @@ async def dispatch(
                 _intro, _qs = build_reply_split(_conv_kind, account_id, portal_user)
                 await adapter.send_message(event, _intro)
                 if _qs:
-                    await _send_sq(event, "Try one of these:", _qs)
+                    await _send_sq(event, _t("reply.greeting.try_one"), _qs)
             else:
                 await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
             return

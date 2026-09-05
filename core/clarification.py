@@ -44,6 +44,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
+from core.i18n import t as _t
+# Accent folding, shared with core/question_normalizer.py rather than
+# reimplemented.
+from core.question_normalizer import _fold as _fold_accents
 from core.query_semantics import analyze_query_intent, summarize_query_intent
 from core.semantic_registry import find_registry_clarification, validated_options
 
@@ -385,10 +389,25 @@ _REJECTION_FILLER = frozenset({
     "please", "actually", "sorry", "hmm", "hmmm", "um", "uh", "well", "ok",
     "okay", "alright", "right", "thanks", "thank", "you", "thx", "but", "and",
     "so", "just", "though", "however", "yeah", "yep",
+    # French. "sil", "vous" and "plait" are what "s'il vous plaît" tokenizes
+    # to once the apostrophe is stripped and the accent folded.
+    "svp", "stp", "sil", "vous", "plait", "merci", "desole", "desolee",
+    "bon", "alors", "mais", "donc", "en", "fait", "euh", "bref", "daccord",
 })
 
 # Standalone negatives that may open a refusal ("no, don't use this").
-_REJECTION_LEAD_NEGATIVES = frozenset({"no", "nope", "nah", "negative", "nooo"})
+_REJECTION_LEAD_NEGATIVES = frozenset({
+    "no", "nope", "nah", "negative", "nooo",
+    "non", "nonn", "nan",
+})
+
+# "[ de[s] ][ ces ][ options ]" -- the tail French refusals share, every part
+# optional and in order: "aucun", "aucun des deux", "aucune de ces options".
+_FR_OF_THESE = (
+    r"(?:\s+(?:de|des|d))?"
+    r"(?:\s+(?:ces|ceux|celles|les))?"
+    r"(?:\s+(?:deux|options?|choix|propositions?|ca|cela))?"
+)
 
 # Each pattern must match the ENTIRE remaining utterance.
 _REJECTION_PATTERNS = tuple(
@@ -426,6 +445,36 @@ _REJECTION_PATTERNS = tuple(
         r"none\s+apply",
         r"not\s+relevant",
         r"(?:this|that|these|those)\s+(?:is|are)\s+(?:not\s+relevant|irrelevant)",
+
+        # ── French ───────────────────────────────────────────────────────────
+        # Same shape as the English above: each must match the WHOLE remaining
+        # utterance, so "commandes annulees" or "clients sans commande" stays a
+        # data question rather than a refusal. Written unaccented and without
+        # apostrophes because _rejection_tokens folds both away.
+        # "aucun", "aucune option", "aucun des deux", "aucune de ces options"
+        # -- each part optional and in order, still anchored to the whole
+        # utterance, so "aucun client n'a commande" is a question not a refusal.
+        r"aucune?" + _FR_OF_THESE,
+        r"aucune?\s+ne\s+(?:convient|correspond|sapplique)",
+        r"ni\s+l\s*un\s+ni\s+l\s*autre",
+        r"non\s+merci",
+        r"pas\s+(?:ceux|celles|ces|ca|cela|celui|cette)(?:\s+la)?",
+        r"pas\s+pertinente?s?",
+        r"sans\s+objet",
+        r"rien\s+de\s+(?:tout\s+)?(?:ca|cela)",
+        r"peu\s+importe",
+        r"tant\s+pis",
+        r"(?:je\s+)?ne?\s*(?:veux|souhaite)\s+(?:pas|aucune?)" + _FR_OF_THESE,
+        r"n?utilise[zr]?\s+(?:pas|aucune?)" + _FR_OF_THESE,
+        r"annul(?:e|er|ez|ons)"
+        r"(?:\s+(?:ca|cela|la\s+(?:question|demande|precision)|"
+        r"cette\s+(?:question|demande|precision)))?",
+        r"(?:passe|passer|passez|ignore|ignorer|ignorez|oublie|oublier|oubliez)"
+        r"(?:\s+(?:ca|cela|la\s+(?:question|demande|precision)|"
+        r"cette\s+(?:question|demande|precision)))?",
+        r"laisse[zr]?\s+tomber",
+        r"(?:on\s+)?recommence(?:r|z)?(?:\s+(?:a\s+zero|depuis\s+le\s+debut))?",
+        r"(?:ce|ceci|cela|ca)\s+n?est\s+pas\s+pertinent",
     )
 )
 
@@ -435,6 +484,10 @@ def _rejection_tokens(text: str) -> list[str]:
     lowered = (text or "").strip().casefold()
     # "don't" / "don’t" / "dont" must all reach the patterns as "dont".
     lowered = re.sub(r"[‘’'`]", "", lowered)
+    # The split below discards anything outside [a-z0-9], so without folding
+    # an accent is a word boundary: "annulé" tokenized to ["annul"] and "ça"
+    # to ["a"]. A no-op for the English patterns, which are ASCII.
+    lowered = _fold_accents(lowered)
     return [token for token in re.split(r"[^a-z0-9]+", lowered) if token]
 
 
@@ -499,22 +552,17 @@ def clarification_reply_matches_option(cmeta: dict | None, text: str) -> bool:
 
 
 def clarification_rejection_message(cmeta: dict | None) -> str:
-    """User-facing acknowledgement for a rejected clarification."""
+    """User-facing acknowledgement for a rejected clarification.
+
+    `source` is the stored clarification kind and is compared here by
+    equality; only the sentence it selects is copy.
+    """
     source = str((cmeta or {}).get("source") or "")
     if source in {"graph_join_path", "source_scope"}:
-        return (
-            "Okay — I won't use those relationship paths. Please restate the "
-            "intended business relationship, or ask the question again."
-        )
+        return _t("reply.clarify.rejected.joins")
     if source == "metric_date_context":
-        return (
-            "Okay — I won't use those business dates. Tell me which business "
-            "date you meant, or ask the question again."
-        )
-    return (
-        "Okay — I've cancelled that clarification and won't use those options. "
-        "Please restate what you meant, or ask the question again."
-    )
+        return _t("reply.clarify.rejected.dates")
+    return _t("reply.clarify.rejected.generic")
 
 
 def _normalized_date_term(value: object) -> str:

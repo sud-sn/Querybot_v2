@@ -24,6 +24,12 @@ from __future__ import annotations
 import logging
 import re
 
+from core.i18n import t as _t
+# Accent folding, shared with core/question_normalizer.py rather than
+# reimplemented: "a bientot" and "à bientôt" have to reach the same pattern,
+# because accents are the first thing a hurried typist drops.
+from core.question_normalizer import _fold as _fold_accents
+
 log = logging.getLogger("querybot.conversational")
 
 # ── Detection patterns ────────────────────────────────────────────────────────
@@ -34,25 +40,45 @@ log = logging.getLogger("querybot.conversational")
 # and common emoji (anything outside the basic-latin word range).
 _SMALLTALK_TAIL = r"[\s!.,\U0001F300-\U0001FAFF☀-➿]*"
 
+# French uses the typographic apostrophe as often as the ASCII one, and puts a
+# space before ! and ? -- both of which a pattern written for English silently
+# refuses.
+_APOS = r"['’]"
+
+# The French alternatives are matched against accent-folded text (see
+# detect_conversational), so they are written unaccented: "bonsoir" covers
+# "bonsoir", "re-bonjour" covers "rebonjour".
 _GREETING_RE = re.compile(
     r"^\s*(hi|hii+|hello|hey|heya|yo|greetings|good\s+(morning|afternoon|evening|day)|"
-    r"howdy|hola|namaste|vanakkam)"
-    r"\s*(there|team|bot|querybot|everyone|all)?" + _SMALLTALK_TAIL + r"$",
+    r"howdy|hola|namaste|vanakkam"
+    r"|bonjour|bonsoir|salut|coucou|allo+|re-?bonjour|bien\s+le\s+bonjour)"
+    r"\s*(there|team|bot|querybot|everyone|all"
+    r"|a\s+tous|a\s+toutes|tout\s+le\s+monde|l" + _APOS + r"?equipe)?"
+    + _SMALLTALK_TAIL + r"$",
     re.IGNORECASE,
 )
 
 _THANKS_RE = re.compile(
     r"^\s*(thanks?|thank\s+you|thankyou|thx|ty|tysm|great,?\s*thanks?|"
     r"perfect,?\s*thanks?|awesome,?\s*thanks?|much\s+appreciated|appreciate\s+it|"
-    r"(that('s| is| was)?\s+)?(great|perfect|awesome|helpful|nice)|got\s+it|cool)"
-    r"(\s+(a\s+lot|so\s+much|very\s+much|again|for\s+(that|the\s+help)))?"
+    r"(that('s| is| was)?\s+)?(great|perfect|awesome|helpful|nice)|got\s+it|cool"
+    r"|(super|parfait|genial|top|nickel|impeccable),?\s*merci|mille\s+mercis"
+    r"|merci|mercii+|(c" + _APOS + r")?est\s+(parfait|super|genial|nickel|impeccable)"
+    r"|(super|parfait|genial|nickel|impeccable|tres\s+bien|ca\s+marche))"
+    r"(\s+(a\s+lot|so\s+much|very\s+much|again|for\s+(that|the\s+help)"
+    r"|beaucoup|bien|infiniment|encore|pour\s+(ton|votre)\s+aide))?"
     + _SMALLTALK_TAIL + r"$",
     re.IGNORECASE,
 )
 
 _GOODBYE_RE = re.compile(
     r"^\s*(bye|goodbye|good\s+bye|see\s+(you|ya)( later)?|good\s+night|take\s+care|"
-    r"talk\s+(to\s+you\s+)?later|ttyl|ciao|cya)\s*[!.]*\s*$",
+    r"talk\s+(to\s+you\s+)?later|ttyl|ciao|cya"
+    # "salut" is both hello and goodbye in French; the greeting branch is
+    # evaluated first, so it is deliberately not repeated here.
+    r"|au\s+revoir|adieu|a\s+(bientot|plus|plus\s+tard|demain|la\s+prochaine)"
+    r"|bonne\s+(journee|soiree|nuit|fin\s+de\s+journee)|bonne\s+continuation)"
+    + _SMALLTALK_TAIL + r"$",
     re.IGNORECASE,
 )
 
@@ -63,7 +89,13 @@ _FRUSTRATION_RE = re.compile(
     r"|(you('re| are)?\s+)?(useless|not\s+helping|no\s+help)"
     r"|(stupid|dumb|terrible|horrible)\s+(bot|answer|result)?"
     r"|this\s+(bot|thing)\s+(sucks|is\s+(broken|terrible|useless))"
-    r")\s*[!.]*\s*$",
+    r"|(c" + _APOS + r")?est\s+(faux|incorrect|inutile|nul|n" + _APOS + r"importe\s+quoi)"
+    r"|ce\s+n" + _APOS + r"est\s+pas\s+(correct|ce\s+que\s+j" + _APOS + r"ai\s+demande|bon)"
+    r"|(ca|cela)\s+ne\s+(marche|fonctionne)\s+pas"
+    r"|mauvaise\s+reponse|reponse\s+(fausse|incorrecte)"
+    r"|(ca|cela)\s+ne\s+sert\s+a\s+rien"
+    r"|tu\s+ne\s+m" + _APOS + r"aides\s+pas|vous\s+ne\s+m" + _APOS + r"aidez\s+pas"
+    r")" + _SMALLTALK_TAIL + r"$",
     re.IGNORECASE,
 )
 
@@ -150,6 +182,12 @@ _OPINION_RE = re.compile(
     r"|is\s+(the\s+)?business\s+(good|bad|ok|okay|healthy|doing\s+well)"
     r"|are\s+we\s+(doing\s+)?(good|well|ok|okay|badly)"
     r"|how\s+are\s+we\s+doing"
+    r"|(quel\s+est\s+)?(ton|votre)\s+avis"
+    r"|qu" + _APOS + r"en\s+(penses-tu|pensez-vous)"
+    r"|(penses-tu|pensez-vous|crois-tu|croyez-vous|recommandes-tu|recommandez-vous)"
+    r"|(devrions|devons)-nous\s+\w+"
+    r"|est-ce\s+que\s+(l" + _APOS + r")?(entreprise|activite)\s+va\s+bien"
+    r"|comment\s+(allons-nous|se\s+porte\s+l" + _APOS + r"entreprise)"
     r")\b",
     re.IGNORECASE,
 )
@@ -168,7 +206,13 @@ _VAGUE_RE = re.compile(
     r"|insights?"
     r"|summary"
     r"|report"
-    r")\s*[?!.]*\s*$",
+    r"|montre(-| )?moi\s+(les\s+)?(donnees|chiffres|stats|tout)"
+    r"|(donne|envoie)(-| )?moi\s+(un\s+|le\s+)?(rapport|resume|apercu|bilan|donnees|chiffres)"
+    r"|(fais|lance)\s+(un\s+|une\s+)?(rapport|analyse)"
+    r"|quoi\s+de\s+neuf"
+    r"|dis(-| )?moi\s+(quelque\s+chose|ce\s+que\s+tu\s+sais)"
+    r"|analyse|resume|rapport|bilan|apercu"
+    r")\s*[?!.\s]*$",
     re.IGNORECASE,
 )
 
@@ -189,6 +233,11 @@ def detect_conversational(text: str) -> str | None:
     if not t or len(t) > 200:
         # Long messages are never small talk — don't even scan.
         return None
+    # Matched against accent-folded text so "a bientot" and "à bientôt" reach
+    # the same pattern. Folding is a no-op for the English patterns (they are
+    # ASCII and already case-insensitive), so every existing tenant classifies
+    # exactly the messages it classified before.
+    t = _fold_accents(t)
     if _GREETING_RE.match(t):
         return "greeting"
     if _THANKS_RE.match(t):
@@ -395,12 +444,31 @@ def _metric_names(account_id: str, limit: int = 5) -> list[str]:
 
 def _format_examples_block(examples: list[str]) -> str:
     if not examples:
-        return (
-            "  • _What is our total revenue this month?_\n"
-            "  • _Show top 10 customers by sales_\n"
-            "  • _How many orders were created last week?_"
-        )
+        # The workspace has no curated examples yet, so these are the
+        # product's own. They go back through the pipeline when someone types
+        # one, and core/question_normalizer.py canonicalises a French question
+        # to English before any detector reads it -- the same path a typed
+        # question takes.
+        examples = [
+            _t("reply.examples.revenue"),
+            _t("reply.examples.top_customers"),
+            _t("reply.examples.orders"),
+        ]
     return "\n".join(f"  • _{q}_" for q in examples)
+
+
+def _greeting_intro(portal_user: dict | None) -> str:
+    """"Hello, Ada! I'm QueryBot — ...", in the reader's language.
+
+    Built as two whole messages rather than one sentence with an optional
+    ", {name}" spliced in: French puts no comma before a name in a greeting
+    ("Bonjour Ada !") and does put a space before the exclamation mark, so the
+    seam English can hide is one French cannot.
+    """
+    name = (portal_user or {}).get("name") or ""
+    hello = (_t("reply.greeting.hello_named", name=name.split()[0]) if name
+             else _t("reply.greeting.hello"))
+    return _t("reply.greeting.intro", hello=hello)
 
 
 def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> str:
@@ -413,53 +481,48 @@ def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> 
         log.warning("Workspace guide rendering failed for %s: %s", kind, exc)
 
     if kind == "greeting":
-        name = (portal_user or {}).get("name") or ""
-        hello = f"Hello{', ' + name.split()[0] if name else ''}! 👋"
         return (
-            f"{hello} I'm QueryBot — ask me anything about your business data.\n\n"
-            "For example:\n"
+            f"{_greeting_intro(portal_user)}\n\n"
+            f"{_t('reply.greeting.for_example')}\n"
             f"{_format_examples_block(_example_questions(account_id, portal_user=portal_user))}\n\n"
-            "Type `help` for commands, or just ask in plain English."
+            f"{_t('reply.greeting.help_hint')}"
         )
 
     if kind == "thanks":
-        return "You're welcome! Ask me another question whenever you're ready."
+        return _t("reply.thanks")
 
     if kind == "goodbye":
-        return "Goodbye! I'll be here whenever you need your data. 👋"
+        return _t("reply.goodbye")
 
     if kind == "frustration":
         return (
-            "Sorry about that — let's get it right.\n\n"
-            "A couple of things that help:\n"
-            "  • Name the metric and breakdown explicitly (e.g. _total revenue by customer_)\n"
-            "  • Use the 👎 button on the wrong answer — your feedback goes to your "
-            "administrator, who can correct the field mapping behind it\n"
-            "  • If a term keeps being misunderstood, ask your admin to define it "
-            "in the Semantic Layer or Metric Registry\n\n"
-            "Want to try rephrasing your question?"
+            f"{_t('reply.frustration.lead')}\n\n"
+            f"{_t('reply.frustration.helps')}\n"
+            f"  • {_t('reply.frustration.tip_explicit')}\n"
+            f"  • {_t('reply.frustration.tip_thumbs_down')}\n"
+            f"  • {_t('reply.frustration.tip_semantic')}\n\n"
+            f"{_t('reply.frustration.retry')}"
         )
 
     if kind == "opinion":
         metrics = _metric_names(account_id, limit=3)
         metric_hint = (
-            f" — for example {', '.join('_' + m + '_' for m in metrics)}" if metrics else ""
+            _t("reply.opinion.metric_hint",
+               metrics=", ".join("_" + m + "_" for m in metrics))
+            if metrics else ""
         )
         return (
-            "I report data — the judgment calls are yours. 🙂\n\n"
-            "I can show you the numbers behind that question though. "
-            f"Ask for a specific metric{metric_hint}, with a time range, like:\n"
-            "  • _How did revenue this quarter compare to last quarter?_\n"
-            "  • _Show gross margin by month this year_"
+            f"{_t('reply.opinion.lead')}\n\n"
+            f"{_t('reply.opinion.offer', metric_hint=metric_hint)}\n"
+            f"  • _{_t('reply.opinion.example_compare')}_\n"
+            f"  • _{_t('reply.opinion.example_margin')}_"
         )
 
     if kind == "vague":
         return (
-            "Happy to help — I just need to know what to measure. "
-            "Name a metric and (optionally) a breakdown or time range:\n\n"
+            f"{_t('reply.vague.lead')}\n\n"
             f"{_format_examples_block(_example_questions(account_id, portal_user=portal_user))}\n\n"
-            "You can also type `help` for commands, or ask "
-            "_what data do you have?_ to see what's available."
+            f"{_t('reply.vague.help_hint')}"
         )
 
     return ""
@@ -493,20 +556,13 @@ def build_reply_split(
         log.warning("Workspace guide split rendering failed for %s: %s", kind, exc)
 
     if kind == "greeting":
-        name = (portal_user or {}).get("name") or ""
-        hello = f"Hello{', ' + name.split()[0] if name else ''}! 👋"
-        intro = (
-            f"{hello} I'm QueryBot — ask me anything about your business data.\n\n"
-            "Here are some questions to get you started:"
-        )
+        intro = (f"{_greeting_intro(portal_user)}\n\n"
+                 f"{_t('reply.greeting.starters')}")
         return intro, _example_questions(account_id, portal_user=portal_user)
 
     if kind == "vague":
-        intro = (
-            "Happy to help — I just need to know what to measure. "
-            "Name a metric and (optionally) a breakdown or time range:"
-        )
-        return intro, _example_questions(account_id, portal_user=portal_user)
+        return _t("reply.vague.lead"), _example_questions(
+            account_id, portal_user=portal_user)
 
     # All other kinds: delegate to build_reply, no split
     return build_reply(kind, account_id, portal_user), []

@@ -2386,6 +2386,116 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Connecté en tant que {name}. Posez-moi toutes vos questions sur vos données.",
     },
 
+    # ── Small talk, and the front door ──────────────────────────────────────
+    #
+    # These reach a reader before any data does. `help` inside them is a
+    # command the dispatcher compares by equality, so it stays `help` in both
+    # languages; the example questions around it are copy, and a French one is
+    # canonicalised back to English by core/question_normalizer.py before any
+    # detector sees it -- the same path a typed French question takes.
+    "reply.greeting.hello": {"en": "Hello! 👋", "fr": "Bonjour ! 👋"},
+    "reply.greeting.hello_named": {"en": "Hello, {name}! 👋", "fr": "Bonjour {name} ! 👋"},
+    "reply.greeting.intro": {
+        "en": "{hello} I'm QueryBot — ask me anything about your business data.",
+        "fr": "{hello} Je suis QueryBot — posez-moi toutes vos questions sur vos données métier.",
+    },
+    "reply.greeting.for_example": {"en": "For example:", "fr": "Par exemple :"},
+    "reply.greeting.help_hint": {
+        "en": "Type `help` for commands, or just ask in plain English.",
+        "fr": "Tapez `help` pour les commandes, ou posez simplement votre question en français.",
+    },
+    "reply.greeting.starters": {
+        "en": "Here are some questions to get you started:",
+        "fr": "Voici quelques questions pour commencer :",
+    },
+    "reply.greeting.try_one": {"en": "Try one of these:", "fr": "Essayez l'une de celles-ci :"},
+    "reply.thanks": {
+        "en": "You're welcome! Ask me another question whenever you're ready.",
+        "fr": "Avec plaisir ! Posez-moi une autre question quand vous voulez.",
+    },
+    "reply.goodbye": {
+        "en": "Goodbye! I'll be here whenever you need your data. 👋",
+        "fr": "Au revoir ! Je serai là dès que vous aurez besoin de vos données. 👋",
+    },
+    "reply.frustration.lead": {
+        "en": "Sorry about that — let's get it right.",
+        "fr": "Désolé — reprenons cela correctement.",
+    },
+    "reply.frustration.helps": {
+        "en": "A couple of things that help:",
+        "fr": "Deux choses qui aident :",
+    },
+    "reply.frustration.tip_explicit": {
+        "en": "Name the metric and breakdown explicitly (e.g. _total revenue by customer_)",
+        "fr": "Nommez explicitement l'indicateur et la ventilation (par exemple _chiffre d'affaires total par client_)",
+    },
+    "reply.frustration.tip_thumbs_down": {
+        "en": "Use the 👎 button on the wrong answer — your feedback goes to your administrator, who can correct the field mapping behind it",
+        "fr": "Utilisez le bouton 👎 sur la réponse erronée — votre retour est transmis à votre administrateur, qui peut corriger la correspondance de champs derrière elle",
+    },
+    "reply.frustration.tip_semantic": {
+        "en": "If a term keeps being misunderstood, ask your admin to define it in the Semantic Layer or Metric Registry",
+        "fr": "Si un terme est régulièrement mal compris, demandez à votre administrateur de le définir dans la couche sémantique ou le registre des indicateurs",
+    },
+    "reply.frustration.retry": {
+        "en": "Want to try rephrasing your question?",
+        "fr": "Voulez-vous reformuler votre question ?",
+    },
+    "reply.opinion.lead": {
+        "en": "I report data — the judgment calls are yours. 🙂",
+        "fr": "Je rapporte les données — les jugements vous appartiennent. 🙂",
+    },
+    "reply.opinion.offer": {
+        "en": "I can show you the numbers behind that question though. Ask for a specific metric{metric_hint}, with a time range, like:",
+        "fr": "Je peux tout de même vous montrer les chiffres derrière cette question. Demandez un indicateur précis{metric_hint}, avec une période, par exemple :",
+    },
+    "reply.opinion.metric_hint": {
+        "en": " — for example {metrics}",
+        "fr": " — par exemple {metrics}",
+    },
+    "reply.opinion.example_compare": {
+        "en": "How did revenue this quarter compare to last quarter?",
+        "fr": "Comment le chiffre d'affaires de ce trimestre se compare-t-il au trimestre dernier ?",
+    },
+    "reply.opinion.example_margin": {
+        "en": "Show gross margin by month this year",
+        "fr": "Affiche la marge brute par mois cette année",
+    },
+    "reply.vague.lead": {
+        "en": "Happy to help — I just need to know what to measure. Name a metric and (optionally) a breakdown or time range:",
+        "fr": "Avec plaisir — j'ai seulement besoin de savoir quoi mesurer. Nommez un indicateur et (éventuellement) une ventilation ou une période :",
+    },
+    "reply.vague.help_hint": {
+        "en": "You can also type `help` for commands, or ask _what data do you have?_ to see what's available.",
+        "fr": "Vous pouvez aussi taper `help` pour les commandes, ou demander _quelles données avez-vous ?_ pour voir ce qui est disponible.",
+    },
+    "reply.examples.revenue": {
+        "en": "What is our total revenue this month?",
+        "fr": "Quel est notre chiffre d'affaires total ce mois-ci ?",
+    },
+    "reply.examples.top_customers": {
+        "en": "Show top 10 customers by sales",
+        "fr": "Affiche les 10 meilleurs clients par ventes",
+    },
+    "reply.examples.orders": {
+        "en": "How many orders were created last week?",
+        "fr": "Combien de commandes ont été créées la semaine dernière ?",
+    },
+
+    # ── Turning down a clarification ────────────────────────────────────────
+    "reply.clarify.rejected.joins": {
+        "en": "Okay — I won't use those relationship paths. Please restate the intended business relationship, or ask the question again.",
+        "fr": "Entendu — je n'utiliserai pas ces chemins de relation. Reformulez la relation métier voulue, ou reposez la question.",
+    },
+    "reply.clarify.rejected.dates": {
+        "en": "Okay — I won't use those business dates. Tell me which business date you meant, or ask the question again.",
+        "fr": "Entendu — je n'utiliserai pas ces dates métier. Dites-moi de quelle date métier il s'agissait, ou reposez la question.",
+    },
+    "reply.clarify.rejected.generic": {
+        "en": "Okay — I've cancelled that clarification and won't use those options. Please restate what you meant, or ask the question again.",
+        "fr": "Entendu — j'ai annulé cette demande de précision et n'utiliserai pas ces options. Reformulez ce que vous vouliez dire, ou reposez la question.",
+    },
+
     # ── When something went wrong ───────────────────────────────────────────
     "reply.error.answer_failed": {
         "en": "Something went wrong while preparing your answer — please try asking again.",
