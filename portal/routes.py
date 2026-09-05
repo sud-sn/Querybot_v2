@@ -2159,6 +2159,47 @@ async def portal_query_history(request: Request):
     return JSONResponse({"ok": True, "items": list(grouped.values())[:40]})
 
 
+def _trace_tables_still_granted(sql: str, db_type: str, allowed, account_id: str) -> bool:
+    """Does this user still have a grant on every table the stored SQL reads?
+
+    The thread rebuild returns rows that were authorised when the question was
+    ASKED. Grants change: a table is removed from a group, a user moves teams.
+    Replaying the stored rows with only an ownership check makes the history --
+    and now the language toggle, which re-fetches the thread to re-render it in
+    the new language -- a way to keep reading a table the workspace has taken
+    away.
+
+    ``allowed`` is None for an admin, which is unrestricted by definition.
+
+    A SQL string that cannot be analysed is the ambiguous case, and it is
+    resolved the same way portal_export_csv resolves its own: closed for a
+    regulated tenant, open otherwise. Same file, same posture, one precedent.
+    """
+    if allowed is None:
+        return True
+    sql = str(sql or "").strip()
+    if not sql:
+        return False
+    try:
+        from core.compliance.sql_guard import analyze_sql
+        tables = analyze_sql(sql, db_type or "azure_sql").tables
+    except Exception as exc:
+        log.warning("Thread rebuild could not analyse a stored query for %s: %s",
+                    account_id, exc, exc_info=True)
+        try:
+            from core.compliance.policy_engine import is_regulated
+            return not is_regulated(account_id)
+        except Exception:
+            return False
+    if not tables:
+        # A parseable query that reads no table -- "SELECT 2 AS total" -- has
+        # nothing to authorise. This is not the ambiguous case: that one raises
+        # above and is handled there.
+        return True
+    granted = {str(t).upper() for t in allowed}
+    return all(str(table).upper() in granted for table in tables)
+
+
 @router.get("/api/history/{thread_id}")
 async def portal_query_thread(request: Request, thread_id: str):
     """Return renderable turns for one thread owned by the signed-in user."""
@@ -2197,44 +2238,69 @@ async def portal_query_thread(request: Request, thread_id: str):
     import json as _json
     from core.chart import build_chart_payload, detect_chart_type, build_chart_annotations
     from core.clarification import extract_original_question
+    from core.i18n import activate_language, deactivate_language
     from core.response_builder import build_assistant_response
 
+    # Every sentence below is built fresh from the stored rows, so the language
+    # of a thread is the language of whoever is reading it NOW. That is the
+    # whole mechanism behind the switcher: change language, come back, and the
+    # answers are rebuilt rather than translated.
+    lang_token = None
+    try:
+        lang_token = activate_language(user.get("lang") or _request_language(request))
+    except Exception as exc:
+        log.warning("Could not activate the thread language for %s: %s -- this "
+                    "thread is rebuilt in English", user["account_id"], exc,
+                    exc_info=True)
+
+    allowed_tables = store.get_allowed_tables(user)
     turns = []
-    for trace in traces:
-        if trace.get("status") != "success" or not trace.get("generated_sql"):
-            continue
-        raw_rows = trace.get("result_rows") or "[]"
-        if isinstance(raw_rows, str):
-            try:
-                raw_rows = _json.loads(raw_rows)
-            except (TypeError, ValueError):
-                raw_rows = []
-        rows = raw_rows if isinstance(raw_rows, list) else []
-        question = extract_original_question(
-            str(trace.get("question_text_sanitized") or "")
-        )
-        chart_type = detect_chart_type(rows, question=question) if rows else None
-        chart = (
-            build_chart_payload(
-                rows, chart_type, title=question, question=question,
-                annotations=build_chart_annotations(rows, question),
+    try:
+        for trace in traces:
+            if trace.get("status") != "success" or not trace.get("generated_sql"):
+                continue
+            if not _trace_tables_still_granted(
+                str(trace.get("generated_sql") or ""),
+                str(trace.get("db_type") or ""),
+                allowed_tables,
+                user["account_id"],
+            ):
+                continue
+            raw_rows = trace.get("result_rows") or "[]"
+            if isinstance(raw_rows, str):
+                try:
+                    raw_rows = _json.loads(raw_rows)
+                except (TypeError, ValueError):
+                    raw_rows = []
+            rows = raw_rows if isinstance(raw_rows, list) else []
+            question = extract_original_question(
+                str(trace.get("question_text_sanitized") or "")
             )
-            if chart_type else None
-        )
-        payload = build_assistant_response(
-            question=question,
-            rows=rows,
-            sql=str(trace.get("generated_sql") or ""),
-            duration_ms=int(trace.get("query_duration_ms") or 0),
-            chart=chart,
-            data_source=str(trace.get("db_type") or ""),
-            question_id=str(trace.get("question_id") or ""),
-        )
-        turns.append({
-            "question": question,
-            "payload": payload,
-            "created_at": str(trace.get("created_at") or ""),
-        })
+            chart_type = detect_chart_type(rows, question=question) if rows else None
+            chart = (
+                build_chart_payload(
+                    rows, chart_type, title=question, question=question,
+                    annotations=build_chart_annotations(rows, question),
+                )
+                if chart_type else None
+            )
+            payload = build_assistant_response(
+                question=question,
+                rows=rows,
+                sql=str(trace.get("generated_sql") or ""),
+                duration_ms=int(trace.get("query_duration_ms") or 0),
+                chart=chart,
+                data_source=str(trace.get("db_type") or ""),
+                question_id=str(trace.get("question_id") or ""),
+            )
+            turns.append({
+                "question": question,
+                "payload": payload,
+                "created_at": str(trace.get("created_at") or ""),
+            })
+    finally:
+        if lang_token is not None:
+            deactivate_language(lang_token)
     return JSONResponse({"ok": True, "thread_id": thread_id, "turns": turns})
 
 
