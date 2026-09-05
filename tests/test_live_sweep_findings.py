@@ -183,6 +183,62 @@ class TestAFlatSeriesIsNotGivenADirection:
         assert 0 < _FLAT_TREND_PCT <= 10
 
 
+class TestACategoryNameIsNotAPeriodLabel:
+    """A branch called "Nova" was read as the month November.
+
+    The value pattern was anchored to stop month abbreviations matching as
+    bare substrings, and the comment above it says so — but the month branch
+    still ended `[a-z]*`, which eats the rest of the word before the anchor is
+    ever reached. So every name merely BEGINNING with a month abbreviation
+    matched: Nova, Maritime, Mayfield, Septic, Junction, and also Marseille,
+    Augusta, Octagon and Decathlon. A result grouped by branch was then read
+    as a time series and given trend language it had no basis for.
+    """
+
+    @staticmethod
+    def _by_branch(names):
+        return [{"BRANCH": n, "REVENUE": 100 * (i + 1)} for i, n in enumerate(names)]
+
+    def test_branch_names_that_start_with_a_month_are_not_a_time_series(self):
+        from core.stat_signals import compute_signals
+
+        signals = compute_signals(
+            self._by_branch(["Nova", "Maritime", "Mayfield", "Septic", "Junction"]))
+        kinds = {s["type"] for s in signals}
+        assert "temporal" not in kinds
+        assert "flat_trend" not in kinds
+
+    def test_the_same_holds_for_other_words_beginning_with_a_month(self):
+        from core.stat_signals import compute_signals
+
+        signals = compute_signals(
+            self._by_branch(["Marseille", "Augusta", "Octagon", "Decathlon", "Aprilia"]))
+        assert "temporal" not in {s["type"] for s in signals}
+
+    def test_weekday_prefixes_are_not_period_labels_either(self):
+        from core.stat_signals import compute_signals
+
+        signals = compute_signals(
+            self._by_branch(["Satellite", "Frigo", "Monaco", "Sunbelt", "Wednesbury"]))
+        assert "temporal" not in {s["type"] for s in signals}
+
+    def test_real_month_labels_are_still_recognised(self):
+        from core.stat_signals import compute_signals
+
+        rows = [{"PERIOD_LABEL": m, "REVENUE": v} for m, v in
+                [("Jan", 100), ("Feb", 140), ("Mar", 190), ("Apr", 260)]]
+        temporal = [s for s in compute_signals(rows) if s["type"] == "temporal"]
+        assert temporal and temporal[0]["direction"] == "upward"
+
+    def test_french_month_labels_are_recognised_too(self):
+        from core.stat_signals import compute_signals
+
+        rows = [{"MOIS": m, "CHIFFRE": v} for m, v in
+                [("janvier", 100), ("f\u00e9vrier", 140),
+                 ("mars", 190), ("avril", 260)]]
+        assert "temporal" in {s["type"] for s in compute_signals(rows)}
+
+
 # ── B6: a warehouse is not a person ──────────────────────────────────────────
 
 

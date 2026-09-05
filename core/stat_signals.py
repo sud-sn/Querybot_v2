@@ -58,12 +58,36 @@ _TEMPORAL_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# A VALUE that is itself a period label. Anchored, because the previous pattern
-# matched month abbreviations as bare substrings anywhere in the text: "Nova"
-# contains "nov", "Maritime" contains "mar", "Mayfield" contains "may" and
-# "Septic" contains "sep". So a result grouped by profit centre read as a time
-# series, and the answer offered "the trend is downward — what period drove the
-# biggest change?" about a result with no period in it at all.
+# A VALUE that is itself a period label. Anchored, because an unanchored
+# pattern matched month abbreviations as bare substrings anywhere in the text:
+# "Nova" contains "nov", "Maritime" contains "mar", "Mayfield" contains "may"
+# and "Septic" contains "sep". So a result grouped by profit centre read as a
+# time series, and the answer offered "the trend is downward — what period
+# drove the biggest change?" about a result with no period in it at all.
+#
+# Anchoring alone did not fix it. The month branch ended `[a-z]*`, which is
+# free to eat the rest of the word before the anchor is reached, so every one
+# of those names still matched — and so did "Marseille", "Augusta",
+# "Octagon", "Decathlon" and any other word merely BEGINNING with a month
+# abbreviation. The months and weekdays are therefore spelled out: an
+# abbreviation, or the whole word, and nothing else. Same for the weekday
+# branch, where "Satellite", "Frigo", "Monaco" and "Sunbelt" had the same
+# problem.
+_MONTHS = (
+    r"january|february|march|april|june|july|august|september|october"
+    r"|november|december"
+    # French, because the product ships French tenants whose warehouses hold
+    # French period labels.
+    r"|janvier|f\u00e9vrier|fevrier|mars|avril|juin|juillet|ao\u00fbt|aout"
+    r"|septembre|octobre|novembre|d\u00e9cembre|decembre"
+    # Abbreviations. "may"/"mai" carry no separate long form.
+    r"|jan|feb|mar|apr|may|mai|jun|jul|aug|sept|sep|oct|nov|dec"
+)
+_WEEKDAYS = (
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r"|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche"
+    r"|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun"
+)
 _TEMPORAL_VALUE_RE = re.compile(
     r"^(?:"
     r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?"          # 2026-06, 2026/06/30
@@ -71,9 +95,9 @@ _TEMPORAL_VALUE_RE = re.compile(
     r"|(?:19|20)\d{2}"                            # 2026
     r"|q[1-4][\s-]?(?:19|20)?\d{2}"               # Q2 2026
     r"|(?:19|20)\d{2}[\s-]?q[1-4]"                # 2026-Q2
-    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+    r"|(?:" + _MONTHS + r")\.?"
     r"(?:[\s-]+(?:19|20)?\d{2})?"                 # Jun, June 2026
-    r"|(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*"     # weekday labels
+    r"|(?:" + _WEEKDAYS + r")\.?"                  # weekday labels
     r")$",
     re.IGNORECASE,
 )
