@@ -134,7 +134,14 @@ SYSTEM_KEYS = {
     "azure_openai_api_version",    # e.g. 2024-02-01
     "azure_query_deployment_name", # custom Azure deployment name for queries
     "azure_kb_deployment_name",    # custom Azure deployment name for KB generation
-    "default_llm_provider",        # "anthropic" | "openai" | "azure_openai"
+    # Local model (self-hosted): an OpenAI-compatible server on the tenant's
+    # own hardware -- Ollama, vLLM, llama.cpp, LM Studio. The only provider
+    # an air-gapped egress posture permits (core/compliance/egress.py).
+    "local_llm_base_url",          # e.g. http://localhost:11434/v1
+    "local_llm_api_key",           # usually unused; for a reverse proxy
+    "local_llm_model",             # exactly as the local server names it
+    "local_kb_model",              # blank = use local_llm_model for KB builds
+    "default_llm_provider",        # "anthropic" | "openai" | "azure_openai" | "local"
     "default_llm_model",           # model name or Azure deployment name
     "kb_llm_model",                # used once for KB generation
     "admin_password_hash",
@@ -154,18 +161,51 @@ def set_system(key: str, value: str) -> None:
         """, (key, encrypt(value)))
 
 
+def _decrypt_setting(key: str, blob) -> str | None:
+    """One stored setting, or None when it cannot be read.
+
+    A row encrypted under a key we no longer hold -- after a key rotation, a
+    restored backup, or a half-migrated deployment -- used to raise out of
+    ``get_all_system`` and take every other setting with it. That turns one
+    unreadable credential into a dead admin page and a ``resolve_provider``
+    that cannot answer any question, with a cryptography stack trace and no
+    indication of which row is at fault.
+
+    Skipping is the safe direction: the caller sees the setting as unset, and
+    "no API key configured for provider X" is an error an admin can act on.
+    Logged at error, not debug, because a silently-dropped credential and a
+    never-entered one are otherwise indistinguishable.
+    """
+    try:
+        return decrypt(blob)
+    except Exception as exc:  # noqa: BLE001 - any cipher failure, same answer
+        log.error(
+            "system_config[%s] could not be decrypted (%s) — treating as unset. "
+            "Re-enter it in Admin \u2192 System.", key, exc.__class__.__name__,
+        )
+        return None
+
+
 def get_system(key: str, default: str = "") -> str:
     with get_db() as conn:
         row = conn.execute(
             "SELECT value_encrypted FROM system_config WHERE key = ?", (key,)
         ).fetchone()
-    return decrypt(row["value_encrypted"]) if row else default
+    if not row:
+        return default
+    value = _decrypt_setting(key, row["value_encrypted"])
+    return default if value is None else value
 
 
 def get_all_system() -> dict[str, str]:
     with get_db() as conn:
         rows = conn.execute("SELECT key, value_encrypted FROM system_config").fetchall()
-    return {r["key"]: decrypt(r["value_encrypted"]) for r in rows}
+    out: dict[str, str] = {}
+    for r in rows:
+        value = _decrypt_setting(r["key"], r["value_encrypted"])
+        if value is not None:
+            out[r["key"]] = value
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════

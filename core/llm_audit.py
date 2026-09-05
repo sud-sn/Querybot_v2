@@ -350,6 +350,19 @@ def record_llm_call(
         log.warning("LLM audit write failed: %s", exc)
 
 
+def audit_scope_account_id() -> str:
+    """The account the current audit scope names, or "".
+
+    ``llm_complete`` needs to know whose data it is about to send in order to
+    apply that tenant's egress posture, and it has no account argument -- the
+    ambient scope is where that identity already lives, and threading a new
+    parameter through every call site would make the guarantee depend on each
+    of them remembering to pass it.
+    """
+    scope = _AUDIT_SCOPE.get()
+    return str((scope or {}).get("account_id") or "")
+
+
 def record_llm_blocked(component: str, reason: str) -> None:
     """
     Record a proof-of-refusal row: a call site decided NOT to invoke the LLM

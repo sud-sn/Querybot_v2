@@ -21,7 +21,11 @@ import re
 from typing import Literal
 
 from core.date_roles import is_date_role_column
-from core.llm_audit import record_llm_call
+from core.llm_audit import (
+    audit_scope_account_id as _audit_scope_account_id,
+    record_llm_blocked,
+    record_llm_call,
+)
 from core.prompt_cache import (
     CachedPrompt,
     anthropic_system_blocks,
@@ -331,7 +335,7 @@ def _is_plain_surrogate_date_key(token: str, governed: dict[str, str]) -> bool:
         return declared == "surrogate_fk"
     return is_plain_surrogate_date_role_column(token)
 
-Provider = Literal["anthropic", "openai", "azure_openai"]
+Provider = Literal["anthropic", "openai", "azure_openai", "local"]
 
 # ── SQL syntax rules per DB type ──────────────────────────────────────────────
 
@@ -1821,6 +1825,15 @@ def _is_temperature_rejection(exc: Exception) -> bool:
     )
 
 
+class EgressPostureError(RuntimeError):
+    """A model call was refused because the tenant's egress posture forbids it.
+
+    Its own type so callers can tell "this workspace does not allow that
+    endpoint" apart from "the endpoint failed" -- the first is a
+    configuration answer, the second is a retry.
+    """
+
+
 async def llm_complete(
     system: str | CachedPrompt,
     user: str,
@@ -1847,6 +1860,21 @@ async def llm_complete(
     """
     truncated = False
     system_text = as_prompt_text(system)
+
+    # Egress posture, enforced at the funnel rather than at the call sites.
+    # This is the same argument-independence execute_governed_query has: a new
+    # caller cannot opt out of it by forgetting a keyword, because there is no
+    # keyword to forget. The account comes from the ambient audit scope, which
+    # is where the pipeline already records whose question this is.
+    _account = _audit_scope_account_id()
+    if _account:
+        from core.compliance.egress import provider_allowed
+        _ok, _why = provider_allowed(_account, provider)
+        if not _ok:
+            record_llm_blocked("llm_complete", f"egress blocked — {_why}")
+            log.error("LLM call refused for %s: %s", _account, _why)
+            raise EgressPostureError(_why)
+
     try:
         if provider == "anthropic":
             result = await _anthropic_complete(system, user, model, api_key, max_tokens, temperature)
@@ -1855,6 +1883,14 @@ async def llm_complete(
         elif provider == "azure_openai":
             result = await _azure_openai_complete(
                 system_text, user, model, api_key, max_tokens, azure_endpoint, azure_api_version, temperature
+            )
+        elif provider == "local":
+            # azure_endpoint carries the base URL for this provider: it is the
+            # existing "where does this provider live" channel through
+            # resolve_provider's extra_kwargs, and adding a parallel one would
+            # mean touching every llm_complete call site to thread it.
+            result = await _local_complete(
+                system_text, user, model, api_key, max_tokens, azure_endpoint, temperature
             )
         else:
             raise ValueError(f"Unknown LLM provider: {provider!r}")
@@ -1963,6 +1999,33 @@ def _get_openai_client(api_key: str):
     if key not in _llm_client_cache:
         _llm_client_cache[key] = _oai.AsyncOpenAI(
             api_key=api_key, timeout=timeout, max_retries=retries,
+        )
+    return _llm_client_cache[key]
+
+
+def _get_local_client(base_url: str, api_key: str):
+    """A client pointed at a model running on the tenant's own hardware.
+
+    Ollama, vLLM, llama.cpp's server and LM Studio all speak the OpenAI
+    chat-completions shape, so one OpenAI-compatible client covers every local
+    runtime worth supporting. The api_key is usually unused -- Ollama ignores
+    it entirely -- but the SDK refuses to construct without one, so a
+    placeholder stands in.
+    """
+    base = (base_url or "").rstrip("/")
+    if not base:
+        raise RuntimeError(
+            "Local model endpoint not configured. "
+            "Go to Admin \u2192 System and enter the base URL of your local "
+            "model server (for example http://localhost:11434/v1)."
+        )
+    import openai as _oai
+    timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
+    key = ("local", base, api_key, timeout, retries)
+    if key not in _llm_client_cache:
+        _llm_client_cache[key] = _oai.AsyncOpenAI(
+            api_key=api_key or "local", base_url=base,
+            timeout=timeout, max_retries=retries,
         )
     return _llm_client_cache[key]
 
@@ -2087,6 +2150,41 @@ async def _openai_complete(system, user, model, api_key, max_tokens, temperature
     return text, tok_in, tok_out
 
 
+async def _local_complete(system, user, model, api_key, max_tokens, base_url, temperature=0.7):
+    """Complete against a model on the tenant's own hardware.
+
+    Deliberately tolerant of a missing ``usage`` block: llama.cpp and some
+    Ollama builds omit token counts, and an answer that arrived should not be
+    thrown away because the server did not say how much it cost. The audit row
+    then records zeros, which is honest -- we do not know -- rather than an
+    invented estimate.
+    """
+    client = _get_local_client(base_url, api_key)
+    try:
+        resp = await client.chat.completions.create(
+            model=model, max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user",   "content": user}],
+        )
+    except Exception as e:
+        log.error("Local model error: %s", e)
+        raise RuntimeError(
+            f"Local model error: {e}\n\n"
+            "Check that the model server is running and reachable at the "
+            "configured base URL, and that the model name is one it serves."
+        ) from e
+
+    choice = resp.choices[0]
+    text = (choice.message.content or "").strip()
+    usage = getattr(resp, "usage", None)
+    tok_in = int(getattr(usage, "prompt_tokens", 0) or 0)
+    tok_out = int(getattr(usage, "completion_tokens", 0) or 0)
+    if getattr(choice, "finish_reason", "") == "length":
+        raise _truncated("Local model", model, max_tokens, text, tok_in, tok_out)
+    return text, tok_in, tok_out
+
+
 async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpoint, api_version, temperature=0.7):
     if not endpoint:
         raise RuntimeError(
@@ -2130,6 +2228,23 @@ def resolve_provider(client: dict, purpose: str = "query") -> tuple[str, str, st
         or "anthropic"
     )
 
+    # Checked here as well as at the funnel, and for a different reason: this
+    # is where an operator finds out. A workspace declared air-gapped whose
+    # provider is still pointed at a hosted endpoint is a configuration
+    # mistake, and it should surface as a legible message on the way in rather
+    # than as a refused call in the middle of somebody's question. The funnel
+    # check in llm_complete remains the actual guarantee -- it holds even when
+    # a caller never came through here.
+    _account = str(client.get("account_id") or "")
+    if _account:
+        from core.compliance.egress import provider_allowed
+        _ok, _why = provider_allowed(_account, provider)
+        if not _ok:
+            raise EgressPostureError(
+                f"{_why}. Change the workspace's model provider, or its egress "
+                f"posture, in Admin → Compliance."
+            )
+
     if purpose == "kb":
         model = sys_cfg.get("kb_llm_model") or _default_model(provider, "high")
     else:
@@ -2160,6 +2275,26 @@ def resolve_provider(client: dict, purpose: str = "query") -> tuple[str, str, st
                 "Go to Admin → System → Azure OpenAI settings."
             )
         extra_kwargs = {"azure_endpoint": endpoint, "azure_api_version": version}
+    elif provider == "local":
+        # A local runtime needs an address, not a key. Most ignore the key
+        # entirely; a reverse proxy in front of one may want a shared secret,
+        # so it is read and passed if set.
+        api_key = sys_cfg.get("local_llm_api_key", "")
+        base_url = (sys_cfg.get("local_llm_base_url", "") or "").strip()
+        if not base_url:
+            raise RuntimeError(
+                "Local model endpoint not configured. "
+                "Go to Admin → System and enter the base URL of your local "
+                "model server (for example http://localhost:11434/v1)."
+            )
+        configured_model = (
+            (sys_cfg.get("local_kb_model") if purpose == "kb" else "")
+            or sys_cfg.get("local_llm_model", "")
+        ).strip()
+        if configured_model:
+            model = configured_model
+        extra_kwargs = {"azure_endpoint": base_url}
+        return provider, model, api_key, extra_kwargs
     else:
         raise ValueError(f"Unknown provider: {provider!r}")
 
@@ -2177,5 +2312,10 @@ def _default_model(provider: str, quality: str) -> str:
         "anthropic":    {"fast": "claude-sonnet-4-6", "high": "claude-opus-4-5"},
         "openai":       {"fast": "gpt-4o-mini",       "high": "gpt-4o"},
         "azure_openai": {"fast": "gpt-4o-mini",       "high": "gpt-4o"},
+        # Named rather than guessed: a local server serves whatever the
+        # operator pulled, so these are only the fallback when
+        # local_llm_model is unset, and the error from a wrong name is
+        # immediate and legible.
+        "local":        {"fast": "llama3.1:8b",        "high": "llama3.1:70b"},
     }
     return defaults.get(provider, {}).get(quality, "gpt-4o-mini")

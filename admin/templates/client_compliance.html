@@ -115,6 +115,27 @@
       <button class="btn btn-primary" type="submit">Apply profile and seed draft policy</button>
     </form>
   </div></div>
+
+  <div class="card" style="margin-top:1rem"><div class="card-header"><h2>Where this workspace's questions may go</h2></div><div class="card-body">
+    <p>Declares which model endpoints this workspace is permitted to reach. It is enforced on every model call, not just advised: a call to a provider this posture forbids is refused and recorded as a blocked entry in the LLM audit log.</p>
+    {% if egress and not egress.declared %}
+    <p class="form-note"><strong>Not yet declared.</strong> Until someone chooses, this workspace behaves as <em>Cloud</em>.</p>
+    {% endif %}
+    <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/egress">
+      <div class="profile-grid">
+        <label class="profile-card"><input type="radio" name="egress_posture" value="cloud" {% if egress and egress.posture == 'cloud' %}checked{% endif %}><strong> Cloud</strong><p>A hosted model API. Table and column names and the question text are sent; result rows are not.</p></label>
+        <label class="profile-card"><input type="radio" name="egress_posture" value="private" {% if egress and egress.posture == 'private' %}checked{% endif %}><strong> Private</strong><p>A hosted model under zero-retention terms, region-pinned. The same content is sent; the permitted endpoints are narrower.</p></label>
+        <label class="profile-card"><input type="radio" name="egress_posture" value="airgapped" {% if egress and egress.posture == 'airgapped' %}checked{% endif %}><strong> Air-gapped</strong><p>A model on your own hardware. Nothing leaves your network. Requires a local model configured in Admin &rarr; System.</p></label>
+      </div>
+      {% if egress %}
+      <p class="form-note" style="margin-top:0.75rem">
+        Currently permitted: <strong>{{ egress.permitted_providers|join(', ') }}</strong>.
+        Embeddings run in-process in every posture, so retrieval text never leaves regardless of this setting.
+      </p>
+      {% endif %}
+      <button class="btn btn-primary" type="submit">Save egress posture</button>
+    </form>
+  </div></div>
 </section>
 
 <section class="compliance-panel" id="panel-classification">

@@ -116,12 +116,20 @@ QUERY_MODELS = [
     ("azure_openai", "gpt-4o",            "GPT-4o (Azure OpenAI) — use your deployment name"),
     ("azure_openai", "gpt-4o-mini",       "GPT-4o Mini (Azure OpenAI) — use your deployment name"),
     ("azure_openai", "gpt-35-turbo",      "GPT-3.5 Turbo (Azure OpenAI)"),
+    # A local runtime serves whatever the operator pulled, so these are
+    # starting points rather than a catalogue -- the free-text model field on
+    # the local panel is what actually decides, and it wins over this list.
+    ("local",        "llama3.1:8b",       "Llama 3.1 8B (local)"),
+    ("local",        "qwen2.5:14b",       "Qwen 2.5 14B (local)"),
+    ("local",        "mistral-small",     "Mistral Small (local)"),
 ]
 KB_MODELS = [
     ("anthropic",    "claude-opus-4-5",  "Claude Opus 4.5 — best quality (recommended)"),
     ("anthropic",    "claude-sonnet-4-6","Claude Sonnet 4.6"),
     ("openai",       "gpt-4o",           "GPT-4o (OpenAI)"),
     ("azure_openai", "gpt-4o",           "GPT-4o (Azure) — use your deployment name"),
+    ("local",        "llama3.1:70b",     "Llama 3.1 70B (local)"),
+    ("local",        "qwen2.5:32b",      "Qwen 2.5 32B (local)"),
 ]
 
 
@@ -1088,6 +1096,10 @@ async def system_save(
     default_provider:        str = Form(""),
     default_model:           str = Form(""),
     kb_model:                str = Form(""),
+    local_base_url:          str = Form(""),
+    local_api_key:           str = Form(""),
+    local_model:             str = Form(""),
+    local_kb_model:          str = Form(""),
     database_backend:        str = Form(""),
     database_url:            str = Form(""),
     save_section:            str = Form(""),
@@ -1115,6 +1127,15 @@ async def system_save(
         store.set_system("default_llm_model", default_model)
     if kb_model:
         store.set_system("kb_llm_model", kb_model)
+    if local_base_url.strip():
+        store.set_system("local_llm_base_url", local_base_url.strip())
+    if local_api_key and not local_api_key.startswith("•"):
+        store.set_system("local_llm_api_key", local_api_key)
+    # Blank clears these deliberately: a local server's model name is free
+    # text, and an operator who empties the field means "fall back to the
+    # dropdown", not "keep whatever was there".
+    store.set_system("local_llm_model", local_model.strip())
+    store.set_system("local_kb_model", local_kb_model.strip())
     # Database backend: write to data/pg_url (empty = SQLite, URL = PostgreSQL)
     if database_backend == "sqlite":
         save_pg_url("")
@@ -2947,9 +2968,51 @@ async def compliance_page(request: Request, account_id: str):
         "egress_summary": store.get_kb_egress_summary(account_id),
         "egress_rows": egress_rows,
         "llm_audit_enabled": bool(client.get("enable_llm_audit")),
+        "egress": _egress_describe(account_id),
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
     })
+
+
+def _egress_describe(account_id: str) -> dict:
+    """The workspace's egress posture, for the compliance page.
+
+    Best-effort: this page is where an admin goes when something is already
+    wrong, and it must render even if the posture cannot be read.
+    """
+    try:
+        from core.compliance.egress import describe
+        return describe(account_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Egress posture unavailable for %s: %s", account_id, exc)
+        return {}
+
+
+@router.post("/clients/{account_id}/compliance/egress")
+async def compliance_save_egress(request: Request, account_id: str):
+    """Declare where this workspace's questions may go.
+
+    Its own route rather than a field on the industry form, because that form
+    resets the policy lifecycle and re-imports classifications — changing
+    where a model runs should not invalidate a tenant's approved policy
+    version.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.compliance.egress import POSTURES
+
+    form = await request.form()
+    posture = str(form.get("egress_posture") or "").strip().lower()
+    if posture not in POSTURES:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/compliance?error=egress_posture",
+            status_code=303,
+        )
+    store.save_compliance_profile(account_id, egress_posture=posture)
+    log.info("Egress posture for %s set to %s by admin", account_id, posture)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=egress", status_code=303,
+    )
 
 
 @router.post("/clients/{account_id}/compliance/profile")

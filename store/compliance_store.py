@@ -54,6 +54,7 @@ def get_compliance_profile(account_id: str) -> dict:
             "identity_control": "password",
             "managed_secrets_enabled": 0,
             "immutable_audit_enabled": 0,
+            "egress_posture": "",
         }
     result = dict(row)
     result["jurisdictions"] = _loads(result.pop("jurisdictions_json", "[]"), [])
@@ -75,8 +76,8 @@ def save_compliance_profile(account_id: str, **values: Any) -> dict:
                 enforcement_mode, active_policy_version, identity_control,
                 managed_secrets_enabled, immutable_audit_enabled,
                 external_audit_destination, activated_by, activated_at,
-                invalidated_at, invalidated_reason, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                invalidated_at, invalidated_reason, egress_posture, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
             ON CONFLICT(account_id) DO UPDATE SET
                 mode=excluded.mode,
                 industry=excluded.industry,
@@ -95,6 +96,7 @@ def save_compliance_profile(account_id: str, **values: Any) -> dict:
                 activated_at=excluded.activated_at,
                 invalidated_at=excluded.invalidated_at,
                 invalidated_reason=excluded.invalidated_reason,
+                egress_posture=excluded.egress_posture,
                 updated_at=datetime('now')
             """,
             (
@@ -116,6 +118,7 @@ def save_compliance_profile(account_id: str, **values: Any) -> dict:
                 merged.get("activated_at"),
                 merged.get("invalidated_at"),
                 merged.get("invalidated_reason", ""),
+                merged.get("egress_posture", ""),
             ),
         )
     return get_compliance_profile(account_id)

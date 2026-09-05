@@ -215,6 +215,7 @@
             <option value="anthropic" {% if saved_provider == 'anthropic' %}selected{% endif %}>Anthropic</option>
             <option value="openai" {% if saved_provider == 'openai' %}selected{% endif %}>OpenAI</option>
             <option value="azure_openai" {% if saved_provider == 'azure_openai' %}selected{% endif %}>Azure OpenAI</option>
+            <option value="local" {% if saved_provider == 'local' %}selected{% endif %}>Local model (self-hosted)</option>
           </select>
           <p class="form-note">Save this choice before adding credentials. Existing provider keys remain stored.</p>
         </div>
@@ -253,6 +254,50 @@
   </div>
 
   <div id="provider-configuration-stage">
+  <!-- ── Local model ────────────────────────────────────────────────────── -->
+  <div class="card provider-panel {{ 'active' if saved_provider == 'local' else '' }}" data-provider-panel="local">
+    <div class="card-header">
+      <div class="llm-stage-heading">
+        <span class="llm-stage-number">2</span>
+        <div>
+          <div class="llm-stage-title">Connect a local model</div>
+          <div class="llm-stage-description">A model running on your own hardware. Nothing leaves your network — set the workspace's egress posture to <strong>air-gapped</strong> to enforce that.</div>
+        </div>
+        <span class="llm-stage-status {{ 'configured' if cfg.get('local_llm_base_url') else '' }}">{{ ic('check-circle', 12) if cfg.get('local_llm_base_url') else ic('key', 12) }} {{ 'Configured' if cfg.get('local_llm_base_url') else 'Not configured' }}</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="form-group">
+        <label for="local_base_url">Model server base URL</label>
+        <input type="text" id="local_base_url" name="local_base_url" placeholder="http://localhost:11434/v1" value="{{ cfg.get('local_llm_base_url', '') }}">
+        <p class="form-note">Any OpenAI-compatible endpoint: Ollama (<code>http://localhost:11434/v1</code>), vLLM, llama.cpp's server, or LM Studio.</p>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="local_model">Query model name</label>
+          <input type="text" id="local_model" name="local_model" placeholder="llama3.1:8b" value="{{ cfg.get('local_llm_model', '') }}">
+          <p class="form-note">Exactly as your server names it. Takes priority over the dropdown above.</p>
+        </div>
+        <div class="form-group">
+          <label for="local_kb_model">KB generation model name</label>
+          <input type="text" id="local_kb_model" name="local_kb_model" placeholder="llama3.1:70b" value="{{ cfg.get('local_kb_model', '') }}">
+          <p class="form-note">Leave blank to use the query model for knowledge-base builds too.</p>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="local_api_key">Shared secret <span class="form-note-inline">(optional)</span></label>
+        <div class="input-reveal-wrap">
+          <input type="password" id="local_api_key" name="local_api_key" value="{{ cfg.get('local_llm_api_key', '') }}">
+        </div>
+        <p class="form-note">Most local runtimes ignore this. Set it only if you have put a reverse proxy in front of the model server.</p>
+      </div>
+      <div class="llm-save-row">
+        <button type="submit" class="btn btn-primary" name="save_section" value="credentials">{{ ic("check", 14) }} Save local model settings</button>
+      </div>
+    </div>
+  </div>
+
+
   <!-- ── Anthropic ──────────────────────────────────────────────────────── -->
   <div class="card provider-panel {{ 'active' if saved_provider == 'anthropic' else '' }}" data-provider-panel="anthropic">
     <div class="card-header">

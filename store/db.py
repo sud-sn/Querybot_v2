@@ -1328,6 +1328,15 @@ def _run_migrations() -> None:
         # databases too -- that is how last_active_at (v36) reaches a brand-new
         # DB -- and two definitions of one column drift.
         ("portal_user", "lang", "TEXT NOT NULL DEFAULT 'en'"),
+        # Egress posture: cloud | private | airgapped. See
+        # core/compliance/egress.py. Empty rather than 'cloud' as the column
+        # default, so "never chosen" stays distinguishable from "chose cloud"
+        # -- egress_posture() supplies the default for a provisioned tenant
+        # and fails closed for an unprovisioned one, and a column default
+        # would erase the difference the same way 'fr' would have for lang.
+        #
+        # Declared HERE ONLY, not in _SCHEMA, for the reason above it.
+        ("compliance_profile", "egress_posture", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
