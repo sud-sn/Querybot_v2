@@ -6957,6 +6957,26 @@ async def handle_query(
     # back to the builtin. An abbreviation the admin added expanded correctly in
     # the generated KB text and then failed to expand the question that needed
     # it, so the doc documenting that term was not retrieved.
+    # The reader's language, activated for the whole answer. Every deterministic
+    # producer downstream -- build_answer, the insight summary, the decision
+    # signal, the coverage caveats -- reads it through core.i18n's ContextVar
+    # rather than taking a parameter, because threading one through
+    # build_assistant_response's fifteen collaborators is a diff a new call site
+    # silently forgets.
+    #
+    # It rides portal_user, which is already resolved here. Deliberately NOT
+    # display_context: on a governed-cache hit that is a cached snapshot, so a
+    # user who switched to French would keep being answered in English.
+    _lang_token = None
+    try:
+        from core.i18n import activate_language
+        _lang_token = activate_language((portal_user or {}).get("lang") or "en")
+    except Exception as _lang_exc:
+        log.warning(
+            "Could not activate the answer language for %s: %s — this answer "
+            "is rendered in English",
+            account_id, _lang_exc, exc_info=True,
+        )
     _vocab_token = None
     try:
         from core.vocab_packs import activate_vocab, vocab_for_account
@@ -6988,6 +7008,9 @@ async def handle_query(
         if _vocab_token is not None:
             from core.vocab_packs import deactivate_vocab
             deactivate_vocab(_vocab_token)
+        if _lang_token is not None:
+            from core.i18n import deactivate_language
+            deactivate_language(_lang_token)
         # Every expected return calls _trace_finish explicitly. This final
         # guard catches future early-return regressions without changing the
         # user-facing response or swallowing an exception.
