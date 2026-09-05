@@ -205,6 +205,7 @@ class TestTheCatalogueIsWellFormed:
         "guide.schema_entry.one",
         "guide.schema_entry.other",
         "guide.table_line",
+        "ui.chat.hist.duration",        # "ms" is the SI symbol in both
     }
 
     def test_no_id_is_declared_twice(self):

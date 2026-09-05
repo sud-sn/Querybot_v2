@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 
 from core import i18n
+from tests.browser_num import preamble as _num_preamble
 from tests.js_lift import function as lift
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,11 +56,18 @@ def run(script: str, *, lang="en", functions=(), consts=(), preamble="") -> dict
         + [lift(src, sig) for sig in functions]
     )
     harness = f"""
+{_num_preamble(lang)}
 const I18N = {json.dumps(i18n.catalogue_for(lang))};
 function t(id, vars){{
   let out = Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id;
   if (vars) for (const k in vars) out = out.split('{{' + k + '}}').join(String(vars[k]));
   return out;
+}}
+function plural(stem, count, vars){{
+  const n = Math.abs(Number(count));
+  const one = {json.dumps(lang)} === 'fr' ? n < 2 : n === 1;
+  const args = Object.assign({{count: count}}, vars || {{}});
+  return t(stem + (one ? '.one' : '.other'), args);
 }}
 {preamble}
 

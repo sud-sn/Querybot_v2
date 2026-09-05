@@ -9,7 +9,12 @@ from statistics import mean, median, stdev
 from typing import Any
 
 from core.display_formats import normalize_display_format
-from core.i18n import plural as _t_plural, t as _t
+from core.i18n import (
+    format_decimal as _format_decimal,
+    number_format as _number_format,
+    plural as _t_plural,
+    t as _t,
+)
 from core.clarification import extract_original_question
 from core.temporal_columns import infer_series_grain, parse_period_label
 
@@ -106,33 +111,51 @@ def _format_number(
     spec = normalize_display_format(display_format)
     fmt = _normalise_result_format(spec.get("type") or fmt)
     grouping = spec.get("grouping", True)
-    group_flag = "," if grouping else ""
     digits = spec.get("fraction_digits")
+    # Comma groups and a dot decimal are English. A French reader reads that
+    # comma as the decimal point, so "1,234" is one and a bit rather than a
+    # thousand -- the same digits, off by a factor of a thousand, with nothing
+    # on screen to say so. core/i18n.py owns the pair, because the browser
+    # formats the same numbers into table cells and the two must agree.
+    number_spec = _number_format()
+
+    def render(value: float, places: int, *, grouped: bool = True) -> str:
+        return _format_decimal(value, places, grouping=grouped and grouping)
+
     if spec.get("style") == "compact" and abs(num) >= 1000:
         for divisor, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
             if abs(num) >= divisor:
                 compact_digits = 1 if digits is None else digits
-                compact = f"{num / divisor:.{compact_digits}f}".rstrip("0").rstrip(".")
+                compact = render(num / divisor, compact_digits, grouped=False)
+                # rstrip on the language's own decimal separator: "1,0M" in
+                # French is one point zero, and stripping a "." there would
+                # leave the zero on.
+                compact = compact.rstrip("0").rstrip(str(number_spec["decimal"]))
                 return f"{compact}{suffix}"
     if fmt == "currency":
         digits = 2 if digits is None else digits
         code = str(spec.get("currency_code") or "USD")
         symbol = _CURRENCY_SYMBOLS.get(code, f"{code} ")
-        absolute = f"{abs(num):{group_flag}.{digits}f}"
+        absolute = render(abs(num), digits)
+        gap = str(number_spec["currency_gap"])
+        amount = (f"{absolute}{gap}{symbol.strip()}"
+                  if number_spec["currency_after"] else f"{symbol}{absolute}")
         if num < 0 and spec.get("accounting"):
-            return f"({symbol}{absolute})"
-        return f"{'-' if num < 0 else ''}{symbol}{absolute}"
+            return f"({amount})"
+        return f"{'-' if num < 0 else ''}{amount}"
     if fmt == "percentage":
         if spec.get("scale") == "fraction":
             num *= 100
         digits = 2 if digits is None else digits
-        rendered = f"{num:{group_flag}.{digits}f}"
-        return f"{rendered}%"
+        return f"{render(num, digits)}{number_spec['percent_gap']}%"
     if digits is not None:
-        return f"{num:{group_flag}.{digits}f}"
+        return render(num, digits)
+    # The >= 1000 test is on the value BEFORE rounding, which is why 999.999
+    # comes back ungrouped as "1000.00". Preserved deliberately: this is a
+    # translation, not a rounding change.
     if abs(num) >= 1000:
-        return f"{num:,.0f}" if num.is_integer() else f"{num:,.2f}"
-    return f"{num:.0f}" if num.is_integer() else f"{num:.2f}"
+        return render(num, 0 if num.is_integer() else 2)
+    return render(num, 0 if num.is_integer() else 2, grouped=False)
 
 
 def _format_display_value(

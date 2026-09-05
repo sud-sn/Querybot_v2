@@ -40,7 +40,8 @@ from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
 from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
 from core.i18n import (
-    catalogue_for, translator_for, LANGUAGE_NAMES, SUPPORTED_LANGUAGES,
+    catalogue_for, number_format, translator_for, LANGUAGE_NAMES,
+    SUPPORTED_LANGUAGES,
     enum_label as i18n_enum_label, plural as i18n_plural, t as i18n_t,
 )
 
@@ -140,6 +141,10 @@ def _language_context(request: Request) -> dict:
     return {
         "lang": lang,
         "i18n_catalogue": catalogue_for(lang),
+        # The separators the page formats numbers with. Injected rather than
+        # left to Intl so the browser's table cells and the server's prose
+        # cannot disagree about what "1,234" means.
+        "number_format": number_format(lang),
         "t": translator_for(lang),
         # Every language OTHER than the current one, each under its own name.
         # A list rather than "the other one" so a third language shows up in

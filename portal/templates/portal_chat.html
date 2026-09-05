@@ -1921,6 +1921,18 @@ window._chartPayloads = window._chartPayloads || {};
 const _PALETTES = window.QB_PALETTES;
 const _PAL_GRAD = window.QB_PALETTE_GRADIENTS;
 
+// French writes the currency symbol AFTER the amount, with a no-break space
+// before it; English writes it in front with nothing between. Both sides come
+// from window.QB_NUM, which core/i18n.py fills, so the page and the server's
+// own prose place the symbol the same way.
+const _QB_CURRENCY_SYMBOL = {USD: '$', EUR: '€', GBP: '£', JPY: '¥', INR: '₹'};
+function _qbMoney(body, symbol) {
+  const sym = String(symbol || '$').trim();
+  return window.QB_NUM.currency_after
+    ? body + window.QB_NUM.currency_gap + sym
+    : sym + body;
+}
+
 // ── Number formatter for tooltips / axis labels ───────────────────────────────
 function _fmtNum(v) {
   const n = Number(v);
@@ -1940,7 +1952,7 @@ function _fmtNum(v) {
   // chart of rates or conversion fractions drew an axis of zeros. Significant
   // digits keep the magnitude visible instead.
   if (abs < 0.01) return Number(n.toPrecision(2)).toString();
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return window.qbNum(n, {max: 2});
 }
 function _chartNormKey(v) {
   return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -1973,9 +1985,9 @@ function _fmtChartValue(v, fmt, compact = false) {
   if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
   if (isNaN(n)) return String(v ?? '');
-  if (fmt === 'currency') return compact ? ('$' + _fmtNum(n)) : ('$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}));
-  if (fmt === 'percentage') return n.toLocaleString('en-US', {maximumFractionDigits:2}) + '%';
-  return compact ? _fmtNum(n) : n.toLocaleString(undefined, {maximumFractionDigits:4});
+  if (fmt === 'currency') return _qbMoney(compact ? _fmtNum(n) : window.qbNum(n, {min:2, max:2}), '$');
+  if (fmt === 'percentage') return window.qbNum(n, {max:2}) + window.QB_NUM.percent_gap + '%';
+  return compact ? _fmtNum(n) : window.qbNum(n, {max:4});
 }
 function _chartNumber(v) {
   if (v === null || v === undefined || v === '') return null;
@@ -3126,10 +3138,12 @@ function _columnFormatMap(data) {
   });
   return map;
 }
+// Delegates to the shell so the table's sort comparator and its column
+// aggregate parse back exactly what the cell formatter wrote. Stripping every
+// comma was right while the page only ever formatted in English; in French a
+// comma is the DECIMAL point, and "1 234,56" coerced to 123456.
 function _parseDisplayNumber(v) {
-  const cleaned = String(v ?? '').replace(/[$,%\s]/g, '').replace(/,/g, '');
-  if (!cleaned) return NaN;
-  return Number(cleaned);
+  return window.qbParseNum(v);
 }
 function _displayFormatSpec(data, column) {
   const specs = data?.display_formats || {};
@@ -3207,17 +3221,27 @@ function _formatDisplayValue(value, fmt, spec = {}, column = '') {
     const n = _parseDisplayNumber(raw);
     if (!isNaN(n)) {
       const code = spec.currency_code || 'USD';
-      const formatted = n.toLocaleString('en-US', {...numberOpts, style:'currency', currency:code, currencySign:spec.accounting ? 'accounting' : 'standard'});
-      return formatted;
+      const body = window.qbNum(Math.abs(n), {min: numberOpts.minimumFractionDigits,
+                                              max: numberOpts.maximumFractionDigits,
+                                              grouping: numberOpts.useGrouping !== false});
+      const amount = _qbMoney(body, _QB_CURRENCY_SYMBOL[code] || (code + ' '));
+      if (n < 0) return spec.accounting ? `(${amount})` : `-${amount}`;
+      return amount;
     }
   }
   if (fmt === 'percentage') {
     const n = _parseDisplayNumber(raw);
-    if (!isNaN(n)) return (spec.scale === 'fraction' ? n * 100 : n).toLocaleString('en-US', numberOpts) + '%';
+    if (!isNaN(n)) return window.qbNum(spec.scale === 'fraction' ? n * 100 : n,
+                                       {min: numberOpts.minimumFractionDigits,
+                                        max: numberOpts.maximumFractionDigits,
+                                        grouping: numberOpts.useGrouping !== false})
+                          + window.QB_NUM.percent_gap + '%';
   }
   if (fmt === 'number') {
     const n = _parseDisplayNumber(raw);
-    if (!isNaN(n)) return n.toLocaleString('en-US', numberOpts);
+    if (!isNaN(n)) return window.qbNum(n, {min: numberOpts.minimumFractionDigits,
+                                          max: numberOpts.maximumFractionDigits,
+                                          grouping: numberOpts.useGrouping !== false});
   }
   // Before any separator logic: a period is a label, not a quantity.
   if (_isPeriodLabel(raw, column)) return raw.trim();
@@ -3225,14 +3249,14 @@ function _formatDisplayValue(value, fmt, spec = {}, column = '') {
   // Matches SQL DECIMAL/FLOAT columns not yet classified by column_formats.
   if (!fmt && /^-?\d+(\.\d+)?$/.test(raw.trim())) {
     const n = Number(raw);
-    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 2});
+    if (!isNaN(n)) return window.qbNum(n, {max: 2});
   }
   return raw;
 }
 function _formatAggregateValue(value, fmt) {
-  if (fmt === 'currency') return '$' + value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  if (fmt === 'percentage') return value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '%';
-  return value.toLocaleString('en-US', {maximumFractionDigits: 2});
+  if (fmt === 'currency') return _qbMoney(window.qbNum(value, {min: 2, max: 2}), '$');
+  if (fmt === 'percentage') return window.qbNum(value, {min: 2, max: 2}) + window.QB_NUM.percent_gap + '%';
+  return window.qbNum(value, {max: 2});
 }
 function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   if (!data || !Array.isArray(data.rows) || !data.rows.length) return '';
@@ -3254,8 +3278,8 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   const total = data.total_rows ?? data.rows.length;
   const shown = data.rows.length;
   const truncNote = (data.truncated || shown < total)
-    ? `<span>Showing first ${shown.toLocaleString()} of ${total.toLocaleString()} rows</span>`
-    : `<span>${shown.toLocaleString()} row${shown === 1 ? '' : 's'}</span>`;
+    ? `<span>${escHtml(t('ui.chat.table.showing_first', {shown: window.qbNum(shown), total: window.qbNum(total)}))}</span>`
+    : `<span>${escHtml(plural('ui.chat.table.rows', shown, {count: window.qbNum(shown)}))}</span>`;
 
   // Detect numeric columns for aggregate footer display
   const numCols = headers.filter(h => {
@@ -3349,9 +3373,9 @@ function _mountDataTableControls(wrapEl, question) {
     const vis = getVisibleRows();
     const total = allRows.length;
     if (vis.length < total) {
-      foot.innerHTML = `<span>${vis.toLocaleString ? vis.length.toLocaleString() : vis.length} of ${total.toLocaleString()} rows shown</span>`;
+      foot.innerHTML = `<span>${escHtml(t('ui.chat.table.rows_shown', {shown: window.qbNum(vis.length), total: window.qbNum(total)}))}</span>`;
     } else {
-      foot.innerHTML = `<span>${total.toLocaleString()} row${total === 1 ? '' : 's'}</span>`;
+      foot.innerHTML = `<span>${escHtml(plural('ui.chat.table.rows', total, {count: window.qbNum(total)}))}</span>`;
     }
     updateAgg();
   }
@@ -3521,7 +3545,7 @@ function _mountResultChat(cardEl, rcId) {
       <div class="rc-table-wrap">
         <table class="rc-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
         <div class="rc-foot">
-          <span>${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}</span>
+          <span>${escHtml(plural('ui.chat.table.rows', rows.length, {count: window.qbNum(rows.length)}))}</span>
           <button id="${csvId}" class="rc-csv-btn" title="${t('ui.chat.table.download_csv')}">
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>
             CSV
@@ -5322,9 +5346,9 @@ async function loadHistory() {
       const groupHeader = group !== lastGroup ? `<div class="hp-group-label">${escHtml(group)}</div>` : '';
       lastGroup = group;
       const ts   = _historyTime(item);
-      const rows = item.row_count != null ? item.row_count.toLocaleString() + ' rows' : '';
-      const dur  = item.duration_ms ? Math.round(item.duration_ms) + ' ms' : '';
-      const turns = item.turn_count > 1 ? item.turn_count + ' turns' : '';
+      const rows = item.row_count != null ? t('ui.chat.hist.rows', {count: window.qbNum(item.row_count)}) : '';
+      const dur  = item.duration_ms ? t('ui.chat.hist.duration', {count: window.qbNum(Math.round(item.duration_ms))}) : '';
+      const turns = item.turn_count > 1 ? t('ui.chat.hist.turns', {count: window.qbNum(item.turn_count)}) : '';
       const active = item.thread_id === THREAD_ID ? ' active' : '';
       return `${groupHeader}<div class="hp-item${active}" role="button" tabindex="0" data-thread-id="${escHtml(item.thread_id || '')}"
                    onclick="openHistoryThread(this.dataset.threadId, this)"

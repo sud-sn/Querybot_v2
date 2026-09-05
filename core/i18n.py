@@ -88,6 +88,28 @@ FORBIDDEN_VALUES = ("redacted segment", "[REDACTED]", "CANNOT_GENERATE")
 
 _PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
+# How each language writes a number. The pair is deliberately declared here
+# rather than taken from Intl or locale: the server writes numbers into prose
+# and the browser writes the same numbers into table cells, and the two have to
+# agree exactly. Intl gives French U+202F or U+00A0 depending on the browser's
+# ICU version, and duktape -- which is how this repo tests the page's own
+# JavaScript -- has no Intl at all.
+#
+# The narrow no-break space is the French typographic standard for grouping and
+# is what a French reader expects; a comma there is the DECIMAL separator, so
+# "1,234" read by a French reader is one and a bit, not a thousand.
+# The gap before % and before a currency symbol is a no-break space in French
+# (U+00A0) and nothing in English; the grouping separator is the NARROW
+# no-break space (U+202F). They are different characters on purpose -- that is
+# the French typographic rule, and using one for both makes "12 345 %" look
+# like a grouped number.
+NUMBER_FORMATS: dict[str, dict[str, object]] = {
+    "en": {"group": ",", "decimal": ".", "percent_gap": "",
+           "currency_gap": "", "currency_after": False},
+    "fr": {"group": "\u202f", "decimal": ",", "percent_gap": "\u00a0",
+           "currency_gap": "\u00a0", "currency_after": True},
+}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # The catalogue
@@ -1636,6 +1658,22 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.trust.governed": {"en": "governed date context", "fr": "contexte de date gouverné"},
 
     # The result table's own controls.
+    # The table's own footer. These were built as `${n.toLocaleString()} row${n
+    # === 1 ? '' : 's'}` -- an English plural and an English number in one
+    # expression, both of them wrong for a French reader.
+    "ui.chat.table.rows.one": {"en": "{count} row", "fr": "{count} ligne"},
+    "ui.chat.table.rows.other": {"en": "{count} rows", "fr": "{count} lignes"},
+    "ui.chat.table.showing_first": {
+        "en": "Showing first {shown} of {total} rows",
+        "fr": "Affichage des {shown} premières lignes sur {total}",
+    },
+    "ui.chat.table.rows_shown": {
+        "en": "{shown} of {total} rows shown",
+        "fr": "{shown} lignes affichées sur {total}",
+    },
+    "ui.chat.hist.rows": {"en": "{count} rows", "fr": "{count} lignes"},
+    "ui.chat.hist.duration": {"en": "{count} ms", "fr": "{count} ms"},
+    "ui.chat.hist.turns": {"en": "{count} turns", "fr": "{count} échanges"},
     "ui.chat.table.filter": {"en": "Filter rows…", "fr": "Filtrer les lignes…"},
     "ui.chat.table.filter_label": {"en": "Filter table rows", "fr": "Filtrer les lignes du tableau"},
     "ui.chat.table.download_csv": {"en": "Download as CSV", "fr": "Télécharger en CSV"},
@@ -3654,20 +3692,55 @@ def grain_label(grain, count=2, lang: str | None = None) -> str:
     return plural(stem, count, lang=lang)
 
 
-def format_count(value, lang: str | None = None) -> str:
-    """A whole number with the thousands separator its language groups by.
+def number_format(lang: str | None = None) -> dict[str, object]:
+    """The separators and spacing one language writes numbers with."""
+    tag = normalise_language(lang if lang is not None else get_active_language())
+    return NUMBER_FORMATS.get(tag, NUMBER_FORMATS[DEFAULT_LANGUAGE])
 
-    ``f"{n:,}"`` is English. French groups with a narrow no-break space and
-    reads a comma as the decimal point, so "1,234 lignes" is one and a bit
-    rather than a thousand -- an off-by-a-thousand in a caveat about how much
-    of the result the reader is being shown.
+
+def format_decimal(
+    value,
+    digits: int | None = None,
+    *,
+    grouping: bool = True,
+    lang: str | None = None,
+) -> str:
+    """A number written the way the reader's language writes numbers.
+
+    ``f"{n:,.2f}"`` is English throughout: comma groups, dot decimal. A French
+    reader reads that comma as the decimal point, so "1,234" is one and a bit
+    rather than a thousand -- the same digits, off by a factor of a thousand,
+    with nothing on screen to say so.
+
+    ``digits`` None keeps the value's own precision the way the callers here
+    already do (whole numbers plain, otherwise two places).
     """
     try:
-        grouped = f"{int(value):,}"
+        number = float(value)
     except (TypeError, ValueError):
         return str(value)
-    tag = normalise_language(lang if lang is not None else get_active_language())
-    return grouped.replace(",", "\u202f") if tag == "fr" else grouped
+    if number != number or number in (float("inf"), float("-inf")):
+        return str(value)
+    if digits is None:
+        digits = 0 if float(number).is_integer() else 2
+    rendered = f"{number:{',' if grouping else ''}.{digits}f}"
+    spec = number_format(lang)
+    if spec["group"] == "," and spec["decimal"] == ".":
+        return rendered
+    # Group first, decimal second. The other order collides: swapping "." to
+    # the French comma first leaves a string of commas that the group pass
+    # cannot tell apart, and "1,234.56" comes out as "1 234 56".
+    return (rendered.replace(",", str(spec["group"]))
+                    .replace(".", str(spec["decimal"])))
+
+
+def format_count(value, lang: str | None = None) -> str:
+    """A whole number, grouped the way its language groups thousands."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return format_decimal(number, 0, lang=lang)
 
 
 def enum_label(group: str, value, lang: str | None = None) -> str:

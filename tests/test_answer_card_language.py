@@ -121,9 +121,14 @@ class TestASingleScalar:
 
     def test_french_puts_a_space_before_the_colon(self, french):
         """Not a nicety: "Marge: 12" is a typographic error in French. It is
-        also why this is a message and not an f-string join."""
+        also why this is a message and not an f-string join.
+
+        The thousands separator is the narrow no-break space for the same
+        reason: a comma there is the DECIMAL point, so "1,250" read by a
+        French reader is one and a bit rather than a thousand.
+        """
         answer = build_answer([{"total_revenue": 1250}], "total revenue")
-        assert answer["headline"] == "Total Revenue : 1,250"
+        assert answer["headline"] == "Total Revenue : 1\u202f250"
 
     def test_english_does_not(self):
         answer = build_answer([{"total_revenue": 1250}], "total revenue")

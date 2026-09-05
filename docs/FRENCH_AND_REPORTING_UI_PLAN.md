@@ -220,20 +220,64 @@ rather than which words are searched.
 
 Ordered by how often a reader sees it.
 
-1. **Number formatting.** `_format_number` in `core/response_builder.py`
-   groups thousands with `,` and puts the decimal point at `.`; French does
-   the opposite, so "1,234" reads as one and a bit. `i18n.format_count`
-   exists for whole counts and the truncation caveat uses it, but the
-   display-format pipeline (currency symbols, compact `K`/`M`, fraction
-   digits) is a separate pass and is untouched.
-2. **`core/answer_formatter.py`'s section markers** — deliberately English
+1. **`core/answer_formatter.py`'s section markers** — deliberately English
    and deliberately out of the catalogue; see the note beside the
    `ui.chat.diag.*` ids.
+2. **Dates.** `toLocaleDateString('en-US', …)` in the chat page's display
+   formatter, and the ISO dates the coverage caveats quote. Numbers are done;
+   dates are the same shape of problem and a separate pass.
 3. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
    and the `/api/ask` JSON error contract. These do not reach a portal reader
    and have no `portal_user` to take a language from.
 4. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### Number formatting, and what it needed
+
+`1,234.56` is English. A French reader reads that comma as the decimal point,
+so the same digits are off by a factor of a thousand with nothing on screen to
+say so — the quietest wrong answer a data product can give.
+
+The rule is needed twice: the server writes numbers into prose (the answer
+headline, the analysis card, the insight summary) and the browser writes the
+same numbers into the table cells under them. So `core/i18n.py` owns
+`NUMBER_FORMATS` and `format_decimal`, `portal/routes.py` injects the pair
+into every render, and `portal_base.html` exposes `window.qbNum` beside
+`qbT`/`qbPlural`. `tests/test_number_format_language.py` EXECUTES the
+JavaScript and compares it to Python for every case.
+
+**Deliberately not `Intl`.** Intl gives French U+202F or U+00A0 depending on
+the browser's ICU version, so the server and the browser would disagree by
+one character; and duktape, which is how this repo tests the page's own
+JavaScript, has no Intl at all.
+
+Three defects that had nothing to do with French:
+
+* The page had **three** number formats live at once —
+  `toLocaleString('en-US')` in the table cells, `toLocaleString(undefined)`
+  (the *browser's* locale, not the reader's) in the chart tooltips, and
+  hand-built magnitude suffixes. On a French browser the tooltip already
+  disagreed with the table beside it.
+* `_parseDisplayNumber` stripped every comma. The table's sort comparator and
+  its column aggregate both read back the text the cell formatter wrote, so a
+  French-formatted `1 234,56` would have coerced to `123456` — the column
+  sorting and totalling wrong, silently. `window.qbParseNum` inverts whatever
+  `window.qbNum` wrote, and a round-trip test pins it.
+* Six English strings in `portal_chat.html` survived the chat-page pass
+  because they are built by interpolation inside template literals:
+  `${n.toLocaleString()} row${n === 1 ? '' : 's'}` and its siblings in the
+  table footer and the history panel. An English number and an English plural
+  in one expression.
+
+`999.999` still comes back ungrouped as `1000.00`: the `>= 1000` test runs on
+the value *before* rounding. Preserved deliberately and pinned — this was a
+translation, not a rounding change, and the English output is byte-identical
+across every shape.
+
+**The CSV export stays English**, pinned by a test. A CSV is an interchange
+format: a decimal comma inside a comma-delimited file is ambiguous to every
+downstream parser, and the reader who exports it may not be the one who opens
+it. The screen is localised; the file stays machine-readable.
 
 ### The "cannot generate" hint, and what it needed
 
@@ -459,7 +503,8 @@ and not translated fails there rather than shipping.
 `tests/test_drill_dimension_language.py`,
 `tests/test_conversational_language.py`,
 `tests/test_workspace_guide_language.py` and
-`tests/test_cannot_generate_hint_language.py` do the same for the surfaces
+`tests/test_cannot_generate_hint_language.py` and
+`tests/test_number_format_language.py` do the same for the surfaces
 above, by
 executing the real producers in both languages — including the post-processing
 block compiled out of `core/query_pipeline.py` and a real `_send_results`

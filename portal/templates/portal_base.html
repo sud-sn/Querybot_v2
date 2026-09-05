@@ -28,6 +28,15 @@
 // template it came from.
 window.QB_I18N = {{ i18n_catalogue|tojson }};
 window.QB_LANG = {{ (lang or 'en')|tojson }};
+// How this language writes a number, from core/i18n.py's NUMBER_FORMATS --
+// the same pair the server writes prose with, so an amount in a sentence and
+// the same amount in the table below it cannot disagree.
+//
+// Deliberately NOT Intl: Intl gives French U+202F or U+00A0 depending on the
+// browser's ICU version, toLocaleString('en-US') is hardcoded English, and
+// toLocaleString(undefined) follows the BROWSER's locale, which is a third
+// answer again. All three were live on this page at once.
+window.QB_NUM = {{ number_format|tojson }};
 window.qbT = function (id, vars) {
   var out = Object.prototype.hasOwnProperty.call(window.QB_I18N, id) ? window.QB_I18N[id] : id;
   if (vars) for (var k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
@@ -47,6 +56,48 @@ window.qbPlural = function (stem, count, vars) {
   var args = {count: count};
   if (vars) for (var k in vars) args[k] = vars[k];
   return window.qbT(stem + (one ? '.one' : '.other'), args);
+};
+// A number, grouped and pointed the way this language writes numbers. Mirrors
+// core.i18n.format_decimal, and tests/test_browser_number_format.py executes
+// both and compares them for every case rather than reading them side by side.
+window.qbNum = function (value, options) {
+  var n = Number(value);
+  if (!isFinite(n)) return String(value == null ? '' : value);
+  var opts = options || {};
+  var min = opts.min == null ? (Number.isInteger(n) ? 0 : 2) : opts.min;
+  var max = opts.max == null ? Math.max(min, Number.isInteger(n) ? 0 : 2) : opts.max;
+  var fixed = n.toFixed(max);
+  // toFixed pads to `max`; trim back to `min` without touching the digits
+  // that carry value.
+  if (max > min && fixed.indexOf('.') !== -1) {
+    fixed = fixed.replace(/0+$/, '');
+    var kept = fixed.split('.')[1] || '';
+    if (kept.length < min) fixed = n.toFixed(min);
+    else if (fixed.charAt(fixed.length - 1) === '.') fixed = fixed.slice(0, -1);
+  }
+  var sign = fixed.charAt(0) === '-' ? '-' : '';
+  if (sign) fixed = fixed.slice(1);
+  var parts = fixed.split('.');
+  var whole = parts[0];
+  if (opts.grouping !== false) {
+    whole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, window.QB_NUM.group);
+  }
+  return sign + whole + (parts[1] ? window.QB_NUM.decimal + parts[1] : '');
+};
+// The inverse. The table's sort comparator and its column aggregate both read
+// back the text the cell formatter wrote, so a formatter that groups with a
+// space and points with a comma needs a parser that knows it -- otherwise
+// "1 234,56" coerces to 123456 and the column sorts, and totals, wrong.
+window.qbParseNum = function (value) {
+  var text = String(value == null ? '' : value).trim();
+  if (!text) return NaN;
+  // Currency symbols, the percent sign, and every kind of space (the narrow
+  // no-break space French groups with is one).
+  text = text.replace(/[$€£¥%\s\u00a0\u202f]/g, '');
+  if (window.QB_NUM.group !== '.') text = text.split(window.QB_NUM.group).join('');
+  if (window.QB_NUM.decimal !== '.') text = text.split(window.QB_NUM.decimal).join('.');
+  if (!text || !/^-?\d*\.?\d+$/.test(text)) return NaN;
+  return Number(text);
 };
 // An unknown enum value falls back to the prettified raw value, never the id:
 // these come from the database and a new one must not render as

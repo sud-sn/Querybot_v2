@@ -354,7 +354,16 @@ function _fmtNum(v) {
   if (abs >= 1e3)  return trim(n / 1e3)  + 'K';
   if (n === 0) return '0';
   if (abs < 0.01) return Number(n.toPrecision(2)).toString();
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return window.qbNum(n, {max: 2});
+}
+// Mirrors portal_chat.html: French writes the symbol after the amount with a
+// no-break space, English in front with nothing between. Both read
+// window.QB_NUM, which portal_base.html fills from core/i18n.py.
+function _qbMoney(body, symbol) {
+  const sym = String(symbol || '$').trim();
+  return window.QB_NUM.currency_after
+    ? body + window.QB_NUM.currency_gap + sym
+    : sym + body;
 }
 function _chartNormKey(v){ return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 function _chartFormatFor(payload, col){
@@ -386,9 +395,9 @@ function _fmtChartValue(v, fmt, compact=false){
   if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
   if (isNaN(n)) return String(v ?? '');
-  if (fmt === 'currency') return compact ? ('$' + _fmtNum(n)) : ('$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}));
-  if (fmt === 'percentage') return n.toLocaleString('en-US', {maximumFractionDigits:2}) + '%';
-  return compact ? _fmtNum(n) : n.toLocaleString(undefined, {maximumFractionDigits:4});
+  if (fmt === 'currency') return _qbMoney(compact ? _fmtNum(n) : window.qbNum(n, {min:2, max:2}), '$');
+  if (fmt === 'percentage') return window.qbNum(n, {max:2}) + window.QB_NUM.percent_gap + '%';
+  return compact ? _fmtNum(n) : window.qbNum(n, {max:4});
 }
 function _chartNumber(v){
   if (v === null || v === undefined || v === '') return null;

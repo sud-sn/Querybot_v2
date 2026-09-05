@@ -80,7 +80,13 @@ def rows_to_csv(
 
 
 def _format_cell(val: Any, fmt: str) -> str:
-    """Convert a single cell value to a display-ready CSV string."""
+    """Convert a single cell value to a display-ready CSV string.
+
+    Deliberately NOT localised, and pinned by a test. A CSV is an interchange
+    format: a French decimal comma inside a comma-delimited file is ambiguous
+    to every downstream parser, and the reader who exported it may not be the
+    one who opens it. The screen is localised; the file stays machine-readable.
+    """
     if val is None:
         return ""
     raw = str(val).replace(",", "")

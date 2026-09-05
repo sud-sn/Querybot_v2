@@ -386,9 +386,14 @@ class TestTheNumberFormatterMatchesTheChatPage:
 
     CHAT = ROOT / "portal" / "templates" / "portal_chat.html"
 
-    def _fmt(self, template: Path, values):
+    def _fmt(self, template: Path, values, lang="en"):
+        # _fmtNum formats through the shell's window.qbNum now, so the harness
+        # has to supply the same window the browser does.
+        from tests.browser_num import preamble
+
         src = template.read_text(encoding="utf-8")
-        harness = (_function(src, "function _fmtNum")
+        harness = (preamble(lang)
+                   + _function(src, "function _fmtNum")
                    + f"\nJSON.stringify({json.dumps(values)}.map(v => _fmtNum(v)));")
         return json.loads(dukpy.evaljs(harness))
 
