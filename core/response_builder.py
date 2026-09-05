@@ -2268,15 +2268,60 @@ def build_analysis_response(action: str, contract: dict) -> dict:
     }
 
 
-def _regulated_analysis_fallback(action: str) -> dict:
-    """Static, non-LLM response for regulated tenants — see
-    core.compliance.policy_engine.result_llm_features_allowed."""
+def _regulated_analysis_fallback(action: str, rows: list[dict] | None = None) -> dict:
+    """The analysis a regulated tenant gets — computed locally, no LLM.
+
+    This used to be a static title and a paragraph explaining why there was no
+    analysis, which meant the tenants we most want to serve received the
+    weakest version of the product: a table and an apology.
+
+    The findings come from ``core.analysis_evidence``, which runs the
+    deterministic analysers over the rows the user is already looking at, and
+    the sentences from ``core.analysis_narrative``, which phrases them from
+    the message catalogue. No model is called, no row leaves the process, and
+    the same rows produce the same sentences every time — so the summary is
+    reproducible for an auditor, which the LLM-written version never was.
+
+    Labels are kept: a category leader named here is a name already on the
+    user's screen in the result above, and these rows have been through
+    ``result_guard`` like every other released row. The label-free form is for
+    the egress boundary (``core.analysis_evidence.redact_labels``), not for
+    the reader.
+
+    Falls back to the original explanatory paragraph if evidence cannot be
+    built — logged at warning, since a silent degradation here is
+    indistinguishable from the feature working.
+    """
+    if rows:
+        try:
+            from core.analysis_evidence import build_evidence
+            from core.analysis_narrative import build_narrative
+
+            narrative = build_narrative(build_evidence(rows))
+            if narrative.sentences:
+                return {
+                    "type": "assistant_analysis",
+                    "action": action,
+                    "title": narrative.title or _t("narrative.title"),
+                    "body": " ".join(narrative.sentences),
+                    "bullets": list(narrative.sentences),
+                    "secondary": _t("narrative.no_values_note"),
+                    "computed": True,
+                    "evidence_id": narrative.evidence_id,
+                    "finding_kinds": list(narrative.finding_kinds),
+                    "rows_sent_to_llm": 0,
+                }
+        except Exception as exc:
+            log.warning("computed narrative unavailable for %r: %s", action, exc)
+
     return {
         "type": "assistant_analysis",
         "action": action,
         "title": _t("analysis.title.unavailable"),
         "body": _t("analysis.regulated_body"),
         "bullets": [],
+        "computed": False,
+        "rows_sent_to_llm": 0,
     }
 
 
@@ -2305,17 +2350,20 @@ async def generate_analysis_response(
     and "why" follow-up questions.
 
     Falls back to the synchronous build_analysis_response() if the LLM
-    call fails. Regulated tenants get the static _regulated_analysis_fallback
-    unconditionally instead — the LLM never sees `rows` for them.
+    call fails. Regulated tenants never reach the LLM at all: they get
+    _regulated_analysis_fallback, which computes the analysis locally from the
+    same rows. The model does not see `rows` for them, and does not see a
+    summary of them either.
     """
     from core.compliance.policy_engine import result_llm_features_allowed
     if not result_llm_features_allowed(account_id):
         from core.llm_audit import record_llm_blocked
         record_llm_blocked(
             "analysis",
-            f"action={action!r} blocked — regulated tenant, LLM never received result rows.",
+            f"action={action!r} blocked — regulated tenant, LLM never received result rows. "
+            f"Analysis computed locally from {len(rows or [])} released rows.",
         )
-        return _regulated_analysis_fallback(action)
+        return _regulated_analysis_fallback(action, rows)
 
     from core.insight import (
         generate_insight,

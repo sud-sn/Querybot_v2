@@ -121,7 +121,12 @@ class GenerateAnalysisResponseBlockedAuditTests(unittest.TestCase):
                     provider="azure_openai", model="gpt-4o", api_key="key",
                     account_id="acct-rx",
                 ))
-        self.assertEqual(result["title"], "Not available for this workspace")
+        # The analysis is computed locally now rather than refused outright,
+        # so the assertion moved off the apology's title and onto the thing
+        # the audit row exists to prove: the model was not called, and the
+        # refusal was recorded anyway.
+        self.assertTrue(result["computed"] or result["body"])
+        self.assertEqual(result["rows_sent_to_llm"], 0)
         log_call.assert_called_once()
         self.assertEqual(log_call.call_args.kwargs["status"], "blocked")
         self.assertEqual(log_call.call_args.kwargs["component"], "analysis")

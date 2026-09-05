@@ -226,7 +226,15 @@ class GenerateAnalysisResponseRegulatedGateTests(unittest.TestCase):
     _send_why_insight, and (previously ungated) the diagnose/standard
     action-button/why-text-detection handlers in webhooks.py."""
 
-    def test_regulated_returns_static_fallback_no_llm_call(self):
+    ROWS = [
+        {"Customer": "Real Name", "Revenue": 5000},
+        {"Customer": "Second Name", "Revenue": 400},
+        {"Customer": "Third Name", "Revenue": 300},
+        {"Customer": "Fourth Name", "Revenue": 200},
+        {"Customer": "Fifth Name", "Revenue": 100},
+    ]
+
+    def test_regulated_gets_an_analysis_computed_without_any_llm_call(self):
         from core.response_builder import generate_analysis_response
 
         with (
@@ -239,7 +247,7 @@ class GenerateAnalysisResponseRegulatedGateTests(unittest.TestCase):
         ):
             result = _arun(generate_analysis_response(
                 action="explain",
-                rows=[{"Customer": "Real Name", "Revenue": 5000}],
+                rows=self.ROWS,
                 question="explain this",
                 provider="azure_openai", model="gpt-4o", api_key="key",
                 account_id="acct-rx",
@@ -247,7 +255,50 @@ class GenerateAnalysisResponseRegulatedGateTests(unittest.TestCase):
         mock_insight.assert_not_called()
         mock_dd.assert_not_called()
         self.assertEqual(result["type"], "assistant_analysis")
-        self.assertIn("only writes SQL queries", result["body"])
+        # A regulated tenant used to receive a title reading "Not available
+        # for this workspace" and a paragraph explaining why -- the segment
+        # this product most wants to serve got a table and an apology. The
+        # analysis is now computed from the released rows in-process.
+        self.assertTrue(result["computed"])
+        self.assertTrue(result["bullets"])
+        self.assertEqual(result["rows_sent_to_llm"], 0)
+        self.assertTrue(result["evidence_id"])
+        self.assertNotIn("only writes SQL queries", result["body"])
+
+    def test_the_computed_analysis_states_what_the_numbers_show(self):
+        # Not just non-empty: the leader in this fixture holds 83% of the
+        # total, and the summary must say so.
+        from core.response_builder import generate_analysis_response
+
+        with patch(
+            "core.compliance.policy_engine.store.get_compliance_profile",
+            return_value={"mode": "regulated"},
+        ):
+            result = _arun(generate_analysis_response(
+                action="explain", rows=self.ROWS, question="explain this",
+                provider="azure_openai", model="gpt-4o", api_key="key",
+                account_id="acct-rx",
+            ))
+        self.assertIn("concentration_leader", result["finding_kinds"])
+        self.assertIn("83", result["body"])
+
+    def test_a_result_the_analysers_cannot_read_still_answers(self):
+        # An empty result has nothing to compute; the tenant must still get a
+        # reply rather than an exception out of the analysis path.
+        from core.response_builder import generate_analysis_response
+
+        with patch(
+            "core.compliance.policy_engine.store.get_compliance_profile",
+            return_value={"mode": "regulated"},
+        ):
+            result = _arun(generate_analysis_response(
+                action="explain", rows=[], question="explain this",
+                provider="azure_openai", model="gpt-4o", api_key="key",
+                account_id="acct-rx",
+            ))
+        self.assertEqual(result["type"], "assistant_analysis")
+        self.assertTrue(result["body"])
+        self.assertEqual(result["rows_sent_to_llm"], 0)
 
     def test_standard_tenant_still_calls_llm(self):
         from core.response_builder import generate_analysis_response

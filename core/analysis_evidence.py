@@ -687,6 +687,33 @@ def build_evidence(
     )
 
 
+def redact_labels(evidence: AnalysisEvidence) -> AnalysisEvidence:
+    """The same evidence with every data-derived string removed.
+
+    Separate from ``build_evidence(include_labels=False)`` because the two
+    answer different questions. Construction-time exclusion is for a caller
+    that must never hold the labels at all; this is for the egress boundary —
+    the narrative shown to the user may name the customer they are already
+    looking at in the table above it, while the payload handed to a model
+    must not. Applying it late keeps that decision at the boundary it belongs
+    to instead of pushing it up into every caller.
+    """
+    if not evidence.labels_included:
+        return evidence
+    return AnalysisEvidence(
+        findings=tuple(
+            Finding(kind=f.kind, columns=f.columns, numbers=f.numbers,
+                    labels={}, materiality=f.materiality)
+            for f in evidence.findings
+        ),
+        row_count=evidence.row_count,
+        numeric_columns=evidence.numeric_columns,
+        label_columns=evidence.label_columns,
+        temporal_column=evidence.temporal_column,
+        labels_included=False,
+    )
+
+
 def _guard(detector, *args) -> list[Finding]:
     """Run a detector; a failure costs its findings, never the answer.
 

@@ -949,6 +949,97 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cet espace de travail est configuré pour un secteur réglementé. Pour qu'aucune donnée protégée n'atteigne le modèle, l'assistant se limite ici à écrire des requêtes SQL — il ne produit ni analyse complémentaire, ni explication, ni comparaison à partir des résultats.",
     },
 
+    # ── Computed narrative (core/analysis_narrative.py) ──────────────────────
+    # One sentence per finding kind in core.analysis_evidence, with every
+    # figure arriving as a named placeholder the phrasing layer has already
+    # formatted for the reader's language. A kind whose finding can carry a
+    # name from the customer's data has a matching ".unlabelled" entry: that
+    # is the sentence a regulated tenant sees, and it must say the same thing
+    # without the name, never less.
+    "narrative.trend_up": {
+        "en": "{column} rose {pct} across the period, from {first} to {last}.",
+        "fr": "{column} a progressé de {pct} sur la période, de {first} à {last}.",
+    },
+    "narrative.trend_down": {
+        "en": "{column} fell {pct} across the period, from {first} to {last}.",
+        "fr": "{column} a reculé de {pct} sur la période, de {first} à {last}.",
+    },
+    "narrative.trend_flat": {
+        "en": "{column} held broadly steady across the period, moving {pct}.",
+        "fr": "{column} est resté globalement stable sur la période, avec une variation de {pct}.",
+    },
+    "narrative.trend_reversal": {
+        "en": "{column} did not move in one direction: it peaked at {peak} and bottomed at {trough}.",
+        "fr": "{column} n'a pas évolué dans un seul sens : il a culminé à {peak} et touché un creux à {trough}.",
+    },
+    "narrative.concentration_leader": {
+        "en": "{leader} alone accounts for {share} of the total {column} ({value}).",
+        "fr": "{leader} représente à lui seul {share} du total de {column} ({value}).",
+    },
+    "narrative.concentration_leader.unlabelled": {
+        "en": "One {group_column} accounts for {share} of the total {column} on its own ({value}).",
+        "fr": "Une seule valeur de {group_column} représente à elle seule {share} du total de {column} ({value}).",
+    },
+    "narrative.concentration_pareto": {
+        "en": "The top {n_top} of {n_total} hold {share} of the total.",
+        "fr": "Les {n_top} premières valeurs sur {n_total} détiennent {share} du total.",
+    },
+    "narrative.long_tail": {
+        "en": "The bottom {n_bottom} of {n_total} together account for only {share}.",
+        "fr": "Les {n_bottom} dernières valeurs sur {n_total} ne représentent ensemble que {share}.",
+    },
+    "narrative.spread_high": {
+        "en": "{column} varies widely between rows (standard deviation {sd} against a mean of {mean}).",
+        "fr": "{column} varie fortement d'une ligne à l'autre (écart-type de {sd} pour une moyenne de {mean}).",
+    },
+    "narrative.spread_low": {
+        "en": "{column} is unusually uniform across rows, close to {mean} throughout.",
+        "fr": "{column} est inhabituellement uniforme d'une ligne à l'autre, proche de {mean} partout.",
+    },
+    "narrative.skew_right": {
+        "en": "{column} is pulled up by its largest values: the mean is {mean} against a median of {median}.",
+        "fr": "{column} est tiré vers le haut par ses valeurs les plus élevées : la moyenne est de {mean} pour une médiane de {median}.",
+    },
+    "narrative.below_average_cluster": {
+        "en": "{count} of {n_total} rows sit at less than half the average {column}.",
+        "fr": "{count} lignes sur {n_total} se situent à moins de la moitié de la moyenne de {column}.",
+    },
+    "narrative.range_span": {
+        "en": "{column} ranges from {low} to {high} across the result.",
+        "fr": "{column} s'étend de {low} à {high} sur l'ensemble du résultat.",
+    },
+    "narrative.outliers": {
+        "en": "{count} of {n_total} rows are far enough from the rest to be worth checking.",
+        "fr": "{count} lignes sur {n_total} s'écartent suffisamment des autres pour mériter une vérification.",
+    },
+    "narrative.correlation.positive": {
+        "en": "{x_column} and {y_column} rise and fall together (r = {r} over {n} rows).",
+        "fr": "{x_column} et {y_column} évoluent dans le même sens (r = {r} sur {n} lignes).",
+    },
+    "narrative.correlation.negative": {
+        "en": "{x_column} and {y_column} move in opposite directions (r = {r} over {n} rows).",
+        "fr": "{x_column} et {y_column} évoluent en sens inverse (r = {r} sur {n} lignes).",
+    },
+    "narrative.comovement": {
+        "en": "{x_column} and {y_column} sit on the same side of their averages in {share} of rows.",
+        "fr": "{x_column} et {y_column} se situent du même côté de leur moyenne dans {share} des lignes.",
+    },
+
+    # Framing around the computed sentences.
+    "narrative.title": {"en": "What the numbers show", "fr": "Ce que montrent les chiffres"},
+    "narrative.nothing_notable": {
+        "en": "Nothing in this result stands out statistically — the values are close to evenly spread.",
+        "fr": "Rien ne ressort statistiquement dans ce résultat : les valeurs sont réparties de façon assez uniforme.",
+    },
+    "narrative.computed_note": {
+        "en": "Each statement above is computed from the returned rows, not written by an AI model.",
+        "fr": "Chaque constat ci-dessus est calculé à partir des lignes retournées, et non rédigé par un modèle d'IA.",
+    },
+    "narrative.no_values_note": {
+        "en": "No result rows and no data values were sent to an AI model to produce this.",
+        "fr": "Aucune ligne de résultat ni valeur de données n'a été transmise à un modèle d'IA pour produire ceci.",
+    },
+
     # Explain.
     "analysis.explain.series": {
         "en": "This result shows {scope}. The latest returned period is {period} at {value}.",
@@ -3860,6 +3951,18 @@ def format_decimal(
     # cannot tell apart, and "1,234.56" comes out as "1 234 56".
     return (rendered.replace(",", str(spec["group"]))
                     .replace(".", str(spec["decimal"])))
+
+
+def format_percent(value, digits: int | None = None, lang: str | None = None) -> str:
+    """A percentage written the way its language writes one.
+
+    French puts a non-breaking space before the sign; English does not. The
+    gap comes from the same ``NUMBER_FORMATS`` spec ``core.response_builder``
+    reads for display-formatted cells, so a percentage in a computed narrative
+    and the same percentage in a table cell cannot disagree about spacing.
+    """
+    spec = number_format(lang)
+    return f"{format_decimal(value, digits, lang=lang)}{spec['percent_gap']}%"
 
 
 def format_count(value, lang: str | None = None) -> str:
