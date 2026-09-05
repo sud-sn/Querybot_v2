@@ -30,8 +30,43 @@ class GovernedResultExclusionTests(unittest.TestCase):
         self.assertEqual(len(set(tokens)), len(tokens))
         for token in tokens:
             self.assertEqual(len(token), 32)
-            self.assertNotIn("Priya", token)
-            self.assertNotIn("1250", token)
+            # Hex only, so nothing from the row can be read out of it. The
+            # previous version asserted "1250" was not a SUBSTRING of the
+            # token, which fails roughly once in a thousand runs by pure
+            # coincidence -- a 32-character hex digest contains any given
+            # four hex digits about 0.04% of the time -- and would pass
+            # anyway on a token that genuinely leaked a non-hex value.
+            self.assertRegex(token, r"^[0-9a-f]{32}$")
+
+    def test_a_token_says_nothing_about_the_row_it_handles(self):
+        # The property the length-and-substring check was reaching for: two
+        # rows differing only in a value get unrelated handles, and a row's
+        # own text cannot be recovered from its handle.
+        import hashlib
+        import json
+
+        tokens = self.cache.get_row_tokens(self.session_id)
+        for token, row in zip(tokens, self.rows):
+            for value in row.values():
+                self.assertNotIn(str(value).lower(), token)
+            canonical = json.dumps(row, sort_keys=True, default=str)
+            self.assertNotEqual(
+                token, hashlib.sha256(canonical.encode()).hexdigest()[:32],
+                "a plain digest of the row would be reversible by lookup",
+            )
+
+    def test_the_same_row_in_a_new_generation_gets_a_new_token(self):
+        # Handles are scoped to the cache generation; reusing one across a
+        # refresh is what the staleness check exists to catch.
+        first = self.cache.get_row_tokens(self.session_id)
+        self.cache.store(
+            self.session_id, self.rows, question="Revenue by doctor",
+            sql="SELECT DOCTOR_NAME, SUM(REVENUE) FROM governed_view",
+            column_formats={"REVENUE": "currency"},
+        )
+        second = self.cache.get_row_tokens(self.session_id)
+        self.assertEqual(len(first), len(second))
+        self.assertFalse(set(first) & set(second))
 
     def test_multiple_rows_are_excluded_without_values_in_request(self):
         tokens = self.cache.get_row_tokens(self.session_id)

@@ -1198,6 +1198,15 @@ class QdrantKBRetriever:
         # Step 4 — cross-encoder re-rank on top _RERANK_POOL candidates
         reranked = _rerank(query, candidates[:_RERANK_POOL], top_n=n)
 
+        # Step 5 — curation weighting. Applied to the ORDERING only; the
+        # _rerank_score the relevance floor reads is untouched, so a
+        # well-curated irrelevant table still cannot be promoted past a
+        # relevant one. It only settles ties the reranker was unsure about --
+        # and between two plausible tables, the one an admin described,
+        # gave synonyms and modelled as an entity is the one the business
+        # actually uses.
+        reranked = self._apply_curation(query, reranked)
+
         # Fill up to n if re-ranker returned fewer (e.g. model unavailable)
         if len(reranked) < n:
             seen_ids = {id(d) for d in reranked}
@@ -1309,6 +1318,26 @@ class QdrantKBRetriever:
             )
             repaired.append(doc.rstrip() + "\n\n" + body + "\n")
         return repaired
+
+    def _apply_curation(self, query: str, hits: list[dict]) -> list[dict]:
+        """Reorder reranked candidates by relevance-and-curation.
+
+        Best-effort by design: retrieval must keep working when the curation
+        lookup fails, and a failure here costs an ordering nicety, never the
+        answer. Logged at warning rather than debug, because "curation is off"
+        and "curation found nothing to prefer" are otherwise identical.
+        """
+        try:
+            from core.curation_weight import apply, scores_for
+
+            scores = scores_for(self._account_id)
+            if not scores:
+                return hits
+            return apply(hits, scores)
+        except Exception as exc:
+            log.warning("Curation weighting skipped for %s: %s",
+                        self._account_id, exc)
+            return hits
 
     def _apply_relevance_floor(self, hits: list[dict]) -> list[dict]:
         """

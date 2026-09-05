@@ -8324,6 +8324,16 @@ async def admin_setup_save_table_description(request: Request, account_id: str):
     except ValueError as exc:
         return JSONResponse({"status": "error", "detail": str(exc)}, status_code=400)
 
+    # Curation scores are cached for five minutes, and this edit is exactly
+    # what they measure. Without this the admin describes a table and
+    # retrieval keeps ranking it as undocumented until the cache expires --
+    # which looks like the description having no effect at all.
+    try:
+        from core.curation_weight import invalidate
+        invalidate(account_id)
+    except Exception:
+        log.debug("curation cache invalidation failed", exc_info=True)
+
     # Saving IS the accept: whatever the admin kept or rewrote is now the live
     # value, so the proposal has nothing left to offer. Clearing it here also
     # means Suggest is never destructive -- a proposal only ever disappears
