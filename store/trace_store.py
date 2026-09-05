@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from typing import Any
 
 from core.answer_rca import extract_sql_tables
 from store.db import get_db
+
+log = logging.getLogger("querybot.trace_store")
 
 
 def _json(value: Any) -> str:
@@ -465,6 +468,16 @@ def get_answer_trace(trace_id: int) -> dict | None:
         ).fetchall()
     result = dict(trace)
     result["steps"] = [dict(s) for s in steps]
+    # A run that failed twice and then succeeded is written to the trace as
+    # two errors and an answer, so an operator scanning for problems finds
+    # problems that were already solved. Relabel the corrected attempts --
+    # presentation only; every step keeps its original_status, because the
+    # audit record must say what happened.
+    try:
+        from core.recovery import annotate_trace
+        result = annotate_trace(result) or result
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Trace recovery annotation unavailable: %s", exc)
     return result
 
 

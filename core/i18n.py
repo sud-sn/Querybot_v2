@@ -949,6 +949,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cet espace de travail est configuré pour un secteur réglementé. Pour qu'aucune donnée protégée n'atteigne le modèle, l'assistant se limite ici à écrire des requêtes SQL — il ne produit ni analyse complémentaire, ni explication, ni comparaison à partir des résultats.",
     },
 
+    # ── Recovery, as a trace reader sees it (core/recovery.py) ───────────────
+    "recovery.corrected": {
+        "en": "An earlier attempt failed and was corrected; the answer came from attempt {attempts}.",
+        "fr": "Une tentative précédente a échoué puis a été corrigée ; la réponse provient de la tentative {attempts}.",
+    },
+    "recovery.unresolved": {
+        "en": "{step} failed and was not corrected after {attempts} attempts.",
+        "fr": "{step} a échoué et n'a pas été corrigé après {attempts} tentatives.",
+    },
+    "recovery.retried": {
+        "en": "This answer took {attempts} attempts.",
+        "fr": "Cette réponse a demandé {attempts} tentatives.",
+    },
+
     # ── Cross-domain corroboration (core/domains.py) ─────────────────────────
     "corroboration.agrees": {
         "en": "Confirmed against {source}, which reports the same figure.",
