@@ -109,6 +109,101 @@ class TestTheSidebarIsTranslated:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# The switcher
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTheLanguageSwitcher:
+
+    def test_it_offers_the_language_the_reader_is_not_in(self):
+        english = _shell(lang="en")
+        assert 'name="lang" value="fr"' in english
+        assert 'name="lang" value="en"' not in english
+
+        french = _shell(lang="fr")
+        assert 'name="lang" value="en"' in french
+        assert 'name="lang" value="fr"' not in french
+
+    def test_each_language_is_named_in_its_own_language(self):
+        """The whole point of the control is that someone who cannot read the
+        current language finds their own. "Anglais" on a French page helps
+        nobody who is looking for English."""
+        assert ">Français</span>" in _shell(lang="en")
+        assert ">English</span>" in _shell(lang="fr")
+        assert "Anglais" not in visible(_shell(lang="fr"))
+
+    def test_the_endonym_carries_its_own_lang_attribute(self):
+        """Otherwise a screen reader says "Français" with English phonemes,
+        which is unintelligible -- to exactly the reader who needs it."""
+        assert '<span lang="fr">Français</span>' in _shell(lang="en")
+        assert '<span lang="en">English</span>' in _shell(lang="fr")
+
+    def test_the_hint_is_in_the_language_the_reader_can_read(self):
+        assert 'title="Switch to Français"' in _shell(lang="en")
+        assert 'title="Passer en English"' in _shell(lang="fr")
+
+    def test_the_current_language_is_announced(self):
+        assert "Current language: English" in _shell(lang="en")
+        assert "Langue actuelle : Français" in _shell(lang="fr")
+
+    def test_it_posts_rather_than_links(self):
+        """`sidebar.querySelectorAll('a')` closes the mobile drawer on any
+        anchor click, so a link-shaped switcher would slam the drawer shut on
+        tap. It is also a state change, which is not what GET is for."""
+        markup = _shell(lang="en")
+        form = markup[markup.index('class="portal-lang-switch"'):]
+        form = form[:form.index("</form>")]
+        assert 'method="post"' in markup[:markup.index('class="portal-lang-switch"') + 200]
+        assert "<button" in form
+        assert "<a " not in form
+
+    def test_it_carries_the_page_back(self):
+        """Without JavaScript the post navigates. Losing the reader's thread
+        because they changed language would be worse than not offering it."""
+        markup = render("portal_notifications.html", path="/portal/chat",
+                        user=USER, alerts=[], reports=[], subscriptions={},
+                        saved=None, error=None)
+        assert '<input type="hidden" name="next" value="/portal/chat">' in markup
+
+    def test_the_return_path_keeps_the_query_string(self):
+        """The chat thread is in ?thread=, so dropping the query would send the
+        reader back to a different conversation than the one they were in."""
+        from tests.portal_render import Req
+        request = Req("/portal/chat")
+        request.url.query = "thread=abc123"
+        markup = render("portal_notifications.html", request=request,
+                        user=USER, alerts=[], reports=[], subscriptions={},
+                        saved=None, error=None)
+        assert 'name="next" value="/portal/chat?thread=abc123"' in markup
+
+    def test_it_is_not_offered_before_sign_in(self):
+        """The endpoint writes a row, so it needs a user. The login page picks
+        the language up from Accept-Language instead, which is the only signal
+        that exists before authentication."""
+        markup = render("portal_notifications.html", path="/portal/login",
+                        user=None, alerts=[], reports=[], subscriptions={},
+                        saved=None, error=None)
+        assert "portal-lang-switch" not in markup
+
+
+class TestTheReturnPathIsNotAnOpenRedirect:
+
+    def _safe(self, candidate):
+        import portal.routes as pr
+        return pr._safe_portal_redirect(candidate)
+
+    def test_a_portal_path_survives(self):
+        assert self._safe("/portal/chat?thread=abc") == "/portal/chat?thread=abc"
+
+    def test_everything_else_does_not(self):
+        for hostile in ("https://evil.example/", "//evil.example/",
+                        "/\\evil.example", "http:/portal/x", "/admin/clients",
+                        "portal/chat", "", None,
+                        "/portal/chat\r\nSet-Cookie: a=b",
+                        "/portal/chat\nX: y"):
+            assert self._safe(hostile) == "", hostile
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # One catalogue for the whole document
 # ══════════════════════════════════════════════════════════════════════════════
 

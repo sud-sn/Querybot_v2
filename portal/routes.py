@@ -40,7 +40,7 @@ from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
 from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
 from core.i18n import (
-    catalogue_for, translator_for,
+    catalogue_for, translator_for, LANGUAGE_NAMES, SUPPORTED_LANGUAGES,
     enum_label as i18n_enum_label, plural as i18n_plural, t as i18n_t,
 )
 
@@ -100,6 +100,33 @@ def _request_language(request: Request) -> str:
     return "en"
 
 
+def _safe_portal_redirect(candidate: str) -> str:
+    """A portal path safe to send a form post back to, or "" if it is not one.
+
+    The switcher posts the page it was on so a reader without JavaScript lands
+    where they started, thread id and all. That field is attacker-reachable --
+    anyone can craft a link that posts this form -- so it is confined to a path
+    under /portal/. That single rule also rules out the open-redirect shapes:
+    "//evil.example" and "/\\evil.example" are protocol-relative URLs a browser
+    follows off-site, and neither can start with "/portal/". A backslash or a
+    newline anywhere is refused outright -- neither belongs in a portal path,
+    and a newline is a response-splitting attempt.
+    """
+    candidate = str(candidate or "").strip()
+    if not candidate.startswith("/portal/"):
+        return ""
+    if any(ch in candidate for ch in ("\\", "\n", "\r")):
+        return ""
+    return candidate
+
+
+def _current_portal_path(request: Request) -> str:
+    """The page the switcher is rendered on, query string included."""
+    path = str(getattr(request.url, "path", "") or "")
+    query = str(getattr(request.url, "query", "") or "")
+    return f"{path}?{query}" if query else path
+
+
 def _language_context(request: Request) -> dict:
     """Injected into every portal template render.
 
@@ -114,6 +141,15 @@ def _language_context(request: Request) -> dict:
         "lang": lang,
         "i18n_catalogue": catalogue_for(lang),
         "t": translator_for(lang),
+        # Every language OTHER than the current one, each under its own name.
+        # A list rather than "the other one" so a third language shows up in
+        # the switcher instead of being silently unreachable.
+        "language_options": [
+            {"code": code, "name": LANGUAGE_NAMES.get(code, code)}
+            for code in SUPPORTED_LANGUAGES if code != lang
+        ],
+        "language_name": LANGUAGE_NAMES.get(lang, lang),
+        "current_portal_path": _current_portal_path(request),
         # Counts and server enums cannot go through t() alone: English and
         # French disagree about zero, and |capitalize cannot translate.
         "plural": lambda stem, count, **kw: i18n_plural(stem, count, lang=lang, **kw),
@@ -806,13 +842,18 @@ async def portal_set_language(request: Request):
     if not user:
         return JSONResponse({"error": "not_authenticated"}, status_code=401)
 
-    requested = ""
+    requested, back = "", ""
     try:
         body = await request.json()
         requested = str((body or {}).get("lang") or "")
     except Exception:
         try:
-            requested = str((await request.form()).get("lang") or "")
+            form = await request.form()
+            requested = str(form.get("lang") or "")
+            # Only the no-JS form carries this, and only it wants a redirect.
+            # Branching on the field rather than on the content type keeps a
+            # fetch() caller answering in JSON even if it posts form-encoded.
+            back = _safe_portal_redirect(form.get("next"))
         except Exception:
             requested = ""
 
@@ -824,13 +865,22 @@ async def portal_set_language(request: Request):
         # app boots with the column missing and this is the first place anyone
         # would notice. Say so rather than returning a misleading 200.
         log.error("Language preference could not be stored: %s", exc, exc_info=True)
+        if back:
+            # Without JavaScript there is nothing to read a 503 body, and a
+            # bare error page loses the reader their page. Send them back; the
+            # chrome will still be in the language they started in, which is
+            # the truth about what was saved.
+            return RedirectResponse(back, status_code=303)
         return JSONResponse(
             {"error": "unavailable",
              "detail": "The language preference could not be saved."},
             status_code=503,
         )
 
-    resp = JSONResponse({"lang": stored})
+    # A 303 so the browser re-issues the page as a GET: a 307 would repost the
+    # form to the page it came from.
+    resp = (RedirectResponse(back, status_code=303) if back
+            else JSONResponse({"lang": stored}))
     _set_language_cookie(resp, request, stored)
     return resp
 

@@ -68,6 +68,12 @@ DEFAULT_LANGUAGE = "en"
 # and a drift between the two is exactly what the test is for.
 SUPPORTED_LANGUAGES = ("en", "fr")
 
+# Endonyms -- each language's name IN that language. Deliberately not catalogue
+# entries: the whole point of a language switcher is that someone who cannot
+# read the current language can still find their own, so "Français" must read
+# "Français" on an English page too. Translating these would defeat the control.
+LANGUAGE_NAMES: dict[str, str] = {"en": "English", "fr": "Français"}
+
 # Strings that must never appear as a catalogue value in ANY language, because
 # something compares them by equality:
 #   "redacted segment"  core/insight.py::_display_label, compared at

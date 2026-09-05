@@ -82,6 +82,27 @@ window.qbT = function (id, vars) {
         </div>
       </div>
       <div class="portal-side-actions" aria-label="{{ t('ui.shell.account_actions') }}">
+        {# The switcher is a plain form on purpose. A fetch() version would have
+           to re-translate the whole shell in JavaScript to avoid a half-French
+           page; posting and coming back re-renders every string server-side,
+           including the answers, which /portal/api/history rebuilds from the
+           stored rows on the next page load. `next` brings the reader back to
+           the page and thread they were on. #}
+        <form class="portal-lang-switch" method="post" action="/portal/api/language"
+              aria-label="{{ t('ui.lang.label') }}">
+          <input type="hidden" name="next" value="{{ current_portal_path }}">
+          <span class="sr-only">{{ t('ui.lang.current', language=language_name) }}</span>
+          {% for option in language_options %}
+          <button type="submit" name="lang" value="{{ option.code }}"
+                  class="portal-lang-option"
+                  title="{{ t('ui.lang.switch_to', language=option.name) }}">
+            {{ ic("globe", 16) }}
+            {# lang= so a screen reader pronounces the endonym in its own
+               language rather than reading "Français" with English phonemes. #}
+            <span lang="{{ option.code }}">{{ option.name }}</span>
+          </button>
+          {% endfor %}
+        </form>
         <a href="/portal/change-password" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }} <span>{{ t('ui.shell.settings') }}</span></a>
         <a href="/portal/logout" title="{{ t('ui.shell.logout') }}"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>{{ t('ui.shell.logout') }}</span></a>
       </div>

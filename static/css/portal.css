@@ -521,6 +521,17 @@ body { background: var(--bg); }
 .portal-side-actions button:hover,
 .portal-side-actions a:hover { color: var(--sidebar-text); background: var(--sidebar-hover); text-decoration: none; }
 .portal-side-actions .portal-logout-icon { display: inline !important; font-size: 16px; line-height: 1; transform: rotate(180deg); }
+
+/* The language switcher shares the account-actions row. That grid was already
+   three columns wide with two items in it, so nothing above needs to move. The
+   <form> is the grid item and the button fills it, which means the switcher
+   picks up the Settings/Logout styling rather than repeating it -- including
+   the collapsed-sidebar rule that hides `span:last-child` and leaves the icon. */
+.portal-lang-switch { display: flex; min-width: 0; gap: 4px; }
+.portal-lang-switch .portal-lang-option { flex: 1 1 auto; min-width: 0; }
+.portal-lang-switch .portal-lang-option span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .portal-drawer-backdrop { display: none; }
 
 .portal-mobile-bar { min-height: 52px; padding: 0 12px; z-index: 300; }

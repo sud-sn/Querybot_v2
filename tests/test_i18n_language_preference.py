@@ -403,6 +403,62 @@ class TestTheSwitcher:
         assert response.status_code == 200
         assert store.get_user(user_id)["lang"] == "fr"
 
+    def test_a_form_post_with_a_return_path_redirects_back(self):
+        """Without JavaScript the reader must land back on the page they were
+        on, in the new language -- not on a JSON body."""
+        client, user_id = self._signed_in()
+        response = client.post(
+            "/portal/api/language",
+            data={"lang": "fr", "next": "/portal/chat?thread=abc"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/portal/chat?thread=abc"
+        assert store.get_user(user_id)["lang"] == "fr"
+        assert client.cookies.get("qb_lang") == "fr"
+
+    def test_the_redirect_refuses_to_leave_the_portal(self):
+        """The field is attacker-reachable: anyone can craft a link that posts
+        this form. Each of these is a shape a browser would follow off-site."""
+        client, _ = self._signed_in()
+        for hostile in ("https://evil.example/",
+                        "//evil.example/",
+                        "/\\evil.example",
+                        "/admin/clients",
+                        "/portal/chat\r\nSet-Cookie: a=b"):
+            response = client.post(
+                "/portal/api/language",
+                data={"lang": "fr", "next": hostile},
+                follow_redirects=False,
+            )
+            assert response.status_code == 200, hostile
+            assert response.json()["lang"] == "fr", hostile
+
+    def test_a_json_post_is_still_answered_in_json(self):
+        """A fetch() caller that followed a redirect would replace its own page
+        with the response body."""
+        client, _ = self._signed_in()
+        response = client.post("/portal/api/language", json={"lang": "fr"},
+                               follow_redirects=False)
+        assert response.status_code == 200
+        assert response.json()["lang"] == "fr"
+
+    def test_a_storage_failure_still_returns_the_reader_to_their_page(self):
+        """A 503 body is unreadable without JavaScript, and losing the page is
+        a worse outcome than losing the preference."""
+        from unittest.mock import patch
+        client, _ = self._signed_in()
+        import portal.routes as pr
+        with patch.object(pr.store, "set_user_language",
+                          side_effect=RuntimeError("no such column: lang")):
+            response = client.post(
+                "/portal/api/language",
+                data={"lang": "fr", "next": "/portal/chat"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/portal/chat"
+
     def test_an_unsupported_language_is_folded_not_stored(self):
         client, user_id = self._signed_in("fr")
         assert client.post("/portal/api/language", json={"lang": "klingon"}).json()["lang"] == "en"
