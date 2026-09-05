@@ -229,17 +229,52 @@ Ordered by how often a reader sees it.
 2. **`core/answer_formatter.py`'s section markers** — deliberately English
    and deliberately out of the catalogue; see the note beside the
    `ui.chat.diag.*` ids.
-3. **`core/workspace_guide.py`** — the six guide kinds `build_reply`
-   delegates to (capability overview, business overview, data inventory,
-   table meanings, semantic explainer, question examples), and the English
-   regexes in `core/conversational.py` that route to them. ~450 lines.
-4. **`core/result_renderer.py`'s `_build_cannot_generate_hint`** — the
+3. **`core/result_renderer.py`'s `_build_cannot_generate_hint`** — the
    "I could not build SQL for that" hint, sent as `result_chat_error`.
-5. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
+4. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
    and the `/api/ask` JSON error contract. These do not reach a portal reader
    and have no `portal_user` to take a language from.
-6. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
+5. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### The workspace guide, and what it needed
+
+`core/workspace_guide.py`'s six kinds are done, and so are the
+`core/conversational.py` regexes that route to them — the second is what makes
+the first reachable. Until now "quelles données avez-vous ?" fell through to
+SQL generation, and the French `vague` reply points the reader at exactly that
+phrase, so the product was handing out a dead route **in its own words**.
+`tests/test_workspace_guide_language.py` pulls the quoted phrase out of both
+the French and the English copy and asserts `detect_conversational` returns
+the kind it promises — a pointer that stops working fails there.
+
+The English output is asserted byte-identical, kind by kind, against a
+snapshot taken before the change; this was a translation, not a rewrite.
+
+Every count in the file was `'s' if n != 1 else ''`, and there are eleven of
+them in two sentences. French takes the singular at zero, so an empty
+workspace read "0 tables" where it should read "0 table" — and an empty
+workspace is exactly what a new tenant has. All of them go through `plural()`
+now. One does not benefit: a schema entry's count is derived from the tables
+in it, so it can never be zero, and the two languages agree at every reachable
+count. It is in the catalogue for consistency, and the test pins its
+interpolation rather than pretending to pin a plural rule nothing can observe.
+
+Three things stay untranslated, asserted rather than assumed: the tenant's
+`business_desc`, its entity names, and the validated questions from
+`core/suggestions.py`. A translated business description would be the product
+rewriting the customer's own data. `tests/test_workspace_guide_language.py`
+compares the two renders line by line with exactly those lines excluded, and
+separately asserts they appear verbatim in both.
+
+One French agreement trap: "Vos accès couvrent {tables} réparties sur
+{schemas}" needs the participle to agree with a count carried inside a
+pre-formatted `{tables}` phrase, which it cannot. "dans" does not agree.
+
+Apostrophes are now normalised once in `detect_conversational` (typographic ’
+to ASCII '), rather than spelled `['’]` at every French contraction. Stripping
+them entirely is not an option — the English patterns match on "what's",
+"that's" and "you're".
 
 ### The behavioural front door, and what it needed
 
@@ -381,8 +416,9 @@ and not translated fails there rather than shipping.
 `tests/test_analysis_card_language.py`,
 `tests/test_coverage_caveat_language.py`,
 `tests/test_chat_socket_language.py`,
-`tests/test_drill_dimension_language.py` and
-`tests/test_conversational_language.py` do the same for the surfaces above, by
+`tests/test_drill_dimension_language.py`,
+`tests/test_conversational_language.py` and
+`tests/test_workspace_guide_language.py` do the same for the surfaces above, by
 executing the real producers in both languages — including the post-processing
 block compiled out of `core/query_pipeline.py` and a real `_send_results`
 render, so a sentence translated at its source but concatenated again

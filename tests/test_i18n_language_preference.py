@@ -196,6 +196,15 @@ class TestTheCatalogueIsWellFormed:
         # entry so that a language which does not can change it.
         "reply.analysis.short_value",
         "reply.analysis.op.python",     # the language's own name
+        # "table" is the same word in French, singular and plural, and these
+        # three are the count phrase, the schema entry and the table line it
+        # appears in. Not assembly rules that happen to coincide -- the noun
+        # itself is spelled the same, like ui.chat.table_count above.
+        "guide.count.table.one",
+        "guide.count.table.other",
+        "guide.schema_entry.one",
+        "guide.schema_entry.other",
+        "guide.table_line",
     }
 
     def test_no_id_is_declared_twice(self):

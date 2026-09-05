@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterable
 
 import store
+from core.i18n import plural as _n, t as _t
 from core.pipeline_context import client_dir, get_state
 from core.semantic_layer import table_allowed, table_name_variants
 from core.semantic_model import load_semantic_model
@@ -139,12 +140,16 @@ def _table_summary(table: dict, overviews: dict[str, str]) -> dict:
         )
     )
     if not meaning:
+        # name, grain and table_type are the tenant's own semantic model, so
+        # they are interpolated; only the sentence around them is copy.
         if grain:
-            meaning = f"Represents {name.lower()} at {grain}."
+            meaning = _t("guide.table.represents_grain",
+                         name=name.lower(), grain=grain)
         elif table_type:
-            meaning = f"Represents {name.lower()} {table_type} data."
+            meaning = _t("guide.table.represents_type",
+                         name=name.lower(), type=table_type)
         else:
-            meaning = "A business description has not yet been curated for this table."
+            meaning = _t("guide.table.no_description")
     parts = ref.split(".")
     schema = _clean_text(table.get("schema") or (parts[-2] if len(parts) >= 2 else "DEFAULT"), 100)
     return {
@@ -339,18 +344,19 @@ def _bullets(values: Iterable[str]) -> str:
 
 def _examples_block(examples: list[str]) -> str:
     if not examples:
-        return "No validated starter questions are available for your current access yet."
+        return _t("guide.examples.none")
     return _bullets(f"_{question}_" for question in examples)
 
 
 def _table_lines(guide: dict, limit: int = 15) -> list[str]:
     tables = guide.get("tables") or []
     lines = [
-        f"{table['name']} ({table['schema']}.{table['table']}) — {table['meaning']}"
+        _t("guide.table_line", name=table["name"], schema=table["schema"],
+           table=table["table"], meaning=table["meaning"])
         for table in tables[:limit]
     ]
     if len(tables) > limit:
-        lines.append(f"…and {len(tables) - limit} more accessible tables in the Semantic Layer.")
+        lines.append(_n("guide.more_tables", len(tables) - limit))
     return lines
 
 
@@ -366,89 +372,100 @@ def render_workspace_guide(
     examples = guide["examples"]
     table_count = len(guide["tables"])
     metric_names = [item["name"] for item in guide["metrics"][:8]]
+    # Every count below goes through plural(). `'s' if n != 1 else ''` is an
+    # English rule that reports "0 tables" where French wants "0 table", and
+    # an empty workspace is exactly what a new tenant has.
     schema_text = ", ".join(
-        f"{name} ({count} table{'s' if count != 1 else ''})"
+        _n("guide.schema_entry", count, name=name)
         for name, count in sorted(guide["schemas"].items())
     )
+    metric_count = _n("guide.count.metric", len(guide["metrics"]))
+    term_count = _n("guide.count.term", len(guide["terms"]))
     if kind == "capability_overview":
         dashboard_count = len(guide["dashboards"])
         dashboard_note = (
-            f"You currently have access to {dashboard_count} named dashboard"
-            f"{'s' if dashboard_count != 1 else ''}."
-            if dashboard_count else
-            "You can create a named dashboard from a result and add suitable KPIs, charts, and tables."
+            _t("guide.capability.dashboard_note",
+               dashboards=_n("guide.count.dashboard", dashboard_count))
+            if dashboard_count else _t("guide.capability.dashboard_none")
         )
-        semantic_note = (
-            f"This workspace currently exposes {len(guide['metrics'])} governed metric"
-            f"{'s' if len(guide['metrics']) != 1 else ''}, {len(guide['terms'])} business term"
-            f"{'s' if len(guide['terms']) != 1 else ''}, {guide['relationship_count']} relationship"
-            f"{'s' if guide['relationship_count'] != 1 else ''}, and {guide['date_role_count']} date role"
-            f"{'s' if guide['date_role_count'] != 1 else ''} within your access."
+        semantic_note = _t(
+            "guide.capability.semantic_note",
+            metrics=metric_count, terms=term_count,
+            relationships=_n("guide.count.relationship", guide["relationship_count"]),
+            date_roles=_n("guide.count.date_role", guide["date_role_count"]),
         )
         text = (
-            "*What I can do in this workspace*\n\n"
-            "  • Answer natural-language questions using the business data you are permitted to access.\n"
-            "  • Calculate KPIs, trends, comparisons, rankings, distributions, and time-based analysis.\n"
-            "  • Present results as KPI cards, charts, or tables and explain how the answer was produced.\n"
-            "  • Refine a recent result—filter, sort, limit, reformat dates/currency/decimals, or change its visual.\n"
-            f"  • Create and maintain named dashboards, add results, arrange visuals, apply filters, and subscribe to updates. {dashboard_note}\n"
-            f"  • Use the governed Semantic Layer to resolve business terms, metrics, joins, and dates. {semantic_note}\n\n"
-            "Presentation-only follow-ups can reuse your governed recent result. If a request needs new data or a different calculation, I run a new governed query. Access controls and masking still apply."
+            f"{_t('guide.capability.title')}\n\n"
+            f"  • {_t('guide.capability.answer')}\n"
+            f"  • {_t('guide.capability.calculate')}\n"
+            f"  • {_t('guide.capability.present')}\n"
+            f"  • {_t('guide.capability.refine')}\n"
+            f"  • {_t('guide.capability.dashboards', note=dashboard_note)}\n"
+            f"  • {_t('guide.capability.semantic', note=semantic_note)}\n\n"
+            f"{_t('guide.capability.footer')}"
         )
         if include_examples:
-            text += "\n\n*Try one of these validated questions:*\n" + _examples_block(examples)
+            text += ("\n\n" + _t("guide.capability.try_these") + "\n"
+                     + _examples_block(examples))
         return text, examples
 
     if kind == "business_overview":
-        business = guide["business"] or "A business description has not yet been curated for this workspace."
+        business = guide["business"] or _t("guide.business.no_description")
         entity_names = [table["name"] for table in guide["tables"][:10]]
+        tables_phrase = _n("guide.count.table", table_count)
+        # One sentence per shape rather than a stem plus an optional clause:
+        # French puts the schema list after a participle that agrees with
+        # "tables", so the seam English can hide is one French cannot.
         text = (
-            "*Business and data overview*\n\n"
+            f"{_t('guide.business.title')}\n\n"
             f"{business}\n\n"
-            f"Your access covers {table_count} table{'s' if table_count != 1 else ''}"
-            + (f" across {schema_text}." if schema_text else ".")
+            + (_t("guide.business.access_covers_schemas",
+                  tables=tables_phrase, schemas=schema_text)
+               if schema_text else
+               _t("guide.business.access_covers", tables=tables_phrase))
         )
         if entity_names:
-            text += "\n\n*Business entities represented:*\n" + _bullets(entity_names)
+            text += "\n\n" + _t("guide.business.entities") + "\n" + _bullets(entity_names)
         if metric_names:
-            text += "\n\n*Governed metrics:* " + ", ".join(metric_names)
-        text += "\n\nAsk _which tables are available and what do they mean?_ for table-level descriptions."
+            text += "\n\n" + _t("guide.business.metrics", names=", ".join(metric_names))
+        text += "\n\n" + _t("guide.business.ask_tables")
         return text, examples
 
     if kind in {"data_inventory", "table_meanings"}:
-        heading = "Available tables and their business meaning" if kind == "table_meanings" else "Data available to you"
+        heading = _t("guide.inventory.title_meanings" if kind == "table_meanings"
+                     else "guide.inventory.title_data")
         lines = _table_lines(guide)
-        text = f"*{heading}*\n\n"
+        text = f"{heading}\n\n"
         if guide["business"]:
             text += f"{guide['business']}\n\n"
         if schema_text:
-            text += f"*Schemas:* {schema_text}\n\n"
-        text += _bullets(lines) if lines else "No queryable tables are assigned to your current access."
+            text += _t("guide.inventory.schemas", schemas=schema_text) + "\n\n"
+        text += _bullets(lines) if lines else _t("guide.inventory.none")
         if metric_names:
-            text += "\n\n*Governed metrics available:* " + ", ".join(metric_names)
-        text += "\n\nOpen Semantic Layer from the Portal sidebar to browse the governed catalog."
+            text += "\n\n" + _t("guide.inventory.metrics", names=", ".join(metric_names))
+        text += "\n\n" + _t("guide.inventory.footer")
         return text, examples
 
     if kind == "semantic_explainer":
         text = (
-            "*How the Semantic Layer works*\n\n"
-            "The Semantic Layer translates business language into governed database logic. It supplies approved metric definitions, business terms and synonyms, table relationships, date meanings, and access rules. When you ask for something such as _monthly revenue_, QueryBot uses it to determine what revenue means, which business date applies, which tables can be joined, and which governance rules must be enforced before SQL is generated.\n\n"
-            f"Within your current access, I can use {len(guide['metrics'])} metric{'s' if len(guide['metrics']) != 1 else ''}, "
-            f"{len(guide['terms'])} business term{'s' if len(guide['terms']) != 1 else ''}, "
-            f"{guide['relationship_count']} governed relationship{'s' if guide['relationship_count'] != 1 else ''}, and "
-            f"{guide['date_role_count']} date role{'s' if guide['date_role_count'] != 1 else ''}. "
-            "If wording or a date meaning is ambiguous, I should ask you to clarify instead of guessing. Ad hoc calculations are possible when the accessible schema supports them, while approved metrics are preferred when available.\n\n"
-            "You can inspect the catalog from Semantic Layer in the Portal sidebar."
+            f"{_t('guide.semantic.title')}\n\n"
+            f"{_t('guide.semantic.body')}\n\n"
+            + _t("guide.semantic.within_access",
+                 metrics=_n("guide.count.plain_metric", len(guide["metrics"])),
+                 terms=term_count,
+                 relationships=_n("guide.count.governed_relationship",
+                                  guide["relationship_count"]),
+                 date_roles=_n("guide.count.date_role", guide["date_role_count"]))
+            + " " + _t("guide.semantic.clarify") + "\n\n"
+            + _t("guide.semantic.inspect")
         )
         return text, examples
 
     if kind == "question_examples":
-        text = (
-            "*How to ask questions*\n\n"
-            "State what you want to measure, then add any breakdown, time range, filter, comparison, or presentation preference. You can ask for totals, KPIs, trends, top/bottom rankings, distributions, period comparisons, tables, and charts. After an answer, you can say things like _show only the top 10_, _format this as currency_, _show month and year_, _change this to a pie chart_, or _add this to a dashboard_. If the intended format or business meaning is unclear, I will ask a follow-up question."
-        )
+        text = f"{_t('guide.questions.title')}\n\n{_t('guide.questions.body')}"
         if include_examples:
-            text += "\n\n*Validated questions for your current access:*\n" + _examples_block(examples)
+            text += ("\n\n" + _t("guide.questions.validated") + "\n"
+                     + _examples_block(examples))
         return text, examples
 
     return "", []

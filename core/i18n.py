@@ -2386,6 +2386,234 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Connecté en tant que {name}. Posez-moi toutes vos questions sur vos données.",
     },
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # guide.*  --  the governed workspace guide
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # core/workspace_guide.py answers "what can you do", "what data do you
+    # have", "how does the semantic layer work" from metadata only -- no SQL,
+    # no LLM, no result rows. It is the onboarding surface, so it is read by
+    # someone who does not yet know what the product does, which is the worst
+    # possible moment to be reading a second language.
+    #
+    # Counts are everywhere in it, and every one was `'s' if n != 1 else ''`.
+    # French takes the singular at zero, so an empty workspace read "0 tables"
+    # where it should read "0 table" -- and an empty workspace is exactly what
+    # a new tenant has.
+
+    # The counted nouns, shared by every kind that reports one.
+    "guide.count.table.one": {"en": "{count} table", "fr": "{count} table"},
+    "guide.count.table.other": {"en": "{count} tables", "fr": "{count} tables"},
+    "guide.count.metric.one": {
+        "en": "{count} governed metric", "fr": "{count} indicateur gouverné",
+    },
+    "guide.count.metric.other": {
+        "en": "{count} governed metrics", "fr": "{count} indicateurs gouvernés",
+    },
+    "guide.count.plain_metric.one": {"en": "{count} metric", "fr": "{count} indicateur"},
+    "guide.count.plain_metric.other": {"en": "{count} metrics", "fr": "{count} indicateurs"},
+    "guide.count.term.one": {
+        "en": "{count} business term", "fr": "{count} terme métier",
+    },
+    "guide.count.term.other": {
+        "en": "{count} business terms", "fr": "{count} termes métier",
+    },
+    "guide.count.relationship.one": {
+        "en": "{count} relationship", "fr": "{count} relation",
+    },
+    "guide.count.relationship.other": {
+        "en": "{count} relationships", "fr": "{count} relations",
+    },
+    "guide.count.governed_relationship.one": {
+        "en": "{count} governed relationship", "fr": "{count} relation gouvernée",
+    },
+    "guide.count.governed_relationship.other": {
+        "en": "{count} governed relationships", "fr": "{count} relations gouvernées",
+    },
+    "guide.count.date_role.one": {"en": "{count} date role", "fr": "{count} rôle de date"},
+    "guide.count.date_role.other": {"en": "{count} date roles", "fr": "{count} rôles de date"},
+    "guide.count.dashboard.one": {
+        "en": "{count} named dashboard", "fr": "{count} tableau de bord nommé",
+    },
+    "guide.count.dashboard.other": {
+        "en": "{count} named dashboards", "fr": "{count} tableaux de bord nommés",
+    },
+    "guide.schema_entry.one": {"en": "{name} ({count} table)", "fr": "{name} ({count} table)"},
+    "guide.schema_entry.other": {"en": "{name} ({count} tables)", "fr": "{name} ({count} tables)"},
+
+    # ── What I can do here ──────────────────────────────────────────────────
+    "guide.capability.title": {
+        "en": "*What I can do in this workspace*",
+        "fr": "*Ce que je peux faire dans cet espace de travail*",
+    },
+    "guide.capability.answer": {
+        "en": "Answer natural-language questions using the business data you are permitted to access.",
+        "fr": "Répondre à des questions en langage naturel à partir des données métier auxquelles vous avez accès.",
+    },
+    "guide.capability.calculate": {
+        "en": "Calculate KPIs, trends, comparisons, rankings, distributions, and time-based analysis.",
+        "fr": "Calculer des KPI, des tendances, des comparaisons, des classements, des distributions et des analyses temporelles.",
+    },
+    "guide.capability.present": {
+        "en": "Present results as KPI cards, charts, or tables and explain how the answer was produced.",
+        "fr": "Présenter les résultats sous forme de cartes KPI, de graphiques ou de tableaux, et expliquer comment la réponse a été produite.",
+    },
+    "guide.capability.refine": {
+        "en": "Refine a recent result—filter, sort, limit, reformat dates/currency/decimals, or change its visual.",
+        "fr": "Affiner un résultat récent — filtrer, trier, limiter, reformater les dates, la devise ou les décimales, ou changer de visuel.",
+    },
+    "guide.capability.dashboards": {
+        "en": "Create and maintain named dashboards, add results, arrange visuals, apply filters, and subscribe to updates. {note}",
+        "fr": "Créer et gérer des tableaux de bord nommés, y ajouter des résultats, disposer les visuels, appliquer des filtres et vous abonner aux mises à jour. {note}",
+    },
+    "guide.capability.dashboard_note": {
+        "en": "You currently have access to {dashboards}.",
+        "fr": "Vous avez actuellement accès à {dashboards}.",
+    },
+    "guide.capability.dashboard_none": {
+        "en": "You can create a named dashboard from a result and add suitable KPIs, charts, and tables.",
+        "fr": "Vous pouvez créer un tableau de bord nommé à partir d'un résultat et y ajouter les KPI, graphiques et tableaux qui conviennent.",
+    },
+    "guide.capability.semantic": {
+        "en": "Use the governed Semantic Layer to resolve business terms, metrics, joins, and dates. {note}",
+        "fr": "Utiliser la couche sémantique gouvernée pour résoudre les termes métier, les indicateurs, les jointures et les dates. {note}",
+    },
+    "guide.capability.semantic_note": {
+        "en": "This workspace currently exposes {metrics}, {terms}, {relationships}, and {date_roles} within your access.",
+        "fr": "Cet espace de travail expose actuellement {metrics}, {terms}, {relationships} et {date_roles} dans le cadre de vos accès.",
+    },
+    "guide.capability.footer": {
+        "en": "Presentation-only follow-ups can reuse your governed recent result. If a request needs new data or a different calculation, I run a new governed query. Access controls and masking still apply.",
+        "fr": "Les demandes de mise en forme peuvent réutiliser votre dernier résultat gouverné. Si une demande nécessite de nouvelles données ou un calcul différent, j'exécute une nouvelle requête gouvernée. Les contrôles d'accès et le masquage continuent de s'appliquer.",
+    },
+    "guide.capability.try_these": {
+        "en": "*Try one of these validated questions:*",
+        "fr": "*Essayez l'une de ces questions validées :*",
+    },
+
+    # ── The business, and what the data covers ──────────────────────────────
+    "guide.business.title": {
+        "en": "*Business and data overview*",
+        "fr": "*Vue d'ensemble de l'activité et des données*",
+    },
+    "guide.business.no_description": {
+        "en": "A business description has not yet been curated for this workspace.",
+        "fr": "Aucune description de l'activité n'a encore été rédigée pour cet espace de travail.",
+    },
+    "guide.business.access_covers": {
+        "en": "Your access covers {tables}.",
+        "fr": "Vos accès couvrent {tables}.",
+    },
+    "guide.business.access_covers_schemas": {
+        "en": "Your access covers {tables} across {schemas}.",
+        # "réparties sur" would have to agree with the table count, which a
+        # pre-formatted {tables} phrase cannot carry. "dans" does not agree.
+        "fr": "Vos accès couvrent {tables} dans {schemas}.",
+    },
+    "guide.business.entities": {
+        "en": "*Business entities represented:*",
+        "fr": "*Entités métier représentées :*",
+    },
+    "guide.business.metrics": {
+        "en": "*Governed metrics:* {names}",
+        "fr": "*Indicateurs gouvernés :* {names}",
+    },
+    "guide.business.ask_tables": {
+        "en": "Ask _which tables are available and what do they mean?_ for table-level descriptions.",
+        "fr": "Demandez _quelles tables sont disponibles et que signifient-elles ?_ pour obtenir des descriptions au niveau des tables.",
+    },
+
+    # ── The inventory ───────────────────────────────────────────────────────
+    "guide.inventory.title_data": {
+        "en": "*Data available to you*",
+        "fr": "*Les données auxquelles vous avez accès*",
+    },
+    "guide.inventory.title_meanings": {
+        "en": "*Available tables and their business meaning*",
+        "fr": "*Les tables disponibles et leur signification métier*",
+    },
+    "guide.inventory.schemas": {"en": "*Schemas:* {schemas}", "fr": "*Schémas :* {schemas}"},
+    "guide.inventory.none": {
+        "en": "No queryable tables are assigned to your current access.",
+        "fr": "Aucune table interrogeable n'est associée à vos accès actuels.",
+    },
+    "guide.inventory.metrics": {
+        "en": "*Governed metrics available:* {names}",
+        "fr": "*Indicateurs gouvernés disponibles :* {names}",
+    },
+    "guide.inventory.footer": {
+        "en": "Open Semantic Layer from the Portal sidebar to browse the governed catalog.",
+        "fr": "Ouvrez la couche sémantique depuis la barre latérale du portail pour parcourir le catalogue gouverné.",
+    },
+    "guide.table_line": {
+        "en": "{name} ({schema}.{table}) — {meaning}",
+        "fr": "{name} ({schema}.{table}) — {meaning}",
+    },
+    "guide.more_tables.one": {
+        "en": "…and {count} more accessible table in the Semantic Layer.",
+        "fr": "…et {count} autre table accessible dans la couche sémantique.",
+    },
+    "guide.more_tables.other": {
+        "en": "…and {count} more accessible tables in the Semantic Layer.",
+        "fr": "…et {count} autres tables accessibles dans la couche sémantique.",
+    },
+
+    # ── How the semantic layer works ────────────────────────────────────────
+    "guide.semantic.title": {
+        "en": "*How the Semantic Layer works*",
+        "fr": "*Comment fonctionne la couche sémantique*",
+    },
+    "guide.semantic.body": {
+        "en": "The Semantic Layer translates business language into governed database logic. It supplies approved metric definitions, business terms and synonyms, table relationships, date meanings, and access rules. When you ask for something such as _monthly revenue_, QueryBot uses it to determine what revenue means, which business date applies, which tables can be joined, and which governance rules must be enforced before SQL is generated.",
+        "fr": "La couche sémantique traduit le langage métier en logique de base de données gouvernée. Elle fournit les définitions d'indicateurs approuvées, les termes métier et leurs synonymes, les relations entre tables, la signification des dates et les règles d'accès. Lorsque vous demandez par exemple le _chiffre d'affaires mensuel_, QueryBot s'en sert pour déterminer ce que signifie le chiffre d'affaires, quelle date métier s'applique, quelles tables peuvent être jointes et quelles règles de gouvernance doivent être appliquées avant de générer le SQL.",
+    },
+    "guide.semantic.within_access": {
+        "en": "Within your current access, I can use {metrics}, {terms}, {relationships}, and {date_roles}.",
+        "fr": "Dans le cadre de vos accès actuels, je peux utiliser {metrics}, {terms}, {relationships} et {date_roles}.",
+    },
+    "guide.semantic.clarify": {
+        "en": "If wording or a date meaning is ambiguous, I should ask you to clarify instead of guessing. Ad hoc calculations are possible when the accessible schema supports them, while approved metrics are preferred when available.",
+        "fr": "Si une formulation ou la signification d'une date est ambiguë, je dois vous demander de préciser plutôt que de deviner. Des calculs ponctuels sont possibles lorsque le schéma accessible le permet, mais les indicateurs approuvés sont préférés lorsqu'ils existent.",
+    },
+    "guide.semantic.inspect": {
+        "en": "You can inspect the catalog from Semantic Layer in the Portal sidebar.",
+        "fr": "Vous pouvez consulter le catalogue depuis la couche sémantique, dans la barre latérale du portail.",
+    },
+
+    # ── How to ask ──────────────────────────────────────────────────────────
+    "guide.questions.title": {
+        "en": "*How to ask questions*",
+        "fr": "*Comment poser vos questions*",
+    },
+    "guide.questions.body": {
+        "en": "State what you want to measure, then add any breakdown, time range, filter, comparison, or presentation preference. You can ask for totals, KPIs, trends, top/bottom rankings, distributions, period comparisons, tables, and charts. After an answer, you can say things like _show only the top 10_, _format this as currency_, _show month and year_, _change this to a pie chart_, or _add this to a dashboard_. If the intended format or business meaning is unclear, I will ask a follow-up question.",
+        "fr": "Indiquez ce que vous voulez mesurer, puis ajoutez une ventilation, une période, un filtre, une comparaison ou une préférence de présentation. Vous pouvez demander des totaux, des KPI, des tendances, des classements, des distributions, des comparaisons de périodes, des tableaux et des graphiques. Après une réponse, vous pouvez dire par exemple _affiche seulement le top 10_, _formate ceci en devise_, _affiche le mois et l'année_, _transforme ceci en camembert_ ou _ajoute ceci à un tableau de bord_. Si le format ou la signification métier n'est pas clair, je vous poserai une question complémentaire.",
+    },
+    "guide.questions.validated": {
+        "en": "*Validated questions for your current access:*",
+        "fr": "*Questions validées pour vos accès actuels :*",
+    },
+    "guide.examples.none": {
+        "en": "No validated starter questions are available for your current access yet.",
+        "fr": "Aucune question de démarrage validée n'est encore disponible pour vos accès actuels.",
+    },
+
+    # ── A table with no curated description ─────────────────────────────────
+    # {name}, {grain} and {type} are the tenant's own semantic model; only the
+    # sentence around them is copy.
+    "guide.table.represents_grain": {
+        "en": "Represents {name} at {grain}.",
+        "fr": "Représente {name}, au grain : {grain}.",
+    },
+    "guide.table.represents_type": {
+        "en": "Represents {name} {type} data.",
+        "fr": "Représente les données de type {type} pour {name}.",
+    },
+    "guide.table.no_description": {
+        "en": "A business description has not yet been curated for this table.",
+        "fr": "Aucune description métier n'a encore été rédigée pour cette table.",
+    },
+
     # ── Small talk, and the front door ──────────────────────────────────────
     #
     # These reach a reader before any data does. `help` inside them is a

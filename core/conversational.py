@@ -40,10 +40,12 @@ log = logging.getLogger("querybot.conversational")
 # and common emoji (anything outside the basic-latin word range).
 _SMALLTALK_TAIL = r"[\s!.,\U0001F300-\U0001FAFF☀-➿]*"
 
-# French uses the typographic apostrophe as often as the ASCII one, and puts a
-# space before ! and ? -- both of which a pattern written for English silently
-# refuses.
-_APOS = r"['’]"
+# French is written with apostrophes inside half its words -- "c'est",
+# "qu'est-ce", "l'entreprise" -- and with a typographic ’ as often as an ASCII
+# '. detect_conversational normalises the typographic one away before matching,
+# so every pattern below is written with a plain '. Stripping the apostrophe
+# entirely is NOT an option: the English patterns match on "what's", "that's"
+# and "you're".
 
 # The French alternatives are matched against accent-folded text (see
 # detect_conversational), so they are written unaccented: "bonsoir" covers
@@ -53,7 +55,7 @@ _GREETING_RE = re.compile(
     r"howdy|hola|namaste|vanakkam"
     r"|bonjour|bonsoir|salut|coucou|allo+|re-?bonjour|bien\s+le\s+bonjour)"
     r"\s*(there|team|bot|querybot|everyone|all"
-    r"|a\s+tous|a\s+toutes|tout\s+le\s+monde|l" + _APOS + r"?equipe)?"
+    r"|a\s+tous|a\s+toutes|tout\s+le\s+monde|(?:a\s+)?l'?equipe)?"
     + _SMALLTALK_TAIL + r"$",
     re.IGNORECASE,
 )
@@ -63,7 +65,7 @@ _THANKS_RE = re.compile(
     r"perfect,?\s*thanks?|awesome,?\s*thanks?|much\s+appreciated|appreciate\s+it|"
     r"(that('s| is| was)?\s+)?(great|perfect|awesome|helpful|nice)|got\s+it|cool"
     r"|(super|parfait|genial|top|nickel|impeccable),?\s*merci|mille\s+mercis"
-    r"|merci|mercii+|(c" + _APOS + r")?est\s+(parfait|super|genial|nickel|impeccable)"
+    r"|merci|mercii+|(c')?est\s+(parfait|super|genial|nickel|impeccable)"
     r"|(super|parfait|genial|nickel|impeccable|tres\s+bien|ca\s+marche))"
     r"(\s+(a\s+lot|so\s+much|very\s+much|again|for\s+(that|the\s+help)"
     r"|beaucoup|bien|infiniment|encore|pour\s+(ton|votre)\s+aide))?"
@@ -89,12 +91,12 @@ _FRUSTRATION_RE = re.compile(
     r"|(you('re| are)?\s+)?(useless|not\s+helping|no\s+help)"
     r"|(stupid|dumb|terrible|horrible)\s+(bot|answer|result)?"
     r"|this\s+(bot|thing)\s+(sucks|is\s+(broken|terrible|useless))"
-    r"|(c" + _APOS + r")?est\s+(faux|incorrect|inutile|nul|n" + _APOS + r"importe\s+quoi)"
-    r"|ce\s+n" + _APOS + r"est\s+pas\s+(correct|ce\s+que\s+j" + _APOS + r"ai\s+demande|bon)"
+    r"|(c')?est\s+(faux|incorrect|inutile|nul|n'importe\s+quoi)"
+    r"|ce\s+n'est\s+pas\s+(correct|ce\s+que\s+j'ai\s+demande|bon)"
     r"|(ca|cela)\s+ne\s+(marche|fonctionne)\s+pas"
     r"|mauvaise\s+reponse|reponse\s+(fausse|incorrecte)"
     r"|(ca|cela)\s+ne\s+sert\s+a\s+rien"
-    r"|tu\s+ne\s+m" + _APOS + r"aides\s+pas|vous\s+ne\s+m" + _APOS + r"aidez\s+pas"
+    r"|tu\s+ne\s+m'aides\s+pas|vous\s+ne\s+m'aidez\s+pas"
     r")" + _SMALLTALK_TAIL + r"$",
     re.IGNORECASE,
 )
@@ -111,6 +113,19 @@ _DATA_INVENTORY_RE = re.compile(
     r"|list\s+(the\s+)?(available\s+)?(tables?|schemas?)"
     r"|what('s| is)\s+in\s+(the|my|your)\s+(database|data)"
     r"|(?:(?:explain|describe)(?:\s+me)?(?:\s+about)?|tell\s+me\s+about)\s+(?:the\s+)?(?:available\s+)?(?:data|data\s+available|data\s+sources?)"
+    # French. The vague reply points here in so many words ("demander
+    # _quelles donnees avez-vous ?_"), so this pattern is what makes that
+    # pointer land rather than fall through to SQL generation.
+    r"|quelles?\s+(?:donnees|tables?|schemas?|informations?)\s+"
+    r"(?:avez-vous|as-tu|sont\s+(?:disponibles|accessibles)|puis-je\s+"
+    r"(?:voir|interroger|utiliser))"
+    r"|(?:montre|affiche|liste)(?:-| )?(?:moi\s+)?(?:les\s+)?"
+    r"(?:tables?|schemas?|sources?\s+de\s+donnees)\s+disponibles"
+    r"|(?:liste|affiche)\s+(?:les\s+)?(?:tables?|schemas?)$"
+    r"|qu'y\s+a-t-il\s+dans\s+(?:la\s+base|les\s+donnees)"
+    r"|qu(?:e|'est-ce\s+que)\s+(?:je\s+)?(?:peux|puis)(?:-je)?\s+"
+    r"(?:demander|interroger|consulter)"
+    r"|(?:parle|parlez)(?:-| )?moi\s+des?\s+donnees(?:\s+disponibles)?"
     r")\b",
     re.IGNORECASE,
 )
@@ -124,6 +139,9 @@ _SEMANTIC_EXPLAINER_RE = re.compile(
     r"(?:(?:explain|describe)(?:\s+me)?(?:\s+about)?|what(?:'s| is)|how does)\s+(?:the\s+)?semantic\s+layer"
     r"|how\s+(?:does|do)\s+(?:the\s+)?semantic(?:\s+layer)?\s+work"
     r"|what\s+(?:are|do)\s+(?:business\s+)?(?:metrics|terms|date\s+roles)\s+(?:mean|do)"
+    r"|comment\s+fonctionne\s+(?:la\s+)?couche\s+semantique"
+    r"|(?:explique|expliquez|decris|decrivez)(?:-| )?(?:moi\s+)?(?:la\s+)?couche\s+semantique"
+    r"|(?:qu'est-ce\s+que|c'est\s+quoi)\s+(?:la\s+)?couche\s+semantique"
     r")\b",
     re.IGNORECASE,
 )
@@ -135,6 +153,16 @@ _TABLE_MEANINGS_RE = re.compile(
     r"|(?:business\s+)?meaning\s+of\s+(?:the\s+)?tables?"
     r"|(?:what|which)\s+(?:are\s+)?(?:the\s+)?(?:available\s+)?tables?\s+and\s+(?:their|the)\s+business\s+meanings?"
     r"|what\s+does\s+(?:each|every)\s+table\s+(?:mean|represent)"
+    # The business-overview reply points here ("Demandez _quelles tables sont
+    # disponibles et que signifient-elles ?_"), so this is what makes that
+    # pointer land. Checked before the data-inventory pattern, as in English.
+    r"|quelles?\s+tables?\s+(?:sont\s+disponibles\s+)?et\s+"
+    r"(?:que\s+signifient-elles|quelles?\s+(?:sont\s+)?leurs?\s+"
+    r"significations?\s+metiers?)"
+    r"|(?:explique|expliquez|decris|decrivez)(?:-| )?(?:moi\s+)?"
+    r"les\s+tables?(?:\s+disponibles)?"
+    r"|signification\s+(?:metier\s+)?des\s+tables?"
+    r"|que\s+(?:represente|signifie)\s+chaque\s+table"
     r")\b",
     re.IGNORECASE,
 )
@@ -146,6 +174,13 @@ _BUSINESS_OVERVIEW_RE = re.compile(
     r"|what\s+(?:does|is)\s+(?:this|the|our)\s+(?:business|workspace)\s+(?:do|about|cover)"
     r"|(?:business|workspace)\s+(?:overview|summary)"
     r"|what\s+business\s+(?:areas|domains)\s+(?:are\s+)?(?:covered|available)"
+    r"|(?:explique|expliquez|decris|decrivez)(?:-| )?(?:moi\s+)?"
+    r"(?:cette\s+|l'|notre\s+|le\s+)?(?:entreprise|activite|espace\s+de\s+travail)"
+    r"|(?:parle|parlez)(?:-| )?moi\s+de\s+(?:l'|cette\s+|notre\s+)?"
+    r"(?:entreprise|activite|espace\s+de\s+travail)"
+    r"|que\s+fait\s+(?:cette|notre|l')\s*(?:entreprise|activite)"
+    r"|vue\s+d'ensemble\s+de\s+(?:l'|cette\s+|notre\s+)?(?:entreprise|activite)"
+    r"|(?:apercu|resume)\s+de\s+(?:l'|cette\s+|notre\s+)?(?:entreprise|activite)"
     r")\b",
     re.IGNORECASE,
 )
@@ -158,6 +193,12 @@ _QUESTION_EXAMPLES_RE = re.compile(
     r"|what\s+(?:can|should|could)\s+(?:i|we)\s+ask"
     r"|how\s+should\s+(?:i|we)\s+(?:ask|phrase)\s+(?:a\s+)?questions?"
     r"|questions?\s+(?:i|we)\s+can\s+ask"
+    r"|quelles?\s+questions?\s+(?:puis-je|peut-on|pouvons-nous|est-ce\s+que\s+"
+    r"je\s+peux)\s+poser"
+    r"|(?:donne|donnez|montre|montrez|propose|proposez)(?:-| )?(?:moi\s+)?"
+    r"(?:des\s+|quelques\s+)?exemples?\s+de\s+questions?"
+    r"|comment\s+(?:poser|formuler)\s+(?:une\s+|mes\s+|des\s+)?questions?"
+    r"|questions?\s+que\s+(?:je\s+peux|l'on\s+peut)\s+poser"
     r")\b",
     re.IGNORECASE,
 )
@@ -169,6 +210,11 @@ _CAPABILITY_OVERVIEW_RE = re.compile(
     r"|what\s+(?:are\s+)?your\s+capabilities"
     r"|(?:explain|show|list)\s+(?:your\s+)?capabilities"
     r"|what\s+is\s+querybot|how\s+does\s+querybot\s+work"
+    r"|que\s+(?:peux|pouvez)(?:-tu|-vous)?\s+(?:faire|m'aider)"
+    r"|quelles?\s+sont\s+(?:tes|vos)\s+(?:capacites|fonctionnalites)"
+    r"|comment\s+(?:peux|pouvez)(?:-tu|-vous)\s+m'aider"
+    r"|(?:qu'est-ce\s+que|c'est\s+quoi)\s+querybot"
+    r"|comment\s+fonctionne\s+querybot"
     r")\b",
     re.IGNORECASE,
 )
@@ -183,11 +229,11 @@ _OPINION_RE = re.compile(
     r"|are\s+we\s+(doing\s+)?(good|well|ok|okay|badly)"
     r"|how\s+are\s+we\s+doing"
     r"|(quel\s+est\s+)?(ton|votre)\s+avis"
-    r"|qu" + _APOS + r"en\s+(penses-tu|pensez-vous)"
+    r"|qu'en\s+(penses-tu|pensez-vous)"
     r"|(penses-tu|pensez-vous|crois-tu|croyez-vous|recommandes-tu|recommandez-vous)"
     r"|(devrions|devons)-nous\s+\w+"
-    r"|est-ce\s+que\s+(l" + _APOS + r")?(entreprise|activite)\s+va\s+bien"
-    r"|comment\s+(allons-nous|se\s+porte\s+l" + _APOS + r"entreprise)"
+    r"|est-ce\s+que\s+(l')?(entreprise|activite)\s+va\s+bien"
+    r"|comment\s+(allons-nous|se\s+porte\s+l'entreprise)"
     r")\b",
     re.IGNORECASE,
 )
@@ -237,7 +283,7 @@ def detect_conversational(text: str) -> str | None:
     # the same pattern. Folding is a no-op for the English patterns (they are
     # ASCII and already case-insensitive), so every existing tenant classifies
     # exactly the messages it classified before.
-    t = _fold_accents(t)
+    t = _fold_accents(t).replace("\u2019", "'").replace("\u2018", "'")
     if _GREETING_RE.match(t):
         return "greeting"
     if _THANKS_RE.match(t):
