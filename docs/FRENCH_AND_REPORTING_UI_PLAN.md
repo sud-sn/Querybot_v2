@@ -180,7 +180,8 @@ the mechanism lands first and the redesign is built French-ready.
 | 4 — French normaliser + eval corpus | **not started** | The part that decides whether a French question is understood at all. 118 eval questions, all English |
 | — the chat page | **done** | `portal_chat.html`: 315 `t()` calls, up from 31 |
 | — browser tab titles | **done** | All ten portal templates |
-| 5 — the rest of the chrome | **partly** | See below |
+| — the remaining portal pages | **done** | sign-in, registration, change-password, pin-confirm, new-report, notifications, Semantic Layer |
+| 5 — the rest of the chrome | **portal done; server-side copy remains** | See below |
 
 ### What is still English
 
@@ -195,15 +196,19 @@ Ordered by how often a reader sees it.
    different modules (`_gap.message`, forecast caveats, multi-period caveats,
    `check_join_coverage`). Each source needs its own pass; the renderer only
    concatenates.
-3. **`portal_kb.html`, `portal_notifications.html`, `portal_login.html`,
-   `portal_register.html`, `portal_change_password.html`,
-   `portal_report_new.html`** — 0 `t()` calls in the body of each; only their
-   tab titles are translated. ~900 lines together.
-4. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
-   "Break down by X" fallbacks and the policy-refusal messages. These reach the
-   chat page as server messages, so a French reader still sees English there.
+3. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
+   "Break down by X" fallbacks and the policy-refusal messages. These reach
+   the chat page as server messages, so a French reader still sees English
+   there.
+4. **`core/answer_formatter.py`'s section markers** — deliberately English
+   and deliberately out of the catalogue; see the note beside the
+   `ui.chat.diag.*` ids.
 5. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+Every portal template's body is done. `tests/test_portal_pages_language.py`
+holds the list and asserts it matches what is on disk, so a page added later
+and not translated fails there rather than shipping.
 
 ### The chat page, and what it needed
 
