@@ -219,7 +219,11 @@ def test_chat_empty_state_uses_workspace_suggestions_and_large_composer():
     template = _read("portal/templates/portal_chat.html")
     stylesheet = _read("static/css/chat_workspace.css")
 
-    assert "How can I help you today?" in template
+    # Asserted on the RENDERED page: the empty state's copy is a catalogue id
+    # in the source now, and the catalogue is injected into the page as JSON --
+    # so a source assertion would pass against a page that renders nothing.
+    from tests.chat_render import render as render_chat, visible as visible_chat
+    assert "How can I help you today?" in visible_chat(render_chat())
     assert "suggestions[:4]" in template
     assert 'class="suggestion-card-copy"' in template
     assert 'id="input" class="chat-input"' in template

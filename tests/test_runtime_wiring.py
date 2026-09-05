@@ -341,9 +341,13 @@ class RouteRegistrationTests(unittest.TestCase):
 
     def test_portal_chat_token_kpi_present(self):
         """The chat portal must render the user token KPI."""
+        from tests.chat_render import render as render_chat, visible as visible_chat
         html = _read("portal/templates/portal_chat.html")
         self.assertIn("token-kpi-pill", html)
-        self.assertIn("Tokens this month", html)
+        # The label is a catalogue id in the source now, so the assertion moves
+        # onto the rendered page -- which also proves the meter's numbers reach
+        # it, which reading the template never did.
+        self.assertIn("Tokens this month · 1M", visible_chat(render_chat()))
 
     def test_schema_selector_is_not_nested_inside_suggestions_only(self):
         """Schema selector should be available even when suggestions are empty."""

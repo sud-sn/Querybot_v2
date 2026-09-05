@@ -935,6 +935,151 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Essayez de reformuler votre question ou de poser une question plus précise.",
     },
 
+    # ── Browser tab titles ───────────────────────────────────────────────────
+    # Chrome the reader sees on every page, and the one string that is still in
+    # front of them when the tab is in the background.
+    "ui.title.suffix": {"en": "QueryBot Portal", "fr": "Portail QueryBot"},
+    "ui.title.sign_in": {"en": "Sign In", "fr": "Connexion"},
+    "ui.title.register": {"en": "Register", "fr": "Créer un compte"},
+    "ui.title.change_password": {"en": "Change Password", "fr": "Changer le mot de passe"},
+    "ui.title.notifications": {"en": "My Notifications", "fr": "Mes notifications"},
+    "ui.title.new_report": {"en": "New Report", "fr": "Nouveau rapport"},
+
+    # ── The chat page ────────────────────────────────────────────────────────
+    #
+    # Where a reader spends the session. Note the two "plain English" strings:
+    # the phrase means "plain language", not "the English language", so the
+    # French is "en langage courant" -- translating it literally would tell a
+    # French customer to ask their questions in English.
+
+    # The thread panel in the sidebar.
+    "ui.chat.recent_threads": {"en": "Recent Threads", "fr": "Conversations récentes"},
+    "ui.chat.refresh_threads": {"en": "Refresh threads", "fr": "Actualiser les conversations"},
+    "ui.chat.search_threads": {"en": "Search threads", "fr": "Rechercher une conversation"},
+    "ui.chat.clear_search": {"en": "Clear thread search", "fr": "Effacer la recherche"},
+    "ui.chat.history_label": {"en": "Recent query history", "fr": "Historique des requêtes récentes"},
+    "ui.chat.your_conversations": {"en": "Your conversations", "fr": "Vos conversations"},
+    "ui.chat.close_history": {"en": "Close history", "fr": "Fermer l'historique"},
+    "ui.chat.loading_threads": {"en": "Loading recent threads...", "fr": "Chargement des conversations récentes..."},
+    "ui.chat.current_workspace": {"en": "Current workspace", "fr": "Espace de travail actuel"},
+    "ui.chat.workspace": {"en": "Workspace", "fr": "Espace de travail"},
+    "ui.chat.your_workspace": {"en": "Your workspace", "fr": "Votre espace de travail"},
+
+    # Chat turned off for the workspace.
+    "ui.chat.disabled_title": {
+        "en": "Internal Chat not enabled", "fr": "Chat interne non activé",
+    },
+    "ui.chat.disabled_body": {
+        "en": "Your administrator has not enabled the Internal Chat UI for your account.",
+        "fr": "Votre administrateur n'a pas activé le chat interne pour votre compte.",
+    },
+    "ui.chat.back_to_dashboard": {
+        "en": "Back to dashboard", "fr": "Retour au tableau de bord",
+    },
+
+    # The hero panel.
+    "ui.chat.hero_title": {
+        "en": "Ask your data in plain English",
+        "fr": "Interrogez vos données en langage courant",
+    },
+    "ui.chat.hero_subtitle": {
+        "en": "Query live business data, get structured answers, and pin useful charts to your dashboard without leaving the conversation.",
+        "fr": "Interrogez vos données métier en direct, obtenez des réponses structurées et épinglez les graphiques utiles à votre tableau de bord sans quitter la conversation.",
+    },
+    "ui.chat.pill_workspace": {"en": "Workspace · {name}", "fr": "Espace de travail · {name}"},
+    "ui.chat.pill_role": {"en": "Role · {role}", "fr": "Rôle · {role}"},
+    "ui.chat.pill_group": {"en": "Group · {group}", "fr": "Groupe · {group}"},
+    "ui.chat.not_assigned": {"en": "Not assigned", "fr": "Non attribué"},
+    "ui.chat.tokens_title": {
+        "en": "Input {input} · Output {output}", "fr": "Entrée {input} · Sortie {output}",
+    },
+    "ui.chat.tokens_pill": {
+        "en": "Tokens this month · {total}", "fr": "Jetons ce mois-ci · {total}",
+    },
+    "ui.chat.queries_title": {
+        "en": "{used} / {limit} queries used this month",
+        "fr": "{used} / {limit} requêtes utilisées ce mois-ci",
+    },
+    "ui.chat.queries_left": {"en": "Queries left · {count}", "fr": "Requêtes restantes · {count}"},
+    "ui.chat.hide_hero": {"en": "Hide hero panel", "fr": "Masquer le panneau d'accueil"},
+    "ui.chat.dismiss_hero": {"en": "Dismiss hero panel", "fr": "Fermer le panneau d'accueil"},
+    "ui.chat.show_info": {"en": "Show workspace info", "fr": "Afficher les informations de l'espace"},
+    "ui.chat.show_info_panel": {
+        "en": "Show workspace info panel",
+        "fr": "Afficher le panneau d'informations de l'espace de travail",
+    },
+    "ui.chat.info": {"en": "Info", "fr": "Infos"},
+
+    # The conversation shell.
+    "ui.chat.shell_title": {"en": "QueryBot live analyst", "fr": "Analyste QueryBot en direct"},
+    "ui.chat.shell_subtitle": {
+        "en": "Interactive answers, chart previews, and governed dashboard workflows.",
+        "fr": "Réponses interactives, aperçus de graphiques et flux de tableau de bord gouvernés.",
+    },
+    "ui.chat.connecting": {"en": "Connecting…", "fr": "Connexion…"},
+    "ui.chat.waiting_session": {"en": "Waiting for live session", "fr": "En attente de la session en direct"},
+    "ui.chat.view_history": {"en": "View recent query history", "fr": "Voir l'historique des requêtes récentes"},
+    "ui.chat.history": {"en": "History", "fr": "Historique"},
+
+    # The schema selector.
+    "ui.chat.schema": {"en": "Schema", "fr": "Schéma"},
+    "ui.chat.all": {"en": "All", "fr": "Tous"},
+    "ui.chat.all_schemas": {"en": "All schemas", "fr": "Tous les schémas"},
+    "ui.chat.table_count.one": {"en": "{count} table", "fr": "{count} table"},
+    "ui.chat.table_count.other": {"en": "{count} tables", "fr": "{count} tables"},
+    "ui.chat.multi_schema_title": {"en": "Multi-schema mode.", "fr": "Mode multi-schéma."},
+    "ui.chat.multi_schema_body": {
+        "en": "QueryBot will search all schemas you can access and may ask for clarification if more than one schema matches.",
+        "fr": "QueryBot cherchera dans tous les schémas auxquels vous avez accès et pourra demander une précision si plusieurs correspondent.",
+    },
+
+    # The thread itself.
+    "ui.chat.system_line": {
+        "en": "QueryBot Internal Chat · {workspace}",
+        "fr": "Chat interne QueryBot · {workspace}",
+    },
+    "ui.chat.welcome_title": {"en": "How can I help you today?", "fr": "Comment puis-je vous aider aujourd'hui ?"},
+    "ui.chat.welcome_body": {
+        "en": "Ask a business question in plain English and QueryBot will turn your governed data into a clear, traceable answer.",
+        "fr": "Posez une question métier en langage courant et QueryBot transformera vos données gouvernées en une réponse claire et traçable.",
+    },
+    "ui.chat.thinking": {"en": "Thinking…", "fr": "Réflexion…"},
+    "ui.chat.ready": {"en": "Ready", "fr": "Prêt"},
+
+    # Suggestions.
+    "ui.chat.suggestions_label": {
+        "en": "Start with a workspace question",
+        "fr": "Commencez par une question sur votre espace de travail",
+    },
+    "ui.chat.shuffle": {"en": "Show different suggestions", "fr": "Afficher d'autres suggestions"},
+    "ui.chat.refresh": {"en": "Refresh", "fr": "Actualiser"},
+    "ui.chat.workspace_insight": {"en": "Workspace insight", "fr": "Analyse de l'espace"},
+
+    # The composer.
+    "ui.chat.composer_placeholder": {
+        "en": "Ask anything about your data…",
+        "fr": "Posez n'importe quelle question sur vos données…",
+    },
+    "ui.chat.send": {"en": "Send message", "fr": "Envoyer le message"},
+    "ui.chat.hint_all_schemas": {
+        "en": "All schemas active. Select a schema when you want a stricter answer.",
+        "fr": "Tous les schémas sont actifs. Sélectionnez-en un pour obtenir une réponse plus stricte.",
+    },
+    "ui.chat.hint_enter": {
+        "en": "Press Enter to send · Shift + Enter for a new line",
+        "fr": "Entrée pour envoyer · Maj + Entrée pour aller à la ligne",
+    },
+
+    # The artifact pane.
+    "ui.chat.artifact_label": {"en": "Analysis artifact", "fr": "Panneau d'analyse"},
+    "ui.chat.artifact_title": {"en": "Result preview", "fr": "Aperçu du résultat"},
+    "ui.chat.close_artifact": {"en": "Close artifact", "fr": "Fermer le panneau"},
+    "ui.chat.close": {"en": "Close", "fr": "Fermer"},
+    "ui.chat.artifact_empty": {
+        "en": "Charts, KPI values, and result tables open here while the explanation stays in the conversation.",
+        "fr": "Les graphiques, les indicateurs et les tableaux de résultats s'ouvrent ici, tandis que l'explication reste dans la conversation.",
+    },
+
     # ── The language switcher ────────────────────────────────────────────────
     "ui.lang.label": {"en": "Language", "fr": "Langue"},
     "ui.lang.en": {"en": "English", "fr": "Anglais"},

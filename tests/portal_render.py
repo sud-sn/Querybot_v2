@@ -20,6 +20,7 @@ from what is actually served.
 
 from __future__ import annotations
 
+import html
 import re
 
 
@@ -44,9 +45,24 @@ def language_context(request=None, lang=None) -> dict:
     return pr._language_context(request or Req(lang=lang))
 
 
+def unescaped(markup: str) -> str:
+    """The markup with HTML entities resolved.
+
+    Jinja autoescapes, so a French string carrying an apostrophe reaches the
+    page as "n&#39;a pas" -- correct output that no assertion written in French
+    will match. Resolving entities lets a test say what the reader sees.
+    """
+    return html.unescape(markup)
+
+
 def visible(markup: str) -> str:
-    """The markup with <script> blocks removed -- see the module docstring."""
-    return re.sub(r"<script\b.*?</script>", " ", markup, flags=re.S | re.I)
+    """What the reader actually sees: no <script> blocks, no entities.
+
+    Dropping the scripts is what makes an absence assertion mean anything --
+    the catalogue is injected into the page as JSON, so every English string is
+    present in the source whatever the page displays.
+    """
+    return unescaped(re.sub(r"<script\b.*?</script>", " ", markup, flags=re.S | re.I))
 
 
 def render(template_name: str, *, lang=None, path="/portal/dashboard", **context) -> str:

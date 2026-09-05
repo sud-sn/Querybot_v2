@@ -176,6 +176,8 @@ class TestTheCatalogueIsWellFormed:
     # makes the test below able to catch a copy-paste that was never translated.
     IDENTICAL_BY_DESIGN = {
         "answer.total",                 # the same word in French
+        "ui.chat.table_count.one",      # "table" is the same word, singular
+        "ui.chat.table_count.other",    # and plural
         "ui.pin.description_label",
         "ui.dash.version",              # "Version" is the same word
         "ui.enum.charttype.kpi",        # an international acronym

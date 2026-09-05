@@ -1,7 +1,7 @@
 {% extends "portal_base.html" %}
 {% from "macros.html" import breadcrumb, brand_motion %}
 {% from "icons.html" import ic %}
-{% block title %}Chat — QueryBot{% endblock %}
+{% block title %}{{ t('ui.shell.chat') }} — QueryBot{% endblock %}
 {% block breadcrumb %}{% endblock %}
 {% block head %}
 <script src="/static/vendor/echarts.min.js"></script>
@@ -618,32 +618,32 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 
 {% block portal_sidebar_context %}
 <div class="portal-sidebar-context">
-  <section class="portal-thread-panel" aria-label="Recent threads">
+  <section class="portal-thread-panel" aria-label="{{ t('ui.chat.recent_threads') }}">
     <div class="portal-thread-heading">
-      <span>Recent Threads</span>
-      <button type="button" onclick="refreshHistory()" title="Refresh threads" aria-label="Refresh threads">&#8635;</button>
+      <span>{{ t('ui.chat.recent_threads') }}</span>
+      <button type="button" onclick="refreshHistory()" title="{{ t('ui.chat.refresh_threads') }}" aria-label="{{ t('ui.chat.refresh_threads') }}">&#8635;</button>
     </div>
     <div class="hp-search-wrap">
       {{ ic("search", 15, "hp-search-icon") }}
       <input type="search" id="historySearch" class="hp-search-input"
-             placeholder="Search threads" autocomplete="off" spellcheck="false"
-             aria-label="Search recent threads" oninput="filterHistory(this.value)">
+             placeholder="{{ t('ui.chat.search_threads') }}" autocomplete="off" spellcheck="false"
+             aria-label="{{ t('ui.chat.search_threads') }}" oninput="filterHistory(this.value)">
       <button type="button" id="historySearchClear" class="hp-search-clear" style="display:none"
               onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'"
-              aria-label="Clear thread search">&times;</button>
+              aria-label="{{ t('ui.chat.clear_search') }}">&times;</button>
     </div>
-    <div class="history-panel open" id="historyPanel" aria-label="Recent query history" role="complementary" data-state="loading">
+    <div class="history-panel open" id="historyPanel" aria-label="{{ t('ui.chat.history_label') }}" role="complementary" data-state="loading">
       <div class="hp-header">
-        <span class="hp-title">Your conversations</span>
-        <button type="button" class="hp-close" onclick="toggleHistoryPanel(false)" aria-label="Close navigation">&times;</button>
+        <span class="hp-title">{{ t('ui.chat.your_conversations') }}</span>
+        <button type="button" class="hp-close" onclick="toggleHistoryPanel(false)" aria-label="{{ t('ui.chat.close_history') }}">&times;</button>
       </div>
       <div class="hp-list" id="historyList">
-        <div class="hp-empty hp-loading" id="historyEmpty"><span class="hp-state-dot" aria-hidden="true"></span>Loading recent threads...</div>
+        <div class="hp-empty hp-loading" id="historyEmpty"><span class="hp-state-dot" aria-hidden="true"></span>{{ t('ui.chat.loading_threads') }}</div>
       </div>
     </div>
-    <div class="portal-thread-workspace" title="Current workspace">
+    <div class="portal-thread-workspace" title="{{ t('ui.chat.current_workspace') }}">
       <span class="portal-thread-workspace-dot" aria-hidden="true"></span>
-      <span><small>Workspace</small><strong>{{ client.client_name or 'Your workspace' }}</strong></span>
+      <span><small>{{ t('ui.chat.workspace') }}</small><strong>{{ client.client_name or t('ui.chat.your_workspace') }}</strong></span>
     </div>
   </section>
 </div>
@@ -653,30 +653,30 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 {% if not enabled %}
 <div style="max-width:500px;margin:4rem auto;text-align:center">
   <div style="margin-bottom:1.5rem"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg></div>
-  <h2 style="font-size:20px;font-weight:700;margin-bottom:.75rem">Internal Chat not enabled</h2>
-  <p style="color:var(--text-muted);line-height:1.7">Your administrator has not enabled the Internal Chat UI for your account.</p>
-  <a href="/portal/dashboard" class="btn btn-secondary" style="margin-top:1.5rem;display:inline-flex">← Back to dashboard</a>
+  <h2 style="font-size:20px;font-weight:700;margin-bottom:.75rem">{{ t('ui.chat.disabled_title') }}</h2>
+  <p style="color:var(--text-muted);line-height:1.7">{{ t('ui.chat.disabled_body') }}</p>
+  <a href="/portal/dashboard" class="btn btn-secondary" style="margin-top:1.5rem;display:inline-flex">&#8592; {{ t('ui.chat.back_to_dashboard') }}</a>
 </div>
 {% else %}
 <div class="chat-page">
   <section class="chat-hero" id="chatHero">
     <div style="flex:1;min-width:0">
-      <div class="chat-title">Ask your data in plain English</div>
-      <div class="chat-subtitle">Query live business data, get structured answers, and pin useful charts to your dashboard without leaving the conversation.</div>
+      <div class="chat-title">{{ t('ui.chat.hero_title') }}</div>
+      <div class="chat-subtitle">{{ t('ui.chat.hero_subtitle') }}</div>
       <div class="chat-pills">
-        <span class="chat-pill">Workspace · {{ client.client_name or 'Your workspace' }}</span>
-        <span class="chat-pill">Role · {{ user.role|capitalize }}</span>
-        <span class="chat-pill">Group · {{ user.group_name or 'Not assigned' }}</span>
+        <span class="chat-pill">{{ t('ui.chat.pill_workspace', name=client.client_name or t('ui.chat.your_workspace')) }}</span>
+        <span class="chat-pill">{{ t('ui.chat.pill_role', role=enum_label('role', user.role)) }}</span>
+        <span class="chat-pill">{{ t('ui.chat.pill_group', group=user.group_name or t('ui.chat.not_assigned')) }}</span>
         <span class="chat-pill token-kpi-pill"
-              title="Input {{ token_usage.input_label if token_usage else '0' }} · Output {{ token_usage.output_label if token_usage else '0' }}">
+              title="{{ t('ui.chat.tokens_title', input=token_usage.input_label if token_usage else '0', output=token_usage.output_label if token_usage else '0') }}">
           <span class="kpi-dot"></span>
-          Tokens this month · {{ token_usage.total_label if token_usage else '0' }}
+          {{ t('ui.chat.tokens_pill', total=token_usage.total_label if token_usage else '0') }}
         </span>
         <span class="chat-pill query-kpi-pill {% if query_status.blocked %}limit-blocked{% elif query_status.warning %}limit-warning{% endif %}"
               id="queryLimitKpi"
-              title="{{ query_status.used_label }} / {{ query_status.limit_label }} queries used this month">
+              title="{{ t('ui.chat.queries_title', used=query_status.used_label, limit=query_status.limit_label) }}">
           <span class="kpi-dot"></span>
-          <span id="queryLimitText">Queries left · {{ query_status.remaining_label }}</span>
+          <span id="queryLimitText">{{ t('ui.chat.queries_left', count=query_status.remaining_label) }}</span>
         </span>
       </div>
       <div id="queryLimitNotice"
@@ -684,7 +684,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         <span id="queryLimitNoticeText">{{ query_status.message }}</span>
       </div>
     </div>
-    <button class="hero-dismiss-btn" id="heroDismissBtn" title="Hide hero panel" aria-label="Dismiss hero panel" onclick="_collapseHero()">×</button>
+    <button class="hero-dismiss-btn" id="heroDismissBtn" title="{{ t('ui.chat.hide_hero') }}" aria-label="{{ t('ui.chat.dismiss_hero') }}" onclick="_collapseHero()">×</button>
   </section>
 
   <div class="chat-workspace">
@@ -694,20 +694,20 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
       <div class="chat-shell-title">
         <div class="chat-shell-badge"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div>
         <div>
-          <h2>QueryBot live analyst</h2>
-          <p>Interactive answers, chart previews, and governed dashboard workflows.</p>
+          <h2>{{ t('ui.chat.shell_title') }}</h2>
+          <p>{{ t('ui.chat.shell_subtitle') }}</p>
         </div>
       </div>
       <div class="status-wrap">
-        <div class="status-badge" id="connBadge"><span class="status-led"></span><span id="connText">Connecting…</span></div>
-        <div class="status-note" id="connNote">Waiting for live session</div>
-        <button type="button" class="hero-info-btn" id="heroInfoBtn" title="Show workspace info" aria-label="Show workspace info panel" onclick="_expandHero()" style="display:none">ℹ Info</button>
+        <div class="status-badge" id="connBadge"><span class="status-led"></span><span id="connText">{{ t('ui.chat.connecting') }}</span></div>
+        <div class="status-note" id="connNote">{{ t('ui.chat.waiting_session') }}</div>
+        <button type="button" class="hero-info-btn" id="heroInfoBtn" title="{{ t('ui.chat.show_info') }}" aria-label="{{ t('ui.chat.show_info_panel') }}" onclick="_expandHero()" style="display:none">&#8505; {{ t('ui.chat.info') }}</button>
         <button type="button" class="history-btn" id="historyToggleBtn"
-                onclick="toggleHistoryPanel()" title="View recent query history" aria-expanded="false">
+                onclick="toggleHistoryPanel()" title="{{ t('ui.chat.view_history') }}" aria-expanded="false">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <circle cx="8" cy="8" r="6.5"/><path d="M8 4.5v3.5l2 2"/>
           </svg>
-          History
+          {{ t('ui.chat.history') }}
         </button>
       </div>
     </div>
@@ -715,49 +715,49 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
     {% if available_schemas and available_schemas|length > 1 %}
     <div class="schema-control-row">
       <div class="schema-bar" id="schemaBar">
-        <span class="schema-bar-label">Schema</span>
+        <span class="schema-bar-label">{{ t('ui.chat.schema') }}</span>
         <button class="schema-tab active" data-schema=""
-                onclick="selectSchema(this.dataset.schema || '', this)">All</button>
+                onclick="selectSchema(this.dataset.schema || '', this)">{{ t('ui.chat.all') }}</button>
         {% for sch in available_schemas %}
         <button class="schema-tab" data-schema="{{ sch.name }}"
                 onclick="selectSchema(this.dataset.schema || '', this)"
-                title="{{ sch.table_count }} table{{ 's' if sch.table_count != 1 else '' }}">
+                title="{{ plural('ui.chat.table_count', sch.table_count) }}">
           {{ sch.name }}
           <span style="opacity:.65;font-weight:600;margin-left:3px">{{ sch.table_count }}</span>
         </button>
         {% endfor %}
       </div>
-      <span class="schema-current" id="activeSchemaLabel">All schemas</span>
+      <span class="schema-current" id="activeSchemaLabel">{{ t('ui.chat.all_schemas') }}</span>
     </div>
     <div class="schema-mode-note" id="schemaModeNote">
       <span class="schema-mode-dot"></span>
-      <span id="schemaModeText"><strong>Multi-schema mode.</strong> QueryBot will search all schemas you can access and may ask for clarification if more than one schema matches.</span>
+      <span id="schemaModeText"><strong>{{ t('ui.chat.multi_schema_title') }}</strong> {{ t('ui.chat.multi_schema_body') }}</span>
     </div>
     {% endif %}
 
     <div class="chat-inner">
       <div class="chat-wrap">
         <div class="chat-thread" id="thread">
-          <div class="msg-system">QueryBot Internal Chat · {{ client.client_name or 'Your workspace' }}</div>
+          <div class="msg-system">{{ t('ui.chat.system_line', workspace=client.client_name or t('ui.chat.your_workspace')) }}</div>
           <div class="empty-state" id="welcomeState">
-            <span class="welcome-kicker">{{ client.client_name or 'Your workspace' }}</span>
-            <h1>How can I help you today?</h1>
-            <p>Ask a business question in plain English and QueryBot will turn your governed data into a clear, traceable answer.</p>
+            <span class="welcome-kicker">{{ client.client_name or t('ui.chat.your_workspace') }}</span>
+            <h1>{{ t('ui.chat.welcome_title') }}</h1>
+            <p>{{ t('ui.chat.welcome_body') }}</p>
           </div>
         </div>
 
         <div class="processing-row" id="processingRow" aria-live="polite">
           <div class="stage-status">
             {{ brand_motion('processing-brand', 'thinking', 'sm', root_id='processingBrand') }}
-            <span class="stage-label" id="stageLabel">Thinking…</span>
+            <span class="stage-label" id="stageLabel">{{ t('ui.chat.thinking') }}</span>
           </div>
         </div>
 
         {% if suggestions %}
         <div class="suggestions-wrap" id="suggestionsWrap">
           <div class="suggestions-heading">
-            <span class="suggestions-label">Start with a workspace question</span>
-            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="Show different suggestions">&#8635; Refresh</button>
+            <span class="suggestions-label">{{ t('ui.chat.suggestions_label') }}</span>
+            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="{{ t('ui.chat.shuffle') }}">&#8635; {{ t('ui.chat.refresh') }}</button>
           </div>
           <div class="suggestions" id="suggestions">
             {% for s in suggestions[:4] %}
@@ -767,11 +767,11 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
                     data-question="{{ s.question }}"
                     title="{{ s.question }}">
               <span class="suggestion-card-icon">{{ ic("sparkles", 16) }}</span>
-              <span class="suggestion-card-copy"><small>Workspace insight</small><strong>{{ s.question }}</strong></span>
+              <span class="suggestion-card-copy"><small>{{ t('ui.chat.workspace_insight') }}</small><strong>{{ s.question }}</strong></span>
             </button>
             {% endfor %}
           </div>
-          <button type="button" onclick="shuffleSuggestions()" style="font-size:var(--font-xs);font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="Show different suggestions">↻</button>
+          <button type="button" onclick="shuffleSuggestions()" style="font-size:var(--font-xs);font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="{{ t('ui.chat.shuffle') }}">&#8635;</button>
         </div>
         {% endif %}
       </div>
@@ -779,17 +779,17 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
       <div class="chat-composer">
                 <div class="chat-input-bar">
           <div class="chat-input-wrap" id="inputWrap">
-            {{ brand_motion('composer-brand', 'idle', 'xs', 'Ready', 'composerMascot', 'composerTooltip', 'ai-tooltip', 'ai-indicator ai-idle') }}
-            <textarea id="input" class="chat-input" placeholder="Ask anything about your data…" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
+            {{ brand_motion('composer-brand', 'idle', 'xs', t('ui.chat.ready'), 'composerMascot', 'composerTooltip', 'ai-tooltip', 'ai-indicator ai-idle') }}
+            <textarea id="input" class="chat-input" placeholder="{{ t('ui.chat.composer_placeholder') }}" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
           </div>
           <div class="composer-side">
             <span class="char-count" id="charCount">500</span>
-            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send message" aria-label="Send message"><span id="sendBtnIcon" class="send-btn-icon">↑</span></button>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="{{ t('ui.chat.send') }}" aria-label="{{ t('ui.chat.send') }}"><span id="sendBtnIcon" class="send-btn-icon">↑</span></button>
           </div>
         </div>
         <div class="composer-footer">
           <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
-            <div class="composer-hint" id="schemaComposerHint">{% if available_schemas and available_schemas|length > 1 %}All schemas active. Select a schema when you want a stricter answer.{% else %}Press Enter to send · Shift + Enter for a new line{% endif %}</div>
+            <div class="composer-hint" id="schemaComposerHint">{% if available_schemas and available_schemas|length > 1 %}{{ t('ui.chat.hint_all_schemas') }}{% else %}{{ t('ui.chat.hint_enter') }}{% endif %}</div>
             <div class="composer-state" id="composerState" role="status" aria-live="polite"></div>
             <div id="memoryBadge" style="display:none;align-items:center;gap:.35rem;font-size:var(--font-xs);font-weight:700;padding:3px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);cursor:default" title=""></div>
           </div>
@@ -807,17 +807,17 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
     </div>
   </section>
     </main>
-    <aside class="artifact-pane" id="artifactPane" aria-label="Analysis artifact" aria-hidden="true">
+    <aside class="artifact-pane" id="artifactPane" aria-label="{{ t('ui.chat.artifact_label') }}" aria-hidden="true">
       <header class="artifact-head">
         <div class="artifact-heading">
           <span class="artifact-icon" aria-hidden="true">{{ ic("dashboard", 16) }}</span>
-          <span class="artifact-heading-copy"><span class="artifact-kicker" id="artifactKicker">Analysis artifact</span><span class="artifact-title" id="artifactTitle">Result preview</span></span>
+          <span class="artifact-heading-copy"><span class="artifact-kicker" id="artifactKicker">{{ t('ui.chat.artifact_label') }}</span><span class="artifact-title" id="artifactTitle">{{ t('ui.chat.artifact_title') }}</span></span>
         </div>
         <div class="artifact-head-actions">
-          <button type="button" class="artifact-head-btn" onclick="closeArtifactPane()" aria-label="Close artifact">Close</button>
+          <button type="button" class="artifact-head-btn" onclick="closeArtifactPane()" aria-label="{{ t('ui.chat.close_artifact') }}">{{ t('ui.chat.close') }}</button>
         </div>
       </header>
-      <div class="artifact-body" id="artifactBody"><div class="artifact-empty">Charts, KPI values, and result tables open here while the explanation stays in the conversation.</div></div>
+      <div class="artifact-body" id="artifactBody"><div class="artifact-empty">{{ t('ui.chat.artifact_empty') }}</div></div>
     </aside>
   </div>
 </div>

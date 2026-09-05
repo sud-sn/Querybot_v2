@@ -1,6 +1,6 @@
 {% extends "portal_base.html" %}
 {% from "macros.html" import breadcrumb, alert %}
-{% block title %}Dashboard — QueryBot Portal{% endblock %}
+{% block title %}{{ t('ui.shell.dashboard') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
 {% endblock %}
