@@ -1350,7 +1350,9 @@ function _saveComposerDraft(){
     if (draft.trim()) sessionStorage.setItem(DRAFT_STORAGE_KEY, draft);
     else sessionStorage.removeItem(DRAFT_STORAGE_KEY);
   } catch (_) {}
-  _setComposerState(draft.trim() ? (wsReady ? 'Draft saved' : 'Draft kept while offline') : '', wsReady ? '' : 'warning');
+  _setComposerState(draft.trim()
+    ? t(wsReady ? 'ui.chat.draft.saved' : 'ui.chat.draft.kept_offline') : '',
+    wsReady ? '' : 'warning');
 }
 function _clearComposerDraft(){
   try { sessionStorage.removeItem(DRAFT_STORAGE_KEY); } catch (_) {}
@@ -1366,7 +1368,7 @@ function _restoreComposerDraft(){
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 140) + 'px';
   updateCharCount();
-  _setComposerState('Draft restored', 'success');
+  _setComposerState(t('ui.chat.draft.restored'), 'success');
 }
 function updateQueryLimitKpi(status, opts = {}){
   if (!status) return;
@@ -1390,7 +1392,7 @@ function updateQueryLimitKpi(status, opts = {}){
   if (noticeText) noticeText.textContent = status.message || '';
   if (opts.toast && (level === 'warning' || level === 'blocked') && (level !== previous || !queryLimitToastShown)) {
     queryLimitToastShown = true;
-    toastLong(status.message || status.title || 'Monthly query limit updated.');
+    toastLong(status.message || status.title || t('ui.chat.toast.limit_updated'));
   }
 }
 async function refreshQueryLimitStatus(opts = {}){
@@ -1563,8 +1565,9 @@ function _setSendButtonMode(isStop){
   btn.classList.toggle('is-stop', isStop);
   icon.textContent = isStop ? '' : '↑';
   icon.className = isStop ? 'send-btn-icon stop-icon' : 'send-btn-icon';
-  btn.title = isStop ? 'Stop generating' : 'Send message';
-  btn.setAttribute('aria-label', isStop ? 'Stop generating' : 'Send message');
+  const sendLabel = t(isStop ? 'ui.chat.action.stop' : 'ui.chat.send');
+  btn.title = sendLabel;
+  btn.setAttribute('aria-label', sendLabel);
   btn.onclick = isStop ? stopQuery : sendMessage;
 }
 function stopQuery(){
@@ -1768,7 +1771,7 @@ function appendUser(text, opts = {}){
   const timestamp = timeLabel(opts.timestamp);
   const div = document.createElement('div');
   div.className = 'msg msg-user';
-  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">You</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div><div class="user-message-footer"><span class="message-delivery" role="status"></span><span class="user-message-actions"><button type="button" class="message-action message-edit">Edit</button><button type="button" class="message-action message-retry">Retry</button></span></div></div>`;
+  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">You</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div><div class="user-message-footer"><span class="message-delivery" role="status"></span><span class="user-message-actions"><button type="button" class="message-action message-edit">${t('ui.chat.action.edit')}</button><button type="button" class="message-action message-retry">${t('ui.chat.action.retry')}</button></span></div></div>`;
   div._querybotOutbound = {
     text,
     tableHint: opts.tableHint || '',
@@ -1807,16 +1810,16 @@ function _editUserMessage(message){
   input.value = outbound.text;
   input.dispatchEvent(new Event('input'));
   input.focus();
-  toast('Message copied to composer');
+  toast(t('ui.chat.toast.copied_to_composer'));
 }
 function _retryUserMessage(message){
   if (processingActive) {
-    toast('Stop the current answer before retrying');
+    toast(t('ui.chat.toast.stop_before_retry'));
     return;
   }
   if (!wsReady) {
     _setUserMessageState(message, 'interrupted', 'Waiting for connection');
-    toastLong('The message is ready to retry when the live connection returns.');
+    toastLong(t('ui.chat.toast.retry_when_live'));
     return;
   }
   const outbound = message?._querybotOutbound;
@@ -1831,7 +1834,7 @@ function _retryUserMessage(message){
     updateProcessing('authorization', 'Retrying analysis', 'Resending your request through the governed query pipeline.');
   } catch (_) {
     _setUserMessageState(message, 'interrupted', t('ui.chat.retry_when_connected'));
-    toastLong('The message could not be sent. Your request is still available to retry.');
+    toastLong(t('ui.chat.toast.send_failed_available'));
   }
 }
 function appendBot(rawText, opts = {}){
@@ -1854,7 +1857,7 @@ function appendBot(rawText, opts = {}){
       const prev = e.currentTarget.textContent;
       e.currentTarget.textContent = 'Copied!';
       setTimeout(() => e.currentTarget.textContent = prev, 1400);
-      toast('Copied to clipboard');
+      toast(t('ui.chat.toast.copied'));
     } else {
       toast('Copy failed');
     }
@@ -3058,7 +3061,7 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
 }
 
 function sendAnalysisAction(action, context, label, resultId){
-  if (!wsReady) { toast('Live session is not ready'); return; }
+  if (!wsReady) { toast(t('ui.chat.toast.session_not_ready')); return; }
   const button = document.activeElement?.matches?.('[data-analysis-action]') ? document.activeElement : null;
   const actionId = (window.crypto?.randomUUID?.() || `action-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   if (window._activeAnalysisAction) {
@@ -3080,7 +3083,7 @@ function sendAnalysisAction(action, context, label, resultId){
     }
     window._activeAnalysisAction = null;
     setAgentRunState('failed', { action_id: actionId });
-    appendSystem('This action did not finish in time. Please retry it.');
+    appendSystem(t('ui.chat.system.action_timed_out'));
   }, 30000);
   window._activeAnalysisAction = { id:actionId, action, button, label, timer, acknowledged:false };
   ws.send(JSON.stringify({ action, context, result_id: resultId || '', action_id: actionId }));
@@ -3410,7 +3413,7 @@ function _mountDataTableControls(wrapEl, question) {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
-      toast('CSV download started');
+      toast(t('ui.chat.toast.csv_started'));
     });
   }
 }
@@ -3945,8 +3948,8 @@ function appendAssistantResponse(msg, opts = {}){
   const feedbackHtml = (FEEDBACK_ENABLED && _qid)
     ? `<div class="feedback-row">
         <span class="feedback-label">Was this helpful?</span>
-        <button class="feedback-btn up" type="button" title="Yes, correct answer" aria-label="Helpful"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904M6.633 10.25H3.75a1.5 1.5 0 00-1.5 1.5v7.5a1.5 1.5 0 001.5 1.5h2.154"/></svg></button>
-        <button class="feedback-btn down" type="button" title="No, something was wrong" aria-label="Not helpful"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.367 13.75c-.806 0-1.533.446-2.031 1.08a9.041 9.041 0 01-2.861 2.4c-.723.384-1.35.956-1.653 1.715a4.498 4.498 0 00-.322 1.672V21a.75.75 0 01-.75.75 2.25 2.25 0 01-2.25-2.25c0-1.152.26-2.243.723-3.218.266-.558-.107-1.282-.725-1.282H4.372c-1.026 0-1.945-.694-2.054-1.715A11.95 11.95 0 014.967 4.236c.388-.482.987-.729 1.605-.729h4.948c.483 0 .964.078 1.423.23l3.114 1.04c.459.152.94.23 1.423.23h2.616M17.367 13.75h2.883a1.5 1.5 0 001.5-1.5v-7.5a1.5 1.5 0 00-1.5-1.5h-2.154"/></svg></button>
+        <button class="feedback-btn up" type="button" title="${t('ui.chat.feedback.up')}" aria-label="${t('ui.chat.feedback.up')}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904M6.633 10.25H3.75a1.5 1.5 0 00-1.5 1.5v7.5a1.5 1.5 0 001.5 1.5h2.154"/></svg></button>
+        <button class="feedback-btn down" type="button" title="${t('ui.chat.feedback.down')}" aria-label="${t('ui.chat.feedback.not_helpful')}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.367 13.75c-.806 0-1.533.446-2.031 1.08a9.041 9.041 0 01-2.861 2.4c-.723.384-1.35.956-1.653 1.715a4.498 4.498 0 00-.322 1.672V21a.75.75 0 01-.75.75 2.25 2.25 0 01-2.25-2.25c0-1.152.26-2.243.723-3.218.266-.558-.107-1.282-.725-1.282H4.372c-1.026 0-1.945-.694-2.054-1.715A11.95 11.95 0 014.967 4.236c.388-.482.987-.729 1.605-.729h4.948c.483 0 .964.078 1.423.23l3.114 1.04c.459.152.94.23 1.423.23h2.616M17.367 13.75h2.883a1.5 1.5 0 001.5-1.5v-7.5a1.5 1.5 0 00-1.5-1.5h-2.154"/></svg></button>
         <span class="feedback-done" style="display:none"></span>
        </div>
        <div class="feedback-panel">
@@ -3961,7 +3964,7 @@ function appendAssistantResponse(msg, opts = {}){
            <option value="confusing">Confusing or unclear</option>
            <option value="expected_data_missing">Expected data missing</option>
          </select>
-         <textarea class="feedback-comment" placeholder="Additional comments (optional)"></textarea>
+         <textarea class="feedback-comment" placeholder="${t('ui.chat.feedback.comments')}"></textarea>
          <button class="feedback-submit" type="button">Submit feedback</button>
        </div>`
     : '';
@@ -4077,7 +4080,7 @@ function appendAssistantResponse(msg, opts = {}){
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
-    toast(ok ? 'Result copied' : 'Copy failed');
+    toast(t(ok ? 'ui.chat.toast.result_copied' : 'ui.chat.toast.copy_failed'));
   });
   const pinBtn = div.querySelector('[data-pin="chart"]');
   pinBtn?.addEventListener('click', () => {
@@ -4170,10 +4173,10 @@ function appendAssistantResponse(msg, opts = {}){
           fbUp?.classList.toggle('active', rating === 1);
           fbDown?.classList.toggle('active', rating === -1);
           if (fbPanel) fbPanel.classList.remove('open');
-          if (fbDone) { fbDone.textContent = data.message || 'Thanks!'; fbDone.style.display = ''; }
-          toast(data.message || 'Feedback saved');
+          if (fbDone) { fbDone.textContent = data.message || t('ui.chat.feedback.thanks'); fbDone.style.display = ''; }
+          toast(data.message || t('ui.chat.toast.feedback_saved'));
         } else {
-          toast(data.detail || 'Could not save feedback');
+          toast(data.detail || t('ui.chat.toast.feedback_failed'));
         }
       } catch { toast('Could not save feedback'); }
     };
@@ -4241,7 +4244,7 @@ function appendAnalysisResponse(msg, opts = {}){
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
-    toast(ok ? 'Analysis copied' : 'Copy failed');
+    toast(t(ok ? 'ui.chat.toast.analysis_copied' : 'ui.chat.toast.copy_failed'));
   });
   div.querySelectorAll('.follow-up-chip').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -4283,7 +4286,7 @@ function appendChart(payload, opts = {}){
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
-    toast(ok ? 'Chart summary copied' : 'Copy failed');
+    toast(t(ok ? 'ui.chat.toast.chart_copied' : 'ui.chat.toast.copy_failed'));
   });
   expandBtn?.addEventListener('click', () => {
     openChartFullscreen(div.querySelector(`#${chartId}`), payload.title || payload.question || 'Chart');
@@ -4537,12 +4540,12 @@ function sendMessage(tableHint){
   // question overlap the first; the user has Stop for that.
   if (!text) return;
   if (processingActive) {
-    toast('Stop the current answer before sending another message');
+    toast(t('ui.chat.toast.stop_before_send'));
     return;
   }
   if (!wsReady) {
     _saveComposerDraft();
-    toastLong('You are offline. Your message is saved and ready to send after reconnection.');
+    toastLong(t('ui.chat.toast.offline_saved'));
     return;
   }
   // Prevent a pending autocomplete request from reopening stale suggestions
@@ -4579,7 +4582,7 @@ function sendMessage(tableHint){
     _setUserMessageState(userMessage, 'working');
   } catch (_) {
     _setUserMessageState(userMessage, 'interrupted', t('ui.chat.retry_when_connected'));
-    toastLong('The message could not be sent. Use Retry when the connection returns.');
+    toastLong(t('ui.chat.toast.send_failed_retry'));
     return;
   }
   inp.value = '';
@@ -4650,7 +4653,7 @@ document.addEventListener('DOMContentLoaded', function() {
       inp.value = next.slice(0, 500);
       inp.selectionStart = inp.selectionEnd = Math.min(start + pasted.length, 500);
       updateCharCount();
-      if (window.qbToast) window.qbToast.warning('Pasted text was trimmed to 500 characters.');
+      if (window.qbToast) window.qbToast.warning(t('ui.chat.draft.trimmed', {limit: 500}));
     }
   });
 });
@@ -5142,7 +5145,7 @@ function connect(){
         URL.revokeObjectURL(url);
         appendSystem(`Downloaded ${msg.row_count ?? 0} row${msg.row_count === 1 ? '' : 's'} as CSV.`);
       } catch (_) {
-        appendSystem('The CSV was prepared, but the browser could not start the download.');
+        appendSystem(t('ui.chat.system.csv_no_download'));
       }
     } else if (msg.type === 'chart') {
       appendChart(msg.chart || {});
@@ -5191,14 +5194,14 @@ function connect(){
     if ([4001, 4003, 4004].includes(evt.code)) {
       const note = evt.code === 4004 ? 'Chat is not enabled for this workspace.' : 'Your session is invalid or no longer authorized.';
       setConnectionState('Unavailable', note);
-      appendSystem('Chat session unavailable. Refresh the page or sign in again.');
+      appendSystem(t('ui.chat.system.session_unavailable'));
       return;
     }
     reconnectAttempts += 1;
     const delay = Math.min(8000, 1000 * reconnectAttempts);
     setConnectionState(t('ui.chat.reconnecting'),
       t('ui.chat.connection_lost_retry', {seconds: Math.round(delay / 1000)}));
-    if (document.getElementById('input')?.value.trim()) _setComposerState('Draft kept while reconnecting', 'warning');
+    if (document.getElementById('input')?.value.trim()) _setComposerState(t('ui.chat.draft.kept_reconnecting'), 'warning');
     setTimeout(connect, delay);
   };
   ws.onerror = () => setConnectionState(t('ui.chat.connection_issue'), t('ui.chat.recovering_session'));
@@ -5322,7 +5325,7 @@ async function loadHistory() {
 }
 
 function openHistoryThread(threadId, itemEl) {
-  if (!_validThreadId(threadId)) { toast('Thread is unavailable'); return; }
+  if (!_validThreadId(threadId)) { toast(t('ui.chat.toast.thread_unavailable')); return; }
   document.querySelectorAll('#historyList .hp-item.active').forEach(el => el.classList.remove('active'));
   itemEl && itemEl.classList.add('active');
   try { localStorage.setItem(THREAD_STORAGE_KEY, threadId); } catch (_) {}

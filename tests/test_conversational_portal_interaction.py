@@ -208,11 +208,25 @@ def test_durable_exact_result_restore_rejects_another_user_or_thread():
         result_cache.clear(adapter.session_id)
 
 
+def _catalogue():
+    """The message catalogue the chat page ships to the browser.
+
+    Several strings below moved out of the template and into core/i18n.py. A
+    source-text assertion would now pass against a page that resolves the id to
+    nothing, so these read what the browser actually receives.
+    """
+    from tests.chat_render import render, catalogue
+    return catalogue(render(lang="en"))
+
+
 def test_result_actions_acknowledge_complete_download_and_timeout_visibly():
     assert "assistant_action_ack" in WEBHOOKS
     assert "action_id: actionId" in CHAT
     assert "function finishAnalysisAction" in CHAT
-    assert "This action did not finish in time" in CHAT
+    # A catalogue id in the source now, so this asserts the sentence still
+    # reaches the browser.
+    assert "This action did not finish in time" in \
+        _catalogue()["ui.chat.system.action_timed_out"]
     assert "msg.type === 'assistant_export'" in CHAT
     assert "new Blob([msg.content || '']" in CHAT
     assert "_bound_action_payload(_dd_result)" in WEBHOOKS
@@ -248,7 +262,8 @@ def test_offline_composer_preserves_draft_instead_of_silently_dropping_send():
     assert "DRAFT_STORAGE_KEY" in CHAT
     assert "function _saveComposerDraft" in CHAT
     assert "function _restoreComposerDraft" in CHAT
-    assert "You are offline. Your message is saved" in CHAT
+    assert "You are offline. Your message is saved" in \
+        _catalogue()["ui.chat.toast.offline_saved"]
     assert "_clearComposerDraft();" in CHAT
 
 

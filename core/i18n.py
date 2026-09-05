@@ -1079,6 +1079,86 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.mascot.ready": {"en": "Response ready", "fr": "Réponse prête"},
     "ui.chat.mascot.error": {"en": "Connection issue", "fr": "Problème de connexion"},
 
+    # ── Chat toasts, drafts, message actions and feedback ────────────────────
+    "ui.chat.toast.copied": {"en": "Copied to clipboard", "fr": "Copié dans le presse-papiers"},
+    "ui.chat.toast.copy_failed": {"en": "Copy failed", "fr": "Échec de la copie"},
+    "ui.chat.toast.result_copied": {"en": "Result copied", "fr": "Résultat copié"},
+    "ui.chat.toast.analysis_copied": {"en": "Analysis copied", "fr": "Analyse copiée"},
+    "ui.chat.toast.chart_copied": {"en": "Chart summary copied", "fr": "Résumé du graphique copié"},
+    "ui.chat.toast.copied_to_composer": {
+        "en": "Message copied to composer", "fr": "Message copié dans la zone de saisie",
+    },
+    "ui.chat.toast.csv_started": {"en": "CSV download started", "fr": "Téléchargement du CSV lancé"},
+    "ui.chat.toast.session_not_ready": {"en": "Live session is not ready", "fr": "La session en direct n'est pas prête"},
+    "ui.chat.toast.stop_before_retry": {
+        "en": "Stop the current answer before retrying",
+        "fr": "Arrêtez la réponse en cours avant de réessayer",
+    },
+    "ui.chat.toast.stop_before_send": {
+        "en": "Stop the current answer before sending another message",
+        "fr": "Arrêtez la réponse en cours avant d'envoyer un autre message",
+    },
+    "ui.chat.toast.thread_unavailable": {"en": "Thread is unavailable", "fr": "Conversation indisponible"},
+    "ui.chat.toast.feedback_saved": {"en": "Feedback saved", "fr": "Avis enregistré"},
+    "ui.chat.toast.feedback_failed": {"en": "Could not save feedback", "fr": "Impossible d'enregistrer l'avis"},
+    "ui.chat.toast.limit_updated": {"en": "Monthly query limit updated.", "fr": "Limite mensuelle de requêtes mise à jour."},
+    "ui.chat.toast.offline_saved": {
+        "en": "You are offline. Your message is saved and ready to send after reconnection.",
+        "fr": "Vous êtes hors ligne. Votre message est enregistré et sera envoyé après la reconnexion.",
+    },
+    "ui.chat.toast.send_failed_retry": {
+        "en": "The message could not be sent. Use Retry when the connection returns.",
+        "fr": "Le message n'a pas pu être envoyé. Utilisez Réessayer une fois la connexion rétablie.",
+    },
+    "ui.chat.toast.send_failed_available": {
+        "en": "The message could not be sent. Your request is still available to retry.",
+        "fr": "Le message n'a pas pu être envoyé. Votre demande reste disponible pour une nouvelle tentative.",
+    },
+    "ui.chat.toast.retry_when_live": {
+        "en": "The message is ready to retry when the live connection returns.",
+        "fr": "Le message pourra être renvoyé dès le retour de la connexion en direct.",
+    },
+
+    # The chat's own system lines.
+    "ui.chat.system.session_unavailable": {
+        "en": "Chat session unavailable. Refresh the page or sign in again.",
+        "fr": "Session de chat indisponible. Actualisez la page ou reconnectez-vous.",
+    },
+    "ui.chat.system.csv_no_download": {
+        "en": "The CSV was prepared, but the browser could not start the download.",
+        "fr": "Le CSV a été préparé, mais le navigateur n'a pas pu démarrer le téléchargement.",
+    },
+    "ui.chat.system.action_timed_out": {
+        "en": "This action did not finish in time. Please retry it.",
+        "fr": "Cette action ne s'est pas terminée à temps. Veuillez réessayer.",
+    },
+
+    # Drafts kept in the composer.
+    "ui.chat.draft.saved": {"en": "Draft saved", "fr": "Brouillon enregistré"},
+    "ui.chat.draft.kept_offline": {"en": "Draft kept while offline", "fr": "Brouillon conservé hors ligne"},
+    "ui.chat.draft.kept_reconnecting": {
+        "en": "Draft kept while reconnecting", "fr": "Brouillon conservé pendant la reconnexion",
+    },
+    "ui.chat.draft.restored": {"en": "Draft restored", "fr": "Brouillon restauré"},
+    "ui.chat.draft.trimmed": {
+        "en": "Pasted text was trimmed to {limit} characters.",
+        "fr": "Le texte collé a été réduit à {limit} caractères.",
+    },
+
+    # Buttons on a message.
+    "ui.chat.action.edit": {"en": "Edit", "fr": "Modifier"},
+    "ui.chat.action.retry": {"en": "Retry", "fr": "Réessayer"},
+    "ui.chat.action.stop": {"en": "Stop generating", "fr": "Arrêter la génération"},
+
+    # The thumbs-up / thumbs-down panel.
+    "ui.chat.feedback.up": {"en": "Yes, correct answer", "fr": "Oui, réponse correcte"},
+    "ui.chat.feedback.down": {"en": "No, something was wrong", "fr": "Non, quelque chose n'allait pas"},
+    "ui.chat.feedback.not_helpful": {"en": "Not helpful", "fr": "Pas utile"},
+    "ui.chat.feedback.comments": {
+        "en": "Additional comments (optional)", "fr": "Commentaires supplémentaires (facultatif)",
+    },
+    "ui.chat.feedback.thanks": {"en": "Thanks!", "fr": "Merci !"},
+
     # ── Browser tab titles ───────────────────────────────────────────────────
     # Chrome the reader sees on every page, and the one string that is still in
     # front of them when the tab is in the background.
