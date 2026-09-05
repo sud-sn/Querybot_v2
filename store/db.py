@@ -1364,6 +1364,7 @@ def _run_migrations() -> None:
         _ensure_metric_version_table(conn)
         _ensure_metric_test_table(conn)
         _ensure_learning_loop_tables(conn)
+        _ensure_domain_tables(conn)
         _ensure_compliance_tables(conn)
         _ensure_semantic_compiler_tables(conn)
         for table, column, col_def in migrations:
@@ -2138,6 +2139,41 @@ def _ensure_metric_version_table(conn: sqlite3.Connection) -> None:
             ON metric_version(metric_id, version DESC);
         CREATE INDEX IF NOT EXISTS idx_metric_version_account
             ON metric_version(account_id, created_at DESC);
+        """
+    )
+
+
+def _ensure_domain_tables(conn: sqlite3.Connection) -> None:
+    """Named subject areas inside one workspace.
+
+    A tenant's analytics do not arrive as one undifferentiated schema: there
+    is a sales area, a supply-chain area, a finance area, each with its own
+    vocabulary and its own facts. Today a workspace is one flat scope, so a
+    question is answered against everything at once and nothing can say which
+    area an answer came from -- or notice that two areas disagree about it.
+
+    A domain is mechanically a named table set with a description. That is
+    deliberately small: `allowed_tables` is already threaded through the
+    planner, the value index, the workspace guide and the clarifier, so a
+    domain is a name attached to a mechanism that already exists rather than
+    a second scoping system beside it.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS domain (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id  TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            name        TEXT    NOT NULL,
+            description TEXT    NOT NULL DEFAULT '',
+            tables_json TEXT    NOT NULL DEFAULT '[]',
+            synonyms    TEXT    NOT NULL DEFAULT '',
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT    DEFAULT (datetime('now')),
+            updated_at  TEXT    DEFAULT (datetime('now')),
+            UNIQUE(account_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_domain_account
+            ON domain(account_id, is_active);
         """
     )
 

@@ -949,6 +949,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cet espace de travail est configuré pour un secteur réglementé. Pour qu'aucune donnée protégée n'atteigne le modèle, l'assistant se limite ici à écrire des requêtes SQL — il ne produit ni analyse complémentaire, ni explication, ni comparaison à partir des résultats.",
     },
 
+    # ── Cross-domain corroboration (core/domains.py) ─────────────────────────
+    "corroboration.agrees": {
+        "en": "Confirmed against {source}, which reports the same figure.",
+        "fr": "Confirmé par {source}, qui indique le même chiffre.",
+    },
+    "corroboration.disagrees": {
+        "en": "{source} reports {secondary} for the same question, against {primary} here — a difference of {gap}. Worth checking which source the business treats as authoritative.",
+        "fr": "{source} indique {secondary} pour la même question, contre {primary} ici — soit un écart de {gap}. Il vaut la peine de vérifier quelle source fait foi pour l'entreprise.",
+    },
+
     # ── Metric variation coverage (core/metric_coverage.py) ──────────────────
     # The question shapes a metric has to survive. These are generated and
     # then RESOLVED against the metric, so they must read the way a user
