@@ -90,7 +90,10 @@ def test_result_action_targets_the_clicked_governed_snapshot():
     assert "requested_result_id" in action_block
     assert "result_cache.get_snapshot(" in action_block
     assert "adopt_cached_snapshot(adapter, action_snapshot)" in action_block
-    assert "That result is no longer available for analysis" in action_block
+    assert '_t("reply.result.expired_analysis")' in action_block
+    from core import i18n
+    assert "no longer available for analysis" in i18n.t(
+        "reply.result.expired_analysis", lang="en")
     assert "const actionResultId = trust.result_id || msg.data?.result_id || '';" in CHAT
     assert "const nextActions = actionResultId &&" in CHAT
 

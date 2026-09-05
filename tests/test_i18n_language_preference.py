@@ -191,6 +191,11 @@ class TestTheCatalogueIsWellFormed:
         "ui.enum.charttype.kpi",        # an international acronym
         "ui.shell.chat",                # borrowed into French unchanged
         "ui.shell.notifications",       # same spelling in both
+        # Not a word: the assembly rule for "3 profile rows" / "3 lignes de
+        # profil". Both languages happen to put the count first, and it is an
+        # entry so that a language which does not can change it.
+        "reply.analysis.short_value",
+        "reply.analysis.op.python",     # the language's own name
     }
 
     def test_no_id_is_declared_twice(self):

@@ -32,6 +32,8 @@ import re
 import time
 from typing import Any
 
+from core.i18n import t as _t
+
 log = logging.getLogger("querybot.drill_dimension")
 
 
@@ -302,11 +304,14 @@ async def generate_drill_by_dimension(
         return {
             "type": "assistant_error",
             "action": "drill_dim",
-            "title": f"Break down by {dim_name}",
+            # "drill_dim" is the wire token the browser routes on; the title
+            # beside it is copy. dim_name is the tenant's own dimension name
+            # and is interpolated, never looked up.
+            "title": _t("reply.drill.title", dimension=dim_name),
             "content": reason,
             "suggestion": (
-                suggestion or
-                f"Try asking: \"Show [metric] broken down by {dim_name}\""
+                suggestion
+                or _t("reply.drill.suggestion_default", dimension=dim_name)
             ),
         }
 
@@ -314,8 +319,8 @@ async def generate_drill_by_dimension(
     dim = find_drill_candidate(dim_name, semantic_plan)
     if not dim:
         return _fallback(
-            f"Dimension '{dim_name}' not found in the semantic model.",
-            f"Try asking: \"Break down by {dim_name}\" in a new question.",
+            _t("reply.drill.not_in_model", dimension=dim_name),
+            _t("reply.drill.not_in_model_suggestion", dimension=dim_name),
         )
 
     # Compile the governed JOIN deterministically. The response builder uses
@@ -327,8 +332,8 @@ async def generate_drill_by_dimension(
     )
     if not drill_sql:
         return _fallback(
-            f"The '{dim_name}' dimension is not safely joinable to the current result.",
-            f"Ask a new question that explicitly requests a {dim_name} breakdown.",
+            _t("reply.drill.not_joinable", dimension=dim_name),
+            _t("reply.drill.not_joinable_suggestion", dimension=dim_name),
         )
 
     # ── Step 3: Validate ────────────────────────────────────────────────────
@@ -341,12 +346,12 @@ async def generate_drill_by_dimension(
         if not ok:
             log.warning("drill_dim: validation failed: %s", reason)
             return _fallback(
-                "The rewritten query failed validation.",
-                f"Try asking: \"Show [metric] by {dim_name}\" directly.",
+                _t("reply.drill.invalid_sql"),
+                _t("reply.drill.invalid_sql_suggestion", dimension=dim_name),
             )
     except Exception as exc:
         log.warning("drill_dim: validation error: %s", exc)
-        return _fallback("Validation error while preparing the drill-down query.")
+        return _fallback(_t("reply.drill.validation_error"))
 
     # ── Step 4: Execute ──────────────────────────────────────────────────────
     t0 = time.monotonic()
@@ -364,17 +369,23 @@ async def generate_drill_by_dimension(
     except Exception as exc:
         log.warning("drill_dim: DB execution failed: %s", exc)
         return _fallback(
-            f"The drill-down query failed to execute: {str(exc)[:120]}",
+            _t("reply.drill.execution_failed", error=str(exc)[:120]),
         )
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     if not drill_rows:
         return _fallback(
-            f"The '{dim_name}' breakdown returned no data.",
-            "The dimension may not have data for the current filter period.",
+            _t("reply.drill.no_data", dimension=dim_name),
+            _t("reply.drill.no_data_suggestion"),
         )
 
     # ── Step 5: Build full assistant_response ───────────────────────────────
+    # Deliberately NOT translated. This string is the question for every
+    # detector build_assistant_response runs -- summarize_result_context,
+    # detect_chart_type, infer_result_scope -- all hand-written English regexes,
+    # and gateway/webhooks.py caches it as the question the NEXT result action
+    # reads. Translating it changes what those detectors see. The reader's own
+    # words are already in `question`; only the suffix is the product's.
     drill_question = f"{question} — broken down by {dim_name}"
     response = build_assistant_response(
         question=drill_question,

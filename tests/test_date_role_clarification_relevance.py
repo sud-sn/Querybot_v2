@@ -665,7 +665,7 @@ class TestRejectionClearsPendingState(unittest.TestCase):
             "the WebSocket clarification handler must check for a rejection",
         )
         # It has to run before the generic "couldn't match that" re-prompt.
-        replay_index = source.find("Please choose one of the available clarification options")
+        replay_index = source.find('_t("reply.clarify.choose_option")')
         self.assertGreater(replay_index, rejection_index)
         self.assertIn("clarification_rejection_message(cmeta)", source)
 

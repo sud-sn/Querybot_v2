@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response
 from gateway import get_adapter, PlatformEvent
 from core.webhook_dedup import is_duplicate_event, remember_event, get_user_serialization_lock
 from core.dispatcher import dispatch
+from core.i18n import enum_label as _enum_label, plural as _t_plural, t as _t
 from core.query_pipeline import handle_query
 from core.pipeline_context import get_state, get_client_db
 from core.pipeline_trace import (
@@ -388,20 +389,23 @@ def _analysis_artifact_answer(
     nonsense like "TOTAL_ORDERS leads at 1". The isolated worker's summary is
     already deterministic and audited, so it is the authoritative narrative.
     """
-    label = {
-        "profile": "profile row",
-        "outliers": "potential outlier",
-        "correlation": "correlation pair",
-        "trend": "trend row",
-        "python": "derived row",
-    }.get(operation, "analysis row")
-    plural = "" if derived_row_count == 1 else "s"
+    # The row's name is looked up per operation rather than title-cased out of
+    # the token, and pluralised by the catalogue: `"" if n == 1 else "s"` is an
+    # English rule, and French takes the singular at zero as well as one.
+    key = (operation if operation in {"profile", "outliers", "correlation",
+                                      "trend", "python"} else "default")
     return {
-        "headline": summary or f"{operation.title()} analysis completed.",
-        "short_value": f"{derived_row_count} {label}{plural}",
-        "comparison": f"Based on {input_row_count} returned row{'s' if input_row_count != 1 else ''}",
-        "scope_badge": "Returned result only",
-        "scope_note": "Calculated in an isolated worker without a new database query.",
+        "headline": summary or (
+            _t("reply.analysis.done_headline_generic") if key == "default"
+            else _t("reply.analysis.done_headline",
+                    operation=_t(f"reply.analysis.op.{key}"))
+        ),
+        "short_value": _t("reply.analysis.short_value", count=derived_row_count,
+                          label=_t_plural(f"reply.analysis.row.{key}",
+                                          derived_row_count)),
+        "comparison": _t_plural("reply.analysis.based_on", input_row_count),
+        "scope_badge": _t("answer.scope.returned"),
+        "scope_note": _t("reply.analysis.isolated_note"),
     }
 
 
@@ -768,6 +772,27 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
     await websocket.accept()
 
+    # The answer language for this socket. Everything below -- the greeting,
+    # every refusal, every dashboard confirmation, and the pipeline's own
+    # answer -- reads it through core.i18n's ContextVar rather than taking a
+    # parameter, because threading one through this function's several hundred
+    # send_json call sites is a diff the next call site silently forgets.
+    #
+    # Set once, not per message: each websocket connection is its own asyncio
+    # task, and a task gets a COPY of the context, so this cannot reach another
+    # reader's socket. It is never reset, because the context dies with the
+    # connection. Switching language re-renders the portal page, which drops
+    # this socket and opens a new one, so a stale value here is not reachable.
+    try:
+        from core.i18n import activate_language
+        activate_language(portal_user.get("lang") or "en")
+    except Exception as _lang_exc:
+        log.warning(
+            "Could not activate the chat language for %s: %s — this session is "
+            "answered in English",
+            account_id, _lang_exc, exc_info=True,
+        )
+
     zoom_user_id = portal_user.get("zoom_user_id") or f"web_{user_id}"
     thread_id = _ws_text_value(
         websocket.query_params.get("thread_id"), "thread_id", "value"
@@ -812,7 +837,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     else:
         await websocket.send_json({
             "type":    "system",
-            "content": f"Connected as {portal_user.get('name', portal_user.get('id', 'user'))}. Ask me anything about your data.",
+            "content": _t("reply.session.connected",
+                          name=portal_user.get("name", portal_user.get("id", "user"))),
         })
 
     # Restore structural multi-turn context from governed server traces. Raw
@@ -862,7 +888,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 reconnect_meta = reconnect_pending.get("clarification_meta") or {}
                 await adapter.send_clarification_prompt(
                     adapter.make_event(reconnect_pending.get("original_q") or ""),
-                    reconnect_meta.get("question") or "Please choose one option so I can continue.",
+                    (reconnect_meta.get("question")
+                     or _t("reply.clarify.choose_one_to_continue")),
                     list(reconnect_meta.get("options") or []),
                     pending_id=str(reconnect_meta.get("pending_id") or ""),
                 )
@@ -966,8 +993,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 "type": "assistant_error",
                                 "role": "assistant",
                                 "content": (
-                                    "Something went wrong while preparing your answer — "
-                                    "please try asking again."
+                                    _t("reply.error.answer_failed")
                                 ),
                             })
                     except Exception:
@@ -1008,8 +1034,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "type": "assistant_error",
                         "role": "assistant",
                         "content": (
-                            "Something went wrong while preparing your answer — "
-                            "please try asking again."
+                            _t("reply.error.answer_failed")
                         ),
                     })
                     await websocket.send_json({"type": "typing", "active": False})
@@ -1134,7 +1159,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "type": "assistant_error",
                         "role": "assistant",
                         "content": outcome.message,
-                        "detail": "No LLM or database query was used.",
+                        "detail": _t("reply.result.no_llm_used"),
                     })
                     await websocket.send_json({"type": "typing", "active": False})
                 return
@@ -1346,8 +1371,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({
                     "type": "assistant_error",
                     "role": "assistant",
-                    "content": "I could not update the cached result. Please run the business question again.",
-                    "detail": "No result values were sent to an LLM.",
+                    "content": _t("reply.result.update_failed"),
+                    "detail": _t("reply.result.no_values_sent"),
                 })
                 await websocket.send_json({"type": "typing", "active": False})
 
@@ -1418,12 +1443,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "type": "assistant_error",
                     "role": "assistant",
                     "content": (
-                        "I could not safely apply that operation to the cached result. "
-                        "Use an exact result column name or a row number."
+                        _t("reply.result.unsafe_operation")
                     ),
                     "detail": (
-                        "The request was stopped locally. No cached rows, sample values, "
-                        "or bound literals were sent to the LLM or source database."
+                        _t("reply.result.stopped_locally")
                     ),
                 })
                 await websocket.send_json({"type": "typing", "active": False})
@@ -1438,7 +1461,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         # than hand-building a new JSON shape the frontend may not recognize.
         if followup.status == "clarification" and followup.outcome is not None:
             _cf_options = list(followup.outcome.clarification_options or [])
-            _cf_prompt = followup.outcome.clarification_prompt or "Which result value did you mean?"
+            _cf_prompt = (followup.outcome.clarification_prompt
+                          or _t("reply.result.which_value"))
             if _cf_options:
                 _cf_event = adapter.make_event(text)
                 await adapter.send_clarification_prompt(_cf_event, _cf_prompt, _cf_options)
@@ -1601,11 +1625,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({
                     "type": "message",
                     "content": (
-                        f"I can build that, but I had to guess which value of "
-                        f"**{columns}** you mean and the one I tried matches no rows — "
-                        "so the number would have been calculated over nothing.\n\n"
-                        f"Tell me the value and I'll rebuild it, for example: "
-                        f"\"{empty_filters[0]} is Y\"."
+                        _t("reply.metric.empty_filter", columns=columns, example=empty_filters[0])
                     ),
                 })
                 await websocket.send_json({"type": "typing", "active": False})
@@ -1635,9 +1655,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 "dry_run": outcome.status,
                 "confidence": round(draft.confidence, 2),
                 "body": (
-                    f"I worked out **{draft.name}** and used it to answer you. "
-                    "It applies to this conversation only — ask to save it and "
-                    "an admin can make it available to everyone."
+                    _t("reply.metric.session_only", name=draft.name)
                 ),
             })
         except Exception as exc:
@@ -1672,8 +1690,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "type": "assistant_error",
                     "action": "define_report",
                     "content": (
-                        "There are no metrics available to you yet -- ask your "
-                        "admin to add some to the metric registry first."
+                        _t("reply.report.no_metrics")
                     ),
                 })
                 return
@@ -1703,8 +1720,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "type": "assistant_error",
                     "action": "define_report",
                     "content": (
-                        plan_error
-                        or "Could not build a report from that -- try naming the metrics explicitly."
+                        plan_error or _t("reply.report.plan_failed")
                     ),
                 })
                 return
@@ -1721,7 +1737,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 metric = metrics_by_id.get(metric_id)
                 metric_names.append((metric or {}).get("name") or str(metric_id))
 
-            bullets = [f"Metrics: {', '.join(metric_names)}"]
+            bullets = [_t("reply.report.metrics_bullet",
+                              names=", ".join(metric_names))]
             schedule_line = ""
             if plan.cadence:
                 report_store.create_subscription(
@@ -1729,23 +1746,25 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     cadence=plan.cadence, day_of_week=plan.day_of_week, hour=plan.hour,
                 )
                 if plan.cadence == "weekly":
-                    day_name = (
-                        "Monday Tuesday Wednesday Thursday Friday Saturday Sunday"
-                    ).split()[plan.day_of_week]
-                    schedule_line = f"Delivered every {day_name} at {plan.hour:02d}:00."
+                    schedule_line = _t(
+                        "reply.report.weekly_schedule",
+                        day=_t(f"reply.weekday.{int(plan.day_of_week)}"),
+                        hour=f"{plan.hour:02d}:00",
+                    )
                 else:
-                    schedule_line = f"Delivered daily at {plan.hour:02d}:00."
+                    schedule_line = _t("reply.report.daily_schedule",
+                                       hour=f"{plan.hour:02d}:00")
                 bullets.append(schedule_line)
 
             metric_word = "metric" if len(metric_names) == 1 else "metrics"
             await websocket.send_json({
                 "type": "assistant_analysis",
                 "action": "define_report",
-                "title": f'Report "{plan.name}" created',
+                "title": _t("reply.report.created_title", name=plan.name),
                 "body": (
-                    f"I've created **{plan.name}** with {len(metric_names)} {metric_word}."
-                    + (f" {schedule_line}" if schedule_line
-                       else " No schedule was requested -- ask any time to add one.")
+                    _t_plural("reply.report.created_body", len(metric_names),
+                              name=plan.name)
+                    + " " + (schedule_line or _t("reply.report.no_schedule"))
                 ),
                 "bullets": bullets,
                 "report_id": report["id"],
@@ -1755,7 +1774,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             await websocket.send_json({
                 "type": "assistant_error",
                 "action": "define_report",
-                "content": "Could not build that report right now.",
+                "content": _t("reply.report.build_failed"),
             })
         finally:
             await websocket.send_json({"type": "typing", "active": False})
@@ -1777,8 +1796,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "type": "assistant_error",
                     "action": "dashboard",
                     "content": (
-                        "This is a published team dashboard owned by another user, so it is read-only. "
-                        "You can ask questions about the data, but only the owner can change the artifact."
+                        _t("reply.dash.read_only")
                     ),
                 })
                 return
@@ -1786,17 +1804,17 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             rollback_match = _DASHBOARD_ROLLBACK_INTENT_RE.search(text)
             if rollback_match:
                 if not latest:
-                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "There is no dashboard here to restore yet."})
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": _t("reply.dash.no_restore")})
                     return
                 target_version = int(rollback_match.group("version"))
                 updated = store.rollback_dashboard(latest["id"], user_id, account_id, target_version)
                 if not updated:
-                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": f"Version {target_version} is not available for this dashboard."})
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": _t("reply.dash.version_missing", version=target_version)})
                     return
                 await websocket.send_json({
                     "type": "assistant_dashboard", "action": "restored",
-                    "title": f'Restored "{updated["name"]}" from version {target_version}',
-                    "body": "The restore created a new draft checkpoint, so the full history is still available.",
+                    "title": _t("reply.dash.restored_title", name=updated["name"], version=target_version),
+                    "body": _t("reply.dash.restored_body"),
                     "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
                 })
                 return
@@ -1804,7 +1822,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             schedule_match = _DASHBOARD_SCHEDULE_INTENT_RE.search(text)
             if schedule_match:
                 if not latest:
-                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before setting its refresh schedule."})
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": _t("reply.dash.need_dashboard_schedule")})
                     return
                 schedule = schedule_match.group("schedule").lower().replace("manually", "manual")
                 updated = store.update_dashboard_controls(
@@ -1814,8 +1832,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 )
                 await websocket.send_json({
                     "type": "assistant_dashboard", "action": "schedule_changed",
-                    "title": f'{updated["name"]} will refresh {schedule}',
-                    "body": "Scheduled refreshes run as the dashboard owner through current ACL, semantic, validation, and compliance controls. Released rows are encrypted and expire at the policy cache TTL.",
+                    "title": _t("reply.dash.schedule_title", name=updated["name"], schedule=schedule),
+                    "body": _t("reply.dash.schedule_body"),
                     "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
                 })
                 return
@@ -1823,7 +1841,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             filter_match = _DASHBOARD_FILTER_INTENT_RE.search(text)
             if filter_match:
                 if not latest:
-                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before adding filters."})
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": _t("reply.dash.need_dashboard_filter")})
                     return
                 field = filter_match.group("field").strip(" .")
                 try:
@@ -1838,8 +1856,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 )
                 await websocket.send_json({
                     "type": "assistant_dashboard", "action": "filter_added",
-                    "title": f'Added a {field} filter to "{updated["name"]}"',
-                    "body": "The control is applied only to dashboard sources that return a matching field.",
+                    "title": _t("reply.dash.filter_title", field=field, name=updated["name"]),
+                    "body": _t("reply.dash.filter_body"),
                     "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
                 })
                 return
@@ -1847,7 +1865,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             tab_match = _DASHBOARD_TAB_INTENT_RE.search(text)
             if tab_match:
                 if not latest:
-                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before adding tabs."})
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": _t("reply.dash.need_dashboard_tab")})
                     return
                 tab = tab_match.group("tab").strip(" .")
                 try:
@@ -1862,15 +1880,15 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 )
                 await websocket.send_json({
                     "type": "assistant_dashboard", "action": "tab_added",
-                    "title": f'Added the {tab} tab to "{updated["name"]}"',
-                    "body": "Ask me to add a new visual to this dashboard and name the tab to place it there.",
+                    "title": _t("reply.dash.tab_title", tab=tab, name=updated["name"]),
+                    "body": _t("reply.dash.tab_body"),
                     "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
                 })
                 return
 
             if _DASHBOARD_SHARE_INTENT_RE.search(text):
                 if not latest:
-                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before sharing it."})
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": _t("reply.dash.need_dashboard_share")})
                     return
                 updated = store.update_dashboard_controls(
                     latest["id"], user_id, account_id, visibility="team",
@@ -1879,8 +1897,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 updated = store.publish_dashboard(updated["id"], user_id, account_id) or updated
                 await websocket.send_json({
                     "type": "assistant_dashboard", "action": "shared",
-                    "title": f'Published "{updated["name"]}" to your workspace team',
-                    "body": "Workspace users can view and filter it under their own current data access. Only the owner can edit or restore the artifact.",
+                    "title": _t("reply.dash.published_title", name=updated["name"]),
+                    "body": _t("reply.dash.published_body"),
                     "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
                 })
                 return
@@ -1891,7 +1909,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "assistant_error",
                         "action": "dashboard",
-                        "content": "There is no dashboard in this thread to rename yet.",
+                        "content": _t("reply.dash.no_rename"),
                     })
                     return
                 updated = store.rename_dashboard(
@@ -1900,7 +1918,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({
                     "type": "assistant_dashboard",
                     "action": "renamed",
-                    "title": f'Dashboard renamed to "{updated["name"]}"',
+                    "title": _t("reply.dash.renamed_title", name=updated["name"]),
                     "dashboard": {
                         "id": updated["id"], "name": updated["name"],
                         "status": updated["status"], "version": updated["version"],
@@ -1914,14 +1932,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "assistant_error",
                         "action": "dashboard",
-                        "content": "There is no dashboard in this thread to publish yet.",
+                        "content": _t("reply.dash.no_publish"),
                     })
                     return
                 updated = store.publish_dashboard(latest["id"], user_id, account_id)
                 await websocket.send_json({
                     "type": "assistant_dashboard",
                     "action": "published",
-                    "title": f'Dashboard "{updated["name"]}" published',
+                    "title": _t("reply.dash.publish_title", name=updated["name"]),
                     "dashboard": {
                         "id": updated["id"], "name": updated["name"],
                         "status": updated["status"], "version": updated["version"],
@@ -1935,14 +1953,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if not latest:
                     await websocket.send_json({
                         "type": "assistant_error", "action": "dashboard",
-                        "content": "There is no dashboard in this thread to update yet.",
+                        "content": _t("reply.dash.no_update"),
                     })
                     return
                 charts = store.list_dashboard_charts(latest["id"], user_id)
                 if not charts:
                     await websocket.send_json({
                         "type": "assistant_error", "action": "dashboard",
-                        "content": "That dashboard does not have a visual to update yet.",
+                        "content": _t("reply.dash.no_visual"),
                     })
                     return
                 chart = charts[-1]
@@ -1956,7 +1974,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 ) or latest
                 await websocket.send_json({
                     "type": "assistant_dashboard", "action": "chart_type_changed",
-                    "title": f'Changed the latest visual in "{latest["name"]}" to {chart_type}',
+                    "title": _t("reply.dash.visual_changed_title",
+                                name=latest["name"],
+                                chart_type=_enum_label("charttype", chart_type)),
                     "dashboard": {
                         "id": latest["id"], "name": latest["name"],
                         "status": "draft", "version": latest["version"],
@@ -1970,7 +1990,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if not latest:
                     await websocket.send_json({
                         "type": "assistant_error", "action": "dashboard",
-                        "content": "Create a dashboard first, then I can add new governed visuals to it.",
+                        "content": _t("reply.dash.need_dashboard_visual"),
                     })
                     return
                 question = add_query_match.group("question").strip(" .,:;-")
@@ -1988,7 +2008,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         await websocket.send_json({
                             "type": "assistant_error",
                             "action": "dashboard",
-                            "content": "Run the result again so I can open the dashboard chooser for it.",
+                            "content": _t("reply.dash.rerun_for_chooser"),
                         })
                         return
                     kpi = response.get("kpi") if isinstance(response.get("kpi"), dict) else {}
@@ -1997,7 +2017,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "pin_token": token,
                         "title": str(
                             chart.get("title") or kpi.get("label")
-                            or response.get("question") or "Dashboard visual"
+                            or response.get("question")
+                            or _t("reply.dash.default_visual_title")
                         )[:120],
                         "chart_type": str(
                             chart.get("chart_type")
@@ -2012,8 +2033,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "type": "assistant_error",
                         "action": "dashboard",
                         "content": (
-                            "There is no dashboard in this thread yet. Say "
-                            '"create a dashboard from this result" first.'
+                            _t("reply.dash.none_yet")
                         ),
                     })
                     return
@@ -2023,7 +2043,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({
                     "type": "assistant_dashboard",
                     "action": "item_added",
-                    "title": f'Added this result to "{artifact["name"]}"',
+                    "title": _t("reply.dash.added_title", name=artifact["name"]),
                     "dashboard": artifact,
                 })
                 return
@@ -2068,7 +2088,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if plan is None or plan.confidence < 0.60:
                         await adapter.send_clarification_prompt(
                             adapter.make_event(text),
-                            plan_error or "I can build that dashboard, but I need the exact visuals, time range, and grouping you want before I run several queries.",
+                            plan_error or _t("reply.dash.need_detail"),
                             [],
                         )
                         return
@@ -2085,15 +2105,15 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     ) or dashboard
                     await websocket.send_json({
                         "type": "assistant_analysis", "action": "dashboard_plan",
-                        "title": f'Building "{dashboard["name"]}"',
-                        "body": f"I’ll run {len(plan.widgets)} governed data tasks and assemble the successful results in the artifact pane.",
+                        "title": _t("reply.dash.building_title", name=dashboard["name"]),
+                        "body": _t_plural("reply.dash.building_body", len(plan.widgets)),
                         "bullets": [f"{index + 1}. {widget.title or widget.question}" for index, widget in enumerate(plan.widgets)],
                     })
                     completed = 0
                     for index, widget in enumerate(plan.widgets):
                         await websocket.send_json({
                             "type": "status", "stage": "dashboard_work",
-                            "label": f"Building visual {index + 1} of {len(plan.widgets)}",
+                            "label": _t("reply.dash.building_step", index=index + 1, total=len(plan.widgets)),
                             "detail": widget.title or widget.question,
                         })
                         adapter.queue_dashboard(
@@ -2108,8 +2128,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     final_dashboard = store.get_dashboard(dashboard["id"], user_id, account_id) or dashboard
                     await websocket.send_json({
                         "type": "assistant_dashboard", "action": "created",
-                        "title": f'Built {completed} of {len(plan.widgets)} visuals for "{final_dashboard["name"]}"',
-                        "body": "Open the artifact to review the live charts, data sources, controls, and revision history.",
+                        "title": _t("reply.dash.built_title", completed=completed,
+                       total=len(plan.widgets), name=final_dashboard["name"]),
+                        "body": _t("reply.dash.built_body"),
                         "dashboard": {"id": final_dashboard["id"], "name": final_dashboard["name"], "status": final_dashboard["status"], "version": final_dashboard["version"], "url": f'/portal/dashboard?dashboard_id={final_dashboard["id"]}'},
                     })
                     return
@@ -2123,8 +2144,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({
                     "type": "message",
                     "content": (
-                        "What should the dashboard track? For example, say "
-                        '"create a dashboard showing monthly revenue by region".'
+                        _t("reply.dash.what_to_track")
                     ),
                 })
                 return
@@ -2132,7 +2152,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             await websocket.send_json({
                 "type": "assistant_dashboard",
                 "action": "created",
-                "title": f'Dashboard "{artifact["name"]}" created',
+                "title": _t("reply.dash.created_title", name=artifact["name"]),
                 "dashboard": artifact,
             })
         except ValueError as exc:
@@ -2146,7 +2166,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             await websocket.send_json({
                 "type": "assistant_error",
                 "action": "dashboard",
-                "content": "I could not update that dashboard right now.",
+                "content": _t("reply.dash.update_failed"),
             })
         finally:
             await websocket.send_json({"type": "typing", "active": False})
@@ -2173,11 +2193,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         await websocket.send_json({
             "type": "assistant_analysis",
             "action": "reconcile",
-            "title": "Here's exactly what I ran",
+            "title": _t("reply.explain.title"),
             "body": (
-                "I can't see how your number was calculated, so I can't explain the "
-                "gap directly -- but here's my exact definition. Try one of these to "
-                "see if it closes the difference:"
+                _t("reply.explain.body")
             ),
             "bullets": bullets,
             "secondary": sql,
@@ -2196,7 +2214,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             await websocket.send_json({
                 "type": "assistant_error",
                 "action": "analyze_result",
-                "content": "Run a data question first, then ask me to analyze that result.",
+                "content": _t("reply.analysis.need_result"),
             })
             await websocket.send_json({"type": "typing", "active": False})
             return
@@ -2214,7 +2232,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         custom_python = bool(user_code or _CUSTOM_PYTHON_INTENT_RE.search(text))
         python_code = ""
         code_source = ""
-        analysis_title = "Analysis work"
+        analysis_title = _t("reply.analysis.default_title")
         plan_explanation = ""
         planner_used = False
         validation = None
@@ -2225,8 +2243,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "type": "assistant_error",
                     "action": "python_analysis",
                     "content": (
-                        "Governed Python analysis is disabled for this workspace. "
-                        "An administrator can enable it in Client settings → Agent Analysis."
+                        _t("reply.analysis.python_disabled")
                     ),
                 })
                 await websocket.send_json({"type": "typing", "active": False})
@@ -2237,16 +2254,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "type": "assistant_error",
                         "action": "python_analysis",
                         "content": (
-                            "This workspace allows governed Python plans but not pasted source. "
-                            "Ask for the calculation in plain English, or have an administrator "
-                            "enable user-submitted Python."
+                            _t("reply.analysis.no_pasted_source")
                         ),
                     })
                     await websocket.send_json({"type": "typing", "active": False})
                     return
                 python_code = user_code
                 code_source = "user_submitted"
-                analysis_title = "Custom Python analysis"
+                analysis_title = _t("reply.analysis.custom_python_title")
             else:
                 provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
 
@@ -2271,9 +2286,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "assistant_error",
                         "action": "python_analysis",
-                        "content": plan_error or (
-                            "I need a more precise calculation and output shape before I run Python."
-                        ),
+                        "content": plan_error or _t("reply.analysis.need_precision"),
                     })
                     await websocket.send_json({"type": "typing", "active": False})
                     return
@@ -2298,10 +2311,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 objective=text,
                 max_tool_calls=1,
                 initial_tool="analyze_result",
-                initial_label="Analyzing the governed result",
-                initial_detail=(
-                    f"Running {len(operations)} bounded child task(s) in isolated workers"
-                ),
+                initial_label=_t("reply.analysis.stage_label"),
+                initial_detail=_t_plural("reply.analysis.stage_detail",
+                                         len(operations)),
                 initial_metadata={
                     "database_queried": False,
                     "rows_sent_to_llm": 0,
@@ -2333,7 +2345,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 ))
             await adapter.send_agent_event(agent_run.record_stage(
                 "analysis_work",
-                "Running isolated analysis tasks",
+                _t("reply.analysis.stage_running"),
                 ", ".join(operation.title() for operation in operations),
             ))
 
@@ -2390,29 +2402,25 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 bullets.insert(0, plan_explanation)
             if failed:
                 bullets.append(
-                    "Could not complete: " + ", ".join(operation for operation, _ in failed)
+                    _t("reply.analysis.partial_failure",
+                       operations=", ".join(operation for operation, _ in failed))
                 )
             await websocket.send_json({
                 "type": "assistant_analysis",
                 "action": "python_analysis" if custom_python else "analyze_result",
-                "title": f"{analysis_title} completed",
+                "title": _t("reply.analysis.completed_title", title=analysis_title),
                 "body": (
-                    "I analyzed only the governed rows already returned to this conversation. "
-                    + (
-                        "A metadata-only planner produced the validated calculation; zero result "
-                        "rows or sample values were sent to the model."
-                        if planner_used else
-                        "No database query or model call was made for these calculations."
-                    )
+                    _t("reply.analysis.completed_planner") if planner_used
+                    else _t("reply.analysis.completed_local")
                 ),
                 "bullets": bullets,
                 "secondary": (
-                    f"{len(completed)} of {len(operations)} child tasks completed in isolated, "
-                    "time-bounded workers."
+                    _t("reply.analysis.child_tasks", completed=len(completed), total=len(operations))
                 ),
                 "result_scope": {
-                    "badge": "Returned result only",
-                    "note": f"Based on {min(len(rows), 5000)} released rows.",
+                    "badge": _t("answer.scope.returned"),
+                    "note": _t_plural("reply.analysis.released_note",
+                                      min(len(rows), 5000)),
                 },
             })
 
@@ -2426,7 +2434,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             chart_type = detect_chart_type(chosen.rows, f"{operation} analysis")
             chart = build_chart_payload(
                 chosen.rows, chart_type,
-                title=analysis_title if operation == "python" else f"{operation.title()} analysis",
+                title=(analysis_title if operation == "python" else _t(
+                    "reply.analysis.chart_title",
+                    operation=_t(f"reply.analysis.op.{operation}"))),
                 question=text,
             ) if chart_type else None
             response = build_assistant_response(
@@ -2500,7 +2510,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             await websocket.send_json({
                 "type": "assistant_error",
                 "action": "python_analysis" if custom_python else "analyze_result",
-                "content": "I could not complete the governed result analysis.",
+                "content": _t("reply.analysis.failed"),
                 "detail": str(exc)[:240],
             })
         finally:
@@ -2513,7 +2523,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({
                     "type": "assistant_error",
                     "role": "assistant",
-                    "content": "I could not read that message. Please send the question again.",
+                    "content": _t("reply.error.unreadable_message"),
                 })
                 continue
 
@@ -2573,7 +2583,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         # the existing "Connected as ..." system notices.
                         await websocket.send_json({
                             "type": "system",
-                            "content": "Query stopped.",
+                            "content": _t("reply.query.stopped"),
                         })
                         await websocket.send_json({"type": "typing", "active": False})
                 continue
@@ -2749,7 +2759,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "result_exclusion_error",
                         "result_id": result_id,
-                        "content": "The filtered view could not be created. Please retry.",
+                        "content": _t("reply.result.filter_failed"),
                     })
                 continue
 
@@ -2762,7 +2772,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "result_chat_error",
                         "result_id": rc_result_id,
-                        "content": "Please type a question.",
+                        "content": _t("reply.error.empty_question"),
                     })
                     continue
                 await websocket.send_json({
@@ -2803,7 +2813,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         await websocket.send_json({
                             "type": "result_chat_error",
                             "result_id": rc_result_id,
-                            "content": "No cached result found. Please run a query first.",
+                            "content": _t("reply.result.none_cached"),
                         })
                         continue
 
@@ -2938,10 +2948,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             "rows": list(_rc_display_data.get("rows") or []),
                             "row_count": len(_rc_rows),
                             "source": "governed_cache",
-                            "source_note": (
-                                "Computed locally from the cached result. "
-                                "No result values were sent to the model."
-                            ),
+                            "source_note": _t("reply.result_chat.local_note"),
                             "currency_columns": _rc_currency,
                             "column_formats": _rc_formats,
                             "display_formats": _rc_display_formats,
@@ -2965,15 +2972,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
                     if _rc_followup.status in {"blocked", "error", "missing"}:
                         detail = (
-                            "The request was stopped locally. No cached rows, sample values, "
-                            "source SQL, or bound literals were sent to the model."
+                            _t("reply.result_chat.blocked_detail")
                             if _rc_followup.status == "blocked"
-                            else "Run the business question again or use an exact result column."
+                            else _t("reply.result_chat.retry_detail")
                         )
                         await websocket.send_json({
                             "type": "result_chat_error",
                             "result_id": rc_result_id,
-                            "content": _rc_followup.reason or "The cached result could not be updated.",
+                            "content": _rc_followup.reason or _t("reply.result.followup_failed"),
                             "detail": detail,
                         })
                         _trace_finish(
@@ -2990,7 +2996,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             "result_id": rc_result_id,
                             "prompt": (
                                 _rc_followup.outcome.clarification_prompt
-                                or "Which result value did you mean?"
+                                or _t("reply.result.which_value")
                             ),
                             "options": list(_rc_followup.outcome.clarification_options or []),
                         })
@@ -3187,7 +3193,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "type": "result_chat_typing",
                                     "result_id": rc_result_id,
                                     "active": True,
-                                    "message": "Querying your database for a complete answer…",
+                                    "message": _t("reply.result.querying_db"),
                                 })
                                 _fb_prov, _fb_model, _fb_key, _fb_az = resolve_provider(
                                     client, purpose="query"
@@ -3426,7 +3432,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 "rows":             list(_fb_display_data.get("rows") or []),
                                 "row_count":        len(_fb_rows),
                                 "source":           "database",
-                                "source_note":      "Answer required a full database query.",
+                                "source_note":      _t("reply.result_chat.db_note"),
                                 "currency_columns": list(_fb_display_data.get("currency_columns") or []),
                                 "column_formats":   dict(_fb_display_data.get("column_formats") or {}),
                                 "display_formats":  dict(_fb_display_data.get("display_formats") or {}),
@@ -3475,7 +3481,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "result_chat_error",
                         "result_id": rc_result_id,
-                        "content": "Something went wrong. Please try again.",
+                        "content": _t("reply.error.generic"),
                     })
                 finally:
                     await websocket.send_json({
@@ -3503,13 +3509,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if not draft or int(draft.get("portal_user_id") or -1) != owner:
                         await websocket.send_json({
                             "type": "assistant_error", "action": "promote_metric",
-                            "content": "That draft is no longer available.",
+                            "content": _t("reply.draft.gone"),
                         })
                         continue
                     if draft.get("status") != "active":
                         await websocket.send_json({
                             "type": "assistant_error", "action": "promote_metric",
-                            "content": f"That draft was already {draft.get('status')}.",
+                            "content": _t("reply.draft.already", status=draft.get("status")),
                         })
                         continue
                     proposal_id = store.create_metric_proposal(
@@ -3534,16 +3540,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "assistant_action_ack", "action": "promote_metric",
                         "content": (
-                            f"Sent. An admin will review '{draft.get('name')}' before it "
-                            "becomes available to everyone — you can keep using it here "
-                            "in the meantime."
+                            _t("reply.draft.sent", name=draft.get("name"))
                         ),
                     })
                 except Exception as exc:
                     log.warning("Metric promotion failed for %s: %s", account_id, exc)
                     await websocket.send_json({
                         "type": "assistant_error", "action": "promote_metric",
-                        "content": "That request could not be sent.",
+                        "content": _t("reply.draft.send_failed"),
                     })
                 continue
 
@@ -3564,7 +3568,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     session_id=adapter.session_id,
                 )
                 if not pending:
-                    await websocket.send_json({"type": "error", "content": "That clarification is no longer active. Please ask the question again."})
+                    await websocket.send_json({"type": "error", "content": _t("reply.clarify.expired")})
                     continue
                 cmeta = pending.get("clarification_meta") or {}
                 expected_pending_id = str(cmeta.get("pending_id") or "")
@@ -3573,8 +3577,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "assistant_error",
                         "content": (
-                            "That clarification belongs to an older step and is no longer active. "
-                            "Please answer the newest clarification card."
+                            _t("reply.clarify.superseded")
                         ),
                         "code": "stale_clarification",
                     })
@@ -3606,7 +3609,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if report:
                         await _deliver_report_via_adapter(account_id, portal_user, report, adapter.make_event(""), adapter)
                     else:
-                        await websocket.send_json({"type": "system", "content": "No worries — skipping today's reports."})
+                        await websocket.send_json({"type": "system", "content": _t("reply.report.skipped")})
                     continue
 
                 # ── Outright rejection of the offered options ────────────────
@@ -3663,7 +3666,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if not selected:
                         await adapter.send_clarification_prompt(
                             adapter.make_event(pending["original_q"]),
-                            cmeta.get("question") or "Please choose one option.",
+                            cmeta.get("question") or _t("reply.clarify.choose_one"),
                             opts,
                         )
                         continue
@@ -3677,8 +3680,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 "type": "message",
                                 "role": "assistant",
                                 "content": (
-                                    "Understood. Please restate the new business question, "
-                                    "and I’ll answer it from the governed data source."
+                                    _t("reply.clarify.restate")
                                 ),
                             })
                             await websocket.send_json({"type": "typing", "active": False})
@@ -3700,7 +3702,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         await websocket.send_json({
                             "type": "assistant_error",
                             "role": "assistant",
-                            "content": "I could not apply that display choice. Please try again.",
+                            "content": _t("reply.clarify.display_failed"),
                         })
                         await websocket.send_json({"type": "typing", "active": False})
                         continue
@@ -3735,12 +3737,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         send_prompt = getattr(adapter, "send_clarification_prompt", None)
                         if callable(send_prompt):
                             retry_question = (
-                                "I couldn't match that business date unambiguously. "
-                                "Choose a suggested business date or type a more "
-                                "specific business name."
+                                _t("reply.clarify.ambiguous_business_date")
                                 if cmeta.get("source") == "metric_date_context"
                                 else cmeta.get("question")
-                                or "Please choose one option."
+                                or _t("reply.clarify.choose_one")
                             )
                             await send_prompt(
                                 adapter.make_event(pending["original_q"]),
@@ -3748,7 +3748,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 opts,
                             )
                         else:
-                            await websocket.send_json({"type": "error", "content": "Please choose one of the available clarification options."})
+                            await websocket.send_json({"type": "error", "content": _t("reply.clarify.choose_option")})
                         continue
                     selected_text = str(selected.get("value") or selected.get("label") or "").strip()
                     selected_opt_id = str(selected.get("id") or "") or None   # Fix #2
@@ -3768,7 +3768,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 else:
                     # Free-text clarification (Fix #9)
                     if not free_text:
-                        await websocket.send_json({"type": "error", "content": "Please type your clarification."})
+                        await websocket.send_json({"type": "error", "content": _t("reply.clarify.type_answer")})
                         continue
                     combined, term_hint = combine_with_clarification(
                         pending["original_q"],
@@ -3843,7 +3843,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             )
                         except Exception as audit_exc:
                             log.debug("Clarification agent audit failed: %s", audit_exc)
-                    await websocket.send_json({"type": "error", "content": "I hit an error while applying that clarification. Please try again."})
+                    await websocket.send_json({"type": "error", "content": _t("reply.clarify.apply_failed")})
                 finally:
                     await websocket.send_json({"type": "typing", "active": False})
                 continue
@@ -3889,8 +3889,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 "type": "assistant_error",
                                 "action": action,
                                 "content": (
-                                    "That result is no longer available for analysis. "
-                                    "Run the question again to create a fresh governed result."
+                                    _t("reply.result.expired_analysis")
                                 ),
                             })
                             continue
@@ -3939,12 +3938,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "type": "assistant_error",
                                     "action": "drill_dim",
                                     "content": (
-                                        "Breaking a result down with AI is turned off for this "
-                                        "workspace by the data policy."
+                                        _t("reply.drill.llm_blocked")
                                     ),
                                     "suggestion": (
-                                        f"Ask \"Break down by {_dim_name}\" as a new question — "
-                                        "that runs as a governed query instead."
+                                        _t("reply.drill.llm_blocked_suggestion", dimension=_dim_name)
                                     ),
                                 })
                                 continue
@@ -3992,8 +3989,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({
                                 "type": "assistant_error",
                                 "action": "drill_dim",
-                                "content": "Could not complete the drill-down.",
-                                "suggestion": f"Try asking: \"Break down by {_dim_name}\" directly.",
+                                "content": _t("reply.drill.failed"),
+                                "suggestion": _t("reply.drill.failed_suggestion", dimension=_dim_name),
                             })
                         finally:
                             await websocket.send_json({"type": "typing", "active": False})
@@ -4043,14 +4040,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({
                                 "type": "assistant_analysis",
                                 "action": "compare_prior",
-                                "title": "Prior period comparison",
-                                "headline": "Could not complete the prior period comparison.",
+                                "title": _t("reply.prior.title"),
+                                "headline": _t("reply.prior.failed_headline"),
                                 "body": (
-                                    "An unexpected error occurred while preparing the prior period. "
-                                    "Try asking the comparison directly in your question."
+                                    _t("reply.prior.failed_body")
                                 ),
                                 "bullets": [],
-                                "next_step": "Ask: \"Show [metric] for [period A] vs [period B]\"",
+                                "next_step": _t("reply.prior.next_step"),
                             })
                         finally:
                             await websocket.send_json({"type": "typing", "active": False})
@@ -4079,7 +4075,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 await websocket.send_json({
                                     "type": "assistant_error",
                                     "action": "contribution",
-                                    "content": "Could not compute contribution share.",
+                                    "content": _t("reply.contribution.failed"),
                                     "detail": _ct_stats.get("reason", ""),
                                 })
                             else:
@@ -4101,7 +4097,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({
                                 "type": "assistant_error",
                                 "action": "contribution",
-                                "content": "Could not compute the % share breakdown.",
+                                "content": _t("reply.contribution.share_failed"),
                             })
                         finally:
                             await websocket.send_json({"type": "typing", "active": False})
@@ -4127,8 +4123,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "type": "assistant_error",
                                     "action": "outliers",
                                     "content": (
-                                        _ol_stats.get("detail")
-                                        or "No outliers found in this result."
+                                        _ol_stats.get("detail") or _t("reply.outliers.none")
                                     ),
                                 })
                             else:
@@ -4148,7 +4143,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({
                                 "type": "assistant_error",
                                 "action": "outliers",
-                                "content": "Could not filter outliers from this result.",
+                                "content": _t("reply.outliers.filter_failed"),
                             })
                         finally:
                             await websocket.send_json({"type": "typing", "active": False})
@@ -4182,8 +4177,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "type": "assistant_error",
                                     "action": "download_csv",
                                     "content": (
-                                        _csv_decision.explanation
-                                        or "Export is blocked by the workspace data policy."
+                                        _csv_decision.explanation or _t("reply.csv.blocked")
                                     ),
                                 })
                                 continue
@@ -4208,7 +4202,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({
                                 "type":    "assistant_error",
                                 "action":  "download_csv",
-                                "content": "Could not generate CSV from this result.",
+                                "content": _t("reply.csv.failed"),
                             })
                         finally:
                             await websocket.send_json({"type": "typing", "active": False})
@@ -4237,8 +4231,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "type": "assistant_error",
                                     "action": "set_alert",
                                     "content": (
-                                        _alert_decision.explanation
-                                        or "Alerts are blocked by the workspace data policy."
+                                        _alert_decision.explanation or _t("reply.alert.blocked")
                                     ),
                                 })
                                 continue
@@ -4262,8 +4255,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "type":    "assistant_error",
                                     "action":  "set_alert",
                                     "content": (
-                                        "Could not identify a numeric metric to monitor. "
-                                        "Ask for a specific KPI result first."
+                                        _t("reply.alert.no_metric")
                                     ),
                                 })
                             else:
@@ -4292,25 +4284,22 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 await websocket.send_json({
                                     "type":      "assistant_analysis",
                                     "action":    "set_alert",
-                                    "title":     "Alert created",
+                                    "title":     _t("reply.alert.created_title"),
                                     "body": (
-                                        f"I'll monitor **{_al_mcol}** (baseline: {_al_raw}) "
-                                        f"and flag it when the value changes by more than 10%."
+                                        _t("reply.alert.created_body", metric=_al_mcol,
+                                           baseline=_al_raw, threshold=10)
                                     ),
                                     "secondary": (
-                                        f"Alert ID: {_al_def['id']} — "
-                                        "use this ID to check the current value against "
-                                        "the baseline at any time."
+                                        _t("reply.alert.created_secondary", id=_al_def["id"])
                                     ),
                                     "bullets": [
-                                        f"Metric: {_al_mcol}",
-                                        f"Baseline: {_al_raw}",
-                                        "Trigger: change > 10%",
-                                        "Condition: change_pct",
+                                        _t("reply.alert.bullet_metric", metric=_al_mcol),
+                                        _t("reply.alert.bullet_baseline", baseline=_al_raw),
+                                        _t("reply.alert.bullet_trigger", threshold=10),
+                                        _t("reply.alert.bullet_condition", condition="change_pct"),
                                     ],
                                     "next_step": (
-                                        "Ask \"Check alert " + _al_def["id"] + "\" "
-                                        "to compare the current value to this baseline."
+                                        _t("reply.alert.next_step", id=_al_def["id"])
                                     ),
                                     "alert_id": _al_def["id"],
                                     "alert":    _al_def,
@@ -4320,7 +4309,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({
                                 "type":    "assistant_error",
                                 "action":  "set_alert",
-                                "content": "Could not create the alert.",
+                                "content": _t("reply.alert.failed"),
                             })
                         finally:
                             await websocket.send_json({"type": "typing", "active": False})
@@ -4373,18 +4362,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             if isinstance(insight, dict):
                                 insight["action"] = "diagnose"
                                 if not insight.get("title"):
-                                    insight["title"] = "Root cause analysis"
+                                    insight["title"] = _t("reply.rootcause.title")
                             await websocket.send_json(_bound_action_payload(insight))
                         except Exception as _dx_err:
                             log.warning("diagnose action failed: %s", _dx_err)
                             await websocket.send_json({
                                 "type": "assistant_analysis",
                                 "action": "diagnose",
-                                "title": "Root cause analysis",
+                                "title": _t("reply.rootcause.title"),
                                 "body": (
-                                    "I could not run the breakdown automatically. "
-                                    "Try asking directly: \"Why did this value change?\" "
-                                    "or \"Break it down by [dimension]\"."
+                                    _t("reply.rootcause.failed_body")
                                 ),
                                 "bullets": [],
                             })
@@ -4454,8 +4441,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             "action": action,
                             "action_id": action_id,
                             "content": (
-                                "That result is no longer available for this action. "
-                                "Run the question again to create a fresh governed result."
+                                _t("reply.result.expired_action")
                             ),
                         })
                 finally:
@@ -4466,7 +4452,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({
                     "type": "assistant_error",
                     "role": "assistant",
-                    "content": "I could not read that question. Please type it again.",
+                    "content": _t("reply.error.unreadable_question"),
                 })
                 await websocket.send_json({"type": "typing", "active": False})
                 continue
@@ -4502,9 +4488,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "message",
                         "content": (
-                            "Sure -- ask me a question and I'll explain my plan before "
-                            'running it, e.g. "explain your plan: what was net revenue '
-                            'for last 7 days".'
+                            _t("reply.plan.explain_hint")
                         ),
                     })
                     await websocket.send_json({"type": "typing", "active": False})
@@ -4516,7 +4500,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 pending_plan_previews.set(account_id, _pp_session_id, _preview)
                 await websocket.send_json({
                     "type": "message",
-                    "content": f'{_preview.summary} Say "go ahead" to run it, or tell me what to change.',
+                    "content": _t("reply.plan.preview_suffix", summary=_preview.summary),
                 })
                 await websocket.send_json({"type": "typing", "active": False})
                 continue
@@ -4610,16 +4594,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if isinstance(column, dict) and column.get("name")
             ]
             if needs_result_reference_confirmation(text, bool(_cache_snapshot)):
-                prompt = "Are you referring to the previous result?"
+                prompt = _t("reply.clarify.previous_result")
                 options = [
                     {
                         "id": "use-previous-result",
-                        "label": "Yes — use the previous result",
+                        "label": _t("reply.clarify.use_previous"),
                         "value": "use_previous_result",
                     },
                     {
                         "id": "new-question",
-                        "label": "No — this is a new question",
+                        "label": _t("reply.clarify.new_question"),
                         "value": "new_question",
                     },
                 ]
@@ -4720,7 +4704,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         try:
             await websocket.send_json({
                 "type":    "error",
-                "content": "Connection error. Please refresh and try again.",
+                "content": _t("reply.error.connection"),
             })
         except Exception:
             pass

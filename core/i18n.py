@@ -2365,6 +2365,718 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The language could not be changed. Please try again.",
         "fr": "La langue n'a pas pu être changée. Veuillez réessayer.",
     },
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # reply.*  --  what the chat socket SAYS
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # ui.* is the page's own markup; these are the assistant's own turns,
+    # written by gateway/webhooks.py and core/drill_dimension.py and pushed
+    # down the socket as `content`, `suggestion`, `title` and `body`. They are
+    # the only part of the conversation the reader did not write themselves,
+    # so an English one under a French answer reads as a system that half
+    # understood them.
+    #
+    # The refusals matter most: "this is turned off by the data policy" is the
+    # sentence that decides whether someone files a ticket or gives up.
+
+    # ── Connecting ──────────────────────────────────────────────────────────
+    "reply.session.connected": {
+        "en": "Connected as {name}. Ask me anything about your data.",
+        "fr": "Connecté en tant que {name}. Posez-moi toutes vos questions sur vos données.",
+    },
+
+    # ── When something went wrong ───────────────────────────────────────────
+    "reply.error.answer_failed": {
+        "en": "Something went wrong while preparing your answer — please try asking again.",
+        "fr": "Une erreur s'est produite pendant la préparation de votre réponse — veuillez reposer la question.",
+    },
+    "reply.error.generic": {
+        "en": "Something went wrong. Please try again.",
+        "fr": "Une erreur s'est produite. Veuillez réessayer.",
+    },
+    "reply.error.connection": {
+        "en": "Connection error. Please refresh and try again.",
+        "fr": "Erreur de connexion. Actualisez la page et réessayez.",
+    },
+    "reply.error.unreadable_message": {
+        "en": "I could not read that message. Please send the question again.",
+        "fr": "Je n'ai pas pu lire ce message. Veuillez renvoyer la question.",
+    },
+    "reply.error.unreadable_question": {
+        "en": "I could not read that question. Please type it again.",
+        "fr": "Je n'ai pas pu lire cette question. Veuillez la saisir à nouveau.",
+    },
+    "reply.error.empty_question": {
+        "en": "Please type a question.",
+        "fr": "Veuillez saisir une question.",
+    },
+    "reply.query.stopped": {"en": "Query stopped.", "fr": "Requête arrêtée."},
+
+    # ── Acting on the result already on screen ──────────────────────────────
+    # These say what did NOT leave the workspace, so they are the sentences a
+    # governance reviewer reads over someone's shoulder.
+    "reply.result.no_llm_used": {
+        "en": "No LLM or database query was used.",
+        "fr": "Aucun appel à un LLM ni à la base de données n'a été effectué.",
+    },
+    "reply.result.no_values_sent": {
+        "en": "No result values were sent to an LLM.",
+        "fr": "Aucune valeur du résultat n'a été envoyée à un LLM.",
+    },
+    "reply.result.stopped_locally": {
+        "en": "The request was stopped locally. No cached rows, sample values, or bound literals were sent to the LLM or source database.",
+        "fr": "La demande a été arrêtée localement. Aucune ligne en cache, valeur d'exemple ou littéral lié n'a été envoyé au LLM ni à la base source.",
+    },
+    "reply.result.update_failed": {
+        "en": "I could not update the cached result. Please run the business question again.",
+        "fr": "Je n'ai pas pu mettre à jour le résultat en cache. Veuillez reposer la question métier.",
+    },
+    "reply.result.unsafe_operation": {
+        "en": "I could not safely apply that operation to the cached result. Use an exact result column name or a row number.",
+        "fr": "Je n'ai pas pu appliquer cette opération au résultat en cache en toute sécurité. Utilisez un nom de colonne exact du résultat ou un numéro de ligne.",
+    },
+    "reply.result.none_cached": {
+        "en": "No cached result found. Please run a query first.",
+        "fr": "Aucun résultat en cache. Veuillez d'abord exécuter une requête.",
+    },
+    "reply.result.followup_failed": {
+        "en": "The cached result could not be updated.",
+        "fr": "Le résultat en cache n'a pas pu être mis à jour.",
+    },
+    "reply.result.filter_failed": {
+        "en": "The filtered view could not be created. Please retry.",
+        "fr": "La vue filtrée n'a pas pu être créée. Veuillez réessayer.",
+    },
+    "reply.result.expired_analysis": {
+        "en": "That result is no longer available for analysis. Run the question again to create a fresh governed result.",
+        "fr": "Ce résultat n'est plus disponible pour analyse. Reposez la question pour créer un résultat gouverné à jour.",
+    },
+    "reply.result.expired_action": {
+        "en": "That result is no longer available for this action. Run the question again to create a fresh governed result.",
+        "fr": "Ce résultat n'est plus disponible pour cette action. Reposez la question pour créer un résultat gouverné à jour.",
+    },
+    "reply.result.querying_db": {
+        "en": "Querying your database for a complete answer…",
+        "fr": "Interrogation de votre base de données pour une réponse complète…",
+    },
+    "reply.result.which_value": {
+        "en": "Which result value did you mean?",
+        "fr": "De quelle valeur du résultat parliez-vous ?",
+    },
+
+    # ── A metric worked out on the fly ──────────────────────────────────────
+    "reply.metric.empty_filter": {
+        "en": "I can build that, but I had to guess which value of **{columns}** you mean and the one I tried matches no rows — so the number would have been calculated over nothing.\n\nTell me the value and I'll rebuild it, for example: \"{example} is Y\".",
+        "fr": "Je peux le construire, mais j'ai dû deviner de quelle valeur de **{columns}** vous parliez, et celle que j'ai essayée ne correspond à aucune ligne — le chiffre aurait donc été calculé sur rien.\n\nIndiquez-moi la valeur et je le reconstruis, par exemple : « {example} est Y ».",
+    },
+    "reply.metric.session_only": {
+        "en": "I worked out **{name}** and used it to answer you. It applies to this conversation only — ask to save it and an admin can make it available to everyone.",
+        "fr": "J'ai établi **{name}** et l'ai utilisé pour vous répondre. Cela ne vaut que pour cette conversation — demandez à l'enregistrer et un administrateur pourra le rendre disponible pour tout le monde.",
+    },
+    "reply.draft.gone": {
+        "en": "That draft is no longer available.",
+        "fr": "Ce brouillon n'est plus disponible.",
+    },
+    # {status} is the stored status value, not copy: the same token the admin
+    # queue filters on.
+    "reply.draft.already": {
+        "en": "That draft was already {status}.",
+        "fr": "Ce brouillon était déjà « {status} ».",
+    },
+    "reply.draft.sent": {
+        "en": "Sent. An admin will review '{name}' before it becomes available to everyone — you can keep using it here in the meantime.",
+        "fr": "Envoyé. Un administrateur examinera « {name} » avant qu'il ne devienne disponible pour tout le monde — vous pouvez continuer à l'utiliser ici en attendant.",
+    },
+    "reply.draft.send_failed": {
+        "en": "That request could not be sent.",
+        "fr": "Cette demande n'a pas pu être envoyée.",
+    },
+
+    # ── Reports ─────────────────────────────────────────────────────────────
+    "reply.report.no_metrics": {
+        "en": "There are no metrics available to you yet -- ask your admin to add some to the metric registry first.",
+        "fr": "Aucun indicateur ne vous est encore accessible — demandez à votre administrateur d'en ajouter au registre des indicateurs.",
+    },
+    "reply.report.plan_failed": {
+        "en": "Could not build a report from that -- try naming the metrics explicitly.",
+        "fr": "Impossible de construire un rapport à partir de cela — essayez de nommer les indicateurs explicitement.",
+    },
+    "reply.report.created_title": {
+        "en": "Report \"{name}\" created",
+        "fr": "Rapport « {name} » créé",
+    },
+    "reply.report.created_body.one": {
+        "en": "I've created **{name}** with {count} metric.",
+        "fr": "J'ai créé **{name}** avec {count} indicateur.",
+    },
+    "reply.report.created_body.other": {
+        "en": "I've created **{name}** with {count} metrics.",
+        "fr": "J'ai créé **{name}** avec {count} indicateurs.",
+    },
+    "reply.report.no_schedule": {
+        "en": "No schedule was requested -- ask any time to add one.",
+        "fr": "Aucune planification n'a été demandée — demandez-en une à tout moment.",
+    },
+    "reply.report.weekly_schedule": {
+        "en": "Delivered every {day} at {hour}.",
+        "fr": "Envoyé chaque {day} à {hour}.",
+    },
+    "reply.report.daily_schedule": {
+        "en": "Delivered daily at {hour}.",
+        "fr": "Envoyé chaque jour à {hour}.",
+    },
+    "reply.report.metrics_bullet": {
+        "en": "Metrics: {names}",
+        "fr": "Indicateurs : {names}",
+    },
+    "reply.report.build_failed": {
+        "en": "Could not build that report right now.",
+        "fr": "Ce rapport n'a pas pu être construit pour le moment.",
+    },
+    "reply.report.skipped": {
+        "en": "No worries — skipping today's reports.",
+        "fr": "Pas de souci — je passe les rapports du jour.",
+    },
+    "reply.weekday.0": {"en": "Monday", "fr": "lundi"},
+    "reply.weekday.1": {"en": "Tuesday", "fr": "mardi"},
+    "reply.weekday.2": {"en": "Wednesday", "fr": "mercredi"},
+    "reply.weekday.3": {"en": "Thursday", "fr": "jeudi"},
+    "reply.weekday.4": {"en": "Friday", "fr": "vendredi"},
+    "reply.weekday.5": {"en": "Saturday", "fr": "samedi"},
+    "reply.weekday.6": {"en": "Sunday", "fr": "dimanche"},
+
+    # ── Dashboards ──────────────────────────────────────────────────────────
+    "reply.dash.read_only": {
+        "en": "This is a published team dashboard owned by another user, so it is read-only. You can ask questions about the data, but only the owner can change the artifact.",
+        "fr": "Ce tableau de bord d'équipe publié appartient à un autre utilisateur : il est en lecture seule. Vous pouvez poser des questions sur les données, mais seul le propriétaire peut modifier l'artefact.",
+    },
+    "reply.dash.no_restore": {
+        "en": "There is no dashboard here to restore yet.",
+        "fr": "Il n'y a pas encore de tableau de bord à restaurer ici.",
+    },
+    "reply.dash.version_missing": {
+        "en": "Version {version} is not available for this dashboard.",
+        "fr": "La version {version} n'est pas disponible pour ce tableau de bord.",
+    },
+    "reply.dash.restored_title": {
+        "en": "Restored \"{name}\" from version {version}",
+        "fr": "« {name} » restauré depuis la version {version}",
+    },
+    "reply.dash.restored_body": {
+        "en": "The restore created a new draft checkpoint, so the full history is still available.",
+        "fr": "La restauration a créé un nouveau point de sauvegarde en brouillon : l'historique complet reste disponible.",
+    },
+    "reply.dash.need_dashboard_schedule": {
+        "en": "Create a dashboard before setting its refresh schedule.",
+        "fr": "Créez un tableau de bord avant de définir sa planification d'actualisation.",
+    },
+    "reply.dash.schedule_title": {
+        "en": "{name} will refresh {schedule}",
+        "fr": "{name} s'actualisera {schedule}",
+    },
+    "reply.dash.schedule_body": {
+        "en": "Scheduled refreshes run as the dashboard owner through current ACL, semantic, validation, and compliance controls. Released rows are encrypted and expire at the policy cache TTL.",
+        "fr": "Les actualisations planifiées s'exécutent au nom du propriétaire du tableau de bord, à travers les contrôles ACL, sémantiques, de validation et de conformité en vigueur. Les lignes diffusées sont chiffrées et expirent à la durée de vie du cache définie par la politique.",
+    },
+    "reply.dash.need_dashboard_filter": {
+        "en": "Create a dashboard before adding filters.",
+        "fr": "Créez un tableau de bord avant d'ajouter des filtres.",
+    },
+    "reply.dash.filter_title": {
+        "en": "Added a {field} filter to \"{name}\"",
+        "fr": "Filtre sur {field} ajouté à « {name} »",
+    },
+    "reply.dash.filter_body": {
+        "en": "The control is applied only to dashboard sources that return a matching field.",
+        "fr": "Le contrôle ne s'applique qu'aux sources du tableau de bord qui renvoient un champ correspondant.",
+    },
+    "reply.dash.need_dashboard_tab": {
+        "en": "Create a dashboard before adding tabs.",
+        "fr": "Créez un tableau de bord avant d'ajouter des onglets.",
+    },
+    "reply.dash.tab_title": {
+        "en": "Added the {tab} tab to \"{name}\"",
+        "fr": "Onglet {tab} ajouté à « {name} »",
+    },
+    "reply.dash.tab_body": {
+        "en": "Ask me to add a new visual to this dashboard and name the tab to place it there.",
+        "fr": "Demandez-moi d'ajouter un nouveau visuel à ce tableau de bord en nommant l'onglet pour l'y placer.",
+    },
+    "reply.dash.need_dashboard_share": {
+        "en": "Create a dashboard before sharing it.",
+        "fr": "Créez un tableau de bord avant de le partager.",
+    },
+    "reply.dash.published_title": {
+        "en": "Published \"{name}\" to your workspace team",
+        "fr": "« {name} » publié auprès de votre équipe",
+    },
+    "reply.dash.published_body": {
+        "en": "Workspace users can view and filter it under their own current data access. Only the owner can edit or restore the artifact.",
+        "fr": "Les utilisateurs de l'espace de travail peuvent le consulter et le filtrer selon leurs propres droits d'accès aux données. Seul le propriétaire peut modifier ou restaurer l'artefact.",
+    },
+    "reply.dash.no_rename": {
+        "en": "There is no dashboard in this thread to rename yet.",
+        "fr": "Il n'y a pas encore de tableau de bord à renommer dans ce fil.",
+    },
+    "reply.dash.renamed_title": {
+        "en": "Dashboard renamed to \"{name}\"",
+        "fr": "Tableau de bord renommé « {name} »",
+    },
+    "reply.dash.no_publish": {
+        "en": "There is no dashboard in this thread to publish yet.",
+        "fr": "Il n'y a pas encore de tableau de bord à publier dans ce fil.",
+    },
+    "reply.dash.publish_title": {
+        "en": "Dashboard \"{name}\" published",
+        "fr": "Tableau de bord « {name} » publié",
+    },
+    "reply.dash.no_update": {
+        "en": "There is no dashboard in this thread to update yet.",
+        "fr": "Il n'y a pas encore de tableau de bord à mettre à jour dans ce fil.",
+    },
+    "reply.dash.no_visual": {
+        "en": "That dashboard does not have a visual to update yet.",
+        "fr": "Ce tableau de bord n'a pas encore de visuel à mettre à jour.",
+    },
+    "reply.dash.visual_changed_title": {
+        "en": "Changed the latest visual in \"{name}\" to {chart_type}",
+        "fr": "Dernier visuel de « {name} » changé en {chart_type}",
+    },
+    "reply.dash.need_dashboard_visual": {
+        "en": "Create a dashboard first, then I can add new governed visuals to it.",
+        "fr": "Créez d'abord un tableau de bord, et je pourrai y ajouter de nouveaux visuels gouvernés.",
+    },
+    "reply.dash.rerun_for_chooser": {
+        "en": "Run the result again so I can open the dashboard chooser for it.",
+        "fr": "Réexécutez le résultat pour que je puisse ouvrir le sélecteur de tableau de bord.",
+    },
+    "reply.dash.default_visual_title": {
+        "en": "Dashboard visual",
+        "fr": "Visuel de tableau de bord",
+    },
+    "reply.dash.none_yet": {
+        "en": "There is no dashboard in this thread yet. Say \"create a dashboard from this result\" first.",
+        "fr": "Il n'y a pas encore de tableau de bord dans ce fil. Dites d'abord « crée un tableau de bord à partir de ce résultat ».",
+    },
+    "reply.dash.added_title": {
+        "en": "Added this result to \"{name}\"",
+        "fr": "Ce résultat a été ajouté à « {name} »",
+    },
+    "reply.dash.building_title": {
+        "en": "Building \"{name}\"",
+        "fr": "Construction de « {name} »",
+    },
+    "reply.dash.building_body.one": {
+        "en": "I'll run {count} governed data task and assemble the successful result in the artifact pane.",
+        "fr": "Je vais exécuter {count} tâche de données gouvernée et assembler le résultat obtenu dans le volet des artefacts.",
+    },
+    "reply.dash.building_body.other": {
+        "en": "I'll run {count} governed data tasks and assemble the successful results in the artifact pane.",
+        "fr": "Je vais exécuter {count} tâches de données gouvernées et assembler les résultats obtenus dans le volet des artefacts.",
+    },
+    "reply.dash.building_step": {
+        "en": "Building visual {index} of {total}",
+        "fr": "Construction du visuel {index} sur {total}",
+    },
+    "reply.dash.built_title": {
+        "en": "Built {completed} of {total} visuals for \"{name}\"",
+        "fr": "{completed} visuels sur {total} construits pour « {name} »",
+    },
+    "reply.dash.built_body": {
+        "en": "Open the artifact to review the live charts, data sources, controls, and revision history.",
+        "fr": "Ouvrez l'artefact pour examiner les graphiques en direct, les sources de données, les contrôles et l'historique des révisions.",
+    },
+    "reply.dash.what_to_track": {
+        "en": "What should the dashboard track? For example, say \"create a dashboard showing monthly revenue by region\".",
+        "fr": "Que doit suivre le tableau de bord ? Dites par exemple « crée un tableau de bord du chiffre d'affaires mensuel par région ».",
+    },
+    "reply.dash.created_title": {
+        "en": "Dashboard \"{name}\" created",
+        "fr": "Tableau de bord « {name} » créé",
+    },
+    "reply.dash.update_failed": {
+        "en": "I could not update that dashboard right now.",
+        "fr": "Je n'ai pas pu mettre à jour ce tableau de bord pour le moment.",
+    },
+
+    # ── Explaining what was run ─────────────────────────────────────────────
+    "reply.explain.title": {
+        "en": "Here's exactly what I ran",
+        "fr": "Voici exactement ce que j'ai exécuté",
+    },
+    "reply.explain.body": {
+        "en": "I can't see how your number was calculated, so I can't explain the gap directly -- but here's my exact definition. Try one of these to see if it closes the difference:",
+        "fr": "Je ne peux pas voir comment votre chiffre a été calculé, je ne peux donc pas expliquer l'écart directement — mais voici ma définition exacte. Essayez l'une de ces pistes pour voir si elle comble la différence :",
+    },
+
+    # ── Governed Python analysis ────────────────────────────────────────────
+    "reply.analysis.default_title": {
+        "en": "Analysis work",
+        "fr": "Travail d'analyse",
+    },
+    "reply.analysis.custom_python_title": {
+        "en": "Custom Python analysis",
+        "fr": "Analyse Python personnalisée",
+    },
+    "reply.analysis.need_result": {
+        "en": "Run a data question first, then ask me to analyze that result.",
+        "fr": "Posez d'abord une question sur les données, puis demandez-moi d'analyser ce résultat.",
+    },
+    "reply.analysis.python_disabled": {
+        "en": "Governed Python analysis is disabled for this workspace. An administrator can enable it in Client settings → Agent Analysis.",
+        "fr": "L'analyse Python gouvernée est désactivée pour cet espace de travail. Un administrateur peut l'activer dans Paramètres client → Analyse par agent.",
+    },
+    "reply.analysis.no_pasted_source": {
+        "en": "This workspace allows governed Python plans but not pasted source. Ask for the calculation in plain English, or have an administrator enable user-submitted Python.",
+        "fr": "Cet espace de travail autorise les plans Python gouvernés mais pas le code collé. Formulez le calcul en langage courant, ou demandez à un administrateur d'activer le Python soumis par les utilisateurs.",
+    },
+    "reply.analysis.need_precision": {
+        "en": "I need a more precise calculation and output shape before I run Python.",
+        "fr": "J'ai besoin d'un calcul et d'un format de sortie plus précis avant d'exécuter du Python.",
+    },
+    "reply.analysis.completed_title": {
+        "en": "{title} completed",
+        "fr": "{title} terminé",
+    },
+    "reply.analysis.completed_planner": {
+        "en": "I analyzed only the governed rows already returned to this conversation. A metadata-only planner produced the validated calculation; zero result rows or sample values were sent to the model.",
+        "fr": "Je n'ai analysé que les lignes gouvernées déjà renvoyées dans cette conversation. Un planificateur travaillant uniquement sur les métadonnées a produit le calcul validé ; aucune ligne de résultat ni valeur d'exemple n'a été envoyée au modèle.",
+    },
+    "reply.analysis.completed_local": {
+        "en": "I analyzed only the governed rows already returned to this conversation. No database query or model call was made for these calculations.",
+        "fr": "Je n'ai analysé que les lignes gouvernées déjà renvoyées dans cette conversation. Aucune requête à la base de données ni appel au modèle n'a été effectué pour ces calculs.",
+    },
+    "reply.analysis.child_tasks": {
+        "en": "{completed} of {total} child tasks completed in isolated, time-bounded workers.",
+        "fr": "{completed} sous-tâches sur {total} terminées dans des workers isolés et limités dans le temps.",
+    },
+    "reply.analysis.failed": {
+        "en": "I could not complete the governed result analysis.",
+        "fr": "Je n'ai pas pu mener à bien l'analyse gouvernée du résultat.",
+    },
+
+    # The isolated worker's own result card. `operation` is a wire token --
+    # profile, outliers, correlation, trend, python -- so the row it counts is
+    # named per token rather than title-cased out of it.
+    "reply.analysis.done_headline": {
+        "en": "{operation} analysis completed.",
+        "fr": "Analyse — {operation} : terminée.",
+    },
+    # The five operations, named. `operation` itself is the wire token the
+    # priority table and the subtask records are keyed on, so it is never
+    # title-cased into a word -- the word is looked up.
+    "reply.analysis.op.profile": {"en": "Profile", "fr": "Profil"},
+    "reply.analysis.op.outliers": {"en": "Outliers", "fr": "Valeurs aberrantes"},
+    "reply.analysis.op.correlation": {"en": "Correlation", "fr": "Corrélation"},
+    "reply.analysis.op.trend": {"en": "Trend", "fr": "Tendance"},
+    "reply.analysis.op.python": {"en": "Python", "fr": "Python"},
+    "reply.analysis.op.default": {"en": "Analysis", "fr": "Analyse"},
+    # The unnamed operation, whose headline would otherwise read "Analysis
+    # analysis completed."
+    "reply.analysis.done_headline_generic": {
+        "en": "Analysis completed.",
+        "fr": "Analyse terminée.",
+    },
+    "reply.analysis.chart_title": {
+        "en": "{operation} analysis",
+        "fr": "Analyse — {operation}",
+    },
+    "reply.analysis.row.profile.one": {"en": "profile row", "fr": "ligne de profil"},
+    "reply.analysis.row.profile.other": {"en": "profile rows", "fr": "lignes de profil"},
+    "reply.analysis.row.outliers.one": {"en": "potential outlier", "fr": "valeur aberrante potentielle"},
+    "reply.analysis.row.outliers.other": {"en": "potential outliers", "fr": "valeurs aberrantes potentielles"},
+    "reply.analysis.row.correlation.one": {"en": "correlation pair", "fr": "paire de corrélation"},
+    "reply.analysis.row.correlation.other": {"en": "correlation pairs", "fr": "paires de corrélation"},
+    "reply.analysis.row.trend.one": {"en": "trend row", "fr": "ligne de tendance"},
+    "reply.analysis.row.trend.other": {"en": "trend rows", "fr": "lignes de tendance"},
+    "reply.analysis.row.python.one": {"en": "derived row", "fr": "ligne dérivée"},
+    "reply.analysis.row.python.other": {"en": "derived rows", "fr": "lignes dérivées"},
+    "reply.analysis.row.default.one": {"en": "analysis row", "fr": "ligne d'analyse"},
+    "reply.analysis.row.default.other": {"en": "analysis rows", "fr": "lignes d'analyse"},
+    "reply.analysis.short_value": {"en": "{count} {label}", "fr": "{count} {label}"},
+    "reply.analysis.based_on.one": {
+        "en": "Based on {count} returned row",
+        "fr": "D'après {count} ligne renvoyée",
+    },
+    "reply.analysis.based_on.other": {
+        "en": "Based on {count} returned rows",
+        "fr": "D'après {count} lignes renvoyées",
+    },
+    "reply.analysis.isolated_note": {
+        "en": "Calculated in an isolated worker without a new database query.",
+        "fr": "Calculé dans un worker isolé, sans nouvelle requête à la base de données.",
+    },
+    "reply.analysis.released_note.one": {
+        "en": "Based on {count} released row.",
+        "fr": "D'après {count} ligne diffusée.",
+    },
+    "reply.analysis.released_note.other": {
+        "en": "Based on {count} released rows.",
+        "fr": "D'après {count} lignes diffusées.",
+    },
+    "reply.analysis.partial_failure": {
+        "en": "Could not complete: {operations}",
+        "fr": "N'a pas pu être terminé : {operations}",
+    },
+    "reply.analysis.stage_label": {
+        "en": "Analyzing the governed result",
+        "fr": "Analyse du résultat gouverné",
+    },
+    "reply.analysis.stage_detail.one": {
+        "en": "Running {count} bounded child task in isolated workers",
+        "fr": "Exécution de {count} sous-tâche bornée dans des workers isolés",
+    },
+    "reply.analysis.stage_detail.other": {
+        "en": "Running {count} bounded child tasks in isolated workers",
+        "fr": "Exécution de {count} sous-tâches bornées dans des workers isolés",
+    },
+    "reply.analysis.stage_running": {
+        "en": "Running isolated analysis tasks",
+        "fr": "Exécution des tâches d'analyse isolées",
+    },
+
+    # ── The result-chat panel beside a result ───────────────────────────────
+    "reply.result_chat.db_note": {
+        "en": "Answer required a full database query.",
+        "fr": "La réponse a nécessité une requête complète à la base de données.",
+    },
+    "reply.result_chat.local_note": {
+        "en": "Computed locally from the cached result. No result values were sent to the model.",
+        "fr": "Calculé localement à partir du résultat en cache. Aucune valeur du résultat n'a été envoyée au modèle.",
+    },
+    "reply.result_chat.blocked_detail": {
+        "en": "The request was stopped locally. No cached rows, sample values, source SQL, or bound literals were sent to the model.",
+        "fr": "La demande a été arrêtée localement. Aucune ligne en cache, valeur d'exemple, requête SQL source ou littéral lié n'a été envoyé au modèle.",
+    },
+    "reply.result_chat.retry_detail": {
+        "en": "Run the business question again or use an exact result column.",
+        "fr": "Reposez la question métier ou utilisez un nom de colonne exact du résultat.",
+    },
+
+    # ── The prior-period chip ───────────────────────────────────────────────
+    "reply.prior.failed_headline": {
+        "en": "Could not complete the prior period comparison.",
+        "fr": "La comparaison avec la période précédente n'a pas pu être effectuée.",
+    },
+
+    # ── The dashboard work planner ──────────────────────────────────────────
+    "reply.dash.need_detail": {
+        "en": "I can build that dashboard, but I need the exact visuals, time range, and grouping you want before I run several queries.",
+        "fr": "Je peux construire ce tableau de bord, mais j'ai besoin des visuels, de la période et du regroupement exacts que vous voulez avant de lancer plusieurs requêtes.",
+    },
+
+    # ── Clarifications ──────────────────────────────────────────────────────
+    "reply.clarify.expired": {
+        "en": "That clarification is no longer active. Please ask the question again.",
+        "fr": "Cette demande de précision n'est plus active. Veuillez reposer la question.",
+    },
+    "reply.clarify.superseded": {
+        "en": "That clarification belongs to an older step and is no longer active. Please answer the newest clarification card.",
+        "fr": "Cette demande de précision porte sur une étape antérieure et n'est plus active. Veuillez répondre à la carte de précision la plus récente.",
+    },
+    "reply.clarify.restate": {
+        "en": "Understood. Please restate the new business question, and I'll answer it from the governed data source.",
+        "fr": "Entendu. Reformulez la nouvelle question métier et j'y répondrai à partir de la source de données gouvernée.",
+    },
+    "reply.clarify.display_failed": {
+        "en": "I could not apply that display choice. Please try again.",
+        "fr": "Je n'ai pas pu appliquer ce choix d'affichage. Veuillez réessayer.",
+    },
+    "reply.clarify.choose_option": {
+        "en": "Please choose one of the available clarification options.",
+        "fr": "Veuillez choisir l'une des options de précision proposées.",
+    },
+    "reply.clarify.type_answer": {
+        "en": "Please type your clarification.",
+        "fr": "Veuillez saisir votre précision.",
+    },
+    "reply.clarify.apply_failed": {
+        "en": "I hit an error while applying that clarification. Please try again.",
+        "fr": "J'ai rencontré une erreur en appliquant cette précision. Veuillez réessayer.",
+    },
+    "reply.clarify.choose_one": {
+        "en": "Please choose one option.",
+        "fr": "Veuillez choisir une option.",
+    },
+    "reply.clarify.choose_one_to_continue": {
+        "en": "Please choose one option so I can continue.",
+        "fr": "Veuillez choisir une option pour que je puisse continuer.",
+    },
+    "reply.clarify.ambiguous_business_date": {
+        "en": "I couldn't match that business date unambiguously. Choose a suggested business date or type a more specific business name.",
+        "fr": "Je n'ai pas pu identifier cette date métier sans ambiguïté. Choisissez une date métier proposée ou saisissez un nom métier plus précis.",
+    },
+    "reply.clarify.previous_result": {
+        "en": "Are you referring to the previous result?",
+        "fr": "Faites-vous référence au résultat précédent ?",
+    },
+    "reply.clarify.use_previous": {
+        "en": "Yes — use the previous result",
+        "fr": "Oui — utiliser le résultat précédent",
+    },
+    "reply.clarify.new_question": {
+        "en": "No — this is a new question",
+        "fr": "Non — c'est une nouvelle question",
+    },
+
+    # ── The chips under a result ────────────────────────────────────────────
+    "reply.prior.title": {
+        "en": "Prior period comparison",
+        "fr": "Comparaison avec la période précédente",
+    },
+    "reply.prior.failed_body": {
+        "en": "An unexpected error occurred while preparing the prior period. Try asking the comparison directly in your question.",
+        "fr": "Une erreur inattendue s'est produite lors de la préparation de la période précédente. Essayez de demander la comparaison directement dans votre question.",
+    },
+    "reply.prior.next_step": {
+        "en": "Ask: \"Show [metric] for [period A] vs [period B]\"",
+        "fr": "Demandez : « Affiche [indicateur] pour [période A] par rapport à [période B] »",
+    },
+    "reply.contribution.failed": {
+        "en": "Could not compute contribution share.",
+        "fr": "La part de contribution n'a pas pu être calculée.",
+    },
+    "reply.contribution.share_failed": {
+        "en": "Could not compute the % share breakdown.",
+        "fr": "La ventilation en pourcentage n'a pas pu être calculée.",
+    },
+    "reply.outliers.none": {
+        "en": "No outliers found in this result.",
+        "fr": "Aucune valeur aberrante trouvée dans ce résultat.",
+    },
+    "reply.outliers.filter_failed": {
+        "en": "Could not filter outliers from this result.",
+        "fr": "Les valeurs aberrantes n'ont pas pu être filtrées de ce résultat.",
+    },
+    "reply.csv.blocked": {
+        "en": "Export is blocked by the workspace data policy.",
+        "fr": "L'export est bloqué par la politique de données de l'espace de travail.",
+    },
+    "reply.csv.failed": {
+        "en": "Could not generate CSV from this result.",
+        "fr": "Le CSV n'a pas pu être généré à partir de ce résultat.",
+    },
+    "reply.alert.blocked": {
+        "en": "Alerts are blocked by the workspace data policy.",
+        "fr": "Les alertes sont bloquées par la politique de données de l'espace de travail.",
+    },
+    "reply.alert.no_metric": {
+        "en": "Could not identify a numeric metric to monitor. Ask for a specific KPI result first.",
+        "fr": "Aucun indicateur numérique à surveiller n'a pu être identifié. Demandez d'abord un résultat de KPI précis.",
+    },
+    "reply.alert.created_title": {"en": "Alert created", "fr": "Alerte créée"},
+    "reply.alert.created_body": {
+        "en": "I'll monitor **{metric}** (baseline: {baseline}) and flag it when the value changes by more than {threshold}%.",
+        "fr": "Je surveillerai **{metric}** (référence : {baseline}) et le signalerai lorsque la valeur variera de plus de {threshold} %.",
+    },
+    "reply.alert.created_secondary": {
+        "en": "Alert ID: {id} — use this ID to check the current value against the baseline at any time.",
+        "fr": "Identifiant d'alerte : {id} — utilisez-le pour comparer la valeur actuelle à la référence à tout moment.",
+    },
+    "reply.alert.bullet_metric": {"en": "Metric: {metric}", "fr": "Indicateur : {metric}"},
+    "reply.alert.bullet_baseline": {"en": "Baseline: {baseline}", "fr": "Référence : {baseline}"},
+    "reply.alert.bullet_trigger": {
+        "en": "Trigger: change > {threshold}%",
+        "fr": "Déclencheur : variation > {threshold} %",
+    },
+    # "change_pct" is the stored condition token, not copy.
+    "reply.alert.bullet_condition": {
+        "en": "Condition: {condition}",
+        "fr": "Condition : {condition}",
+    },
+    "reply.alert.next_step": {
+        "en": "Ask \"Check alert {id}\" to compare the current value to this baseline.",
+        "fr": "Demandez « Vérifie l'alerte {id} » pour comparer la valeur actuelle à cette référence.",
+    },
+    "reply.alert.failed": {
+        "en": "Could not create the alert.",
+        "fr": "L'alerte n'a pas pu être créée.",
+    },
+    "reply.rootcause.title": {
+        "en": "Root cause analysis",
+        "fr": "Analyse des causes profondes",
+    },
+    "reply.rootcause.failed_body": {
+        "en": "I could not run the breakdown automatically. Try asking directly: \"Why did this value change?\" or \"Break it down by [dimension]\".",
+        "fr": "Je n'ai pas pu exécuter la ventilation automatiquement. Demandez directement : « Pourquoi cette valeur a-t-elle changé ? » ou « Ventile-la par [dimension] ».",
+    },
+    "reply.plan.explain_hint": {
+        "en": "Sure -- ask me a question and I'll explain my plan before running it, e.g. \"explain your plan: what was net revenue for last 7 days\".",
+        "fr": "Bien sûr — posez-moi une question et j'expliquerai mon plan avant de l'exécuter, par exemple « explique ton plan : quel était le chiffre d'affaires net sur les 7 derniers jours ».",
+    },
+    "reply.plan.preview_suffix": {
+        "en": "{summary} Say \"go ahead\" to run it, or tell me what to change.",
+        "fr": "{summary} Dites « vas-y » pour l'exécuter, ou indiquez-moi ce qu'il faut changer.",
+    },
+
+    # ── Breaking a result down by a dimension ────────────────────────────────
+    # {dimension} is the dimension's own name from the semantic model, which is
+    # the tenant's word and stays as it is.
+    "reply.drill.title": {
+        "en": "Break down by {dimension}",
+        "fr": "Ventiler par {dimension}",
+    },
+    "reply.drill.suggestion_default": {
+        "en": "Try asking: \"Show [metric] broken down by {dimension}\"",
+        "fr": "Essayez de demander : « Affiche [indicateur] ventilé par {dimension} »",
+    },
+    "reply.drill.not_in_model": {
+        "en": "Dimension '{dimension}' was not found in the semantic model.",
+        "fr": "La dimension « {dimension} » est introuvable dans le modèle sémantique.",
+    },
+    "reply.drill.not_in_model_suggestion": {
+        "en": "Try asking: \"Break down by {dimension}\" in a new question.",
+        "fr": "Posez une nouvelle question : « Ventile par {dimension} ».",
+    },
+    "reply.drill.not_joinable": {
+        "en": "The '{dimension}' dimension is not safely joinable to the current result.",
+        "fr": "La dimension « {dimension} » ne peut pas être jointe en toute sécurité au résultat actuel.",
+    },
+    "reply.drill.not_joinable_suggestion": {
+        "en": "Ask a new question that explicitly requests a {dimension} breakdown.",
+        "fr": "Posez une nouvelle question demandant explicitement une ventilation par {dimension}.",
+    },
+    "reply.drill.invalid_sql": {
+        "en": "The rewritten query failed validation.",
+        "fr": "La requête réécrite n'a pas passé la validation.",
+    },
+    "reply.drill.invalid_sql_suggestion": {
+        "en": "Try asking: \"Show [metric] by {dimension}\" directly.",
+        "fr": "Demandez directement : « Affiche [indicateur] par {dimension} ».",
+    },
+    "reply.drill.validation_error": {
+        "en": "Validation error while preparing the drill-down query.",
+        "fr": "Erreur de validation lors de la préparation de la requête de ventilation.",
+    },
+    "reply.drill.execution_failed": {
+        "en": "The drill-down query failed to execute: {error}",
+        "fr": "L'exécution de la requête de ventilation a échoué : {error}",
+    },
+    "reply.drill.no_data": {
+        "en": "The '{dimension}' breakdown returned no data.",
+        "fr": "La ventilation par « {dimension} » n'a renvoyé aucune donnée.",
+    },
+    "reply.drill.no_data_suggestion": {
+        "en": "The dimension may not have data for the current filter period.",
+        "fr": "Cette dimension n'a peut-être pas de données pour la période filtrée actuelle.",
+    },
+    "reply.drill.llm_blocked": {
+        "en": "Breaking a result down with AI is turned off for this workspace by the data policy.",
+        "fr": "La ventilation d'un résultat par l'IA est désactivée pour cet espace de travail par la politique de données.",
+    },
+    "reply.drill.llm_blocked_suggestion": {
+        "en": "Ask \"Break down by {dimension}\" as a new question — that runs as a governed query instead.",
+        "fr": "Posez « Ventile par {dimension} » comme nouvelle question : elle s'exécutera alors comme une requête gouvernée.",
+    },
+    "reply.drill.failed": {
+        "en": "Could not complete the drill-down.",
+        "fr": "La ventilation n'a pas pu être effectuée.",
+    },
+    "reply.drill.failed_suggestion": {
+        "en": "Try asking: \"Break down by {dimension}\" directly.",
+        "fr": "Demandez directement : « Ventile par {dimension} ».",
+    },
 }
 
 

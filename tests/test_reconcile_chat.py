@@ -58,8 +58,16 @@ class ReconcileChatWiringTests(unittest.TestCase):
         start = self.source.index("async def _run_reconcile_chat")
         end = self.source.index("\n    try:\n        while True:", start)
         block = self.source[start:end]
-        self.assertIn("can't explain the", block)
-        self.assertNotIn("I'll explain the difference", block)
+        # The promise is in the catalogue now, and a translation is exactly
+        # where one could reappear -- so every shipped language is checked, not
+        # just the source of the handler.
+        self.assertIn('_t("reply.explain.body")', block)
+        from core import i18n
+        self.assertIn("can't explain the", i18n.t("reply.explain.body", lang="en"))
+        for lang in i18n.SUPPORTED_LANGUAGES:
+            said = i18n.t("reply.explain.body", lang=lang).lower()
+            self.assertNotIn("i'll explain the difference", said, lang)
+            self.assertNotIn("j'expliquerai", said, lang)
 
     def test_handler_restates_the_exact_sql_not_a_vague_description(self):
         start = self.source.index("async def _run_reconcile_chat")

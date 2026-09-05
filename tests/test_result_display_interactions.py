@@ -236,7 +236,10 @@ class ResultDisplayCommandTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('"source": "result_reference_confirmation"', source)
         self.assertIn('"source": "local_result_command"', source)
-        self.assertIn("Are you referring to the previous result?", source)
+        self.assertIn('_t("reply.clarify.previous_result")', source)
+        from core import i18n
+        self.assertEqual(i18n.t("reply.clarify.previous_result", lang="en"),
+                         "Are you referring to the previous result?")
         self.assertIn("compile_confirmed_result_presentation", source)
 
 

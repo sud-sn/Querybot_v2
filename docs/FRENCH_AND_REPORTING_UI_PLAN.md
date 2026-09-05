@@ -220,21 +220,69 @@ rather than which words are searched.
 
 Ordered by how often a reader sees it.
 
-1. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
-   "Break down by X" fallbacks and the policy-refusal messages. These reach
-   the chat page as server messages, so a French reader still sees English
-   there.
-2. **Number formatting.** `_format_number` in `core/response_builder.py`
+1. **Number formatting.** `_format_number` in `core/response_builder.py`
    groups thousands with `,` and puts the decimal point at `.`; French does
    the opposite, so "1,234" reads as one and a bit. `i18n.format_count`
    exists for whole counts and the truncation caveat uses it, but the
    display-format pipeline (currency symbols, compact `K`/`M`, fraction
    digits) is a separate pass and is untouched.
-3. **`core/answer_formatter.py`'s section markers** — deliberately English
+2. **`core/answer_formatter.py`'s section markers** — deliberately English
    and deliberately out of the catalogue; see the note beside the
    `ui.chat.diag.*` ids.
-4. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
+3. **`core/conversational.py`'s `build_reply`** — the login greeting, and
+   `core/clarification.py`'s `clarification_rejection_message`. Both are
+   called from `gateway/webhooks.py` but written elsewhere; the socket now
+   activates the language around them, so each is a catalogue pass in its own
+   module away from being done.
+4. **`core/result_renderer.py`'s `_build_cannot_generate_hint`** — the
+   "I could not build SQL for that" hint, sent as `result_chat_error`.
+5. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
+   and the `/api/ask` JSON error contract. These do not reach a portal reader
+   and have no `portal_user` to take a language from.
+6. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### The chat socket, and what it needed
+
+`core/drill_dimension.py` and the whole user-visible surface of
+`gateway/webhooks.py` are done: 113 payload strings plus the locals that feed
+them, under `reply.*`.
+
+The prerequisite was that no language was active on that path at all.
+`core/query_pipeline.py` activates one for the duration of ONE answer, which
+covers the answer and nothing around it — every refusal, nudge and dashboard
+confirmation is sent from the socket loop, outside that scope. So `ws_chat`
+activates the reader's language once, right after the session cookie resolves:
+
+* **Once per connection, not per message.** Each websocket connection is its
+  own asyncio task and a task gets a COPY of the context, so one reader's
+  language cannot reach another's socket. `tests/test_chat_socket_language.py`
+  holds two sockets open at different languages and asserts it.
+* **Never reset.** The context dies with the connection. Switching language
+  re-renders the portal page, which drops the socket and opens a new one, so a
+  stale value is not reachable.
+* **Proven over a real websocket, not asserted from the source.** Wiring like
+  this is exactly what can be written, reviewed, merged and never execute:
+  every `_t()` in `webhooks.py` is English until that ContextVar is actually
+  set on that task.
+
+Four defects that were already live in English:
+
+* `f"{operation.title()} analysis completed."` title-cased a wire token into a
+  word, and the unnamed operation read "Analysis analysis completed."
+* `"" if n == 1 else "s"` on the analysis row label — English again, and
+  French takes the singular at zero.
+* `"Monday Tuesday ...".split()[day_of_week]` built the report schedule line
+  out of a hardcoded English week.
+* The hand-built `result_scope` on the analysis card said "Returned result
+  only", a badge no other surface used; it now takes `answer.scope.returned`
+  like everything else.
+
+Two things were deliberately left in English and are pinned as such by tests:
+`drill_question` (`"{question} — broken down by {dim}"`) and the follow-up
+suggestions, because both are read back by the English intent detectors and
+cached as the question the NEXT action reads. `_dx_follow_up` is a prompt to
+the model and stays English for the same reason.
 
 ### The analysis card and the coverage caveats, and what they needed
 
@@ -285,8 +333,10 @@ A tenant `business_role` is English data ("invoice", "posting"), and
 Every portal template's body is done. `tests/test_portal_pages_language.py`
 holds the list and asserts it matches what is on disk, so a page added later
 and not translated fails there rather than shipping.
-`tests/test_analysis_card_language.py` and
-`tests/test_coverage_caveat_language.py` do the same for the two above, by
+`tests/test_analysis_card_language.py`,
+`tests/test_coverage_caveat_language.py`,
+`tests/test_chat_socket_language.py` and
+`tests/test_drill_dimension_language.py` do the same for the surfaces above, by
 executing the real producers in both languages — including the post-processing
 block compiled out of `core/query_pipeline.py` and a real `_send_results`
 render, so a sentence translated at its source but concatenated again

@@ -53,9 +53,15 @@ class PortalLoginGreetingWiringTests(unittest.TestCase):
 
     def test_reconnect_within_session_keeps_plain_connected_line(self):
         anchor = self.src.index("_is_new_portal_session = store.touch_user_activity")
-        body = self.src[anchor:anchor + 900]
+        # 1200, not 900: the connected line is a catalogue lookup now and its
+        # keyword argument wraps onto the next line.
+        body = self.src[anchor:anchor + 1200]
         self.assertIn("else:", body)
-        self.assertIn("Connected as {portal_user.get(", body)
+        self.assertIn('_t("reply.session.connected"', body)
+        self.assertIn("name=portal_user.get(", body)
+        from core import i18n
+        self.assertIn("Connected as Ada",
+                      i18n.t("reply.session.connected", lang="en", name="Ada"))
 
     def test_touch_failure_does_not_crash_the_connection(self):
         anchor = self.src.index("_is_new_portal_session = False")

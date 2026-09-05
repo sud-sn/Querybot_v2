@@ -205,7 +205,15 @@ class ResultChatNarrationBoundaryTests(unittest.TestCase):
         block = src[start:end]
         self.assertIn("run_governed_result_followup(", block)
         self.assertIn('"trust": _rc_followup.evidence', block)
-        self.assertIn("No result values were sent to the model", block)
+        self.assertIn('_t("reply.result_chat.local_note")', block)
+        # The claim itself is what matters, and it now has to hold in every
+        # language the product ships -- a translation that dropped "no result
+        # values" would be a governance claim quietly weakened.
+        from core import i18n
+        self.assertIn("No result values were sent to the model",
+                      i18n.t("reply.result_chat.local_note", lang="en"))
+        self.assertIn("Aucune valeur du résultat n'a été envoyée au modèle",
+                      i18n.t("reply.result_chat.local_note", lang="fr"))
         self.assertNotIn("_generate_result_narration", block)
 
         governed = _src("core/governed_result_followup.py")

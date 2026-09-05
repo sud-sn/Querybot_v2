@@ -559,7 +559,20 @@ class TestAFormulaThatBindsIsNotAFormulaThatMatches:
         handler = webhooks[webhooks.index("async def _run_metric_authoring_chat"):]
         handler = handler[: handler.index("async def _run_report_builder_chat")]
         assert "check_filter_matches" in handler
-        assert "matches no rows" in handler
+        # The sentence itself lives in the catalogue now, so the handler is
+        # checked for the id and the SHIPPED string is checked for what it has
+        # to say -- in both languages, because a translation that dropped the
+        # column name would be the same silent failure in French.
+        assert '_t("reply.metric.empty_filter"' in handler
+        assert "columns=columns" in handler
+        from core import i18n
+        for lang in i18n.SUPPORTED_LANGUAGES:
+            said = i18n.t("reply.metric.empty_filter", lang=lang,
+                          columns="ACT_FLG", example="ACT_FLG is Y")
+            assert "ACT_FLG" in said, lang
+            assert "?" not in said.split("\n")[0], lang
+        assert "matches no rows" in i18n.t(
+            "reply.metric.empty_filter", lang="en", columns="X", example="Y")
         assert "_fall_through(f\"filter matched no rows" in handler
 
 

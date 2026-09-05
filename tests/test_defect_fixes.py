@@ -299,7 +299,14 @@ class WsFallbackErrorTests(unittest.TestCase):
         anchor = src.index('log.error("WS bg task error: %s", e)')
         tail = src[anchor:anchor + 900]
         self.assertIn('"type": "assistant_error"', tail)
-        self.assertIn("Something went wrong while preparing your answer", tail)
+        self.assertIn('_t("reply.error.answer_failed")', tail)
+        # The frame has to CARRY something; an id that resolves to nothing
+        # would be the same silence this test exists to stop.
+        from core import i18n
+        for lang in i18n.SUPPORTED_LANGUAGES:
+            self.assertTrue(i18n.t("reply.error.answer_failed", lang=lang).strip(), lang)
+        self.assertIn("Something went wrong while preparing your answer",
+                      i18n.t("reply.error.answer_failed", lang="en"))
 
 
 if __name__ == "__main__":

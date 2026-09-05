@@ -78,7 +78,12 @@ class PlanPreviewChatWiringTests(unittest.TestCase):
         end = self.source.index("_REPORT_BUILDER_INTENT_RE.search(text)")
         block = self.source[start:end]
         set_pos = block.index("pending_plan_previews.set(")
-        send_pos = block.index('Say "go ahead"')
+        # Anchored on the message id rather than the English sentence: the
+        # ordering is the invariant, and the sentence moved to the catalogue.
+        send_pos = block.index('_t("reply.plan.preview_suffix"')
+        from core import i18n
+        assert 'Say "go ahead"' in i18n.t("reply.plan.preview_suffix",
+                                          lang="en", summary="")
         self.assertLess(set_pos, send_pos)
         self.assertIn("build_plan_preview(", block)
 

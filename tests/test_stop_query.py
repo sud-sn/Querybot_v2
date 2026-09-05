@@ -131,7 +131,10 @@ class WebhooksWiringTests(unittest.TestCase):
         self.assertIn('if msg_type == "cancel":', self.src)
         self.assertIn("current_query_task.cancel()", self.src)
         self.assertIn('"type": "system"', self.src)
-        self.assertIn("Query stopped.", self.src)
+        self.assertIn('_t("reply.query.stopped")', self.src)
+        from core import i18n
+        self.assertEqual(i18n.t("reply.query.stopped", lang="en"), "Query stopped.")
+        self.assertTrue(i18n.t("reply.query.stopped", lang="fr"))
 
     def test_main_question_runs_as_background_task_not_awaited_inline(self):
         self.assertIn("current_query_task = asyncio.create_task(", self.src)

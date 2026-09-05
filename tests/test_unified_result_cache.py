@@ -461,7 +461,15 @@ class UnifiedCacheWiringTests(unittest.TestCase):
         self.assertIn("run_governed_result_followup(", block)
         self.assertNotIn("get_stats(", block)
         self.assertNotIn("_generate_duckdb_sql", block)
-        self.assertIn("No result values were sent to the model", block)
+        self.assertIn('_t("reply.result_chat.local_note")', block)
+        # The claim itself is what matters, and it now has to hold in every
+        # language the product ships -- a translation that dropped "no result
+        # values" would be a governance claim quietly weakened.
+        from core import i18n
+        self.assertIn("No result values were sent to the model",
+                      i18n.t("reply.result_chat.local_note", lang="en"))
+        self.assertIn("Aucune valeur du résultat n'a été envoyée au modèle",
+                      i18n.t("reply.result_chat.local_note", lang="fr"))
 
     def test_database_fallback_context_is_metadata_only(self):
         source = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
