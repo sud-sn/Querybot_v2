@@ -664,9 +664,92 @@ The end state, in the buyer's language:
 
 ---
 
-## 10. Suggested first commit
+## 10. Implementation status
 
-Phase C1 — the evidence engine — with no phrasing and no wiring: a typed `AnalysisEvidence`
-built from the analysers we already own, and tests that execute it over fixed row sets. It is
-self-contained, it unblocks C2/C3 and G3, it has no schema change, and it is the piece the other
-two claims are built on.
+Ten commits on `fix/value-grounding-governance-and-sweep`, each with its tests
+executing the real function and each mutation-tested before it landed. The
+suite went from 6,627 to 7,053 tests; the baseline of four known environment
+failures is unchanged throughout.
+
+### Landed
+
+| Phase | What ships | Commit |
+|---|---|---|
+| **C1** | `core/analysis_evidence.py` — typed findings with materiality, family de-duplication, three redundancy rules, governed labels | `b2c4236` |
+| **C2/C3** | `core/analysis_narrative.py` — selection, template and LLM phrasing, the checked-numbers rule, `evidence_id`. **Regulated tenants get a real analysis instead of a static apology.** 25 message ids in both languages | `a244d8b` |
+| **G1/G2** | `local` provider (Ollama/vLLM/llama.cpp/LM Studio) + `core/compliance/egress.py` enforced at `llm_complete`, with an admin surface for both | `71fc630` |
+| **G3** | `core/compliance/proof_pack.py` — five sections generated from the audit trail, downloadable, fingerprinted | `6df7292` |
+| **E2** | `core/curation_weight.py` — curation status weights the fused KB ranking, applied to ordering only | `144f25b` |
+| **B (part)** | `considered_facts` / `considered_date_roles` / `considered_metrics` on the compiled plan, ambiguity recorded on the trace, and `core/candidate_selection.py` as the selector | `9b34303` |
+| **D (D1–D3)** | `core/metric_coverage.py` — the question shapes a metric must survive, gaps naming the asset to add; wired into the chat draft and an admin API | `f0c0d78` |
+| **E1/E4** | `core/model_readiness.py` — one backlog ordered by measured outcome, plus `metadata_version` stamped on every answer | `348c94d` |
+| **A1/A3** | `store/domain_store.py` + `core/domains.py` — named subject areas, routing, and corroboration between two areas that can both answer | `c671ba2` |
+| **F2** | `core/recovery.py` — a corrected run reads as a correction; the re-plan budget asserted against the one the pipeline enforces | `a961157` |
+
+### Defects found and fixed along the way
+
+Each was found by the work above rather than looked for, and each was live.
+
+- **`core/stat_signals.py` read any word beginning with a month abbreviation as
+  a period label.** The pattern is anchored and its comment says the anchoring
+  fixed exactly this — but the month branch ended `[a-z]*`, which eats the rest
+  of the word before the anchor is reached. "Nova", "Maritime", "Mayfield",
+  "Marseille", "Augusta", "Octagon" and "Decathlon" all matched, so a result
+  grouped by branch was read as a time series and given trend language.
+- **`get_all_system()` raised on the first row it could not decrypt**, so one
+  unreadable credential — after a key rotation, a restored backup, a
+  half-migrated deployment — took out every setting at once and killed both the
+  admin page and `resolve_provider`, with a cryptography stack trace naming no
+  key.
+- **The hash-chained decision log forked under any burst inside one second.**
+  `created_at` has one-second resolution and the primary key is a random UUID,
+  so several decisions logged in the same second all chained off whichever UUID
+  sorted highest. Two records claiming the same predecessor is a chain that
+  cannot prove ordering or detect a deleted branch — and one question logs
+  several decisions, so this was the normal case.
+- **The system-key allow-list silently rejected the four new local-model
+  settings**, caught immediately by the write-to-read test and by nothing else.
+- **`test_tokens_are_opaque_and_aligned` was flaky by construction**: it
+  asserted `"1250"` was not a substring of a 32-character hex digest, which
+  fails by coincidence about once in a thousand runs and would pass anyway on a
+  token that genuinely leaked a non-hex value.
+- **95 lines of unreachable code in `graph_api_chat`**, kept "for source
+  compatibility" that nothing depends on.
+
+### Not landed, and why
+
+- **B1 — generating the extra candidates.** The selector and its trigger are
+  in place and the ambiguity rate is now measured, but a candidate has to be
+  executed before it can be selected, and execution sits a thousand lines
+  downstream of generation in `_handle_query_impl` through validation and the
+  compliance gate. Factoring that sequence into a callable unit is the next
+  commit's work; restructuring the product's most important function at speed
+  is how this codebase acquired the inert-code defects its testing doctrine
+  exists to prevent.
+- **A1 pipeline routing.** Domains, routing and scope-narrowing are built and
+  tested; threading the resolved scope into `_handle_query_impl` is the same
+  refactor B1 needs and is best done once, for both.
+- **A2 — multiple connections per workspace.** Deliberately deferred per §8;
+  domains within one connection cover what "multiple apps in a tenant" means
+  for a warehouse-backed customer.
+- **D4** (synonyms mined from failed questions), **E2b** (moving example
+  retrieval off its older ChromaDB path), **E3** (auto-drafting date roles and
+  metric proposals for review), **F1** (in-loop clarification), and the **MCP
+  surface** (§6, sequenced after G2, which is now done).
+- **Admin pages for domains and the readiness backlog.** Both have working,
+  tested JSON endpoints; neither has a screen yet.
+
+---
+
+## 11. Suggested first commit
+
+*(Done — `b2c4236`.)* Phase C1, the evidence engine: a typed `AnalysisEvidence`
+built from the analysers we already own, with tests that execute it over fixed
+row sets. Self-contained, no schema change, and the piece the other two claims
+are built on.
+
+**The next one** is the `_handle_query_impl` refactor that B1 and A1 both need:
+extract the generate → validate → execute sequence into a callable unit, so a
+candidate can be produced and executed more than once and a domain's scope can
+be threaded through it. Everything else in this document is either landed or
+waiting on that.
