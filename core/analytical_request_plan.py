@@ -360,6 +360,29 @@ def compile_analytical_request_plan(
         "missing_slots": list(dict.fromkeys(missing_slots)),
         "source_fact": selected_fact,
         "source_facts": source_facts,
+        # What the compiler chose BETWEEN, not just what it chose.
+        #
+        # Business-source arbitration weighs several facts and keeps one;
+        # metric matching can resolve to several source tables; a question
+        # with two temporal policies has two date roles it could anchor on.
+        # All of that was computed and thrown away, so a plan that was a
+        # coin-flip and a plan that was determined looked identical
+        # downstream -- and the product presented both with the same
+        # confidence. core.candidate_selection reads these to decide when a
+        # question is worth more than one query.
+        "considered_facts": sorted({
+            str(value) for value in (
+                list(selected_facts) + list(source_facts) + list(metric_sources)
+            ) if value
+        }),
+        "considered_date_roles": sorted({
+            str((policy or {}).get("date_role") or (policy or {}).get("column") or "")
+            for policy in temporal
+            if isinstance(policy, dict)
+        } - {""}),
+        "considered_metrics": sorted({
+            str(m.get("name") or "") for m in registered_metrics if m.get("name")
+        }),
         "source_kind": str(source_scope.get("source_kind") or "fact"),
         "subrequests": subrequests,
         "measures": measures,

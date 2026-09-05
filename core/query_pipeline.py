@@ -4713,6 +4713,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         analytical_intent_plan=_analytical_plan.to_dict(),
     )
     _semantic_plan["analytical_request_plan"] = _analytical_request_plan
+    # Which decisions this plan left open. A plan that arbitrated between two
+    # facts and a plan that had exactly one are answered with identical
+    # confidence today, and nothing recorded the difference -- so there was no
+    # way to know how often an answer rests on a coin-flip. Recorded now so
+    # the rate is measurable before anything is built on top of it.
+    try:
+        from core.candidate_selection import ambiguity_of
+        _plan_ambiguity = ambiguity_of(_analytical_request_plan)
+    except Exception as _amb_exc:  # noqa: BLE001
+        log.warning("Plan ambiguity not computed: %s", _amb_exc)
+        _plan_ambiguity = []
+    if _plan_ambiguity:
+        log.info(
+            "Analytical request plan for %s left %s open: considered facts=%s "
+            "date_roles=%s",
+            account_id, ", ".join(_plan_ambiguity),
+            _analytical_request_plan.get("considered_facts"),
+            _analytical_request_plan.get("considered_date_roles"),
+        )
     _trace_step(
         trace_id,
         "analytical_request_plan",
@@ -4723,6 +4742,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             "dimensions": len(_analytical_request_plan.get("dimensions") or []),
             "temporal_operations": len(_analytical_request_plan.get("temporal_operations") or []),
             "subrequests": len(_analytical_request_plan.get("subrequests") or []),
+            "ambiguity": _plan_ambiguity,
         },
         metadata=_analytical_request_plan,
     )
