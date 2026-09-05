@@ -3,10 +3,8 @@
 {% block content %}
 <div style="max-width:760px;margin:0 auto">
   <div class="page-header">
-    <h1>New report</h1>
-    <p>Group a few metrics you check often into a named report you can ask for
-      later ("what's my {name} report?") or subscribe to for a scheduled
-      digest. Each metric still respects your own table access.</p>
+    <h1>{{ t('ui.report.title') }}</h1>
+    <p>{{ t('ui.report.intro') }}</p>
   </div>
 
   {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
@@ -16,19 +14,19 @@
       <form method="post" action="/portal/reports/create">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
           <div>
-            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Report name</label>
-            <input name="name" type="text" required placeholder="e.g. My Territory Snapshot" style="width:100%">
+            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">{{ t('ui.report.name') }}</label>
+            <input name="name" type="text" required placeholder="{{ t('ui.report.name_placeholder') }}" style="width:100%">
           </div>
           <div>
-            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">Description</label>
-            <input name="description" type="text" placeholder="What this report covers" style="width:100%">
+            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">{{ t('ui.report.description') }}</label>
+            <input name="description" type="text" placeholder="{{ t('ui.report.description_placeholder') }}" style="width:100%">
           </div>
         </div>
 
         <div style="margin-top:1rem">
           <div style="font-size:var(--font-xs);font-weight:700;color:var(--gray-500);
             text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">
-            Metrics to include
+            {{ t('ui.report.metrics') }}
           </div>
           {% if all_metrics %}
             {% for m in all_metrics %}
@@ -42,15 +40,14 @@
             {% endfor %}
           {% else %}
             <div style="font-size:var(--font-sm);color:var(--gray-500)">
-              No metrics are available to you yet — ask your admin to grant table access
-              or add metrics to the registry.
+              {{ t('ui.report.no_metrics') }}
             </div>
           {% endif %}
         </div>
 
         <div style="margin-top:1rem;display:flex;gap:.5rem">
-          <button type="submit" class="btn btn-primary btn-sm">Create report</button>
-          <a href="/portal/notifications" class="btn btn-secondary btn-sm">Cancel</a>
+          <button type="submit" class="btn btn-primary btn-sm">{{ t('ui.report.create') }}</button>
+          <a href="/portal/notifications" class="btn btn-secondary btn-sm">{{ t('ui.pin.cancel') }}</a>
         </div>
       </form>
     </div>

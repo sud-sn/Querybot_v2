@@ -1496,6 +1496,279 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.chart.palette": {"en": "Palette", "fr": "Palette"},
     "ui.chat.chart.outlier": {"en": "Outlier", "fr": "Valeur aberrante"},
 
+    # ── The sign-in page ─────────────────────────────────────────────────────
+    # Pre-authentication, so the language comes from Accept-Language rather
+    # than the reader's stored preference -- a French browser gets a French
+    # login screen before there is any account to read a setting from.
+    "ui.auth.tagline": {
+        "en": "Secure data intelligence workspace",
+        "fr": "Espace sécurisé d'intelligence des données",
+    },
+    "ui.auth.account_id": {"en": "Account ID", "fr": "Identifiant du compte"},
+    "ui.auth.account_id_placeholder": {"en": "e.g. acme-corp", "fr": "ex. acme-corp"},
+    "ui.auth.account_id_note": {
+        "en": "Ask your administrator for your Account ID",
+        "fr": "Demandez votre identifiant de compte à votre administrateur",
+    },
+    "ui.auth.email": {"en": "Email", "fr": "E-mail"},
+    "ui.auth.password": {"en": "Password", "fr": "Mot de passe"},
+    "ui.auth.email_placeholder": {"en": "you@company.com", "fr": "vous@entreprise.com"},
+    "ui.auth.show_password": {"en": "Show password", "fr": "Afficher le mot de passe"},
+    "ui.auth.hide_password": {"en": "Hide password", "fr": "Masquer le mot de passe"},
+    "ui.auth.toggle_password": {"en": "Show / hide password", "fr": "Afficher / masquer le mot de passe"},
+    "ui.auth.sign_in": {"en": "Sign in", "fr": "Se connecter"},
+    "ui.auth.first_time": {
+        "en": "First time? Message your organisation's QueryBot to get a registration link.",
+        "fr": "Première visite ? Écrivez au QueryBot de votre organisation pour obtenir un lien d'inscription.",
+    },
+
+    # ── Registration ─────────────────────────────────────────────────────────
+    "ui.auth.setting_up_for": {
+        "en": "Setting up your account for {client}",
+        "fr": "Configuration de votre compte pour {client}",
+    },
+    "ui.auth.link_expired_help": {
+        "en": "Message your QueryBot in Zoom to receive a new registration link.",
+        "fr": "Écrivez à votre QueryBot dans Zoom pour recevoir un nouveau lien d'inscription.",
+    },
+    "ui.auth.create_account_title": {"en": "Create your account", "fr": "Créez votre compte"},
+    "ui.auth.one_time_link": {"en": "One-time registration link", "fr": "Lien d'inscription à usage unique"},
+    "ui.auth.one_time_link_note": {
+        "en": "This link expires in 48 hours and can only be used once.",
+        "fr": "Ce lien expire dans 48 heures et ne peut être utilisé qu'une seule fois.",
+    },
+    "ui.auth.full_name": {"en": "Full name", "fr": "Nom complet"},
+    "ui.auth.full_name_placeholder": {"en": "Jane Smith", "fr": "Marie Dupont"},
+    "ui.auth.work_email": {"en": "Work email", "fr": "E-mail professionnel"},
+    "ui.auth.work_email_placeholder": {"en": "jane@company.com", "fr": "marie@entreprise.com"},
+    "ui.auth.min_characters": {"en": "Min 8 characters", "fr": "8 caractères minimum"},
+    "ui.auth.confirm_password": {"en": "Confirm password", "fr": "Confirmez le mot de passe"},
+    "ui.auth.repeat_password": {"en": "Repeat password", "fr": "Répétez le mot de passe"},
+    "ui.auth.create_account": {"en": "Create account", "fr": "Créer le compte"},
+    "ui.auth.after_registering": {
+        "en": "After registering, your administrator will assign you to a group so you can start querying data.",
+        "fr": "Après votre inscription, votre administrateur vous affectera à un groupe pour que vous puissiez interroger les données.",
+    },
+
+    # ── Changing a password ──────────────────────────────────────────────────
+    "ui.auth.set_password_title": {"en": "Set your password", "fr": "Définissez votre mot de passe"},
+    "ui.auth.set_password_body": {
+        "en": "You must set a new password before continuing.",
+        "fr": "Vous devez définir un nouveau mot de passe avant de continuer.",
+    },
+    "ui.auth.change_password_title": {"en": "Change password", "fr": "Changer le mot de passe"},
+    "ui.auth.change_password_body": {
+        "en": "Update your account password.",
+        "fr": "Mettez à jour le mot de passe de votre compte.",
+    },
+    "ui.auth.temporary_password": {
+        "en": "Your account was created with a temporary password. Please set a new one now.",
+        "fr": "Votre compte a été créé avec un mot de passe temporaire. Veuillez en définir un nouveau maintenant.",
+    },
+    "ui.auth.current_password": {"en": "Current password", "fr": "Mot de passe actuel"},
+    "ui.auth.current_password_placeholder": {"en": "Your current password", "fr": "Votre mot de passe actuel"},
+    "ui.auth.new_password": {"en": "New password", "fr": "Nouveau mot de passe"},
+    "ui.auth.confirm_new_password": {"en": "Confirm new password", "fr": "Confirmez le nouveau mot de passe"},
+    "ui.auth.repeat_new_password": {"en": "Repeat new password", "fr": "Répétez le nouveau mot de passe"},
+    "ui.auth.set_password": {"en": "Set password", "fr": "Définir le mot de passe"},
+
+    # ── Pinning a chart from a link ──────────────────────────────────────────
+    "ui.pinpage.title": {"en": "Add chart to a dashboard", "fr": "Ajouter le graphique à un tableau de bord"},
+    "ui.pinpage.subtitle": {
+        "en": "Choose a named dashboard or create one for this live, governed result.",
+        "fr": "Choisissez un tableau de bord existant ou créez-en un pour ce résultat gouverné en direct.",
+    },
+    "ui.pinpage.chart_title": {"en": "Chart title", "fr": "Titre du graphique"},
+    "ui.pinpage.chart_title_placeholder": {
+        "en": "e.g. Total revenue this month", "fr": "ex. Chiffre d'affaires total ce mois-ci",
+    },
+    "ui.pinpage.existing": {"en": "Existing dashboard", "fr": "Tableau de bord existant"},
+    "ui.pinpage.create_new": {"en": "Create a new dashboard", "fr": "Créer un tableau de bord"},
+    "ui.pinpage.option.one": {"en": "{name} · {count} visual", "fr": "{name} · {count} visuel"},
+    "ui.pinpage.option.other": {"en": "{name} · {count} visuals", "fr": "{name} · {count} visuels"},
+    "ui.pinpage.new_name": {"en": "New dashboard name", "fr": "Nom du nouveau tableau de bord"},
+    "ui.pinpage.new_name_only": {
+        "en": "New dashboard name (only when creating new)",
+        "fr": "Nom du nouveau tableau de bord (uniquement à la création)",
+    },
+    "ui.pinpage.new_name_placeholder": {"en": "e.g. Pharmacy performance", "fr": "ex. Performance pharmacie"},
+    "ui.pinpage.default_name": {"en": "My Dashboard", "fr": "Mon tableau de bord"},
+    "ui.pinpage.original_question": {"en": "Original question", "fr": "Question d'origine"},
+    "ui.pinpage.sql_note": {
+        "en": "SQL query (runs live on refresh)",
+        "fr": "Requête SQL (exécutée en direct à l'actualisation)",
+    },
+
+    # ── The new-report form ──────────────────────────────────────────────────
+    "ui.report.title": {"en": "New report", "fr": "Nouveau rapport"},
+    # The braces around {name} are literal: the sentence shows the reader the
+    # shape of the question, it is not interpolated. t() leaves an unsupplied
+    # placeholder in place, so this is safe whether or not kwargs are ever
+    # passed to this id.
+    "ui.report.intro": {
+        "en": "Group a few metrics you check often into a named report you can ask for later (\"what's my {name} report?\") or subscribe to for a scheduled digest. Each metric still respects your own table access.",
+        "fr": "Regroupez les indicateurs que vous consultez souvent dans un rapport nommé que vous pourrez demander plus tard (« quel est mon rapport {name} ? ») ou recevoir sur abonnement. Chaque indicateur respecte toujours vos propres accès aux tables.",
+    },
+    "ui.report.name": {"en": "Report name", "fr": "Nom du rapport"},
+    "ui.report.name_placeholder": {"en": "e.g. My Territory Snapshot", "fr": "ex. Synthèse de mon secteur"},
+    "ui.report.description": {"en": "Description", "fr": "Description"},
+    "ui.report.description_placeholder": {"en": "What this report covers", "fr": "Ce que couvre ce rapport"},
+    "ui.report.metrics": {"en": "Metrics to include", "fr": "Indicateurs à inclure"},
+    "ui.report.no_metrics": {
+        "en": "No metrics are available to you yet — ask your admin to grant table access or add metrics to the registry.",
+        "fr": "Aucun indicateur ne vous est encore accessible — demandez à votre administrateur d'accorder l'accès aux tables ou d'ajouter des indicateurs au registre.",
+    },
+    "ui.report.create": {"en": "Create report", "fr": "Créer le rapport"},
+
+    # ── The notifications page ───────────────────────────────────────────────
+    "ui.notif.title": {"en": "My Notifications", "fr": "Mes notifications"},
+    "ui.notif.intro": {
+        "en": "Alerts you've set up on results, and reports you can subscribe to for a scheduled digest.",
+        "fr": "Les alertes que vous avez créées sur des résultats, et les rapports auxquels vous pouvez vous abonner pour un envoi programmé.",
+    },
+    "ui.notif.saved": {"en": "Saved.", "fr": "Enregistré."},
+    "ui.notif.your_alerts": {"en": "Your alerts", "fr": "Vos alertes"},
+    # No plural forms: "min" is invariant in both languages, so a .one/.other
+    # split here would be two identical sentences pretending to be a rule.
+    "ui.notif.checks_every": {
+        "en": "checks every {count} min", "fr": "vérifie toutes les {count} min",
+    },
+    "ui.notif.last_checked": {"en": "last checked {when}", "fr": "dernière vérification {when}"},
+    "ui.notif.last_sent": {"en": "last sent {when}", "fr": "dernier envoi {when}"},
+    "ui.notif.delete": {"en": "Delete", "fr": "Supprimer"},
+    "ui.notif.delete_alert_title": {"en": "Delete alert?", "fr": "Supprimer l'alerte ?"},
+    "ui.notif.delete_undone": {"en": "This cannot be undone.", "fr": "Cette action est irréversible."},
+    "ui.notif.delete_report_title": {"en": "Delete report?", "fr": "Supprimer le rapport ?"},
+    "ui.notif.delete_report_body": {
+        "en": "This cannot be undone. Subscriptions to it will stop.",
+        "fr": "Cette action est irréversible. Les abonnements à ce rapport prendront fin.",
+    },
+    "ui.notif.no_alerts": {
+        "en": "No alerts set up yet — ask a question in Chat, then use \"Alert me on changes\" on the result.",
+        "fr": "Aucune alerte pour l'instant — posez une question dans le chat, puis utilisez « M'alerter en cas de changement » sur le résultat.",
+    },
+    "ui.notif.my_reports": {"en": "My reports", "fr": "Mes rapports"},
+    "ui.notif.new_report": {"en": "New report", "fr": "Nouveau rapport"},
+    "ui.notif.describe_in_chat": {
+        "en": "Or describe it in chat — try \"build a report with net revenue and top customers, scheduled every Monday at 9am\".",
+        "fr": "Ou décrivez-le dans le chat — essayez « crée un rapport avec le chiffre d'affaires net et les meilleurs clients, programmé chaque lundi à 9 h ».",
+    },
+    "ui.notif.no_my_reports": {
+        "en": "You haven't created any reports yet — group a few metrics you check often into one you can ask for or subscribe to.",
+        "fr": "Vous n'avez encore créé aucun rapport — regroupez les indicateurs que vous consultez souvent dans un rapport que vous pourrez demander ou recevoir sur abonnement.",
+    },
+    "ui.notif.subscriptions": {"en": "Report subscriptions", "fr": "Abonnements aux rapports"},
+    "ui.notif.unsubscribe": {"en": "Unsubscribe", "fr": "Se désabonner"},
+    "ui.notif.subscribe": {"en": "Subscribe", "fr": "S'abonner"},
+    "ui.notif.subscribed": {"en": "Subscribed", "fr": "Abonné"},
+    "ui.notif.on_day": {"en": "(day {day})", "fr": "(jour {day})"},
+    "ui.notif.at_hour": {"en": "at {hour}:00", "fr": "à {hour} h 00"},
+    "ui.notif.day_label": {"en": "Day (weekly only)", "fr": "Jour (hebdomadaire uniquement)"},
+    "ui.notif.hour_label": {"en": "Hour (server local time)", "fr": "Heure (heure locale du serveur)"},
+    "ui.notif.no_reports": {
+        "en": "No reports have been set up for this account yet — ask your admin to create one.",
+        "fr": "Aucun rapport n'a encore été créé pour ce compte — demandez à votre administrateur d'en créer un.",
+    },
+
+    # Alert and subscription states. The VALUE is the wire enum in each case.
+    "ui.enum.alertstatus.active": {"en": "active", "fr": "active"},
+    "ui.enum.alertstatus.paused": {"en": "paused", "fr": "en pause"},
+    "ui.enum.condition.change_pct": {"en": "changes by", "fr": "varie de"},
+    "ui.enum.condition.above": {"en": "goes above", "fr": "dépasse"},
+    "ui.enum.condition.below": {"en": "falls below", "fr": "descend sous"},
+
+    # Weekday abbreviations for the schedule picker. The VALUE is the index.
+    "ui.notif.day.0": {"en": "Mon", "fr": "Lun"},
+    "ui.notif.day.1": {"en": "Tue", "fr": "Mar"},
+    "ui.notif.day.2": {"en": "Wed", "fr": "Mer"},
+    "ui.notif.day.3": {"en": "Thu", "fr": "Jeu"},
+    "ui.notif.day.4": {"en": "Fri", "fr": "Ven"},
+    "ui.notif.day.5": {"en": "Sat", "fr": "Sam"},
+    "ui.notif.day.6": {"en": "Sun", "fr": "Dim"},
+
+    # ── The Semantic Layer page ──────────────────────────────────────────────
+    "ui.kb.intro": {
+        "en": "Review the field meanings QueryBot uses for your assigned tables. If something is wrong, submit a correction for admin approval instead of changing the live Semantic Layer directly.",
+        "fr": "Vérifiez la signification des champs que QueryBot utilise pour les tables qui vous sont attribuées. Si quelque chose est incorrect, soumettez une correction à la validation de l'administrateur plutôt que de modifier directement la couche sémantique en production.",
+    },
+    "ui.kb.pending.one": {"en": "{count} pending review", "fr": "{count} correction en attente"},
+    "ui.kb.pending.other": {"en": "{count} pending reviews", "fr": "{count} corrections en attente"},
+    "ui.kb.back_to_chat": {"en": "Back to chat", "fr": "Retour au chat"},
+    "ui.kb.saved": {
+        "en": "Your correction was sent to the admin review queue. It will update the Semantic Layer only after approval.",
+        "fr": "Votre correction a été envoyée à la file de validation de l'administrateur. Elle ne mettra à jour la couche sémantique qu'après approbation.",
+    },
+    "ui.kb.empty_submission": {
+        "en": "Add a suggested meaning, suggested use, or comment before submitting.",
+        "fr": "Ajoutez une signification, un usage ou un commentaire avant d'envoyer.",
+    },
+    "ui.kb.no_metadata": {
+        "en": "No Semantic Layer metadata is available yet, or you have not been assigned to a table group.",
+        "fr": "Aucune métadonnée de couche sémantique n'est encore disponible, ou vous n'avez pas été affecté à un groupe de tables.",
+    },
+    "ui.kb.schema_selector": {"en": "Schema selector", "fr": "Sélecteur de schéma"},
+    "ui.kb.search": {"en": "Search tables and fields…", "fr": "Rechercher des tables et des champs…"},
+    "ui.kb.no_match": {
+        "en": "No tables or fields match {query}. Try a shorter term or clear the search.",
+        "fr": "Aucune table ni aucun champ ne correspond à {query}. Essayez un terme plus court ou effacez la recherche.",
+    },
+    "ui.kb.matched.tables.one": {"en": "{count} table", "fr": "{count} table"},
+    "ui.kb.matched.tables.other": {"en": "{count} tables", "fr": "{count} tables"},
+    "ui.kb.matched.fields.one": {"en": "{count} field matched", "fr": "{count} champ trouvé"},
+    "ui.kb.matched.fields.other": {"en": "{count} fields matched", "fr": "{count} champs trouvés"},
+    "ui.kb.tables_in": {"en": "Tables in {schema}", "fr": "Tables dans {schema}"},
+    "ui.kb.field_count.one": {"en": "{count} field", "fr": "{count} champ"},
+    "ui.kb.field_count.other": {"en": "{count} fields", "fr": "{count} champs"},
+    "ui.kb.default_overview": {
+        "en": "Field-level business metadata extracted from the approved KB.",
+        "fr": "Métadonnées métier au niveau des champs, extraites de la base de connaissances approuvée.",
+    },
+    "ui.kb.pass": {"en": "{score}% pass", "fr": "{score} % de réussite"},
+
+    # The field table's headings.
+    "ui.kb.col.field": {"en": "Field", "fr": "Champ"},
+    "ui.kb.col.meaning": {"en": "What this field is", "fr": "Ce qu'est ce champ"},
+    "ui.kb.col.use_case": {"en": "What it is used for", "fr": "À quoi il sert"},
+    "ui.kb.col.terms": {"en": "Business terms", "fr": "Termes métier"},
+    "ui.kb.col.confidence": {"en": "Confidence", "fr": "Confiance"},
+    "ui.kb.col.feedback": {"en": "Feedback", "fr": "Retour"},
+
+    "ui.kb.type_unknown": {"en": "type unknown", "fr": "type inconnu"},
+    "ui.kb.nullable": {"en": "nullable {value}", "fr": "nullable {value}"},
+    "ui.kb.values": {"en": "Values: {values}", "fr": "Valeurs : {values}"},
+    "ui.kb.badge.pending": {"en": "pending review", "fr": "en attente de validation"},
+    "ui.kb.badge.approved": {"en": "admin approved", "fr": "validé par l'administrateur"},
+    "ui.kb.badge.needs_context": {"en": "needs context", "fr": "contexte manquant"},
+    "ui.kb.no_terms": {"en": "No business terms yet", "fr": "Aucun terme métier pour l'instant"},
+
+    # The correction form.
+    "ui.kb.suggest_edit": {"en": "Suggest edit", "fr": "Proposer une correction"},
+    "ui.kb.close_edit": {"en": "Close edit", "fr": "Fermer"},
+    "ui.kb.suggested_meaning": {"en": "Suggested field meaning", "fr": "Signification proposée"},
+    "ui.kb.suggested_meaning_placeholder": {
+        "en": "What should this field mean?", "fr": "Que devrait signifier ce champ ?",
+    },
+    "ui.kb.suggested_use": {"en": "Suggested use case", "fr": "Usage proposé"},
+    "ui.kb.suggested_use_placeholder": {
+        "en": "How should QueryBot use this field?",
+        "fr": "Comment QueryBot devrait-il utiliser ce champ ?",
+    },
+    "ui.kb.terms_placeholder": {
+        "en": "Comma-separated, e.g. purchase quantity, number of items purchased",
+        "fr": "Séparés par des virgules, ex. quantité achetée, nombre d'articles achetés",
+    },
+    "ui.kb.terms_hint": {
+        "en": "Other words a question might use for this field — helps QueryBot match phrasing it wouldn't otherwise recognize.",
+        "fr": "D'autres mots qu'une question pourrait employer pour ce champ — cela aide QueryBot à reconnaître des formulations qu'il ignorerait autrement.",
+    },
+    "ui.kb.comment": {"en": "Comment for admin", "fr": "Commentaire pour l'administrateur"},
+    "ui.kb.comment_placeholder": {"en": "Why should this be changed?", "fr": "Pourquoi faut-il modifier cela ?"},
+    "ui.kb.approval_note": {
+        "en": "This creates an admin approval request. The live Semantic Layer is unchanged until approved.",
+        "fr": "Cela crée une demande de validation. La couche sémantique en production reste inchangée jusqu'à l'approbation.",
+    },
+    "ui.kb.send_for_approval": {"en": "Send for approval", "fr": "Envoyer pour validation"},
+
     # ── Browser tab titles ───────────────────────────────────────────────────
     # Chrome the reader sees on every page, and the one string that is still in
     # front of them when the tab is in the background.
@@ -1774,7 +2047,13 @@ def plural(msg_id_stem: str, count, lang: str | None = None, **kw) -> str:
     tag = normalise_language(lang if lang is not None else get_active_language())
     try:
         number = abs(float(count))
-    except (TypeError, ValueError):
+    except Exception:  # noqa: BLE001
+        # Anything that will not coerce takes the plural. Deliberately broad,
+        # and for the same reason t() leaves an unsupplied placeholder in
+        # place: a count that arrives missing is a bug, but a page that 500s
+        # because of it costs the reader everything else on it. Jinja's
+        # Undefined raises UndefinedError rather than TypeError, so a template
+        # whose route forgot one key is exactly this case.
         number = 2.0
     if tag == "fr":
         one = number < 2          # French: 0 and 1 both take the singular

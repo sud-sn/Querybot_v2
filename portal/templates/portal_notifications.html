@@ -3,15 +3,15 @@
 {% block content %}
 <div style="max-width:760px;margin:0 auto">
   <div class="page-header">
-    <h1>My Notifications</h1>
-    <p>Alerts you've set up on results, and reports you can subscribe to for a scheduled digest.</p>
+    <h1>{{ t('ui.notif.title') }}</h1>
+    <p>{{ t('ui.notif.intro') }}</p>
   </div>
 
-  {% if saved %}<div class="alert alert-success">Saved.</div>{% endif %}
+  {% if saved %}<div class="alert alert-success">{{ t('ui.notif.saved') }}</div>{% endif %}
   {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 
   <div class="card" style="margin-bottom:1.5rem">
-    <div class="card-header"><h2 style="font-size:15px;margin:0">Your alerts</h2></div>
+    <div class="card-header"><h2 style="font-size:15px;margin:0">{{ t('ui.notif.your_alerts') }}</h2></div>
     <div class="card-body" style="padding:1rem">
       {% if alerts %}
         {% for a in alerts %}
@@ -20,23 +20,23 @@
             <div>
               <div style="font-size:var(--font-base);font-weight:600">{{ a.question }}</div>
               <div style="font-size:var(--font-xs);color:var(--gray-500)">
-                {{ a.metric_col }} {{ a.condition }} {{ a.threshold }}
+                {{ a.metric_col }} {{ enum_label('condition', a.condition) }} {{ a.threshold }}
                 {% if a.condition == 'change_pct' %}%{% endif %}
-                &middot; checks every {{ a.check_interval_minutes or 60 }} min
-                &middot; {% if a.status == 'active' %}active{% else %}paused{% endif %}
-                {% if a.last_checked %}&middot; last checked {{ a.last_checked }}{% endif %}
+                &middot; {{ t('ui.notif.checks_every', count=a.check_interval_minutes or 60) }}
+                &middot; {{ enum_label('alertstatus', a.status if a.status == 'active' else 'paused') }}
+                {% if a.last_checked %}&middot; {{ t('ui.notif.last_checked', when=a.last_checked) }}{% endif %}
               </div>
             </div>
             <form method="post" action="/portal/notifications/alerts/{{ a.id }}/delete"
               style="display:inline" id="del-alert-{{ a.id }}">
               <button type="button" class="btn btn-secondary btn-sm"
-                onclick="qbConfirm({title:'Delete alert?',body:'This cannot be undone.',confirm:'Delete',onConfirm:()=>document.getElementById('del-alert-{{ a.id }}').submit()})">Delete</button>
+                onclick="qbConfirm({title:{{ t('ui.notif.delete_alert_title')|tojson }},body:{{ t('ui.notif.delete_undone')|tojson }},confirm:{{ t('ui.notif.delete')|tojson }},onConfirm:()=>document.getElementById('del-alert-{{ a.id }}').submit()})">{{ t('ui.notif.delete') }}</button>
             </form>
           </div>
         {% endfor %}
       {% else %}
         <div style="font-size:var(--font-sm);color:var(--gray-500)">
-          No alerts set up yet — ask a question in Chat, then use "Alert me on changes" on the result.
+          {{ t('ui.notif.no_alerts') }}
         </div>
       {% endif %}
     </div>
@@ -44,13 +44,12 @@
 
   <div class="card" style="margin-bottom:1.5rem">
     <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
-      <h2 style="font-size:15px;margin:0">My reports</h2>
-      <a href="/portal/reports/new" class="btn btn-primary btn-sm">+ New report</a>
+      <h2 style="font-size:15px;margin:0">{{ t('ui.notif.my_reports') }}</h2>
+      <a href="/portal/reports/new" class="btn btn-primary btn-sm">+ {{ t('ui.notif.new_report') }}</a>
     </div>
     <div class="card-body" style="padding:1rem">
       <div style="font-size:var(--font-xs);color:var(--gray-500);margin-bottom:.75rem">
-        Or describe it in chat — try "build a report with net revenue and top
-        customers, scheduled every Monday at 9am".
+        {{ t('ui.notif.describe_in_chat') }}
       </div>
       {% if my_reports %}
         {% for r in my_reports %}
@@ -63,21 +62,20 @@
             <form method="post" action="/portal/reports/{{ r.id }}/delete" style="display:inline"
               id="del-my-report-{{ r.id }}">
               <button type="button" class="btn btn-secondary btn-sm"
-                onclick="qbConfirm({title:'Delete report?',body:'This cannot be undone. Subscriptions to it will stop.',confirm:'Delete',onConfirm:()=>document.getElementById('del-my-report-{{ r.id }}').submit()})">Delete</button>
+                onclick="qbConfirm({title:{{ t('ui.notif.delete_report_title')|tojson }},body:{{ t('ui.notif.delete_report_body')|tojson }},confirm:{{ t('ui.notif.delete')|tojson }},onConfirm:()=>document.getElementById('del-my-report-{{ r.id }}').submit()})">{{ t('ui.notif.delete') }}</button>
             </form>
           </div>
         {% endfor %}
       {% else %}
         <div style="font-size:var(--font-sm);color:var(--gray-500)">
-          You haven't created any reports yet — group a few metrics you check
-          often into one you can ask for or subscribe to.
+          {{ t('ui.notif.no_my_reports') }}
         </div>
       {% endif %}
     </div>
   </div>
 
   <div class="card">
-    <div class="card-header"><h2 style="font-size:15px;margin:0">Report subscriptions</h2></div>
+    <div class="card-header"><h2 style="font-size:15px;margin:0">{{ t('ui.notif.subscriptions') }}</h2></div>
     <div class="card-body" style="padding:1rem">
       {% if reports %}
         {% for r in reports %}
@@ -91,44 +89,45 @@
               {% if sub %}
                 <form method="post" action="/portal/notifications/unsubscribe" style="display:inline">
                   <input type="hidden" name="subscription_id" value="{{ sub.id }}">
-                  <button type="submit" class="btn btn-secondary btn-sm">Unsubscribe</button>
+                  <button type="submit" class="btn btn-secondary btn-sm">{{ t('ui.notif.unsubscribe') }}</button>
                 </form>
               {% endif %}
             </div>
             {% if sub %}
               <div style="font-size:var(--font-xs);color:var(--gray-500);margin-top:.3rem">
-                Subscribed &middot; {{ sub.cadence }}
-                {% if sub.cadence == 'weekly' %}(day {{ sub.day_of_week }}){% endif %}
-                at {{ sub.hour }}:00
-                {% if sub.status != 'active' %}&middot; paused{% endif %}
-                {% if sub.last_sent %}&middot; last sent {{ sub.last_sent }}{% endif %}
+                {{ t('ui.notif.subscribed') }} &middot; {{ enum_label('cadence', sub.cadence) }}
+                {% if sub.cadence == 'weekly' %}{{ t('ui.notif.on_day', day=t('ui.notif.day.' ~ sub.day_of_week)) }}{% endif %}
+                {{ t('ui.notif.at_hour', hour=sub.hour) }}
+                {% if sub.status != 'active' %}&middot; {{ enum_label('alertstatus', 'paused') }}{% endif %}
+                {% if sub.last_sent %}&middot; {{ t('ui.notif.last_sent', when=sub.last_sent) }}{% endif %}
               </div>
             {% else %}
               <form method="post" action="/portal/notifications/subscribe"
                 style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;flex-wrap:wrap">
                 <input type="hidden" name="report_id" value="{{ r.id }}">
                 <select name="cadence" style="width:auto">
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
+                  {% for value in ['daily', 'weekly'] %}
+                  <option value="{{ value }}">{{ enum_label('cadence', value) }}</option>
+                  {% endfor %}
                 </select>
-                <select name="day_of_week" style="width:auto" title="Day (weekly only)">
-                  <option value="0">Mon</option><option value="1">Tue</option><option value="2">Wed</option>
-                  <option value="3">Thu</option><option value="4">Fri</option><option value="5">Sat</option>
-                  <option value="6">Sun</option>
+                <select name="day_of_week" style="width:auto" title="{{ t('ui.notif.day_label') }}">
+                  {% for day in range(7) %}
+                  <option value="{{ day }}">{{ t('ui.notif.day.' ~ day) }}</option>
+                  {% endfor %}
                 </select>
-                <select name="hour" style="width:auto" title="Hour (server local time)">
+                <select name="hour" style="width:auto" title="{{ t('ui.notif.hour_label') }}">
                   {% for h in range(24) %}
                     <option value="{{ h }}" {% if h == 8 %}selected{% endif %}>{{ '%02d'|format(h) }}:00</option>
                   {% endfor %}
                 </select>
-                <button type="submit" class="btn btn-primary btn-sm">Subscribe</button>
+                <button type="submit" class="btn btn-primary btn-sm">{{ t('ui.notif.subscribe') }}</button>
               </form>
             {% endif %}
           </div>
         {% endfor %}
       {% else %}
         <div style="font-size:var(--font-sm);color:var(--gray-500)">
-          No reports have been set up for this account yet — ask your admin to create one.
+          {{ t('ui.notif.no_reports') }}
         </div>
       {% endif %}
     </div>

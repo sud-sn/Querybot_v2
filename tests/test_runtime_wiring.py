@@ -549,7 +549,10 @@ class RouteRegistrationTests(unittest.TestCase):
         empty = visible(render(charts=[]))
         self.assertIn("View Semantic Layer", with_charts)
         self.assertIn("Browse Semantic Layer", empty)
-        self.assertIn("live Semantic Layer directly", kb_html)
+        # The page's intro is a catalogue id now, so this checks the sentence
+        # still reaches the reader rather than that it sits in the template.
+        from core import i18n
+        self.assertIn("live Semantic Layer directly", i18n.t("ui.kb.intro", lang="en"))
         self.assertNotIn("Browse Knowledge Base", with_charts)
         self.assertNotIn("View KB docs", with_charts)
 

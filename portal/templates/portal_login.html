@@ -9,7 +9,7 @@
     {{ brand_motion('portal-auth', 'error' if error else 'idle', 'lg', root_id='portalAuthMark', extra_class='qb-brand-motion--intro') }}
     <div>
       <div class="login-brand">Query<span>Bot</span></div>
-      <p class="login-tagline">Secure data intelligence workspace</p>
+      <p class="login-tagline">{{ t('ui.auth.tagline') }}</p>
     </div>
   </div>
 
@@ -18,31 +18,31 @@
       {% if error %}{{ alert(error, 'error', 'x-circle') }}{% endif %}
       <form method="post" action="/portal/login" data-loading data-brand-loading data-brand-target="portalAuthMark">
         <div class="form-group">
-          <label for="login-account">Account ID</label>
+          <label for="login-account">{{ t('ui.auth.account_id') }}</label>
           <input id="login-account" type="text" name="account_id" autofocus required
-            placeholder="e.g. acme-corp" class="login-mono-input">
-          <p class="form-note">Ask your administrator for your Account ID</p>
+            placeholder="{{ t('ui.auth.account_id_placeholder') }}" class="login-mono-input">
+          <p class="form-note">{{ t('ui.auth.account_id_note') }}</p>
         </div>
         <div class="form-group">
-          <label for="login-email">Email</label>
-          <input id="login-email" type="email" name="email" required placeholder="you@company.com">
+          <label for="login-email">{{ t('ui.auth.email') }}</label>
+          <input id="login-email" type="email" name="email" required placeholder="{{ t('ui.auth.email_placeholder') }}">
         </div>
         <div class="form-group">
-          <label for="login-password">Password</label>
+          <label for="login-password">{{ t('ui.auth.password') }}</label>
           <div class="input-reveal-wrap">
             <input id="login-password" type="password" name="password" required placeholder="••••••••">
             <button type="button" class="input-reveal-btn" id="login-pw-reveal"
-              aria-label="Show password" title="Show / hide password">
+              aria-label="{{ t('ui.auth.show_password') }}" title="{{ t('ui.auth.toggle_password') }}">
               {{ ic("eye", 15) }}
             </button>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary login-submit">Sign in →</button>
+        <button type="submit" class="btn btn-primary login-submit">{{ t('ui.auth.sign_in') }} &rarr;</button>
       </form>
     </div>
   </div>
 
-  <p class="login-footer">First time? Message your organisation's QueryBot to get a registration link.</p>
+  <p class="login-footer">{{ t('ui.auth.first_time') }}</p>
 </div>
 
 <style>
@@ -73,7 +73,8 @@
     const show = input.type === 'password';
     input.type  = show ? 'text' : 'password';
     btn.innerHTML = show ? EYE_OFF : EYE;
-    btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    btn.setAttribute('aria-label',
+      window.qbT(show ? 'ui.auth.hide_password' : 'ui.auth.show_password'));
   });
 })();
 </script>

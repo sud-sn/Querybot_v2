@@ -3,8 +3,8 @@
 {% block title %}{{ t('ui.shell.semantic_layer') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
-    {"label": "Dashboard",      "href": "/portal"},
-    {"label": "Semantic Layer", "href": ""},
+    {"label": t('ui.shell.dashboard'),      "href": "/portal"},
+    {"label": t('ui.shell.semantic_layer'), "href": ""},
 ]) }}
 {% endblock %}
 {% block head %}
@@ -76,33 +76,33 @@
 {% block content %}
 <section class="semantic-hero">
   <div class="semantic-title">
-    <h1>Semantic Layer</h1>
-    <p>Review the field meanings QueryBot uses for your assigned tables. If something is wrong, submit a correction for admin approval instead of changing the live Semantic Layer directly.</p>
+    <h1>{{ t('ui.shell.semantic_layer') }}</h1>
+    <p>{{ t('ui.kb.intro') }}</p>
   </div>
   <div class="semantic-actions">
     <span class="confidence-pill {% if pending_count %}med{% else %}high{% endif %}">
-      {{ pending_count }} pending review{{ 's' if pending_count != 1 else '' }}
+      {{ plural('ui.kb.pending', pending_count) }}
     </span>
-    <a href="/portal/chat" class="btn btn-secondary btn-sm">Back to chat</a>
+    <a href="/portal/chat" class="btn btn-secondary btn-sm">{{ t('ui.kb.back_to_chat') }}</a>
   </div>
 </section>
 
 {% if saved %}
-{{ alert('Your correction was sent to the admin review queue. It will update the Semantic Layer only after approval.', 'success', 'check-circle') }}
+{{ alert(t('ui.kb.saved'), 'success', 'check-circle') }}
 {% endif %}
 {% if request.query_params.get('error') == 'empty' %}
-{{ alert('Add a suggested meaning, suggested use, or comment before submitting.', 'error', 'x-circle') }}
+{{ alert(t('ui.kb.empty_submission'), 'error', 'x-circle') }}
 {% endif %}
 
 {% if not semantic_tables %}
 <div class="card">
   <div class="card-body" style="text-align:center;padding:3rem;color:var(--text-muted)">
     <div style="font-size:34px;margin-bottom:1rem">SL</div>
-    <p>No Semantic Layer metadata is available yet, or you have not been assigned to a table group.</p>
+    <p>{{ t('ui.kb.no_metadata') }}</p>
   </div>
 </div>
 {% else %}
-<nav class="schema-tabs" aria-label="Schema selector">
+<nav class="schema-tabs" aria-label="{{ t('ui.kb.schema_selector') }}">
   {% for schema in schemas %}
   <a class="schema-tab {% if selected_schema == schema %}active{% endif %}" href="/portal/kb?schema={{ schema|urlencode }}">{{ schema }}</a>
   {% endfor %}
@@ -110,22 +110,27 @@
 
 <div class="sl-search-wrap">
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-  <input type="search" id="slSearch" class="sl-search" placeholder="Search tables and fields…" autocomplete="off" spellcheck="false">
+  <input type="search" id="slSearch" class="sl-search" placeholder="{{ t('ui.kb.search') }}" autocomplete="off" spellcheck="false">
 </div>
 <div class="sl-search-meta">
   <span class="sl-count" id="slCount"></span>
 </div>
-<div class="sl-no-results" id="slNoResults">No tables or fields match <strong id="slNoResultsQuery"></strong>. Try a shorter term or clear the search.</div>
+{# The query is a <strong> the script fills in, so the sentence is SPLIT on
+   its placeholder rather than interpolated: a translation that moves the
+   placeholder still puts the query where the sentence wants it. Split rather
+   than |replace, because Markup.replace escapes what it inserts. #}
+{% set _no_match = t('ui.kb.no_match', query='\x00').split('\x00') %}
+<div class="sl-no-results" id="slNoResults">{{ _no_match[0] }}<strong id="slNoResultsQuery"></strong>{{ _no_match[1] if _no_match|length > 1 else '' }}</div>
 
 <div class="semantic-grid">
   <aside class="card table-list">
-    <div class="card-header"><h2>Tables in {{ selected_schema }}</h2></div>
+    <div class="card-header"><h2>{{ t('ui.kb.tables_in', schema=selected_schema) }}</h2></div>
     <div>
       {% for table in visible_tables %}
       <a class="table-link" href="#table-{{ loop.index }}">
         <span>
           <span class="table-name">{{ table.table }}</span>
-          <span class="table-meta">{{ table.field_count }} fields · {{ table.fqn }}</span>
+          <span class="table-meta">{{ plural('ui.kb.field_count', table.field_count) }} · {{ table.fqn }}</span>
         </span>
         <span class="confidence-pill {% if table.confidence >= 85 %}high{% elif table.confidence >= 65 %}med{% else %}low{% endif %}">{{ table.confidence }}%</span>
       </a>
@@ -140,20 +145,20 @@
       <div class="card-header table-head">
         <div>
           <h2>{{ table.schema }}.{{ table.table }}</h2>
-          <p>{{ table.overview or 'Field-level business metadata extracted from the approved KB.' }}</p>
+          <p>{{ table.overview or t('ui.kb.default_overview') }}</p>
         </div>
-        <span class="confidence-pill {% if table.confidence >= 85 %}high{% elif table.confidence >= 65 %}med{% else %}low{% endif %}">{{ table.confidence }}% pass</span>
+        <span class="confidence-pill {% if table.confidence >= 85 %}high{% elif table.confidence >= 65 %}med{% else %}low{% endif %}">{{ t('ui.kb.pass', score=table.confidence) }}</span>
       </div>
       <div style="overflow:auto">
         <table class="field-table">
           <thead>
             <tr>
-              <th style="width:16%">Field</th>
-              <th style="width:26%">What this field is</th>
-              <th>What it is used for</th>
-              <th style="width:220px">Business terms</th>
-              <th style="width:120px">Confidence</th>
-              <th style="width:120px">Feedback</th>
+              <th style="width:16%">{{ t('ui.kb.col.field') }}</th>
+              <th style="width:26%">{{ t('ui.kb.col.meaning') }}</th>
+              <th>{{ t('ui.kb.col.use_case') }}</th>
+              <th style="width:220px">{{ t('ui.kb.col.terms') }}</th>
+              <th style="width:120px">{{ t('ui.kb.col.confidence') }}</th>
+              <th style="width:120px">{{ t('ui.kb.col.feedback') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -162,12 +167,12 @@
             <tr class="semantic-field-row" data-table-fqn="{{ table.fqn }}" data-column-name="{{ field.column }}">
               <td>
                 <div class="field-col">{{ field.column }}</div>
-                <div class="field-type">{{ field.type or 'type unknown' }}{% if field.nullable %} · nullable {{ field.nullable }}{% endif %}</div>
-                {% if field.distinct_values %}<div class="values">Values: {{ field.distinct_values }}</div>{% endif %}
+                <div class="field-type">{{ field.type or t('ui.kb.type_unknown') }}{% if field.nullable %} · {{ t('ui.kb.nullable', value=field.nullable) }}{% endif %}</div>
+                {% if field.distinct_values %}<div class="values">{{ t('ui.kb.values', values=field.distinct_values) }}</div>{% endif %}
                 <div class="status-badges">
-                  {% if field.pending %}<span class="mini-badge pending">pending review</span>{% endif %}
-                  {% if field.approved %}<span class="mini-badge approved">admin approved</span>{% endif %}
-                  {% if field.needs_context %}<span class="mini-badge pending">needs context</span>{% endif %}
+                  {% if field.pending %}<span class="mini-badge pending">{{ t('ui.kb.badge.pending') }}</span>{% endif %}
+                  {% if field.approved %}<span class="mini-badge approved">{{ t('ui.kb.badge.approved') }}</span>{% endif %}
+                  {% if field.needs_context %}<span class="mini-badge pending">{{ t('ui.kb.badge.needs_context') }}</span>{% endif %}
                 </div>
               </td>
               <td class="field-meaning">{{ field.meaning }}</td>
@@ -178,13 +183,13 @@
                   {% for term in field.synonyms %}<span class="term-chip">{{ term }}</span>{% endfor %}
                 </div>
                 {% else %}
-                <span class="term-chips-empty">No business terms yet</span>
+                <span class="term-chips-empty">{{ t('ui.kb.no_terms') }}</span>
                 {% endif %}
               </td>
               <td>
                 <span class="confidence-pill field-confidence {% if field.confidence >= 85 %}high{% elif field.confidence >= 65 %}med{% else %}low{% endif %}">{{ field.confidence }}%</span>
               </td>
-              <td><button type="button" class="review-toggle" data-review-target="{{ row_id }}" aria-expanded="false" onclick="toggleReview(this.dataset.reviewTarget, this)">Suggest edit</button></td>
+              <td><button type="button" class="review-toggle" data-review-target="{{ row_id }}" aria-expanded="false" onclick="toggleReview(this.dataset.reviewTarget, this)">{{ t('ui.kb.suggest_edit') }}</button></td>
             </tr>
             <tr class="review-row" id="{{ row_id }}">
               <td colspan="6">
@@ -192,25 +197,25 @@
                   <input type="hidden" name="table_fqn" value="{{ table.fqn }}">
                   <input type="hidden" name="column_name" value="{{ field.column }}">
                   <div>
-                    <label>Suggested field meaning</label>
-                    <textarea name="suggested_meaning" placeholder="What should this field mean?">{{ field.meaning }}</textarea>
+                    <label>{{ t('ui.kb.suggested_meaning') }}</label>
+                    <textarea name="suggested_meaning" placeholder="{{ t('ui.kb.suggested_meaning_placeholder') }}">{{ field.meaning }}</textarea>
                   </div>
                   <div>
-                    <label>Suggested use case</label>
-                    <textarea name="suggested_use_case" placeholder="How should QueryBot use this field?">{{ field.use_case }}</textarea>
+                    <label>{{ t('ui.kb.suggested_use') }}</label>
+                    <textarea name="suggested_use_case" placeholder="{{ t('ui.kb.suggested_use_placeholder') }}">{{ field.use_case }}</textarea>
                   </div>
                   <div class="review-full">
-                    <label>Business terms</label>
-                    <input type="text" name="suggested_synonyms" placeholder="Comma-separated, e.g. purchase quantity, number of items purchased" value="{{ field.synonyms|join(', ') if field.synonyms else '' }}">
-                    <div class="review-hint">Other words a question might use for this field — helps QueryBot match phrasing it wouldn't otherwise recognize.</div>
+                    <label>{{ t('ui.kb.col.terms') }}</label>
+                    <input type="text" name="suggested_synonyms" placeholder="{{ t('ui.kb.terms_placeholder') }}" value="{{ field.synonyms|join(', ') if field.synonyms else '' }}">
+                    <div class="review-hint">{{ t('ui.kb.terms_hint') }}</div>
                   </div>
                   <div class="review-full">
-                    <label>Comment for admin</label>
-                    <textarea name="user_comment" placeholder="Why should this be changed?"></textarea>
+                    <label>{{ t('ui.kb.comment') }}</label>
+                    <textarea name="user_comment" placeholder="{{ t('ui.kb.comment_placeholder') }}"></textarea>
                   </div>
                   <div class="review-actions">
-                    <span class="review-note">This creates an admin approval request. The live Semantic Layer is unchanged until approved.</span>
-                    <button type="submit" class="btn btn-primary btn-sm">Send for approval</button>
+                    <span class="review-note">{{ t('ui.kb.approval_note') }}</span>
+                    <button type="submit" class="btn btn-primary btn-sm">{{ t('ui.kb.send_for_approval') }}</button>
                   </div>
                 </form>
               </td>
@@ -238,7 +243,7 @@ function toggleReview(id, btn){
   const isOpen = row.classList.contains('open');
   if (btn){
     btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    btn.textContent = isOpen ? 'Close edit' : 'Suggest edit';
+    btn.textContent = window.qbT(isOpen ? 'ui.kb.close_edit' : 'ui.kb.suggest_edit');
   }
 }
 function _semanticKey(value){
@@ -331,7 +336,10 @@ function _setConfidenceClass(pill, value){
       countEl.className = 'sl-count';
       noResults.classList.remove('visible');
     } else {
-      countEl.textContent = visibleCards + ' table' + (visibleCards !== 1 ? 's' : '') + ', ' + totalFields + ' field' + (totalFields !== 1 ? 's' : '') + ' matched';
+      // qbPlural, not an inline "s": French takes the singular at zero, so
+      // "0 tables, 0 fields matched" is wrong there on every empty search.
+      countEl.textContent = window.qbPlural('ui.kb.matched.tables', visibleCards)
+        + ', ' + window.qbPlural('ui.kb.matched.fields', totalFields);
       countEl.className   = 'sl-count has-results';
       noResults.classList.toggle('visible', visibleCards === 0);
       if (noQuery) noQuery.textContent = '"' + input.value.trim() + '"';
@@ -386,7 +394,7 @@ window.addEventListener('qb-semantic-feedback-reviewed', function(event){
       if(badges && !badges.querySelector('.mini-badge.approved')){
         const badge = document.createElement('span');
         badge.className = 'mini-badge approved';
-        badge.textContent = 'admin approved';
+        badge.textContent = window.qbT('ui.kb.badge.approved');
         badges.appendChild(badge);
       }
     }

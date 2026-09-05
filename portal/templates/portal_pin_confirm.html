@@ -3,8 +3,8 @@
 {% block content %}
 <div style="max-width:500px;margin:2rem auto">
   <div class="page-header">
-    <h1>Add chart to a dashboard</h1>
-    <p>Choose a named dashboard or create one for this live, governed result.</p>
+    <h1>{{ t('ui.pinpage.title') }}</h1>
+    <p>{{ t('ui.pinpage.subtitle') }}</p>
   </div>
   <div class="card">
     <div class="card-body" style="padding:1.5rem">
@@ -13,42 +13,43 @@
         <input type="hidden" name="token" value="{{ token }}">
 
         <div class="form-group">
-          <label>Chart title</label>
+          <label>{{ t('ui.pinpage.chart_title') }}</label>
           <input type="text" name="title" value="{{ question[:60] }}" autofocus required
-            placeholder="e.g. Total revenue this month">
+            placeholder="{{ t('ui.pinpage.chart_title_placeholder') }}">
         </div>
 
         {% if dashboards %}
         <div class="form-group">
-          <label>Existing dashboard</label>
+          <label>{{ t('ui.pinpage.existing') }}</label>
           <select name="dashboard_id">
-            <option value="">Create a new dashboard</option>
+            <option value="">{{ t('ui.pinpage.create_new') }}</option>
             {% for dashboard in dashboards %}
-            <option value="{{ dashboard.id }}">{{ dashboard.name }} · {{ dashboard.chart_count }} visual{% if dashboard.chart_count != 1 %}s{% endif %}</option>
+            {# plural(), not an inline "s": French takes the singular at zero. #}
+            <option value="{{ dashboard.id }}">{{ plural('ui.pinpage.option', dashboard.chart_count, name=dashboard.name) }}</option>
             {% endfor %}
           </select>
         </div>
         {% endif %}
         <div class="form-group">
-          <label>New dashboard name{% if dashboards %} (only when creating new){% endif %}</label>
-          <input type="text" name="new_dashboard_name" value="{% if not dashboards %}My Dashboard{% endif %}" placeholder="e.g. Pharmacy performance">
+          <label>{{ t('ui.pinpage.new_name_only' if dashboards else 'ui.pinpage.new_name') }}</label>
+          <input type="text" name="new_dashboard_name" value="{% if not dashboards %}{{ t('ui.pinpage.default_name') }}{% endif %}" placeholder="{{ t('ui.pinpage.new_name_placeholder') }}">
         </div>
 
         <div style="background:var(--gray-50);border-radius:8px;padding:.875rem;margin-bottom:1rem">
           <div style="font-size:var(--font-xs);font-weight:700;color:var(--gray-500);
-            text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Original question</div>
+            text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">{{ t('ui.pinpage.original_question') }}</div>
           <div style="font-size:var(--font-base);color:var(--gray-700)">{{ question }}</div>
         </div>
 
         <div style="background:var(--gray-50);border-radius:8px;padding:.875rem;margin-bottom:1rem">
           <div style="font-size:var(--font-xs);font-weight:700;color:var(--gray-500);
-            text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">SQL query (runs live on refresh)</div>
+            text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">{{ t('ui.pinpage.sql_note') }}</div>
           <code style="font-size:var(--font-xs);color:var(--gray-700);word-break:break-all">{{ sql[:200] }}</code>
         </div>
 
         <div style="display:flex;gap:.75rem">
-          <button type="submit" class="btn btn-primary">Add to dashboard</button>
-          <a href="/portal/dashboard" class="btn btn-secondary">Cancel</a>
+          <button type="submit" class="btn btn-primary">{{ t('ui.pin.title') }}</button>
+          <a href="/portal/dashboard" class="btn btn-secondary">{{ t('ui.pin.cancel') }}</a>
         </div>
       </form>
     </div>
