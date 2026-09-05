@@ -1674,7 +1674,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # back to the total the user is looking at, and the date can only be the
     # role that answer was already governed by. No LLM is involved.
     _regrain_request = (
-        parse_trend_regrain_request(question)
+        parse_trend_regrain_request(_analysis_question)
         if (_session_id and _has_cached_result and not is_clarification)
         else None
     )
@@ -4584,7 +4584,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
         if _intents.get("forecast"):
             from core.forecast import build_forecast_sql_hint, extract_forecast_periods
-            _n_fc = extract_forecast_periods(question)
+            _n_fc = extract_forecast_periods(_analysis_question)
             _analytic_hints.append(build_forecast_sql_hint(_n_fc))
             log.info("analytic_intent: forecast=True periods=%d", _n_fc)
 
@@ -4621,7 +4621,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
         if _intents.get("whatif"):
             from core.whatif import parse_whatif_params, build_whatif_sql_hint
-            _wi_params = parse_whatif_params(question)
+            _wi_params = parse_whatif_params(_analysis_question)
             _analytic_hints.append(build_whatif_sql_hint(_wi_params))
             log.info("analytic_intent: whatif=True col_hint=%s", _wi_params.col_hint)
             if hasattr(event, '__dict__'):
@@ -5351,7 +5351,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _trace_update(trace_id, error_message="")
                 return
         from core.failure_messages import suggest_closest_terms
-        _closest = suggest_closest_terms(question, account_id, state.get("kb_dir", ""))
+        _closest = suggest_closest_terms(_analysis_question, account_id, state.get("kb_dir", ""))
         _closest_line = (
             f"Closest known terms in your data: {', '.join(_closest)}.\n\n" if _closest else ""
         )
@@ -6271,7 +6271,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         from core.failure_messages import translate_failure, suggest_closest_terms, _VALIDATION_REASONS
         if (last_code or "").lower() in _VALIDATION_REASONS:
             _suggest = (
-                suggest_closest_terms(question, account_id, state.get("kb_dir", ""))
+                suggest_closest_terms(_analysis_question, account_id, state.get("kb_dir", ""))
                 if (last_code or "").lower() in {"unknown_column", "cannot_generate", "field_plan_mismatch"}
                 else []
             )
@@ -6662,7 +6662,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _fc_decision = evaluate_forecast_request(
                     rows,
                     question=question,
-                    horizon=extract_forecast_periods(question),
+                    horizon=extract_forecast_periods(_analysis_question),
                     truncated=bool(_rows_truncated),
                     policy_allows_derived_visual=aggregate_only_gate_passes(
                         account_id=account_id,

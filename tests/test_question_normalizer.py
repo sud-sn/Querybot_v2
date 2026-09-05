@@ -105,6 +105,21 @@ class TestTheLexicon:
         assert canonicalise("l'évolution") == "trend"
         assert canonicalise("d'anomalies") == "anomalies"
 
+    @pytest.mark.parametrize("french,english", [
+        ("chiffre d'affaires", "revenue"), ("ventes", "sales"),
+        ("marge", "margin"), ("marge brute", "gross margin"),
+        ("bénéfice", "profit"), ("coût", "cost"), ("dépenses", "spend"),
+        ("quantité", "quantity"), ("effectifs", "headcount"),
+        ("commandes", "orders"), ("clients", "customers"),
+        ("produits", "products"), ("fournisseurs", "suppliers"),
+    ])
+    def test_the_measure_and_dimension_words_canonicalise(self, french, english):
+        """The corpus in evals/ cannot see these: its cases recover their
+        intents from the surrounding words, so breaking "marge" -> "margin"
+        leaves parity at 100%. These matter to retrieval and to the field
+        planner rather than to a detector, so they are checked here."""
+        assert canonicalise(french) == english
+
     def test_a_word_is_not_matched_inside_another(self):
         assert "margin" not in canonicalise("margelle")
         assert "month" not in canonicalise("moissonneuse")
@@ -143,9 +158,17 @@ class TestCustomerValuesAreNotRewritten:
 class TestTheNumericRules:
 
     def test_a_relative_window_becomes_the_english_shape(self):
-        assert canonicalise("les 6 derniers mois") == "last 6 months"
-        assert canonicalise("ces 12 derniers mois") == "last 12 months"
-        assert canonicalise("les 3 prochains trimestres") == "next 3 quarters"
+        assert canonicalise("les 6 derniers mois") == "the last 6 months"
+        assert canonicalise("ces 12 derniers mois") == "the last 12 months"
+        assert canonicalise("les 3 prochains trimestres") == "the next 3 quarters"
+
+    def test_the_determiner_is_translated_rather_than_dropped(self):
+        """analyze_query_intent's time-series pattern is `over the last \\d+`,
+        so "over last 30 days" misses it by one word and the reader gets a flat
+        aggregate where they asked for a series."""
+        assert canonicalise("ventes sur les 30 derniers jours") == \
+            "sales over the last 30 days"
+        assert canonicalise("30 derniers jours") == "last 30 days"
 
     def test_a_french_quarter_becomes_the_letter_the_detector_reads(self):
         """core/multi_period.py's quarter pattern is anchored on Q."""
@@ -278,3 +301,40 @@ class TestThePipelineReadsTheCanonicalTextAndKeepsTheReadersOwn:
         src = self._source()
         seam = src[src.index("_analysis_question = canonical_question("):]
         assert '(portal_user or {}).get("lang")' in seam[:300]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# The corpus
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTheFrenchParityCorpus:
+    """evals/french_questions.yaml, run here so a lexicon regression fails the
+    suite rather than waiting for someone to run the eval."""
+
+    def _results(self):
+        from evals.french_parity import run
+        return run()
+
+    def test_the_corpus_is_worth_running(self):
+        """Guards the two assertions below: an empty or unloadable corpus would
+        otherwise make both of them vacuously true."""
+        results = self._results()
+        assert len(results) >= 25
+        assert all(r.english_signals for r in results), [
+            r.id for r in results if not r.english_signals
+        ]
+
+    def test_every_case_reaches_parity(self):
+        """Anything below parity is a question a French customer asks and gets
+        a different answer to -- silently, because none of this errors."""
+        failures = [(r.id, r.french, r.missing) for r in self._results() if r.missing]
+        assert not failures, failures
+
+    def test_the_raw_french_would_not_have(self):
+        """The measurement the normaliser exists for, kept beside the result so
+        the number is not just asserted but visible."""
+        from evals.french_parity import summarise
+
+        summary = summarise(self._results())
+        assert summary["parity"] == 1.0
+        assert summary["parity_without_normaliser"] < 0.1, summary

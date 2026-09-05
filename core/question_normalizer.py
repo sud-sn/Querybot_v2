@@ -165,6 +165,13 @@ _LEXICON: dict[str, str] = {
     "anomalie": "anomaly",
     "inhabituel": "unusual",
     "inhabituelle": "unusual",
+    "inhabituels": "unusual",
+    "inhabituelles": "unusual",
+    "trouve": "find",
+    "trouver": "find",
+    "cherche": "find",
+    "detecte": "detect",
+    "identifie": "identify",
     "pic": "spike",
     "pics": "spikes",
     "ecart type": "standard deviation",
@@ -367,15 +374,17 @@ _UNITS = {
 _UNIT_ALT = "|".join(sorted(_UNITS, key=len, reverse=True))
 
 _NUMERIC_RULES: tuple[tuple[re.Pattern[str], object], ...] = (
-    # "les 6 derniers mois" / "ces 6 derniers mois" / "6 derniers mois"
-    # -> "last 6 months". The determiner is consumed rather than left behind:
-    # "ces last 12 months" would keep a French word in the middle of the phrase
-    # the detector reads.
-    (re.compile(rf"\b(?:[lc]es?\s+)?(\d+)\s+derniers?\s+({_UNIT_ALT})\b"),
-     lambda m: f"last {m.group(1)} {_UNITS[m.group(2)]}"),
-    # "les 3 prochains mois" -> "next 3 months"
-    (re.compile(rf"\b(?:[lc]es?\s+)?(\d+)\s+prochains?\s+({_UNIT_ALT})\b"),
-     lambda m: f"next {m.group(1)} {_UNITS[m.group(2)]}"),
+    # "les 6 derniers mois" -> "the last 6 months". The determiner is
+    # TRANSLATED, not dropped: analyze_query_intent's time-series pattern is
+    # `over\s+the\s+last\s+\d+`, so "over last 30 days" misses it by one word
+    # and the reader gets a flat aggregate instead of a series. It is also not
+    # left in place -- "ces last 12 months" keeps a French word in the middle
+    # of the phrase the detector reads.
+    (re.compile(rf"\b([lc]es?\s+)?(\d+)\s+derniers?\s+({_UNIT_ALT})\b"),
+     lambda m: f"{'the ' if m.group(1) else ''}last {m.group(2)} {_UNITS[m.group(3)]}"),
+    # "les 3 prochains mois" -> "the next 3 months"
+    (re.compile(rf"\b([lc]es?\s+)?(\d+)\s+prochains?\s+({_UNIT_ALT})\b"),
+     lambda m: f"{'the ' if m.group(1) else ''}next {m.group(2)} {_UNITS[m.group(3)]}"),
     # "sur 3 mois" -> "over 3 months". French "mois" is invariant, so the
     # English plural cannot come from the lexicon -- only the number knows.
     (re.compile(rf"\b(\d+)\s+({_UNIT_ALT})\b"),

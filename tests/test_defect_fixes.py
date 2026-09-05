@@ -260,7 +260,12 @@ class ClosestTermSuggestionTests(unittest.TestCase):
 
     def test_cannot_generate_path_wired_in_pipeline(self):
         src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("suggest_closest_terms(question, account_id, state.get(\"kb_dir\", \"\"))", src)
+        # The canonical question: the KB's terms are English, so a French
+        # question had nothing to be close TO.
+        self.assertIn(
+            "suggest_closest_terms(_analysis_question, account_id, state.get(\"kb_dir\", \"\"))",
+            src,
+        )
         self.assertIn("Closest known terms in your data:", src)
         self.assertIn("suggestions=_suggest", src)
 

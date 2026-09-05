@@ -543,7 +543,7 @@ class TestRegrainAgainstRealRowsSqlite(unittest.TestCase):
 class TestPipelineWiring(unittest.TestCase):
 
     def test_the_route_exists_and_runs_before_the_metric_registry(self):
-        regrain = PIPELINE_SRC.find("parse_trend_regrain_request(question)")
+        regrain = PIPELINE_SRC.find("parse_trend_regrain_request(_analysis_question)")
         metric = PIPELINE_SRC.find("Step 3: Metric registry")
         self.assertGreater(regrain, 0, "the trend re-grain route must be wired in")
         self.assertLess(

@@ -137,6 +137,10 @@ class TestTheForecastBlockExecutes:
             **vars(qp),
             "rows": rows,
             "question": "forecast my revenue for the next 3 months",
+            # The detectors read the canonical form -- identical to `question`
+            # for an English reader, and the English phrasing of it for a
+            # French one. The block closes over it, so the env must carry it.
+            "_analysis_question": "forecast my revenue for the next 3 months",
             "_post_intents": {"forecast": True},
             "_rows_truncated": truncated,
             "_confidence_context": {},

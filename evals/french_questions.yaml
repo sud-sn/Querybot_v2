@@ -1,0 +1,159 @@
+# French intent-parity corpus.
+#
+# Each case is one question in two languages. `english` is the phrasing the
+# product already understands; `french` is the same question as a French
+# customer would ask it. The eval asserts that the CANONICAL form of the French
+# detects everything the English does -- not that the two strings match, which
+# they never will and never need to.
+#
+# This is not a translation exercise. A case belongs here when getting it wrong
+# changes the ANSWER: a lost row limit, a missing period comparison, a forecast
+# that never runs. Add a case when a French phrasing is found that silently
+# answers a different question, and keep the English side as the exact phrasing
+# the detectors are known to read.
+#
+# What this does NOT measure: whether a measure word canonicalises. Breaking
+# "marge" -> "margin" leaves parity at 100%, because these cases recover their
+# intents from the surrounding words. That is the right scope for an INTENT
+# corpus -- the measure words matter to retrieval and the field planner, and
+# they are checked directly in tests/test_question_normalizer.py instead.
+#
+# Run:  python -m evals.french_parity
+cases:
+  # ── Top-N: the row limit that goes missing ─────────────────────────────────
+  - id: fr_top_n_customers
+    intent: top_n
+    english: "Show me the top 10 customers by margin"
+    french: "Montre-moi les 10 meilleurs clients par marge"
+  - id: fr_top_n_products
+    intent: top_n
+    english: "the 5 best products by revenue"
+    french: "les 5 meilleurs produits par chiffre d'affaires"
+  - id: fr_bottom_n
+    intent: top_n
+    english: "the 5 worst products by margin"
+    french: "les 5 pires produits par marge"
+  - id: fr_top_n_highest
+    intent: top_n
+    english: "the 20 highest invoices this year"
+    french: "les 20 plus élevées factures cette année"
+
+  # ── Multi-period comparison ───────────────────────────────────────────────
+  - id: fr_compare_years
+    intent: multi_period
+    english: "Compare 2025 against 2024 by revenue category"
+    french: "Compare 2025 par rapport à 2024 par catégorie de chiffre d'affaires"
+  - id: fr_compare_quarters
+    intent: multi_period
+    english: "Q1 2025 versus Q1 2024 revenue"
+    french: "T1 2025 contre T1 2024 chiffre d'affaires"
+  - id: fr_last_n_months
+    intent: multi_period
+    english: "What is the trend of sales over the last 6 months"
+    french: "Quelle est l'évolution des ventes sur les 6 derniers mois"
+
+  # ── Relative dates ────────────────────────────────────────────────────────
+  - id: fr_last_month
+    intent: relative_date
+    english: "revenue last month by region"
+    french: "chiffre d'affaires le mois dernier par région"
+  - id: fr_last_year
+    intent: relative_date
+    english: "orders last year by customer"
+    french: "commandes l'année dernière par client"
+  - id: fr_last_30_days
+    intent: relative_date
+    english: "sales over the last 30 days"
+    french: "ventes sur les 30 derniers jours"
+
+  # ── Contribution / share ──────────────────────────────────────────────────
+  - id: fr_contribution
+    intent: contribution
+    english: "What did each region contribute to revenue"
+    french: "Qu'est-ce que chaque région a contribué au chiffre d'affaires"
+  - id: fr_share_of_total
+    intent: contribution
+    english: "what share of total revenue does each product hold"
+    french: "quelle part du total de chiffre d'affaires chaque produit détient"
+
+  # ── Anomalies ─────────────────────────────────────────────────────────────
+  - id: fr_outliers
+    intent: anomaly
+    english: "Show the margin outliers last month"
+    french: "Montre les valeurs aberrantes de marge le mois dernier"
+  - id: fr_anomaly
+    intent: anomaly
+    english: "find unusual orders this quarter"
+    french: "trouve les commandes inhabituelles ce trimestre"
+
+  # ── Budget versus actual ──────────────────────────────────────────────────
+  - id: fr_budget_variance
+    intent: budget_vs_actual
+    english: "What is the budget variance by region for Q1 2025"
+    french: "Quel est l'écart budgétaire par région pour T1 2025"
+
+  # ── Forecast ──────────────────────────────────────────────────────────────
+  - id: fr_forecast
+    intent: forecast
+    english: "Forecast revenue for the next 3 months"
+    french: "Prévision du chiffre d'affaires pour les 3 prochains mois"
+  - id: fr_predict
+    intent: forecast
+    english: "predict sales for the next 2 quarters"
+    french: "prédire les ventes pour les 2 prochains trimestres"
+
+  # ── Correlation ───────────────────────────────────────────────────────────
+  - id: fr_correlation
+    intent: correlation
+    english: "Correlation between margin and revenue"
+    french: "Corrélation entre la marge et le chiffre d'affaires"
+
+  # ── Window analytics ──────────────────────────────────────────────────────
+  - id: fr_rolling_average
+    intent: window
+    english: "Rolling average of sales over 3 months"
+    french: "Moyenne mobile des ventes sur 3 mois"
+  - id: fr_running_total
+    intent: window
+    english: "running total of revenue by month"
+    french: "cumul de chiffre d'affaires par mois"
+
+  # ── Pivot, funnel, cohort, distribution ───────────────────────────────────
+  - id: fr_pivot
+    intent: pivot
+    english: "pivot table of revenue by region and month"
+    french: "tableau croisé de chiffre d'affaires par région et mois"
+  - id: fr_funnel
+    intent: funnel
+    english: "conversion funnel by stage"
+    french: "tunnel de conversion par étape"
+  - id: fr_cohort
+    intent: cohort
+    english: "cohort retention by signup month"
+    french: "rétention par cohorte par mois d'inscription"
+  - id: fr_histogram
+    intent: histogram
+    english: "histogram of invoice amounts"
+    french: "histogramme des montants de factures"
+
+  # ── What-if ───────────────────────────────────────────────────────────────
+  - id: fr_whatif
+    intent: whatif
+    english: "what if price increases by 10%"
+    french: "et si le prix augmente de 10%"
+
+  # ── Fiscal ────────────────────────────────────────────────────────────────
+  - id: fr_fiscal
+    intent: fiscal
+    english: "revenue for fiscal year 2025"
+    french: "chiffre d'affaires pour l'exercice fiscal 2025"
+
+  # ── Causal: a different ROUTE, not an intent ──────────────────────────────
+  - id: fr_why
+    intent: causal
+    english: "Why did sales drop last quarter"
+    french: "Pourquoi les ventes ont baissé le trimestre dernier"
+  - id: fr_what_caused
+    intent: causal
+    english: "what caused the margin decrease"
+    french: "qu'est-ce qui a causé la baisse de marge"
