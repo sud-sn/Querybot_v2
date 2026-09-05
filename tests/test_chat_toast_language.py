@@ -207,3 +207,93 @@ class TestTheFeedbackPanel:
         en = catalogue(render(lang="en"))
         assert en["ui.chat.feedback.up"] == "Yes, correct answer"
         assert en["ui.chat.feedback.not_helpful"] == "Not helpful"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# The answer card the browser draws
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTheTrustDisclosure:
+
+    def test_the_labels_are_french(self):
+        fr = catalogue(render(lang="fr"))
+        assert fr["ui.chat.trust.summary"] == "Comment cette réponse a été produite"
+        assert fr["ui.chat.trust.rows"] == "Lignes"
+        assert fr["ui.chat.trust.runtime"] == "Durée"
+        assert fr["ui.chat.trust.result_scope"] == "Portée du résultat"
+
+    def test_the_governance_claims_are_french(self):
+        """These are the sentences that say what was and was not sent to a
+        model. A reader who cannot read them cannot check them."""
+        fr = catalogue(render(lang="fr"))
+        assert fr["ui.chat.trust.planner_none"] == "Aucun appel au modèle"
+        assert fr["ui.chat.trust.planner_none_detail"] == \
+            "0 ligne de résultat transmise à un modèle"
+        assert fr["ui.chat.trust.no_db_query"] == "Aucune requête à la base"
+
+    def test_english_is_unchanged(self):
+        en = catalogue(render(lang="en"))
+        assert en["ui.chat.trust.summary"] == "How this answer was produced"
+        assert en["ui.chat.trust.planner_none_detail"] == "0 result rows sent to any model"
+
+    def test_the_placeholders_survive_translation(self):
+        """A French sentence that drops {id} or {hash} silently stops being
+        evidence of anything."""
+        for msg_id, expected in (
+            ("ui.chat.trust.from_result", {"id"}),
+            ("ui.chat.trust.validated_code", {"hash"}),
+            ("ui.chat.trust.ast_nodes", {"count", "input"}),
+            ("ui.chat.trust.schema_named", {"schema"}),
+            ("ui.chat.trust.grain", {"grain"}),
+        ):
+            assert i18n.placeholders(msg_id) == expected, msg_id
+            for lang in ("en", "fr"):
+                rendered = i18n.t(msg_id, lang=lang, **{k: "X" for k in expected})
+                assert "{" not in rendered, (msg_id, lang)
+
+
+class TestTheChartAndTableControls:
+
+    def test_they_are_french(self):
+        fr = catalogue(render(lang="fr"))
+        assert fr["ui.chat.table.filter"] == "Filtrer les lignes…"
+        assert fr["ui.chat.chart.expand"] == "Agrandir le graphique"
+        assert fr["ui.chat.chart.pin"] == "Ajouter au tableau de bord"
+
+    def test_the_empty_chart_notices_are_french(self):
+        fr = catalogue(render(lang="fr"))
+        assert fr["ui.chat.chart.no_rows"] == "Aucune ligne à tracer"
+        assert fr["ui.chat.chart.no_value_column"] == "Aucune colonne de valeurs à tracer"
+
+    def test_the_pin_label_matches_the_dialog_it_opens(self):
+        """The chart's button and the modal's title are the same promise, and
+        a reader who sees two different phrasings has to work out whether they
+        are the same action."""
+        fr = catalogue(render(lang="fr"))
+        assert fr["ui.chat.chart.pin"] == fr["ui.pin.title"]
+
+    def test_english_is_unchanged(self):
+        en = catalogue(render(lang="en"))
+        assert en["ui.chat.table.filter"] == "Filter rows…"
+        assert en["ui.chat.chart.pin"] == "Add to dashboard"
+
+
+class TestTheFeedbackReasons:
+
+    REASONS = ("other", "wrong_metric", "wrong_dimension", "wrong_filter",
+               "wrong_join", "wrong_data", "incomplete", "confusing",
+               "expected_data_missing")
+
+    def test_every_reason_is_translated(self):
+        fr = catalogue(render(lang="fr"))
+        for reason in self.REASONS:
+            value = fr[f"ui.chat.reason.{reason}"]
+            assert value and value != i18n.t(f"ui.chat.reason.{reason}", lang="en"), reason
+
+    def test_the_option_values_are_untranslated_wire_enums(self):
+        """store/learning_store.py groups feedback by this value. A translated
+        one silently splits a French tenant's reasons into their own buckets."""
+        markup = render(lang="fr")
+        for reason in self.REASONS:
+            assert f"'{reason}'" in markup, reason
+        assert "wrong_metric" in markup

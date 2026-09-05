@@ -178,6 +178,8 @@ class TestTheCatalogueIsWellFormed:
         "answer.total",                 # the same word in French
         "ui.chat.table_count.one",      # "table" is the same word, singular
         "ui.chat.table_count.other",    # and plural
+        "ui.chat.trust.source",         # "source" is the same word
+        "ui.chat.trust.sources",        # and so is its plural
         "ui.pin.description_label",
         "ui.dash.version",              # "Version" is the same word
         "ui.enum.charttype.kpi",        # an international acronym

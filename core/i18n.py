@@ -1159,6 +1159,134 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "ui.chat.feedback.thanks": {"en": "Thanks!", "fr": "Merci !"},
 
+    # ── The answer card as the browser draws it ──────────────────────────────
+    "ui.chat.card.answer_ready": {"en": "Answer ready", "fr": "Réponse prête"},
+    "ui.chat.card.copy": {"en": "Copy", "fr": "Copier"},
+    "ui.chat.card.copied": {"en": "Copied!", "fr": "Copié !"},
+    "ui.chat.card.next_step": {"en": "Next step: ", "fr": "Étape suivante : "},
+
+    # The "How this answer was produced" disclosure.
+    "ui.chat.trust.summary": {
+        "en": "How this answer was produced", "fr": "Comment cette réponse a été produite",
+    },
+    "ui.chat.trust.open": {
+        "en": "See how this answer was produced",
+        "fr": "Voir comment cette réponse a été produite",
+    },
+    "ui.chat.trust.rows": {"en": "Rows", "fr": "Lignes"},
+    "ui.chat.trust.runtime": {"en": "Runtime", "fr": "Durée"},
+    "ui.chat.trust.data_source": {"en": "Data source", "fr": "Source de données"},
+    "ui.chat.trust.schema_mode": {"en": "Schema mode", "fr": "Mode de schéma"},
+    "ui.chat.trust.result_scope": {"en": "Result scope", "fr": "Portée du résultat"},
+    "ui.chat.trust.execution": {"en": "Execution", "fr": "Exécution"},
+    "ui.chat.trust.all_schemas": {"en": "All allowed schemas", "fr": "Tous les schémas autorisés"},
+    "ui.chat.trust.schema_named": {"en": "{schema} schema", "fr": "schéma {schema}"},
+    "ui.chat.trust.planner_metadata": {"en": "Metadata-only planner", "fr": "Planificateur sur métadonnées seules"},
+    "ui.chat.trust.planner_none": {"en": "No LLM call", "fr": "Aucun appel au modèle"},
+    "ui.chat.trust.bounded": {"en": "Bounded execution", "fr": "Exécution bornée"},
+    "ui.chat.trust.no_sql": {
+        "en": "No SQL query was executed for this result.",
+        "fr": "Aucune requête SQL n'a été exécutée pour ce résultat.",
+    },
+    "ui.chat.trust.business_date": {"en": "Business date", "fr": "Date métier"},
+    "ui.chat.trust.grain": {"en": "{grain} grain", "fr": "granularité {grain}"},
+    "ui.chat.trust.calendar_grain": {"en": "calendar grain", "fr": "granularité calendaire"},
+    "ui.chat.trust.inferred": {"en": "inferred encoded field", "fr": "champ encodé déduit"},
+    "ui.chat.trust.governed": {"en": "governed date context", "fr": "contexte de date gouverné"},
+
+    # The result table's own controls.
+    "ui.chat.table.filter": {"en": "Filter rows…", "fr": "Filtrer les lignes…"},
+    "ui.chat.table.filter_label": {"en": "Filter table rows", "fr": "Filtrer les lignes du tableau"},
+    "ui.chat.table.download_csv": {"en": "Download as CSV", "fr": "Télécharger en CSV"},
+
+    # The chart card.
+    "ui.chat.chart.result": {"en": "Chart result", "fr": "Graphique"},
+    "ui.chat.chart.expand": {"en": "Expand chart", "fr": "Agrandir le graphique"},
+    "ui.chat.chart.pin": {"en": "Add to dashboard", "fr": "Ajouter au tableau de bord"},
+    "ui.chat.chart.copy_summary": {"en": "Copy summary", "fr": "Copier le résumé"},
+    "ui.chat.chart.rows": {"en": "{count} rows · {duration}", "fr": "{count} lignes · {duration}"},
+    "ui.chat.chart.value_range": {"en": "Value range", "fr": "Plage de valeurs"},
+    "ui.chat.chart.biggest_drop": {"en": "Biggest drop", "fr": "Plus forte baisse"},
+    "ui.chat.chart.biggest_gain": {"en": "Biggest gain", "fr": "Plus forte hausse"},
+    "ui.chat.chart.no_value_column": {"en": "No value column to plot", "fr": "Aucune colonne de valeurs à tracer"},
+    "ui.chat.chart.no_rows": {"en": "No rows to plot", "fr": "Aucune ligne à tracer"},
+
+    # The artifact pane's own copy.
+    "ui.chat.artifact.result": {"en": "Analysis result", "fr": "Résultat d'analyse"},
+    "ui.chat.artifact.isolated": {"en": "Isolated result analysis", "fr": "Analyse de résultat isolée"},
+    "ui.chat.artifact.governed_note": {
+        "en": "Governed result from the current conversation",
+        "fr": "Résultat gouverné issu de la conversation en cours",
+    },
+    "ui.chat.artifact.single_value": {"en": "Single-value result", "fr": "Résultat à valeur unique"},
+    "ui.chat.artifact.value": {"en": "Value", "fr": "Valeur"},
+    "ui.chat.artifact.default_visual": {"en": "Dashboard visual", "fr": "Visuel de tableau de bord"},
+    "ui.chat.artifact.dashboard_updated": {"en": "Dashboard updated", "fr": "Tableau de bord mis à jour"},
+    "ui.chat.artifact.dashboard_note": {
+        "en": "This artifact uses saved governed SQL and refreshes through your existing access policies.",
+        "fr": "Cet élément utilise le SQL gouverné enregistré et s'actualise selon vos politiques d'accès existantes.",
+    },
+    "ui.chat.artifact.open_dashboard": {"en": "Open dashboard", "fr": "Ouvrir le tableau de bord"},
+    "ui.chat.artifact.untitled": {"en": "Untitled dashboard", "fr": "Tableau de bord sans titre"},
+
+    # The follow-up composer under a result.
+    "ui.chat.followup.open": {"en": "Ask about this result", "fr": "Poser une question sur ce résultat"},
+    "ui.chat.followup.placeholder": {
+        "en": "e.g. what is the avg? who is above average? show top 5…",
+        "fr": "ex. quelle est la moyenne ? qui est au-dessus ? afficher les 5 premiers…",
+    },
+    "ui.chat.followup.hint": {
+        "en": "Ask about the result above. If your follow-up needs a metric or dimension missing from these rows, QueryBot can fall back to the database using the original answer context.",
+        "fr": "Posez votre question sur le résultat ci-dessus. Si votre question porte sur un indicateur ou une dimension absents de ces lignes, QueryBot peut revenir à la base en s'appuyant sur le contexte de la réponse d'origine.",
+    },
+
+    # The feedback reasons. The VALUE is the wire enum and is never
+    # translated -- store/learning_store.py groups on it.
+    "ui.chat.reason.other": {"en": "Why was this wrong? (optional)", "fr": "Pourquoi était-ce incorrect ? (facultatif)"},
+    "ui.chat.reason.wrong_metric": {"en": "Wrong metric", "fr": "Mauvais indicateur"},
+    "ui.chat.reason.wrong_dimension": {"en": "Wrong dimension / grouping", "fr": "Mauvaise dimension / mauvais regroupement"},
+    "ui.chat.reason.wrong_filter": {"en": "Wrong filter / date range", "fr": "Mauvais filtre / mauvaise période"},
+    "ui.chat.reason.wrong_join": {"en": "Wrong join / relationship", "fr": "Mauvaise jointure / mauvaise relation"},
+    "ui.chat.reason.wrong_data": {"en": "Wrong data / values", "fr": "Mauvaises données / mauvaises valeurs"},
+    "ui.chat.reason.incomplete": {"en": "Incomplete answer", "fr": "Réponse incomplète"},
+    "ui.chat.reason.confusing": {"en": "Confusing or unclear", "fr": "Confus ou peu clair"},
+    "ui.chat.reason.expected_data_missing": {"en": "Expected data missing", "fr": "Données attendues manquantes"},
+    "ui.chat.feedback.submit": {"en": "Submit feedback", "fr": "Envoyer l'avis"},
+
+    # The proof strip inside the disclosure.
+    "ui.chat.trust.sql_used": {"en": "SQL used", "fr": "SQL utilisé"},
+    "ui.chat.trust.sources": {"en": "Sources", "fr": "Sources"},
+    "ui.chat.trust.source": {"en": "source", "fr": "source"},
+    "ui.chat.trust.no_db_query": {"en": "No database query", "fr": "Aucune requête à la base"},
+    "ui.chat.trust.from_result": {
+        "en": "Worked only from result {id}", "fr": "Travail effectué uniquement à partir du résultat {id}",
+    },
+    "ui.chat.trust.child_tasks.one": {"en": "{count} child task", "fr": "{count} tâche enfant"},
+    "ui.chat.trust.child_tasks.other": {"en": "{count} child tasks", "fr": "{count} tâches enfants"},
+    "ui.chat.trust.validated_code": {"en": "Validated code {hash}", "fr": "Code validé {hash}"},
+    "ui.chat.trust.ast_nodes": {
+        "en": "{count} AST nodes · planner input: {input}",
+        "fr": "{count} nœuds AST · entrée du planificateur : {input}",
+    },
+    "ui.chat.trust.planner_none_detail": {
+        "en": "0 result rows sent to any model",
+        "fr": "0 ligne de résultat transmise à un modèle",
+    },
+    "ui.chat.trust.planner_metadata_detail": {
+        "en": "Only column metadata and sanitized intent were sent; 0 rows and 0 sample values",
+        "fr": "Seules les métadonnées de colonnes et l'intention nettoyée ont été transmises ; 0 ligne et 0 valeur d'exemple",
+    },
+    "ui.chat.trust.none": {"en": "none", "fr": "aucune"},
+
+    # The dashboard confirmation strip under an answer.
+    "ui.chat.confirm.updated": {"en": "{name} updated", "fr": "{name} mis à jour"},
+    "ui.chat.confirm.saved_as": {
+        "en": "Saved as a governed {kind} · {status}",
+        "fr": "Enregistré comme {kind} gouverné · {status}",
+    },
+    "ui.chat.confirm.dashboard": {"en": "Dashboard", "fr": "Tableau de bord"},
+    "ui.chat.confirm.visual": {"en": "visual", "fr": "visuel"},
+
     # ── Browser tab titles ───────────────────────────────────────────────────
     # Chrome the reader sees on every page, and the one string that is still in
     # front of them when the tab is in the background.

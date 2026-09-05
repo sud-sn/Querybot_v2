@@ -870,6 +870,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 // document -- three copies of the same catalogue in one page is exactly
 // the drift the comment above warns about, in payload form.
 const I18N = window.QB_I18N || {};
+const plural = window.qbPlural;
+const enumLabel = window.qbEnumLabel;
 function t(id, vars){
   let out = Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id;
   if (vars) for (const k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
@@ -1160,7 +1162,7 @@ function renderDashboardPickerOptions(query = ''){
     // The API already returns the description; showing it is what lets a user
     // tell two same-named dashboards apart.
     const desc = String(item.description || '').trim();
-    return `<button type="button" role="option" tabindex="${selected ? '0' : '-1'}" aria-selected="${selected}" class="dashboard-picker-option${selected ? ' selected' : ''}" data-dashboard-id="${id}" onclick="selectDashboardPickerOption(${id})"><span style="min-width:0"><strong>${escHtml(item.name || 'Untitled dashboard')}</strong>${desc ? `<span class="dashboard-picker-option-desc">${escHtml(desc)}</span>` : ''}</span><span class="dashboard-picker-meta">${escHtml(meta)}</span></button>`;
+    return `<button type="button" role="option" tabindex="${selected ? '0' : '-1'}" aria-selected="${selected}" class="dashboard-picker-option${selected ? ' selected' : ''}" data-dashboard-id="${id}" onclick="selectDashboardPickerOption(${id})"><span style="min-width:0"><strong>${escHtml(item.name || t('ui.chat.artifact.untitled'))}</strong>${desc ? `<span class="dashboard-picker-option-desc">${escHtml(desc)}</span>` : ''}</span><span class="dashboard-picker-meta">${escHtml(meta)}</span></button>`;
   }).join('');
 }
 
@@ -1249,7 +1251,7 @@ function _collectPinRequest(){
   if (!_dashboardAddContext) return {error: t('ui.pin.err_expired')};
   const payload = {
     token: _dashboardAddContext.token,
-    title: _dashboardAddContext.title || 'Dashboard visual',
+    title: _dashboardAddContext.title || t('ui.chat.artifact.default_visual'),
     chart_type: _dashboardAddContext.chart_type || 'auto',
     color_palette: _dashboardAddContext.color_palette || 'default',
     thread_id: typeof THREAD_ID === 'undefined' ? '' : THREAD_ID,
@@ -1742,7 +1744,7 @@ function renderDiagnosticCard(rawText){
 function copySqlBox(btn){
   const sql = btn.closest('.trust-box').querySelector('.sql-box').textContent;
   copyText(sql).then(ok => {
-    if(ok){ btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy',1500); }
+    if(ok){ btn.textContent=t('ui.chat.card.copied'); setTimeout(()=>btn.textContent=t('ui.chat.card.copy'),1500); }
   });
 }
 async function copyText(text){
@@ -1855,7 +1857,7 @@ function appendBot(rawText, opts = {}){
     const ok = await copyText(raw || bubble.innerText || '');
     if (ok) {
       const prev = e.currentTarget.textContent;
-      e.currentTarget.textContent = 'Copied!';
+      e.currentTarget.textContent = t('ui.chat.card.copied');
       setTimeout(() => e.currentTarget.textContent = prev, 1400);
       toast(t('ui.chat.toast.copied'));
     } else {
@@ -2013,7 +2015,7 @@ function _buildAnnotationMarkPoints(payload, labels, values) {
       ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
       : '';
     points.push({
-      name: isDrop ? 'Biggest drop' : 'Biggest gain',
+      name: t(isDrop ? 'ui.chat.chart.biggest_drop' : 'ui.chat.chart.biggest_gain'),
       coord: [idx, values[idx]],
       value: pctLabel,
       symbol: 'circle',
@@ -2158,7 +2160,7 @@ function buildChartOption(payload) {
       graphic: {
         type: 'text', left: 'center', top: 'middle',
         style: {
-          text: rows.length ? 'No value column to plot' : 'No rows to plot',
+          text: t(rows.length ? 'ui.chat.chart.no_value_column' : 'ui.chat.chart.no_rows'),
           fill: axisColor, fontSize: 13,
           fontFamily: getComputedStyle(document.documentElement)
             .getPropertyValue('--font-ui').trim() || 'sans-serif',
@@ -2667,7 +2669,7 @@ function buildChartOption(payload) {
         type: 'category', data: binLabels,
         axisLabel: { color: axisColor, rotate: 30, fontSize: 10, formatter: v => v.length > 14 ? v.slice(0,13)+'…' : v },
         axisLine: { lineStyle: { color: gridColor } }, axisTick: { show: false },
-        name: 'Value range', nameTextStyle: { color: axisColor, fontSize: 10 },
+        name: t('ui.chat.chart.value_range'), nameTextStyle: { color: axisColor, fontSize: 10 },
       },
       yAxis: {
         type: 'value', name: 'Count',
@@ -3259,9 +3261,9 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
 
   const csvIcon = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>`;
   const toolbarHtml = `<div class="data-table-toolbar">
-    <input class="data-table-filter" type="text" placeholder="Filter rows…" aria-label="Filter table rows" data-dt="${dtId}">
+    <input class="data-table-filter" type="text" placeholder="${t('ui.chat.table.filter')}" aria-label="${t('ui.chat.table.filter_label')}" data-dt="${dtId}">
     <span class="data-table-agg" id="${dtId}-agg"></span>
-    <button type="button" class="dt-csv-btn" data-dt="${dtId}" title="Download as CSV">${csvIcon} CSV</button>
+    <button type="button" class="dt-csv-btn" data-dt="${dtId}" title="${t('ui.chat.table.download_csv')}">${csvIcon} CSV</button>
   </div>`;
 
   return `<div class="data-table-wrap" id="${dtId}-wrap" data-trace-id="${escHtml(trace_id)}">
@@ -3432,7 +3434,7 @@ function _mountResultChat(cardEl, rcId) {
   toggleBtn.addEventListener('click', () => {
     const isOpen = panel.classList.toggle('open');
     toggleBtn.classList.toggle('open', isOpen);
-    toggleBtn.textContent = isOpen ? 'Close' : 'Ask about this result';
+    toggleBtn.textContent = t(isOpen ? 'ui.chat.close' : 'ui.chat.followup.open');
     if (isOpen) {
       input.focus();
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -3694,12 +3696,12 @@ function renderArtifactPreview(msg){
   chartCounter += 1;
   const artifactChartId = `artifact-chart-${chartCounter}`;
   _activeArtifactChartId = hasChart ? artifactChartId : '';
-  const title = msg.chart?.title || msg.answer?.headline || msg.question || 'Analysis result';
+  const title = msg.chart?.title || msg.answer?.headline || msg.question || t('ui.chat.artifact.result');
   document.getElementById('artifactTitle').textContent = title;
   const dashboard = msg.dashboard_artifact || null;
   document.getElementById('artifactKicker').textContent = dashboard
     ? `${dashboard.name} · ${dashboard.status}`
-    : (msg.analysis_artifact ? 'Isolated result analysis' : 'Analysis artifact');
+    : t(msg.analysis_artifact ? 'ui.chat.artifact.isolated' : 'ui.chat.artifact_label');
   const tabs = [];
   const panels = [];
   if (hasChart || hasKpi) {
@@ -3708,7 +3710,7 @@ function renderArtifactPreview(msg){
     if (hasKpi) {
       const kpi = msg.kpi || {};
       const value = kpi.state === 'missing' ? 'N/A' : _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {});
-      visual = `<div class="result-kpi ${kpi.state === 'missing' ? 'missing' : ''}" style="min-height:360px;display:flex;flex-direction:column;justify-content:center"><div class="result-kpi-label">${escHtml(kpi.label || 'Value')}</div><div class="result-kpi-value">${escHtml(value)}</div><div class="result-kpi-note">${escHtml(kpi.note || 'Single-value result')}</div></div>`;
+      visual = `<div class="result-kpi ${kpi.state === 'missing' ? 'missing' : ''}" style="min-height:360px;display:flex;flex-direction:column;justify-content:center"><div class="result-kpi-label">${escHtml(kpi.label || t('ui.chat.artifact.value'))}</div><div class="result-kpi-value">${escHtml(value)}</div><div class="result-kpi-note">${escHtml(kpi.note || t('ui.chat.artifact.single_value'))}</div></div>`;
     } else {
       visual = `<div id="${artifactChartId}" class="artifact-chart"></div>${renderChartWarnings(msg.chart)}`;
     }
@@ -3727,7 +3729,7 @@ function renderArtifactPreview(msg){
     ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">Open ${escHtml(dashboard.name)}</a>`
     : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">Add to dashboard</button>');
   const root = document.getElementById('artifactBody');
-  root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || 'Governed result from the current conversation')}</p></div><div class="artifact-tabs">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
+  root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || t('ui.chat.artifact.governed_note'))}</p></div><div class="artifact-tabs">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
   root.querySelectorAll('.artifact-tab').forEach(btn => btn.addEventListener('click', () => _activateArtifactTab(root, btn.dataset.artifactTab)));
   root.querySelectorAll('.data-table-wrap').forEach(wrap => _mountDataTableControls(wrap, msg.question || ''));
   if (hasChart) {
@@ -3745,7 +3747,7 @@ function addArtifactToDashboard(){
   const chart = _activeArtifactPayload.chart || {};
   openDashboardPicker({
     token: _activeArtifactPayload.pin_token || chart.pin_token,
-    title: chart.title || _activeArtifactPayload.kpi?.label || _activeArtifactPayload.question || 'Dashboard visual',
+    title: chart.title || _activeArtifactPayload.kpi?.label || _activeArtifactPayload.question || t('ui.chat.artifact.default_visual'),
     chart_type: chart.chart_type || (_activeArtifactPayload.kpi ? 'kpi' : 'table'),
     color_palette: chart.color_palette || 'default',
     dashboard_id: DASHBOARD_ID,
@@ -3756,7 +3758,7 @@ function appendDashboardEvent(msg){
   const dashboard = msg.dashboard || {};
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timeLabel()}</span></div><div class="msg-bubble"><strong>${escHtml(msg.title || 'Dashboard updated')}</strong><div style="margin-top:.35rem;color:var(--text-muted)">${escHtml(msg.body || 'This artifact uses saved governed SQL and refreshes through your existing access policies.')}</div><div class="msg-actions" style="margin-top:.65rem"><a class="msg-action" href="${escHtml(dashboard.url || '/portal/dashboard')}">Open dashboard</a></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timeLabel()}</span></div><div class="msg-bubble"><strong>${escHtml(msg.title || t('ui.chat.artifact.dashboard_updated'))}</strong><div style="margin-top:.35rem;color:var(--text-muted)">${escHtml(msg.body || t('ui.chat.artifact.dashboard_note'))}</div><div class="msg-actions" style="margin-top:.65rem"><a class="msg-action" href="${escHtml(dashboard.url || '/portal/dashboard')}">${t('ui.chat.artifact.open_dashboard')}</a></div></div></div>`;
   thread().appendChild(div);
   scrollBottom();
 }
@@ -3791,7 +3793,7 @@ function appendAssistantResponse(msg, opts = {}){
          ${answer.comparison ? `<span class="answer-delta">${escHtml(answer.comparison)}</span>` : ''}
        </div>
        ${answer.headline ? `<p class="answer-headline">${escHtml(answer.headline)}</p>` : ''}`
-    : `<p class="answer-headline is-lead">${escHtml(answer.headline || 'Answer ready')}</p>`;
+    : `<p class="answer-headline is-lead">${escHtml(answer.headline || t('ui.chat.card.answer_ready'))}</p>`;
 
   // Confidence: a verdict in the footer, its reasoning inside the provenance
   // disclosure. Warnings come before reasons — someone opening this is looking
@@ -3807,7 +3809,7 @@ function appendAssistantResponse(msg, opts = {}){
     ? (confidence.warnings[0] || '') : '';
   const confidencePillHtml = hasConfidence
     ? `<button type="button" class="trust-pill ${escHtml(confidenceLevel)}" data-open-trust
-        title="See how this answer was produced">
+        title="${t('ui.chat.trust.open')}">
         ${escHtml(confidence.label || 'Confidence')}
         <span class="tp-score">${escHtml(String(confidence.score))}/100</span>
       </button>`
@@ -3953,33 +3955,31 @@ function appendAssistantResponse(msg, opts = {}){
         <span class="feedback-done" style="display:none"></span>
        </div>
        <div class="feedback-panel">
-         <select class="feedback-reason">
-           <option value="other">Why was this wrong? (optional)</option>
-           <option value="wrong_metric">Wrong metric</option>
-           <option value="wrong_dimension">Wrong dimension / grouping</option>
-           <option value="wrong_filter">Wrong filter / date range</option>
-           <option value="wrong_join">Wrong join / relationship</option>
-           <option value="wrong_data">Wrong data / values</option>
-           <option value="incomplete">Incomplete answer</option>
-           <option value="confusing">Confusing or unclear</option>
-           <option value="expected_data_missing">Expected data missing</option>
-         </select>
+         <select class="feedback-reason">${
+           ['other', 'wrong_metric', 'wrong_dimension', 'wrong_filter',
+            'wrong_join', 'wrong_data', 'incomplete', 'confusing',
+            'expected_data_missing']
+             .map(reason => `<option value="${reason}">${escHtml(t('ui.chat.reason.' + reason))}</option>`)
+             .join('')
+         }</select>
          <textarea class="feedback-comment" placeholder="${t('ui.chat.feedback.comments')}"></textarea>
-         <button class="feedback-submit" type="button">Submit feedback</button>
+         <button class="feedback-submit" type="button">${t('ui.chat.feedback.submit')}</button>
        </div>`
     : '';
 
-  const trustSchema = trust.schema || (_activeSchema ? `${_activeSchema} schema` : 'All allowed schemas');
+  const trustSchema = trust.schema || (_activeSchema
+    ? t('ui.chat.trust.schema_named', {schema: _activeSchema})
+    : t('ui.chat.trust.all_schemas'));
   const dashboardArtifact = msg.dashboard_artifact || null;
   const dashboardConfirmHtml = dashboardArtifact
-    ? `<div class="dashboard-confirm"><span><strong>${escHtml(dashboardArtifact.name || 'Dashboard')} updated</strong>Saved as a governed ${escHtml(dashboardArtifact.item_type || 'visual')} · ${escHtml(dashboardArtifact.status || 'draft')}</span><a href="${escHtml(dashboardArtifact.url || '/portal/dashboard')}">Open dashboard</a></div>`
+    ? `<div class="dashboard-confirm"><span><strong>${escHtml(t('ui.chat.confirm.updated', {name: dashboardArtifact.name || t('ui.chat.confirm.dashboard')}))}</strong>${escHtml(t('ui.chat.confirm.saved_as', {kind: dashboardArtifact.item_type || t('ui.chat.confirm.visual'), status: enumLabel('status', dashboardArtifact.status || 'draft')}))}</span><a href="${escHtml(dashboardArtifact.url || '/portal/dashboard')}">${t('ui.chat.artifact.open_dashboard')}</a></div>`
     : '';
   const localOperation = msg.result_command || msg.result_exclusion || {};
   const plannerUsed = localOperation.llm_input_mode === 'metadata_only';
-  const plannerProofTitle = plannerUsed ? 'Metadata-only planner' : 'No LLM call';
+  const plannerProofTitle = t(plannerUsed ? 'ui.chat.trust.planner_metadata' : 'ui.chat.trust.planner_none');
   const plannerProofDetail = plannerUsed
-    ? 'Only column metadata and sanitized intent were sent; 0 rows and 0 sample values'
-    : '0 result rows sent to any model';
+    ? t('ui.chat.trust.planner_metadata_detail')
+    : t('ui.chat.trust.planner_none_detail');
   const localOperationProofHtml = (localOperation.operation || localOperation.excluded_count)
     ? `<div class="result-exclusion-proof">
         <div><strong>Local ${escHtml(String(localOperation.operation || 'exclusion'))}</strong><span>${escHtml(String(localOperation.rows_after ?? ''))} rows in the derived result</span></div>
@@ -3989,28 +3989,30 @@ function appendAssistantResponse(msg, opts = {}){
     : '';
   const citations = Array.isArray(msg.citations) ? msg.citations : [];
   const citationsHtml = citations.length
-    ? `<div class="citation-strip"><span class="citation-label">Sources</span>${citations.map(c => `<span class="citation-chip" title="${escHtml(c.type || 'source')}">${escHtml(c.label || '')}</span>`).join('')}</div>`
+    ? `<div class="citation-strip"><span class="citation-label">${t('ui.chat.trust.sources')}</span>${citations.map(c => `<span class="citation-chip" title="${escHtml(c.type || t('ui.chat.trust.source'))}">${escHtml(c.label || '')}</span>`).join('')}</div>`
     : '';
   const childTasks = Array.isArray(trust.child_tasks) ? trust.child_tasks : [];
   const analysisProofHtml = trust.operation
     ? `<div class="result-exclusion-proof">
-        <div><strong>${escHtml(trust.operation)}</strong><span>${escHtml(trust.worker_isolation || 'Bounded execution')}</span></div>
-        <div><strong>No database query</strong><span>Worked only from result ${escHtml(trust.source_result_id || '')}</span></div>
-        <div><strong>${childTasks.length} child task${childTasks.length === 1 ? '' : 's'}</strong><span>${childTasks.map(task => `${task.operation}: ${task.status}`).join(' · ')}</span></div>
-        ${trust.code_hash ? `<div><strong>Validated code ${escHtml(String(trust.code_hash).slice(0, 12))}</strong><span>${escHtml(String(trust.ast_nodes || 0))} AST nodes · planner input: ${escHtml(trust.planner_input || 'none')}</span></div>` : ''}
+        <div><strong>${escHtml(trust.operation)}</strong><span>${escHtml(trust.worker_isolation || t('ui.chat.trust.bounded'))}</span></div>
+        <div><strong>${t('ui.chat.trust.no_db_query')}</strong><span>${escHtml(t('ui.chat.trust.from_result', {id: trust.source_result_id || ''}))}</span></div>
+        <div><strong>${escHtml(plural('ui.chat.trust.child_tasks', childTasks.length))}</strong><span>${childTasks.map(task => `${task.operation}: ${task.status}`).join(' · ')}</span></div>
+        ${trust.code_hash ? `<div><strong>${escHtml(t('ui.chat.trust.validated_code', {hash: String(trust.code_hash).slice(0, 12)}))}</strong><span>${escHtml(t('ui.chat.trust.ast_nodes', {count: String(trust.ast_nodes || 0), input: trust.planner_input || t('ui.chat.trust.none')}))}</span></div>` : ''}
       </div>`
     : '';
   const sqlProofHtml = trust.sql
-    ? `<div class="trust-sql-label"><span>SQL used</span><button class="sql-copy-btn" onclick="copySqlBox(this)">Copy</button></div><div class="sql-box">${escHtml(trust.sql)}</div>`
-    : `<div class="trust-sql-label"><span>Execution</span></div><div class="sql-box">${escHtml(trust.operation || 'No SQL query was executed for this result.')}</div>`;
+    ? `<div class="trust-sql-label"><span>${t('ui.chat.trust.sql_used')}</span><button class="sql-copy-btn" onclick="copySqlBox(this)">${t('ui.chat.card.copy')}</button></div><div class="sql-box">${escHtml(trust.sql)}</div>`
+    : `<div class="trust-sql-label"><span>${t('ui.chat.trust.execution')}</span></div><div class="sql-box">${escHtml(trust.operation || t('ui.chat.trust.no_sql'))}</div>`;
   const dateContexts = Array.isArray(trust.date_context) ? trust.date_context : [];
   const dateContextHtml = dateContexts.map(ctx => {
     const physical = [String(ctx.table || '').split('.').pop(), ctx.column || ''].filter(Boolean).join('.');
-    const grain = ctx.temporal_grain ? `${ctx.temporal_grain} grain` : 'calendar grain';
-    const provenance = ctx.inferred ? 'inferred encoded field' : 'governed date context';
-    return `<div class="trust-item"><div class="trust-k">Business date</div><div class="trust-v">${escHtml(ctx.label || 'Business date')} · ${escHtml(grain)} · ${escHtml(physical)} · ${escHtml(provenance)}</div></div>`;
+    const grain = ctx.temporal_grain
+      ? t('ui.chat.trust.grain', {grain: ctx.temporal_grain})
+      : t('ui.chat.trust.calendar_grain');
+    const provenance = t(ctx.inferred ? 'ui.chat.trust.inferred' : 'ui.chat.trust.governed');
+    return `<div class="trust-item"><div class="trust-k">${t('ui.chat.trust.business_date')}</div><div class="trust-v">${escHtml(ctx.label || t('ui.chat.trust.business_date'))} · ${escHtml(grain)} · ${escHtml(physical)} · ${escHtml(provenance)}</div></div>`;
   }).join('');
-  const trustHtml = `<details class="trust-box" data-trust-box><summary>How this answer was produced</summary>${confidenceDetailHtml}<div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}</div>${analysisProofHtml}${sqlProofHtml}</details>`;
+  const trustHtml = `<details class="trust-box" data-trust-box><summary>${t('ui.chat.trust.summary')}</summary>${confidenceDetailHtml}<div class="trust-grid"><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.rows')}</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.runtime')}</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.data_source')}</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.schema_mode')}</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.result_scope')}</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}</div>${analysisProofHtml}${sqlProofHtml}</details>`;
 
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;
@@ -4041,7 +4043,7 @@ function appendAssistantResponse(msg, opts = {}){
             ${nextActionsHtml}
             <button class="msg-action" type="button" data-copy="result">Copy result</button>
             ${pinBtnHtml}
-            <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">Ask about this result</button>
+            <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">${t('ui.chat.followup.open')}</button>
           </div>
           ${(confidencePillHtml || citationsHtml)
             ? `<div class="trust-row">${confidencePillHtml}${citationsHtml}</div>`
@@ -4055,7 +4057,7 @@ function appendAssistantResponse(msg, opts = {}){
         <div class="rc-input-row">
           <textarea class="rc-input" id="${rcId}-input" rows="1"
             spellcheck="true" autocomplete="off"
-            placeholder="e.g. what is the avg? who is above average? show top 5…"></textarea>
+            placeholder="${t('ui.chat.followup.placeholder')}"></textarea>
           <button class="rc-send" type="button" id="${rcId}-send">Ask</button>
         </div>
       </div>
@@ -4070,7 +4072,7 @@ function appendAssistantResponse(msg, opts = {}){
   const rcHintEl = rcPanelEl ? rcPanelEl.querySelector('.rc-hint') : null;
   if (rcPanelEl && rcHintEl) {
     rcHintEl.insertAdjacentHTML('beforebegin', '<div class="rc-scope-strip"><span class="rc-scope-chip">Returned rows first</span><span class="rc-scope-chip">Database fallback if needed</span></div>');
-    rcHintEl.textContent = 'Ask about the result above. If your follow-up needs a metric or dimension missing from these rows, QueryBot can fall back to the database using the original answer context.';
+    rcHintEl.textContent = t('ui.chat.followup.hint');
   }
   div.querySelector('[data-open-artifact]')?.addEventListener('click', () => renderArtifactPreview(msg));
   const copyBtn = div.querySelector('[data-copy="result"]');
@@ -4078,7 +4080,7 @@ function appendAssistantResponse(msg, opts = {}){
     const copyPayload = [answer.headline || '', trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
     const ok = await copyText(copyPayload);
     const prev = e.currentTarget.textContent;
-    e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
+    e.currentTarget.textContent = t(ok ? 'ui.chat.card.copied' : 'ui.chat.toast.copy_failed');
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
     toast(t(ok ? 'ui.chat.toast.result_copied' : 'ui.chat.toast.copy_failed'));
   });
@@ -4087,7 +4089,7 @@ function appendAssistantResponse(msg, opts = {}){
     const live = window._chartPayloads[chartId] || msg.chart || {};
     openDashboardPicker({
       token: dashboardToken,
-      title: live.title || msg.kpi?.label || msg.question || 'Dashboard visual',
+      title: live.title || msg.kpi?.label || msg.question || t('ui.chat.artifact.default_visual'),
       chart_type: live.chart_type || (msg.kpi ? 'kpi' : 'table'),
       color_palette: live.color_palette || 'default',
       dashboard_id: DASHBOARD_ID,
@@ -4239,10 +4241,10 @@ function appendAnalysisResponse(msg, opts = {}){
   div.querySelector('[data-copy="analysis"]')?.addEventListener('click', async (e) => {
     // Sections belong in the copy too, or copying a two-part answer takes half of it.
     const sectionText = (msg.sections || []).flatMap(s => [s.title || '', s.body || '', ...(s.bullets || [])]);
-    const payload = [msg.title || '', msg.body || '', ...sectionText, msg.secondary || '', ...(msg.bullets || []), msg.next_step ? ('Next step: ' + msg.next_step) : ''].filter(Boolean).join('\n');
+    const payload = [msg.title || '', msg.body || '', ...sectionText, msg.secondary || '', ...(msg.bullets || []), msg.next_step ? (t('ui.chat.card.next_step') + msg.next_step) : ''].filter(Boolean).join('\n');
     const ok = await copyText(payload);
     const prev = e.currentTarget.textContent;
-    e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
+    e.currentTarget.textContent = t(ok ? 'ui.chat.card.copied' : 'ui.chat.toast.copy_failed');
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
     toast(t(ok ? 'ui.chat.toast.analysis_copied' : 'ui.chat.toast.copy_failed'));
   });
@@ -4262,8 +4264,8 @@ function appendChart(payload, opts = {}){
   const rows = payload.rows || [];
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  const _chartTitle = escHtml(payload.title || payload.question || 'Chart result');
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">Add to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button><button type="button" class="chart-btn" data-action="expand" title="Expand chart" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  const _chartTitle = escHtml(payload.title || payload.question || t('ui.chat.chart.result'));
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${escHtml(t('ui.chat.chart.rows', {count: rows.length, duration: payload.duration_label || ''}))}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">${t('ui.chat.chart.pin')}</button><button type="button" class="chart-btn" data-action="copy">${t('ui.chat.chart.copy_summary')}</button><button type="button" class="chart-btn" data-action="expand" title="${t('ui.chat.chart.expand')}" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
   thread().appendChild(div);
   const [pinBtn, copyBtn, expandBtn] = div.querySelectorAll('.chart-btn');
   if (!payload.pin_token) {
@@ -4273,7 +4275,7 @@ function appendChart(payload, opts = {}){
       const live = window._chartPayloads[chartId] || payload;
       openDashboardPicker({
         token: payload.pin_token,
-        title: live.title || payload.question || 'Dashboard visual',
+        title: live.title || payload.question || t('ui.chat.artifact.default_visual'),
         chart_type: live.chart_type || payload.chart_type || 'bar',
         color_palette: live.color_palette || 'default',
         dashboard_id: DASHBOARD_ID,
@@ -4284,7 +4286,7 @@ function appendChart(payload, opts = {}){
     const summary = `${payload.title || payload.question || 'Chart'}\n${rows.length} rows`;
     const ok = await copyText(summary);
     const prev = e.currentTarget.textContent;
-    e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
+    e.currentTarget.textContent = t(ok ? 'ui.chat.card.copied' : 'ui.chat.toast.copy_failed');
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
     toast(t(ok ? 'ui.chat.toast.chart_copied' : 'ui.chat.toast.copy_failed'));
   });
@@ -5122,7 +5124,7 @@ function connect(){
       setAgentRunState('completed', msg);
       openDashboardPicker({
         token: msg.pin_token,
-        title: msg.title || 'Dashboard visual',
+        title: msg.title || t('ui.chat.artifact.default_visual'),
         chart_type: msg.chart_type || 'auto',
         color_palette: msg.color_palette || 'default',
       });

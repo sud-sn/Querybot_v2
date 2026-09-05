@@ -690,7 +690,10 @@ class ConversationalResultCacheWiringTests(unittest.TestCase):
         self.assertNotIn("dt-row-select", template)
         self.assertNotIn("Exclude selected", template)
         self.assertIn("msg.result_command", template)
-        self.assertIn("No LLM call", template)
+        # A catalogue id in the source now; asserted on what the page ships.
+        from tests.chat_render import render as _render_chat, catalogue
+        self.assertEqual(catalogue(_render_chat(lang="en"))["ui.chat.trust.planner_none"],
+                         "No LLM call")
 
 
 if __name__ == "__main__":

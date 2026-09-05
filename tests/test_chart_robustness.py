@@ -123,7 +123,12 @@ def test_the_reader_is_told_when_a_chart_is_a_subset(source):
 
 
 def test_a_chart_with_nothing_to_draw_says_so(source):
-    assert "No rows to plot" in source and "No value column to plot" in source, (
+    # Both notices are catalogue ids in the source now, so this asserts they
+    # still reach the browser -- a source assertion would pass for a page that
+    # resolves the id to nothing, which is the empty grid this test is about.
+    from tests.chat_render import render as _render_chat, catalogue as _catalogue
+    _shipped = _catalogue(_render_chat(lang="en")).values()
+    assert "No rows to plot" in _shipped and "No value column to plot" in _shipped, (
         "an empty chart renders as an empty grid, which reads as broken rather "
         "than as an empty result"
     )

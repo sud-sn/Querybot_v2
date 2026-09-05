@@ -281,6 +281,8 @@
 // document -- three copies of the same catalogue in one page is exactly
 // the drift the comment above warns about, in payload form.
 const I18N = window.QB_I18N || {};
+const plural = window.qbPlural;
+const enumLabel = window.qbEnumLabel;
 function t(id, vars){
   let out = Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id;
   if (vars) for (const k in vars) out = out.split('{' + k + '}').join(String(vars[k]));

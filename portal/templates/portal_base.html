@@ -27,10 +27,37 @@
 // alias it as I18N so a lifted function resolves an id the same way whichever
 // template it came from.
 window.QB_I18N = {{ i18n_catalogue|tojson }};
+window.QB_LANG = {{ (lang or 'en')|tojson }};
 window.qbT = function (id, vars) {
   var out = Object.prototype.hasOwnProperty.call(window.QB_I18N, id) ? window.QB_I18N[id] : id;
   if (vars) for (var k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
   return out;
+};
+// The same two rules core/i18n.py applies, because the browser builds
+// sentences the server never sees. Both are asserted against the Python side
+// by a test rather than trusted to stay in step by reading.
+//
+// French takes the singular at ZERO as well as one: "0 ligne", "1 ligne",
+// "2 lignes". The inline `n !== 1 ? 's' : ''` these replace is right for
+// English and wrong for French on every empty result.
+window.qbPlural = function (stem, count, vars) {
+  var n = Math.abs(Number(count));
+  if (!isFinite(n)) n = 2;
+  var one = window.QB_LANG === 'fr' ? n < 2 : n === 1;
+  var args = {count: count};
+  if (vars) for (var k in vars) args[k] = vars[k];
+  return window.qbT(stem + (one ? '.one' : '.other'), args);
+};
+// An unknown enum value falls back to the prettified raw value, never the id:
+// these come from the database and a new one must not render as
+// "ui.enum.status.archived" on a customer's screen.
+window.qbEnumLabel = function (group, value) {
+  var key = String(value == null ? '' : value).trim().toLowerCase().split(' ').join('_');
+  if (!key) return '';
+  var id = 'ui.enum.' + group + '.' + key;
+  if (Object.prototype.hasOwnProperty.call(window.QB_I18N, id)) return window.QB_I18N[id];
+  key = key.split('_').join(' ');
+  return key.charAt(0).toUpperCase() + key.slice(1);
 };
 </script>
 
