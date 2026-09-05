@@ -2387,6 +2387,89 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # ══════════════════════════════════════════════════════════════════════════
+    # hint.*  --  "I could not answer that, here is what you CAN ask"
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # core/result_renderer.py::_build_cannot_generate_hint is the last thing a
+    # reader sees when both the cached-result engine and the database fallback
+    # have failed. It is the one message whose whole job is to be acted on, so
+    # the example questions in it are not decoration: they are typed back into
+    # the result chat. A French one that the normaliser cannot canonicalise
+    # fails exactly the way the question that produced this hint just did --
+    # tests/test_cannot_generate_hint_language.py canonicalises every one of
+    # them and asserts what comes out.
+    #
+    # {column} and {columns} are the tenant's own schema and are interpolated,
+    # never looked up. The example entries hold the QUESTION only -- the
+    # module adds the surrounding quotes -- because those quotes are display,
+    # and because the normaliser treats a '...' span as a value to protect, so
+    # a catalogue entry that carried them would canonicalise to nothing.
+
+    "hint.no_schema": {
+        "en": "Try asking a fresh question in the main chat.",
+        "fr": "Essayez de poser une nouvelle question dans la conversation principale.",
+    },
+    "hint.ask.average": {
+        "en": "what is the average {column}",
+        "fr": "quelle est la moyenne de {column}",
+    },
+    "hint.ask.above_average": {
+        "en": "show rows where {column} is above average",
+        "fr": "affiche les lignes avec {column} supérieur à la moyenne",
+    },
+    "hint.ask.rank": {"en": "rank by {column}", "fr": "classer par {column}"},
+    "hint.ask.filter": {"en": "filter by {column}", "fr": "filtrer par {column}"},
+
+    # The summary-total dead end. The three examples here used to name
+    # prescriptions and patients, in a module every tenant shares.
+    "hint.total.lead": {
+        "en": "This result shows a summary total ({columns} = **{value}**). There are no identifiers here to drill into.",
+        "fr": "Ce résultat est un total agrégé ({columns} = **{value}**). Il ne contient aucun identifiant permettant d'aller au détail.",
+    },
+    "hint.total.list_records": {
+        "en": "To list the actual records, ask a **fresh question in the main chat** — for example:",
+        "fr": "Pour lister les enregistrements eux-mêmes, posez une **nouvelle question dans la conversation principale** — par exemple :",
+    },
+    "hint.total.example_records": {
+        "en": "List the records behind this total",
+        "fr": "lister les enregistrements derrière ce total",
+    },
+    "hint.total.example_breakdown": {
+        "en": "Break this total down by category",
+        "fr": "ventiler ce total par catégorie",
+    },
+
+    "hint.summary_columns": {
+        "en": "The current result only has summary columns: {columns}.",
+        "fr": "Le résultat actuel ne contient que des colonnes agrégées : {columns}.",
+    },
+    "hint.questions_here": {
+        "en": "Questions you can ask here:",
+        "fr": "Questions que vous pouvez poser ici :",
+    },
+    "hint.record_level": {
+        "en": "To see record-level details, ask a fresh question in the main chat.",
+        "fr": "Pour voir le détail par enregistrement, posez une nouvelle question dans la conversation principale.",
+    },
+    "hint.only_columns": {
+        "en": "The current result only has these columns: {columns}.",
+        "fr": "Le résultat actuel ne contient que ces colonnes : {columns}.",
+    },
+    "hint.questions": {
+        "en": "Questions you can ask:",
+        "fr": "Questions que vous pouvez poser :",
+    },
+    "hint.name_them": {
+        "en": "For anything else, ask a fresh question in the main chat — for example, name them explicitly:",
+        "fr": "Pour toute autre demande, posez une nouvelle question dans la conversation principale — en nommant explicitement les valeurs, par exemple :",
+    },
+    "hint.name_them_example": {"en": "... for {names}", "fr": "... pour {names}"},
+    "hint.anything_else": {
+        "en": "For anything else, ask a fresh question in the main chat.",
+        "fr": "Pour toute autre demande, posez une nouvelle question dans la conversation principale.",
+    },
+
+    # ══════════════════════════════════════════════════════════════════════════
     # guide.*  --  the governed workspace guide
     # ══════════════════════════════════════════════════════════════════════════
     #

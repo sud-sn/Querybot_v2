@@ -24,6 +24,7 @@ from gateway import get_adapter, PlatformEvent
 from core.webhook_dedup import is_duplicate_event, remember_event, get_user_serialization_lock
 from core.dispatcher import dispatch
 from core.i18n import enum_label as _enum_label, plural as _t_plural, t as _t
+from core.question_normalizer import canonical_question
 from core.query_pipeline import handle_query
 from core.pipeline_context import get_state, get_client_db
 from core.pipeline_trace import (
@@ -2780,6 +2781,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "result_id": rc_result_id,
                     "active": True,
                 })
+                # The text the DETECTORS read, alongside the text the reader
+                # wrote. Identical for an English reader, byte for byte; for a
+                # French one it is the product's canonical English of the same
+                # question. core/query_pipeline.py does this for the main
+                # question path and this branch never did, so every
+                # deterministic rule below -- parse_result_command, the
+                # grouping regex, build_generic_query_hints -- read French and
+                # matched nothing. That is what produces the "I could not
+                # answer that" hint whose own suggestions this now lets work.
+                # Display, traces, logs and the model's prompts keep the
+                # reader's own words.
+                _rc_analysis_question = canonical_question(
+                    rc_question, (portal_user or {}).get("lang"))
                 _rc_start_ms    = int(time.time() * 1000)
                 _rc_question_id = make_llm_audit_request_id()
                 _rc_parent_qid  = getattr(adapter, "last_question_id", "") or ""
@@ -2856,7 +2870,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         component="result_metadata_planner",
                     ):
                         _rc_followup = await run_governed_result_followup(
-                            rc_question,
+                            _rc_analysis_question,
                             _sid,
                             complete=_complete_result_plan,
                             source_result_id=_rc_source_id,
@@ -2891,7 +2905,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         try:
                             _rc_chart_type = detect_chart_type(
                                 _rc_rows,
-                                question=rc_question,
+                                question=_rc_analysis_question,
                                 column_formats=_rc_formats,
                             )
                             if _rc_chart_type:
@@ -3063,16 +3077,18 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 _fb_rag_ctx  = _cached_result.get("rag_context", "")
                                 _fb_grouping = bool(_fb_re.search(
                                     r"\b(by|per|grouped by|breakdown|split by|each|for each)\s+\w",
-                                    rc_question.lower()
+                                    _rc_analysis_question.lower()
                                 ))
                                 _fb_n = 10 if _fb_grouping else 8
                                 try:
                                     _fb_retriever  = load_retriever(account_id)
-                                    _fb_fresh_docs = _fb_retriever.retrieve(rc_question, n=_fb_n)
+                                    _fb_fresh_docs = _fb_retriever.retrieve(
+                                        _rc_analysis_question, n=_fb_n)
                                     _fb_pinned     = [d for d in _fb_fresh_docs if _fb_retriever._is_global(d)]
                                     _fb_table_docs = [d for d in _fb_fresh_docs if not _fb_retriever._is_global(d)]
                                     if _fb_grouping:
-                                        _fb_fact_pats = _fb_retriever.retrieve_fact_patterns(rc_question, n=2)
+                                        _fb_fact_pats = _fb_retriever.retrieve_fact_patterns(
+                                            _rc_analysis_question, n=2)
                                         for _fp in _fb_fact_pats:
                                             if _fp not in (_fb_pinned + _fb_table_docs):
                                                 _fb_table_docs.insert(0, _fp)
@@ -3089,7 +3105,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
                                 # 2. Few-shot validated examples
                                 try:
-                                    _fb_examples = retrieve_similar_examples(rc_question, account_id, n=3)
+                                    _fb_examples = retrieve_similar_examples(
+                                        _rc_analysis_question, account_id, n=3)
                                     if _fb_examples:
                                         _fb_rag_ctx = (
                                             format_examples_for_prompt(_fb_examples, account_id)
@@ -3099,13 +3116,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     pass
 
                                 # 3. Business term injection (glossary)
-                                _fb_term_inj = store.build_term_injection(account_id, rc_question, None)
+                                _fb_term_inj = store.build_term_injection(
+                                    account_id, _rc_analysis_question, None)
 
                                 # 4. KB synonym map (from ## Business Synonyms sections)
                                 _fb_synonym_inj = _extract_kb_synonym_injection(_fb_rag_ctx)
 
                                 # 5. Generic query hints (date anchoring, aggregation rules)
-                                _fb_generic_hints = build_generic_query_hints(rc_question)
+                                _fb_generic_hints = build_generic_query_hints(_rc_analysis_question)
 
                                 # 6. Entity graph — deterministic JOIN path resolution
                                 # SCOPE to the schemas used in the original SQL so the
@@ -3148,7 +3166,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                     _orig_schemas,
                                                 )
                                         _fb_graph_ctx = _graph_resolve(
-                                            question   = rc_question,
+                                            question   = _rc_analysis_question,
                                             account_id = account_id,
                                             db_type    = _fb_db_cfg.get("db_type", "azure_sql"),
                                             graph      = _fb_full_graph,

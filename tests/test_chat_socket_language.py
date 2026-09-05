@@ -238,6 +238,90 @@ class TestTheGreetingArrivesTranslated:
         assert "`help`" in self._greeting("fr")["content"]
 
 
+class TestTheResultChatReadsTheCanonicalQuestion:
+    """The enabling half of the "cannot generate" hint.
+
+    core/query_pipeline.py has canonicalised the main question path since the
+    French work began; this branch never did, so parse_result_command, the
+    grouping regex and build_generic_query_hints all read the reader's own
+    French and matched nothing -- which is what produces the hint whose own
+    suggestions are French.
+
+    Driven over the real socket with the planner stubbed at the boundary, so
+    what is asserted is the text the planner actually received.
+    """
+
+    ROWS = [{"REGION": "North", "NET_AMOUNT": 10},
+            {"REGION": "South", "NET_AMOUNT": 20}]
+
+    def _question_the_planner_saw(self, lang, typed):
+        import asyncio
+
+        import core.governed_result_followup as grf
+        import gateway.webhooks as wh
+        from core.result_cache import result_cache
+
+        seen = {}
+
+        async def _spy(question, session_id, **kw):
+            seen["question"] = question
+            return grf.GovernedFollowupResult(
+                "error", reason="stubbed", evidence={})
+
+        client = _client_app()
+        account_id, user_id = _reader(lang)
+        session_id = f"{account_id}:web_{user_id}:thread:t1"
+        result_cache.store(session_id, list(self.ROWS), question="revenue by region",
+                           sql="SELECT 1")
+        import portal.routes as pr
+        client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
+        # resolve_provider runs before the planner and raises without an API
+        # key, so it is stubbed too -- at the boundary, not inside the block.
+        original = wh.run_governed_result_followup
+        original_provider = wh.resolve_provider
+        wh.run_governed_result_followup = _spy
+        wh.resolve_provider = lambda *a, **k: ("test", "test", "k", {})
+        try:
+            with client.websocket_connect(
+                    f"/ws/chat/{account_id}?thread_id=t1") as ws:
+                ws.receive_json()          # greeting
+                ws.send_json({"type": "result_chat", "question": typed,
+                              "result_id": ""})
+                for _ in range(10):
+                    frame = ws.receive_json()
+                    if isinstance(frame, dict) and frame.get("content"):
+                        break
+        finally:
+            wh.run_governed_result_followup = original
+            wh.resolve_provider = original_provider
+            result_cache.clear(session_id)
+        return seen.get("question")
+
+    def test_a_french_question_reaches_the_planner_as_english(self):
+        asked = self._question_the_planner_saw("fr", "classer par net amount")
+        assert asked == "rank by net amount", asked
+
+    def test_a_french_suggestion_from_the_hint_reaches_it_as_its_english_twin(self):
+        """The suggestion the hint itself offers, typed back verbatim."""
+        from core import i18n
+
+        typed = i18n.t("hint.ask.filter", lang="fr", column="region")
+        asked = self._question_the_planner_saw("fr", typed)
+        assert asked == i18n.t("hint.ask.filter", lang="en", column="region"), asked
+
+    def test_an_english_question_reaches_the_planner_untouched(self):
+        """canonical_question returns English unchanged, which is what makes
+        it safe to call unconditionally here.
+
+        The question deliberately contains "client" and "stock": the French
+        lexicon rewrites both ("customer", "inventory"), so canonicalising an
+        English reader's words as French would show up here rather than as a
+        quietly different answer.
+        """
+        typed = "show stock by client"
+        assert self._question_the_planner_saw("en", typed) == typed
+
+
 class TestEveryMessageIdTheChatUsesExists:
     """lookup() returns the id itself when an entry is missing, so a typo ships
     as `reply.dash.no_publish` in the chat bubble rather than raising anywhere.

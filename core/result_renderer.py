@@ -381,7 +381,7 @@ def _build_cannot_generate_hint(
     when the question likely references entities from the previous result.
     """
     if not schema:
-        return "Try asking a fresh question in the main chat."
+        return _t("hint.no_schema")
 
     numeric_cols = [
         c["name"] for c in stats.get("columns", [])
@@ -391,49 +391,53 @@ def _build_cannot_generate_hint(
         c["name"] for c in stats.get("columns", [])
         if c.get("sample_values")
     ]
-    currency_cols = [
-        c["name"] for c in stats.get("columns", [])
-        if c.get("is_currency")
-    ]
 
+    # The example questions are the point of this message: they are typed back
+    # into the result chat, so each one has to be a question that path can
+    # actually plan. In French that means core/question_normalizer.py must
+    # canonicalise it -- tests/test_cannot_generate_hint_language.py runs every
+    # one of them through it.
+    # The quotes are display, added here: a catalogue entry that carried them
+    # would be read by the normaliser as a '...' value span and protected from
+    # canonicalisation entirely, which is the one thing these must survive.
     suggestions = []
     if numeric_cols:
-        col = numeric_cols[0]
-        prefix = "$" if col in currency_cols else ""
+        label = numeric_cols[0].lower().replace("_", " ")
         suggestions += [
-            f"'what is the average {col.lower().replace('_', ' ')}'",
-            f"'show rows where {col.lower().replace('_', ' ')} is above average'",
-            f"'rank by {col.lower().replace('_', ' ')}'",
+            f"'{_t('hint.ask.average', column=label)}'",
+            f"'{_t('hint.ask.above_average', column=label)}'",
+            f"'{_t('hint.ask.rank', column=label)}'",
         ]
     if text_cols:
-        col = text_cols[0]
-        label = col.lower().replace("_", " ")
-        suggestions.append(f"'filter by {label}'")
+        suggestions.append(
+            f"'{_t('hint.ask.filter', column=text_cols[0].lower().replace('_', ' '))}'"
+        )
 
     col_summary = ", ".join(f"`{c['name']}`" for c in schema)
 
     if not text_cols and numeric_cols:
-        num_col = numeric_cols[0].lower().replace("_", " ")
         if prev_rows and len(prev_rows) == 1:
             val = list(prev_rows[0].values())[0] if prev_rows[0] else ""
+            # These three examples used to name prescriptions and patients, in
+            # a module every tenant shares -- so a distributor was told to ask
+            # for "patient details". Nothing here knows the domain, so the
+            # examples no longer pretend to.
             return (
-                f"This result shows a summary total ({col_summary} = **{val}**). "
-                f"There are no patient or record identifiers here to drill into.\n\n"
-                f"To list the actual records, ask a **fresh question in the main chat** — for example:\n"
-                f"  • *'List all prescriptions with their patient details'*\n"
-                f"  • *'Show me the prescriptions that make up this total'*\n"
-                f"  • *'List patients with prescription counts'*"
+                _t("hint.total.lead", columns=col_summary, value=val) + "\n\n"
+                + _t("hint.total.list_records") + "\n"
+                + f"  • *'{_t('hint.total.example_records')}'*\n"
+                + f"  • *'{_t('hint.total.example_breakdown')}'*"
             )
         return (
-            f"The current result only has summary columns: {col_summary}.\n"
-            "Questions you can ask here:\n"
+            _t("hint.summary_columns", columns=col_summary) + "\n"
+            + _t("hint.questions_here") + "\n"
             + "\n".join(f"  • {s}" for s in suggestions[:3])
-            + "\n\nTo see record-level details, ask a fresh question in the main chat."
+            + "\n\n" + _t("hint.record_level")
         )
 
     hint = (
-        f"The current result only has these columns: {col_summary}.\n"
-        "Questions you can ask:\n"
+        _t("hint.only_columns", columns=col_summary) + "\n"
+        + _t("hint.questions") + "\n"
         + "\n".join(f"  • {s}" for s in suggestions[:4])
     )
     if prev_rows and text_cols:
@@ -442,14 +446,12 @@ def _build_cannot_generate_hint(
             str(r[key_col]) for r in prev_rows if r.get(key_col) is not None
         ))[:5]
         if values:
-            names = ", ".join(values)
             hint += (
-                f"\n\nFor anything else, ask a fresh question in the main chat — "
-                f"for example, name them explicitly:\n"
-                f"  *'... for {names}'*"
+                "\n\n" + _t("hint.name_them") + "\n"
+                + f"  *'{_t('hint.name_them_example', names=', '.join(values))}'*"
             )
     else:
-        hint += "\n\nFor anything else, ask a fresh question in the main chat."
+        hint += "\n\n" + _t("hint.anything_else")
     return hint
 
 

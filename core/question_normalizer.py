@@ -196,6 +196,11 @@ _LEXICON: dict[str, str] = {
     "croissance": "growth",
     "taux de croissance": "growth rate",
     "moyenne": "average",
+    # A phrase, not two words: "superieur" alone would also fire inside
+    # "chiffre superieur a 100", where "above average" would be a lie.
+    "superieur a la moyenne": "above average",
+    "superieure a la moyenne": "above average",
+    "au-dessus de la moyenne": "above average",
     "mediane": "median",
     "somme": "sum",
     "nombre de": "count of",
@@ -325,6 +330,15 @@ _LEXICON: dict[str, str] = {
     "augmente": "increased",
     "augmenter": "increase",
     "hausse": "increase",
+    # The verbs core/result_renderer.py's "here is what you CAN ask" hint
+    # puts in front of a reader. Infinitives, because the noun forms are
+    # ambiguous: "classe" is also a category and "filtre" also a filter, and
+    # either would rewrite a column name in a real question.
+    "classer": "rank",
+    "filtrer": "filter",
+    "lister": "list",
+    "ventiler": "break down",
+    "afficher": "show",
     "montre": "show",
     "montre-moi": "show me",
     "montre moi": "show me",
@@ -332,6 +346,17 @@ _LEXICON: dict[str, str] = {
     "affiche-moi": "show me",
     "donne-moi": "give me",
     "liste": "list",
+    "lignes": "rows",
+    "ligne": "row",
+    "enregistrements": "records",
+    "enregistrement": "record",
+    "derriere": "behind",
+    # Demonstratives. "ce mois-ci" and its siblings are longer entries, and
+    # the lexicon is applied longest-first, so those still win.
+    "ce": "this",
+    "cet": "this",
+    "cette": "this",
+    "ces": "these",
     "quels sont": "what are",
     "quelles sont": "what are",
     "quel est": "what is",

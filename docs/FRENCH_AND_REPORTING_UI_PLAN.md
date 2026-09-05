@@ -229,13 +229,53 @@ Ordered by how often a reader sees it.
 2. **`core/answer_formatter.py`'s section markers** — deliberately English
    and deliberately out of the catalogue; see the note beside the
    `ui.chat.diag.*` ids.
-3. **`core/result_renderer.py`'s `_build_cannot_generate_hint`** — the
-   "I could not build SQL for that" hint, sent as `result_chat_error`.
-4. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
+3. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
    and the `/api/ask` JSON error contract. These do not reach a portal reader
    and have no `portal_user` to take a language from.
-5. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
+4. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### The "cannot generate" hint, and what it needed
+
+`_build_cannot_generate_hint` is the last thing a reader sees when both the
+cached-result engine and the database fallback have failed. Its whole job is
+to be acted on: the example questions in it are typed back into the result
+chat. That makes them a route, and a route has to go somewhere.
+
+Two things were wrong before the translation, and neither was about French:
+
+* The summary-total branch told every tenant to ask for "prescriptions with
+  their patient details", in a module a steel distributor and a pharmacy
+  share. Nothing in the function knows the domain, so the examples no longer
+  pretend to. This is the only English output that changed; everything else is
+  byte-identical against a snapshot taken before the work.
+* **The result-chat path never called `canonical_question`.** The main
+  question path has since the French work began; this branch read the reader's
+  own words with `parse_result_command`, an English grouping regex,
+  `build_generic_query_hints` and the retrievers — which is what produces this
+  hint for a French reader in the first place. So the hint was about to hand
+  them French suggestions down the path that had just failed on French.
+  `_rc_analysis_question` is an ADDED name, exactly as `_analysis_question` is
+  in the pipeline: detectors, retrieval and the planner read it; display,
+  traces, logs and the model's own prompts keep the reader's words. It is a
+  no-op for every English tenant, and
+  `tests/test_chat_socket_language.py` asserts that with a question containing
+  "client" and "stock", both of which the French lexicon rewrites.
+
+The quotes around each example live in the module, not the catalogue. A
+catalogue entry carrying them would be read by the normaliser as a `'...'`
+value span and protected from canonicalisation entirely — the one thing these
+must survive. `tests/test_cannot_generate_hint_language.py` pulls every quoted
+example out of the rendered French hint, canonicalises it, and asserts the
+English that comes out; a suggestion added later with no row in that table
+fails there rather than shipping as a dead end.
+
+Ten lexicon entries were added for the words those suggestions use. Each is
+there because it changes what a detector sees, which is the bar
+`core/question_normalizer.py` sets for itself. The verbs are infinitives on
+purpose: "classe" is also a category and "filtre" also a filter, and either
+would rewrite a column name in a real question. `evals/french_parity.py` is
+still 100%.
 
 ### The workspace guide, and what it needed
 
@@ -417,8 +457,10 @@ and not translated fails there rather than shipping.
 `tests/test_coverage_caveat_language.py`,
 `tests/test_chat_socket_language.py`,
 `tests/test_drill_dimension_language.py`,
-`tests/test_conversational_language.py` and
-`tests/test_workspace_guide_language.py` do the same for the surfaces above, by
+`tests/test_conversational_language.py`,
+`tests/test_workspace_guide_language.py` and
+`tests/test_cannot_generate_hint_language.py` do the same for the surfaces
+above, by
 executing the real producers in both languages — including the post-processing
 block compiled out of `core/query_pipeline.py` and a real `_send_results`
 render, so a sentence translated at its source but concatenated again
