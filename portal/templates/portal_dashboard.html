@@ -11,6 +11,10 @@
 <script src="/static/vendor/gridstack-all.js"></script>
 <style>
 .dashboard-page{min-height:100%;display:flex;flex-direction:column;gap:1rem}
+/* Was style="all:unset", which also unset the focus outline -- and this is the
+   only keyboard-reachable control inside a table tile. */
+.dash-th-sort{border:0;background:transparent;padding:0;margin:0;font:inherit;font-weight:750;color:inherit;cursor:pointer;text-align:left}
+.dash-th-sort:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:var(--radius-sm)}
 .dashboard-page .page-header{margin-bottom:.25rem}
 .dashboard-page .metrics{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:.5rem}
 .dashboard-library{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.75rem;margin:0 0 1rem}
@@ -33,7 +37,10 @@
 .chart-card.drag-over{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}
 .chart-card-header{padding:.95rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 84%, var(--primary-soft) 16%),var(--surface))}
 .chart-card-body{padding:1rem;display:flex;flex-direction:column;flex:1;min-height:0}
-.chart-card-title{font-size:var(--font-md);font-weight:800;color:var(--text);line-height:1.4;cursor:text}
+/* cursor:text was unconditional, so a read-only viewer's pointer said the
+   title was editable when it is not. It follows the permission now. */
+.chart-card-title{font-size:var(--font-md);font-weight:800;color:var(--text);line-height:1.4}
+.chart-card-title.is-editable{cursor:text}
 .chart-card-title[contenteditable=true]{outline:none;border-bottom:2px solid var(--primary);padding-bottom:1px}
 .chart-card-sub{font-size:var(--font-xs);color:var(--text-muted);margin-top:4px}
 .chart-drag-handle{border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);border-radius:7px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;cursor:grab;font-weight:900;line-height:1}
@@ -195,17 +202,23 @@
     <div class="chart-card-content grid-stack-item-content">
     <div class="chart-card-header">
       <div style="flex:1;min-width:0">
-        <div class="chart-card-title"
-             title="Double-click to rename"
-             {% if dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit %}ondblclick="startRenameChart(this, {{ chart.id }})"{% endif %}
+        {% set _can_edit = dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit %}
+        {# The tooltip used to sit OUTSIDE the can_edit guard that wraps
+           ondblclick, so a team viewer was told to double-click to rename and
+           nothing happened. #}
+        <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}"
+             {% if _can_edit %}title="Double-click to rename" ondblclick="startRenameChart(this, {{ chart.id }})"{% endif %}
              id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
-        <div class="chart-card-sub">{{ chart.row_count }} rows · {% if chart.from_cache %}Protected cache {{ chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '' }}{% else %}Live governed refresh{% endif %}</div>
+        <div class="chart-card-sub">{% if chart.table_truncated %}Showing {{ chart.table_shown }} of {{ chart.row_count }} rows{% else %}{{ chart.row_count }} rows{% endif %} · {% if chart.from_cache %}Protected cache {{ chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '' }}{% else %}Live governed refresh{% endif %}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
         {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="Drag to reorder or resize from the card corner" aria-label="Drag chart to reorder">⋮⋮</button>{% endif %}
-        <button type="button" class="btn btn-xs btn-secondary"
+        {# Only a card that HAS a chart node can expand: openChartModal does
+           `querySelector('[data-chart]'); if (!node) return;`, so on error, KPI
+           and table cards this was a button that did nothing and said nothing. #}
+        {% if chart.chart_json %}<button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
-          title="Expand chart" style="font-size:var(--font-sm);padding:4px 8px">⤢ Expand</button>
+          title="Expand chart" style="font-size:var(--font-sm);padding:4px 8px">⤢ Expand</button>{% endif %}
         <form method="post" action="/portal/unpin" style="margin:0;display:none" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
           <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id if dashboard_artifact else 0 }}">
@@ -217,7 +230,7 @@
     </div>
     <div class="chart-card-body">
       {% if chart.error %}
-      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div></div>
+      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
       {% elif chart.kpi %}
       <div style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
         <div style="font-size:var(--font-sm);font-weight:700;color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
@@ -227,19 +240,27 @@
       {% elif chart.table_rows %}
       <div style="width:100%;height:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
         <table style="width:100%;border-collapse:collapse;font-size:var(--font-sm);white-space:nowrap">
-          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" onclick="sortDashboardTable(this, {{ loop.index0 }})" style="all:unset;cursor:pointer;font-weight:750">{{ col }} ↕</button>{% else %}{{ col }}{% endif %}</th>{% endfor %}</tr></thead>
-          <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}<td style="padding:.5rem .65rem;border-bottom:1px solid var(--border)">{{ row[col] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0 }})">{{ col }} ↕</button>{% else %}{{ col }}{% endif %}</th>{% endfor %}</tr></thead>
+          <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}{% set cell = row[col] %}<td data-sort="{{ cell.v if cell.v is not none else '' }}" style="padding:.5rem .65rem;border-bottom:1px solid var(--border)">{{ cell.d }}</td>{% endfor %}</tr>{% endfor %}</tbody>
         </table>
       </div>
       {% elif chart.chart_json %}
-      <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart='{{ chart.chart_json|safe }}'><div class="skeleton skeleton-chart" data-chart-skeleton></div></div>
+      {# Double quotes and normal autoescaping. Single quotes plus |safe meant any
+    apostrophe in a column name or a value -- "chiffre d'affaires", "L'Oreal" --
+    ended the attribute early, so JSON.parse threw and, because the init loop
+    had no try/catch, every chart AFTER it stayed a shimmering skeleton too. #}
+      <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart="{{ chart.chart_json }}"><div class="skeleton skeleton-chart" data-chart-skeleton></div></div>
       {% else %}
       <div class="chart-error">No data returned for this query.</div>
       {% endif %}
       {% for warning in chart.filter_warnings or [] %}<div class="chart-warning">{{ warning }}</div>{% endfor %}
       <div class="chart-meta">
         <span title="{{ chart.question }}" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ chart.question[:70] }}{% if chart.question|length > 70 %}…{% endif %}</span>
-        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:700;color:var(--primary);flex-shrink:0">{{ (chart.chart_type or 'bar')|upper }}</span>
+        {# The badge read the STORED type. The picker sends 'auto' when no type was
+    chosen, so the card announced AUTO above a rendered area chart. The JS
+    overwrites this from the payload once the chart mounts; the server-side
+    fallback below is only what shows before that. #}
+        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:700;color:var(--primary);flex-shrink:0">{% if chart.chart_type and chart.chart_type != 'auto' %}{{ chart.chart_type|upper }}{% elif chart.kpi %}KPI{% elif chart.table_rows %}TABLE{% else %}CHART{% endif %}</span>
       </div>
       {% if chart.chart_json and (not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
@@ -276,13 +297,27 @@ function sortDashboardTable(button, columnIndex){
   if (!body) return;
   const ascending = button.dataset.sortDirection !== 'asc';
   const rows = Array.from(body.rows);
+  // Sort on data-sort, the RAW governed value the server put on the cell, not
+  // on the rendered text. The old code stripped "$,% " out of the displayed
+  // string and called Number() on what was left, which is a silent
+  // wrong-answer path the moment the display is not en-US: French "1 234,50"
+  // came back as 123450 and sorted a hundredfold too high, and "1 234,50 €"
+  // came back NaN and fell through to a STRING sort with no sign that it had.
+  const cellValue = (row) => {
+    const cell = row.cells[columnIndex];
+    if (!cell) return {n: NaN, s: ''};
+    const raw = cell.dataset ? cell.dataset.sort : undefined;
+    const text = (cell.textContent || '').trim();
+    // undefined means the server sent no raw value for this cell; '' is a
+    // legitimate empty one, and must not be read as a zero.
+    const source = raw === undefined ? text : raw;
+    return {n: source === '' ? NaN : Number(source), s: text};
+  };
   rows.sort((left, right) => {
-    const a = (left.cells[columnIndex]?.textContent || '').trim();
-    const b = (right.cells[columnIndex]?.textContent || '').trim();
-    const an = Number(a.replace(/[$,%\s,]/g, ''));
-    const bn = Number(b.replace(/[$,%\s,]/g, ''));
-    const comparison = Number.isFinite(an) && Number.isFinite(bn)
-      ? an - bn : a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'});
+    const a = cellValue(left), b = cellValue(right);
+    const comparison = Number.isFinite(a.n) && Number.isFinite(b.n)
+      ? a.n - b.n
+      : a.s.localeCompare(b.s, undefined, {numeric: true, sensitivity: 'base'});
     return ascending ? comparison : -comparison;
   });
   rows.forEach(row => body.appendChild(row));
@@ -297,13 +332,23 @@ function sortDashboardTable(button, columnIndex){
 const _PALETTES = window.QB_PALETTES;
 const _PAL_GRAD = window.QB_PALETTE_GRADIENTS;
 
-function _fmtNum(v){
-  const n=Number(v); if(isNaN(n)) return String(v??'');
-  const a=Math.abs(n);
-  if(a>=1e9) return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';
-  if(a>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';
-  if(a>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';
-  return n.toLocaleString(undefined,{maximumFractionDigits:2});
+// Kept byte-identical to portal_chat.html's copy. The two had drifted: this one
+// still rendered Infinity as "InfinityB", 1.2e12 as "1200B" (which reads as a
+// mistake on an axis) and every rate below 0.01 as "0", so an axis of
+// conversion fractions drew as a column of zeros. Same payload, same product,
+// two different numbers depending on which page you were looking at.
+function _fmtNum(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? '');
+  const abs = Math.abs(n);
+  const trim = x => x.toFixed(1).replace(/\.0$/, '');
+  if (abs >= 1e12) return trim(n / 1e12) + 'T';
+  if (abs >= 1e9)  return trim(n / 1e9)  + 'B';
+  if (abs >= 1e6)  return trim(n / 1e6)  + 'M';
+  if (abs >= 1e3)  return trim(n / 1e3)  + 'K';
+  if (n === 0) return '0';
+  if (abs < 0.01) return Number(n.toPrecision(2)).toString();
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 function _chartNormKey(v){ return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 function _chartFormatFor(payload, col){
@@ -566,10 +611,32 @@ function initDashboardChart(node) {
 }
 function renderDashboardCharts() {
   requestAnimationFrame(() => {
-    document.querySelectorAll('[data-chart]').forEach(initDashboardChart);
-    document.querySelectorAll('.dash-ctrl-row[data-chart-id]').forEach(mountDashChartControls);
+    // Per-node try/catch. This was a bare forEach, so one chart whose payload
+    // failed to parse threw out of the loop and every chart after it in DOM
+    // order was never initialised -- each one left shimmering its skeleton
+    // with no error, forever. A card that cannot draw says so, alone.
+    document.querySelectorAll('[data-chart]').forEach(node => {
+      try {
+        initDashboardChart(node);
+      } catch (err) {
+        console.error('dashboard chart failed to render', err);
+        _showDashChartFailure(node);
+      }
+    });
+    document.querySelectorAll('.dash-ctrl-row[data-chart-id]').forEach(node => {
+      try { mountDashChartControls(node); } catch (err) { console.error(err); }
+    });
     resizeDashboardCharts();
   });
+}
+
+function _showDashChartFailure(node){
+  if (!node) return;
+  node.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'chart-error';
+  box.textContent = 'This chart could not be drawn. The other charts on this dashboard are unaffected.';
+  node.appendChild(box);
 }
 let dashboardGrid = null;
 let layoutSaveTimer = null;

@@ -1043,6 +1043,11 @@ async def portal_dashboard(request: Request):
     })
 
 
+# The table tile renders at most this many rows. The card says so now; it used
+# to print the full row count above fifty rendered rows.
+_TABLE_TILE_ROWS = 50
+
+
 def _refresh_chart(
     chart: dict,
     db_cfg: dict | None,
@@ -1059,8 +1064,12 @@ def _refresh_chart(
     result["kpi"] = None
     result["table_columns"] = []
     result["table_rows"] = []
+    result["table_column_formats"] = {}
+    result["table_truncated"] = False
+    result["table_shown"] = 0
     result["from_cache"] = False
     result["filter_warnings"] = []
+    result["error_next_step"] = ""
 
     if not db_cfg:
         result["error"] = "Database not configured"
@@ -1163,8 +1172,42 @@ def _refresh_chart(
                         result["kpi"].get("value"), result["kpi"].get("format")
                     )
             elif chart_type == "table":
+                # Formatted here, not left to Jinja's str(). A table tile used
+                # to print the raw governed float -- "1234.5" -- while a chart
+                # of the SAME measure on the SAME page rendered "$1,234.50",
+                # because only the chart path ever saw column_formats.
+                from core.response_builder import (
+                    build_column_formats, _format_display_value,
+                )
+                _display_formats = display_config.get("display_formats") or {}
+                _column_formats = build_column_formats(
+                    rows, explicit_formats=display_config.get("column_formats") or {},
+                )
                 result["table_columns"] = list(rows[0].keys())
-                result["table_rows"] = rows[:50]
+                result["table_column_formats"] = _column_formats
+                # Each cell carries BOTH the display string and the raw value.
+                # The sort used to parse the number back out of the rendered
+                # text, which is a silent wrong-answer path: strip "$,% " from
+                # a French "1 234,50" and you get 123450, a factor of a hundred
+                # out, with no error anywhere.
+                result["table_rows"] = [
+                    {
+                        column: {
+                            "d": _format_display_value(
+                                row.get(column),
+                                _column_formats.get(column),
+                                _display_formats.get(column),
+                            ),
+                            "v": row.get(column),
+                        }
+                        for column in result["table_columns"]
+                    }
+                    for row in rows[:_TABLE_TILE_ROWS]
+                ]
+                # The card's subtitle reported the FULL row count while only 50
+                # rows were rendered, so a 5,000-row table read as complete.
+                result["table_truncated"] = len(rows) > _TABLE_TILE_ROWS
+                result["table_shown"] = len(result["table_rows"])
             else:
                 payload = build_chart_payload(
                     rows,
@@ -1181,7 +1224,14 @@ def _refresh_chart(
                     result["chart_json"] = json.dumps(payload)
         store.update_chart_refreshed(chart["id"])
     except Exception as e:
-        result["error"] = str(e)[:120]
+        # str(e)[:120] put raw driver text -- ODBC codes, schema and table names
+        # -- on the end user's card, arbitrarily truncated mid-sentence. The
+        # same sanitiser the chat failures use gives a plain reason and a next
+        # step; the technical text stays in the log, which is where it belongs.
+        from core.failure_messages import sanitize_db_error
+        _sanitized = sanitize_db_error(str(e))
+        result["error"] = _sanitized.get("plain_reason") or "This chart could not be refreshed."
+        result["error_next_step"] = _sanitized.get("next_step") or ""
         log.warning("Chart refresh failed for chart %d: %s", chart["id"], e)
 
     return result
