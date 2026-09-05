@@ -57,7 +57,8 @@ def run(script: str, *, lang="en", functions=(), consts=(), preamble="") -> dict
     )
     harness = f"""
 {_num_preamble(lang)}
-const I18N = {json.dumps(i18n.catalogue_for(lang))};
+window.QB_I18N = {json.dumps(i18n.catalogue_for(lang))};
+const I18N = window.QB_I18N;
 function t(id, vars){{
   let out = Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id;
   if (vars) for (const k in vars) out = out.split('{{' + k + '}}').join(String(vars[k]));

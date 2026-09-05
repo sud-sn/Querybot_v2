@@ -17,7 +17,8 @@ import time
 
 import store
 from gateway import PlatformEvent
-from core.i18n import t as _t
+from core.i18n import format_date as _format_date, plural as _t_plural, t as _t
+from datetime import date as _dt_date
 from core.llm import llm_complete, build_sql_system_prompt, resolve_provider
 from core.prompt_cache import prompt_cache_enabled
 from core.kb_preload import preload_account_kb
@@ -885,6 +886,59 @@ def _multi_period_column_formats(
     if len(metrics) == 1:
         fmt = str(metrics[0].get("result_format") or "number").strip().lower() or "number"
     return {column: fmt for column in period_columns.values()}
+
+
+# The date windows whose answers are relative to the DATA's most recent date
+# rather than to the calendar. Only these get the freshness banner below.
+BUSINESS_DATE_WINDOW_KINDS = frozenset({
+    "today", "yesterday", "this_week", "this_month", "this_quarter", "this_year",
+})
+
+
+def business_date_banner(
+    window_kind: str,
+    anchor: dict | None,
+    today: _dt_date | None = None,
+) -> tuple[int | None, str]:
+    """The freshness note for a data-relative window: ``(drift_days, message)``.
+
+    Extracted from _handle_query_impl so it can be executed on its own. It is
+    pure -- dates in, one sentence out -- and it was six levels deep inside a
+    6,800-line function, which is where a plural rule goes unnoticed.
+
+    ``drift_days`` is None when no anchor date was probed at all; the caller
+    still records a trace step in that case, which is why it comes back rather
+    than being folded into the message.
+    """
+    spoken = _t(f"date.window.{window_kind}")
+    value = str((anchor or {}).get("value") or "")
+    drift_days: int | None = None
+    anchor_date = None
+    if value:
+        try:
+            anchor_date = _dt_date.fromisoformat(value)
+        except ValueError:
+            return None, _t("date.anchor.unknown", window=spoken)
+        drift_days = ((today or _dt_date.today()) - anchor_date).days
+    if drift_days is not None and drift_days > 1:
+        # Say where the date came from. The anchor may have been read from
+        # cache rather than from the warehouse on this request, and a cached
+        # value stated as bare fact is exactly how a stale answer passes for a
+        # current one: the banner was the one thing on screen that looked
+        # authoritative about the date, and it was willing to name a specific
+        # day it had not checked.
+        source = _t("date.anchor.checked_cache" if (anchor or {}).get("cached")
+                    else "date.anchor.checked_now")
+        return drift_days, _t_plural(
+            "date.anchor.drift", drift_days,
+            # "%d %b %Y" is an English month whatever the reader chose;
+            # day_month_short_year is the same shape with the name looked up.
+            date=_format_date(anchor_date, "day_month_short_year"),
+            window=spoken, source=source,
+        )
+    if drift_days is None:
+        return None, _t("date.anchor.unknown", window=spoken)
+    return drift_days, ""
 
 
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
@@ -4901,55 +4955,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Without a probed date we cannot name the day, but we can still say the
     # answer is data-relative rather than calendar-relative.
     try:
-        from datetime import date as _date
-
         _window_kind = str(
             (_anchor_policies[0] if _anchor_policies else {}).get("kind") or ""
         )
-        if _window_kind in {"today", "yesterday", "this_week", "this_month",
-                            "this_quarter", "this_year"}:
-            _spoken_kind = _window_kind.replace("_", " ")
-            _anchor_value = str(
-                (_generation_semantic_context.get("resolved_date_anchor") or {})
-                .get("value") or ""
+        if _window_kind in BUSINESS_DATE_WINDOW_KINDS:
+            _anchor_meta = (
+                _generation_semantic_context.get("resolved_date_anchor") or {}
             )
-            _drift_days = None
-            if _anchor_value:
-                _anchor_date = _date.fromisoformat(_anchor_value)
-                _drift_days = (_date.today() - _anchor_date).days
-            if _drift_days is not None and _drift_days > 1:
-                # Say where the date came from. The anchor may have been read
-                # from cache rather than from the warehouse on this request, and
-                # a cached value stated as bare fact is exactly how a stale
-                # answer passes for a current one: the banner was the one thing
-                # on screen that looked authoritative about the date, and it was
-                # willing to name a specific day it had not checked.
-                _anchor_meta = (_generation_semantic_context.get("resolved_date_anchor") or {})
-                _anchor_checked = "just now" if not _anchor_meta.get("cached") else "from cache"
-                await adapter.send_message(
-                    event,
-                    f"ℹ️ The most recent business data is "
-                    f"**{_anchor_date.strftime('%d %b %Y')}** ({_drift_days} days "
-                    f"ago), so \"{_spoken_kind}\" is answered as of that date "
-                    f"rather than the calendar date. "
-                    f"_(read {_anchor_checked}; if your data has just been "
-                    f"reloaded, ask an administrator to refresh the business "
-                    f"date.)_",
-                )
-            elif _drift_days is None:
-                await adapter.send_message(
-                    event,
-                    f"ℹ️ \"{_spoken_kind}\" is answered against the most recent "
-                    "business date present in your data, which may be earlier "
-                    "than the calendar date.",
-                )
+            _drift_days, _banner = business_date_banner(_window_kind, _anchor_meta)
+            if _banner:
+                await adapter.send_message(event, _banner)
             if _drift_days is None or _drift_days > 1:
                 _trace_step(
                     trace_id,
                     "stale_relative_date_disclosed",
                     output_summary={
                         "window_kind": _window_kind,
-                        "anchor": _anchor_value or "unresolved",
+                        "anchor": str(_anchor_meta.get("value") or "")
+                                  or "unresolved",
                         "drift_days": _drift_days,
                     },
                 )

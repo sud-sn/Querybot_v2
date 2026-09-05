@@ -103,6 +103,14 @@ _PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 # no-break space (U+202F). They are different characters on purpose -- that is
 # the French typographic rule, and using one for both makes "12 345 %" look
 # like a grouped number.
+# Clock convention. French writes 14:30, English (US) 2:30 PM. The page read
+# this from the BROWSER's locale, which is a third answer again: a French
+# reader on an English-locale machine got 2:30 PM beside French prose.
+DATE_FORMATS: dict[str, dict[str, object]] = {
+    "en": {"clock": 12},
+    "fr": {"clock": 24},
+}
+
 NUMBER_FORMATS: dict[str, dict[str, object]] = {
     "en": {"group": ",", "decimal": ".", "percent_gap": "",
            "currency_gap": "", "currency_after": False},
@@ -2425,6 +2433,69 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # ══════════════════════════════════════════════════════════════════════════
+    # date.*  --  month names, and the dates written into prose
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # strftime("%B") and toLocaleDateString("en-US") are both English, whatever
+    # the reader chose. The DISPLAY STYLE is not translated -- dd-mm-yyyy vs
+    # mm-dd-yyyy is a per-column choice an administrator made, and flipping it
+    # by language would silently change which number is the day. Only the month
+    # NAME inside a style varies.
+    #
+    # French month names are lower case (a proper noun rule, not a typo) and
+    # the abbreviations carry their full stop: "janv.", "sept.". "mars", "mai"
+    # and "juin" are already short enough to have none.
+    "date.month.long.1": {"en": "January", "fr": "janvier"},
+    "date.month.long.2": {"en": "February", "fr": "février"},
+    "date.month.long.3": {"en": "March", "fr": "mars"},
+    "date.month.long.4": {"en": "April", "fr": "avril"},
+    "date.month.long.5": {"en": "May", "fr": "mai"},
+    "date.month.long.6": {"en": "June", "fr": "juin"},
+    "date.month.long.7": {"en": "July", "fr": "juillet"},
+    "date.month.long.8": {"en": "August", "fr": "août"},
+    "date.month.long.9": {"en": "September", "fr": "septembre"},
+    "date.month.long.10": {"en": "October", "fr": "octobre"},
+    "date.month.long.11": {"en": "November", "fr": "novembre"},
+    "date.month.long.12": {"en": "December", "fr": "décembre"},
+    "date.month.short.1": {"en": "Jan", "fr": "janv."},
+    "date.month.short.2": {"en": "Feb", "fr": "févr."},
+    "date.month.short.3": {"en": "Mar", "fr": "mars"},
+    "date.month.short.4": {"en": "Apr", "fr": "avr."},
+    "date.month.short.5": {"en": "May", "fr": "mai"},
+    "date.month.short.6": {"en": "Jun", "fr": "juin"},
+    "date.month.short.7": {"en": "Jul", "fr": "juil."},
+    "date.month.short.8": {"en": "Aug", "fr": "août"},
+    "date.month.short.9": {"en": "Sep", "fr": "sept."},
+    "date.month.short.10": {"en": "Oct", "fr": "oct."},
+    "date.month.short.11": {"en": "Nov", "fr": "nov."},
+    "date.month.short.12": {"en": "Dec", "fr": "déc."},
+
+    # ── The freshness banner ────────────────────────────────────────────────
+    # The one place a date is written into a sentence rather than a cell, and
+    # it carried an English month, an English inline plural and an English
+    # word for the window all at once.
+    "date.window.today": {"en": "today", "fr": "aujourd'hui"},
+    "date.window.yesterday": {"en": "yesterday", "fr": "hier"},
+    "date.window.this_week": {"en": "this week", "fr": "cette semaine"},
+    "date.window.this_month": {"en": "this month", "fr": "ce mois-ci"},
+    "date.window.this_quarter": {"en": "this quarter", "fr": "ce trimestre"},
+    "date.window.this_year": {"en": "this year", "fr": "cette année"},
+    "date.anchor.checked_now": {"en": "just now", "fr": "à l'instant"},
+    "date.anchor.checked_cache": {"en": "from cache", "fr": "depuis le cache"},
+    "date.anchor.drift.one": {
+        "en": "ℹ️ The most recent business data is **{date}** ({count} day ago), so \"{window}\" is answered as of that date rather than the calendar date. _(read {source}; if your data has just been reloaded, ask an administrator to refresh the business date.)_",
+        "fr": "ℹ️ La donnée métier la plus récente date du **{date}** (il y a {count} jour) ; « {window} » est donc calculé à cette date et non à la date du calendrier. _(lu {source} ; si vos données viennent d'être rechargées, demandez à un administrateur d'actualiser la date métier.)_",
+    },
+    "date.anchor.drift.other": {
+        "en": "ℹ️ The most recent business data is **{date}** ({count} days ago), so \"{window}\" is answered as of that date rather than the calendar date. _(read {source}; if your data has just been reloaded, ask an administrator to refresh the business date.)_",
+        "fr": "ℹ️ La donnée métier la plus récente date du **{date}** (il y a {count} jours) ; « {window} » est donc calculé à cette date et non à la date du calendrier. _(lu {source} ; si vos données viennent d'être rechargées, demandez à un administrateur d'actualiser la date métier.)_",
+    },
+    "date.anchor.unknown": {
+        "en": "ℹ️ \"{window}\" is answered against the most recent business date present in your data, which may be earlier than the calendar date.",
+        "fr": "ℹ️ « {window} » est calculé par rapport à la date métier la plus récente présente dans vos données, qui peut être antérieure à la date du calendrier.",
+    },
+
+    # ══════════════════════════════════════════════════════════════════════════
     # hint.*  --  "I could not answer that, here is what you CAN ask"
     # ══════════════════════════════════════════════════════════════════════════
     #
@@ -3690,6 +3761,63 @@ def grain_label(grain, count=2, lang: str | None = None) -> str:
     if f"{stem}.one" not in MESSAGES:
         return key
     return plural(stem, count, lang=lang)
+
+
+def month_name(month: int, *, short: bool = False, lang: str | None = None) -> str:
+    """The name of a month, 1-12, in the reader's language.
+
+    ``strftime("%B")`` reads the process C locale, which is English on every
+    server this runs on and is not a per-request thing in any case.
+    """
+    try:
+        index = int(month)
+    except (TypeError, ValueError):
+        return str(month)
+    if not 1 <= index <= 12:
+        return str(month)
+    return t(f"date.month.{'short' if short else 'long'}.{index}", lang=lang)
+
+
+def format_date(value, style: str = "iso", lang: str | None = None) -> str:
+    """One date, in one of the display styles an administrator can choose.
+
+    The STYLE is not translated. dd-mm-yyyy and mm-dd-yyyy are a per-column
+    decision someone made about their own data, and swapping them by language
+    would silently change which number is the day -- the one date bug nobody
+    spots from the screen. Only the month NAME inside a style varies.
+
+    Mirrored by window.qbDate in portal_base.html, which the browser uses for
+    the same columns; tests/test_date_format_language.py executes both.
+    """
+    try:
+        year, month, day = value.year, value.month, value.day
+    except AttributeError:
+        return str(value)
+    if style == "month_year_short":
+        return f"{month_name(month, short=True, lang=lang)}-{year % 100:02d}"
+    if style == "month_year_long":
+        return f"{month_name(month, lang=lang)} {year}"
+    if style == "day_month_year":
+        return f"{day:02d}-{month:02d}-{year}"
+    if style == "month_day_year":
+        return f"{month:02d}-{day:02d}-{year}"
+    if style == "day_month_name_year":
+        return f"{day:02d}-{month_name(month, short=True, lang=lang)}-{year}"
+    # The same order, spaced rather than hyphenated: what the freshness banner
+    # writes into a sentence, where hyphens read as a code.
+    if style == "day_month_short_year":
+        return f"{day:02d} {month_name(month, short=True, lang=lang)} {year}"
+    if style == "year":
+        return f"{year}"
+    if style == "month_name":
+        return month_name(month, lang=lang)
+    return f"{year}-{month:02d}"
+
+
+def date_format(lang: str | None = None) -> dict[str, object]:
+    """The clock convention one language reads times in."""
+    tag = normalise_language(lang if lang is not None else get_active_language())
+    return DATE_FORMATS.get(tag, DATE_FORMATS[DEFAULT_LANGUAGE])
 
 
 def number_format(lang: str | None = None) -> dict[str, object]:

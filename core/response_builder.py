@@ -10,6 +10,7 @@ from typing import Any
 
 from core.display_formats import normalize_display_format
 from core.i18n import (
+    format_date as _format_date,
     format_decimal as _format_decimal,
     number_format as _number_format,
     plural as _t_plural,
@@ -186,22 +187,11 @@ def _format_display_value(
                 except ValueError:
                     parsed = None
         if parsed:
-            style = spec.get("style") or "iso"
-            if style == "month_year_short":
-                return parsed.strftime("%b-%y")
-            if style == "month_year_long":
-                return parsed.strftime("%B %Y")
-            if style == "day_month_year":
-                return parsed.strftime("%d-%m-%Y")
-            if style == "month_day_year":
-                return parsed.strftime("%m-%d-%Y")
-            if style == "day_month_name_year":
-                return parsed.strftime("%d-%b-%Y")
-            if style == "year":
-                return parsed.strftime("%Y")
-            if style == "month_name":
-                return parsed.strftime("%B")
-            return parsed.strftime("%Y-%m")
+            # strftime("%B") reads the process C locale, which is English on
+            # every server this runs on. core/i18n.py owns the month names,
+            # because portal_base.html's window.qbDate formats the same
+            # columns in the browser and the two must not disagree.
+            return _format_date(parsed, spec.get("style") or "iso")
     return _format_number(value, fmt, spec)
 
 

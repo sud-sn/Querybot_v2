@@ -223,14 +223,48 @@ Ordered by how often a reader sees it.
 1. **`core/answer_formatter.py`'s section markers** — deliberately English
    and deliberately out of the catalogue; see the note beside the
    `ui.chat.diag.*` ids.
-2. **Dates.** `toLocaleDateString('en-US', …)` in the chat page's display
-   formatter, and the ISO dates the coverage caveats quote. Numbers are done;
-   dates are the same shape of problem and a separate pass.
-3. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
+2. **The platform webhooks** — Zoom/Teams/Slack signature and identity errors,
    and the `/api/ask` JSON error contract. These do not reach a portal reader
    and have no `portal_user` to take a language from.
-4. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
+3. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### Dates, and what they needed
+
+Same shape as numbers, same solution: `core/i18n.py` owns the month names and
+the styles, `portal_base.html` exposes `window.qbDate` / `window.qbMonth` /
+`window.qbTime`, and `tests/test_date_format_language.py` executes both sides
+and compares them — including the page's own `_formatDisplayValue`, lifted and
+run, not just the shell helper it calls.
+
+Three formats were live at once again: `strftime("%B")` on the server (the
+process C locale — English on every server this runs on, and not a per-request
+thing in any case), `toLocaleDateString('en-US')` in the table cells, and
+`toLocaleTimeString([])` — the *browser's* locale — for the clock. A French
+reader on an English-locale machine got "2:30 PM" beside French prose.
+
+**The display style is never translated.** `dd-mm-yyyy` versus `mm-dd-yyyy` is
+a per-column choice an administrator made about their own data; flipping it by
+language would silently change which number is the day — the one date bug
+nobody spots from the screen. Only the month NAME inside a style varies, and a
+test asserts the numeric styles are byte-identical across languages.
+
+**ISO dates stay ISO**, pinned by a test. The coverage caveats quote the date a
+source's data runs through; "2026-07-20" is unambiguous in every language,
+where "20/07/2026" and "07/20/2026" are the same characters meaning different
+days, and a reader who copies one into a filter has no way to tell.
+
+French month names are lower case (a proper-noun rule, not a typo) and the
+abbreviations carry their full stop — "janv.", "sept." — while "mars", "mai"
+and "juin" are already short enough to need none.
+
+The freshness banner ("the most recent business data is **03 Sep 2025**") was
+six levels deep inside `_handle_query_impl`, carrying an English month, an
+English inline plural and an English word for the window at once. It is now
+`business_date_banner()`, pure and testable. Extracting it also fixed a
+degradation: an unparseable anchor used to raise into the surrounding handler
+and skip the whole banner — on exactly the reader who most needed to be told
+the answer was data-relative.
 
 ### Number formatting, and what it needed
 
@@ -504,7 +538,8 @@ and not translated fails there rather than shipping.
 `tests/test_conversational_language.py`,
 `tests/test_workspace_guide_language.py` and
 `tests/test_cannot_generate_hint_language.py` and
-`tests/test_number_format_language.py` do the same for the surfaces
+`tests/test_number_format_language.py` and
+`tests/test_date_format_language.py` do the same for the surfaces
 above, by
 executing the real producers in both languages — including the post-processing
 block compiled out of `core/query_pipeline.py` and a real `_send_results`

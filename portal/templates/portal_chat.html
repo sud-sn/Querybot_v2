@@ -979,7 +979,7 @@ let _activeOutboundMessage = null;
 
 function thread(){ return document.getElementById('thread'); }
 function scrollBottom(){ const t = thread(); t.scrollTop = t.scrollHeight; }
-function nowLabel(){ return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+function nowLabel(){ return window.qbTime(new Date()); }
 function timeLabel(ts){ return ts || nowLabel(); }
 function hideWelcome(){
   const el = document.getElementById('welcomeState');
@@ -3206,15 +3206,10 @@ function _formatDisplayValue(value, fmt, spec = {}, column = '') {
   if (fmt === 'date' || spec.type === 'date') {
     const dt = _parseDisplayDate(value);
     if (dt) {
-      const style = spec.style || 'iso';
-      if (style === 'month_year_short') return dt.toLocaleDateString('en-US', {month:'short', year:'2-digit'}).replace(' ', '-');
-      if (style === 'month_year_long') return dt.toLocaleDateString('en-US', {month:'long', year:'numeric'});
-      if (style === 'day_month_year') return `${String(dt.getDate()).padStart(2,'0')}-${String(dt.getMonth()+1).padStart(2,'0')}-${dt.getFullYear()}`;
-      if (style === 'month_day_year') return `${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}-${dt.getFullYear()}`;
-      if (style === 'day_month_name_year') return `${String(dt.getDate()).padStart(2,'0')}-${dt.toLocaleDateString('en-US',{month:'short'})}-${dt.getFullYear()}`;
-      if (style === 'year') return String(dt.getFullYear());
-      if (style === 'month_name') return dt.toLocaleDateString('en-US', {month:'long'});
-      return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+      // Every style through the shell, so the cell and the sentence the
+      // server wrote about it name the same month.
+      return window.qbDate(dt.getFullYear(), dt.getMonth() + 1, dt.getDate(),
+                           spec.style || 'iso');
     }
   }
   if (fmt === 'currency') {
@@ -5279,7 +5274,7 @@ function _historyGroup(item) {
 
 function _historyTime(item) {
   const date = _historyDate(item);
-  return date ? date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+  return window.qbTime(date);
 }
 
 function toggleHistoryPanel(forceOpen) {

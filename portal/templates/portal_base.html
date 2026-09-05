@@ -37,6 +37,11 @@ window.QB_LANG = {{ (lang or 'en')|tojson }};
 // toLocaleString(undefined) follows the BROWSER's locale, which is a third
 // answer again. All three were live on this page at once.
 window.QB_NUM = {{ number_format|tojson }};
+// Month names and the clock convention, from core/i18n.py. The display STYLE
+// is not in here: dd-mm-yyyy versus mm-dd-yyyy is a per-column choice an
+// administrator made, and flipping it by language would silently change which
+// number is the day.
+window.QB_DATE = {{ date_format|tojson }};
 window.qbT = function (id, vars) {
   var out = Object.prototype.hasOwnProperty.call(window.QB_I18N, id) ? window.QB_I18N[id] : id;
   if (vars) for (var k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
@@ -98,6 +103,43 @@ window.qbParseNum = function (value) {
   if (window.QB_NUM.decimal !== '.') text = text.split(window.QB_NUM.decimal).join('.');
   if (!text || !/^-?\d*\.?\d+$/.test(text)) return NaN;
   return Number(text);
+};
+// One date, in one of the styles an administrator can choose. Mirrors
+// core.i18n.format_date; tests/test_date_format_language.py executes both and
+// compares them for every style rather than reading them side by side.
+//
+// Takes the parts rather than a Date so the two sides cannot disagree about
+// what a string parses to -- the browser's Date() and Python's date() do not
+// read every input the same way.
+window.qbMonth = function (month, short) {
+  var index = Number(month);
+  if (!(index >= 1 && index <= 12)) return String(month);
+  return window.qbT('date.month.' + (short ? 'short' : 'long') + '.' + index);
+};
+window.qbDate = function (year, month, day, style) {
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  if (style === 'month_year_short') return window.qbMonth(month, true) + '-' + pad(year % 100);
+  if (style === 'month_year_long') return window.qbMonth(month, false) + ' ' + year;
+  if (style === 'day_month_year') return pad(day) + '-' + pad(month) + '-' + year;
+  if (style === 'month_day_year') return pad(month) + '-' + pad(day) + '-' + year;
+  if (style === 'day_month_name_year') return pad(day) + '-' + window.qbMonth(month, true) + '-' + year;
+  if (style === 'day_month_short_year') return pad(day) + ' ' + window.qbMonth(month, true) + ' ' + year;
+  if (style === 'year') return String(year);
+  if (style === 'month_name') return window.qbMonth(month, false);
+  return year + '-' + pad(month);
+};
+// A wall-clock time. The page read this from the BROWSER's locale, which is a
+// third answer again: a French reader on an English-locale machine got
+// "2:30 PM" beside French prose.
+window.qbTime = function (date) {
+  if (!date || isNaN(date.getTime())) return '';
+  var hours = date.getHours();
+  var minutes = (date.getMinutes() < 10 ? '0' : '') + date.getMinutes();
+  if (window.QB_DATE.clock === 24) return (hours < 10 ? '0' : '') + hours + ':' + minutes;
+  var suffix = hours < 12 ? 'AM' : 'PM';
+  var hour12 = hours % 12;
+  if (hour12 === 0) hour12 = 12;
+  return (hour12 < 10 ? '0' : '') + hour12 + ':' + minutes + ' ' + suffix;
 };
 // An unknown enum value falls back to the prettified raw value, never the id:
 // these come from the database and a new one must not render as
