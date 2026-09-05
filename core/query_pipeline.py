@@ -4713,6 +4713,23 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         analytical_intent_plan=_analytical_plan.to_dict(),
     )
     _semantic_plan["analytical_request_plan"] = _analytical_request_plan
+    # Stamp the model this answer was produced against. Two answers to the
+    # same question that disagree because the graph or a metric changed
+    # between them are otherwise indistinguishable from two that disagree
+    # because one is wrong -- and the second is a support ticket while the
+    # first is an explanation. Best-effort: an invented version is worse than
+    # none, because it asserts a sameness nobody checked.
+    try:
+        from core.model_readiness import metadata_version
+        _metadata_version = metadata_version(account_id)
+    except Exception as _mv_exc:  # noqa: BLE001
+        log.warning("metadata_version not stamped: %s", _mv_exc)
+        _metadata_version = ""
+    if _metadata_version:
+        _trace_step(
+            trace_id, "metadata_version",
+            output_summary={"version": _metadata_version},
+        )
     # Which decisions this plan left open. A plan that arbitrated between two
     # facts and a plan that had exactly one are answered with identical
     # confidence today, and nothing recorded the difference -- so there was no

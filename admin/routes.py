@@ -3015,6 +3015,42 @@ async def compliance_save_egress(request: Request, account_id: str):
     )
 
 
+@router.get("/api/clients/{account_id}/readiness")
+async def model_readiness_api(request: Request, account_id: str):
+    """What to model next, in the order that fixes the most questions.
+
+    Four scores already existed and none of them answered the question an
+    admin actually has. This one is ordered by how many failing question
+    shapes each remedy would resolve -- measured from the metric coverage
+    reports, not weighted by guess -- so modelling becomes review of a
+    shrinking list rather than open-ended authoring.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.model_readiness import build_report
+
+    report = build_report(account_id)
+    return JSONResponse({
+        "metadata_version": report.metadata_version,
+        "tables_described": report.tables_described,
+        "tables_total": report.tables_total,
+        "metrics_complete": report.metrics_complete,
+        "metrics_total": report.metrics_total,
+        "total_unblocked": report.total_unblocked,
+        "by_kind": report.by_kind(),
+        "items": [
+            {
+                "kind": item.kind,
+                "subject": item.subject,
+                "remedy": item.remedy,
+                "unblocks": item.unblocks,
+                "example": item.detail,
+            }
+            for item in report.items
+        ],
+    })
+
+
 @router.get("/api/clients/{account_id}/metrics/{metric_id}/coverage")
 async def metric_coverage_api(request: Request, account_id: str, metric_id: int):
     """Which real-world question shapes this metric answers, and what the rest need.
