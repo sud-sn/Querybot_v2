@@ -178,31 +178,58 @@ the mechanism lands first and the redesign is built French-ready.
 | — answer card | **done** | `build_answer`, `infer_result_scope`, insight summary, anomaly callouts, decision signal, action chips, analysis title |
 | — narration language | **done** | `core/insight._language_rule`, applied in `build_insight_prompt_from_contract` and the period-comparison prompt |
 | 4 — French normaliser + eval corpus | **not started** | The part that decides whether a French question is understood at all. 118 eval questions, all English |
+| — the chat page | **done** | `portal_chat.html`: 315 `t()` calls, up from 31 |
+| — browser tab titles | **done** | All ten portal templates |
 | 5 — the rest of the chrome | **partly** | See below |
 
 ### What is still English
 
 Ordered by how often a reader sees it.
 
-1. **`portal_chat.html` body** — 5,650 lines, 31 `t()` calls, all in the
-   picker. The composer, the history panel, the trust box, the stage trail,
-   every toast. This is where a reader spends their session and it is the
-   largest single remaining surface.
-2. **`build_analysis_response`** (`core/response_builder.py`) — the
+1. **`build_analysis_response`** (`core/response_builder.py`) — the
    zero-latency analysis card used when no model call is available. ~40
    strings. Note `scope.get("badge").lower()` is interpolated mid-sentence
    there, which a translated badge makes read oddly; that call site needs a
    sentence per shape, like the headline's movement did.
-3. **Coverage caveats** — assembled in `core/result_renderer.py` from four
+2. **Coverage caveats** — assembled in `core/result_renderer.py` from four
    different modules (`_gap.message`, forecast caveats, multi-period caveats,
    `check_join_coverage`). Each source needs its own pass; the renderer only
    concatenates.
-4. **`portal_kb.html`, `portal_notifications.html`, `portal_login.html`** —
-   0 `t()` calls each, ~600 lines together.
-5. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
-   "Break down by X" fallbacks and the policy-refusal messages.
-6. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
+3. **`portal_kb.html`, `portal_notifications.html`, `portal_login.html`,
+   `portal_register.html`, `portal_change_password.html`,
+   `portal_report_new.html`** — 0 `t()` calls in the body of each; only their
+   tab titles are translated. ~900 lines together.
+4. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
+   "Break down by X" fallbacks and the policy-refusal messages. These reach the
+   chat page as server messages, so a French reader still sees English there.
+5. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### The chat page, and what it needed
+
+`portal_chat.html` is done: 315 `t()` calls, up from 31. Everything a reader
+sees — the shell, the composer, the stage trail, every toast, the answer card,
+the trust disclosure, the diagnostic card, the clarification cards, the history
+panel, the chart legends.
+
+Four things there could not be translated in place, and each is a pattern worth
+recognising elsewhere:
+
+* **A sentence assembled from fragments.** `subject + ' was ' + verb + ' by
+  admin.'` has no seam in French, which puts the participle after the auxiliary
+  and agrees it with the subject. Whole sentence per outcome.
+* **A count with an inline `s`.** French takes the singular at zero, so every
+  `n !== 1 ? 's' : ''` is wrong on an empty result. `plural()` on both sides —
+  and `window.qbPlural` exists precisely because the browser builds sentences
+  the server never sees. A test executes both and compares.
+* **A string that is also a wire value.** The diagnostic card's markers
+  ("Most likely reason:", "SQL tried:") are written by
+  `core/answer_formatter.py` and scanned by the page; the forecast chart's
+  "95% interval" is both a legend entry and the seriesName the tooltip filters
+  on. Split the two jobs or keep one constant, never translate in place.
+* **A callback that shadows `t`.** `.map(t => escHtml(t))` binds the table name
+  over the translator. Two of these were live in the file; any lookup added
+  inside either would have silently returned a table name.
 
 ### Two things deliberately NOT translated
 
