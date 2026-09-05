@@ -982,33 +982,41 @@ def _period_comparison_summary(
     def named(mover: dict) -> str:
         return _safe_category_label(mover["label"], facts["label_column"])
 
+    # _plural is English morphology on a column name. The column name is the
+    # customer's schema in both languages, so it keeps the same treatment
+    # rather than being left bare in one of them.
     counted = (_plural(_display_label(facts["label_column"]).lower())
-               if facts["label_column"] else "groups")
-    opening = (
-        f"Across {facts['row_count']} {counted}, {facts['grew']} grew and "
-        f"{facts['shrank']} shrank between {facts['oldest_label']} and "
-        f"{facts['newest_label']}."
-    )
+               if facts["label_column"] else _t("answer.groups"))
+    opening = _t(
+        "answer.period.opening", count=facts["row_count"], label=counted,
+        grew=_t_plural("answer.period.grew", facts["grew"]),
+        shrank=_t_plural("answer.period.shrank", facts["shrank"]),
+        old=facts["oldest_label"], new=facts["newest_label"])
 
     clauses: list[str] = []
     riser, faller = facts["top_riser"], facts["top_faller"]
     if riser:
         share = ""
         if facts["share_holds"] and facts["net"]:
-            share = f", {abs(riser['change'] * 100.0 / facts['net']):.0f}% of the net change"
+            share = _t("answer.period.share",
+                       pct=f"{abs(riser['change'] * 100.0 / facts['net']):.0f}")
         who = named(riser)
         clauses.append(
-            f"{who} added the most ({signed(riser['change'])}{share})" if who
-            else f"the largest increase was {signed(riser['change'])}{share}"
+            _t("answer.period.added_most", who=who,
+               change=signed(riser["change"]), share=share) if who
+            else _t("answer.period.largest_increase",
+                    change=signed(riser["change"]), share=share)
         )
     if faller:
         who = named(faller)
         clauses.append(
-            f"{who} fell the most ({signed(faller['change'])})" if who
-            else f"the largest decrease was {signed(faller['change'])}"
+            _t("answer.period.fell_most", who=who,
+               change=signed(faller["change"])) if who
+            else _t("answer.period.largest_decrease",
+                    change=signed(faller["change"]))
         )
     if not clauses:
-        return f"{opening} No category moved between the two periods."
+        return _t("answer.period.none_moved", opening=opening)
     detail = "; ".join(clauses)
     return f"{opening} {detail[0].upper()}{detail[1:]}."
 
@@ -1678,6 +1686,22 @@ def _dynamic_actions(ctx: dict) -> list[dict]:
 
 # ── Insight Layer helpers — pure statistics, no LLM call ─────────────────────
 
+def _movement_suffix(sentence: str, pct: float | None) -> str:
+    """Attach the direction to a finished clause, or just close it.
+
+    The clause goes in whole and comes out whole for the same reason the
+    headline's does: French conjugates the direction and there is no seam in
+    the middle of the sentence for a translated adverb.
+    """
+    if pct is None:
+        return f"{sentence}."
+    if pct > 0:
+        return _t("answer.note.up", sentence=sentence, pct=f"{abs(pct):.1f}%")
+    if pct < 0:
+        return _t("answer.note.down", sentence=sentence, pct=f"{abs(pct):.1f}%")
+    return _t("answer.note.unchanged", sentence=sentence)
+
+
 def _build_insight_summary(
     rows: list[dict],
     ctx: dict,
@@ -1704,7 +1728,7 @@ def _build_insight_summary(
         )
 
     if detect_zero_match_result(rows):
-        return "No matching data was found for this question."
+        return _t("answer.no_match_headline")
 
     missing_scalar = _single_missing_scalar(rows)
     if missing_scalar:
@@ -1714,16 +1738,15 @@ def _build_insight_summary(
     if null_issue:
         issue = null_issue["issues"][0]
         metric = _display_label(issue["metric_column"])
-        return (
-            f"{null_issue['matched_rows']} records matched, but {metric} is missing "
-            "for every matched row."
-        )
+        return _t_plural("answer.note.null_metric", null_issue["matched_rows"],
+                         metric=metric)
 
     if mode == "single_value":
         raw_col = brief.get("value_column") or ""
         col = raw_col.replace("_", " ").title()
         val = brief.get("value", "")
-        return f"{col}: {format_value(val, raw_col)}." if col else ""
+        return (_t("answer.note.single_value", label=col,
+                   value=format_value(val, raw_col)) if col else "")
 
     # A comparison of periods the USER named, which arrives as one row per
     # category with a column per period. Deliberately ahead of the single-wide-
@@ -1745,18 +1768,10 @@ def _build_insight_summary(
         measure = _display_label(_cmp["measure_column"])
         cur = format_value(_cmp["current_value"], _cmp["measure_column"])
         prev = format_value(_cmp["previous_value"], _cmp["previous_column"])
-        sentence = (
-            f"{measure} was {cur} in {_cmp['current_period']} "
-            f"versus {prev} in {_cmp['previous_period']}"
-        )
-        pct = _cmp.get("pct_change")
-        if pct is None:
-            return sentence + "."
-        if pct > 0:
-            return sentence + f" - up {abs(pct):.1f}%."
-        if pct < 0:
-            return sentence + f" - down {abs(pct):.1f}%."
-        return sentence + " - unchanged."
+        sentence = _t("answer.note.period_versus", measure=measure, current=cur,
+                      current_period=_cmp["current_period"], previous=prev,
+                      previous_period=_cmp["previous_period"])
+        return _movement_suffix(sentence, _cmp.get("pct_change"))
 
     if mode == "time_series":
         ts = brief.get("time_series") or {}
@@ -1770,44 +1785,39 @@ def _build_insight_summary(
         # presenting one interval as sustained momentum or decline.
         if observation_count == 1:
             raw_value_col = ctx.get("value_col") or ""
-            value_col = raw_value_col.replace("_", " ").title() or "Value"
-            return (
-                f"{value_col} was "
-                f"{format_value(ts.get('first_value'), raw_value_col)} "
-                f"in {ts.get('first_period', 'the returned period')}."
-            )
+            value_col = raw_value_col.replace("_", " ").title() or _t("answer.value")
+            return _t(
+                "answer.note.single_observation", measure=value_col,
+                value=format_value(ts.get("first_value"), raw_value_col),
+                period=ts.get("first_period") or _t("answer.returned_period"))
         if observation_count == 2:
             raw_value_col = ctx.get("value_col") or ""
-            value_col = raw_value_col.replace("_", " ").title() or "Value"
-            first_value = ts.get("first_value")
-            last_value = ts.get("last_value")
-            sentence = (
-                f"{value_col} changed from {format_value(first_value, raw_value_col)} "
-                f"in {ts.get('first_period', 'the first period')} to "
-                f"{format_value(last_value, raw_value_col)} "
-                f"in {ts.get('last_period', 'the second period')}"
-            )
-            pct = ts.get("overall_pct_change")
-            if pct is None:
-                return sentence + "."
-            direction = "up" if pct > 0 else "down" if pct < 0 else "unchanged"
-            if direction == "unchanged":
-                return sentence + " - unchanged."
-            return sentence + f" - {direction} {abs(pct):.1f}%."
+            value_col = raw_value_col.replace("_", " ").title() or _t("answer.value")
+            sentence = _t(
+                "answer.note.changed_from", measure=value_col,
+                first=format_value(ts.get("first_value"), raw_value_col),
+                first_period=ts.get("first_period") or _t("answer.first_period"),
+                last=format_value(ts.get("last_value"), raw_value_col),
+                last_period=ts.get("last_period") or _t("answer.second_period"))
+            return _movement_suffix(sentence, ts.get("overall_pct_change"))
         direction = ts.get("direction", "stable")
         pct = ts.get("overall_pct_change")
         first = ts.get("first_period", "")
         last_ = ts.get("last_period", "")
         raw_value_col = ctx.get("value_col") or ""
         value_col = raw_value_col.replace("_", " ").title()
-        dir_word = {"increasing": "up", "decreasing": "down", "stable": "flat"}.get(direction, direction)
+        shape = {"increasing": "up", "decreasing": "down"}.get(direction, "flat")
         if pct is not None:
-            base = f"{value_col} trended {dir_word} {abs(pct):.1f}% from {first} to {last_}."
+            base = _t(f"answer.note.trended_{shape}", measure=value_col,
+                      pct=f"{abs(pct):.1f}%", first=first, last=last_)
         else:
-            base = f"{value_col} remained {dir_word} between {first} and {last_}."
+            base = _t(f"answer.note.remained_{shape}", measure=value_col,
+                      first=first, last=last_)
         peak = ts.get("peak") or {}
         if peak and direction in ("increasing", "decreasing"):
-            base += f" Peak: {format_value(peak.get('value', 0), raw_value_col)} in {peak.get('period', '')}."
+            base = _t("answer.note.peak", sentence=base,
+                      value=format_value(peak.get("value", 0), raw_value_col),
+                      period=peak.get("period", ""))
         return base
 
     if mode == "ranking":
@@ -1818,23 +1828,24 @@ def _build_insight_summary(
             leader_share = cat.get("leader_share_pct")
             label_col = (cat.get("label_column") or "").replace("_", " ").lower()
             count = cat.get("category_count", row_count)
-            share_str = f" ({leader_share}% of total)" if leader_share else ""
-            return (
-                f"{leader['label']} leads at {format_value(leader['value'], ctx.get('value_col') or '')}{share_str}"
-                f" across {count} {label_col or 'entries'}."
-            )
+            share_str = (_t("answer.note.leader_share", pct=leader_share)
+                         if leader_share else "")
+            return _t(
+                "answer.note.leads_across", leader=leader["label"],
+                value=format_value(leader["value"], ctx.get("value_col") or ""),
+                share=share_str, count=count,
+                label=label_col or _t("answer.entries"))
 
     if mode == "numeric_table":
         value_col = (ctx.get("value_col") or "").replace("_", " ").title()
         mn = ctx.get("min_value", 0)
         mx = ctx.get("max_value", 0)
         avg = ctx.get("avg_value", 0)
-        return (
-            f"{row_count} records — {value_col} ranges "
-            f"{format_value(mn, ctx.get('value_col') or '')} to "
-            f"{format_value(mx, ctx.get('value_col') or '')}, avg "
-            f"{format_value(avg, ctx.get('value_col') or '')}."
-        )
+        return _t_plural(
+            "answer.note.range_summary", row_count, measure=value_col,
+            low=format_value(mn, ctx.get("value_col") or ""),
+            high=format_value(mx, ctx.get("value_col") or ""),
+            avg=format_value(avg, ctx.get("value_col") or ""))
 
     return ""
 
@@ -1867,25 +1878,23 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
         if drop.get("pct_change") is not None and drop["pct_change"] < -10:
             callouts.append({
                 "type": "drop", "icon": "↓",
-                "message": (
-                    f"Biggest drop: {drop['from_period']} → {drop['to_period']} "
-                    f"({drop['pct_change']:.1f}%)"
-                ),
+                "message": _t("answer.callout.biggest_drop",
+                              old=drop["from_period"], new=drop["to_period"],
+                              pct=f"{drop['pct_change']:.1f}%"),
                 "severity": "warning",
             })
         if gain.get("pct_change") is not None and gain["pct_change"] > 10:
             callouts.append({
                 "type": "gain", "icon": "↑",
-                "message": (
-                    f"Biggest gain: {gain['from_period']} → {gain['to_period']} "
-                    f"(+{gain['pct_change']:.1f}%)"
-                ),
+                "message": _t("answer.callout.biggest_gain",
+                              old=gain["from_period"], new=gain["to_period"],
+                              pct=f"+{gain['pct_change']:.1f}%"),
                 "severity": "success",
             })
         if streak >= 3:
             callouts.append({
                 "type": "streak", "icon": "⚠",
-                "message": f"{streak} consecutive periods of decline",
+                "message": _t_plural("answer.callout.decline_streak", streak),
                 "severity": "warning",
             })
 
@@ -1896,7 +1905,7 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
             if conc and conc >= 80:
                 callouts.append({
                     "type": "concentration", "icon": "◉",
-                    "message": f"Top 3 entries account for {conc}% of total — highly concentrated",
+                    "message": _t("answer.callout.concentration", pct=conc),
                     "severity": "info",
                 })
                 break
@@ -1905,7 +1914,8 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
         if leader_share and leader_share >= 50 and top5 and len(callouts) < 2:
             callouts.append({
                 "type": "dominance", "icon": "★",
-                "message": f"{top5[0]['label']} holds {leader_share}% of the total",
+                "message": _t("answer.callout.dominance",
+                              label=top5[0]["label"], pct=leader_share),
                 "severity": "info",
             })
 
@@ -1918,10 +1928,10 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
             if std and mean_v and std > 0 and mx_v and mx_v > mean_v + 2.5 * std:
                 callouts.append({
                     "type": "outlier", "icon": "◆",
-                    "message": (
-                        f"Outlier in {col.replace('_', ' ')}: "
-                        f"max {_format_number(mx_v)} vs avg {_format_number(mean_v)}"
-                    ),
+                    "message": _t("answer.callout.outlier",
+                                  column=col.replace("_", " "),
+                                  high=_format_number(mx_v),
+                                  avg=_format_number(mean_v)),
                     "severity": "info",
                 })
                 break
@@ -1961,17 +1971,19 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         leader = top5[0]["label"] if top5 else ""
         if conc is not None and conc >= 80:
             return {
-                "line": f"Top entries drive {conc:.0f}% of the total — concentration risk if any one is lost.",
+                "line": _t("answer.signal.concentration", pct=f"{conc:.0f}"),
                 "tone": "watch", "basis": "concentration",
             }
         if leader_share is not None and leader_share >= 50:
             return {
-                "line": f"{leader} alone holds {leader_share:.0f}% of the total — a single point of dependency.",
+                "line": _t("answer.signal.dominance", leader=leader,
+                           pct=f"{leader_share:.0f}"),
                 "tone": "watch", "basis": "dominance",
             }
         if leader_share is not None:
             return {
-                "line": f"Volume is spread across the field — no single entry exceeds {max(leader_share,1):.0f}%; broadly diversified.",
+                "line": _t("answer.signal.spread",
+                           pct=f"{max(leader_share, 1):.0f}"),
                 "tone": "positive", "basis": "spread",
             }
 
@@ -1985,18 +1997,18 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         streak = ts.get("longest_decline_streak", 0)
         if direction == "decreasing" and streak >= 3:
             return {
-                "line": f"Sustained downward trend ({pct:+.0f}% overall) — worth investigating before it compounds." if pct is not None
-                        else "Sustained downward trend — worth investigating before it compounds.",
+                "line": (_t("answer.signal.decline_pct", pct=f"{pct:+.0f}%")
+                         if pct is not None else _t("answer.signal.decline")),
                 "tone": "watch", "basis": "decline",
             }
         if direction == "increasing" and pct is not None and pct >= 10:
             return {
-                "line": f"Momentum is building (+{pct:.0f}% overall) — confirm it is sustainable, not a one-off spike.",
+                "line": _t("answer.signal.growth", pct=f"+{pct:.0f}%"),
                 "tone": "positive", "basis": "growth",
             }
         if direction == "stable":
             return {
-                "line": "Metric is holding steady over the period — no urgent action indicated.",
+                "line": _t("answer.signal.stable"),
                 "tone": "neutral", "basis": "stable",
             }
 
@@ -2004,7 +2016,7 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         outliers = [c for c in anomaly_callouts if c.get("type") == "outlier"]
         if outliers:
             return {
-                "line": "One or more values sit well above normal — review for data quality or a genuine signal before acting.",
+                "line": _t("answer.signal.outlier"),
                 "tone": "watch", "basis": "outlier",
             }
 
@@ -2012,7 +2024,8 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         # Restate with directional framing only if a comparison exists.
         comp = ctx.get("comparison") or brief.get("comparison")
         if comp:
-            return {"line": f"{comp} — factor this into the decision.", "tone": "neutral", "basis": "single"}
+            return {"line": _t("answer.signal.single", comparison=comp),
+                    "tone": "neutral", "basis": "single"}
 
     return {}
 

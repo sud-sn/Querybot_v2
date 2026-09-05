@@ -682,6 +682,194 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "answer.your_query": {"en": "your query", "fr": "votre requête"},
 
+    # ── The notes under the answer card ──────────────────────────────────────
+    #
+    # _build_insight_summary, _build_anomaly_callouts and _build_decision_signal
+    # are pure statistics -- no model call -- and the chat page merges all three
+    # into one .answer-notes list. They are the reader's second sentence after
+    # the headline, so they follow it into the reader's language.
+
+    "answer.value": {"en": "Value", "fr": "Valeur"},
+    "answer.entries": {"en": "entries", "fr": "entrées"},
+    "answer.groups": {"en": "groups", "fr": "groupes"},
+    "answer.returned_period": {"en": "the returned period", "fr": "la période renvoyée"},
+    "answer.first_period": {"en": "the first period", "fr": "la première période"},
+    "answer.second_period": {"en": "the second period", "fr": "la deuxième période"},
+
+    # Movement suffixes. The sentence goes in whole and comes out whole for the
+    # same reason the headline's does: French conjugates the direction.
+    "answer.note.up": {"en": "{sentence} - up {pct}.", "fr": "{sentence} — en hausse de {pct}."},
+    "answer.note.down": {"en": "{sentence} - down {pct}.", "fr": "{sentence} — en baisse de {pct}."},
+    "answer.note.unchanged": {"en": "{sentence} - unchanged.", "fr": "{sentence} — inchangé."},
+
+    "answer.note.null_metric.one": {
+        "en": "{count} record matched, but {metric} is missing for it.",
+        "fr": "{count} enregistrement correspondait, mais {metric} y est absent.",
+    },
+    "answer.note.null_metric.other": {
+        "en": "{count} records matched, but {metric} is missing for every matched row.",
+        "fr": "{count} enregistrements correspondaient, mais {metric} est absent pour chacun d'eux.",
+    },
+    "answer.note.single_value": {"en": "{label}: {value}.", "fr": "{label} : {value}."},
+    "answer.note.period_versus": {
+        "en": "{measure} was {current} in {current_period} versus {previous} in {previous_period}",
+        "fr": "{measure} s'élevait à {current} en {current_period} contre {previous} en {previous_period}",
+    },
+    "answer.note.single_observation": {
+        "en": "{measure} was {value} in {period}.",
+        "fr": "{measure} s'élevait à {value} en {period}.",
+    },
+    "answer.note.changed_from": {
+        "en": "{measure} changed from {first} in {first_period} to {last} in {last_period}",
+        "fr": "{measure} est passé de {first} en {first_period} à {last} en {last_period}",
+    },
+    "answer.note.trended_up": {
+        "en": "{measure} trended up {pct} from {first} to {last}.",
+        "fr": "{measure} a progressé de {pct} entre {first} et {last}.",
+    },
+    "answer.note.trended_down": {
+        "en": "{measure} trended down {pct} from {first} to {last}.",
+        "fr": "{measure} a reculé de {pct} entre {first} et {last}.",
+    },
+    "answer.note.trended_flat": {
+        "en": "{measure} trended flat {pct} from {first} to {last}.",
+        "fr": "{measure} est resté stable ({pct}) entre {first} et {last}.",
+    },
+    "answer.note.remained_up": {
+        "en": "{measure} remained up between {first} and {last}.",
+        "fr": "{measure} est resté orienté à la hausse entre {first} et {last}.",
+    },
+    "answer.note.remained_down": {
+        "en": "{measure} remained down between {first} and {last}.",
+        "fr": "{measure} est resté orienté à la baisse entre {first} et {last}.",
+    },
+    "answer.note.remained_flat": {
+        "en": "{measure} remained flat between {first} and {last}.",
+        "fr": "{measure} est resté stable entre {first} et {last}.",
+    },
+    "answer.note.peak": {
+        "en": "{sentence} Peak: {value} in {period}.",
+        "fr": "{sentence} Pic : {value} en {period}.",
+    },
+    "answer.note.leader_share": {
+        "en": " ({pct}% of total)", "fr": " ({pct} % du total)",
+    },
+    "answer.note.leads_across": {
+        "en": "{leader} leads at {value}{share} across {count} {label}.",
+        "fr": "{leader} arrive en tête avec {value}{share}, sur {count} {label}.",
+    },
+    "answer.note.range_summary.one": {
+        "en": "{count} record — {measure} ranges {low} to {high}, avg {avg}.",
+        "fr": "{count} enregistrement — {measure} varie de {low} à {high}, moyenne {avg}.",
+    },
+    "answer.note.range_summary.other": {
+        "en": "{count} records — {measure} ranges {low} to {high}, avg {avg}.",
+        "fr": "{count} enregistrements — {measure} varie de {low} à {high}, moyenne {avg}.",
+    },
+
+    # The statistical callouts.
+    "answer.callout.biggest_drop": {
+        "en": "Biggest drop: {old} → {new} ({pct})",
+        "fr": "Plus forte baisse : {old} → {new} ({pct})",
+    },
+    "answer.callout.biggest_gain": {
+        "en": "Biggest gain: {old} → {new} ({pct})",
+        "fr": "Plus forte hausse : {old} → {new} ({pct})",
+    },
+    "answer.callout.decline_streak.one": {
+        "en": "{count} consecutive period of decline",
+        "fr": "{count} période de baisse consécutive",
+    },
+    "answer.callout.decline_streak.other": {
+        "en": "{count} consecutive periods of decline",
+        "fr": "{count} périodes de baisse consécutives",
+    },
+    "answer.callout.concentration": {
+        "en": "Top 3 entries account for {pct}% of total — highly concentrated",
+        "fr": "Les 3 premières entrées représentent {pct} % du total — forte concentration",
+    },
+    "answer.callout.dominance": {
+        "en": "{label} holds {pct}% of the total",
+        "fr": "{label} détient {pct} % du total",
+    },
+    "answer.callout.outlier": {
+        "en": "Outlier in {column}: max {high} vs avg {avg}",
+        "fr": "Valeur aberrante dans {column} : max {high} contre moyenne {avg}",
+    },
+
+    # The "so what" line.
+    "answer.signal.concentration": {
+        "en": "Top entries drive {pct}% of the total — concentration risk if any one is lost.",
+        "fr": "Les premières entrées représentent {pct} % du total — risque de concentration si l'une d'elles est perdue.",
+    },
+    "answer.signal.dominance": {
+        "en": "{leader} alone holds {pct}% of the total — a single point of dependency.",
+        "fr": "{leader} détient à lui seul {pct} % du total — un point de dépendance unique.",
+    },
+    "answer.signal.spread": {
+        "en": "Volume is spread across the field — no single entry exceeds {pct}%; broadly diversified.",
+        "fr": "Le volume est réparti sur l'ensemble — aucune entrée ne dépasse {pct} % ; largement diversifié.",
+    },
+    "answer.signal.decline_pct": {
+        "en": "Sustained downward trend ({pct} overall) — worth investigating before it compounds.",
+        "fr": "Tendance baissière durable ({pct} au total) — à examiner avant que cela ne s'aggrave.",
+    },
+    "answer.signal.decline": {
+        "en": "Sustained downward trend — worth investigating before it compounds.",
+        "fr": "Tendance baissière durable — à examiner avant que cela ne s'aggrave.",
+    },
+    "answer.signal.growth": {
+        "en": "Momentum is building ({pct} overall) — confirm it is sustainable, not a one-off spike.",
+        "fr": "La dynamique s'installe ({pct} au total) — vérifiez qu'elle est durable et non un pic isolé.",
+    },
+    "answer.signal.stable": {
+        "en": "Metric is holding steady over the period — no urgent action indicated.",
+        "fr": "L'indicateur reste stable sur la période — aucune action urgente n'est requise.",
+    },
+    "answer.signal.outlier": {
+        "en": "One or more values sit well above normal — review for data quality or a genuine signal before acting.",
+        "fr": "Une ou plusieurs valeurs sortent nettement de l'ordinaire — vérifiez la qualité des données ou la réalité du signal avant d'agir.",
+    },
+    "answer.signal.single": {
+        "en": "{comparison} — factor this into the decision.",
+        "fr": "{comparison} — à prendre en compte dans la décision.",
+    },
+
+    # The named-period comparison note. The grew/shrank counts agree with their
+    # own numbers in French, so each is built by plural() and dropped into the
+    # opening as a finished clause.
+    "answer.period.grew.one": {"en": "{count} grew", "fr": "{count} a augmenté"},
+    "answer.period.grew.other": {"en": "{count} grew", "fr": "{count} ont augmenté"},
+    "answer.period.shrank.one": {"en": "{count} shrank", "fr": "{count} a diminué"},
+    "answer.period.shrank.other": {"en": "{count} shrank", "fr": "{count} ont diminué"},
+    "answer.period.opening": {
+        "en": "Across {count} {label}, {grew} and {shrank} between {old} and {new}.",
+        "fr": "Sur {count} {label}, {grew} et {shrank} entre {old} et {new}.",
+    },
+    "answer.period.share": {
+        "en": ", {pct}% of the net change", "fr": ", soit {pct} % de la variation nette",
+    },
+    "answer.period.added_most": {
+        "en": "{who} added the most ({change}{share})",
+        "fr": "c'est {who} qui a le plus progressé ({change}{share})",
+    },
+    "answer.period.largest_increase": {
+        "en": "the largest increase was {change}{share}",
+        "fr": "la plus forte hausse est de {change}{share}",
+    },
+    "answer.period.fell_most": {
+        "en": "{who} fell the most ({change})",
+        "fr": "c'est {who} qui a le plus reculé ({change})",
+    },
+    "answer.period.largest_decrease": {
+        "en": "the largest decrease was {change}",
+        "fr": "la plus forte baisse est de {change}",
+    },
+    "answer.period.none_moved": {
+        "en": "{opening} No category moved between the two periods.",
+        "fr": "{opening} Aucune catégorie n'a bougé entre les deux périodes.",
+    },
+
     # ── The language switcher ────────────────────────────────────────────────
     "ui.lang.label": {"en": "Language", "fr": "Langue"},
     "ui.lang.en": {"en": "English", "fr": "Anglais"},

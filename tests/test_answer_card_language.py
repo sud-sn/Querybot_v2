@@ -291,6 +291,141 @@ class TestAnEmptyAggregate:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# The notes under the card
+# ══════════════════════════════════════════════════════════════════════════════
+
+SERIES = [{"month": f"2026-{m:02d}", "revenue": v}
+          for m, v in ((1, 100), (2, 90), (3, 80), (4, 60))]
+RANKING = [{"region": "North", "revenue": 900},
+           {"region": "South", "revenue": 50},
+           {"region": "East", "revenue": 20}]
+PERIOD = [{"category": "Pumps", "revenue_2025": 100, "revenue_2026": 150},
+          {"category": "Valves", "revenue_2025": 200, "revenue_2026": 180}]
+
+
+def _card(rows, question, period=False):
+    return build_assistant_response(
+        question=question, rows=rows, sql="SELECT * FROM t", duration_ms=1,
+        display_context=({"period_comparison": {"labels": ["2025", "2026"]}}
+                         if period else None),
+    )
+
+
+class TestTheInsightSummary:
+
+    def test_a_falling_series_is_french(self, french):
+        assert _card(SERIES, "revenue by month")["insight_summary"] == \
+            "Revenue a reculé de 40.0% entre 2026-01 et 2026-04. Pic : 100 en 2026-01."
+
+    def test_english_is_unchanged(self):
+        assert _card(SERIES, "revenue by month")["insight_summary"] == \
+            "Revenue trended down 40.0% from 2026-01 to 2026-04. Peak: 100 in 2026-01."
+
+    def test_a_ranking_is_french(self, french):
+        assert _card(RANKING, "revenue by region")["insight_summary"] == \
+            "North arrive en tête avec 900 (92.8 % du total), sur 3 region."
+
+    def test_the_french_percent_sign_takes_a_space(self, french):
+        """French typography puts a space before %, and the reader notices its
+        absence the way an English reader notices "92.8 %"."""
+        summary = _card(RANKING, "revenue by region")["insight_summary"]
+        assert "92.8 %" in summary and "92.8%" not in summary
+
+    def test_a_two_point_series_compares_rather_than_claiming_a_trend(self, french):
+        """Two endpoints are one interval. The language must not turn that into
+        sustained momentum, in either language."""
+        rows = [{"month": "2026-01", "revenue": 100},
+                {"month": "2026-02", "revenue": 150}]
+        summary = _card(rows, "revenue by month")["insight_summary"]
+        assert "est passé de" in summary
+        assert "progressé" not in summary
+
+
+class TestTheAnomalyCallouts:
+
+    def test_they_are_french(self, french):
+        messages = [c["message"] for c in _card(SERIES, "revenue by month")["anomaly_callouts"]]
+        assert messages == ["Plus forte baisse : 2026-03 → 2026-04 (-25.0%)",
+                            "3 périodes de baisse consécutives"]
+
+    def test_english_is_unchanged(self):
+        messages = [c["message"] for c in _card(SERIES, "revenue by month")["anomaly_callouts"]]
+        assert messages == ["Biggest drop: 2026-03 → 2026-04 (-25.0%)",
+                            "3 consecutive periods of decline"]
+
+    def test_a_single_period_streak_takes_the_singular(self, french):
+        assert i18n.plural("answer.callout.decline_streak", 1, lang="fr") == \
+            "1 période de baisse consécutive"
+        assert i18n.plural("answer.callout.decline_streak", 1, lang="en") == \
+            "1 consecutive period of decline"
+
+    def test_the_severity_is_not_a_translated_string(self, french):
+        """The chat page colours the callout by this value. Translating it
+        would leave every French callout uncoloured."""
+        callouts = _card(SERIES, "revenue by month")["anomaly_callouts"]
+        assert {c["severity"] for c in callouts} <= {"warning", "success", "info"}
+
+
+class TestTheDecisionSignal:
+
+    def test_the_line_is_french(self, french):
+        assert _card(SERIES, "revenue by month")["decision_signal"]["line"] == \
+            "Tendance baissière durable (-40% au total) — à examiner avant que " \
+            "cela ne s'aggrave."
+
+    def test_english_is_unchanged(self):
+        assert _card(SERIES, "revenue by month")["decision_signal"]["line"] == \
+            "Sustained downward trend (-40% overall) — worth investigating " \
+            "before it compounds."
+
+    def test_the_tone_and_basis_are_not_translated(self, french):
+        """Both are read by name -- the tone picks a UI colour and the basis is
+        an analytics key. A translated one is a silent behaviour change."""
+        signal = _card(SERIES, "revenue by month")["decision_signal"]
+        assert signal["tone"] == "watch"
+        assert signal["basis"] == "decline"
+
+    def test_a_concentrated_ranking_is_french(self, french):
+        assert _card(RANKING, "revenue by region")["decision_signal"]["line"] == \
+            "Les premières entrées représentent 100 % du total — risque de " \
+            "concentration si l'une d'elles est perdue."
+
+
+class TestTheNamedPeriodNote:
+
+    def test_the_counts_agree_with_their_own_numbers(self, french):
+        """"1 a augmenté" and "2 ont augmenté" -- the verb agrees with the
+        count, so each clause is built separately and dropped into the opening
+        finished."""
+        summary = _card(PERIOD, "revenue 2025 vs 2026", period=True)["insight_summary"]
+        assert summary.startswith(
+            "Sur 2 categories, 1 a augmenté et 1 a diminué entre 2025 et 2026.")
+
+    def test_a_plural_count_conjugates_differently(self, french):
+        rows = PERIOD + [{"category": "Seals", "revenue_2025": 10, "revenue_2026": 40},
+                         {"category": "Hoses", "revenue_2025": 10, "revenue_2026": 40}]
+        summary = _card(rows, "revenue 2025 vs 2026", period=True)["insight_summary"]
+        assert "3 ont augmenté et 1 a diminué" in summary
+
+    def test_the_mover_clauses_are_french(self, french):
+        summary = _card(PERIOD, "revenue 2025 vs 2026", period=True)["insight_summary"]
+        assert "C'est Pumps qui a le plus progressé (+50, soit 167 % de la " \
+               "variation nette)" in summary
+        assert "c'est Valves qui a le plus reculé (-20)" in summary
+
+    def test_english_is_unchanged(self):
+        summary = _card(PERIOD, "revenue 2025 vs 2026", period=True)["insight_summary"]
+        assert summary == (
+            "Across 2 categories, 1 grew and 1 shrank between 2025 and 2026. "
+            "Pumps added the most (+50, 167% of the net change); "
+            "Valves fell the most (-20).")
+
+    def test_the_category_labels_are_never_translated(self, french):
+        summary = _card(PERIOD, "revenue 2025 vs 2026", period=True)["insight_summary"]
+        assert "Pumps" in summary and "Valves" in summary
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # End to end
 # ══════════════════════════════════════════════════════════════════════════════
 
