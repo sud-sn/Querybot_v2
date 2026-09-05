@@ -107,14 +107,20 @@ def _const_block(source: str, name: str) -> str:
 
 
 PICKER_FUNCTIONS = (
+    # The page's own t(), so the harness resolves message ids exactly as the
+    # browser does rather than through a stand-in that could disagree.
+    "function t(id, vars)",
     "function _pickerError(message, {focus = null} = {})",
     "function _clearPickerError()",
     "function _pickerSubmitLabel()",
     "function _setPickerBusy(busy)",
     "function closeDashboardPicker()",
     "function setDashboardPickerMode(mode)",
+    "function onDashboardPickerTabKey(event)",
+    "function onDashboardPickerListKey(event)",
     "function selectDashboardPickerOption(id)",
     "function renderDashboardPickerOptions(query = '')",
+    "function _renderPickerSubject(context)",
     "function _collectPinRequest()",
     "function _classifyPinOutcome(httpOk, data)",
     "function _applyPinOutcome(result)",
@@ -122,8 +128,15 @@ PICKER_FUNCTIONS = (
 
 
 def _run(script: str, *, items=None, mode="existing", selected=0, context=None,
-         fields=None) -> dict:
-    """Execute the real picker functions against a DOM thin enough for them."""
+         fields=None, lang="en") -> dict:
+    """Execute the real picker functions against a DOM thin enough for them.
+
+    The catalogue is the REAL one from core/i18n.py, not a fixture. That is what
+    makes this suite notice a message id the page uses and the catalogue does
+    not have -- which would render as the raw id on screen.
+    """
+    from core import i18n
+
     tmpl = TEMPLATE.read_text(encoding="utf-8")
     lifted = "\n".join(_function(tmpl, sig) for sig in PICKER_FUNCTIONS)
     harness = f"""
@@ -150,19 +163,27 @@ const _nodes = {{}};
 for (const id of ['dashboardPickerBackdrop','dashboardPickerError','dashboardPickerSubmit',
                   'dashboardExistingMode','dashboardNewMode','dashboardExistingPanel',
                   'dashboardNewPanel','dashboardPickerList','dashboardPickerSearch',
-                  'dashboardNewName','dashboardNewDescription','dashboardNewVisibility']) {{
+                  'dashboardNewName','dashboardNewDescription','dashboardNewVisibility',
+                  'dashboardPickerSubject','dashboardPickerSubjectTitle',
+                  'dashboardPickerSubjectKind','dashboardPickerPanel']) {{
   _nodes[id] = _el(); _nodes[id]._id = id;
 }}
 const _fields = {json.dumps(fields or {})};
 for (const k in _fields) if (_nodes[k]) _nodes[k].value = _fields[k];
 if (!_nodes.dashboardNewVisibility.value) _nodes.dashboardNewVisibility.value = 'personal';
 
+// Options are created by renderDashboardPickerOptions as HTML, so the harness
+// keeps its own list of option stand-ins for the keyboard tests to walk.
+let _options = [];
 var document = {{
+  body: {{style: {{}}}},
+  activeElement: null,
   getElementById: id => _nodes[id] || null,
-  // Only the two selectors the lifted code actually uses.
+  querySelector: sel => sel === '.dashboard-picker' ? _nodes.dashboardPickerPanel : null,
   querySelectorAll: sel => {{
     if (sel.indexOf('aria-invalid') >= 0)
       return Object.keys(_nodes).map(k => _nodes[k]).filter(n => n.getAttribute('aria-invalid'));
+    if (sel.indexOf('dashboard-picker-option') >= 0) return _options;
     return [];
   }},
 }};
@@ -178,6 +199,7 @@ function toastLong(m) {{ _log.toastLong.push(m); }}
 function setTimeout(fn) {{ fn(); return 0; }}
 const THREAD_ID = 'thread-1';
 const DASHBOARD_ID = 0;
+const I18N = {json.dumps(i18n.catalogue_for(lang))};
 
 {_const_block(tmpl, "_PIN_ERRORS")}
 
@@ -186,6 +208,7 @@ let _dashboardPickerItems = {json.dumps(items or [])};
 let _dashboardPickerMode = {json.dumps(mode)};
 let _dashboardPickerSelected = {json.dumps(selected)};
 let _dashboardPickerBusy = false;
+let _dashboardPickerReturnFocus = null;
 const _dashboardPinnedTokens = new Map();
 
 {lifted}
@@ -207,6 +230,7 @@ JSON.stringify({{
     return acc;
   }}, {{}}),
   focused: _log.focused || null,
+  bodyOverflow: document.body.style.overflow || '',
 }});
 """
     return json.loads(dukpy.evaljs(harness))
@@ -410,10 +434,13 @@ class TestClassifyingTheServerResponse:
 class TestApplyingTheOutcome:
 
     def test_success_closes_records_and_confirms(self):
+        from core import i18n
         out = _run("_applyPinOutcome({outcome:'success', dashboard:{id:3,name:'Ops',url:'/x'}});",
                    context={"token": "tok"})
         assert "open" not in out["nodes"]["dashboardPickerBackdrop"]["classes"]
-        assert out["log"]["toast"] == ["Added to Ops"]
+        # Asserted through the catalogue, not against hardcoded English, so this
+        # keeps meaning something once the page is French.
+        assert out["log"]["toast"] == [i18n.t("ui.pin.added", lang="en", dashboard="Ops")]
         assert out["pinned"] == [["tok", {"id": 3, "name": "Ops", "url": "/x"}]]
 
     def test_a_recoverable_outcome_leaves_the_modal_open(self):
@@ -576,3 +603,207 @@ class TestThePinEndpointReturnsCodes:
         assert server_codes == client_codes, (
             f"server-only: {sorted(server_codes - client_codes)}; "
             f"client-only: {sorted(client_codes - server_codes)}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# The redesign
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTheDialogBehavesLikeADialog:
+    """None of this existed. The dialog could be tabbed out of into the page
+    behind the scrim, the page scrolled under it, focus started wherever it
+    happened to be, and closing dropped focus at the top of a 5000-line
+    document."""
+
+    def test_opening_locks_the_page_behind_the_scrim(self):
+        out = _run("document.body.style.overflow = 'hidden';")
+        assert out["bodyOverflow"] == "hidden"
+
+    def test_closing_releases_the_page(self):
+        out = _run("document.body.style.overflow = 'hidden'; closeDashboardPicker();")
+        assert out["bodyOverflow"] == ""
+
+    def test_closing_returns_focus_to_whatever_opened_it(self):
+        out = _run("_dashboardPickerReturnFocus = _nodes.dashboardPickerSubmit;"
+                   " closeDashboardPicker();")
+        assert out["focused"] == "dashboardPickerSubmit"
+
+    def test_closing_twice_does_not_move_focus_again(self):
+        """The return target is cleared on use; without that, a later close
+        yanks focus back to a button the user has moved on from."""
+        out = _run("_dashboardPickerReturnFocus = _nodes.dashboardPickerSubmit;"
+                   " closeDashboardPicker();"
+                   " _log.focused = null; closeDashboardPicker();")
+        assert out["focused"] is None
+
+    def test_the_dialog_role_sits_on_the_panel_not_the_backdrop(self):
+        """On the backdrop, the dialog's accessible bounds were the full-screen
+        scrim: a screen reader announced a dialog and then read nothing inside
+        it."""
+        src = TEMPLATE.read_text(encoding="utf-8")
+        panel = src[src.index('<section class="dashboard-picker"'):]
+        panel = panel[:panel.index(">") + 1]
+        assert 'role="dialog"' in panel
+        assert 'aria-modal="true"' in panel
+        assert 'aria-describedby="dashboardPickerCopy"' in panel
+        backdrop = src[src.index('<div class="dashboard-picker-backdrop"'):]
+        backdrop = backdrop[:backdrop.index(">") + 1]
+        assert "role=" not in backdrop
+
+
+class TestKeyboardNavigation:
+
+    def test_arrow_keys_move_between_the_two_tabs(self):
+        out = _run("onDashboardPickerTabKey({key:'ArrowRight', preventDefault(){}});")
+        assert out["mode"] == "new"
+        out = _run("onDashboardPickerTabKey({key:'ArrowLeft', preventDefault(){}});",
+                   mode="new")
+        assert out["mode"] == "existing"
+
+    def test_an_unrelated_key_is_left_alone(self):
+        assert _run("onDashboardPickerTabKey({key:'a', preventDefault(){}});")["mode"] == "existing"
+
+    def test_the_tabs_announce_which_is_current(self):
+        out = _run("setDashboardPickerMode('new');")
+        assert out["nodes"]["dashboardNewMode"]["attrs"]["aria-selected"] == "true"
+        assert out["nodes"]["dashboardExistingMode"]["attrs"]["aria-selected"] == "false"
+
+    def _list_harness(self, script):
+        # renderDashboardPickerOptions writes HTML, so the option stand-ins the
+        # keyboard handler walks are built here to match what it rendered.
+        return _run(
+            "renderDashboardPickerOptions('');"
+            "_options = _dashboardPickerItems.map(i => {"
+            "  const n = _el(); n._id = 'opt' + i.id; n.dataset = {dashboardId: String(i.id)};"
+            "  return n; });"
+            + script, items=DASHBOARDS, selected=3)
+
+    def test_arrow_down_moves_the_selection(self):
+        out = self._list_harness("onDashboardPickerListKey({key:'ArrowDown', preventDefault(){}});")
+        assert out["selected"] == 7
+
+    def test_arrow_up_stops_at_the_top(self):
+        out = self._list_harness("onDashboardPickerListKey({key:'ArrowUp', preventDefault(){}});")
+        assert out["selected"] == 3
+
+    def test_end_and_home_jump(self):
+        assert self._list_harness("onDashboardPickerListKey({key:'End', preventDefault(){}});")["selected"] == 7
+        assert self._list_harness("onDashboardPickerListKey({key:'Home', preventDefault(){}});")["selected"] == 3
+
+    def test_the_list_uses_a_roving_tabindex(self):
+        """One tab stop for the list, arrows inside it -- not one stop per
+        dashboard."""
+        html = _run("renderDashboardPickerOptions('');", items=DASHBOARDS,
+                    selected=7)["nodes"]["dashboardPickerList"]["html"]
+        assert html.count('tabindex="0"') == 1
+        assert html.count('tabindex="-1"') == 1
+
+
+class TestTheSubjectStrip:
+    """The dialog already knew the title and the chart type and displayed
+    neither, so it asked the user to place something it would not name."""
+
+    def test_it_names_what_is_being_added(self):
+        out = _run("_renderPickerSubject({title:'Revenue by region', chart_type:'bar'});")
+        assert out["nodes"]["dashboardPickerSubject"]["hidden"] is False
+        assert "Revenue by region" in out["nodes"]["dashboardPickerSubjectTitle"]["text"]
+        assert out["nodes"]["dashboardPickerSubjectKind"]["text"] == "BAR"
+
+    def test_it_stays_hidden_with_nothing_to_name(self):
+        out = _run("_renderPickerSubject({});")
+        assert out["nodes"]["dashboardPickerSubject"]["hidden"] is True
+
+
+class TestTheWholeModalRendersInFrench:
+    """The end-to-end assertion for feature 1 on this surface: the same
+    executed code paths, one language flag apart, and nothing English left."""
+
+    def test_the_button_labels_come_from_the_catalogue(self):
+        out = _run("setDashboardPickerMode('new');", lang="fr")
+        assert out["nodes"]["dashboardPickerSubmit"]["text"] == "Créer et ajouter"
+        out = _run("setDashboardPickerMode('existing');", lang="fr")
+        assert out["nodes"]["dashboardPickerSubmit"]["text"] == "Ajouter le graphique"
+
+    def test_a_validation_error_is_french(self):
+        out = _run("const r = _collectPinRequest(); _pickerError(r.error, {focus: r.focus});",
+                   mode="new", context={"token": "t"}, lang="fr")
+        assert out["nodes"]["dashboardPickerError"]["text"] == \
+            "Donnez un nom au nouveau tableau de bord."
+
+    def test_a_terminal_failure_is_french(self):
+        out = _run("_applyPinOutcome(_classifyPinOutcome(false, {ok:false, code:'expired_token'}));",
+                   context={"token": "t"}, lang="fr")
+        assert out["log"]["toastLong"] == [
+            "Ce résultat ne peut plus être épinglé. Relancez la question puis réessayez."]
+
+    def test_the_empty_state_is_french(self):
+        html = _run("renderDashboardPickerOptions('');", items=[], lang="fr")["nodes"]["dashboardPickerList"]["html"]
+        assert "tableau de bord" in html
+
+    def test_the_markup_carries_no_hardcoded_english_labels(self):
+        """Every visible string in the picker markup goes through t(). A literal
+        left behind renders English on a French page and no test would see it,
+        because the JS half would still be French.
+
+        Attribute values and Jinja expressions are stripped first: element ids
+        legitimately read like labels (`id="dashboardNewVisibility"`), and the
+        `{{ t('...') }}` calls contain the message ids themselves.
+        """
+        src = TEMPLATE.read_text(encoding="utf-8")
+        markup = src[src.index('<div class="dashboard-picker-backdrop"'):]
+        markup = markup[:markup.index("</div>\n\n<script>")]
+        text = re.sub(r"<!--.*?-->", " ", markup, flags=re.S)
+        text = re.sub(r'\w+="[^"]*"', " ", text)      # attributes
+        text = re.sub(r"\{\{.*?\}\}", " ", text)       # Jinja expressions
+        text = re.sub(r"<[^>]+>", " ", text)          # tags
+        for literal in ("Add to dashboard", "Existing dashboard", "Create new",
+                        "Search your dashboards", "Dashboard name", "Visibility",
+                        "Personal", "Team draft", "Cancel", "Add chart",
+                        "optional", "Description"):
+            assert literal not in text, f"hardcoded: {literal!r} in {text.strip()!r}"
+
+    def test_that_check_can_actually_fail(self):
+        """The stripping above is aggressive enough that the assertion could
+        pass on anything. It does not."""
+        text = re.sub(r'\w+="[^"]*"', " ", '<label id="x">Visibility</label>')
+        text = re.sub(r"<[^>]+>", " ", text)
+        assert "Visibility" in text
+
+
+class TestTheDesignSystemIsUsed:
+    """CSS is the one thing the JS harness cannot execute, so it is checked as
+    the cascade -- which is what these are: rules whose absence is a real,
+    visible defect rather than a style preference."""
+
+    def _picker_css(self) -> str:
+        src = TEMPLATE.read_text(encoding="utf-8")
+        start = src.index(".dashboard-picker-backdrop{")
+        return src[start:src.index(".clarification-card{", start)]
+
+    def test_no_hardcoded_scrim_shadow_or_z_index(self):
+        css = self._picker_css()
+        assert "var(--scrim)" in css and "var(--z-modal)" in css
+        assert "var(--shadow-lg)" in css
+        assert "rgba(15,23,42" not in css
+        assert "z-index:9100" not in css
+
+    def test_the_toast_outranks_the_modal(self):
+        """The toast sat at z-index 1200 under a backdrop at 8000, so a toasted
+        message from inside this dialog was painted underneath it."""
+        src = TEMPLATE.read_text(encoding="utf-8")
+        toast = src[src.index(".toast{"):src.index("}", src.index(".toast{"))]
+        assert "var(--z-toast)" in toast
+
+    def test_motion_respects_the_reduced_motion_preference(self):
+        css = self._picker_css()
+        assert "prefers-reduced-motion" in css
+        assert css.count("prefers-reduced-motion") >= 2   # panel and skeleton
+
+    def test_the_mobile_sheet_clears_the_home_indicator(self):
+        assert "env(safe-area-inset-bottom)" in self._picker_css()
+
+    def test_there_is_only_one_scroller(self):
+        """A 285px cap on the list inside a scrolling body gave the dialog two
+        nested scrollbars."""
+        css = self._picker_css()
+        assert "max-height:285px" not in css

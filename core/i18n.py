@@ -172,12 +172,29 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Vous n'avez pas accès à ce tableau de bord.",
     },
     "ui.pin.err_generic": {
-        "en": "The chart could not be added. Nothing was changed.",
-        "fr": "Le graphique n'a pas pu être ajouté. Rien n'a été modifié.",
+        "en": "The chart could not be added, and nothing was changed. "
+              "Run the question again to retry.",
+        "fr": "Le graphique n'a pas pu être ajouté et rien n'a été modifié. "
+              "Relancez la question pour réessayer.",
     },
     "ui.pin.err_offline": {
-        "en": "Could not reach the server. Check your connection and try again.",
-        "fr": "Serveur injoignable. Vérifiez votre connexion et réessayez.",
+        "en": "Could not reach the server. Nothing was changed — check your "
+              "connection and try again.",
+        "fr": "Serveur injoignable. Rien n'a été modifié — vérifiez votre "
+              "connexion et réessayez.",
+    },
+    "ui.pin.err_load": {
+        "en": "Your dashboards could not be loaded. You can still create a new one.",
+        "fr": "Vos tableaux de bord n'ont pas pu être chargés. Vous pouvez tout de "
+              "même en créer un.",
+    },
+    "ui.pin.err_session": {
+        "en": "Your session ended. Sign in again to add this result.",
+        "fr": "Votre session a expiré. Reconnectez-vous pour ajouter ce résultat.",
+    },
+    "ui.pin.already_added": {
+        "en": "Already added to {dashboard}. Run the question again to add it a second time.",
+        "fr": "Déjà ajouté à {dashboard}. Relancez la question pour l'ajouter une seconde fois.",
     },
     # ── The language switcher ────────────────────────────────────────────────
     "ui.lang.label": {"en": "Language", "fr": "Langue"},
