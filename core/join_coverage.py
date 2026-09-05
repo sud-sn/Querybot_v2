@@ -29,6 +29,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from core.i18n import plural as _plural, t as _t
+
 log = logging.getLogger("querybot.join_coverage")
 
 # Reuses the exact threshold core/relationship_validator.py's own admin-facing
@@ -78,8 +80,10 @@ def check_join_coverage(account_id: str, graph_edges: list[dict]) -> list[str]:
         if orphan_rate < 0 or orphan_rate <= _ORPHAN_RATE_WARNING_THRESHOLD:
             continue
 
-        from_entity = str(edge.get("from_entity") or rel.get("from_entity") or "the source table")
-        to_entity = str(edge.get("to_entity") or rel.get("to_entity") or "the joined table")
+        from_entity = str(edge.get("from_entity") or rel.get("from_entity")
+                          or _t("caveat.join.default_source"))
+        to_entity = str(edge.get("to_entity") or rel.get("to_entity")
+                        or _t("caveat.join.default_target"))
         messages.append(_coverage_message(
             from_entity, to_entity, orphan_rate,
             str(rel.get("last_profiled_at") or ""),
@@ -117,24 +121,18 @@ def _coverage_message(
     still the best evidence available; what was missing is that it is evidence
     from a point in time.
     """
-    lead = f"The join from {from_entity} to {to_entity}"
+    # Three whole sentences rather than a shared "The join from X to Y" stem
+    # plus a clause: the stem is the subject of three different verbs in three
+    # different tenses, and French does not let a subject phrase and its verb
+    # be assembled from separate strings the way "{lead} excluded ..." does.
     age_days = _measured_age_days(last_profiled_at)
-
+    fields = {
+        "source": from_entity, "target": to_entity, "rate": f"{orphan_rate:.0f}",
+    }
     if age_days is None:
-        return (
-            f"{lead} was measured as excluding about {orphan_rate:.0f}% of rows "
-            "with no match. That measurement is undated, so it may not reflect "
-            "the current data — some rows may not be counted."
-        )
+        return _t("caveat.join.undated", **fields)
+    when = (_t("caveat.join.today") if age_days == 0
+            else _plural("caveat.join.days_ago", age_days))
     if age_days > _STALE_PROFILE_DAYS:
-        return (
-            f"{lead} excluded about {orphan_rate:.0f}% of rows with no match "
-            f"when it was last profiled {age_days} days ago. Re-profile the "
-            "relationship to confirm the current figure — some rows may not be "
-            "counted."
-        )
-    measured = "today" if age_days == 0 else f"{age_days} day{'s' if age_days != 1 else ''} ago"
-    return (
-        f"{lead} excludes about {orphan_rate:.0f}% of rows with no match "
-        f"(measured {measured}) — some data may not be counted."
-    )
+        return _t("caveat.join.stale", when=when, **fields)
+    return _t("caveat.join.measured", when=when, **fields)

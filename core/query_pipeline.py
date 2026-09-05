@@ -6661,7 +6661,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 # under "Trend: +$43.9K/period".
                 _fc_decision = evaluate_forecast_request(
                     rows,
-                    question=question,
+                    # _analysis_question, not question. The gate reads this to
+                    # spot "you asked by week and this data is monthly", with
+                    # the same hand-written English regex `horizon` already
+                    # goes through -- so on the raw text a French reader never
+                    # got that caveat at all.
+                    question=_analysis_question,
                     horizon=extract_forecast_periods(_analysis_question),
                     truncated=bool(_rows_truncated),
                     policy_allows_derived_visual=aggregate_only_gate_passes(
@@ -6711,8 +6716,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     )
                     if _fc_meta.get("fell_back_from"):
                         _confidence_context.setdefault("forecast_caveats", []).append(
-                            f"I projected these periods with a {_fc_meta.get('model')} model; "
-                            f"the {_fc_meta['fell_back_from']} model was not available here."
+                            _t("caveat.forecast.model_fallback",
+                               model=_fc_meta.get("model"),
+                               preferred=_fc_meta["fell_back_from"])
                         )
                 else:
                     log.info(

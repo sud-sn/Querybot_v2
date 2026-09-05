@@ -57,6 +57,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
+from core.i18n import t as _t
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Data models
@@ -694,16 +696,10 @@ def build_multi_period_sql_hint(plan: PeriodPlan | None,
 # and nothing has read until now.
 _SHARE_FLOOR = 0.05
 
-_TRUNCATED_WARNING = (
-    "The result stopped at its row cap, so I did not compute the change "
-    "between periods or each category's share of it -- both would be "
-    "statistics over the first rows only, not the whole result."
-)
-_CANCELLING_WARNING = (
-    "Gains and losses across these categories almost cancel out, so each "
-    "category's share of the net change would be misleading. I left that "
-    "column empty and kept the per-category changes themselves."
-)
+# The truncation and cancelling warnings were module constants here. A
+# constant is built at import time, which is before any request and therefore
+# before any answer language -- so a French reader got the English sentence no
+# matter what. They are looked up at the point the guard fires instead.
 
 
 def _to_float(value) -> float | None:
@@ -801,9 +797,10 @@ def annotate_period_change(
     missing = [label for label, alias in zip(plan.labels, plan.aliases)
                if alias.strip().upper() not in found]
     if missing:
-        _warn(plan, "The result did not come back with a column for "
-                    f"{', '.join(missing)}, so the change shown below is "
-                    f"between {plan.labels[0]} and {plan.labels[-1]} only.")
+        _warn(plan, _t(
+            "caveat.period.missing_columns", missing=", ".join(missing),
+            oldest=plan.labels[0], newest=plan.labels[-1],
+        ))
 
     annotated = [dict(row) for row in rows]
 
@@ -812,7 +809,7 @@ def annotate_period_change(
     # exactly that, so the shape is recognised (the caller must not raise a
     # miss caveat) but nothing is derived.
     if truncated:
-        _warn(plan, _TRUNCATED_WARNING)
+        _warn(plan, _t("caveat.period.truncated"))
         return annotated
 
     oldest_col, newest_col = ordered[0], ordered[-1]
@@ -827,7 +824,7 @@ def annotate_period_change(
     gross = sum(abs(change) for change in readable)
     shares_hold = gross > 0 and abs(net) >= _SHARE_FLOOR * gross
     if gross > 0 and not shares_hold:
-        _warn(plan, _CANCELLING_WARNING)
+        _warn(plan, _t("caveat.period.cancelling"))
 
     for row, change in zip(annotated, changes):
         if change is None:

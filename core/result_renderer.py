@@ -35,7 +35,7 @@ import store
 # NOTE: this module deliberately imports no LLM entry point. Result narration
 # runs through core.governed_result_followup (metadata only). See the removal
 # note under "LLM narration" below.
-from core.i18n import t as _t
+from core.i18n import format_count as _fmt_count, t as _t
 from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.response_builder import (
     build_assistant_response, build_column_formats,
@@ -917,12 +917,12 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     # computed over the prefix — say so, otherwise the only visible symptom is
     # a chart that quietly failed to appear.
     if confidence_context.get("rows_truncated"):
+        # _fmt_count, not f"{n:,}": French groups thousands with a space and
+        # reads a comma as the decimal separator, so "1,234 lignes" is one and
+        # a bit rather than a thousand -- an off-by-a-thousand in the sentence
+        # that says how much of the result the reader is being shown.
         coverage_caveats.append(
-            f"Showing the first {len(rows):,} rows — the full result is larger. "
-            "Distribution statistics (median, quartiles, histogram bins, "
-            "correlation) are not shown, because computing them over a partial "
-            "result would give a misleading answer. Narrow the question with a "
-            "filter or a shorter date range to see them."
+            _t("caveat.truncated", count=_fmt_count(len(rows)))
         )
 
     rich_sender = getattr(adapter, "send_assistant_response", None)

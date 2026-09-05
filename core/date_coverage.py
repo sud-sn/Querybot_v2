@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from core.i18n import grain_label as _grain, plural as _plural, t as _t
 from core.pipeline_helpers import _quote_table_for_count
 from core.schema import run_query
 
@@ -51,6 +52,21 @@ class CoverageGap:
     # user shown "the result reflects the available data" was not told which
     # dates that meant.
     observed_through: str = ""
+
+
+def _metric_subject(metric_text: str, *, lead: bool) -> str:
+    """What the missing records are called, in the position it appears in.
+
+    English lowercased the whole phrase mid-sentence, which also lowercased
+    the metric's own name -- an "EBITDA" metric was reported as "ebitda
+    records". The name is the tenant's, so it keeps its case here and only the
+    frame around it changes; French needs its article at the head of a
+    sentence and none in the middle, which is why the position is a parameter
+    rather than a call to ``.lower()`` on a translated string.
+    """
+    kind = "named" if metric_text else "generic"
+    return _t(f"caveat.dates.subject.{kind}{'_lead' if lead else ''}",
+              metric=metric_text)
 
 
 def _safe_metric_formula(value: object) -> str:
@@ -183,10 +199,9 @@ def check_date_coverage(
                 requested_days=requested_days,
                 actual_days=0,
                 observed_through=end_iso,
-                message=(
-                    f"This source is recorded by {grain}. The most recent data "
-                    f"it holds is dated {end_iso}, and the result covers the "
-                    f"requested period up to that point."
+                message=_t(
+                    "caveat.dates.grain_recorded",
+                    grain=_grain(grain, 1), through=end_iso,
                 ),
             )
 
@@ -274,14 +289,18 @@ def check_date_coverage(
     role = str(policy.get("business_role") or "business date").strip().lower()
     if role.endswith(" date"):
         role = role[:-5].strip()
-    date_label = f"{role} date" if role else "business date"
-    if actual_days != 1:
-        date_label += "s"
-    metric_subject = (
-        f"{str(metric_name).strip()} records"
-        if str(metric_name).strip()
-        else "Records"
+    # "business" is this module's own default word for the date, so it is copy
+    # and translates. Any other role is the tenant's own term -- "invoice",
+    # "posting" -- and is interpolated into the frame rather than looked up,
+    # because it is data. The plural is the catalogue's decision either way:
+    # `+= "s"` is English, and French takes the singular at zero as well as
+    # one.
+    label_stem = (
+        "caveat.dates.business_date" if role in ("", "business")
+        else "caveat.dates.role_date"
     )
+    date_label = _plural(label_stem, actual_days, role=role)
+    metric_text = str(metric_name).strip()
     requested_amount = int(policy.get("amount") or requested_days)
     requested_unit = str(policy.get("unit") or "day").strip().lower() or "day"
     if (
@@ -289,27 +308,35 @@ def check_date_coverage(
         and metric_active_days is not None
         and metric_active_days < min(actual_days, requested_days)
     ):
-        available_label = "day" if metric_active_days == 1 else "days"
-        metric_label = str(metric_name).strip() or "The selected metric"
-        message = (
-            f"You asked for the last {requested_amount} days. Records existed "
-            f"on {actual_days} {date_label}, but {metric_label} was nonzero on "
-            f"only {metric_active_days} {available_label}, through {end_iso}. "
-            "The result reflects the available metric values."
+        message = _t(
+            "caveat.dates.metric_sparse",
+            requested=requested_amount,
+            actual=actual_days,
+            date_label=date_label,
+            metric=metric_text or _t("caveat.dates.default_metric"),
+            active=metric_active_days,
+            active_label=_grain("day", metric_active_days),
+            through=end_iso,
         )
     elif requested_unit == "day":
-        available_label = "day" if actual_days == 1 else "days"
-        message = (
-            f"You asked for the last {requested_amount} days, but "
-            f"{metric_subject.lower()} were found on only {actual_days} "
-            f"{date_label} ({actual_days} {available_label} with data), "
-            f"through {end_iso}. The result reflects the available data."
+        message = _t(
+            "caveat.dates.days_sparse",
+            requested=requested_amount,
+            subject=_metric_subject(metric_text, lead=False),
+            actual=actual_days,
+            date_label=date_label,
+            active_label=_grain("day", actual_days),
+            through=end_iso,
         )
     else:
-        message = (
-            f"{metric_subject} were available on {actual_days} distinct "
-            f"{date_label} within the requested {requested_amount}-{requested_unit} "
-            f"period, through {end_iso}. The result reflects those available records."
+        message = _t(
+            "caveat.dates.period_sparse",
+            subject_lead=_metric_subject(metric_text, lead=True),
+            actual=actual_days,
+            date_label=date_label,
+            requested=requested_amount,
+            units=_grain(requested_unit, requested_amount),
+            through=end_iso,
         )
 
     return CoverageGap(

@@ -1128,6 +1128,189 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cette action de suivi n'est pas prise en charge pour ce résultat.",
     },
 
+    # ── Coverage caveats ─────────────────────────────────────────────────────
+    #
+    # The "silent gap" notes: the answer looks complete and something was
+    # quietly left out of it. They are assembled in core/result_renderer.py
+    # from four modules, and they are the sentences a reader most needs to be
+    # able to READ -- an English caveat under a French answer is a warning the
+    # person it is for cannot act on.
+    #
+    # Whole sentences throughout. Each refusal names its own reason, so there
+    # is no stem-plus-clause to share; and where a count decides the wording,
+    # the two forms are separate entries because French takes the singular at
+    # zero as well as one.
+
+    # The truncated result.
+    "caveat.truncated": {
+        "en": "Showing the first {count} rows — the full result is larger. Distribution statistics (median, quartiles, histogram bins, correlation) are not shown, because computing them over a partial result would give a misleading answer. Narrow the question with a filter or a shorter date range to see them.",
+        "fr": "Affichage des {count} premières lignes — le résultat complet est plus grand. Les statistiques de distribution (médiane, quartiles, classes d'histogramme, corrélation) ne sont pas affichées : les calculer sur un résultat partiel donnerait une réponse trompeuse. Restreignez la question par un filtre ou une période plus courte pour les obtenir.",
+    },
+
+    # ── Time grains, named ───────────────────────────────────────────────────
+    #
+    # Four call sites built these as f"{grain}s" -- English pluralisation
+    # bolted onto a wire token. "mois" has no plural s, and French takes the
+    # singular at zero as well as one, so the rule has to be the catalogue's.
+    # Read through i18n.grain_label(); an unrecognised grain (a tenant's own
+    # temporal_grain) passes through untranslated, because it is data.
+    "caveat.grain.day.one": {"en": "day", "fr": "jour"},
+    "caveat.grain.day.other": {"en": "days", "fr": "jours"},
+    "caveat.grain.week.one": {"en": "week", "fr": "semaine"},
+    "caveat.grain.week.other": {"en": "weeks", "fr": "semaines"},
+    "caveat.grain.month.one": {"en": "month", "fr": "mois"},
+    "caveat.grain.month.other": {"en": "months", "fr": "mois"},
+    "caveat.grain.quarter.one": {"en": "quarter", "fr": "trimestre"},
+    "caveat.grain.quarter.other": {"en": "quarters", "fr": "trimestres"},
+    "caveat.grain.year.one": {"en": "year", "fr": "année"},
+    "caveat.grain.year.other": {"en": "years", "fr": "années"},
+    "caveat.grain.period.one": {"en": "period", "fr": "période"},
+    "caveat.grain.period.other": {"en": "periods", "fr": "périodes"},
+
+    # ── Why a forecast was refused, or what was clamped about one that ran ───
+    "caveat.forecast.policy_blocked": {
+        "en": "I did not project future periods: this result's policy does not allow a derived visual of these values.",
+        "fr": "Je n'ai pas projeté de périodes futures : la politique appliquée à ce résultat n'autorise pas de visuel dérivé de ces valeurs.",
+    },
+    "caveat.forecast.no_temporal_axis": {
+        "en": "I did not project future periods: this result has no column I can read as a time axis.",
+        "fr": "Je n'ai pas projeté de périodes futures : ce résultat n'a aucune colonne lisible comme axe temporel.",
+    },
+    "caveat.forecast.no_measure": {
+        "en": "I did not project future periods: this result has no numeric column to project.",
+        "fr": "Je n'ai pas projeté de périodes futures : ce résultat n'a aucune colonne numérique à projeter.",
+    },
+    "caveat.forecast.masked_series": {
+        "en": "I did not project future periods: some values in this result are masked, so a projection would be fitted to an incomplete series.",
+        "fr": "Je n'ai pas projeté de périodes futures : certaines valeurs de ce résultat sont masquées, une projection serait donc ajustée sur une série incomplète.",
+    },
+    "caveat.forecast.truncated_result": {
+        "en": "I did not project future periods: this result was truncated, so the series is only the first part of the data.",
+        "fr": "Je n'ai pas projeté de périodes futures : ce résultat a été tronqué, la série ne couvre donc que le début des données.",
+    },
+    "caveat.forecast.multi_series": {
+        "en": "I did not project future periods: this result is broken down by {column}, so it holds several series rather than one.",
+        "fr": "Je n'ai pas projeté de périodes futures : ce résultat est ventilé par {column}, il contient donc plusieurs séries et non une seule.",
+    },
+    "caveat.forecast.too_short": {
+        "en": "I did not project future periods: a reliable projection needs at least {minimum} periods and this result has {count}.",
+        "fr": "Je n'ai pas projeté de périodes futures : une projection fiable demande au moins {minimum} périodes, et ce résultat en compte {count}.",
+    },
+    "caveat.forecast.too_short_grain": {
+        "en": "I did not project future periods: this series has {count} {periods} and a reliable projection needs at least {minimum}.",
+        "fr": "Je n'ai pas projeté de périodes futures : cette série compte {count} {periods} et une projection fiable en demande au moins {minimum}.",
+    },
+    "caveat.forecast.unordered_series": {
+        "en": "I did not project future periods: the periods are not in chronological order, so the trend cannot be read from them.",
+        "fr": "Je n'ai pas projeté de périodes futures : les périodes ne sont pas dans l'ordre chronologique, la tendance ne peut donc pas en être lue.",
+    },
+    "caveat.forecast.irregular_cadence": {
+        "en": "I did not project future periods: the periods are not evenly spaced, so there is no consistent step to project forward.",
+        "fr": "Je n'ai pas projeté de périodes futures : les périodes ne sont pas régulièrement espacées, il n'y a donc pas de pas constant à prolonger.",
+    },
+    # "{missing} of {expected} months are missing" makes the verb agree with
+    # the wrong number -- "1 of 24 days are missing" -- and French additionally
+    # has to agree the noun. Both languages say it impersonally instead.
+    "caveat.forecast.gaps_in_series": {
+        "en": "I did not project future periods: this series is missing {missing} of the {expected} {periods} it should cover.",
+        "fr": "Je n'ai pas projeté de périodes futures : il manque {missing} des {expected} {periods} que cette série devrait couvrir.",
+    },
+    "caveat.forecast.constant_series": {
+        "en": "I did not project future periods: this series does not vary, so a projection would just repeat the same number.",
+        "fr": "Je n'ai pas projeté de périodes futures : cette série ne varie pas, une projection ne ferait que répéter le même nombre.",
+    },
+    "caveat.forecast.poor_fit": {
+        "en": "I did not project future periods: the trend line explains only {r2}% of the movement in this series and back-testing it against the periods I already have was {mape}% out, so a projection would not mean much.",
+        "fr": "Je n'ai pas projeté de périodes futures : la droite de tendance n'explique que {r2} % des variations de cette série, et son test rétrospectif sur les périodes déjà connues s'écarte de {mape} % — une projection n'aurait guère de sens.",
+    },
+    "caveat.forecast.capped_horizon": {
+        "en": "I projected {capped} {periods} rather than {asked}: beyond about half the length of the history a projection is guesswork.",
+        "fr": "J'ai projeté {capped} {periods} au lieu de {asked} : au-delà de la moitié environ de l'historique, une projection relève de la conjecture.",
+    },
+    # "this data is {grain}ly" builds an English adverb out of a wire token,
+    # and the French adjective would have to agree with two different nouns in
+    # the same sentence ("ces données", "la projection"). Both languages name
+    # the grain instead of deriving a word from it.
+    "caveat.forecast.grain_mismatch": {
+        "en": "You asked by {asked_grain}, but this data is recorded by {grain}, so the projection is by {grain}.",
+        "fr": "Vous avez demandé par {asked_grain}, mais ces données sont enregistrées par {grain} ; la projection est donc par {grain}.",
+    },
+    "caveat.forecast.model_fallback": {
+        "en": "I projected these periods with a {model} model; the {preferred} model was not available here.",
+        "fr": "J'ai projeté ces périodes avec un modèle {model} ; le modèle {preferred} n'était pas disponible ici.",
+    },
+
+    # ── The date-range coverage gap ──────────────────────────────────────────
+    #
+    # The English sentence puts the subject first ("Revenue records were
+    # available on ..."), which French cannot do without an article, so the
+    # subject has a sentence-initial form of its own. English also built the
+    # window as the compound "6-month period"; both languages now count the
+    # grain instead ("period of 6 months"), because a placeholder that exists
+    # in one language and not the other is the one shape a translation cannot
+    # be checked for.
+    "caveat.dates.grain_recorded": {
+        "en": "This source is recorded by {grain}. The most recent data it holds is dated {through}, and the result covers the requested period up to that point.",
+        "fr": "Cette source est enregistrée par {grain}. La donnée la plus récente qu'elle contient est datée du {through}, et le résultat couvre la période demandée jusque-là.",
+    },
+    "caveat.dates.metric_sparse": {
+        "en": "You asked for the last {requested} days. Records existed on {actual} {date_label}, but {metric} was nonzero on only {active} {active_label}, through {through}. The result reflects the available metric values.",
+        "fr": "Vous avez demandé les {requested} derniers jours. Des enregistrements existaient sur {actual} {date_label}, mais {metric} n'affichait une valeur non nulle que sur {active} {active_label}, jusqu'au {through}. Le résultat reflète les valeurs disponibles de l'indicateur.",
+    },
+    "caveat.dates.days_sparse": {
+        "en": "You asked for the last {requested} days, but {subject} were found on only {actual} {date_label} ({actual} {active_label} with data), through {through}. The result reflects the available data.",
+        "fr": "Vous avez demandé les {requested} derniers jours, mais {subject} n'ont été trouvés que sur {actual} {date_label} ({actual} {active_label} avec des données), jusqu'au {through}. Le résultat reflète les données disponibles.",
+    },
+    "caveat.dates.period_sparse": {
+        "en": "{subject_lead} were available on {actual} distinct {date_label} within the requested period of {requested} {units}, through {through}. The result reflects those available records.",
+        "fr": "{subject_lead} étaient disponibles sur un total de {actual} {date_label} dans la période de {requested} {units} demandée, jusqu'au {through}. Le résultat reflète ces enregistrements disponibles.",
+    },
+    "caveat.dates.default_metric": {"en": "the selected metric", "fr": "l'indicateur sélectionné"},
+    "caveat.dates.subject.named": {"en": "{metric} records", "fr": "des enregistrements de {metric}"},
+    "caveat.dates.subject.named_lead": {"en": "{metric} records", "fr": "Les enregistrements de {metric}"},
+    "caveat.dates.subject.generic": {"en": "records", "fr": "des enregistrements"},
+    "caveat.dates.subject.generic_lead": {"en": "Records", "fr": "Les enregistrements"},
+    "caveat.dates.business_date.one": {"en": "business date", "fr": "date métier"},
+    "caveat.dates.business_date.other": {"en": "business dates", "fr": "dates métier"},
+    "caveat.dates.role_date.one": {"en": "{role} date", "fr": "date « {role} »"},
+    "caveat.dates.role_date.other": {"en": "{role} dates", "fr": "dates « {role} »"},
+
+    # ── The lossy join ───────────────────────────────────────────────────────
+    # The percentage came from a profiling run at some past admin click, and
+    # the age of that measurement is part of the claim -- so it is part of the
+    # sentence, not a suffix bolted onto one.
+    "caveat.join.undated": {
+        "en": "The join from {source} to {target} was measured as excluding about {rate}% of rows with no match. That measurement is undated, so it may not reflect the current data — some rows may not be counted.",
+        "fr": "La jointure de {source} vers {target} a été mesurée comme excluant environ {rate} % des lignes sans correspondance. Cette mesure n'est pas datée : elle peut ne plus refléter les données actuelles — certaines lignes peuvent ne pas être comptées.",
+    },
+    "caveat.join.stale": {
+        "en": "The join from {source} to {target} excluded about {rate}% of rows with no match when it was last profiled, {when}. Re-profile the relationship to confirm the current figure — some rows may not be counted.",
+        "fr": "La jointure de {source} vers {target} excluait environ {rate} % des lignes sans correspondance lors de son dernier profilage, {when}. Reprofilez la relation pour confirmer le chiffre actuel — certaines lignes peuvent ne pas être comptées.",
+    },
+    "caveat.join.measured": {
+        "en": "The join from {source} to {target} excludes about {rate}% of rows with no match (measured {when}) — some data may not be counted.",
+        "fr": "La jointure de {source} vers {target} exclut environ {rate} % des lignes sans correspondance (mesuré {when}) — certaines données peuvent ne pas être comptées.",
+    },
+    "caveat.join.default_source": {"en": "the source table", "fr": "la table source"},
+    "caveat.join.default_target": {"en": "the joined table", "fr": "la table jointe"},
+    "caveat.join.today": {"en": "today", "fr": "aujourd'hui"},
+    "caveat.join.days_ago.one": {"en": "{count} day ago", "fr": "il y a {count} jour"},
+    "caveat.join.days_ago.other": {"en": "{count} days ago", "fr": "il y a {count} jours"},
+
+    # ── The named-period comparison that came back incomplete ────────────────
+    "caveat.period.missing_columns": {
+        "en": "The result did not come back with a column for {missing}, so the change shown below is between {oldest} and {newest} only.",
+        "fr": "Le résultat n'est pas revenu avec une colonne pour {missing} ; la variation ci-dessous ne porte donc qu'entre {oldest} et {newest}.",
+    },
+    "caveat.period.truncated": {
+        "en": "The result stopped at its row cap, so I did not compute the change between periods or each category's share of it -- both would be statistics over the first rows only, not the whole result.",
+        "fr": "Le résultat s'est arrêté à son plafond de lignes ; je n'ai donc calculé ni la variation entre périodes ni la part de chaque catégorie — les deux ne porteraient que sur les premières lignes, pas sur l'ensemble du résultat.",
+    },
+    "caveat.period.cancelling": {
+        "en": "Gains and losses across these categories almost cancel out, so each category's share of the net change would be misleading. I left that column empty and kept the per-category changes themselves.",
+        "fr": "Les hausses et les baisses de ces catégories se compensent presque ; la part de chaque catégorie dans la variation nette serait donc trompeuse. J'ai laissé cette colonne vide et conservé les variations par catégorie.",
+    },
+
     # ── The action chips under an answer, and the card each one opens ────────
     #
     # The chip ID routes the action and is never translated; only the label and
@@ -2319,6 +2502,39 @@ def plural(msg_id_stem: str, count, lang: str | None = None, **kw) -> str:
         one = number == 1
     return t(f"{msg_id_stem}.{'one' if one else 'other'}", lang=tag,
              count=count, **kw)
+
+
+def grain_label(grain, count=2, lang: str | None = None) -> str:
+    """The name of a time grain, in the number a count calls for.
+
+    Four modules wrote this as ``f"{grain}s"``. ``grain`` is a wire token --
+    "day", "week", "month" -- and suffixing it was already wrong in English
+    (core/forecast_gate.py clamps a horizon to 1 and said "1 months"); in
+    French "mois" has no plural s and zero takes the singular. An unrecognised
+    grain comes back verbatim rather than as a missing-id token, because a
+    tenant's own ``temporal_grain`` is data, not copy.
+    """
+    key = str(grain or "").strip().lower()
+    stem = f"caveat.grain.{key}"
+    if f"{stem}.one" not in MESSAGES:
+        return key
+    return plural(stem, count, lang=lang)
+
+
+def format_count(value, lang: str | None = None) -> str:
+    """A whole number with the thousands separator its language groups by.
+
+    ``f"{n:,}"`` is English. French groups with a narrow no-break space and
+    reads a comma as the decimal point, so "1,234 lignes" is one and a bit
+    rather than a thousand -- an off-by-a-thousand in a caveat about how much
+    of the result the reader is being shown.
+    """
+    try:
+        grouped = f"{int(value):,}"
+    except (TypeError, ValueError):
+        return str(value)
+    tag = normalise_language(lang if lang is not None else get_active_language())
+    return grouped.replace(",", "\u202f") if tag == "fr" else grouped
 
 
 def enum_label(group: str, value, lang: str | None = None) -> str:

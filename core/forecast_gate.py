@@ -26,6 +26,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.i18n import grain_label as _grain, t as _t
 from core.temporal_columns import (
     infer_series_grain,
     is_temporal_result_column,
@@ -126,11 +127,7 @@ def evaluate_forecast_request(
     #    would draw, so it inherits the chart's aggregate-only decision rather
     #    than inventing a second, weaker rule.
     if not policy_allows_derived_visual:
-        return _refuse(
-            "policy_blocked",
-            "I did not project future periods: this result's policy does not "
-            "allow a derived visual of these values.",
-        )
+        return _refuse("policy_blocked", _t("caveat.forecast.policy_blocked"))
 
     if not rows:
         return _refuse("no_rows", "")
@@ -149,11 +146,7 @@ def evaluate_forecast_request(
         and any(_to_float(row.get(column)) is not None for row in rows)
     ]
     if not period_candidates:
-        return _refuse(
-            "no_temporal_axis",
-            "I did not project future periods: this result has no column I can "
-            "read as a time axis.",
-        )
+        return _refuse("no_temporal_axis", _t("caveat.forecast.no_temporal_axis"))
     if not numeric_candidates:
         # This refused with an empty caveat, and the pipeline only surfaces a
         # refusal that HAS one -- so a forecast question over a result with no
@@ -161,19 +154,13 @@ def evaluate_forecast_request(
         # Every other refusal here names its reason; this one was written as
         # though it were too obvious to say, which is exactly when a user
         # assumes the product simply ignored them.
-        return _refuse(
-            "no_measure",
-            "I did not project future periods: this result has no numeric "
-            "column to project.",
-        )
+        return _refuse("no_measure", _t("caveat.forecast.no_measure"))
 
     period_col, value_col = period_candidates[0], numeric_candidates[0]
 
     if any(_is_masked(row.get(value_col)) for row in rows):
         return _refuse(
-            "masked_series",
-            "I did not project future periods: some values in this result are "
-            "masked, so a projection would be fitted to an incomplete series.",
+            "masked_series", _t("caveat.forecast.masked_series"),
             period_col=period_col, value_col=value_col,
         )
 
@@ -181,9 +168,7 @@ def evaluate_forecast_request(
     #    over a prefix; forecast was the one that did not.
     if truncated:
         return _refuse(
-            "truncated_result",
-            "I did not project future periods: this result was truncated, so "
-            "the series is only the first part of the data.",
+            "truncated_result", _t("caveat.forecast.truncated_result"),
             period_col=period_col, value_col=value_col,
         )
 
@@ -196,8 +181,7 @@ def evaluate_forecast_request(
     if breakdown_cols:
         return _refuse(
             "multi_series",
-            "I did not project future periods: this result is broken down by "
-            f"{breakdown_cols[0]}, so it holds several series rather than one.",
+            _t("caveat.forecast.multi_series", column=breakdown_cols[0]),
             period_col=period_col, value_col=value_col,
         )
 
@@ -207,8 +191,7 @@ def evaluate_forecast_request(
     if len(points) < 2:
         return _refuse(
             "too_short",
-            f"I did not project future periods: a reliable projection needs at "
-            f"least {MIN_POINTS} periods and this result has {len(points)}.",
+            _t("caveat.forecast.too_short", minimum=MIN_POINTS, count=len(points)),
             period_col=period_col, value_col=value_col, n_points=len(points),
         )
 
@@ -216,18 +199,14 @@ def evaluate_forecast_request(
     #    governed artefact, and re-sorting here would hide a planning defect.
     if any(points[i][0] > points[i + 1][0] for i in range(len(points) - 1)):
         return _refuse(
-            "unordered_series",
-            "I did not project future periods: the periods are not in "
-            "chronological order, so the trend cannot be read from them.",
+            "unordered_series", _t("caveat.forecast.unordered_series"),
             period_col=period_col, value_col=value_col, n_points=len(points),
         )
 
     grain, consistency = infer_series_grain([p for p, _ in points])
     if not grain or consistency < MIN_CADENCE_CONSISTENCY:
         return _refuse(
-            "irregular_cadence",
-            "I did not project future periods: the periods are not evenly "
-            "spaced, so there is no consistent step to project forward.",
+            "irregular_cadence", _t("caveat.forecast.irregular_cadence"),
             period_col=period_col, value_col=value_col, n_points=len(points),
         )
 
@@ -236,16 +215,16 @@ def evaluate_forecast_request(
         missing = expected - len(points)
         return _refuse(
             "gaps_in_series",
-            f"I did not project future periods: {missing} of {expected} "
-            f"{grain}s are missing from this series.",
+            _t("caveat.forecast.gaps_in_series", missing=missing, expected=expected,
+               periods=_grain(grain, expected)),
             period_col=period_col, value_col=value_col, grain=grain, n_points=len(points),
         )
 
     if len(points) < MIN_POINTS:
         return _refuse(
             "too_short",
-            f"I did not project future periods: this series has {len(points)} "
-            f"{grain}s and a reliable projection needs at least {MIN_POINTS}.",
+            _t("caveat.forecast.too_short_grain", count=len(points),
+               periods=_grain(grain, len(points)), minimum=MIN_POINTS),
             period_col=period_col, value_col=value_col, grain=grain, n_points=len(points),
         )
 
@@ -255,28 +234,26 @@ def evaluate_forecast_request(
     stdev = math.sqrt(variance)
     if stdev == 0 or (mean and abs(stdev / mean) < MIN_VARIATION_CV):
         return _refuse(
-            "constant_series",
-            "I did not project future periods: this series does not vary, so a "
-            "projection would just repeat the same number.",
+            "constant_series", _t("caveat.forecast.constant_series"),
             period_col=period_col, value_col=value_col, grain=grain, n_points=len(points),
         )
 
     notes: list[str] = []
     capped = max(1, min(int(horizon or 3), MAX_HORIZON, math.ceil(len(points) / 2)))
     if capped < int(horizon or 3):
-        notes.append(
-            f"I projected {capped} {grain}s rather than {int(horizon)}: beyond "
-            f"about half the length of the history a projection is guesswork."
-        )
+        notes.append(_t(
+            "caveat.forecast.capped_horizon", capped=capped,
+            periods=_grain(grain, capped), asked=int(horizon),
+        ))
 
     from core.contextual_dates import requested_temporal_grain
 
     asked_grain = requested_temporal_grain(question or "")
     if asked_grain and asked_grain != grain:
-        notes.append(
-            f"You asked by {asked_grain} and this data is {grain}ly, so the "
-            f"projection is {grain}ly."
-        )
+        notes.append(_t(
+            "caveat.forecast.grain_mismatch",
+            asked_grain=_grain(asked_grain, 1), grain=_grain(grain, 1),
+        ))
 
     seasonal_period = seasonal_period_for_grain(grain)
     model = _select_model(values, len(points), seasonal_period)
@@ -341,11 +318,10 @@ def assess_fit(
     if poor_r2 and poor_backtest:
         return ForecastDecision(
             allowed=False, reason_code="poor_fit",
-            caveat=(
-                "I did not project future periods: the trend line explains only "
-                f"{max(0.0, (r2 or 0.0)) * 100:.0f}% of the movement in this series "
-                "and back-testing it against the periods I already have was "
-                f"{backtest_mape:.0f}% out, so a projection would not mean much."
+            caveat=_t(
+                "caveat.forecast.poor_fit",
+                r2=f"{max(0.0, (r2 or 0.0)) * 100:.0f}",
+                mape=f"{backtest_mape:.0f}",
             ),
             model=decision.model, period_col=decision.period_col,
             value_col=decision.value_col, grain=decision.grain,

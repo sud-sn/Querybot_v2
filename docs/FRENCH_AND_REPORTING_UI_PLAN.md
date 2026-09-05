@@ -220,28 +220,77 @@ rather than which words are searched.
 
 Ordered by how often a reader sees it.
 
-1. **`build_analysis_response`** (`core/response_builder.py`) — the
-   zero-latency analysis card used when no model call is available. ~40
-   strings. Note `scope.get("badge").lower()` is interpolated mid-sentence
-   there, which a translated badge makes read oddly; that call site needs a
-   sentence per shape, like the headline's movement did.
-2. **Coverage caveats** — assembled in `core/result_renderer.py` from four
-   different modules (`_gap.message`, forecast caveats, multi-period caveats,
-   `check_join_coverage`). Each source needs its own pass; the renderer only
-   concatenates.
-3. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
+1. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
    "Break down by X" fallbacks and the policy-refusal messages. These reach
    the chat page as server messages, so a French reader still sees English
    there.
-4. **`core/answer_formatter.py`'s section markers** — deliberately English
+2. **Number formatting.** `_format_number` in `core/response_builder.py`
+   groups thousands with `,` and puts the decimal point at `.`; French does
+   the opposite, so "1,234" reads as one and a bit. `i18n.format_count`
+   exists for whole counts and the truncation caveat uses it, but the
+   display-format pipeline (currency symbols, compact `K`/`M`, fraction
+   digits) is a separate pass and is untouched.
+3. **`core/answer_formatter.py`'s section markers** — deliberately English
    and deliberately out of the catalogue; see the note beside the
    `ui.chat.diag.*` ids.
-5. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
+4. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
    with no context processor, and ~1,546 strings.
+
+### The analysis card and the coverage caveats, and what they needed
+
+Both are done. `build_analysis_response` is 100% catalogue, and the caveats
+are translated where they are PRODUCED — `core/forecast_gate.py`,
+`core/date_coverage.py`, `core/join_coverage.py`, `core/multi_period.py`, plus
+the truncation sentence in `core/result_renderer.py` and the model-fallback
+note in `core/query_pipeline.py`. `core/result_renderer.py` only concatenates,
+and the pipeline's `activate_language` covers all six producers.
+
+Four defects that were already live in English, found only because the strings
+had to be pulled apart:
+
+* `f"{pct:.1f}% {direction} than the starting period"` with a three-way
+  higher/lower/**flat** direction produced "0.0% flat than the starting
+  period" on a series that did not move.
+* `f"{missing} of {expected} {grain}s are missing"` agreed the verb with
+  `expected`: "1 of 24 days **are** missing".
+* `metric_subject.lower()`, applied to fit mid-sentence, lowercased the
+  tenant's own metric name — an `EBITDA` metric was reported as "ebitda
+  records". So did `"The selected metric"`, capitalised mid-sentence.
+* The forecast gate was handed the reader's raw question rather than the
+  canonical English one, so its English grain-mismatch regex matched nothing
+  and a French reader was never told the projection had changed grain — the
+  caveat was translated and unreachable at once.
+
+Three patterns worth recognising elsewhere:
+
+* **A wire token pluralised by suffix.** `f"{grain}s"`, `date_label += "s"`,
+  `f"{n} day{'s' if n != 1 else ''} ago"`. "mois" is already its own plural
+  and French takes the singular at zero. `i18n.grain_label()` reads the
+  catalogue and lets an unrecognised tenant grain through untranslated,
+  because that one is data.
+* **A module-level constant.** `_TRUNCATED_WARNING` was built at import time,
+  which is before any request and therefore before any answer language. The
+  lookup has to happen where the guard fires.
+* **A placeholder that only one language needs.** English compounded
+  "6-month period"; French counts "période de 6 mois". Passing both `{unit}`
+  and `{units}` and letting each language pick is exactly what
+  `test_placeholders_match_across_languages` cannot check, so both languages
+  count the grain instead.
+
+A tenant `business_role` is English data ("invoice", "posting"), and
+`"date de invoice"` needs an elision no rule can decide from an arbitrary word
+— a mute h and an aspirated h take opposite forms. The French label quotes it:
+`dates « invoice »`.
 
 Every portal template's body is done. `tests/test_portal_pages_language.py`
 holds the list and asserts it matches what is on disk, so a page added later
 and not translated fails there rather than shipping.
+`tests/test_analysis_card_language.py` and
+`tests/test_coverage_caveat_language.py` do the same for the two above, by
+executing the real producers in both languages — including the post-processing
+block compiled out of `core/query_pipeline.py` and a real `_send_results`
+render, so a sentence translated at its source but concatenated again
+downstream still fails.
 
 ### The chat page, and what it needed
 

@@ -103,7 +103,7 @@ class CheckDateCoverageTests(unittest.TestCase):
             )
         self.assertEqual(
             gap.message,
-            "You asked for the last 7 days, but revenue records were found on "
+            "You asked for the last 7 days, but Revenue records were found on "
             "only 2 invoice dates (2 days with data), through 2026-07-20. "
             "The result reflects the available data.",
         )
@@ -119,8 +119,8 @@ class CheckDateCoverageTests(unittest.TestCase):
             gap = check_date_coverage(
                 self.db_cfg, policy, "azure_sql", metric_name="Revenue",
             )
-        self.assertIn("requested 6-month period", gap.message)
-        self.assertNotIn("180-day", gap.message)
+        self.assertIn("requested period of 6 months", gap.message)
+        self.assertNotIn("180", gap.message)
 
     def test_one_missing_day_is_reported(self):
         with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
@@ -152,7 +152,7 @@ class CheckDateCoverageTests(unittest.TestCase):
         self.assertEqual(gap.actual_days, 1)
         self.assertEqual(
             gap.message,
-            "You asked for the last 2 days, but revenue records were found on "
+            "You asked for the last 2 days, but Revenue records were found on "
             "only 1 invoice date (1 day with data), through 2026-07-20. "
             "The result reflects the available data.",
         )
