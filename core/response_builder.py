@@ -1586,18 +1586,21 @@ def compute_chip_eligibility(
         if period_count >= 2 and pct_change is not None and abs(pct_change) >= 3.0:
             sign = "+" if pct_change > 0 else ""
             _add(
-                "compare", "Compare periods",
+                "compare", _t("chip.compare"),
                 82 if abs(pct_change) >= 10 else 73,
-                f"{sign}{pct_change:.1f}% overall change",
+                _t("chip.compare_hint", pct=f"{sign}{pct_change:.1f}%"),
             )
 
         # diagnose: root-cause chip for significant movement
         if pct_change is not None and abs(pct_change) >= 5.0:
-            _change_word = "drop" if pct_change < 0 else "rise"
+            # Two ids, not one with a noun slot: French moves the noun to the
+            # front of the hint ("baisse de 12,3 %") and puts the adjective
+            # agreement on the demonstrative in the label.
+            _shape = "drop" if pct_change < 0 else "rise"
             _add(
-                "diagnose", f"Why the {_change_word}?",
+                "diagnose", _t(f"chip.diagnose_{_shape}"),
                 88 if abs(pct_change) >= 10 else 80,
-                f"{abs(pct_change):.1f}% {_change_word} — identify what drove this",
+                _t(f"chip.diagnose_{_shape}_hint", pct=f"{abs(pct_change):.1f}%"),
             )
 
         # compare_prior: available when the semantic model knows the date role
@@ -1608,8 +1611,8 @@ def compute_chip_eligibility(
             )
             if has_date_role:
                 _add(
-                    "compare_prior", "vs prior period", 70,
-                    "Fetch the same metric for the previous cycle",
+                    "compare_prior", _t("chip.compare_prior"), 70,
+                    _t("chip.compare_prior_hint"),
                 )
 
     # ── ranking chips ────────────────────────────────────────────────────────
@@ -1619,8 +1622,9 @@ def compute_chip_eligibility(
         leader_share = cmp_stats.get("leader_share_pct")
         if leader_share is not None and row_count >= 2:
             _add(
-                "contribution", "Show % contribution", 78,
-                f"{leader} holds {leader_share:.0f}% of total",
+                "contribution", _t("chip.contribution"), 78,
+                _t("chip.contribution_hint", leader=leader,
+                   pct=f"{leader_share:.0f}"),
             )
 
     # ── drill_dim — "Break down by X" chips ─────────────────────────────────
@@ -1648,17 +1652,17 @@ def compute_chip_eligibility(
             conf = 75 if dim.get("status") == "approved" else 68
             _add(
                 f"drill_dim:{name}",
-                f"Break down by {name}",
+                _t("chip.drill_dim", name=name),
                 conf,
-                f"Add {name} dimension to this result",
+                _t("chip.drill_dim_hint", name=name),
             )
             drill_count += 1
 
     # ── download_csv — available for any non-empty result ────────────────────
     if row_count >= 1 and mode != "empty":
         _add(
-            "download_csv", "Download CSV", 85,
-            f"{row_count} row{'s' if row_count != 1 else ''} ready to export",
+            "download_csv", _t("chip.download_csv"), 85,
+            _t_plural("chip.download_csv_hint", row_count),
         )
 
     # Fixed display order. drill_dim chips slot between contribution and download.

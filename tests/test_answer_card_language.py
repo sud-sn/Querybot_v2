@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from core import i18n
+from core.insight import generate_insight
 from core.response_builder import (
     build_answer,
     build_assistant_response,
@@ -423,6 +424,122 @@ class TestTheNamedPeriodNote:
     def test_the_category_labels_are_never_translated(self, french):
         summary = _card(PERIOD, "revenue 2025 vs 2026", period=True)["insight_summary"]
         assert "Pumps" in summary and "Valves" in summary
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# The action chips
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTheActionChips:
+
+    def _chips(self, rows, question, **kw):
+        return {c["id"]: c for c in
+                _card(rows, question, **kw)["next_actions"]}
+
+    def test_the_labels_are_french(self, french):
+        chips = self._chips(SERIES, "revenue by month")
+        assert chips["download_csv"]["label"] == "Télécharger le CSV"
+        assert chips["compare"]["label"] == "Comparer les périodes"
+
+    def test_the_hover_hint_is_french_too(self, french):
+        chips = self._chips(SERIES, "revenue by month")
+        assert chips["download_csv"]["pre_context"] == "4 lignes prêtes à exporter"
+
+    def test_a_fall_and_a_rise_are_different_sentences(self, french):
+        """French moves the noun to the front of the hint and agrees the
+        demonstrative in the label, so one template with a noun slot cannot
+        produce both."""
+        # A different series, not the same one reversed: the builder sorts
+        # rows chronologically, so reversing them changes nothing.
+        rising_rows = [{"month": f"2026-{m:02d}", "revenue": v}
+                       for m, v in ((1, 60), (2, 80), (3, 90), (4, 100))]
+        falling = self._chips(SERIES, "revenue by month")["diagnose"]
+        rising = self._chips(rising_rows, "revenue by month")["diagnose"]
+        assert falling["label"] == "Pourquoi cette baisse ?"
+        assert rising["label"] == "Pourquoi cette hausse ?"
+        assert falling["pre_context"].startswith("baisse de")
+        assert rising["pre_context"].startswith("hausse de")
+
+    def test_english_is_unchanged(self):
+        chips = self._chips(SERIES, "revenue by month")
+        assert chips["download_csv"]["label"] == "Download CSV"
+        assert chips["download_csv"]["pre_context"] == "4 rows ready to export"
+        assert chips["diagnose"]["label"] == "Why the drop?"
+
+    def test_the_chip_id_is_never_translated(self, french):
+        """It routes the action. A translated id is a chip that does nothing."""
+        chips = self._chips(SERIES, "revenue by month")
+        assert set(chips) <= {"compare", "diagnose", "compare_prior",
+                              "contribution", "download_csv"}
+
+    def test_a_dimension_name_is_the_customers_and_stays_put(self, french):
+        from core.response_builder import compute_chip_eligibility
+        chips = compute_chip_eligibility(
+            {"mode": "ranking", "row_count": 5},
+            semantic_plan={"enabled": True, "available_dimensions": [
+                {"name": "Warehouse", "display_column": "WH", "status": "approved"}]},
+        )
+        drill = [c for c in chips if c["id"].startswith("drill_dim:")][0]
+        assert drill["label"] == "Détailler par Warehouse"
+        assert drill["id"] == "drill_dim:Warehouse"
+
+    def test_one_row_takes_the_singular(self, french):
+        assert i18n.plural("chip.download_csv_hint", 1, lang="fr") == \
+            "1 ligne prête à exporter"
+        assert i18n.plural("chip.download_csv_hint", 0, lang="fr") == \
+            "0 ligne prête à exporter"
+        assert i18n.plural("chip.download_csv_hint", 0, lang="en") == \
+            "0 rows ready to export"
+
+
+class TestTheAnalysisCardTitle:
+    """Driven through the real generate_insight, with only the model call
+    stubbed -- the title is chosen after the response comes back, so stubbing
+    the engine would leave the line under test unexecuted."""
+
+    def _card(self, action, raw="HEADLINE: x\nBODY: y", fail=False):
+        import asyncio
+        from unittest.mock import patch
+        import core.llm as llm
+
+        async def _complete(*a, **kw):
+            if fail:
+                raise RuntimeError("provider is down")
+            return raw, 1, 1
+
+        with patch.object(llm, "llm_complete", _complete):
+            return asyncio.run(generate_insight(
+                [{"region": "North", "revenue": 900},
+                 {"region": "South", "revenue": 400}],
+                "revenue by region", action=action))
+
+    def test_the_titles_are_french(self, french):
+        assert self._card("explain")["title"] == "Explication du résultat"
+        assert self._card("decide")["title"] == "Prochaine étape recommandée"
+
+    def test_english_is_unchanged(self):
+        assert self._card("explain")["title"] == "Result explanation"
+        assert self._card("decide")["title"] == "Recommended next step"
+
+    def test_an_unknown_action_falls_back_rather_than_showing_an_id(self, french):
+        assert self._card("teleport")["title"] == "Analyse"
+
+    def test_the_action_key_is_never_translated(self, french):
+        """It routes the card. A translated key is a card the page cannot
+        render."""
+        assert self._card("explain")["action"] == "explain"
+
+    def test_a_provider_failure_is_reported_in_french(self, french):
+        card = self._card("explain", fail=True)
+        assert card["headline"] == "L'analyse n'a pas pu être menée à son terme."
+        assert card["body"].startswith("Le moteur d'analyse a rencontré une erreur :")
+        assert card["next_step"].startswith("Essayez de reformuler")
+
+    def test_a_provider_failure_in_english_is_unchanged(self):
+        card = self._card("explain", fail=True)
+        assert card["headline"] == "Analysis could not be completed."
+        assert card["next_step"] == \
+            "Try rephrasing your question or running a more specific query."
 
 
 # ══════════════════════════════════════════════════════════════════════════════

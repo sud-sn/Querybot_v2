@@ -870,6 +870,71 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "{opening} Aucune catégorie n'a bougé entre les deux périodes.",
     },
 
+    # ── The action chips under an answer, and the card each one opens ────────
+    #
+    # The chip ID routes the action and is never translated; only the label and
+    # the hover hint are copy. Same for the analysis card's action key.
+
+    "chip.compare": {"en": "Compare periods", "fr": "Comparer les périodes"},
+    "chip.compare_hint": {
+        "en": "{pct} overall change", "fr": "{pct} de variation globale",
+    },
+    "chip.diagnose_drop": {"en": "Why the drop?", "fr": "Pourquoi cette baisse ?"},
+    "chip.diagnose_rise": {"en": "Why the rise?", "fr": "Pourquoi cette hausse ?"},
+    "chip.diagnose_drop_hint": {
+        "en": "{pct} drop — identify what drove this",
+        "fr": "baisse de {pct} — identifier ce qui l'a provoquée",
+    },
+    "chip.diagnose_rise_hint": {
+        "en": "{pct} rise — identify what drove this",
+        "fr": "hausse de {pct} — identifier ce qui l'a provoquée",
+    },
+    "chip.compare_prior": {"en": "vs prior period", "fr": "vs période précédente"},
+    "chip.compare_prior_hint": {
+        "en": "Fetch the same metric for the previous cycle",
+        "fr": "Récupérer le même indicateur pour le cycle précédent",
+    },
+    "chip.contribution": {
+        "en": "Show % contribution", "fr": "Afficher la contribution en %",
+    },
+    "chip.contribution_hint": {
+        "en": "{leader} holds {pct}% of total",
+        "fr": "{leader} détient {pct} % du total",
+    },
+    "chip.drill_dim": {"en": "Break down by {name}", "fr": "Détailler par {name}"},
+    "chip.drill_dim_hint": {
+        "en": "Add {name} dimension to this result",
+        "fr": "Ajouter la dimension {name} à ce résultat",
+    },
+    "chip.download_csv": {"en": "Download CSV", "fr": "Télécharger le CSV"},
+    "chip.download_csv_hint.one": {
+        "en": "{count} row ready to export", "fr": "{count} ligne prête à exporter",
+    },
+    "chip.download_csv_hint.other": {
+        "en": "{count} rows ready to export", "fr": "{count} lignes prêtes à exporter",
+    },
+
+    # The titles on the card a chip opens.
+    "analysis.title.explain": {"en": "Result explanation", "fr": "Explication du résultat"},
+    "analysis.title.analyze": {"en": "Trend analysis", "fr": "Analyse de tendance"},
+    "analysis.title.compare": {"en": "Compare periods", "fr": "Comparaison de périodes"},
+    "analysis.title.predict": {"en": "Predict next period", "fr": "Prévision de la période suivante"},
+    "analysis.title.why": {"en": "Why this pattern?", "fr": "Pourquoi ce schéma ?"},
+    "analysis.title.decide": {"en": "Recommended next step", "fr": "Prochaine étape recommandée"},
+    "analysis.title.default": {"en": "Analysis", "fr": "Analyse"},
+    "analysis.failed_headline": {
+        "en": "Analysis could not be completed.",
+        "fr": "L'analyse n'a pas pu être menée à son terme.",
+    },
+    "analysis.failed_body": {
+        "en": "The insight engine encountered an error: {detail}",
+        "fr": "Le moteur d'analyse a rencontré une erreur : {detail}",
+    },
+    "analysis.failed_next": {
+        "en": "Try rephrasing your question or running a more specific query.",
+        "fr": "Essayez de reformuler votre question ou de poser une question plus précise.",
+    },
+
     # ── The language switcher ────────────────────────────────────────────────
     "ui.lang.label": {"en": "Language", "fr": "Langue"},
     "ui.lang.en": {"en": "English", "fr": "Anglais"},

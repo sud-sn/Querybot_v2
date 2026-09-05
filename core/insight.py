@@ -36,6 +36,8 @@ import re
 from statistics import mean, median, stdev
 from typing import Any, Optional
 
+from core.i18n import t as _t
+
 log = logging.getLogger("querybot.insight")
 
 
@@ -1452,25 +1454,21 @@ async def generate_insight(
     except Exception as e:
         log.error("Insight generation failed: %s", e)
         parsed = {
-            "headline": "Analysis could not be completed.",
-            "body": f"The insight engine encountered an error: {str(e)[:100]}",
+            "headline": _t("analysis.failed_headline"),
+            "body": _t("analysis.failed_body", detail=str(e)[:100]),
             "bullets": [],
-            "next_step": "Try rephrasing your question or running a more specific query.",
+            "next_step": _t("analysis.failed_next"),
         }
 
-    title_map = {
-        "explain": "Result explanation",
-        "analyze": "Trend analysis",
-        "compare": "Compare periods",
-        "predict": "Predict next period",
-        "why": "Why this pattern?",
-        "decide": "Recommended next step",
-    }
+    # The action key routes the card; only the title is copy.
+    _KNOWN_TITLES = ("explain", "analyze", "compare", "predict", "why", "decide")
+    title = _t(f"analysis.title.{action}" if action in _KNOWN_TITLES
+               else "analysis.title.default")
 
     return {
         "type": "assistant_analysis",
         "action": action,
-        "title": title_map.get(action, "Analysis"),
+        "title": title,
         "headline": parsed.get("headline", ""),
         "body": parsed.get("body", ""),
         "bullets": parsed.get("bullets", []),
