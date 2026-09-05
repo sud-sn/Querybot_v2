@@ -165,6 +165,61 @@ the mechanism lands first and the redesign is built French-ready.
 
 ---
 
+## Status
+
+| Stage | State | Where |
+|---|---|---|
+| 1 — mechanism | **done** | `core/i18n.py` (~350 ids), `portal_user.lang` (v39), `POST /portal/api/language`, the Jinja context processor, `window.QB_I18N` |
+| 2 — picker modal | **done** | `portal_chat.html` picker: 8 defects fixed, then redesigned French-ready |
+| 3 — dashboard page | **done** | `portal_dashboard.html` restructured; 49 strings; `static/css/dashboard.css` |
+| — portal shell | **done** | `portal_base.html`: sidebar, mobile bar, confirm dialog, live toast, `<html lang>` |
+| — language switcher | **done** | Sidebar footer, third column of `.portal-side-actions`. A plain form: no JS, so nothing has to re-translate the shell in the browser |
+| — retroactive flip | **done** | `GET /portal/api/history/{thread}` rebuilds every turn from `answer_trace.result_rows` under the reader's language, and re-checks the table grant while it is at it |
+| — answer card | **done** | `build_answer`, `infer_result_scope`, insight summary, anomaly callouts, decision signal, action chips, analysis title |
+| — narration language | **done** | `core/insight._language_rule`, applied in `build_insight_prompt_from_contract` and the period-comparison prompt |
+| 4 — French normaliser + eval corpus | **not started** | The part that decides whether a French question is understood at all. 118 eval questions, all English |
+| 5 — the rest of the chrome | **partly** | See below |
+
+### What is still English
+
+Ordered by how often a reader sees it.
+
+1. **`portal_chat.html` body** — 5,650 lines, 31 `t()` calls, all in the
+   picker. The composer, the history panel, the trust box, the stage trail,
+   every toast. This is where a reader spends their session and it is the
+   largest single remaining surface.
+2. **`build_analysis_response`** (`core/response_builder.py`) — the
+   zero-latency analysis card used when no model call is available. ~40
+   strings. Note `scope.get("badge").lower()` is interpolated mid-sentence
+   there, which a translated badge makes read oddly; that call site needs a
+   sentence per shape, like the headline's movement did.
+3. **Coverage caveats** — assembled in `core/result_renderer.py` from four
+   different modules (`_gap.message`, forecast caveats, multi-period caveats,
+   `check_join_coverage`). Each source needs its own pass; the renderer only
+   concatenates.
+4. **`portal_kb.html`, `portal_notifications.html`, `portal_login.html`** —
+   0 `t()` calls each, ~600 lines together.
+5. **`core/drill_dimension.py` and `gateway/webhooks.py` error copy** — the
+   "Break down by X" fallbacks and the policy-refusal messages.
+6. **`admin/`** — out of scope by design. It has its own `Jinja2Templates`
+   with no context processor, and ~1,546 strings.
+
+### Two things deliberately NOT translated
+
+Both are tested for, because translating either is a silent behaviour change
+rather than a visible one.
+
+- **Anything compared by name.** A chip `id`, an analysis `action`, a
+  callout's `severity`, a decision signal's `tone` and `basis`, and the
+  structural labels `HEADLINE:`/`BODY:`/`DETAIL:`/`SECTION:`/`NEXT:` that
+  `parse_insight_response` matches literally. `infer_result_scope` publishes
+  `badge_key` next to the translated `badge` for exactly this reason: the
+  narration prompt reads the key.
+- **Customer data and schema.** Column names, category values, dimension
+  names, group names. A translated header stops matching the table under it.
+
+---
+
 ## Do not do
 
 - **Do not put the language on `display_context`.** At
