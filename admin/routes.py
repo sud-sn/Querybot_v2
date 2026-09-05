@@ -3015,6 +3015,44 @@ async def compliance_save_egress(request: Request, account_id: str):
     )
 
 
+@router.get("/api/clients/{account_id}/metrics/{metric_id}/coverage")
+async def metric_coverage_api(request: Request, account_id: str, metric_id: int):
+    """Which real-world question shapes this metric answers, and what the rest need.
+
+    A metric that compiles is not a metric that works: the same definition is
+    asked about as "top 10 customers by it", as "how has it changed this
+    quarter", and by a name nobody wrote down. This reports each shape and,
+    for the ones that fail, the asset to add rather than the failure that
+    occurred.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.metric_coverage import report_for_metric_id
+
+    report = report_for_metric_id(account_id, int(metric_id))
+    return JSONResponse({
+        "total": report.total,
+        "resolvable": report.resolvable,
+        "complete": report.complete,
+        "summary": report.summary,
+        "by_reason": report.gaps_by_reason(),
+        "gaps": [
+            {
+                "question": gap.variation.question,
+                "kind": gap.variation.kind,
+                "reason": gap.reason,
+                "missing": gap.missing,
+            }
+            for gap in report.gaps
+        ],
+        "answers": [
+            {"question": v.question, "kind": v.kind}
+            for v in report.variations
+            if v not in {g.variation for g in report.gaps}
+        ],
+    })
+
+
 @router.get("/clients/{account_id}/compliance/proof-pack")
 async def compliance_proof_pack(request: Request, account_id: str):
     """The artefact a customer hands to their auditor.
@@ -4657,104 +4695,6 @@ async def graph_api_chat(request: Request, account_id: str):
         "validation_status": next((item["status"] for item in reversed(staged) if item["kind"] == "relationship"), "untested"),
         "validation_statuses": [item["status"] for item in staged if item["kind"] == "relationship"],
         "staged": staged_summary,
-    })
-
-    # Legacy single-command implementation retained below only for source
-    # compatibility; all commands now return through the batch-safe path above.
-    command = commands[0]
-    conf_pct = max(0, min(100, int(round(command.confidence * 100))))
-    review_queue_url = f"/clients/{account_id}/graph#review"
-
-    if command.action == "register_entity":
-        parts = command.table_name.split(".")
-        table_only  = parts[-1]
-        schema_only = command.schema_name or (parts[-2] if len(parts) >= 2 else "")
-        store.save_entity(
-            account_id,
-            entity_name=command.entity_name,
-            table_name=table_only,
-            schema_name=schema_only,
-            status="suggested",
-            confidence_score=conf_pct,
-            generated_by="chat",
-            reason=f'Suggested from chat: "{message[:200]}"',
-        )
-        return JSONResponse({
-            "status": "ok",
-            "message": (
-                f"I've suggested **{command.entity_name}** (mapped to {command.table_name}) "
-                "— it's waiting in the review queue for you to confirm."
-            ),
-            "review_queue_url": review_queue_url,
-        })
-
-    # create_join / update_join — relationships are always stored between
-    # entity_graph rows, never raw table names, so resolve (or auto-suggest)
-    # an entity for each side first.
-    def _resolve_entity(table_fqn: str) -> str:
-        parts = table_fqn.split(".")
-        table_name  = parts[-1]
-        schema_name = parts[-2] if len(parts) >= 2 else ""
-        for ent in store.list_entities(account_id, active_only=False):
-            if (ent.get("table_name") or "").upper() != table_name.upper():
-                continue
-            if schema_name and (ent.get("schema_name") or "").upper() != schema_name.upper():
-                continue
-            return ent["entity_name"]
-        store.save_entity(
-            account_id,
-            entity_name=table_name,
-            table_name=table_name,
-            schema_name=schema_name,
-            status="suggested",
-            confidence_score=conf_pct,
-            generated_by="chat",
-            reason=f'Auto-registered from chat join: "{message[:200]}"',
-        )
-        return table_name
-
-    from_entity = _resolve_entity(command.from_table)
-    to_entity   = _resolve_entity(command.to_table)
-
-    rel_id = store.save_relationship(
-        account_id,
-        from_entity=from_entity,
-        to_entity=to_entity,
-        from_column=command.from_column,
-        to_column=command.to_column,
-        relationship_type=command.relationship_type,
-        join_type=command.join_type,
-        where_clause=command.where_clause,
-        status="suggested",
-        confidence_score=conf_pct,
-        generated_by="chat",
-        reason=f'Suggested from chat: "{message[:200]}"',
-    )
-
-    from core.relationship_validator import validate_relationship
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None, lambda: validate_relationship(account_id, rel_id, execute=False),
-    )
-    store.update_relationship_validation(
-        account_id, rel_id, result.status,
-        row_count_estimate=result.row_count_estimate,
-        join_multiplicity=result.join_multiplicity,
-        match_rate=result.match_rate,
-        orphan_rate=result.orphan_rate,
-        null_fk_rate=result.null_fk_rate,
-        fanout_ratio=result.fanout_ratio,
-    )
-
-    return JSONResponse({
-        "status": "ok",
-        "message": (
-            f"I've suggested a {command.join_type} join from **{from_entity}.{command.from_column}** "
-            f"to **{to_entity}.{command.to_column}** (validation: {result.status}) — "
-            "it's waiting in the review queue for you to confirm."
-        ),
-        "review_queue_url": review_queue_url,
-        "validation_status": result.status,
     })
 
 

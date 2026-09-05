@@ -1645,6 +1645,31 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 source_question=text,
             )
 
+            # Which real questions this metric will and will not answer, said
+            # at the moment it is defined rather than discovered later by a
+            # user getting "I could not generate a query for that". A session
+            # draft has no bound business date yet, so the period shapes are
+            # reported as gaps -- which is true, and is the next thing to do.
+            _coverage: dict = {}
+            try:
+                from core.metric_coverage import coverage_report
+
+                _report = coverage_report(draft.as_metric(), date_roles=[])
+                if _report.total:
+                    _coverage = {
+                        "total": _report.total,
+                        "resolvable": _report.resolvable,
+                        "summary": _report.summary,
+                        "gaps": [
+                            {"question": g.variation.question,
+                             "reason": g.reason, "missing": g.missing}
+                            for g in _report.gaps[:5]
+                        ],
+                    }
+            except Exception as _cov_exc:  # noqa: BLE001
+                log.warning("Metric coverage unavailable for %s: %s",
+                            draft.name, _cov_exc)
+
             await websocket.send_json({
                 "type": "assistant_metric_draft",
                 "draft_id": draft_id,
@@ -1655,6 +1680,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 "columns": draft.required_columns,
                 "dry_run": outcome.status,
                 "confidence": round(draft.confidence, 2),
+                "coverage": _coverage,
                 "body": (
                     _t("reply.metric.session_only", name=draft.name)
                 ),

@@ -949,6 +949,102 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cet espace de travail est configuré pour un secteur réglementé. Pour qu'aucune donnée protégée n'atteigne le modèle, l'assistant se limite ici à écrire des requêtes SQL — il ne produit ni analyse complémentaire, ni explication, ni comparaison à partir des résultats.",
     },
 
+    # ── Metric variation coverage (core/metric_coverage.py) ──────────────────
+    # The question shapes a metric has to survive. These are generated and
+    # then RESOLVED against the metric, so they must read the way a user
+    # really asks -- a template nobody would type proves nothing.
+    "coverage.q.base": {
+        "en": "what is {metric}",
+        "fr": "quel est {metric}",
+    },
+    "coverage.q.total": {
+        "en": "total {metric}",
+        "fr": "{metric} total",
+    },
+    "coverage.q.grain": {
+        "en": "{metric} by {grain}",
+        "fr": "{metric} par {grain}",
+    },
+    "coverage.q.grain_last": {
+        "en": "{metric} by {grain} for the last 6 {grain_plural}",
+        "fr": "{metric} par {grain} sur les 6 derniers {grain_plural}",
+    },
+    "coverage.q.dimension": {
+        "en": "{metric} by {dimension}",
+        "fr": "{metric} par {dimension}",
+    },
+    "coverage.q.dimension_grain": {
+        "en": "{metric} by {dimension} by {grain}",
+        "fr": "{metric} par {dimension} et par {grain}",
+    },
+    "coverage.q.ranking": {
+        "en": "top 10 {dimension} by {metric}",
+        "fr": "les 10 premiers {dimension} par {metric}",
+    },
+    "coverage.q.ranking_bottom": {
+        "en": "which {dimension} has the lowest {metric}",
+        "fr": "quel {dimension} a le plus faible {metric}",
+    },
+    "coverage.q.comparison_prior": {
+        "en": "{metric} this {grain} compared with last {grain}",
+        "fr": "{metric} ce {grain} par rapport au {grain} précédent",
+    },
+    "coverage.q.comparison_year": {
+        "en": "{metric} this year compared with the same period last year",
+        "fr": "{metric} cette année par rapport à la même période l'an dernier",
+    },
+    "coverage.q.trend": {
+        "en": "how has {metric} changed over the last 12 months",
+        "fr": "comment {metric} a-t-il évolué sur les 12 derniers mois",
+    },
+    "coverage.q.share": {
+        "en": "which {dimension} contributes most to {metric}",
+        "fr": "quel {dimension} contribue le plus à {metric}",
+    },
+
+    # Stands in when a metric declares no dimensions at all, so the question
+    # shapes still exist and report the absence instead of quietly shrinking
+    # the denominator -- a score that improves as the metric gets worse is
+    # worse than no score.
+    "coverage.any_dimension": {"en": "category", "fr": "catégorie"},
+
+    # Why a variation could not be answered. Each names the asset to add, not
+    # the failure -- a coverage report is a to-do list or it is nothing.
+    "coverage.gap.no_dimensions": {
+        "en": "No dimensions are approved for this metric, so it can only be reported as a single total. Add the dimensions it should be breakable by.",
+        "fr": "Aucune dimension n'est approuvée pour cette métrique : elle ne peut être présentée qu'en total unique. Ajoutez les dimensions selon lesquelles elle doit pouvoir être ventilée.",
+    },
+    "coverage.gap.dimension_not_allowed": {
+        "en": "'{dimension}' is not one of this metric's approved dimensions. Add it if questions should be able to break the metric down that way.",
+        "fr": "« {dimension} » ne fait pas partie des dimensions approuvées de cette métrique. Ajoutez-la si les questions doivent pouvoir la ventiler ainsi.",
+    },
+    "coverage.gap.no_date_role": {
+        "en": "No business date is bound to this metric, so it cannot answer questions about a period. Add a date role.",
+        "fr": "Aucune date métier n'est associée à cette métrique : elle ne peut pas répondre aux questions portant sur une période. Ajoutez un rôle de date.",
+    },
+    "coverage.gap.no_grain": {
+        "en": "This metric declares no time grain, so period breakdowns cannot be checked. Set the grain it is reported at.",
+        "fr": "Cette métrique ne déclare aucune granularité temporelle : les ventilations par période ne peuvent pas être vérifiées. Définissez la granularité de restitution.",
+    },
+    "coverage.gap.name_not_found": {
+        "en": "A question phrased this way does not find the metric by name or synonym. Add the wording people actually use as a synonym.",
+        "fr": "Une question formulée ainsi ne retrouve pas la métrique par son nom ni par un synonyme. Ajoutez la formulation réellement utilisée comme synonyme.",
+    },
+
+    # The summary line.
+    "coverage.summary.one": {
+        "en": "Answers {resolvable} of {total} question shapes.",
+        "fr": "Répond à {resolvable} formulation sur {total}.",
+    },
+    "coverage.summary.other": {
+        "en": "Answers {resolvable} of {total} question shapes.",
+        "fr": "Répond à {resolvable} formulations sur {total}.",
+    },
+    "coverage.summary.complete": {
+        "en": "Answers every question shape checked ({total}).",
+        "fr": "Répond à toutes les formulations vérifiées ({total}).",
+    },
+
     # ── Computed narrative (core/analysis_narrative.py) ──────────────────────
     # One sentence per finding kind in core.analysis_evidence, with every
     # figure arriving as a named placeholder the phrasing layer has already
