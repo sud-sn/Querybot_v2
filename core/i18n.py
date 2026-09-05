@@ -935,6 +935,150 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Essayez de reformuler votre question ou de poser une question plus précise.",
     },
 
+    # ── The live stage trail ─────────────────────────────────────────────────
+    #
+    # Pushed from the pipeline as the answer is built, and shown by the chat
+    # page. The pipeline activates the reader's language for the whole answer,
+    # so these resolve there; portal_chat.html's STATUS_FALLBACK reads the same
+    # ids, which also collapses a drift -- the browser's copy of
+    # "executing_query" said "Executing the query against your connected
+    # database" while the server said "Executing the SQL against your connected
+    # data source". Same stage, two sentences, neither wrong.
+    #
+    # The STAGE KEY is the wire value and is never translated: the page picks
+    # the mark's animation state from it.
+
+    "stage.authorization.label": {"en": "Checking access", "fr": "Vérification des accès"},
+    "stage.authorization.detail": {
+        "en": "Verifying workspace access and available data.",
+        "fr": "Vérification de vos accès et des données disponibles.",
+    },
+    "stage.analysing_results.label": {"en": "Analysing results", "fr": "Analyse des résultats"},
+    "stage.analysing_results.detail": {
+        "en": "Running a governed analysis on the previously returned data.",
+        "fr": "Analyse gouvernée des données déjà renvoyées.",
+    },
+    "stage.building_trend.label": {"en": "Building the trend", "fr": "Construction de la tendance"},
+    "stage.building_trend.detail": {
+        "en": "Re-running the previous answer's governed query, grouped by its approved business date.",
+        "fr": "Réexécution de la requête gouvernée précédente, regroupée par sa date métier approuvée.",
+    },
+    "stage.metric_registry.label": {"en": "Using known metric", "fr": "Utilisation d'un indicateur connu"},
+    "stage.metric_registry.detail": {
+        "en": "Found a trusted metric definition for this question.",
+        "fr": "Une définition d'indicateur approuvée a été trouvée pour cette question.",
+    },
+    "stage.metric_query.label": {"en": "Running query", "fr": "Exécution de la requête"},
+    "stage.metric_query.detail": {
+        "en": "Executing the trusted metric query against your database.",
+        "fr": "Exécution de la requête d'indicateur approuvée sur votre base de données.",
+    },
+    "stage.retrieving_context.label": {"en": "Understanding your data", "fr": "Compréhension de vos données"},
+    "stage.retrieving_context.detail": {
+        "en": "Retrieving the most relevant schema, examples, and business context.",
+        "fr": "Récupération du schéma, des exemples et du contexte métier les plus pertinents.",
+    },
+    "stage.compiling_sql.label": {"en": "Compiling governed query", "fr": "Compilation de la requête gouvernée"},
+    "stage.compiling_sql.detail": {
+        "en": "Using the approved metric formula and business date mapping.",
+        "fr": "Utilisation de la formule d'indicateur et du mappage de date métier approuvés.",
+    },
+    "stage.reusing_sql.label": {"en": "Using validated query", "fr": "Réutilisation d'une requête validée"},
+    "stage.reusing_sql.detail": {
+        "en": "Revalidating a successful governed query plan for this workspace.",
+        "fr": "Revalidation d'un plan de requête gouvernée déjà réussi pour cet espace de travail.",
+    },
+    "stage.generating_sql.label": {"en": "Generating query", "fr": "Génération de la requête"},
+    "stage.generating_sql.detail": {
+        "en": "Translating the business question into SQL.",
+        "fr": "Traduction de la question métier en SQL.",
+    },
+    "stage.recovering_sql.label": {"en": "Resolving query plan", "fr": "Résolution du plan de requête"},
+    "stage.recovering_sql.detail": {
+        "en": "Retrying once with the approved tables, fields, dates, and joins.",
+        "fr": "Nouvelle tentative avec les tables, champs, dates et jointures approuvés.",
+    },
+    "stage.validating_sql.label": {"en": "Checking query safety", "fr": "Contrôle de sûreté de la requête"},
+    "stage.validating_sql.detail": {
+        "en": "Verifying table access, structure, and execution safety.",
+        "fr": "Vérification des accès aux tables, de la structure et de la sûreté d'exécution.",
+    },
+    "stage.executing_query.label": {"en": "Running query", "fr": "Exécution de la requête"},
+    "stage.executing_query.detail": {
+        "en": "Executing the SQL against your connected data source.",
+        "fr": "Exécution du SQL sur votre source de données connectée.",
+    },
+    "stage.repairing_query.label": {"en": "Repairing query", "fr": "Correction de la requête"},
+    "stage.repairing_query.detail": {
+        "en": "Fixing a validation or execution issue before retrying.",
+        "fr": "Correction d'un problème de validation ou d'exécution avant nouvelle tentative.",
+    },
+    "stage.completing_repair.label": {"en": "Completing query repair", "fr": "Finalisation de la correction"},
+    "stage.completing_repair.detail": {
+        "en": "The first correction exposed another validation issue; applying one bounded follow-up repair.",
+        "fr": "La première correction en a révélé une autre ; une seule correction complémentaire est appliquée.",
+    },
+    "stage.retrying_query.label": {"en": "Retrying query", "fr": "Nouvelle tentative"},
+    "stage.retrying_query.detail": {
+        "en": "Running the corrected query against your data.",
+        "fr": "Exécution de la requête corrigée sur vos données.",
+    },
+    "stage.formatting_results.label": {"en": "Preparing results", "fr": "Préparation des résultats"},
+    "stage.formatting_results.detail": {
+        "en": "Formatting the answer and any chart for display.",
+        "fr": "Mise en forme de la réponse et du graphique éventuel.",
+    },
+    "stage.chart_ready.label": {"en": "Building chart", "fr": "Construction du graphique"},
+    "stage.chart_ready.detail": {
+        "en": "Rendering an interactive chart for this answer.",
+        "fr": "Rendu d'un graphique interactif pour cette réponse.",
+    },
+
+    # ── Live connection and run status, shown by the chat page ───────────────
+    # The STATE KEY is the wire value in every case; only the label is copy.
+    "ui.chat.connected": {"en": "Connected", "fr": "Connecté"},
+    "ui.chat.reconnecting": {"en": "Reconnecting…", "fr": "Reconnexion…"},
+    "ui.chat.restoring_session": {"en": "Restoring live session", "fr": "Rétablissement de la session en direct"},
+    "ui.chat.session_active": {"en": "Live session active", "fr": "Session en direct active"},
+    "ui.chat.connection_issue": {"en": "Connection issue", "fr": "Problème de connexion"},
+    "ui.chat.recovering_session": {"en": "Trying to recover live session", "fr": "Tentative de rétablissement de la session"},
+    "ui.chat.connection_lost_retry": {
+        "en": "Connection lost. Retrying in {seconds}s",
+        "fr": "Connexion perdue. Nouvelle tentative dans {seconds} s",
+    },
+    "ui.chat.draft_ready": {"en": "Draft ready to send", "fr": "Brouillon prêt à envoyer"},
+    "ui.chat.retry_when_connected": {"en": "Retry when connected", "fr": "Réessayer une fois reconnecté"},
+    "ui.chat.interrupted_retry": {
+        "en": "Interrupted · Retry when connected",
+        "fr": "Interrompu · Réessayer une fois reconnecté",
+    },
+    "ui.chat.need_clarification": {"en": "Need clarification…", "fr": "Précision nécessaire…"},
+
+    # Shown when a status frame carries no stage the page recognises.
+    "ui.chat.stage_generic": {"en": "Working on your answer", "fr": "Traitement de votre réponse"},
+    "ui.chat.stage_generic_detail": {
+        "en": "Preparing a trusted response.", "fr": "Préparation d'une réponse fiable.",
+    },
+
+    # The governed-agent run badge.
+    "ui.chat.run.running": {"en": "Governed agent", "fr": "Agent gouverné"},
+    "ui.chat.run.completed": {"en": "Governed answer", "fr": "Réponse gouvernée"},
+    "ui.chat.run.waiting_for_user": {"en": "Waiting for your input", "fr": "En attente de votre réponse"},
+    "ui.chat.run.blocked": {"en": "Blocked by policy", "fr": "Bloqué par la politique"},
+    "ui.chat.run.failed": {"en": "Run failed", "fr": "Exécution échouée"},
+    "ui.chat.run.cancelled": {"en": "Run cancelled", "fr": "Exécution annulée"},
+    "ui.chat.run.read_only": {"en": "read only", "fr": "lecture seule"},
+
+    # The composer mascot's status labels. Short and executive in tone: no
+    # exclamations, no emoji, in either language.
+    "ui.chat.mascot.idle": {"en": "Ready", "fr": "Prêt"},
+    "ui.chat.mascot.focus": {"en": "Listening", "fr": "À l'écoute"},
+    "ui.chat.mascot.typing": {"en": "Attending", "fr": "Attention"},
+    "ui.chat.mascot.thinking": {"en": "Considering", "fr": "Réflexion"},
+    "ui.chat.mascot.send": {"en": "Processing", "fr": "Traitement"},
+    "ui.chat.mascot.ready": {"en": "Response ready", "fr": "Réponse prête"},
+    "ui.chat.mascot.error": {"en": "Connection issue", "fr": "Problème de connexion"},
+
     # ── Browser tab titles ───────────────────────────────────────────────────
     # Chrome the reader sees on every page, and the one string that is still in
     # front of them when the tab is in the background.

@@ -38,3 +38,17 @@ def render(*, lang=None, enabled=True, suggestions=None, schemas=None,
                      "output_label": "400K"},
         selected_dashboard=None,
     )
+
+
+def catalogue(markup: str) -> dict:
+    """The message catalogue the page actually shipped to the browser.
+
+    Jinja's tojson escapes non-ASCII, so "Interrupted · Retry" reaches the page
+    source as "Interrupted \\u00b7 Retry". An assertion written the way a
+    reader would read it has to go through the decoded object, not the text.
+    """
+    import json
+
+    marker = "window.QB_I18N = "
+    start = markup.index(marker) + len(marker)
+    return json.loads(markup[start:markup.index(";\n", start)])

@@ -225,4 +225,9 @@ def test_portal_and_pipeline_agent_wiring_is_present():
     assert "record_stage" in adapter
     assert "record_trace_outcome" in trace
     assert "agent_run_started" in portal
-    assert "Blocked by policy" in portal
+    # The run-state labels moved into the message catalogue, so this asserts
+    # the string still REACHES the page rather than that it is spelled out in
+    # the template -- which would now pass for a page that resolves the id to
+    # nothing.
+    from tests.chat_render import render as _render_chat
+    assert "Blocked by policy" in _render_chat(lang="en")

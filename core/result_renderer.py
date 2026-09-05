@@ -35,6 +35,7 @@ import store
 # NOTE: this module deliberately imports no LLM entry point. Result narration
 # runs through core.governed_result_followup (metadata only). See the removal
 # note under "LLM narration" below.
+from core.i18n import t as _t
 from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.response_builder import (
     build_assistant_response, build_column_formats,
@@ -927,7 +928,9 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     rich_sender = getattr(adapter, "send_assistant_response", None)
     if callable(rich_sender):
         if chart_payload:
-            await _send_live_stage(adapter, event, "chart_ready", "Building chart", "Rendering an interactive chart for this answer.")
+            await _send_live_stage(adapter, event, "chart_ready",
+                                     _t("stage.chart_ready.label"),
+                                     _t("stage.chart_ready.detail"))
         response_payload = build_assistant_response(
             question=display_question,
             rows=rows,
@@ -1062,7 +1065,9 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
 
     chart_sender = getattr(adapter, "send_chart", None)
     if chart_payload and callable(chart_sender):
-        await _send_live_stage(adapter, event, "chart_ready", "Building chart", "Rendering an interactive chart for this answer.")
+        await _send_live_stage(adapter, event, "chart_ready",
+                                     _t("stage.chart_ready.label"),
+                                     _t("stage.chart_ready.detail"))
         await chart_sender(event, chart_payload)
         return
 

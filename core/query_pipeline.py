@@ -17,6 +17,7 @@ import time
 
 import store
 from gateway import PlatformEvent
+from core.i18n import t as _t
 from core.llm import llm_complete, build_sql_system_prompt, resolve_provider
 from core.prompt_cache import prompt_cache_enabled
 from core.kb_preload import preload_account_kb
@@ -971,7 +972,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         await adapter.send_message(event, "⚠️ No database assigned. Contact your administrator.")
         return
 
-    await _send_live_stage(adapter, event, "authorization", "Checking access", "Verifying workspace access and available data.")
+    await _send_live_stage(adapter, event, "authorization", _t("stage.authorization.label"), _t("stage.authorization.detail"))
 
     within_limit, used, limit = check_query_limit(account_id)
     if not within_limit:
@@ -1419,12 +1420,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             output_summary="governed_result_cache" if _regex_routes_to_cache else "governed_result_cache_second_opinion",
         )
         await _send_live_stage(
-            adapter,
-            event,
-            "retrieving_context",
-            "Analysing results",
-            "Running a governed analysis on the previously returned data.",
-        )
+            adapter, event, "retrieving_context", _t("stage.analysing_results.label"), _t("stage.analysing_results.detail"))
 
         _cache_provider, _cache_model, _cache_key, _cache_az = resolve_provider(
             client, purpose="query"
@@ -1710,10 +1706,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 output_summary={"route": "trend_regrain", "grain": _regrain_grain},
             )
             await _send_live_stage(
-                adapter, event, "executing_query", "Building the trend",
-                "Re-running the previous answer's governed query, grouped by its "
-                "approved business date.",
-            )
+                adapter, event, "executing_query", _t("stage.building_trend.label"), _t("stage.building_trend.detail"))
             _regrain_t0 = time.time()
             try:
                 _loop = asyncio.get_running_loop()
@@ -1865,7 +1858,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     if matched_metric:
         _trace_update(trace_id, route="metric_registry", generated_sql=matched_metric["sql_template"].strip())
         _trace_step(trace_id, "route", output_summary={"route": "metric_registry", "metric": matched_metric.get("name", "")})
-        await _send_live_stage(adapter, event, "metric_registry", "Using known metric", "Found a trusted metric definition for this question.")
+        await _send_live_stage(adapter, event, "metric_registry", _t("stage.metric_registry.label"), _t("stage.metric_registry.detail"))
         sql_from_metric = matched_metric["sql_template"].strip()
         # Warn when user asks for a dimensional breakdown of a query-type metric
         import re as _re_grp
@@ -1879,7 +1872,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         log.info("Metric registry hit: %s → %s", matched_metric["name"], sql_from_metric[:60])
         _metric_exec_t0 = time.time()
         try:
-            await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the trusted metric query against your database.")
+            await _send_live_stage(adapter, event, "executing_query", _t("stage.metric_query.label"), _t("stage.metric_query.detail"))
             _loop = asyncio.get_running_loop()
             try:
                 governed = await asyncio.wait_for(
@@ -1999,7 +1992,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _weak_retrieval = False
     _retrieval_unscored = False
     try:
-        await _send_live_stage(adapter, event, "retrieving_context", "Understanding your data", "Retrieving the most relevant schema, examples, and business context.")
+        await _send_live_stage(adapter, event, "retrieving_context", _t("stage.retrieving_context.label"), _t("stage.retrieving_context.detail"))
         import re as _re
         retriever    = load_retriever(account_id)   # Qdrant — no filesystem path needed
 
@@ -5052,22 +5045,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     try:
         if _compiled_governed_sql:
             await _send_live_stage(
-                adapter,
-                event,
-                "compiling_sql",
-                "Compiling governed query",
-                "Using the approved metric formula and business date mapping.",
-            )
+                adapter, event, "compiling_sql", _t("stage.compiling_sql.label"), _t("stage.compiling_sql.detail"))
         elif _reused_plan:
             await _send_live_stage(
-                adapter,
-                event,
-                "reusing_sql",
-                "Using validated query",
-                "Revalidating a successful governed query plan for this workspace.",
-            )
+                adapter, event, "reusing_sql", _t("stage.reusing_sql.label"), _t("stage.reusing_sql.detail"))
         else:
-            await _send_live_stage(adapter, event, "generating_sql", "Generating query", "Translating the business question into SQL.")
+            await _send_live_stage(adapter, event, "generating_sql", _t("stage.generating_sql.label"), _t("stage.generating_sql.detail"))
         _llm_gen_t0 = time.time()
         with llm_audit_scope(
             account_id=account_id,
@@ -5197,12 +5180,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 semantic_plan=_semantic_plan,
             )
             await _send_live_stage(
-                adapter,
-                event,
-                "recovering_sql",
-                "Resolving query plan",
-                "Retrying once with the approved tables, fields, dates, and joins.",
-            )
+                adapter, event, "recovering_sql", _t("stage.recovering_sql.label"), _t("stage.recovering_sql.detail"))
             _recovery_t0 = time.time()
             with llm_audit_scope(
                 account_id=account_id,
@@ -5384,7 +5362,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     last_reason = ""
     last_code   = ""
 
-    await _send_live_stage(adapter, event, "validating_sql", "Checking query safety", "Verifying table access, structure, and execution safety.")
+    await _send_live_stage(adapter, event, "validating_sql", _t("stage.validating_sql.label"), _t("stage.validating_sql.detail"))
     retry_count = 0
     semantic_context = _generation_semantic_context
     _validate_t0 = time.time()
@@ -5507,7 +5485,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     if ok:
         _exec_t0 = time.time()
         try:
-            await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the SQL against your connected data source.")
+            await _send_live_stage(adapter, event, "executing_query", _t("stage.executing_query.label"), _t("stage.executing_query.detail"))
             _loop = asyncio.get_running_loop()
             governed = await asyncio.wait_for(
                 _loop.run_in_executor(None, _execute_with_policy, sql, semantic_context),
@@ -5964,7 +5942,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _retry_semantic_context = dict(semantic_context)
 
         try:
-            await _send_live_stage(adapter, event, "repairing_query", "Repairing query", "Fixing a validation or execution issue before retrying.")
+            await _send_live_stage(adapter, event, "repairing_query", _t("stage.repairing_query.label"), _t("stage.repairing_query.detail"))
             _retry_llm_t0 = time.time()
             _llm_repair_attempts += 1
             with llm_audit_scope(
@@ -6033,7 +6011,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 if ok2:
                     _retry_exec_t0 = time.time()
                     try:
-                        await _send_live_stage(adapter, event, "executing_query", "Retrying query", "Running the corrected query against your data.")
+                        await _send_live_stage(adapter, event, "executing_query", _t("stage.retrying_query.label"), _t("stage.retrying_query.detail"))
                         _loop = asyncio.get_running_loop()
                         governed = await asyncio.wait_for(
                             _loop.run_in_executor(None, _execute_with_policy, sql_retry, _retry_semantic_context),
@@ -6107,12 +6085,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         try:
             await _send_live_stage(
-                adapter,
-                event,
-                "repairing_query",
-                "Completing query repair",
-                "The first correction exposed another validation issue; applying one bounded follow-up repair.",
-            )
+                adapter, event, "repairing_query", _t("stage.completing_repair.label"), _t("stage.completing_repair.detail"))
             _progressive_t0 = time.time()
             _llm_repair_attempts += 1
             with llm_audit_scope(
@@ -6195,12 +6168,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _progressive_exec_t0 = time.time()
                     try:
                         await _send_live_stage(
-                            adapter,
-                            event,
-                            "executing_query",
-                            "Retrying query",
-                            "Running the corrected query against your data.",
-                        )
+                            adapter, event, "executing_query", _t("stage.retrying_query.label"), _t("stage.retrying_query.detail"))
                         _loop = asyncio.get_running_loop()
                         governed = await asyncio.wait_for(
                             _loop.run_in_executor(
@@ -6478,7 +6446,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             return
 
-    await _send_live_stage(adapter, event, "formatting_results", "Preparing results", "Formatting the answer and any chart for display.")
+    await _send_live_stage(adapter, event, "formatting_results", _t("stage.formatting_results.label"), _t("stage.formatting_results.detail"))
     # Record this turn in conversation history (web portal only)
     _add_history = getattr(adapter, "add_to_history", None)
     if callable(_add_history) and rows:

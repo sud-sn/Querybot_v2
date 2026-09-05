@@ -233,7 +233,12 @@ def test_outbound_messages_expose_delivery_and_manual_recovery_states():
     assert "function _setUserMessageState" in CHAT
     assert "function _retryUserMessage" in CHAT
     assert "function _editUserMessage" in CHAT
-    assert "Interrupted · Retry when connected" in CHAT
+    # Now a catalogue id, so this asserts the string still REACHES the browser
+    # rather than that it is spelled out in the template -- which would pass
+    # for a page that resolves the id to nothing.
+    from tests.chat_render import render as _render_chat, catalogue
+    assert catalogue(_render_chat(lang="en"))["ui.chat.interrupted_retry"] == \
+        "Interrupted · Retry when connected"
     on_open = CHAT.split("ws.onopen =", 1)[1].split("ws.onmessage =", 1)[0]
     assert "_retryUserMessage(" not in on_open
     assert '.msg-user[data-delivery-state="interrupted"] .message-retry' in CSS
@@ -248,6 +253,16 @@ def test_offline_composer_preserves_draft_instead_of_silently_dropping_send():
 
 
 def test_governed_recovery_statuses_have_human_readable_progress_copy():
-    assert "recovering_sql:" in CHAT
-    assert "reusing_sql:" in CHAT
-    assert "retrying_query:" in CHAT
+    """Executed rather than read: STATUS_FALLBACK is built from the catalogue
+    now, so the question is whether these three stages RESOLVE to a label and a
+    detail, not whether their keys appear in the source."""
+    from tests.chat_js import run as run_chat_js
+
+    out = run_chat_js(
+        "JSON.stringify({fallback: STATUS_FALLBACK});",
+        consts=["STATUS_FALLBACK"],
+    )["fallback"]
+    for stage in ("recovering_sql", "reusing_sql", "retrying_query"):
+        label, detail = out[stage]
+        assert label and not label.startswith("stage."), stage
+        assert detail and not detail.startswith("stage."), stage

@@ -949,20 +949,17 @@ function _visibleSuggestionTexts() {
     document.querySelectorAll('#suggestionsWrap .suggestion-chip')
   ).map(c => (c.dataset.question || c.textContent).trim()).filter(Boolean);
 }
-const STATUS_FALLBACK = {
-  authorization: ['Checking access', 'Verifying workspace access and available data.'],
-  metric_registry: ['Using known metric', 'Found a trusted metric definition for this question.'],
-  retrieving_context: ['Understanding your data', 'Retrieving the most relevant schema, examples, and business context.'],
-  generating_sql: ['Generating query', 'Translating the business question into SQL.'],
-  validating_sql: ['Checking query safety', 'Verifying access, structure, and execution safety.'],
-  repairing_query: ['Repairing query', 'Fixing a validation or execution issue before retrying.'],
-  recovering_sql: ['Recovering query', 'Applying a governed repair using the latest validation feedback.'],
-  reusing_sql: ['Reusing trusted context', 'Applying your follow-up to the previous governed result.'],
-  retrying_query: ['Retrying query', 'Running the validated repair against your connected database.'],
-  executing_query: ['Running query', 'Executing the query against your connected database.'],
-  formatting_results: ['Preparing results', 'Formatting the answer for chat.'],
-  chart_ready: ['Building chart', 'Rendering an interactive chart from the result set.']
-};
+// Used only when a status arrives with no label. Built from the SAME
+// catalogue ids the pipeline sends, which also collapses a drift: this table
+// said "Executing the query against your connected database" for
+// executing_query while core/query_pipeline.py said "Executing the SQL against
+// your connected data source". Same stage, two sentences, neither wrong.
+const STATUS_FALLBACK = Object.fromEntries(
+  ['authorization', 'metric_registry', 'retrieving_context', 'generating_sql',
+   'validating_sql', 'repairing_query', 'recovering_sql', 'reusing_sql',
+   'retrying_query', 'executing_query', 'formatting_results', 'chart_ready']
+    .map(key => [key, [t(`stage.${key}.label`), t(`stage.${key}.detail`)]])
+);
 
 let ws = null;
 let wsReady = false;
@@ -1833,7 +1830,7 @@ function _retryUserMessage(message){
     _setUserMessageState(message, 'working', 'Retrying');
     updateProcessing('authorization', 'Retrying analysis', 'Resending your request through the governed query pipeline.');
   } catch (_) {
-    _setUserMessageState(message, 'interrupted', 'Retry when connected');
+    _setUserMessageState(message, 'interrupted', t('ui.chat.retry_when_connected'));
     toastLong('The message could not be sent. Your request is still available to retry.');
   }
 }
@@ -4581,7 +4578,7 @@ function sendMessage(tableHint){
     ws.send(JSON.stringify(payload));
     _setUserMessageState(userMessage, 'working');
   } catch (_) {
-    _setUserMessageState(userMessage, 'interrupted', 'Retry when connected');
+    _setUserMessageState(userMessage, 'interrupted', t('ui.chat.retry_when_connected'));
     toastLong('The message could not be sent. Use Retry when the connection returns.');
     return;
   }
@@ -4740,7 +4737,8 @@ function _renderStageTrail() {
 
 function _updateStageSteps(stage, label, detail) {
   if (stage && BRAND_STAGE_STATES[stage]) _setStageState(stage);
-  const fallback = (stage && STATUS_FALLBACK[stage]) || ['Working on your answer', 'Preparing a trusted response.'];
+  const fallback = (stage && STATUS_FALLBACK[stage])
+    || [t('ui.chat.stage_generic'), t('ui.chat.stage_generic_detail')];
   const primaryLabel = label || fallback[0];
   const detailLabel = detail || fallback[1];
 
@@ -4771,18 +4769,16 @@ function _applyAgentRunEvent(msg) {
   const meta = document.getElementById('agentRunMeta');
   if (!meta) return;
   const status = String(msg.run_status || 'running');
-  const stateLabels = {
-    running: 'Governed agent', completed: 'Governed answer',
-    waiting_for_user: 'Waiting for your input', blocked: 'Blocked by policy',
-    failed: 'Run failed', cancelled: 'Run cancelled'
-  };
+  // Keyed by the wire status, which is never translated.
+  const runLabel = key => t(`ui.chat.run.${key}`);
   meta.hidden = false;
   meta.dataset.status = status;
   const state = document.getElementById('agentRunState');
   const tool = document.getElementById('agentRunTool');
   const runId = document.getElementById('agentRunId');
-  if (state) state.textContent = stateLabels[status] || 'Governed agent';
-  if (tool) tool.textContent = (msg.tool || 'query_data') + (msg.read_only ? ' \u00b7 read only' : '');
+  if (state) state.textContent = I18N[`ui.chat.run.${status}`] || runLabel('running');
+  if (tool) tool.textContent = (msg.tool || 'query_data')
+    + (msg.read_only ? ' \u00b7 ' + t('ui.chat.run.read_only') : '');
   if (runId) runId.textContent = msg.run_id ? '#' + String(msg.run_id).slice(0, 8) : '';
   if (msg.stage || msg.tool_label || msg.detail) {
     _updateStageSteps(msg.stage, msg.tool_label, msg.detail);
@@ -4809,7 +4805,7 @@ function showMascotClarify() {
   const row = document.getElementById('processingRow');
   if (row) row.classList.add('active');
   const sl = document.getElementById('stageLabel');
-  if (sl) sl.textContent = 'Need clarification…';
+  if (sl) sl.textContent = t('ui.chat.need_clarification');
   window._mascotInClarifyState = true;
 }
 
@@ -4839,15 +4835,10 @@ function _initComposerMascot() {
                   'ai-send', 'ai-ready', 'ai-error', 'ai-hidden'];
 
   // Short, executive-tone status labels per state. No exclamations, no emoji.
-  const LABELS = {
-    idle:     'Ready',
-    focus:    'Listening',
-    typing:   'Attending',
-    thinking: 'Considering',
-    send:     'Processing',
-    ready:    'Response ready',
-    error:    'Connection issue',
-  };
+  const LABELS = Object.fromEntries(
+    ['idle', 'focus', 'typing', 'thinking', 'send', 'ready', 'error']
+      .map(key => [key, t(`ui.chat.mascot.${key}`)])
+  );
 
   let current = 'idle';
   let thinkTimer = null;
@@ -4985,16 +4976,18 @@ function _initHeroCollapse() {
 
 function connect(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  setConnectionState(reconnectAttempts ? 'Reconnecting…' : 'Connecting…', reconnectAttempts ? 'Restoring live session' : 'Waiting for live session');
+  setConnectionState(
+    t(reconnectAttempts ? 'ui.chat.reconnecting' : 'ui.chat.connecting'),
+    t(reconnectAttempts ? 'ui.chat.restoring_session' : 'ui.chat.waiting_session'));
   const dashboardScope = DASHBOARD_ID ? `&dashboard_id=${encodeURIComponent(DASHBOARD_ID)}` : '';
   ws = new WebSocket(`${proto}//${location.host}/ws/chat/${ACCOUNT_ID}?thread_id=${encodeURIComponent(THREAD_ID)}${dashboardScope}`);
   ws.onopen = () => {
     wsReady = true;
     reconnectAttempts = 0;
     document.getElementById('sendBtn').disabled = false;
-    setConnectionState('Connected', 'Live session active');
+    setConnectionState(t('ui.chat.connected'), t('ui.chat.session_active'));
     const draftInput = document.getElementById('input');
-    if (draftInput?.value.trim()) _setComposerState('Draft ready to send', 'success');
+    if (draftInput?.value.trim()) _setComposerState(t('ui.chat.draft_ready'), 'success');
     // Display-only memory metadata comes from localStorage. Governed SQL
     // context is restored server-side from this user-owned thread's traces.
     _localHistory = _loadStoredHistory();
@@ -5193,7 +5186,7 @@ function connect(){
     const queryWasActive = processingActive;
     wsReady = false;
     document.getElementById('sendBtn').disabled = true;
-    if (queryWasActive) _markActiveOutbound('interrupted', 'Interrupted · Retry when connected');
+    if (queryWasActive) _markActiveOutbound('interrupted', t('ui.chat.interrupted_retry'));
     setAgentRunState('idle');
     if ([4001, 4003, 4004].includes(evt.code)) {
       const note = evt.code === 4004 ? 'Chat is not enabled for this workspace.' : 'Your session is invalid or no longer authorized.';
@@ -5203,11 +5196,12 @@ function connect(){
     }
     reconnectAttempts += 1;
     const delay = Math.min(8000, 1000 * reconnectAttempts);
-    setConnectionState('Reconnecting…', `Connection lost. Retrying in ${Math.round(delay / 1000)}s`);
+    setConnectionState(t('ui.chat.reconnecting'),
+      t('ui.chat.connection_lost_retry', {seconds: Math.round(delay / 1000)}));
     if (document.getElementById('input')?.value.trim()) _setComposerState('Draft kept while reconnecting', 'warning');
     setTimeout(connect, delay);
   };
-  ws.onerror = () => setConnectionState('Connection issue', 'Trying to recover live session');
+  ws.onerror = () => setConnectionState(t('ui.chat.connection_issue'), t('ui.chat.recovering_session'));
 }
 // ── Query history panel ───────────────────────────────────────────────────────
 let _historyLoaded = false;

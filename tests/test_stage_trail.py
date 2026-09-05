@@ -57,7 +57,9 @@ def _function(source: str, signature: str) -> str:
 
 def _run(frames: list[tuple[str, str, str]]) -> dict:
     """Feed status frames through the template's own stage functions."""
+    from core import i18n
     tmpl = TEMPLATE.read_text(encoding="utf-8")
+    catalogue = json.dumps(i18n.catalogue_for("en"))
     harness = f"""
 // A DOM thin enough for these three functions and no thinner.
 const _nodes = {{}};
@@ -76,6 +78,14 @@ function escHtml(s) {{
     c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
 }}
 const STATUS_FALLBACK = {{}};
+// The generic fallback label goes through the catalogue now. The REAL one, so
+// this suite notices an id the page uses and the catalogue does not have.
+const I18N = {catalogue};
+function t(id, vars) {{
+  let out = Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id;
+  if (vars) for (const k in vars) out = out.split('{{' + k + '}}').join(String(vars[k]));
+  return out;
+}}
 const BRAND_STAGE_STATES = {{}};
 function _setStageState() {{}}
 let _completedStages = [];
@@ -183,11 +193,15 @@ class TestItIsSafeToRender:
     def test_a_missing_container_does_not_throw(self):
         """The trail renders into the skeleton bubble, which does not exist
         between questions -- so every status frame outside a turn would throw."""
+        from core import i18n
         tmpl = TEMPLATE.read_text(encoding="utf-8")
+        catalogue = json.dumps(i18n.catalogue_for("en"))
         harness = f"""
 var document = {{ getElementById: () => null }};
 function escHtml(s) {{ return String(s == null ? '' : s); }}
 const STATUS_FALLBACK = {{}}; const BRAND_STAGE_STATES = {{}};
+const I18N = {catalogue};
+function t(id) {{ return Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id; }}
 function _setStageState() {{}}
 let _completedStages = []; let _currentStage = null;
 {_function(tmpl, "function _renderStageTrail()")}
