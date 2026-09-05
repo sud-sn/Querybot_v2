@@ -178,6 +178,8 @@ class TestTheCatalogueIsWellFormed:
         "ui.pin.description_label",
         "ui.dash.version",              # "Version" is the same word
         "ui.enum.charttype.kpi",        # an international acronym
+        "ui.shell.chat",                # borrowed into French unchanged
+        "ui.shell.notifications",       # same spelling in both
     }
 
     def test_french_is_actually_french(self):

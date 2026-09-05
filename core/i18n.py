@@ -367,14 +367,106 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.enum.charttype.pie": {"en": "Pie", "fr": "Secteurs"},
     "ui.enum.charttype.donut": {"en": "Donut", "fr": "Anneau"},
     "ui.enum.charttype.scatter": {"en": "Scatter", "fr": "Nuage de points"},
+    "ui.enum.role.admin": {"en": "Admin", "fr": "Administrateur"},
+    "ui.enum.role.analyst": {"en": "Analyst", "fr": "Analyste"},
     "ui.enum.source.governed_query": {"en": "Governed query", "fr": "Requête gouvernée"},
     "ui.enum.source.metric": {"en": "Metric", "fr": "Métrique"},
     "ui.enum.source.report": {"en": "Report", "fr": "Rapport"},
+
+    # ── The portal shell ─────────────────────────────────────────────────────
+    "ui.shell.nav_label": {"en": "Portal navigation", "fr": "Navigation du portail"},
+    "ui.shell.nav_primary": {"en": "Primary", "fr": "Principale"},
+    "ui.shell.home": {"en": "QueryBot dashboard", "fr": "Tableau de bord QueryBot"},
+    "ui.shell.collapse": {"en": "Collapse sidebar", "fr": "Réduire le menu latéral"},
+    "ui.shell.expand": {"en": "Expand sidebar", "fr": "Développer le menu latéral"},
+    "ui.shell.open_nav": {"en": "Open navigation", "fr": "Ouvrir la navigation"},
+    "ui.shell.close_nav": {"en": "Close navigation", "fr": "Fermer la navigation"},
+    "ui.shell.new_thread": {"en": "New Thread", "fr": "Nouvelle conversation"},
+    "ui.shell.chat": {"en": "Chat", "fr": "Chat"},
+    "ui.shell.dashboard": {"en": "Dashboard", "fr": "Tableau de bord"},
+    "ui.shell.semantic_layer": {"en": "Semantic Layer", "fr": "Couche sémantique"},
+    "ui.shell.notifications": {"en": "Notifications", "fr": "Notifications"},
+    "ui.shell.no_group": {"en": "No group", "fr": "Aucun groupe"},
+    "ui.shell.account_actions": {"en": "Account actions", "fr": "Actions du compte"},
+    "ui.shell.settings": {"en": "Settings", "fr": "Paramètres"},
+    "ui.shell.logout": {"en": "Logout", "fr": "Déconnexion"},
+    # The house confirm dialog. Its defaults are set in JS, so they need the
+    # catalogue on the browser side too.
+    "ui.shell.confirm_title": {"en": "Are you sure?", "fr": "Confirmer l'action ?"},
+    "ui.shell.cancel": {"en": "Cancel", "fr": "Annuler"},
+    "ui.shell.confirm": {"en": "Confirm", "fr": "Confirmer"},
+    # The live toast. The status sentence was assembled by concatenation --
+    # `(column || 'Field') + ' was ' + statusText + ' by admin.'` -- which
+    # cannot be translated as fragments: French puts the participle after the
+    # auxiliary and agrees it with the subject. One whole sentence per outcome.
+    "ui.shell.toast_semantic": {"en": "Semantic Layer updated", "fr": "Couche sémantique mise à jour"},
+    "ui.shell.toast_approved_title": {
+        "en": "Semantic Layer change approved",
+        "fr": "Modification de la couche sémantique approuvée",
+    },
+    "ui.shell.toast_rejected_title": {
+        "en": "Semantic Layer change rejected",
+        "fr": "Modification de la couche sémantique refusée",
+    },
+    "ui.shell.toast_approved_body": {
+        "en": "{field} was approved by an administrator.",
+        "fr": "{field} a été approuvé par un administrateur.",
+    },
+    "ui.shell.toast_rejected_body": {
+        "en": "{field} was rejected by an administrator.",
+        "fr": "{field} a été refusé par un administrateur.",
+    },
+    "ui.shell.limit_reached_title": {
+        "en": "Monthly query limit reached",
+        "fr": "Limite mensuelle de requêtes atteinte",
+    },
+    "ui.shell.limit_warning_title": {
+        "en": "Monthly query limit warning",
+        "fr": "Alerte de limite mensuelle de requêtes",
+    },
+    "ui.shell.limit_title": {
+        "en": "Monthly query limit",
+        "fr": "Limite mensuelle de requêtes",
+    },
+    "ui.shell.limit_reached_body.one": {
+        "en": "{count}/{limit} query used this month. Ask your admin to increase the limit.",
+        "fr": "{count}/{limit} requête utilisée ce mois-ci. Demandez à votre administrateur d'augmenter la limite.",
+    },
+    "ui.shell.limit_reached_body.other": {
+        "en": "{count}/{limit} queries used this month. Ask your admin to increase the limit.",
+        "fr": "{count}/{limit} requêtes utilisées ce mois-ci. Demandez à votre administrateur d'augmenter la limite.",
+    },
+    "ui.shell.limit_warning_body.one": {
+        "en": "{count}/{limit} query used this month. Your workspace is above 80% of its limit.",
+        "fr": "{count}/{limit} requête utilisée ce mois-ci. Votre espace de travail dépasse 80 % de sa limite.",
+    },
+    "ui.shell.limit_warning_body.other": {
+        "en": "{count}/{limit} queries used this month. Your workspace is above 80% of its limit.",
+        "fr": "{count}/{limit} requêtes utilisées ce mois-ci. Votre espace de travail dépasse 80 % de sa limite.",
+    },
+    "ui.shell.limit_remaining_body.one": {
+        "en": "{count} query remaining this month.",
+        "fr": "{count} requête restante ce mois-ci.",
+    },
+    "ui.shell.limit_remaining_body.other": {
+        "en": "{count} queries remaining this month.",
+        "fr": "{count} requêtes restantes ce mois-ci.",
+    },
+    "ui.shell.toast_field": {"en": "Field", "fr": "Champ"},
+    "ui.shell.toast_system": {"en": "System Notice", "fr": "Message système"},
+    "ui.shell.toast_system_body": {"en": "System update", "fr": "Mise à jour du système"},
+    "ui.shell.toast_query_limit": {"en": "Monthly query limit", "fr": "Limite mensuelle de requêtes"},
 
     # ── The language switcher ────────────────────────────────────────────────
     "ui.lang.label": {"en": "Language", "fr": "Langue"},
     "ui.lang.en": {"en": "English", "fr": "Anglais"},
     "ui.lang.fr": {"en": "French", "fr": "Français"},
+    "ui.lang.switch_to": {"en": "Switch to {language}", "fr": "Passer en {language}"},
+    "ui.lang.current": {"en": "Current language: {language}", "fr": "Langue actuelle : {language}"},
+    "ui.lang.failed": {
+        "en": "The language could not be changed. Please try again.",
+        "fr": "La langue n'a pas pu être changée. Veuillez réessayer.",
+    },
 }
 
 

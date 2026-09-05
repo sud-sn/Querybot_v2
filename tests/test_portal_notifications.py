@@ -199,14 +199,18 @@ class PortalNotificationsTemplateTests(unittest.TestCase):
     syntax errors a mocked-_resp route test would never surface."""
 
     def test_template_renders_empty_and_populated_states(self):
-        import jinja2
-        env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(ROOT / "portal" / "templates")))
-        tmpl = env.get_template("portal_notifications.html")
+        # Rendered through the portal's own environment: the shell now calls
+        # t() and reads i18n_catalogue, both of which arrive from a context
+        # processor a hand-built jinja2.Environment does not have.
+        from tests.portal_render import render
 
         user = {"id": 1, "name": "Tester", "role": "analyst", "group_name": "Ops"}
-        req = MagicMock(url=MagicMock(path="/portal/notifications"))
 
-        rendered_empty = tmpl.render(request=req, user=user, alerts=[], reports=[], subscriptions={}, saved=None, error=None)
+        def rendered(**ctx):
+            return render("portal_notifications.html", path="/portal/notifications",
+                          user=user, **ctx)
+
+        rendered_empty = rendered(alerts=[], reports=[], subscriptions={}, saved=None, error=None)
         self.assertIn("No alerts set up yet", rendered_empty)
         self.assertIn("No reports have been set up", rendered_empty)
 
@@ -218,8 +222,8 @@ class PortalNotificationsTemplateTests(unittest.TestCase):
         reports = [{"id": 1, "name": "Daily Ops", "description": "Ops summary"}]
         subscriptions = {1: {"id": 5, "cadence": "weekly", "day_of_week": 2, "hour": 9,
                               "status": "active", "last_sent": None}}
-        rendered_full = tmpl.render(
-            request=req, user=user, alerts=alerts, reports=reports,
+        rendered_full = rendered(
+            alerts=alerts, reports=reports,
             subscriptions=subscriptions, saved="1", error=None,
         )
         self.assertIn("Revenue drop?", rendered_full)

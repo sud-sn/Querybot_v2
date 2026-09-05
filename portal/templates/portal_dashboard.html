@@ -277,7 +277,10 @@
 // The message catalogue for this user's language. Same shape and same t() as
 // portal_chat.html, so the two pages resolve an id identically -- _fmtNum and
 // the stage labels have both already drifted by each page keeping its own copy.
-const I18N = {{ i18n_catalogue|tojson }};
+// Aliased from the one copy portal_base.html injects for the whole
+// document -- three copies of the same catalogue in one page is exactly
+// the drift the comment above warns about, in payload form.
+const I18N = window.QB_I18N || {};
 function t(id, vars){
   let out = Object.prototype.hasOwnProperty.call(I18N, id) ? I18N[id] : id;
   if (vars) for (const k in vars) out = out.split('{' + k + '}').join(String(vars[k]));

@@ -41,7 +41,7 @@ from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
 from core.i18n import (
     catalogue_for, translator_for,
-    enum_label as i18n_enum_label, plural as i18n_plural,
+    enum_label as i18n_enum_label, plural as i18n_plural, t as i18n_t,
 )
 
 log = logging.getLogger("querybot.portal")
@@ -511,8 +511,14 @@ def _compact_number(value: int | float | None) -> str:
     return f"{sign}{int(n):,}"
 
 
-def _query_limit_status(account_id: str) -> dict:
-    """Monthly query allowance using the same counter as admin billing."""
+def _query_limit_status(account_id: str, lang: str | None = None) -> dict:
+    """Monthly query allowance using the same counter as admin billing.
+
+    The title and message land in the shell's live toast, so they are the
+    reader's language, not the server's. ``lang`` is explicit rather than read
+    from the active ContextVar because this runs on portal request handlers,
+    which do not activate one -- only the answer pipeline does.
+    """
     client = store.get_client(account_id) or {}
     limit = int(client.get("query_limit_monthly") or 500)
     used = int(store.get_monthly_query_count(account_id) or 0)
@@ -534,20 +540,23 @@ def _query_limit_status(account_id: str) -> dict:
     if blocked:
         status.update({
             "level": "blocked",
-            "title": "Monthly query limit reached",
-            "message": f"{used}/{limit} queries used this month. Ask your admin to increase the limit.",
+            "title": i18n_t("ui.shell.limit_reached_title", lang=lang),
+            "message": i18n_plural("ui.shell.limit_reached_body", used,
+                                   lang=lang, limit=limit),
         })
     elif warning:
         status.update({
             "level": "warning",
-            "title": "Monthly query limit warning",
-            "message": f"{used}/{limit} queries used this month. Your workspace is above 80% of its limit.",
+            "title": i18n_t("ui.shell.limit_warning_title", lang=lang),
+            "message": i18n_plural("ui.shell.limit_warning_body", used,
+                                   lang=lang, limit=limit),
         })
     else:
         status.update({
             "level": "normal",
-            "title": "Monthly query limit",
-            "message": f"{remaining} queries remaining this month.",
+            "title": i18n_t("ui.shell.limit_title", lang=lang),
+            "message": i18n_plural("ui.shell.limit_remaining_body", remaining,
+                                   lang=lang),
         })
     return status
 
@@ -1005,7 +1014,7 @@ async def portal_dashboard(request: Request):
     client        = store.get_client(user["account_id"]) or {}
     group_tables  = store.get_group_tables(user["group_id"]) if user.get("group_id") else []
     monthly_count = store.get_monthly_query_count(user["account_id"])
-    query_status  = _query_limit_status(user["account_id"])
+    query_status  = _query_limit_status(user["account_id"], _request_language(request))
     token_status  = store.get_monthly_token_status(user["account_id"])
     token_status["used_label"] = _compact_number(token_status.get("total_tokens"))
     token_status["limit_label"] = _compact_number(token_status.get("limit"))
@@ -2051,7 +2060,9 @@ async def portal_query_limit_status(request: Request):
     user = _get_portal_user(request)
     if not user:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
-    return JSONResponse({"ok": True, "query_status": _query_limit_status(user["account_id"])})
+    return JSONResponse({"ok": True,
+                         "query_status": _query_limit_status(
+                             user["account_id"], _request_language(request))})
 
 
 @router.get("/api/history")
@@ -2458,7 +2469,7 @@ async def portal_chat(request: Request):
     # Build the list of schemas the user has access to — used for the schema
     # selector tab bar in the chat UI.
     available_schemas = _get_available_schemas(user)
-    query_status = _query_limit_status(user["account_id"])
+    query_status = _query_limit_status(user["account_id"], _request_language(request))
     token_usage = _store.get_monthly_token_usage(user["account_id"], user.get("id"))
     token_usage["total_label"] = _compact_number(token_usage.get("total_tokens"))
     token_usage["input_label"] = _compact_number(token_usage.get("tokens_in"))

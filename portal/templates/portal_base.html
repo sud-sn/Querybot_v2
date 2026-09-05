@@ -1,6 +1,6 @@
 {% from "icons.html" import ic %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang or 'en' }}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -21,33 +21,46 @@
 </head>
 <body>
 
+<script>
+// The message catalogue for this user's language, injected once for the whole
+// document. The shell's own scripts read it through qbT(); the page scripts
+// alias it as I18N so a lifted function resolves an id the same way whichever
+// template it came from.
+window.QB_I18N = {{ i18n_catalogue|tojson }};
+window.qbT = function (id, vars) {
+  var out = Object.prototype.hasOwnProperty.call(window.QB_I18N, id) ? window.QB_I18N[id] : id;
+  if (vars) for (var k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
+  return out;
+};
+</script>
+
 {% if user %}
 <div class="portal-app-shell">
-  <aside class="portal-sidebar" id="portalSidebar" aria-label="Portal navigation">
+  <aside class="portal-sidebar" id="portalSidebar" aria-label="{{ t('ui.shell.nav_label') }}">
     <div class="portal-sidebar-head">
-      <a href="/portal/dashboard" class="portal-brand" aria-label="QueryBot dashboard">
+      <a href="/portal/dashboard" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
         <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></span>
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
-      <button type="button" class="portal-sidebar-toggle" onclick="window.__qbToggleSidebar()" aria-label="Collapse sidebar" title="Collapse sidebar">
+      <button type="button" class="portal-sidebar-toggle" onclick="window.__qbToggleSidebar()" aria-label="{{ t('ui.shell.collapse') }}" title="{{ t('ui.shell.collapse') }}">
         <span aria-hidden="true">&#8249;</span>
       </button>
     </div>
 
-    <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="New Thread" title="New Thread">
+    <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="{{ t('ui.shell.new_thread') }}" title="{{ t('ui.shell.new_thread') }}">
       <span class="portal-new-thread-icon" aria-hidden="true">+</span>
-      <span>New Thread</span>
+      <span>{{ t('ui.shell.new_thread') }}</span>
     </a>
 
-    <nav class="portal-nav" aria-label="Primary">
-      <a href="/portal/chat" title="Chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
-        {{ ic("chat", 17) }} <span>Chat</span>
+    <nav class="portal-nav" aria-label="{{ t('ui.shell.nav_primary') }}">
+      <a href="/portal/chat" title="{{ t('ui.shell.chat') }}" class="{% if '/chat' in request.url.path %}active{% endif %}">
+        {{ ic("chat", 17) }} <span>{{ t('ui.shell.chat') }}</span>
       </a>
-      <a href="/portal/dashboard" title="Dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
-        {{ ic("dashboard", 17) }} <span>Dashboard</span>
+      <a href="/portal/dashboard" title="{{ t('ui.shell.dashboard') }}" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
+        {{ ic("dashboard", 17) }} <span>{{ t('ui.shell.dashboard') }}</span>
       </a>
-      <a href="/portal/kb" title="Semantic Layer" class="{% if '/kb' in request.url.path %}active{% endif %}">
-        {{ ic("database", 17) }} <span>Semantic Layer</span>
+      <a href="/portal/kb" title="{{ t('ui.shell.semantic_layer') }}" class="{% if '/kb' in request.url.path %}active{% endif %}">
+        {{ ic("database", 17) }} <span>{{ t('ui.shell.semantic_layer') }}</span>
       </a>
     </nav>
 
@@ -55,9 +68,9 @@
 
     <div class="portal-sidebar-spacer"></div>
 
-    <a href="/portal/notifications" title="Notifications" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}">
+    <a href="/portal/notifications" title="{{ t('ui.shell.notifications') }}" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}">
       <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-      <span>Notifications</span>
+      <span>{{ t('ui.shell.notifications') }}</span>
     </a>
 
     <footer class="portal-sidebar-footer">
@@ -65,28 +78,28 @@
         <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
         <div class="portal-user-meta">
           <div class="topbar-user-name">{{ user.name }}</div>
-          <div class="topbar-user-role">{{ user.group_name or 'No group' }} &middot; {{ user.role }}</div>
+          <div class="topbar-user-role">{{ user.group_name or t('ui.shell.no_group') }} &middot; {{ enum_label('role', user.role) }}</div>
         </div>
       </div>
-      <div class="portal-side-actions" aria-label="Account actions">
-        <a href="/portal/change-password" title="Settings">{{ ic("settings", 16) }} <span>Settings</span></a>
-        <a href="/portal/logout" title="Logout"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>Logout</span></a>
+      <div class="portal-side-actions" aria-label="{{ t('ui.shell.account_actions') }}">
+        <a href="/portal/change-password" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }} <span>{{ t('ui.shell.settings') }}</span></a>
+        <a href="/portal/logout" title="{{ t('ui.shell.logout') }}"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>{{ t('ui.shell.logout') }}</span></a>
       </div>
     </footer>
   </aside>
-  <button type="button" class="portal-drawer-backdrop" onclick="window.__qbToggleSidebar(false)" aria-label="Close navigation"></button>
+  <button type="button" class="portal-drawer-backdrop" onclick="window.__qbToggleSidebar(false)" aria-label="{{ t('ui.shell.close_nav') }}"></button>
 
   <div class="portal-app-main">
     <header class="portal-mobile-bar">
-      <button type="button" class="portal-mobile-menu" onclick="window.__qbToggleSidebar(true)" aria-label="Open navigation">
+      <button type="button" class="portal-mobile-menu" onclick="window.__qbToggleSidebar(true)" aria-label="{{ t('ui.shell.open_nav') }}">
         {{ ic("menu", 20) }}
       </button>
-      <a href="/portal/dashboard" class="portal-brand" aria-label="QueryBot dashboard">
+      <a href="/portal/dashboard" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
         <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></span>
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <div class="portal-mobile-actions">
-        <a href="/portal/change-password" class="icon-btn" aria-label="Settings" title="Settings">{{ ic("settings", 16) }}</a>
+        <a href="/portal/change-password" class="icon-btn" aria-label="{{ t('ui.shell.settings') }}" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }}</a>
       </div>
     </header>
 {% endif %}
@@ -115,8 +128,9 @@
     var collapsed = shell.classList.contains('portal-sidebar-collapsed');
     var button = sidebar.querySelector('.portal-sidebar-toggle');
     if (!button) return;
-    button.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
-    button.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    var label = window.qbT(collapsed ? 'ui.shell.expand' : 'ui.shell.collapse');
+    button.setAttribute('aria-label', label);
+    button.setAttribute('title', label);
   }
 
   window.__qbToggleSidebar = function(forceOpen){
@@ -176,8 +190,8 @@
       <div class="qb-dialog-body"  id="qbDialogBody"></div>
     </div>
     <div class="qb-dialog-footer">
-      <button type="button" class="btn btn-secondary btn-sm" id="qbDialogCancel">Cancel</button>
-      <button type="button" class="btn btn-danger    btn-sm" id="qbDialogConfirm">Confirm</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="qbDialogCancel">{{ t('ui.shell.cancel') }}</button>
+      <button type="button" class="btn btn-danger    btn-sm" id="qbDialogConfirm">{{ t('ui.shell.confirm') }}</button>
     </div>
   </div>
 </div>
@@ -206,10 +220,10 @@
 
   window.qbConfirm = function(opts){
     opts = opts || {};
-    titleEl.textContent    = opts.title   || 'Are you sure?';
+    titleEl.textContent    = opts.title   || window.qbT('ui.shell.confirm_title');
     bodyEl.textContent     = opts.body    || '';
-    cancelBtn.textContent  = opts.cancel  || 'Cancel';
-    confirmBtn.textContent = opts.confirm || 'Confirm';
+    cancelBtn.textContent  = opts.cancel  || window.qbT('ui.shell.cancel');
+    confirmBtn.textContent = opts.confirm || window.qbT('ui.shell.confirm');
     var variant = opts.variant || 'danger';
     confirmBtn.className = 'btn btn-' + variant + ' btn-sm';
     _onConfirm = opts.onConfirm || null;
@@ -244,7 +258,7 @@
 
 {% if user %}
 <div class="portal-live-toast" id="portalLiveToast" role="status" aria-live="polite">
-  <div class="portal-live-toast-title" id="portalLiveToastTitle">Semantic Layer updated</div>
+  <div class="portal-live-toast-title" id="portalLiveToastTitle">{{ t('ui.shell.toast_semantic') }}</div>
   <div class="portal-live-toast-body"  id="portalLiveToastBody"></div>
 </div>
 <script>
@@ -277,17 +291,22 @@
     if(fromPoll&&isSeen(key)) return;
     markSeen(key);
     window.dispatchEvent(new CustomEvent('qb-semantic-feedback-reviewed',{detail:msg}));
-    var statusText=msg.status==='approved'?'approved':'rejected';
+    // One whole sentence per outcome, not `subject + ' was ' + verb`: French
+    // puts the participle after the auxiliary and agrees it with the subject,
+    // so there is no seam to concatenate at.
+    var approved=msg.status==='approved';
     showPortalToast(
-      msg.status==='approved'?'Semantic Layer change approved':'Semantic Layer change rejected',
-      (msg.column_name||'Field')+' was '+statusText+' by admin.',
-      msg.status==='approved'?'success':'warning'
+      window.qbT(approved?'ui.shell.toast_approved_title':'ui.shell.toast_rejected_title'),
+      window.qbT(approved?'ui.shell.toast_approved_body':'ui.shell.toast_rejected_body',
+                 {field: msg.column_name||window.qbT('ui.shell.toast_field')}),
+      approved?'success':'warning'
     );
   }
 
   function handleSystemMessage(msg){
     if(!msg||msg.type!=='system_message') return;
-    showPortalToast('System Notice', msg.message||'System update', 'warning');
+    showPortalToast(window.qbT('ui.shell.toast_system'),
+                    msg.message||window.qbT('ui.shell.toast_system_body'), 'warning');
   }
 
   function handleQueryLimitStatus(status,fromPoll){
@@ -299,7 +318,7 @@
     var key=level+':'+status.used+':'+status.limit;
     if(fromPoll&&sessionStorage.getItem(queryLimitSeenKey)===key) return;
     sessionStorage.setItem(queryLimitSeenKey,key);
-    showPortalToast(status.title||'Monthly query limit',status.message||'',level);
+    showPortalToast(status.title||window.qbT('ui.shell.limit_title'),status.message||'',level);
   }
 
   async function pollQueryLimit(){
