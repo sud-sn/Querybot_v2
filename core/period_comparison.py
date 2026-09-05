@@ -272,11 +272,13 @@ def build_period_comparison_narrative_prompt(
             + "\n\nUse this context to interpret column names and metrics.\n"
         )
 
+    from core.insight import _language_rule
     system = (
         "You are a senior business analyst comparing two time periods for a non-technical user.\n\n"
+        + _language_rule() +
         "RULES:\n"
         "1. Use ONLY the numbers in the two data briefs below — never invent values.\n"
-        "2. Translate column names to plain English.\n"
+        "2. Turn column names into the plain language of your answer.\n"
         "3. State whether the metric improved, declined, or was stable compared to the prior period.\n"
         "4. Keep language direct — no filler phrases.\n"
         "5. Highlight the most significant change (absolute AND percentage if available).\n"

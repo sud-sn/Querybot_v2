@@ -9,6 +9,7 @@ from statistics import mean, median, stdev
 from typing import Any
 
 from core.display_formats import normalize_display_format
+from core.i18n import plural as _t_plural, t as _t
 from core.clarification import extract_original_question
 from core.temporal_columns import infer_series_grain, parse_period_label
 
@@ -735,13 +736,15 @@ def _missing_scalar_copy(column: str, question: str) -> dict[str, str]:
         str(question or ""),
         re.IGNORECASE,
     ))
-    target = "the requested period" if temporal else "the current filters"
+    target = _t("answer.target_period" if temporal else "answer.target_filters")
     return {
-        "headline": f"No {metric_lower} data was found for {target}.",
-        "short_value": "No data",
-        "comparison": "The query completed successfully, but no metric value was returned.",
-        "scope_badge": "No data",
-        "scope_note": f"There are no matching {metric_lower} values for {target}.",
+        "headline": _t("answer.no_metric_headline",
+                       metric=metric_lower, target=target),
+        "short_value": _t("answer.no_data"),
+        "comparison": _t("answer.no_metric_comparison"),
+        "scope_badge": _t("answer.no_data"),
+        "scope_note": _t("answer.no_metric_note",
+                         metric=metric_lower, target=target),
     }
 
 
@@ -1148,33 +1151,33 @@ def infer_result_scope(
         if explicit_limit is not None:
             scope["n"] = explicit_limit
 
-    badge = "Returned result"
-    note = "This reflects the rows returned by the query."
+    # badge_key is the stable token; badge and note are what the reader sees.
+    # The narration prompt in core/insight.py reads the KEY, so a French portal
+    # does not quietly change what the model is asked -- the answer's language
+    # is decided by the prompt's own language rule, not by a leaked label.
+    badge_key = "returned"
+    fields: dict[str, Any] = {}
     if scope["is_top_n"]:
         n = scope["n"] or row_count
         if n == 1:
-            badge = "Top result only"
-            note = "This result is based on the top-ranked row only, not the full distribution."
+            badge_key = "top_one"
         else:
-            badge = f"Top {n} only"
-            note = f"This result is based only on the top {n} returned rows."
+            badge_key, fields = "top_n", {"n": n}
     elif mode == "ranking" and scope["is_complete_distribution"]:
-        badge = "Full distribution"
-        note = "This result reflects the full returned distribution."
+        badge_key = "full_distribution"
     elif mode == "time_series" and scope["is_complete_series"]:
-        badge = "Full series"
-        note = "This result reflects the full returned time series."
+        badge_key = "full_series"
     elif scope["is_preview"]:
-        badge = "Preview"
-        note = "This result is a preview because the returned rows are capped for display."
+        badge_key = "preview"
     elif filtered_subset:
-        badge = "Filtered subset"
-        note = "This result reflects a filtered subset defined by the query conditions."
+        badge_key = "filtered_subset"
 
-    scope["badge"] = badge
+    note = _t(f"answer.scope.{badge_key}_note", **fields)
+    scope["badge_key"] = badge_key
+    scope["badge"] = _t(f"answer.scope.{badge_key}", **fields)
     scope["note"] = note
     scope["analysis_note"] = (
-        "Interpret this as a returned slice rather than a complete picture."
+        _t("answer.scope.slice_note")
         if was_limited and mode in {"ranking", "time_series"}
         else note
     )
@@ -1201,9 +1204,9 @@ def build_answer(
         )
     if not rows or detect_zero_match_result(rows):
         return {
-            "headline": "No matching data was found for this question.",
-            "short_value": "0 rows",
-            "comparison": "Try adjusting the filters or time range.",
+            "headline": _t("answer.no_match_headline"),
+            "short_value": _t_plural("answer.rows", 0),
+            "comparison": _t("answer.no_match_hint"),
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
         }
@@ -1221,14 +1224,13 @@ def build_answer(
         metric_label = _display_label(metric_col)
         matched = null_issue["matched_rows"]
         return {
-            "headline": f"{metric_label}: {value} because all matched values are missing.",
+            "headline": _t("answer.null_metric_headline",
+                           metric=metric_label, value=value),
             "short_value": value,
-            "comparison": f"{matched} matching records, 0 non-null {metric_label} values",
-            "scope_badge": "Missing metric values",
-            "scope_note": (
-                f"The filter matched {matched} records, but the requested metric column "
-                f"had no non-null values in those records."
-            ),
+            "comparison": _t_plural("answer.null_metric_comparison", matched,
+                                    metric=metric_label),
+            "scope_badge": _t("answer.null_metric_badge"),
+            "scope_note": _t_plural("answer.null_metric_note", matched),
         }
 
     numeric_cols = _numeric_cols(rows)
@@ -1239,9 +1241,11 @@ def build_answer(
         val = rows[0][col]
         fmt = column_formats.get(col)
         return {
-            "headline": f"{col.replace('_', ' ').title()}: {format_value(val, col)}",
+            "headline": _t("answer.label_value",
+                           label=col.replace("_", " ").title(),
+                           value=format_value(val, col)),
             "short_value": format_value(val, col),
-            "comparison": scope.get("badge") or "Single-value result",
+            "comparison": scope.get("badge") or _t("answer.single_value"),
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
         }
@@ -1258,24 +1262,37 @@ def build_answer(
         if _pair:
             newest_col = _pair["newest_column"]
             measure = _display_label(
-                _measure_prefix(newest_col, _pair["newest_label"])) or "Total"
+                _measure_prefix(newest_col, _pair["newest_label"])) or _t("answer.total")
             pct = _pair["total_pct"]
-            direction = ("rose" if _pair["net"] > 0
-                         else "fell" if _pair["net"] < 0 else "was flat")
-            movement = (f"{direction} {abs(pct):.1f}%" if pct is not None
-                        else direction)
-            headline = (f"{measure} {movement} from {_pair['oldest_label']} "
-                        f"to {_pair['newest_label']}")
+            # A whole sentence per direction. English joins a verb to a
+            # percentage; French conjugates ("a augmenté de 12,3 %") and agrees
+            # the participle with the measure, so there is no seam in the
+            # middle for a translated adverb to slot into.
+            rose, fell = _pair["net"] > 0, _pair["net"] < 0
+            if pct is None:
+                msg_id = ("answer.period_rose_unquantified" if rose
+                          else "answer.period_fell_unquantified" if fell
+                          else "answer.period_flat")
+                headline = _t(msg_id, measure=measure,
+                              old=_pair["oldest_label"], new=_pair["newest_label"])
+            else:
+                msg_id = ("answer.period_rose" if rose
+                          else "answer.period_fell" if fell
+                          else "answer.period_flat")
+                headline = _t(msg_id, measure=measure, pct=f"{abs(pct):.1f}%",
+                              old=_pair["oldest_label"], new=_pair["newest_label"])
             riser = _pair["top_riser"] or _pair["top_faller"]
             if riser:
                 mover = _safe_category_label(riser["label"], _pair["label_column"])
                 change = ("+" if riser["change"] > 0 else "") + format_value(
                     riser["change"], newest_col)
-                headline += (f"; {mover} moved the most, {change}" if mover
-                             else f"; the largest single move was {change}")
-            comparison = (f"{pct:+.1f}% versus {_pair['oldest_label']}"
+                headline = _t(
+                    "answer.period_mover" if mover else "answer.period_mover_unnamed",
+                    sentence=headline, mover=mover, change=change)
+            comparison = (_t("answer.period_versus", pct=f"{pct:+.1f}%",
+                             old=_pair["oldest_label"])
                           if pct is not None
-                          else f"compared with {_pair['oldest_label']}")
+                          else _t("answer.period_compared", old=_pair["oldest_label"]))
             return {
                 "headline": headline + ".",
                 "short_value": format_value(_pair["newest_total"], newest_col),
@@ -1294,10 +1311,15 @@ def build_answer(
             last = rows[-1]
             first_val = _to_float_z(first.get(value_col))
             last_val = _to_float_z(last.get(value_col))
-            direction = "up" if last_val > first_val else "down" if last_val < first_val else "flat"
-            last_label = format_value(last.get(label_col, 'Latest period'), label_col)
-            headline = f"{last_label} closed at {format_value(last_val, value_col)}."
-            comparison = scope.get("badge") or f"Trend is {direction} versus {format_value(first_val, value_col)} at the start"
+            trend = ("answer.trend_up" if last_val > first_val
+                     else "answer.trend_down" if last_val < first_val
+                     else "answer.trend_flat")
+            last_label = format_value(
+                last.get(label_col, _t("answer.latest_period")), label_col)
+            headline = _t("answer.series_close", label=last_label,
+                          value=format_value(last_val, value_col))
+            comparison = scope.get("badge") or _t(
+                trend, value=format_value(first_val, value_col))
             return {
                 "headline": headline,
                 "short_value": format_value(last_val, value_col),
@@ -1306,19 +1328,22 @@ def build_answer(
                 "scope_note": scope.get("note", ""),
             }
         best = ordered[0]
-        best_label = str(best.get(label_col, 'Top result'))
+        best_label = str(best.get(label_col, _t("answer.top_result")))
         best_value = _to_float_z(best.get(value_col))
-        comparison = scope.get("badge") or f"Across {len(rows)} results"
+        comparison = scope.get("badge") or _t_plural("answer.across_results", len(rows))
         if scope.get("is_top_n") and (scope.get("n") or 0) == 1:
-            headline = f"Top-ranked result: {best_label} at {format_value(best_value, value_col)}."
-            comparison = "This card shows only the leading row"
+            headline = _t("answer.top_ranked", label=best_label,
+                          value=format_value(best_value, value_col))
+            comparison = _t("answer.leading_row_only")
         else:
-            headline = f"{best_label} leads at {format_value(best_value, value_col)}."
+            headline = _t("answer.leads", label=best_label,
+                          value=format_value(best_value, value_col))
         if len(ordered) > 1 and not scope.get("is_top_n"):
             second = ordered[1]
             second_value = _to_float_z(second.get(value_col))
             delta = best_value - second_value
-            comparison = f"{format_value(delta, value_col)} above the next result"
+            comparison = _t("answer.above_next",
+                            delta=format_value(delta, value_col))
         return {
             "headline": headline,
             "short_value": format_value(best_value, value_col),
@@ -1332,9 +1357,13 @@ def build_answer(
         value_fmt = column_formats.get(col)
         values = [_to_float_z(r.get(col)) for r in rows]
         return {
-            "headline": f"Returned {len(rows)} rows for {question.strip().rstrip('?') or 'this query'}.",
+            "headline": _t_plural(
+                "answer.returned_rows", len(rows),
+                question=question.strip().rstrip("?") or _t("answer.this_query")),
             "short_value": format_value(values[0], col),
-            "comparison": scope.get("badge") or f"Range {format_value(min(values), col)} to {format_value(max(values), col)}",
+            "comparison": scope.get("badge") or _t(
+                "answer.range", low=format_value(min(values), col),
+                high=format_value(max(values), col)),
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
         }
@@ -1344,11 +1373,13 @@ def build_answer(
     preview_items = [str(r.get(first_col, "")) for r in rows[:3] if r.get(first_col)]
     preview = ", ".join(preview_items)
     if len(rows) > 3:
-        preview += f", +{len(rows) - 3} more"
+        preview += ", " + _t("answer.more_items", count=len(rows) - 3)
     return {
-        "headline": f"Found {len(rows)} result{'s' if len(rows) != 1 else ''} for: {question.strip().rstrip('?') or 'your query'}",
-        "short_value": f"{len(rows)} rows",
-        "comparison": scope.get("badge") or preview or "Review the records below",
+        "headline": _t_plural(
+            "answer.found_results", len(rows),
+            question=question.strip().rstrip("?") or _t("answer.your_query")),
+        "short_value": _t_plural("answer.rows", len(rows)),
+        "comparison": scope.get("badge") or preview or _t("answer.review_records"),
         "scope_badge": scope.get("badge", ""),
         "scope_note": scope.get("note", ""),
     }

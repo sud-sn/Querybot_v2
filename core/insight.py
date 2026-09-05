@@ -756,7 +756,11 @@ def build_answer_grounding(
 
     try:
         scope = result_scope or {}
-        badge = str(scope.get("badge") or scope.get("kind") or "").strip()
+        # badge_key, not badge: the badge is now translated for the reader,
+        # and a French token here would silently change what the model is
+        # asked. The answer's language is set by the prompt's language rule.
+        badge = str(scope.get("badge_key") or scope.get("badge")
+                    or scope.get("kind") or "").strip()
         if badge:
             grounding["scope"] = badge
     except Exception:  # noqa: BLE001
@@ -822,6 +826,49 @@ def _format_grounding_for_prompt(grounding: dict) -> str:
     )
 
 
+# The narration model writes the sentences the reader actually reads, so the
+# reader's language is a prompt rule, not a post-processing step -- translating
+# a generated English paragraph afterwards would need a second model call and
+# would still be a translation of an analysis rather than an analysis.
+#
+# Three things are pinned deliberately:
+#   * The structural labels stay English. parse_insight_response matches
+#     "HEADLINE:", "BODY:", "DETAIL:", "SECTION:" and "NEXT:" literally, so a
+#     translated label is a response that parses as unlabelled prose.
+#   * Column names and category values are the customer's schema and data.
+#     Translating "Marge brute" into "Gross margin" makes the answer stop
+#     matching the table under it.
+#   * Numbers keep the formatting they arrive with. They are formatted upstream
+#     against the column's format spec, and a model re-punctuating them is a
+#     model changing values.
+_LANGUAGE_RULES: dict[str, str] = {
+    "fr": (
+        "LANGUE :\n"
+        "Rédigez toute votre réponse en français, dans un français professionnel "
+        "et naturel -- pas une traduction mot à mot de l'anglais.\n"
+        "Exceptions, à laisser exactement telles quelles :\n"
+        "- Les étiquettes de structure HEADLINE:, SECTION:, BODY:, DETAIL: et "
+        "NEXT: restent en anglais, en majuscules, suivies de deux-points.\n"
+        "- Les noms de colonnes et les valeurs de catégories proviennent de la "
+        "base du client : citez-les tels quels, ne les traduisez pas.\n"
+        "- Les nombres, dates et devises sont déjà mis en forme : reprenez-les "
+        "caractère pour caractère.\n\n"
+    ),
+}
+
+
+def _language_rule(lang: str | None = None) -> str:
+    """The output-language rule for the active reader, or "" for English.
+
+    English is the empty string on purpose: every existing prompt is written in
+    English, so adding "answer in English" to it would be a change to a prompt
+    that has been tuned, for no behavioural gain.
+    """
+    from core.i18n import get_active_language, normalise_language
+    tag = normalise_language(lang if lang is not None else get_active_language())
+    return _LANGUAGE_RULES.get(tag, "")
+
+
 def build_insight_prompt_from_contract(
     action_contract: dict,
     *,
@@ -848,14 +895,16 @@ def build_insight_prompt_from_contract(
     mode    = action_contract.get("mode", "table")
     scope   = action_contract.get("result_scope", {})
     scope_note = scope.get("note", "Based on returned rows.")
-    scope_badge = scope.get("badge", "")
+    scope_badge = scope.get("badge_key") or scope.get("badge", "")
 
     # ── Shared base rules ────────────────────────────────────────────────────
     base_rules = (
         "You are a senior business analyst interpreting query results for a non-technical user.\n\n"
+        + _language_rule() +
         "RULES:\n"
         "1. Use ONLY the numbers and labels from the data brief. Never invent values.\n"
-        "2. Translate column names into plain English (STATUSCOUNT → 'count of employees per status').\n"
+        "2. Turn column names into the plain language of your answer "
+        "(STATUSCOUNT → 'count of employees per status').\n"
         "3. Never claim certainty about causes unless the data directly supports it.\n"
         "4. Keep language direct — no filler phrases like 'it is worth noting'.\n"
         "5. Scope note to include verbatim at the end of BODY: "

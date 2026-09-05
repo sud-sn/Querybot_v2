@@ -463,6 +463,225 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.toast_system_body": {"en": "System update", "fr": "Mise à jour du système"},
     "ui.shell.toast_query_limit": {"en": "Monthly query limit", "fr": "Limite mensuelle de requêtes"},
 
+    # ── The answer card's deterministic sentences ────────────────────────────
+    #
+    # These are not chrome. When a question is not causal enough for the
+    # narration model to run, these sentences ARE the answer the reader gets,
+    # so an English card under a French portal is the product failing to answer
+    # in the reader's language rather than a cosmetic gap.
+    #
+    # Whole sentences, one per outcome, rather than a stem plus an adverb.
+    # English builds "{measure} rose 12.3% from Q1 to Q2" by joining a verb to a
+    # percentage; French conjugates ("a augmenté de 12,3 %") and there is no
+    # seam in the middle to translate.
+
+    # The scope badge and its note.
+    "answer.scope.returned": {"en": "Returned result", "fr": "Résultat renvoyé"},
+    "answer.scope.returned_note": {
+        "en": "This reflects the rows returned by the query.",
+        "fr": "Ceci correspond aux lignes renvoyées par la requête.",
+    },
+    "answer.scope.top_one": {"en": "Top result only", "fr": "Meilleur résultat uniquement"},
+    "answer.scope.top_one_note": {
+        "en": "This result is based on the top-ranked row only, not the full distribution.",
+        "fr": "Ce résultat repose uniquement sur la ligne la mieux classée, et non sur la distribution complète.",
+    },
+    "answer.scope.top_n": {"en": "Top {n} only", "fr": "{n} premiers uniquement"},
+    "answer.scope.top_n_note": {
+        "en": "This result is based only on the top {n} returned rows.",
+        "fr": "Ce résultat repose uniquement sur les {n} premières lignes renvoyées.",
+    },
+    "answer.scope.full_distribution": {"en": "Full distribution", "fr": "Distribution complète"},
+    "answer.scope.full_distribution_note": {
+        "en": "This result reflects the full returned distribution.",
+        "fr": "Ce résultat reflète la distribution complète renvoyée.",
+    },
+    "answer.scope.full_series": {"en": "Full series", "fr": "Série complète"},
+    "answer.scope.full_series_note": {
+        "en": "This result reflects the full returned time series.",
+        "fr": "Ce résultat reflète la série temporelle complète renvoyée.",
+    },
+    "answer.scope.preview": {"en": "Preview", "fr": "Aperçu"},
+    "answer.scope.preview_note": {
+        "en": "This result is a preview because the returned rows are capped for display.",
+        "fr": "Ce résultat est un aperçu : le nombre de lignes affichées est plafonné.",
+    },
+    "answer.scope.filtered_subset": {"en": "Filtered subset", "fr": "Sous-ensemble filtré"},
+    "answer.scope.filtered_subset_note": {
+        "en": "This result reflects a filtered subset defined by the query conditions.",
+        "fr": "Ce résultat correspond à un sous-ensemble filtré par les conditions de la requête.",
+    },
+    "answer.scope.slice_note": {
+        "en": "Interpret this as a returned slice rather than a complete picture.",
+        "fr": "À interpréter comme un extrait renvoyé, et non comme une vue complète.",
+    },
+
+    # Counts. French takes the singular at zero, which the inline
+    # `{'s' if n != 1 else ''}` these replace could not express.
+    "answer.rows.one": {"en": "{count} row", "fr": "{count} ligne"},
+    "answer.rows.other": {"en": "{count} rows", "fr": "{count} lignes"},
+    "answer.across_results.one": {"en": "Across {count} result", "fr": "Sur {count} résultat"},
+    "answer.across_results.other": {"en": "Across {count} results", "fr": "Sur {count} résultats"},
+
+    # Nothing matched.
+    "answer.no_match_headline": {
+        "en": "No matching data was found for this question.",
+        "fr": "Aucune donnée correspondante n'a été trouvée pour cette question.",
+    },
+    "answer.no_match_hint": {
+        "en": "Try adjusting the filters or time range.",
+        "fr": "Essayez d'ajuster les filtres ou la période.",
+    },
+
+    # A successful aggregate over no facts -- an empty analytical result, not
+    # a failure, so the copy stays calm in both languages.
+    "answer.no_data": {"en": "No data", "fr": "Aucune donnée"},
+    "answer.no_metric_headline": {
+        "en": "No {metric} data was found for {target}.",
+        "fr": "Aucune donnée de {metric} n'a été trouvée pour {target}.",
+    },
+    "answer.no_metric_comparison": {
+        "en": "The query completed successfully, but no metric value was returned.",
+        "fr": "La requête a abouti, mais aucune valeur de mesure n'a été renvoyée.",
+    },
+    "answer.no_metric_note": {
+        "en": "There are no matching {metric} values for {target}.",
+        "fr": "Il n'existe aucune valeur de {metric} correspondant à {target}.",
+    },
+    "answer.target_period": {"en": "the requested period", "fr": "la période demandée"},
+    "answer.target_filters": {"en": "the current filters", "fr": "les filtres actuels"},
+
+    # An aggregate that matched rows but every value was NULL.
+    "answer.null_metric_headline": {
+        "en": "{metric}: {value} because all matched values are missing.",
+        "fr": "{metric} : {value}, car toutes les valeurs correspondantes sont manquantes.",
+    },
+    "answer.null_metric_comparison.one": {
+        "en": "{count} matching record, 0 non-null {metric} values",
+        "fr": "{count} enregistrement correspondant, 0 valeur de {metric} non nulle",
+    },
+    "answer.null_metric_comparison.other": {
+        "en": "{count} matching records, 0 non-null {metric} values",
+        "fr": "{count} enregistrements correspondants, 0 valeur de {metric} non nulle",
+    },
+    "answer.null_metric_badge": {
+        "en": "Missing metric values", "fr": "Valeurs de mesure manquantes",
+    },
+    "answer.null_metric_note.one": {
+        "en": "The filter matched {count} record, but the requested metric column had no non-null values in it.",
+        "fr": "Le filtre a retenu {count} enregistrement, mais la colonne de mesure demandée n'y contenait aucune valeur non nulle.",
+    },
+    "answer.null_metric_note.other": {
+        "en": "The filter matched {count} records, but the requested metric column had no non-null values in those records.",
+        "fr": "Le filtre a retenu {count} enregistrements, mais la colonne de mesure demandée n'y contenait aucune valeur non nulle.",
+    },
+
+    # A single scalar. French puts a space before the colon, which is why this
+    # is a message and not an f-string join.
+    "answer.label_value": {"en": "{label}: {value}", "fr": "{label} : {value}"},
+    "answer.single_value": {"en": "Single-value result", "fr": "Résultat à valeur unique"},
+
+    # A named-period comparison. Six ids rather than a verb slot: French
+    # conjugates the movement and agrees it with the measure.
+    "answer.period_rose": {
+        "en": "{measure} rose {pct} from {old} to {new}",
+        "fr": "{measure} a augmenté de {pct} entre {old} et {new}",
+    },
+    "answer.period_fell": {
+        "en": "{measure} fell {pct} from {old} to {new}",
+        "fr": "{measure} a diminué de {pct} entre {old} et {new}",
+    },
+    "answer.period_flat": {
+        "en": "{measure} was flat from {old} to {new}",
+        "fr": "{measure} est resté stable entre {old} et {new}",
+    },
+    "answer.period_rose_unquantified": {
+        "en": "{measure} rose from {old} to {new}",
+        "fr": "{measure} a augmenté entre {old} et {new}",
+    },
+    "answer.period_fell_unquantified": {
+        "en": "{measure} fell from {old} to {new}",
+        "fr": "{measure} a diminué entre {old} et {new}",
+    },
+    "answer.period_mover": {
+        "en": "{sentence}; {mover} moved the most, {change}",
+        "fr": "{sentence} ; c'est {mover} qui a le plus varié, {change}",
+    },
+    "answer.period_mover_unnamed": {
+        "en": "{sentence}; the largest single move was {change}",
+        "fr": "{sentence} ; la plus forte variation isolée est de {change}",
+    },
+    "answer.period_versus": {
+        "en": "{pct} versus {old}", "fr": "{pct} par rapport à {old}",
+    },
+    "answer.period_compared": {
+        "en": "compared with {old}", "fr": "par rapport à {old}",
+    },
+    "answer.total": {"en": "Total", "fr": "Total"},
+
+    # A time series.
+    "answer.series_close": {
+        "en": "{label} closed at {value}.", "fr": "{label} a terminé à {value}.",
+    },
+    "answer.trend_up": {
+        "en": "Trend is up versus {value} at the start",
+        "fr": "Tendance à la hausse par rapport à {value} au départ",
+    },
+    "answer.trend_down": {
+        "en": "Trend is down versus {value} at the start",
+        "fr": "Tendance à la baisse par rapport à {value} au départ",
+    },
+    "answer.trend_flat": {
+        "en": "Trend is flat versus {value} at the start",
+        "fr": "Tendance stable par rapport à {value} au départ",
+    },
+    "answer.latest_period": {"en": "Latest period", "fr": "Dernière période"},
+
+    # A ranking.
+    "answer.leads": {
+        "en": "{label} leads at {value}.", "fr": "{label} arrive en tête avec {value}.",
+    },
+    "answer.top_ranked": {
+        "en": "Top-ranked result: {label} at {value}.",
+        "fr": "Résultat le mieux classé : {label}, avec {value}.",
+    },
+    "answer.leading_row_only": {
+        "en": "This card shows only the leading row",
+        "fr": "Cette carte n'affiche que la première ligne",
+    },
+    "answer.above_next": {
+        "en": "{delta} above the next result",
+        "fr": "{delta} de plus que le résultat suivant",
+    },
+    "answer.top_result": {"en": "Top result", "fr": "Meilleur résultat"},
+
+    # Numbers with no label column to hang them on.
+    "answer.returned_rows.one": {
+        "en": "Returned {count} row for {question}.",
+        "fr": "{count} ligne renvoyée pour {question}.",
+    },
+    "answer.returned_rows.other": {
+        "en": "Returned {count} rows for {question}.",
+        "fr": "{count} lignes renvoyées pour {question}.",
+    },
+    "answer.range": {"en": "Range {low} to {high}", "fr": "Plage de {low} à {high}"},
+    "answer.this_query": {"en": "this query", "fr": "cette requête"},
+
+    # A list of names.
+    "answer.found_results.one": {
+        "en": "Found {count} result for: {question}",
+        "fr": "{count} résultat trouvé pour : {question}",
+    },
+    "answer.found_results.other": {
+        "en": "Found {count} results for: {question}",
+        "fr": "{count} résultats trouvés pour : {question}",
+    },
+    "answer.more_items": {"en": "+{count} more", "fr": "+{count} autres"},
+    "answer.review_records": {
+        "en": "Review the records below", "fr": "Consultez les enregistrements ci-dessous",
+    },
+    "answer.your_query": {"en": "your query", "fr": "votre requête"},
+
     # ── The language switcher ────────────────────────────────────────────────
     "ui.lang.label": {"en": "Language", "fr": "Langue"},
     "ui.lang.en": {"en": "English", "fr": "Anglais"},

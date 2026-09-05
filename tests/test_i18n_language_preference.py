@@ -175,6 +175,7 @@ class TestTheCatalogueIsWellFormed:
     # that is spelled the same in French, and listing them explicitly is what
     # makes the test below able to catch a copy-paste that was never translated.
     IDENTICAL_BY_DESIGN = {
+        "answer.total",                 # the same word in French
         "ui.pin.description_label",
         "ui.dash.version",              # "Version" is the same word
         "ui.enum.charttype.kpi",        # an international acronym
