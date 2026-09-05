@@ -177,11 +177,44 @@ the mechanism lands first and the redesign is built French-ready.
 | — retroactive flip | **done** | `GET /portal/api/history/{thread}` rebuilds every turn from `answer_trace.result_rows` under the reader's language, and re-checks the table grant while it is at it |
 | — answer card | **done** | `build_answer`, `infer_result_scope`, insight summary, anomaly callouts, decision signal, action chips, analysis title |
 | — narration language | **done** | `core/insight._language_rule`, applied in `build_insight_prompt_from_contract` and the period-comparison prompt |
-| 4 — French normaliser + eval corpus | **not started** | The part that decides whether a French question is understood at all. 118 eval questions, all English |
+| 4 — French normaliser + eval corpus | **done** | `core/question_normalizer.py`, `evals/french_questions.yaml`, `evals/french_parity.py`. Intent parity 100%, against 1.6% without it |
 | — the chat page | **done** | `portal_chat.html`: 315 `t()` calls, up from 31 |
 | — browser tab titles | **done** | All ten portal templates |
 | — the remaining portal pages | **done** | sign-in, registration, change-password, pin-confirm, new-report, notifications, Semantic Layer |
 | 5 — the rest of the chrome | **portal done; server-side copy remains** | See below |
+
+### The normaliser, and what it had to get right
+
+`core/question_normalizer.py` canonicalises a French question into the
+product's own English analytics phrasing before the detectors run, so all 484
+regex patterns stay unedited. It is an ADDED name (`_analysis_question`), never
+a replacement: `question` stays the reader's own words and keeps flowing to the
+chart title, the dashboard tile, the trace and the audit log.
+
+Five things it had to get right, each found by executing it:
+
+* **"contribute", not "contributed".** `core/contribution_analysis.py` matches
+  `contribut(?:ion|e|es|ing)?` — the past participle is the one form that
+  pattern does not read, so the obvious translation of "a contribué" is the one
+  that fails.
+* **A single quote is a delimiter only at a word boundary.** A naive
+  `'[^']*'` pairs the apostrophe in "d'affaires" with the opening quote, so the
+  real customer value goes UNPROTECTED and half the question goes untranslated.
+* **The elided article outlives its word.** "l'évolution" matches "évolution"
+  and comes out "l'trend". Stripped after the lexicon, so "aujourd'hui" and
+  "chiffre d'affaires" are already consumed.
+* **"ça" and "CA" fold to the same two letters,** so the abbreviation for
+  chiffre d'affaires is deliberately absent from the lexicon.
+* **The determiner is translated, not dropped.** "over last 30 days" misses
+  `over the last \d+` by one word, and the reader gets a flat aggregate where
+  they asked for a series.
+
+One deliberate departure from the list above: **value resolution keeps the
+reader's text.** Candidate phrases are customer VALUES, and a customer called
+"Marge" or a product called "Premier" is a French word that must not be
+rewritten. Quoted spans are protected in the normaliser, but an unquoted one is
+not, and this is the one consumer where a rewrite changes which rows come back
+rather than which words are searched.
 
 ### What is still English
 
