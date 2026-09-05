@@ -1287,6 +1287,215 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.confirm.dashboard": {"en": "Dashboard", "fr": "Tableau de bord"},
     "ui.chat.confirm.visual": {"en": "visual", "fr": "visuel"},
 
+    # ── The diagnostic card ──────────────────────────────────────────────────
+    #
+    # These are DISPLAY labels only. The markers the page scans for in the
+    # server's message -- "Most likely reason:", "SQL tried:" and the rest --
+    # stay English and are NOT in this catalogue: core/answer_formatter.py
+    # writes them, the same text degrades to plain Teams and Zoom messages, and
+    # a card that silently stops parsing renders as raw text with no signal
+    # that anything went wrong. Wire format on one side, copy on the other.
+    "ui.chat.diag.query_failed": {"en": "Query failed", "fr": "Échec de la requête"},
+    "ui.chat.diag.validation": {"en": "Validation issue", "fr": "Problème de validation"},
+    "ui.chat.diag.no_rows": {"en": "No rows returned", "fr": "Aucune ligne renvoyée"},
+    "ui.chat.diag.no_match": {"en": "No matching data was found.", "fr": "Aucune donnée correspondante n'a été trouvée."},
+    "ui.chat.diag.confidence": {"en": "Confidence", "fr": "Confiance"},
+    "ui.chat.diag.reason": {"en": "Most likely reason", "fr": "Raison la plus probable"},
+    "ui.chat.diag.next_step": {"en": "Suggested next step", "fr": "Prochaine étape suggérée"},
+    "ui.chat.diag.why": {"en": "Why", "fr": "Pourquoi"},
+    "ui.chat.diag.technical": {"en": "Technical details", "fr": "Détails techniques"},
+    "ui.chat.diag.sql_tried": {"en": "SQL tried", "fr": "SQL tenté"},
+
+    # ── The clarification and metric-draft cards ─────────────────────────────
+    "ui.chat.clar.composed": {"en": "I composed a calculation for this.", "fr": "J'ai composé un calcul pour cela."},
+    "ui.chat.clar.untitled": {"en": "Untitled", "fr": "Sans titre"},
+    "ui.chat.clar.uses": {"en": "Uses {tables}", "fr": "Utilise {tables}"},
+    "ui.chat.clar.promote": {"en": "Ask an admin to save this", "fr": "Demander à un administrateur de l'enregistrer"},
+    "ui.chat.clar.discard": {"en": "Just for now", "fr": "Seulement pour cette fois"},
+    "ui.chat.clar.sent_for_review": {"en": "Sent for review", "fr": "Envoyé pour validation"},
+    "ui.chat.clar.kept_local": {"en": "Kept to this chat", "fr": "Conservé dans cette conversation"},
+    "ui.chat.clar.choose_one": {
+        "en": "Please choose one option so I can continue.",
+        "fr": "Veuillez choisir une option pour que je puisse continuer.",
+    },
+    "ui.chat.clar.add_detail": {
+        "en": "Please add the detail I need so I can continue.",
+        "fr": "Veuillez ajouter la précision dont j'ai besoin pour continuer.",
+    },
+    "ui.chat.clar.add_detail_label": {
+        "en": "Add the detail QueryBot needs to continue",
+        "fr": "Ajoutez la précision dont QueryBot a besoin pour continuer",
+    },
+    "ui.chat.clar.suggested_dates": {"en": "Suggested business dates", "fr": "Dates métier suggérées"},
+    "ui.chat.clar.your_answer": {"en": "Your answer", "fr": "Votre réponse"},
+    "ui.chat.clar.continue": {"en": "Continue", "fr": "Continuer"},
+    "ui.chat.clar.search_dates": {"en": "Search by business date name", "fr": "Rechercher par nom de date métier"},
+    "ui.chat.clar.date_example": {"en": "For example: invoice date", "fr": "Par exemple : date de facture"},
+    "ui.chat.clar.needs_answer": {
+        "en": "Add an answer so QueryBot can continue",
+        "fr": "Ajoutez une réponse pour que QueryBot puisse continuer",
+    },
+    "ui.chat.clar.offline": {
+        "en": "Connection lost. Your clarification is still here; send it after reconnection.",
+        "fr": "Connexion perdue. Votre précision est conservée ; envoyez-la après la reconnexion.",
+    },
+    "ui.chat.clar.busy": {
+        "en": "QueryBot is still finishing the current step; applying your clarification now.",
+        "fr": "QueryBot termine l'étape en cours ; votre précision est appliquée maintenant.",
+    },
+    "ui.chat.clar.resolving": {"en": "Resolving clarification", "fr": "Prise en compte de la précision"},
+    "ui.chat.clar.resolving_detail": {
+        "en": "Applying your clarification and continuing the governed query.",
+        "fr": "Application de votre précision et poursuite de la requête gouvernée.",
+    },
+    "ui.chat.clar.answer_when_connected": {"en": "Answer again when connected", "fr": "Répondez à nouveau une fois reconnecté"},
+    "ui.chat.clar.requested": {"en": "Clarification requested", "fr": "Précision demandée"},
+
+    # ── Sections and buttons on an answer ────────────────────────────────────
+    "ui.chat.card.key_insights": {"en": "Key insights", "fr": "Points clés"},
+    "ui.chat.card.follow_up": {"en": "Follow-up", "fr": "Question de suivi"},
+    "ui.chat.card.helpful": {"en": "Was this helpful?", "fr": "Cette réponse vous a-t-elle été utile ?"},
+    "ui.chat.card.copy_answer": {"en": "Copy answer", "fr": "Copier la réponse"},
+    "ui.chat.card.copy_result": {"en": "Copy result", "fr": "Copier le résultat"},
+    "ui.chat.card.copy_analysis": {"en": "Copy analysis", "fr": "Copier l'analyse"},
+    "ui.chat.card.next_step_label": {"en": "Next step", "fr": "Étape suivante"},
+    "ui.chat.card.rows_first": {"en": "Returned rows first", "fr": "D'abord les lignes renvoyées"},
+    "ui.chat.card.db_fallback": {"en": "Database fallback if needed", "fr": "Retour à la base si nécessaire"},
+    "ui.chat.card.duckdb": {
+        "en": "Executed in the governed DuckDB session cache",
+        "fr": "Exécuté dans le cache de session DuckDB gouverné",
+    },
+
+    # ── Message delivery states ──────────────────────────────────────────────
+    "ui.chat.delivery.sending": {"en": "Sending", "fr": "Envoi"},
+    "ui.chat.delivery.working": {"en": "Working", "fr": "En cours"},
+    "ui.chat.delivery.complete": {"en": "Answered", "fr": "Répondu"},
+    "ui.chat.delivery.interrupted": {"en": "Interrupted", "fr": "Interrompu"},
+    "ui.chat.delivery.needs_attention": {"en": "Needs attention", "fr": "À vérifier"},
+    "ui.chat.delivery.waiting": {"en": "Waiting for connection", "fr": "En attente de connexion"},
+    "ui.chat.delivery.stopped": {"en": "Stopped", "fr": "Arrêté"},
+    "ui.chat.delivery.retrying": {"en": "Retrying analysis", "fr": "Nouvelle analyse en cours"},
+    "ui.chat.delivery.retrying_detail": {
+        "en": "Resending your request through the governed query pipeline.",
+        "fr": "Renvoi de votre demande dans le pipeline de requêtes gouverné.",
+    },
+    "ui.chat.delivery.starting": {"en": "Starting analysis", "fr": "Démarrage de l'analyse"},
+    "ui.chat.delivery.starting_detail": {
+        "en": "Sending your request to the backend.",
+        "fr": "Envoi de votre demande au serveur.",
+    },
+    "ui.chat.delivery.understanding": {"en": "Understanding your question", "fr": "Compréhension de votre question"},
+    "ui.chat.delivery.understanding_detail": {
+        "en": "Checking access to your workspace and data.",
+        "fr": "Vérification de l'accès à votre espace de travail et à vos données.",
+    },
+    "ui.chat.delivery.processing": {"en": "Processing your request…", "fr": "Traitement de votre demande…"},
+    "ui.chat.delivery.composer_working": {
+        "en": "Working on your answer…", "fr": "Élaboration de votre réponse…",
+    },
+
+    # ── Errors the browser raises on its own ─────────────────────────────────
+    "ui.chat.err.chart_library": {
+        "en": "Chart library failed to load. Refresh the page and try again.",
+        "fr": "La bibliothèque de graphiques n'a pas pu être chargée. Actualisez la page et réessayez.",
+    },
+    "ui.chat.err.chart_render": {"en": "Unable to render chart.", "fr": "Impossible d'afficher le graphique."},
+    "ui.chat.err.db_waking": {
+        "en": "Database is waking up — please try again in a moment",
+        "fr": "La base de données démarre — réessayez dans un instant",
+    },
+    "ui.chat.err.connection": {
+        "en": "Connection issue — please try again",
+        "fr": "Problème de connexion — veuillez réessayer",
+    },
+    "ui.chat.err.generic_rephrase": {
+        "en": "Something went wrong — try rephrasing or retry",
+        "fr": "Une erreur s'est produite — reformulez ou réessayez",
+    },
+    "ui.chat.err.generic_retry": {
+        "en": "Something went wrong — please retry",
+        "fr": "Une erreur s'est produite — veuillez réessayer",
+    },
+    "ui.chat.err.generic": {"en": "Something went wrong.", "fr": "Une erreur s'est produite."},
+    "ui.chat.err.clarify_format": {"en": "Please clarify the format.", "fr": "Veuillez préciser le format."},
+    "ui.chat.err.not_enabled": {
+        "en": "Chat is not enabled for this workspace.",
+        "fr": "Le chat n'est pas activé pour cet espace de travail.",
+    },
+    "ui.chat.err.session_invalid": {
+        "en": "Your session is invalid or no longer authorized.",
+        "fr": "Votre session est invalide ou n'est plus autorisée.",
+    },
+    "ui.chat.err.action_failed": {"en": "Action failed", "fr": "Action échouée"},
+    "ui.chat.err.action_incomplete": {"en": "Action could not be completed.", "fr": "L'action n'a pas pu être menée à son terme."},
+    "ui.chat.err.action_accepted": {
+        "en": "The governed action was accepted and is being completed.",
+        "fr": "L'action gouvernée a été acceptée et est en cours d'exécution.",
+    },
+    "ui.chat.err.no_rows_matched": {
+        "en": "No rows matched that query in the current result.",
+        "fr": "Aucune ligne ne correspond à cette question dans le résultat actuel.",
+    },
+    "ui.chat.err.connection_not_ready": {"en": "Connection not ready. Please wait.", "fr": "Connexion non prête. Veuillez patienter."},
+    "ui.chat.err.returned_only": {
+        "en": "Using the returned result only — no new query is being run.",
+        "fr": "Utilisation du seul résultat renvoyé — aucune nouvelle requête n'est exécutée.",
+    },
+    "ui.chat.action.finishing": {"en": "Finishing...", "fr": "Finalisation..."},
+
+    # ── The schema lock, mirrored from the markup by updateSchemaModeCopy ────
+    "ui.chat.schema_locked_title": {"en": "{schema} schema locked.", "fr": "Schéma {schema} verrouillé."},
+    "ui.chat.schema_locked_body": {
+        "en": "QueryBot will retrieve context and generate SQL only from this selected schema.",
+        "fr": "QueryBot n'utilisera le contexte et ne générera du SQL qu'à partir de ce schéma.",
+    },
+    "ui.chat.schema_locked_hint": {
+        "en": "Using {schema} schema. Press Enter to send, Shift + Enter for a new line.",
+        "fr": "Schéma {schema} actif. Entrée pour envoyer, Maj + Entrée pour aller à la ligne.",
+    },
+    "ui.chat.schema_locked_placeholder": {
+        "en": "Ask anything about {schema} data…",
+        "fr": "Posez n'importe quelle question sur les données {schema}…",
+    },
+    "ui.chat.schema_named": {"en": "{schema} schema", "fr": "schéma {schema}"},
+
+    # ── The last of the answer card ──────────────────────────────────────────
+    "ui.chat.card.select": {"en": "Select", "fr": "Choisir"},
+    "ui.chat.card.visual": {"en": "Visual", "fr": "Visuel"},
+    "ui.chat.card.analysis": {"en": "Analysis", "fr": "Analyse"},
+
+    "ui.chat.clar.help": {
+        "en": "Press Enter to continue · Shift + Enter for a new line",
+        "fr": "Entrée pour continuer · Maj + Entrée pour aller à la ligne",
+    },
+
+    # ── The history panel ────────────────────────────────────────────────────
+    "ui.chat.hist.refreshing": {"en": "Refreshing threads...", "fr": "Actualisation des conversations..."},
+    "ui.chat.hist.none_yet": {"en": "No threads yet.", "fr": "Aucune conversation pour l'instant."},
+    "ui.chat.hist.empty": {
+        "en": "Your recent questions will appear here.",
+        "fr": "Vos questions récentes apparaîtront ici.",
+    },
+    "ui.chat.hist.failed": {"en": "Could not load threads.", "fr": "Impossible de charger les conversations."},
+    "ui.chat.hist.try_again": {"en": "Try again", "fr": "Réessayer"},
+    "ui.chat.hist.no_match": {"en": "No queries matching \"{term}\"", "fr": "Aucune question ne correspond à « {term} »"},
+
+    # The history list's date groups.
+    "ui.chat.hist.today": {"en": "Today", "fr": "Aujourd'hui"},
+    "ui.chat.hist.yesterday": {"en": "Yesterday", "fr": "Hier"},
+    "ui.chat.hist.last_week": {"en": "Previous 7 days", "fr": "7 derniers jours"},
+    "ui.chat.hist.older": {"en": "Older", "fr": "Plus ancien"},
+
+    # The forecast chart's series. These are the legend AND the seriesName the
+    # tooltip filters on, so both sides read the same constant.
+    "ui.chat.chart.actual": {"en": "Actual", "fr": "Réel"},
+    "ui.chat.chart.forecast": {"en": "Forecast", "fr": "Prévision"},
+    "ui.chat.chart.interval": {"en": "95% interval", "fr": "Intervalle à 95 %"},
+
+    # ── The chart palette picker ─────────────────────────────────────────────
+    "ui.chat.chart.palette": {"en": "Palette", "fr": "Palette"},
+    "ui.chat.chart.outlier": {"en": "Outlier", "fr": "Valeur aberrante"},
+
     # ── Browser tab titles ───────────────────────────────────────────────────
     # Chrome the reader sees on every page, and the one string that is still in
     # front of them when the tab is in the background.

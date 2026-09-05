@@ -253,7 +253,12 @@ class FrontendWiringTests(unittest.TestCase):
         was there. The composer now says what it is doing instead of silently
         rejecting the next question with a toast."""
         body = self._function_body("function setProcessing(active)")
-        self.assertIn("Processing your request", body)
+        # The copy is a catalogue id now, so what this checks is that the
+        # placeholder is SET here at all -- and separately that the id resolves.
+        self.assertIn("input.placeholder = t('ui.chat.delivery.processing')", body)
+        from tests.chat_render import render as _render_chat, catalogue
+        self.assertIn("Processing your request",
+                      catalogue(_render_chat(lang="en"))["ui.chat.delivery.processing"])
         self.assertIn("readOnly", body)
         self.assertIn("_setComposerState", body)
 

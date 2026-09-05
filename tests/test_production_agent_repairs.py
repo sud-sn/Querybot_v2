@@ -287,5 +287,8 @@ def test_clarification_submit_is_not_blocked_by_stale_processing_state():
     function_source = source[start:start + 2200]
     assert "processingActive && agentRunState" in function_source
     assert "setAgentRunState('waiting_for_user');" in function_source
-    assert "QueryBot is still finishing the current step; applying" in function_source
+    assert "t('ui.chat.clar.busy')" in function_source
+    from tests.chat_render import render as _render_chat, catalogue
+    assert "QueryBot is still finishing the current step; applying" in \
+        catalogue(_render_chat(lang="en"))["ui.chat.clar.busy"]
     assert "pending_id: data.pending_id" in function_source

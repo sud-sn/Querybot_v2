@@ -547,7 +547,7 @@ class ChartRendererTemplateTests(unittest.TestCase):
             src = self._read(path)
             self.assertIn("function _chartNumber", src)
             self.assertIn("return Number.isFinite(n) ? n : null", src)
-            self.assertIn("Chart library failed to load", src)
+            self.assertIn("t('ui.chat.err.chart_library')", src)
             self.assertNotIn("Number(r?.[k] ?? 0)", src)
 
 

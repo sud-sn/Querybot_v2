@@ -180,12 +180,32 @@ class TestTheCatalogueIsWellFormed:
         "ui.chat.table_count.other",    # and plural
         "ui.chat.trust.source",         # "source" is the same word
         "ui.chat.trust.sources",        # and so is its plural
+        "ui.chat.chart.palette",        # "palette" is French to begin with
         "ui.pin.description_label",
         "ui.dash.version",              # "Version" is the same word
         "ui.enum.charttype.kpi",        # an international acronym
         "ui.shell.chat",                # borrowed into French unchanged
         "ui.shell.notifications",       # same spelling in both
     }
+
+    def test_no_id_is_declared_twice(self):
+        """A repeated key in the literal is kept silently by Python -- the
+        second wins and the first disappears. Two different sentences under one
+        id is exactly how "Working" became "Working on your answer…" for a
+        delivery pill that had room for one word."""
+        import collections
+        import re
+        from pathlib import Path
+
+        source = (Path(i18n.__file__)).read_text(encoding="utf-8")
+        body = source[source.index("MESSAGES: dict[str, dict[str, str]] = {"):]
+        keys = re.findall(r'^\s{4}"([a-z][a-zA-Z0-9_.]+)":', body, flags=re.M)
+        assert len(keys) == len(i18n.MESSAGES), (
+            "the scan missed entries; it is the only thing that can see a "
+            "duplicate, so it has to see all of them"
+        )
+        dupes = [k for k, n in collections.Counter(keys).items() if n > 1]
+        assert not dupes, dupes
 
     def test_french_is_actually_french(self):
         """A guard against a catalogue whose 'fr' entries were copied from 'en'

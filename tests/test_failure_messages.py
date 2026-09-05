@@ -150,9 +150,14 @@ class PipelineWiringTests(unittest.TestCase):
 
     def test_portal_kicker_is_derived(self):
         tmpl = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(encoding="utf-8")
-        self.assertIn("'Query failed'", tmpl)
-        self.assertIn("'Validation issue'", tmpl)
         self.assertIn("${kicker}", tmpl)
+        # The kicker copy is a catalogue id now; asserted on what the page
+        # ships, since a source assertion would pass for an id that resolves
+        # to nothing.
+        from tests.chat_render import render as _render_chat, catalogue
+        shipped = catalogue(_render_chat(lang="en"))
+        self.assertEqual(shipped["ui.chat.diag.query_failed"], "Query failed")
+        self.assertEqual(shipped["ui.chat.diag.validation"], "Validation issue")
 
 
 if __name__ == "__main__":

@@ -488,7 +488,9 @@ class TestThePageNarratesItsWork:
 
     def test_the_composer_announces_that_it_is_working(self):
         src = self._template()
-        assert "Processing your request" in src
+        from tests.chat_render import render as _render_chat, catalogue
+        assert "Processing your request" in \
+            catalogue(_render_chat(lang="en"))["ui.chat.delivery.processing"]
         assert "_composerPlaceholder" in src, (
             "the placeholder must restore from a stash: it is schema-dependent"
         )

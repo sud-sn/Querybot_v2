@@ -54,7 +54,10 @@ def test_admin_and_portal_governed_python_proof_is_wired():
     assert "sql_accuracy_target_pct" in schema
     assert "agent-analysis" in admin
     assert "eval_rate >= eval_target" in route
-    assert "No database query" in portal
+    # A catalogue id in the source now; asserted on what the page ships.
+    from tests.chat_render import render as _render_chat, catalogue
+    assert catalogue(_render_chat(lang="en"))["ui.chat.trust.no_db_query"] == \
+        "No database query"
 
 
 def test_admin_readiness_requires_latest_golden_suite_to_meet_target():

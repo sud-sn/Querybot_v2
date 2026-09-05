@@ -594,7 +594,8 @@ function initDashboardChart(node) {
   const payload = JSON.parse(node.dataset.chart || '{}');
   if (!payload.rows || !payload.rows.length) return;
   if (!window.echarts) {
-    node.innerHTML = '<div class="msg-system" style="margin:0">Chart library failed to load. Refresh the page and try again.</div>';
+    node.innerHTML = '<div class="msg-system" style="margin:0">'
+      + escHtmlDash(t('ui.chat.err.chart_library')) + '</div>';
     return;
   }
   if (payload.chart_id) window._dashPayloads[payload.chart_id] = payload;

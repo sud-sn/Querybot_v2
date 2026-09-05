@@ -1430,8 +1430,10 @@ function _showSkeletonBubble(){
     + '<div class="msg-content" style="flex:1">'
     + '<div class="answer-progress-card">'
     + '<div class="answer-progress-head"><div class="answer-progress-status">'
-    + '<span class="answer-progress-copy"><span class="answer-progress-label" id="answerStageLabel">Understanding your question</span>'
-    + '<span class="answer-progress-detail" id="answerStageDetail">Checking access to your workspace and data.</span></span>'
+    + '<span class="answer-progress-copy"><span class="answer-progress-label" id="answerStageLabel">'
+    + escHtml(t('ui.chat.delivery.understanding')) + '</span>'
+    + '<span class="answer-progress-detail" id="answerStageDetail">'
+    + escHtml(t('ui.chat.delivery.understanding_detail')) + '</span></span>'
     + '</div><span class="answer-progress-elapsed" id="answerProgressElapsed"></span></div>'
     + '<div class="agent-run-meta" id="agentRunMeta" hidden data-status="running">'
     + '<span class="agent-run-governed" id="agentRunState">Governed agent</span>'
@@ -1487,7 +1489,7 @@ function setProcessing(active){
   if (input) {
     if (active) {
       if (_composerPlaceholder === null) _composerPlaceholder = input.placeholder;
-      input.placeholder = 'Processing your request…';
+      input.placeholder = t('ui.chat.delivery.processing');
       input.readOnly = true;
     } else {
       // Restore the STASHED value: the placeholder is schema-dependent
@@ -1497,7 +1499,7 @@ function setProcessing(active){
       input.readOnly = false;
     }
   }
-  _setComposerState(active ? 'Working on your answer…' : '');
+  _setComposerState(active ? t('ui.chat.delivery.composer_working') : '');
 
   if (active) {
     _showSkeletonBubble();
@@ -1575,7 +1577,7 @@ function _setSendButtonMode(isStop){
 function stopQuery(){
   if (!wsReady) return;
   ws.send(JSON.stringify({ type: 'cancel' }));
-  _markActiveOutbound('stopped', 'Stopped');
+  _markActiveOutbound('stopped', t('ui.chat.delivery.stopped'));
   // Optimistically reset the composer instead of waiting for the server's
   // round trip — the server-side "Query stopped." message + typing:false
   // will arrive right behind this and are idempotent with it.
@@ -1591,17 +1593,19 @@ function appendMetricDraftCard(msg){
   // track (b): whether to ask an admin to make it available to everyone.
   const card = document.createElement('div');
   card.className = 'clarification-card metric-draft-card';
-  const tables = (msg.tables || []).map(t => escHtml(t)).join(', ');
+  // NOT `.map(t => ...)`: t is the translator in this scope, and shadowing it
+  // inside a callback is how a lookup silently becomes a table name.
+  const tables = (msg.tables || []).join(', ');
   card.innerHTML =
-    '<div class="clarification-question">' + escHtml(msg.body || 'I composed a calculation for this.') + '</div>' +
+    '<div class="clarification-question">' + escHtml(msg.body || t('ui.chat.clar.composed')) + '</div>' +
     '<div class="metric-draft-body">' +
-      '<div class="metric-draft-name">' + escHtml(msg.name || 'Untitled') + '</div>' +
+      '<div class="metric-draft-name">' + escHtml(msg.name || t('ui.chat.clar.untitled')) + '</div>' +
       '<code class="metric-draft-formula">' + escHtml(msg.formula || '') + '</code>' +
-      (tables ? '<div class="metric-draft-meta">Uses ' + tables + '</div>' : '') +
+      (tables ? '<div class="metric-draft-meta">' + escHtml(t('ui.chat.clar.uses', {tables: tables})) + '</div>' : '') +
     '</div>' +
     '<div class="clarification-options">' +
-      '<button class="clarification-option" data-act="promote">Ask an admin to save this</button>' +
-      '<button class="clarification-option" data-act="discard">Just for now</button>' +
+      '<button class="clarification-option" data-act="promote">' + escHtml(t('ui.chat.clar.promote')) + '</button>' +
+      '<button class="clarification-option" data-act="discard">' + escHtml(t('ui.chat.clar.discard')) + '</button>' +
     '</div>';
   card.querySelectorAll('button[data-act]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1613,7 +1617,7 @@ function appendMetricDraftCard(msg){
           draft_id: msg.draft_id,
         }));
       } catch (e) { /* socket closed; the draft simply expires on its own */ }
-      btn.textContent = act === 'promote' ? 'Sent for review' : 'Kept to this chat';
+      btn.textContent = t(act === 'promote' ? 'ui.chat.clar.sent_for_review' : 'ui.chat.clar.kept_local');
     });
   });
   const thread = document.getElementById('thread');
@@ -1711,7 +1715,7 @@ function renderDiagnosticCard(rawText){
   const text = String(rawText || '').trim();
   if (!/Most likely reason:/i.test(text) || !/SQL tried:/i.test(text)) return '';
   const lines = text.split(/\n+/).map(x => x.trim()).filter(Boolean);
-  const headline = lines[0] || 'No matching data was found.';
+  const headline = lines[0] || t('ui.chat.diag.no_match');
   const confidence = (_extractDiagnosticSection(text, 'Confidence:', ['Most likely reason:']) || '').replace(/\n/g, ' ').trim();
   const reason = _extractDiagnosticSection(text, 'Most likely reason:', ['Suggested next step:', 'Why:', 'Technical details:', 'SQL tried:']);
   const nextStep = _extractDiagnosticSection(text, 'Suggested next step:', ['Why:', 'Technical details:', 'SQL tried:']);
@@ -1720,25 +1724,27 @@ function renderDiagnosticCard(rawText){
   const sqlMatch = text.match(/```(?:sql)?\s*([\s\S]*?)```/i);
   const sql = sqlMatch ? sqlMatch[1].trim() : _extractDiagnosticSection(text, 'SQL tried:', []);
   const whyHtml = why.length
-    ? `<div class="diagnostic-section"><div class="diagnostic-label">Why</div><ul class="diagnostic-list">${why.slice(0,4).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
+    ? `<div class="diagnostic-section"><div class="diagnostic-label">${t('ui.chat.diag.why')}</div><ul class="diagnostic-list">${why.slice(0,4).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
     : '';
   const techHtml = technical.length
-    ? `<div class="diagnostic-section"><div class="diagnostic-label">Technical details</div><ul class="diagnostic-list">${technical.slice(0,5).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
+    ? `<div class="diagnostic-section"><div class="diagnostic-label">${t('ui.chat.diag.technical')}</div><ul class="diagnostic-list">${technical.slice(0,5).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
     : '';
-  const kicker = /could not run|database error/i.test(headline) ? 'Query failed'
-               : /could not build a trusted|could not answer/i.test(headline) ? 'Validation issue'
-               : 'No rows returned';
+  // Matched against the SERVER's headline, which is English wire text --
+  // see the note beside the diagnostic ids in core/i18n.py.
+  const kicker = t(/could not run|database error/i.test(headline) ? 'ui.chat.diag.query_failed'
+               : /could not build a trusted|could not answer/i.test(headline) ? 'ui.chat.diag.validation'
+               : 'ui.chat.diag.no_rows');
   return `<div class="diagnostic-card" data-raw="${encodeURIComponent(rawText)}">
     <div class="diagnostic-kicker">${kicker}</div>
     <div class="diagnostic-title">${escHtml(headline)}</div>
     <div class="diagnostic-grid">
-      ${confidence ? `<div class="diagnostic-section"><div class="diagnostic-label">Confidence</div><div class="diagnostic-copy">${escHtml(confidence)}</div></div>` : ''}
-      ${reason ? `<div class="diagnostic-section"><div class="diagnostic-label">Most likely reason</div><div class="diagnostic-copy">${escHtml(reason)}</div></div>` : ''}
-      ${nextStep ? `<div class="diagnostic-section"><div class="diagnostic-label">Suggested next step</div><div class="diagnostic-copy">${escHtml(nextStep)}</div></div>` : ''}
+      ${confidence ? `<div class="diagnostic-section"><div class="diagnostic-label">${t('ui.chat.diag.confidence')}</div><div class="diagnostic-copy">${escHtml(confidence)}</div></div>` : ''}
+      ${reason ? `<div class="diagnostic-section"><div class="diagnostic-label">${t('ui.chat.diag.reason')}</div><div class="diagnostic-copy">${escHtml(reason)}</div></div>` : ''}
+      ${nextStep ? `<div class="diagnostic-section"><div class="diagnostic-label">${t('ui.chat.diag.next_step')}</div><div class="diagnostic-copy">${escHtml(nextStep)}</div></div>` : ''}
       ${whyHtml}
       ${techHtml}
     </div>
-    ${sql ? `<div class="diagnostic-label">SQL tried</div><div class="sql-box">${escHtml(sql)}</div>` : ''}
+    ${sql ? `<div class="diagnostic-label">${t('ui.chat.diag.sql_tried')}</div><div class="sql-box">${escHtml(sql)}</div>` : ''}
   </div>`;
 }
 function copySqlBox(btn){
@@ -1792,11 +1798,10 @@ function _setUserMessageState(message, state, label = ''){
   if (!message) return;
   const delivery = message.querySelector('.message-delivery');
   if (!delivery) return;
-  const labels = {
-    sending: 'Sending', working: 'Working', complete: 'Answered', stopped: 'Stopped',
-    interrupted: 'Interrupted', failed: 'Needs attention'
-  };
-  delivery.textContent = label || labels[state] || '';
+  // The STATE is the wire value -- CSS colours the pill from data-state.
+  delivery.textContent = label
+    || (state ? t('ui.chat.delivery.' + (state === 'failed' ? 'needs_attention' : state)) : '')
+    || '';
   delivery.dataset.state = state || '';
   message.dataset.deliveryState = state || '';
 }
@@ -1820,7 +1825,7 @@ function _retryUserMessage(message){
     return;
   }
   if (!wsReady) {
-    _setUserMessageState(message, 'interrupted', 'Waiting for connection');
+    _setUserMessageState(message, 'interrupted', t('ui.chat.delivery.waiting'));
     toastLong(t('ui.chat.toast.retry_when_live'));
     return;
   }
@@ -1833,7 +1838,8 @@ function _retryUserMessage(message){
     ws.send(JSON.stringify(payload));
     _activeOutboundMessage = message;
     _setUserMessageState(message, 'working', 'Retrying');
-    updateProcessing('authorization', 'Retrying analysis', 'Resending your request through the governed query pipeline.');
+    updateProcessing('authorization', t('ui.chat.delivery.retrying'),
+                     t('ui.chat.delivery.retrying_detail'));
   } catch (_) {
     _setUserMessageState(message, 'interrupted', t('ui.chat.retry_when_connected'));
     toastLong(t('ui.chat.toast.send_failed_available'));
@@ -1846,7 +1852,7 @@ function appendBot(rawText, opts = {}){
   const diagnosticHtml = renderDiagnosticCard(rawText);
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">Copy answer</button></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">${t('ui.chat.card.copy_answer')}</button></div></div>`;
   if (diagnosticHtml) {
     const bubbleNode = div.querySelector('.msg-bubble');
     if (bubbleNode) bubbleNode.outerHTML = diagnosticHtml;
@@ -1861,7 +1867,7 @@ function appendBot(rawText, opts = {}){
       setTimeout(() => e.currentTarget.textContent = prev, 1400);
       toast(t('ui.chat.toast.copied'));
     } else {
-      toast('Copy failed');
+      toast(t('ui.chat.toast.copy_failed'));
     }
   });
   thread().appendChild(div);
@@ -2544,7 +2550,7 @@ function buildChartOption(payload) {
         silent: true, tooltip: { show: false }, legendHoverLink: false,
       },
       {
-        name: '95% interval', type: 'line', stack: 'fcband', stackStrategy: 'all',
+        name: t('ui.chat.chart.interval'), type: 'line', stack: 'fcband', stackStrategy: 'all',
         data: bandSpan,
         lineStyle: { opacity: 0 }, symbol: 'none', silent: true,
         areaStyle: { color: (colors[1] || '#f59e0b') + '26' },
@@ -2580,12 +2586,13 @@ function buildChartOption(payload) {
           const row = rows[arr[0]?.dataIndex] || {};
           const band = (isFc && row.forecast_low != null && row.forecast_high != null)
             ? `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${(colors[1]||'#f59e0b')}55;margin-right:5px"></span>`
-              + `95% interval: <strong>${valueFmt(_chartNumber(row.forecast_low), metricKey)}`
+              + `${escHtml(t('ui.chat.chart.interval'))}: <strong>${valueFmt(_chartNumber(row.forecast_low), metricKey)}`
               + ` – ${valueFmt(_chartNumber(row.forecast_high), metricKey)}</strong>`
             : '';
           return `<div style="font-weight:700;margin-bottom:4px">${escHtml(lbl)}${isFc ? ' <em style="opacity:.6">(forecast)</em>' : ''}</div>`
             + arr.filter(p => p.value != null
-                && p.seriesName !== 'band-base' && p.seriesName !== '95% interval').map(p =>
+                && p.seriesName !== 'band-base'
+                && p.seriesName !== t('ui.chat.chart.interval')).map(p =>
               `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>`
               + `${escHtml(String(p.seriesName||''))}: <strong>${valueFmt(p.value, metricKey)}</strong>`
             ).concat(band ? [band] : []).join('<br/>');
@@ -2593,7 +2600,8 @@ function buildChartOption(payload) {
       },
       legend: {
         top: 4, left: 56, textStyle: { color: axisColor, fontSize: 11 }, icon: 'roundRect',
-        data: ['Actual', 'Forecast', ...(hasBand ? ['95% interval'] : [])],
+        data: [t('ui.chat.chart.actual'), t('ui.chat.chart.forecast'),
+               ...(hasBand ? [t('ui.chat.chart.interval')] : [])],
       },
       xAxis: {
         type: 'category', data: allLabels,
@@ -2620,7 +2628,7 @@ function buildChartOption(payload) {
       },
       series: [
         {
-          name: 'Actual', type: 'line', smooth: true,
+          name: t('ui.chat.chart.actual'), type: 'line', smooth: true,
           data: histVals,
           symbolSize: historical.length <= 24 ? 5 : 0,
           lineStyle: { width: 2.5, color: colors[0] },
@@ -2631,7 +2639,7 @@ function buildChartOption(payload) {
           connectNulls: false,
         },
         {
-          name: 'Forecast', type: 'line', smooth: true,
+          name: t('ui.chat.chart.forecast'), type: 'line', smooth: true,
           data: fcVals,
           symbolSize: 6,
           lineStyle: { width: 2.5, color: colors[1] || '#f59e0b', type: 'dashed' },
@@ -2714,7 +2722,7 @@ function buildChartOption(payload) {
         trigger: 'item',
         formatter: p => {
           if (p.seriesType === 'scatter') {
-            return `<strong>Outlier</strong>: ${valueFmt(p.value[1], yKey)}`;
+            return `<strong>${escHtml(t('ui.chat.chart.outlier'))}</strong>: ${valueFmt(p.value[1], yKey)}`;
           }
           const r = rows[p.dataIndex] ?? {};
           return `<strong>${escHtml(groups[p.dataIndex] ?? '')}</strong><br/>`
@@ -2971,7 +2979,7 @@ function _wireChartDrillClick(chart, payload) {
 function renderChartInto(chartEl, payload){
   if (!chartEl || !payload) return;
   if (!window.echarts) {
-    chartEl.innerHTML = `<div class="msg-system" style="margin:0">Chart library failed to load. Refresh the page and try again.</div>`;
+    chartEl.innerHTML = `<div class="msg-system" style="margin:0">${escHtml(t('ui.chat.err.chart_library'))}</div>`;
     return;
   }
   try {
@@ -2992,7 +3000,7 @@ function renderChartInto(chartEl, payload){
       window.addEventListener('resize', () => { try { chart.resize(); } catch {} });
     }
   } catch (err) {
-    chartEl.innerHTML = `<div class="msg-system" style="margin:0">Unable to render chart.</div>`;
+    chartEl.innerHTML = `<div class="msg-system" style="margin:0">${escHtml(t('ui.chat.err.chart_render'))}</div>`;
     console.error('Chart render failed', err, payload);
   }
 }
@@ -3008,20 +3016,16 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   const pal  = stored().color_palette || 'default';
 
   // Type toggle
-  const TYPES = [
-    { k:'bar',     label:'Bar' },
-    { k:'line',    label:'Line' },
-    { k:'area',    label:'Area' },
-    { k:'pie',     label:'Pie' },
-    { k:'donut',   label:'Donut' },
-    { k:'scatter', label:'Scatter' },
-  ];
+  const TYPES = ['bar', 'line', 'area', 'pie', 'donut', 'scatter']
+    .map(k => ({k, label: enumLabel('charttype', k)}));
   const allowed = Array.isArray(stored().renderable_types) && stored().renderable_types.length
     ? stored().renderable_types
-    : (Array.isArray(stored().allowed_types) ? stored().allowed_types : TYPES.map(t => t.k));
-  const visibleTypes = TYPES.filter(t => allowed.includes(t.k));
-  const typeHtml = visibleTypes.map(t =>
-    `<button type="button" class="ctt-btn${ct===t.k?' ctt-active':''}" data-type="${t.k}">${t.label}</button>`
+    : (Array.isArray(stored().allowed_types) ? stored().allowed_types : TYPES.map(x => x.k));
+  // `x`, not `t`: t is the translator in this scope, and shadowing it inside a
+  // callback is how a lookup silently becomes whatever the callback iterates.
+  const visibleTypes = TYPES.filter(x => allowed.includes(x.k));
+  const typeHtml = visibleTypes.map(x =>
+    `<button type="button" class="ctt-btn${ct===x.k?' ctt-active':''}" data-type="${x.k}">${escHtml(x.label)}</button>`
   ).join('');
 
   // Palette switcher: small gradient swatches
@@ -3036,7 +3040,7 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   wrapEl.insertAdjacentHTML('beforeend', `
     <div class="chart-type-toggle" data-ctrl-for="${chartId}">${typeHtml}</div>
     <div class="chart-palette-row" data-ctrl-for="${chartId}">
-      <span class="cpt-label">Palette</span>${palHtml}
+      <span class="cpt-label">${t('ui.chat.chart.palette')}</span>${palHtml}
     </div>`);
 
   // Wire events
@@ -3076,7 +3080,7 @@ function sendAnalysisAction(action, context, label, resultId){
   }
   appendSystem(`Running ${label.toLowerCase()}…`);
   setProcessing(true);
-  updateProcessing('analysis', label, 'Using the returned result only — no new query is being run.');
+  updateProcessing('analysis', label, t('ui.chat.err.returned_only'));
   const timer = setTimeout(() => {
     if (window._activeAnalysisAction?.id !== actionId) return;
     if (button) {
@@ -3459,7 +3463,7 @@ function _mountResultChat(cardEl, rcId) {
   function _rcSend() {
     const q = input.value.trim();
     if (!q) return;
-    if (!wsReady) { _rcAppend('error', 'Connection not ready. Please wait.'); return; }
+    if (!wsReady) { _rcAppend('error', t('ui.chat.err.connection_not_ready')); return; }
 
     // Render user bubble
     _rcAppend('user', q);
@@ -3518,7 +3522,7 @@ function _mountResultChat(cardEl, rcId) {
         <table class="rc-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
         <div class="rc-foot">
           <span>${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}</span>
-          <button id="${csvId}" class="rc-csv-btn" title="Download CSV">
+          <button id="${csvId}" class="rc-csv-btn" title="${t('ui.chat.table.download_csv')}">
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>
             CSV
           </button>
@@ -3588,7 +3592,7 @@ function _mountResultChat(cardEl, rcId) {
       }
 
       if (!rows.length) {
-        _rcAppend('bot', 'No rows matched that query in the current result.');
+        _rcAppend('bot', t('ui.chat.err.no_rows_matched'));
         thread.scrollTop = thread.scrollHeight;
         return;
       }
@@ -3618,7 +3622,7 @@ function _mountResultChat(cardEl, rcId) {
       }
     },
     onError(msg) {
-      const content = msg.content || 'Something went wrong.';
+      const content = msg.content || t('ui.chat.err.generic');
       // Render newlines as line-breaks (hint messages contain \n)
       const div = document.createElement('div');
       div.className = 'rc-bubble bot error';
@@ -3632,9 +3636,9 @@ function _mountResultChat(cardEl, rcId) {
       const wrap = document.createElement('div');
       wrap.className = 'rc-clarification';
       const options = Array.isArray(msg.options) ? msg.options : [];
-      wrap.innerHTML = `<div class="rc-clarification-prompt">${escHtml(msg.prompt || 'Please clarify the format.')}</div>`
+      wrap.innerHTML = `<div class="rc-clarification-prompt">${escHtml(msg.prompt || t('ui.chat.err.clarify_format'))}</div>`
         + `<div class="rc-clarification-options">${options.map((option, index) =>
-          `<button type="button" class="rc-clarification-option" data-rc-option="${index}">${escHtml(option.label || option.value || 'Select')}</button>`
+          `<button type="button" class="rc-clarification-option" data-rc-option="${index}">${escHtml(option.label || option.value || t('ui.chat.card.select'))}</button>`
         ).join('')}</div>`;
       wrap.querySelectorAll('[data-rc-option]').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3705,7 +3709,7 @@ function renderArtifactPreview(msg){
   const tabs = [];
   const panels = [];
   if (hasChart || hasKpi) {
-    tabs.push('<button type="button" class="artifact-tab active" data-artifact-tab="visual">Visual</button>');
+    tabs.push('<button type="button" class="artifact-tab active" data-artifact-tab="visual">${t('ui.chat.card.visual')}</button>');
     let visual = '';
     if (hasKpi) {
       const kpi = msg.kpi || {};
@@ -3727,7 +3731,7 @@ function renderArtifactPreview(msg){
   }
   const dashboardAction = dashboard
     ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">Open ${escHtml(dashboard.name)}</a>`
-    : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">Add to dashboard</button>');
+    : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">' + t('ui.chat.chart.pin') + '</button>');
   const root = document.getElementById('artifactBody');
   root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || t('ui.chat.artifact.governed_note'))}</p></div><div class="artifact-tabs">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
   root.querySelectorAll('.artifact-tab').forEach(btn => btn.addEventListener('click', () => _activateArtifactTab(root, btn.dataset.artifactTab)));
@@ -3903,7 +3907,7 @@ function appendAssistantResponse(msg, opts = {}){
       + (_insights.length
           // .section-label already exists (11px/850/uppercase) and was used
           // only by the analysis card. This is what it is for.
-          ? `<div class="section-label answer-insights-label">Key insights</div>`
+          ? `<div class="section-label answer-insights-label">${t('ui.chat.card.key_insights')}</div>`
             + _insights.map(_noteRow).join('')
           : '')
       + `</div>`
@@ -3928,7 +3932,7 @@ function appendAssistantResponse(msg, opts = {}){
 
   const dashboardToken = msg.pin_token || msg.chart?.pin_token || '';
   const pinBtnHtml = (dashboardToken && (hasChart || msg.kpi || hasData))
-    ? '<button class="msg-action" type="button" data-pin="chart"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>Add to dashboard</button>'
+    ? '<button class="msg-action" type="button" data-pin="chart"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>' + escHtml(t('ui.chat.chart.pin')) + '</button>'
     : '';
 
   // Follow-up suggestions — result-aware chips generated from the data brief
@@ -3939,7 +3943,7 @@ function appendAssistantResponse(msg, opts = {}){
         <div class="suggestions follow-up-chips">
           ${followUpSugs.map(q => `<button class="suggestion-chip follow-up-chip" type="button"
             data-follow-up="${escHtml(q)}" title="${escHtml(q)}">
-            <span class="suggestion-card-copy"><small>Follow-up</small><strong>${escHtml(q)}</strong></span>
+            <span class="suggestion-card-copy"><small>${t('ui.chat.card.follow_up')}</small><strong>${escHtml(q)}</strong></span>
           </button>`).join('')}
         </div>
       </div>`
@@ -3949,7 +3953,7 @@ function appendAssistantResponse(msg, opts = {}){
   const _qid = trust.question_id || '';
   const feedbackHtml = (FEEDBACK_ENABLED && _qid)
     ? `<div class="feedback-row">
-        <span class="feedback-label">Was this helpful?</span>
+        <span class="feedback-label">${t('ui.chat.card.helpful')}</span>
         <button class="feedback-btn up" type="button" title="${t('ui.chat.feedback.up')}" aria-label="${t('ui.chat.feedback.up')}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904M6.633 10.25H3.75a1.5 1.5 0 00-1.5 1.5v7.5a1.5 1.5 0 001.5 1.5h2.154"/></svg></button>
         <button class="feedback-btn down" type="button" title="${t('ui.chat.feedback.down')}" aria-label="${t('ui.chat.feedback.not_helpful')}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.367 13.75c-.806 0-1.533.446-2.031 1.08a9.041 9.041 0 01-2.861 2.4c-.723.384-1.35.956-1.653 1.715a4.498 4.498 0 00-.322 1.672V21a.75.75 0 01-.75.75 2.25 2.25 0 01-2.25-2.25c0-1.152.26-2.243.723-3.218.266-.558-.107-1.282-.725-1.282H4.372c-1.026 0-1.945-.694-2.054-1.715A11.95 11.95 0 014.967 4.236c.388-.482.987-.729 1.605-.729h4.948c.483 0 .964.078 1.423.23l3.114 1.04c.459.152.94.23 1.423.23h2.616M17.367 13.75h2.883a1.5 1.5 0 001.5-1.5v-7.5a1.5 1.5 0 00-1.5-1.5h-2.154"/></svg></button>
         <span class="feedback-done" style="display:none"></span>
@@ -3984,7 +3988,7 @@ function appendAssistantResponse(msg, opts = {}){
     ? `<div class="result-exclusion-proof">
         <div><strong>Local ${escHtml(String(localOperation.operation || 'exclusion'))}</strong><span>${escHtml(String(localOperation.rows_after ?? ''))} rows in the derived result</span></div>
         <div><strong>${plannerProofTitle}</strong><span>${plannerProofDetail}</span></div>
-        <div><strong>No database query</strong><span>Executed in the governed DuckDB session cache</span></div>
+        <div><strong>${t('ui.chat.trust.no_db_query')}</strong><span>${t('ui.chat.card.duckdb')}</span></div>
       </div>`
     : '';
   const citations = Array.isArray(msg.citations) ? msg.citations : [];
@@ -4041,7 +4045,7 @@ function appendAssistantResponse(msg, opts = {}){
           ${bodyHtml}
           <div class="msg-actions">
             ${nextActionsHtml}
-            <button class="msg-action" type="button" data-copy="result">Copy result</button>
+            <button class="msg-action" type="button" data-copy="result">${t('ui.chat.card.copy_result')}</button>
             ${pinBtnHtml}
             <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">${t('ui.chat.followup.open')}</button>
           </div>
@@ -4071,7 +4075,8 @@ function appendAssistantResponse(msg, opts = {}){
   const rcPanelEl = div.querySelector(`#${rcId}`);
   const rcHintEl = rcPanelEl ? rcPanelEl.querySelector('.rc-hint') : null;
   if (rcPanelEl && rcHintEl) {
-    rcHintEl.insertAdjacentHTML('beforebegin', '<div class="rc-scope-strip"><span class="rc-scope-chip">Returned rows first</span><span class="rc-scope-chip">Database fallback if needed</span></div>');
+    rcHintEl.insertAdjacentHTML('beforebegin', '<div class="rc-scope-strip"><span class="rc-scope-chip">' + escHtml(t('ui.chat.card.rows_first'))
+       + '</span><span class="rc-scope-chip">' + escHtml(t('ui.chat.card.db_fallback')) + '</span></div>');
     rcHintEl.textContent = t('ui.chat.followup.hint');
   }
   div.querySelector('[data-open-artifact]')?.addEventListener('click', () => renderArtifactPreview(msg));
@@ -4180,7 +4185,7 @@ function appendAssistantResponse(msg, opts = {}){
         } else {
           toast(data.detail || t('ui.chat.toast.feedback_failed'));
         }
-      } catch { toast('Could not save feedback'); }
+      } catch { toast(t('ui.chat.toast.feedback_failed')); }
     };
 
     // Thumbs-up: immediate submit, no panel
@@ -4233,7 +4238,7 @@ function appendAnalysisResponse(msg, opts = {}){
         ${analysisFollowUps.map(q => `<button class="suggestion-chip follow-up-chip" type="button">${escHtml(q)}</button>`).join('')}
       </div>`
     : '';
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || t('ui.chat.card.analysis'))}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">${t('ui.chat.card.next_step_label')}</span>${escHtml(msg.next_step)}</div>` : ''}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">${t('ui.chat.card.copy_analysis')}</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
     div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
@@ -4330,12 +4335,12 @@ function renderClarificationPrompt(data, opts = {}){
     Array.isArray(opt.business_suggestions) ? opt.business_suggestions : []
   ).map((value) => String(value || '').trim()).filter(Boolean))];
   const question = data.question || (options.length
-    ? 'Please choose one option so I can continue.'
-    : 'Please add the detail I need so I can continue.');
+    ? t('ui.chat.clar.choose_one')
+    : t('ui.chat.clar.add_detail'));
   div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card" data-pending-id="${escHtml(data.pending_id || '')}"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
   const wrap = div.querySelector('.clarification-options');
   const card = div.querySelector('.clarification-card');
-  _markActiveOutbound('complete', 'Clarification requested');
+  _markActiveOutbound('complete', t('ui.chat.clar.requested'));
   options.forEach((opt) => {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -4351,13 +4356,13 @@ function renderClarificationPrompt(data, opts = {}){
     const form = document.createElement('div');
     form.className = 'clarification-freeform';
     const fieldId = `clarification-${String(data.pending_id || 'reply').replace(/[^A-Za-z0-9_-]/g, '')}`;
-    form.innerHTML = `<label for="${fieldId}">Your answer</label><div class="clarification-input-row"><textarea id="${fieldId}" rows="2" maxlength="500" autocomplete="off" placeholder="Add the detail QueryBot needs to continue"></textarea><button type="button" class="clarification-submit">Continue</button></div><div class="clarification-business-suggestions" role="listbox" aria-label="Suggested business dates"></div><div class="clarification-help">Press Enter to continue · Shift + Enter for a new line</div>`;
+    form.innerHTML = `<label for="${fieldId}">${t('ui.chat.clar.your_answer')}</label><div class="clarification-input-row"><textarea id="${fieldId}" rows="2" maxlength="500" autocomplete="off" placeholder="${t('ui.chat.clar.add_detail_label')}"></textarea><button type="button" class="clarification-submit">${t('ui.chat.clar.continue')}</button></div><div class="clarification-business-suggestions" role="listbox" aria-label="${t('ui.chat.clar.suggested_dates')}"></div><div class="clarification-help">${t('ui.chat.clar.help')}</div>`;
     const input = form.querySelector('textarea');
     const submit = form.querySelector('.clarification-submit');
     const suggestionList = form.querySelector('.clarification-business-suggestions');
     if (hasChoices) {
-      form.querySelector('label').textContent = 'Search by business date name';
-      input.placeholder = 'For example: invoice date';
+      form.querySelector('label').textContent = t('ui.chat.clar.search_dates');
+      input.placeholder = t('ui.chat.clar.date_example');
     }
     const renderBusinessSuggestions = () => {
       if (!hasChoices || !businessSuggestions.length) {
@@ -4414,11 +4419,11 @@ function renderClarificationPrompt(data, opts = {}){
 function _submitClarification(data, answer, optionId, card){
   const text = String(answer || '').trim();
   if (!text) {
-    toast('Add an answer so QueryBot can continue');
+    toast(t('ui.chat.clar.needs_answer'));
     return;
   }
   if (!wsReady) {
-    toastLong('Connection lost. Your clarification is still here; send it after reconnection.');
+    toastLong(t('ui.chat.clar.offline'));
     return;
   }
   // A clarification prompt is itself the server's authorization to answer.
@@ -4427,7 +4432,7 @@ function _submitClarification(data, answer, optionId, card){
   // pending_id and server-side pending record remain the authority, and the
   // controls are disabled immediately below to prevent duplicate submits.
   if (processingActive && agentRunState !== 'waiting_for_user') {
-    toast('QueryBot is still finishing the current step; applying your clarification now.');
+    toast(t('ui.chat.clar.busy'));
     setAgentRunState('waiting_for_user');
   }
   card?.querySelectorAll('button, textarea').forEach((control) => control.disabled = true);
@@ -4437,11 +4442,11 @@ function _submitClarification(data, answer, optionId, card){
   const userMessage = appendUser(text, { deliveryState:'working', payload });
   _activeOutboundMessage = userMessage;
   setAgentRunState('running');
-  _updateStageSteps('authorization', 'Resolving clarification', 'Applying your clarification and continuing the governed query.');
+  _updateStageSteps('authorization', t('ui.chat.clar.resolving'), t('ui.chat.clar.resolving_detail'));
   try {
     ws.send(JSON.stringify(payload));
   } catch (_) {
-    _setUserMessageState(userMessage, 'interrupted', 'Answer again when connected');
+    _setUserMessageState(userMessage, 'interrupted', t('ui.chat.clar.answer_when_connected'));
     card?.querySelectorAll('button, textarea').forEach((control) => control.disabled = false);
     setAgentRunState('waiting_for_user');
   }
@@ -4456,17 +4461,27 @@ function updateSchemaModeCopy(){
   const label = document.getElementById("activeSchemaLabel");
   const composerHint = document.getElementById("schemaComposerHint");
   const input = document.getElementById("input");
-  if (label) label.textContent = _activeSchema ? `${_activeSchema} schema` : "All schemas";
+  if (label) label.textContent = _activeSchema
+    ? t('ui.chat.schema_named', {schema: _activeSchema})
+    : t('ui.chat.all_schemas');
   if (_activeSchema) {
     if (notice) notice.classList.add("locked");
-    if (text) text.innerHTML = `<strong>${escHtml(_activeSchema)} schema locked.</strong> QueryBot will retrieve context and generate SQL only from this selected schema.`;
-    if (composerHint) composerHint.textContent = `Using ${_activeSchema} schema. Press Enter to send, Shift + Enter for a new line.`;
-    if (input) input.placeholder = `Ask anything about ${_activeSchema} data...`;
+    if (text) text.innerHTML = '<strong>'
+      + escHtml(t('ui.chat.schema_locked_title', {schema: _activeSchema})) + '</strong> '
+      + escHtml(t('ui.chat.schema_locked_body'));
+    if (composerHint) composerHint.textContent =
+      t('ui.chat.schema_locked_hint', {schema: _activeSchema});
+    if (input) input.placeholder = t('ui.chat.schema_locked_placeholder', {schema: _activeSchema});
   } else {
     if (notice) notice.classList.remove("locked");
-    if (text) text.innerHTML = "<strong>Multi-schema mode.</strong> QueryBot will search all schemas you can access and may ask for clarification if more than one schema matches.";
-    if (composerHint) composerHint.textContent = "All schemas active. Select a schema when you want a stricter answer.";
-    if (input) input.placeholder = "Ask anything about your data...";
+    // The same two ids the markup renders: this function kept its own copy of
+    // both, and they had already drifted from it.
+    if (text) text.innerHTML = '<strong>' + escHtml(t('ui.chat.multi_schema_title'))
+      + '</strong> ' + escHtml(t('ui.chat.multi_schema_body'));
+    if (composerHint) composerHint.textContent = t('ui.chat.hint_all_schemas');
+    // The same id the markup uses: this reset carried its own copy, and the
+    // two had already drifted to three dots against an ellipsis.
+    if (input) input.placeholder = t('ui.chat.composer_placeholder');
   }
 }
 
@@ -4591,7 +4606,8 @@ function sendMessage(tableHint){
   inp.style.height = 'auto';
   _clearComposerDraft();
   updateCharCount();
-  updateProcessing('authorization', 'Starting analysis', 'Sending your request to the backend.');
+  updateProcessing('authorization', t('ui.chat.delivery.starting'),
+                   t('ui.chat.delivery.starting_detail'));
   const sug = document.getElementById('suggestionsWrap'); if (sug) sug.style.display = 'none';
 }
 function sendSuggestion(btn){
@@ -4801,7 +4817,7 @@ function showMascotError() {
   const row = document.getElementById('processingRow');
   if (row) row.classList.add('active');
   const sl = document.getElementById('stageLabel');
-  if (sl) sl.textContent = 'Something went wrong';
+  if (sl) sl.textContent = t('ui.chat.err.generic').replace(/\.$/, '');
   window._mascotInErrorState = true;
 }
 
@@ -5041,19 +5057,19 @@ function connect(){
         // message to restore the composer; that frame can be delayed/lost.
         setAgentRunState(msgContent.startsWith('❌') ? 'failed' : 'waiting_for_user', msg);
         if (msgContent.startsWith('❌')) {
-          _markActiveOutbound('failed', 'Needs attention');
+          _markActiveOutbound('failed', t('ui.chat.delivery.needs_attention'));
           showMascotError();
           // Show contextual error on the composer mascot
           const isDbPause = msgContent.includes('40613') || msgContent.includes('not currently available');
           const isConn    = msgContent.includes('connection') || msgContent.includes('timeout');
           const errMsg    = isDbPause
-            ? 'Database is waking up — please try again in a moment'
+            ? t('ui.chat.err.db_waking')
             : isConn
-              ? 'Connection issue — please try again'
-              : 'Something went wrong — try rephrasing or retry';
+              ? t('ui.chat.err.connection')
+              : t('ui.chat.err.generic_rephrase');
           if (window._composerMascotError) window._composerMascotError(errMsg);
         } else {
-          _markActiveOutbound('complete', 'Clarification requested');
+          _markActiveOutbound('complete', t('ui.chat.clar.requested'));
         }
         // Render immediately: the delay this replaced existed only so a
         // mascot reaction could play on a visually-hidden element.
@@ -5086,12 +5102,12 @@ function connect(){
       if (window._activeAnalysisAction && (!msg.action_id || msg.action_id === window._activeAnalysisAction.id)) {
         window._activeAnalysisAction.acknowledged = true;
         if (window._activeAnalysisAction.button) {
-          window._activeAnalysisAction.button.textContent = 'Finishing...';
+          window._activeAnalysisAction.button.textContent = t('ui.chat.action.finishing');
         }
         updateProcessing(
           'analysis',
           window._activeAnalysisAction.label,
-          'The governed action was accepted and is being completed.'
+          t('ui.chat.err.action_accepted')
         );
       }
     } else if (msg.type === 'assistant_response') {
@@ -5160,8 +5176,8 @@ function connect(){
       // The typing indicator is cleared by the server's separate typing:false message.
       // We still need to surface the error so the user knows what happened.
       const errDetail = msg.detail ? ` (${msg.detail})` : '';
-      _markActiveOutbound('failed', 'Action failed');
-      appendSystem(`⚠ ${msg.content || 'Action could not be completed.'}${errDetail}`);
+      _markActiveOutbound('failed', t('ui.chat.err.action_failed'));
+      appendSystem(`⚠ ${msg.content || t('ui.chat.err.action_incomplete')}${errDetail}`);
     } else if (msg.type === 'error') {
       setAgentRunState('failed', msg);
       // The chip ran and did not work. Recording nothing here meant a failure
@@ -5171,8 +5187,8 @@ function connect(){
       if (_pendingSuggestion) _genieEvent('executed', _pendingSuggestion);
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
-      if (window._composerMascotError) window._composerMascotError('Something went wrong — please retry');
-      _markActiveOutbound('failed', 'Needs attention');
+      if (window._composerMascotError) window._composerMascotError(t('ui.chat.err.generic_retry'));
+      _markActiveOutbound('failed', t('ui.chat.delivery.needs_attention'));
       appendSystem(msg.content);
     } else if (msg.type === 'result_chat_typing') {
       _rcPanels[msg.result_id]?.onTyping(!!msg.active);
@@ -5194,7 +5210,7 @@ function connect(){
     if (queryWasActive) _markActiveOutbound('interrupted', t('ui.chat.interrupted_retry'));
     setAgentRunState('idle');
     if ([4001, 4003, 4004].includes(evt.code)) {
-      const note = evt.code === 4004 ? 'Chat is not enabled for this workspace.' : 'Your session is invalid or no longer authorized.';
+      const note = evt.code === 4004 ? t('ui.chat.err.not_enabled') : t('ui.chat.err.session_invalid');
       setConnectionState('Unavailable', note);
       appendSystem(t('ui.chat.system.session_unavailable'));
       return;
@@ -5226,15 +5242,15 @@ function _historyDate(item) {
 
 function _historyGroup(item) {
   const date = _historyDate(item);
-  if (!date) return 'Older';
+  if (!date) return t('ui.chat.hist.older');
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const itemDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const days = Math.round((today - itemDay) / 86400000);
-  if (days <= 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  if (days <= 7) return 'Previous 7 days';
-  return 'Older';
+  if (days <= 0) return t('ui.chat.hist.today');
+  if (days === 1) return t('ui.chat.hist.yesterday');
+  if (days <= 7) return t('ui.chat.hist.last_week');
+  return t('ui.chat.hist.older');
 }
 
 function _historyTime(item) {
@@ -5267,7 +5283,9 @@ function refreshHistory() {
   const listEl = document.getElementById('historyList');
   const panel = document.getElementById('historyPanel');
   panel && (panel.dataset.state = 'loading');
-  if (listEl) listEl.innerHTML = '<div class="hp-empty hp-loading" id="historyEmpty"><span class="hp-state-dot" aria-hidden="true"></span>Refreshing threads...</div>';
+  if (listEl) listEl.innerHTML = '<div class="hp-empty hp-loading" id="historyEmpty">'
+    + '<span class="hp-state-dot" aria-hidden="true"></span>'
+    + escHtml(t('ui.chat.hist.refreshing')) + '</div>';
   _historyLoaded = false;
   loadHistory();
 }
@@ -5293,7 +5311,8 @@ async function loadHistory() {
         listEl.appendChild(emptyEl);
       }
       emptyEl.classList.remove('hp-loading');
-      emptyEl.innerHTML = 'No threads yet.<br><span style="font-size:var(--font-2xs)">Your recent questions will appear here.</span>';
+      emptyEl.innerHTML = escHtml(t('ui.chat.hist.none_yet'))
+        + '<br><span style="font-size:var(--font-2xs)">' + escHtml(t('ui.chat.hist.empty')) + '</span>';
       return;
     }
     if (emptyEl) emptyEl.remove();
@@ -5321,7 +5340,9 @@ async function loadHistory() {
     }).join('');
   } catch(e) {
     panel && (panel.dataset.state = 'error');
-    listEl.innerHTML = '<div class="hp-empty">Could not load threads.<br><button type="button" class="hp-retry" onclick="refreshHistory()">Try again</button></div>';
+    listEl.innerHTML = '<div class="hp-empty">' + escHtml(t('ui.chat.hist.failed'))
+      + '<br><button type="button" class="hp-retry" onclick="refreshHistory()">'
+      + escHtml(t('ui.chat.hist.try_again')) + '</button></div>';
     console.warn('History load failed:', e);
   }
 }
@@ -5393,7 +5414,7 @@ function filterHistory(q) {
     if (list) list.appendChild(noRes);
   }
   if (q && visible === 0) {
-    noRes.textContent = 'No queries matching "' + q + '"';
+    noRes.textContent = t('ui.chat.hist.no_match', {term: q});
     noRes.style.display = '';
   } else {
     noRes.style.display = 'none';

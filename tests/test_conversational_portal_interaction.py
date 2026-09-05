@@ -14,13 +14,13 @@ def test_open_ended_clarification_has_a_free_text_reply_path():
     assert "clarification-freeform" in CHAT
     assert "payload.text = text" in CHAT
     assert "type:'clarification_response'" in CHAT
-    assert "Shift + Enter for a new line" in CHAT
+    assert "Shift + Enter for a new line" in _catalogue()["ui.chat.clar.help"]
 
 
 def test_ranked_date_choices_keep_a_custom_business_date_input_below_them():
     assert "options.some((opt) => Boolean(opt.allow_free_text))" in CHAT
-    assert "Search by business date name" in CHAT
-    assert "For example: invoice date" in CHAT
+    assert "Search by business date name" in _catalogue()["ui.chat.clar.search_dates"]
+    assert "For example: invoice date" in _catalogue()["ui.chat.clar.date_example"]
     assert "business_suggestions" in CHAT
     assert "clarification-business-suggestion" in CHAT
     assert ".clarification-business-suggestion" in CSS
@@ -233,7 +233,8 @@ def test_result_actions_acknowledge_complete_download_and_timeout_visibly():
     assert "_bound_action_payload(_cp_result)" in WEBHOOKS
     assert "_bound_action_payload(insight)" in WEBHOOKS
     assert 'resolved.setdefault("action_id", action_id)' in WEBHOOKS
-    assert "The governed action was accepted and is being completed." in CHAT
+    assert _catalogue()["ui.chat.err.action_accepted"] == \
+        "The governed action was accepted and is being completed."
 
 
 def test_only_live_server_clarification_is_actionable_after_restore():
