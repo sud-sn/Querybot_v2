@@ -870,6 +870,264 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "{opening} Aucune catégorie n'a bougé entre les deux périodes.",
     },
 
+    # ── The zero-latency analysis card ───────────────────────────────────────
+    #
+    # build_analysis_response, used when no model call is available. Its titles
+    # live under analysis.title.* beside the model path's, so the two cards
+    # cannot end up calling the same action two different things.
+    #
+    # The scope phrase is the reason this needed more than translation.
+    # The card said `scope.get("badge").lower()` mid-sentence -- "This result
+    # shows full distribution." French cannot make an inline noun phrase by
+    # lowercasing a title-case badge: it needs the article, and the article
+    # carries the gender. So each scope has an INLINE form of its own,
+    # alongside the badge and the note it already had.
+    "answer.scope.returned.inline": {
+        "en": "the returned rows", "fr": "les lignes renvoyées",
+    },
+    "answer.scope.top_one.inline": {
+        "en": "the top-ranked row only", "fr": "uniquement la ligne la mieux classée",
+    },
+    "answer.scope.top_n.inline": {
+        "en": "the top {n} rows only", "fr": "uniquement les {n} premières lignes",
+    },
+    "answer.scope.full_distribution.inline": {
+        "en": "the full returned distribution", "fr": "la distribution complète renvoyée",
+    },
+    "answer.scope.full_series.inline": {
+        "en": "the full returned series", "fr": "la série complète renvoyée",
+    },
+    "answer.scope.preview.inline": {
+        "en": "a capped preview of the rows", "fr": "un aperçu plafonné des lignes",
+    },
+    "answer.scope.filtered_subset.inline": {
+        "en": "a filtered subset of the rows", "fr": "un sous-ensemble filtré des lignes",
+    },
+
+    "analysis.title.explain_result": {"en": "Result explanation", "fr": "Explication du résultat"},
+    "analysis.title.detailed": {"en": "Detailed analysis", "fr": "Analyse détaillée"},
+    "analysis.title.comparison": {"en": "Comparison view", "fr": "Vue comparative"},
+    "analysis.title.framing": {"en": "Business framing", "fr": "Mise en perspective métier"},
+    "analysis.title.forecast": {"en": "Forecast", "fr": "Prévision"},
+    "analysis.title.next_step": {"en": "Recommended next step", "fr": "Prochaine étape recommandée"},
+    "analysis.title.unavailable": {
+        "en": "Not available for this workspace",
+        "fr": "Indisponible pour cet espace de travail",
+    },
+    "analysis.regulated_body": {
+        "en": "This workspace is configured for a regulated industry. To keep protected data from ever reaching the AI model, the assistant only writes SQL queries here — it doesn't generate follow-up analysis, explanations, or comparisons from results.",
+        "fr": "Cet espace de travail est configuré pour un secteur réglementé. Pour qu'aucune donnée protégée n'atteigne le modèle, l'assistant se limite ici à écrire des requêtes SQL — il ne produit ni analyse complémentaire, ni explication, ni comparaison à partir des résultats.",
+    },
+
+    # Explain.
+    "analysis.explain.series": {
+        "en": "This result shows {scope}. The latest returned period is {period} at {value}.",
+        "fr": "Ce résultat porte sur {scope}. La dernière période renvoyée est {period}, à {value}.",
+    },
+    "analysis.explain.direction_up": {
+        "en": "Overall direction across the returned series: up ({pct})",
+        "fr": "Orientation générale de la série renvoyée : à la hausse ({pct})",
+    },
+    "analysis.explain.direction_down": {
+        "en": "Overall direction across the returned series: down ({pct})",
+        "fr": "Orientation générale de la série renvoyée : à la baisse ({pct})",
+    },
+    "analysis.explain.direction_flat": {
+        "en": "Overall direction across the returned series: flat ({pct})",
+        "fr": "Orientation générale de la série renvoyée : stable ({pct})",
+    },
+    "analysis.explain.ranking": {
+        "en": "This result shows {scope}. {leader} ranks first at {value}.",
+        "fr": "Ce résultat porte sur {scope}. {leader} arrive en première position, à {value}.",
+    },
+    "analysis.explain.runner_up": {
+        "en": "{sentence} The next highest returned result is {runner_up} at {value}.",
+        "fr": "{sentence} Le résultat suivant est {runner_up}, à {value}.",
+    },
+    "analysis.explain.numeric.one": {
+        "en": "The result contains {count} numeric row with values ranging from {low} to {high}.",
+        "fr": "Le résultat contient {count} ligne numérique, avec des valeurs allant de {low} à {high}.",
+    },
+    "analysis.explain.numeric.other": {
+        "en": "The result contains {count} numeric rows with values ranging from {low} to {high}.",
+        "fr": "Le résultat contient {count} lignes numériques, avec des valeurs allant de {low} à {high}.",
+    },
+    "analysis.explain.concise": {
+        "en": "This result is already concise and does not require deeper interpretation without an additional breakdown.",
+        "fr": "Ce résultat est déjà concis et ne demande pas d'interprétation plus poussée sans une ventilation supplémentaire.",
+    },
+    "analysis.latest_period": {"en": "the latest period", "fr": "la dernière période"},
+    "analysis.first_period": {"en": "the first period", "fr": "la première période"},
+
+    # Analyze.
+    "analysis.detail.series": {
+        "en": "The returned time series varies between {low} and {high}, with an average of {average}.",
+        "fr": "La série temporelle renvoyée varie entre {low} et {high}, pour une moyenne de {average}.",
+    },
+    "analysis.detail.avg_step": {"en": "Average step change: {value}", "fr": "Variation moyenne par pas : {value}"},
+    "analysis.detail.volatility": {
+        "en": "Observed volatility per step: {value}", "fr": "Volatilité observée par pas : {value}",
+    },
+    "analysis.detail.concentrated": {
+        "en": "The ranking is concentrated: the top three returned categories account for {pct} of the total.",
+        "fr": "Le classement est concentré : les trois premières catégories renvoyées représentent {pct} du total.",
+    },
+    "analysis.detail.distribution": {
+        "en": "The ranking pattern should be read as a distribution, not just a winner.",
+        "fr": "Ce classement se lit comme une distribution, pas seulement comme un vainqueur.",
+    },
+    "analysis.detail.category_count": {
+        "en": "Category count in returned result: {count}",
+        "fr": "Nombre de catégories dans le résultat renvoyé : {count}",
+    },
+    "analysis.detail.spread_range": {
+        "en": "Spread from highest to lowest returned value: {value}",
+        "fr": "Écart entre la valeur renvoyée la plus élevée et la plus faible : {value}",
+    },
+    "analysis.detail.std_dev": {
+        "en": "Standard deviation across returned values: {value}",
+        "fr": "Écart type des valeurs renvoyées : {value}",
+    },
+    "analysis.detail.numeric.one": {
+        "en": "The numeric values average {average} across {count} row.",
+        "fr": "Les valeurs numériques s'établissent en moyenne à {average} sur {count} ligne.",
+    },
+    "analysis.detail.numeric.other": {
+        "en": "The numeric values average {average} across {count} rows.",
+        "fr": "Les valeurs numériques s'établissent en moyenne à {average} sur {count} lignes.",
+    },
+    "analysis.detail.spread": {"en": "Spread: {value}", "fr": "Écart : {value}"},
+    "analysis.detail.median": {"en": "Median: {value}", "fr": "Médiane : {value}"},
+    "analysis.detail.not_enough": {
+        "en": "There is not enough structure in this result for a richer analysis without a more specific breakdown.",
+        "fr": "Ce résultat n'a pas assez de structure pour une analyse plus riche sans une ventilation plus précise.",
+    },
+
+    # Compare.
+    "analysis.compare.series": {
+        "en": "{last_period} is {last_value} versus {first_value} in {first_period}.",
+        "fr": "{last_period} s'établit à {last_value}, contre {first_value} en {first_period}.",
+    },
+    "analysis.compare.pct_change": {
+        "en": "Percent change across returned periods: {pct}",
+        "fr": "Variation en pourcentage entre les périodes renvoyées : {pct}",
+    },
+    "analysis.compare.leader": {
+        "en": "{leader} is ahead of {runner_up} by {gap}.",
+        "fr": "{leader} devance {runner_up} de {gap}.",
+    },
+    "analysis.compare.leader_share": {
+        "en": "Leader share of returned total: {pct}",
+        "fr": "Part du premier dans le total renvoyé : {pct}",
+    },
+    "analysis.compare.only_one": {
+        "en": "{leader} is the only comparable returned category, so there is no runner-up to compare.",
+        "fr": "{leader} est la seule catégorie comparable renvoyée : il n'y a pas de second à comparer.",
+    },
+    "analysis.compare.not_comparable": {
+        "en": "There is not enough comparable structure in this result for a comparison.",
+        "fr": "Ce résultat n'a pas assez de structure comparable pour établir une comparaison.",
+    },
+    "analysis.compare.not_yet": {
+        "en": "This result does not yet have enough comparable structure for a useful comparison card.",
+        "fr": "Ce résultat n'a pas encore assez de structure comparable pour une carte de comparaison utile.",
+    },
+
+    # Why.
+    "analysis.why.caveat": {
+        "en": "This framing is based on the returned result shape, not on inferred root causes.",
+        "fr": "Cette mise en perspective repose sur la forme du résultat renvoyé, non sur des causes déduites.",
+    },
+    "analysis.why.unstable_base": {
+        "en": "The direction is visible, but the starting point is too close to zero for a stable percentage comparison.",
+        "fr": "L'orientation est visible, mais le point de départ est trop proche de zéro pour une comparaison en pourcentage fiable.",
+    },
+    "analysis.why.higher": {
+        "en": "This leaves the latest period {pct} higher than the starting period, which is useful for judging whether performance is improving or deteriorating over time.",
+        "fr": "La dernière période se situe ainsi {pct} au-dessus de la période de départ, ce qui aide à juger si la performance s'améliore ou se dégrade dans le temps.",
+    },
+    "analysis.why.lower": {
+        "en": "This leaves the latest period {pct} lower than the starting period, which is useful for judging whether performance is improving or deteriorating over time.",
+        "fr": "La dernière période se situe ainsi {pct} en dessous de la période de départ, ce qui aide à juger si la performance s'améliore ou se dégrade dans le temps.",
+    },
+    "analysis.why.flat": {
+        "en": "This leaves the latest period level with the starting period, which is useful for judging whether performance is improving or deteriorating over time.",
+        "fr": "La dernière période se situe ainsi au même niveau que la période de départ, ce qui aide à juger si la performance s'améliore ou se dégrade dans le temps.",
+    },
+    "analysis.why.gap": {
+        "en": "The leading category is ahead by {gap}, so performance is concentrated rather than evenly distributed across categories.",
+        "fr": "La première catégorie devance les autres de {gap} : la performance est concentrée plutôt que répartie uniformément.",
+    },
+    "analysis.why.leader_only": {
+        "en": "This identifies the leading category directly, which helps focus follow-up analysis on where performance is strongest or weakest.",
+        "fr": "Cela identifie directement la catégorie de tête, ce qui aide à cibler l'analyse suivante là où la performance est la plus forte ou la plus faible.",
+    },
+    "analysis.why.spread": {
+        "en": "The spread between the minimum and maximum values shows whether the result is tightly grouped or highly variable.",
+        "fr": "L'écart entre la valeur minimale et la valeur maximale indique si le résultat est resserré ou très variable.",
+    },
+    "analysis.why.empty": {
+        "en": "No impact can be inferred because the result set is empty under the current filters.",
+        "fr": "Aucun impact ne peut être déduit : le résultat est vide avec les filtres actuels.",
+    },
+    "analysis.why.starting_point": {
+        "en": "This result is best used as a starting point for a more targeted follow-up question.",
+        "fr": "Ce résultat sert surtout de point de départ à une question de suivi plus ciblée.",
+    },
+
+    # Predict.
+    "analysis.predict.projection": {
+        "en": "A simple trend projection puts the next period near {value}.",
+        "fr": "Une simple projection de tendance situe la période suivante autour de {value}.",
+    },
+    "analysis.predict.confidence_low": {
+        "en": "This is a low-confidence directional estimate based only on the returned series, not a full forecasting model.",
+        "fr": "Il s'agit d'une estimation directionnelle peu fiable, fondée uniquement sur la série renvoyée et non sur un vrai modèle de prévision.",
+    },
+    "analysis.predict.confidence_medium": {
+        "en": "This is a medium-confidence directional estimate based only on the returned series, not a full forecasting model.",
+        "fr": "Il s'agit d'une estimation directionnelle moyennement fiable, fondée uniquement sur la série renvoyée et non sur un vrai modèle de prévision.",
+    },
+    "analysis.predict.confidence_moderate": {
+        "en": "This is a moderate-confidence directional estimate based only on the returned series, not a full forecasting model.",
+        "fr": "Il s'agit d'une estimation directionnelle assez fiable, fondée uniquement sur la série renvoyée et non sur un vrai modèle de prévision.",
+    },
+    "analysis.predict.last_observed": {
+        "en": "Last observed period: {period} at {value}",
+        "fr": "Dernière période observée : {period}, à {value}",
+    },
+    "analysis.predict.step_used": {
+        "en": "Average step change used in projection: {value}",
+        "fr": "Variation moyenne par pas utilisée dans la projection : {value}",
+    },
+    "analysis.predict.needs_series": {
+        "en": "Prediction is only available when the result contains a clear time series with at least three periods.",
+        "fr": "La prévision n'est disponible que si le résultat contient une série temporelle claire d'au moins trois périodes.",
+    },
+
+    # Decide.
+    "analysis.decide.starting_point": {
+        "en": "This result is a useful starting point. Before acting, confirm the figures against a second cut of the data.",
+        "fr": "Ce résultat est un bon point de départ. Avant d'agir, confirmez les chiffres avec une seconde lecture des données.",
+    },
+    "analysis.decide.finding": {
+        "en": "Finding: based only on the returned result, not external context.",
+        "fr": "Constat : fondé uniquement sur le résultat renvoyé, sans contexte extérieur.",
+    },
+    "analysis.decide.caveat": {
+        "en": "Caveat: this is an advisory observation, not a directive.",
+        "fr": "Réserve : il s'agit d'une observation indicative, non d'une directive.",
+    },
+    "analysis.decide.based_on": {"en": "Based on the returned rows.", "fr": "D'après les lignes renvoyées."},
+    "analysis.decide.next_step": {
+        "en": "Re-run with a narrower filter or a second time window to verify before acting.",
+        "fr": "Relancez avec un filtre plus étroit ou une seconde fenêtre temporelle pour vérifier avant d'agir.",
+    },
+    "analysis.unsupported": {
+        "en": "This follow-up action is not supported for the current result.",
+        "fr": "Cette action de suivi n'est pas prise en charge pour ce résultat.",
+    },
+
     # ── The action chips under an answer, and the card each one opens ────────
     #
     # The chip ID routes the action and is never translated; only the label and

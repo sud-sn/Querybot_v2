@@ -1184,6 +1184,11 @@ def infer_result_scope(
     scope["badge_key"] = badge_key
     scope["badge"] = _t(f"answer.scope.{badge_key}", **fields)
     scope["note"] = note
+    # The badge as a noun phrase, for the middle of a sentence. The analysis
+    # card used to write `badge.lower()` there -- which reads as English and
+    # cannot work in French, where an inline noun phrase needs its article and
+    # the article carries the gender.
+    scope["inline"] = _t(f"answer.scope.{badge_key}.inline", **fields)
     scope["analysis_note"] = (
         _t("answer.scope.slice_note")
         if was_limited and mode in {"ranking", "time_series"}
@@ -2039,115 +2044,160 @@ def _why_it_matters(ctx: dict) -> str:
     if mode == "time_series":
         pct = ctx.get("pct_change")
         if pct is None:
-            return "The direction is visible, but the starting point is too close to zero for a stable percentage comparison."
-        direction = "higher" if pct > 0 else "lower" if pct < 0 else "flat"
-        return f"This leaves the latest period {abs(pct):.1f}% {direction} than the starting period, which is useful for judging whether performance is improving or deteriorating over time."
+            return _t("analysis.why.unstable_base")
+        # A sentence per direction, not "{pct} {direction} than": French does
+        # not build a comparative that way, and "flat" is not a comparative at
+        # all -- the English sentence reads "0.0% flat than the starting
+        # period", which nobody would have noticed until it was translated.
+        shape = "higher" if pct > 0 else "lower" if pct < 0 else "flat"
+        return _t(f"analysis.why.{shape}", pct=f"{abs(pct):.1f}%")
     if mode == "ranking":
         top_items = ctx.get("top_items") or []
         if len(top_items) >= 2:
-            gap = (top_items[0]["value"] - top_items[1]["value"])
-            return f"The leading category is ahead by {_format_number(gap)}, so performance is concentrated rather than evenly distributed across categories."
-        return "This identifies the leading category directly, which helps focus follow-up analysis on where performance is strongest or weakest."
+            gap = top_items[0]["value"] - top_items[1]["value"]
+            return _t("analysis.why.gap", gap=_format_number(gap))
+        return _t("analysis.why.leader_only")
     if mode == "numeric_table":
-        return "The spread between the minimum and maximum values shows whether the result is tightly grouped or highly variable."
+        return _t("analysis.why.spread")
     if mode == "empty":
-        return "No impact can be inferred because the result set is empty under the current filters."
-    return "This result is best used as a starting point for a more targeted follow-up question."
+        return _t("analysis.why.empty")
+    return _t("analysis.why.starting_point")
 
 
 def build_analysis_response(action: str, contract: dict) -> dict:
     """
     Synchronous fallback for action button clicks when LLM insight is unavailable.
-    
+
     The preferred path is the async generate_analysis_response() below, which
     uses the LLM insight engine. This function is kept as a zero-latency
     fallback that works without an LLM call.
+
+    Every sentence here is a whole message id. The scope phrase is why: this
+    card wrote `scope["badge"].lower()` into the middle of a sentence, which
+    reads as English and cannot work in French, where an inline noun phrase
+    needs its article and the article carries the gender. infer_result_scope
+    publishes scope["inline"] for exactly this position.
     """
     mode = contract.get("mode")
     scope = contract.get("result_scope") or {}
-    title = "Analysis"
+    scope_inline = scope.get("inline") or _t("answer.scope.returned.inline")
+    title = _t("analysis.title.default")
     body = ""
     bullets: list[str] = []
     secondary = scope.get("analysis_note", "")
 
     if action == "explain":
-        title = "Result explanation"
+        title = _t("analysis.title.explain_result")
         if mode == "time_series":
-            last_value = contract.get("last_value", 0.0)
-            body = f"This result shows {scope.get('badge', 'the returned series').lower()}. The latest returned period is {contract.get('last_label', 'the latest period')} at {_format_number(last_value)}."
+            body = _t(
+                "analysis.explain.series", scope=scope_inline,
+                period=contract.get("last_label") or _t("analysis.latest_period"),
+                value=_format_number(contract.get("last_value", 0.0)),
+            )
             pct = contract.get("pct_change")
             if pct is not None:
-                direction = "up" if pct > 0 else "down" if pct < 0 else "flat"
-                bullets.append(f"Overall direction across the returned series: {direction} ({abs(pct):.1f}%)")
+                shape = "up" if pct > 0 else "down" if pct < 0 else "flat"
+                bullets.append(_t(f"analysis.explain.direction_{shape}",
+                                  pct=f"{abs(pct):.1f}%"))
         elif mode == "ranking":
             top_items = contract.get("top_items") or []
             if top_items:
-                body = f"This result shows {scope.get('badge', 'the returned ranking').lower()}. {top_items[0]['label']} ranks first at {_format_number(top_items[0]['value'])}."
+                body = _t("analysis.explain.ranking", scope=scope_inline,
+                          leader=top_items[0]["label"],
+                          value=_format_number(top_items[0]["value"]))
                 if len(top_items) > 1 and not scope.get("is_top_n"):
-                    body += f" The next highest returned result is {top_items[1]['label']} at {_format_number(top_items[1]['value'])}."
+                    body = _t("analysis.explain.runner_up", sentence=body,
+                              runner_up=top_items[1]["label"],
+                              value=_format_number(top_items[1]["value"]))
         elif mode == "numeric_table":
-            body = f"The result contains {contract.get('row_count', 0)} numeric rows with values ranging from {_format_number(contract.get('min_value', 0.0))} to {_format_number(contract.get('max_value', 0.0))}."
+            body = _t_plural(
+                "analysis.explain.numeric", contract.get("row_count", 0),
+                low=_format_number(contract.get("min_value", 0.0)),
+                high=_format_number(contract.get("max_value", 0.0)),
+            )
         else:
-            body = "This result is already concise and does not require deeper interpretation without an additional breakdown."
+            body = _t("analysis.explain.concise")
 
     elif action == "analyze":
-        title = "Detailed analysis"
+        title = _t("analysis.title.detailed")
         if mode == "time_series":
-            body = f"The returned time series varies between {_format_number(contract.get('min_value', 0.0))} and {_format_number(contract.get('max_value', 0.0))}, with an average of {_format_number(contract.get('avg_value', 0.0))}."
+            body = _t("analysis.detail.series",
+                      low=_format_number(contract.get("min_value", 0.0)),
+                      high=_format_number(contract.get("max_value", 0.0)),
+                      average=_format_number(contract.get("avg_value", 0.0)))
             bullets = [
-                f"Average step change: {_format_number(contract.get('avg_step_change', 0.0))}",
-                f"Observed volatility per step: {_format_number(contract.get('volatility', 0.0))}",
+                _t("analysis.detail.avg_step",
+                   value=_format_number(contract.get("avg_step_change", 0.0))),
+                _t("analysis.detail.volatility",
+                   value=_format_number(contract.get("volatility", 0.0))),
             ]
         elif mode == "ranking":
             stats = contract.get("distribution_stats") or {}
             if stats.get("top_3_share_pct") is not None:
-                body = f"The ranking is concentrated: the top three returned categories account for {stats['top_3_share_pct']:.1f}% of the total."
+                body = _t("analysis.detail.concentrated",
+                          pct=f"{stats['top_3_share_pct']:.1f}%")
             else:
-                body = "The ranking pattern should be read as a distribution, not just a winner."
+                body = _t("analysis.detail.distribution")
             bullets = [
-                f"Category count in returned result: {stats.get('category_count', contract.get('row_count', 0))}",
-                f"Spread from highest to lowest returned value: {_format_number(stats.get('spread', 0.0))}",
+                _t("analysis.detail.category_count",
+                   count=stats.get("category_count", contract.get("row_count", 0))),
+                _t("analysis.detail.spread_range",
+                   value=_format_number(stats.get("spread", 0.0))),
             ]
             if stats.get("std_dev") is not None:
-                bullets.append(f"Standard deviation across returned values: {_format_number(stats['std_dev'])}")
+                bullets.append(_t("analysis.detail.std_dev",
+                                  value=_format_number(stats["std_dev"])))
         elif mode == "numeric_table":
-            body = f"The numeric values average {_format_number(contract.get('avg_value', 0.0))} across {contract.get('row_count', 0)} rows."
+            body = _t_plural(
+                "analysis.detail.numeric", contract.get("row_count", 0),
+                average=_format_number(contract.get("avg_value", 0.0)),
+            )
             bullets = [
-                f"Spread: {_format_number((contract.get('distribution_stats') or {}).get('spread', 0.0))}",
-                f"Median: {_format_number(contract.get('median_value', 0.0))}",
+                _t("analysis.detail.spread", value=_format_number(
+                    (contract.get("distribution_stats") or {}).get("spread", 0.0))),
+                _t("analysis.detail.median",
+                   value=_format_number(contract.get("median_value", 0.0))),
             ]
         else:
-            body = "There is not enough structure in this result for a richer analysis without a more specific breakdown."
+            body = _t("analysis.detail.not_enough")
 
     elif action == "compare":
-        title = "Comparison view"
+        title = _t("analysis.title.comparison")
         if mode == "time_series":
             cmp = contract.get("comparison_stats") or {}
-            body = f"{cmp.get('last_period', 'Latest period')} is {_format_number(cmp.get('last_value', 0.0))} versus {_format_number(cmp.get('first_value', 0.0))} in {cmp.get('first_period', 'the first period')}."
+            body = _t(
+                "analysis.compare.series",
+                last_period=cmp.get("last_period") or _t("answer.latest_period"),
+                last_value=_format_number(cmp.get("last_value", 0.0)),
+                first_value=_format_number(cmp.get("first_value", 0.0)),
+                first_period=cmp.get("first_period") or _t("analysis.first_period"),
+            )
             if cmp.get("pct_change") is not None:
-                bullets.append(f"Percent change across returned periods: {abs(cmp['pct_change']):.1f}%")
+                bullets.append(_t("analysis.compare.pct_change",
+                                  pct=f"{abs(cmp['pct_change']):.1f}%"))
         elif mode == "ranking":
             cmp = contract.get("comparison_stats") or {}
             if cmp.get("leader") and cmp.get("runner_up"):
-                body = f"{cmp['leader']} is ahead of {cmp['runner_up']} by {_format_number(cmp.get('gap', 0.0))}."
+                body = _t("analysis.compare.leader", leader=cmp["leader"],
+                          runner_up=cmp["runner_up"],
+                          gap=_format_number(cmp.get("gap", 0.0)))
                 if cmp.get("leader_share_pct") is not None:
-                    bullets.append(f"Leader share of returned total: {cmp['leader_share_pct']:.1f}%")
+                    bullets.append(_t("analysis.compare.leader_share",
+                                      pct=f"{cmp['leader_share_pct']:.1f}%"))
             elif cmp.get("leader"):
-                body = f"{cmp['leader']} is the only comparable returned category, so there is no runner-up to compare."
+                body = _t("analysis.compare.only_one", leader=cmp["leader"])
             else:
-                body = "There is not enough comparable structure in this result for a comparison."
+                body = _t("analysis.compare.not_comparable")
         else:
-            body = "This result does not yet have enough comparable structure for a useful comparison card."
+            body = _t("analysis.compare.not_yet")
 
     elif action == "why":
-        title = "Business framing"
+        title = _t("analysis.title.framing")
         body = _why_it_matters(contract)
-        bullets = [
-            "This framing is based on the returned result shape, not on inferred root causes.",
-        ]
+        bullets = [_t("analysis.why.caveat")]
 
     elif action == "predict":
-        title = "Forecast"
+        title = _t("analysis.title.forecast")
         if mode == "time_series" and contract.get("row_count", 0) >= 3:
             vals = contract.get("values") or []
             labels = contract.get("labels") or []
@@ -2163,38 +2213,33 @@ def build_analysis_response(action: str, contract: dict) -> dict:
             forecast = max(forecast, 0.0)
             vol = contract.get("volatility", 0.0)
             conf = "low" if vol > abs(slope) * 3 else "medium" if vol > abs(slope) else "moderate"
-            body = f"A simple trend projection puts the next period near {_format_number(forecast)}."
-            secondary = f"This is a {conf}-confidence directional estimate based only on the returned series, not a full forecasting model."
+            body = _t("analysis.predict.projection", value=_format_number(forecast))
+            secondary = _t(f"analysis.predict.confidence_{conf}")
             bullets = [
-                f"Last observed period: {labels[-1]} at {_format_number(vals[-1])}",
-                f"Average step change used in projection: {_format_number(contract.get('avg_step_change', 0.0))}",
+                _t("analysis.predict.last_observed", period=labels[-1],
+                   value=_format_number(vals[-1])),
+                _t("analysis.predict.step_used",
+                   value=_format_number(contract.get("avg_step_change", 0.0))),
             ]
         else:
-            body = "Prediction is only available when the result contains a clear time series with at least three periods."
+            body = _t("analysis.predict.needs_series")
 
     elif action == "decide":
-        title = "Recommended next step"
+        title = _t("analysis.title.next_step")
         # Deterministic advisory fallback (no LLM). Reuse the decision-signal
         # rules so the static path still gives a useful, safe recommendation.
         signal = _build_decision_signal(contract, contract, [])
-        if signal.get("line"):
-            body = signal["line"]
-        else:
-            body = ("This result is a useful starting point. Before acting, "
-                    "confirm the figures against a second cut of the data.")
-        bullets = [
-            "Finding: based only on the returned result, not external context.",
-            "Caveat: this is an advisory observation, not a directive.",
-        ]
-        secondary = scope.get("note", "Based on the returned rows.")
+        body = signal.get("line") or _t("analysis.decide.starting_point")
+        bullets = [_t("analysis.decide.finding"), _t("analysis.decide.caveat")]
+        secondary = scope.get("note") or _t("analysis.decide.based_on")
 
     else:
-        title = "Analysis"
-        body = "This follow-up action is not supported for the current result."
+        title = _t("analysis.title.default")
+        body = _t("analysis.unsupported")
 
     next_step = ""
     if action == "decide":
-        next_step = "Re-run with a narrower filter or a second time window to verify before acting."
+        next_step = _t("analysis.decide.next_step")
 
     return {
         "type": "assistant_analysis",
@@ -2216,13 +2261,8 @@ def _regulated_analysis_fallback(action: str) -> dict:
     return {
         "type": "assistant_analysis",
         "action": action,
-        "title": "Not available for this workspace",
-        "body": (
-            "This workspace is configured for a regulated industry. To keep "
-            "protected data from ever reaching the AI model, the assistant "
-            "only writes SQL queries here — it doesn't generate follow-up "
-            "analysis, explanations, or comparisons from results."
-        ),
+        "title": _t("analysis.title.unavailable"),
+        "body": _t("analysis.regulated_body"),
         "bullets": [],
     }
 

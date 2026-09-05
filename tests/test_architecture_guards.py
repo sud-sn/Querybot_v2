@@ -63,8 +63,23 @@ class ArchitectureGuardTests(unittest.TestCase):
         explain = build_analysis_response("explain", ctx)
 
         self.assertEqual(ctx["result_scope"]["badge"], "Top result only")
-        self.assertIn("top result only", explain["body"].lower())
+        # The card writes the scope as a noun phrase mid-sentence, which is a
+        # different string from the badge -- "the top-ranked row only" rather
+        # than a lowercased "Top result only". What has to hold is that the
+        # sentence still SAYS the result is one row, in either language.
+        self.assertEqual(ctx["result_scope"]["inline"], "the top-ranked row only")
+        self.assertIn("the top-ranked row only", explain["body"])
         self.assertIn("returned slice", explain["secondary"].lower())
+
+        from core import i18n
+        token = i18n.activate_language("fr")
+        try:
+            french_ctx = summarize_result_context(
+                rows, "which nationality employees are higher in count", sql)
+            french = build_analysis_response("explain", french_ctx)
+        finally:
+            i18n.deactivate_language(token)
+        self.assertIn("uniquement la ligne la mieux classée", french["body"])
 
     def test_action_fallbacks_are_differentiated(self):
         rows = [
