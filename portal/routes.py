@@ -1646,7 +1646,9 @@ async def list_dashboards_api(request: Request):
     """Return only dashboards the signed-in user can add content to."""
     user = _get_portal_user(request)
     if not user:
-        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+        return JSONResponse(
+            {"ok": False, "code": "not_authenticated",
+             "error": "Authentication required."}, status_code=401)
     store.migrate_legacy_charts(user["account_id"], user["id"])
     dashboards = store.list_editable_dashboards(user["account_id"], user["id"])
     return JSONResponse({
@@ -1700,7 +1702,9 @@ async def create_dashboard_api(request: Request):
 async def pin_chart_api(request: Request):
     user = _get_portal_user(request)
     if not user:
-        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+        return JSONResponse(
+            {"ok": False, "code": "not_authenticated",
+             "error": "Authentication required."}, status_code=401)
 
     try:
         payload = await request.json()
@@ -1714,19 +1718,27 @@ async def pin_chart_api(request: Request):
     type_override    = str(payload.get("chart_type") or "").strip() or None
     palette_override = str(payload.get("color_palette") or "default").strip()
     if not token:
-        return JSONResponse({"ok": False, "error": "Missing pin token."}, status_code=400)
+        return JSONResponse(
+            {"ok": False, "code": "missing_token",
+             "error": "Missing pin token."}, status_code=400)
     pin_data = _peek_pin_token(token)
     if not pin_data or pin_data["user_id"] != user["id"]:
-        return JSONResponse({"ok": False, "error": "This pin request is invalid or has expired."}, status_code=400)
+        return JSONResponse(
+            {"ok": False, "code": "expired_token",
+             "error": "This pin request is invalid or has expired."}, status_code=400)
     if pin_data["account_id"] != user["account_id"]:
-        return JSONResponse({"ok": False, "error": "This result belongs to another workspace."}, status_code=403)
+        return JSONResponse(
+            {"ok": False, "code": "wrong_workspace",
+             "error": "This result belongs to another workspace."}, status_code=403)
 
     dashboard_id = int(payload.get("dashboard_id") or 0)
     new_name = str(payload.get("new_dashboard_name") or "").strip()
     if dashboard_id:
         dashboard = store.get_dashboard(dashboard_id, user["id"], user["account_id"])
         if not dashboard:
-            return JSONResponse({"ok": False, "error": "Select a dashboard you can edit."}, status_code=403)
+            return JSONResponse(
+                {"ok": False, "code": "no_access",
+                 "error": "Select a dashboard you can edit."}, status_code=403)
     elif new_name:
         dashboard = store.create_dashboard(
             user["account_id"], user["id"],
@@ -1739,6 +1751,7 @@ async def pin_chart_api(request: Request):
     else:
         return JSONResponse({
             "ok": False,
+            "code": "no_target",
             "error": "Choose an existing dashboard or create a new one.",
         }, status_code=400)
 
@@ -1746,7 +1759,9 @@ async def pin_chart_api(request: Request):
     # validation error never destroys the one-time result token.
     consumed = _consume_pin_token(token)
     if not consumed:
-        return JSONResponse({"ok": False, "error": "This result has expired. Run it again."}, status_code=400)
+        return JSONResponse(
+            {"ok": False, "code": "expired_token",
+             "error": "This result has expired. Run it again."}, status_code=400)
     item_title = title or pin_data["question"][:50]
     source = store.create_data_source(
         dashboard_id,
@@ -1776,7 +1791,16 @@ async def pin_chart_api(request: Request):
         data_source_id=int(source["id"]),
         tab=str(payload.get("tab") or "Overview"),
     ):
-        return JSONResponse({"ok": False, "error": "The chart could not be added."}, status_code=409)
+        # TERMINAL, not transient. store.add_chart returns False only when the
+        # dashboard or the freshly-created chart cannot be found under this
+        # user and account -- a structural failure a retry reproduces exactly.
+        # The token is already spent by the line above, deliberately: the
+        # consume sits after authorisation so a RECOVERABLE validation error
+        # never destroys it, and this failure is not recoverable. The client
+        # must therefore not offer a retry here, which is why the code says so.
+        return JSONResponse(
+            {"ok": False, "code": "add_failed",
+             "error": "The chart could not be added."}, status_code=409)
     return JSONResponse({
         "ok": True,
         "dashboard": {
