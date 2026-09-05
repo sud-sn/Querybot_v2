@@ -9,72 +9,7 @@
 <script src="/static/js/chart-palettes.js?v=20260819-1"></script>
 <link rel="stylesheet" href="/static/vendor/gridstack.min.css">
 <script src="/static/vendor/gridstack-all.js"></script>
-<style>
-.dashboard-page{min-height:100%;display:flex;flex-direction:column;gap:1rem}
-/* Was style="all:unset", which also unset the focus outline -- and this is the
-   only keyboard-reachable control inside a table tile. */
-.dash-th-sort{border:0;background:transparent;padding:0;margin:0;font:inherit;font-weight:750;color:inherit;cursor:pointer;text-align:left}
-.dash-th-sort:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:var(--radius-sm)}
-.dashboard-page .page-header{margin-bottom:.25rem}
-.dashboard-page .metrics{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:.5rem}
-.dashboard-library{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.75rem;margin:0 0 1rem}
-.dashboard-library-item{display:block;padding:.9rem 1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:inherit;text-decoration:none}
-.dashboard-library-item:hover{border-color:var(--primary);box-shadow:0 3px 12px rgba(15,23,42,.06)}
-.dashboard-controls{display:flex;align-items:end;gap:.65rem;flex-wrap:wrap;padding:.75rem 1rem;margin:-.35rem 0 1rem;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius)}
-.dashboard-filter{display:grid;gap:.3rem;min-width:170px}.dashboard-filter label{font-size:var(--font-xs);font-weight:750;color:var(--text-muted)}
-.dashboard-filter input{height:34px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);padding:0 .65rem}
-.dashboard-tabs{display:flex;gap:.25rem;overflow:auto;margin:0 0 .8rem;border-bottom:1px solid var(--border)}
-.dashboard-tab{padding:.55rem .75rem;border-bottom:2px solid transparent;color:var(--text-muted);font-size:var(--font-sm);font-weight:700;text-decoration:none;white-space:nowrap}.dashboard-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
-.artifact-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;margin:0 0 1rem}.artifact-detail{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:.8rem 1rem}.artifact-detail summary{cursor:pointer;font-size:var(--font-sm);font-weight:800}.artifact-detail-list{display:grid;gap:.5rem;margin-top:.7rem}.artifact-detail-row{display:flex;justify-content:space-between;gap:.75rem;font-size:var(--font-sm);color:var(--text-muted)}
-@media(max-width:720px){.artifact-details{grid-template-columns:1fr}.dashboard-filter{min-width:min(100%,220px)}}
-.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));grid-auto-flow:dense;gap:1rem;margin-bottom:1.5rem;align-items:stretch}
-.chart-grid.is-gridstack{display:block;min-height:460px}
-.chart-card{min-height:420px}
-.chart-grid.is-gridstack .chart-card{min-height:0}
-.chart-card-content{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);overflow:hidden;transition:box-shadow .2s,transform .2s,border-color .2s;display:flex;flex-direction:column;height:100%}
-.chart-card:hover .chart-card-content{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
-.chart-card.dragging{opacity:.58;transform:scale(.985);border-color:var(--primary)}
-.chart-card.drag-over{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}
-.chart-card-header{padding:.95rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 84%, var(--primary-soft) 16%),var(--surface))}
-.chart-card-body{padding:1rem;display:flex;flex-direction:column;flex:1;min-height:0}
-/* cursor:text was unconditional, so a read-only viewer's pointer said the
-   title was editable when it is not. It follows the permission now. */
-.chart-card-title{font-size:var(--font-md);font-weight:800;color:var(--text);line-height:1.4}
-.chart-card-title.is-editable{cursor:text}
-.chart-card-title[contenteditable=true]{outline:none;border-bottom:2px solid var(--primary);padding-bottom:1px}
-.chart-card-sub{font-size:var(--font-xs);color:var(--text-muted);margin-top:4px}
-.chart-drag-handle{border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);border-radius:7px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;cursor:grab;font-weight:900;line-height:1}
-.chart-drag-handle:active{cursor:grabbing}
-.chart-canvas{height:clamp(280px,34vh,460px);width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent);flex:1;min-height:280px}
-.chart-grid.is-gridstack .chart-canvas{height:100%;min-height:180px}
-.chart-meta{font-size:var(--font-xs);color:var(--gray-500);margin-top:.6rem;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:center}
-.chart-error{padding:2rem;text-align:center;color:var(--text-muted);font-size:var(--font-sm);background:var(--surface-2);border-radius:var(--radius);border:1px dashed var(--border)}
-.chart-warnings{display:flex;flex-direction:column;gap:.35rem;margin-top:.55rem}
-.chart-warning{font-size:var(--font-xs);color:var(--warning);background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 28%,transparent);border-radius:7px;padding:.45rem .55rem;line-height:1.35}
-/* ── Dashboard chart controls ───────────────────────────────────────────── */
-.dash-ctrl-row{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.55rem;padding-top:.45rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);align-items:center}
-.dash-ctrl-sep{width:1px;height:14px;background:var(--border);margin:0 .2rem;flex-shrink:0}
-.dctt-btn{padding:3px 10px;font-size:10.5px;font-weight:700;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}
-.dctt-btn:hover{border-color:var(--primary);color:var(--primary)}
-.dctt-btn.dctt-active{background:var(--primary);border-color:var(--primary);color:#fff}
-.dcpt-swatch{width:26px;height:13px;border-radius:4px;border:2px solid transparent;cursor:pointer;transition:transform .12s,border-color .12s;flex-shrink:0}
-.dcpt-swatch:hover{transform:scale(1.15)}
-.dcpt-swatch.dcpt-active{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
-.empty-state{text-align:center;padding:4rem 2rem;color:var(--gray-500)}
-#chart-modal{animation:fadeIn .15s ease}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
-.empty-state .icon{font-size:48px;margin-bottom:1rem}
-.empty-state h3{font-size:17px;font-weight:700;color:var(--gray-700);margin-bottom:.5rem}
-.table-pill{display:inline-block;background:var(--primary-soft);color:var(--primary);font-size:var(--font-2xs);font-weight:700;padding:2px 8px;border-radius:999px;margin:2px;font-family:monospace}
-.welcome-banner{background:linear-gradient(135deg,var(--blue-mid),var(--blue));border-radius:var(--radius);padding:1.5rem;color:#fff;margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;box-shadow:var(--shadow-lg)}
-.metric-progress{height:6px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden;margin-top:.55rem}
-.metric-progress span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--success),var(--primary))}
-.metric-progress.warning span{background:linear-gradient(90deg,var(--warning),var(--primary))}
-.metric-progress.blocked span{background:var(--danger)}
-@media (max-width: 640px){.chart-grid{grid-template-columns:1fr}.welcome-banner{flex-direction:column;align-items:flex-start}.chart-canvas{height:280px}.chart-card{min-height:360px}.chart-grid.is-gridstack .chart-canvas{min-height:220px}}
-/* Drag-to-reorder is not supported on touch-only devices */
-@media (hover: none) { .chart-drag-handle { display: none; } }
-</style>
+<link rel="stylesheet" href="/static/css/dashboard.css?v=20260905-1">
 {% endblock %}
 {% block content %}
 
@@ -90,67 +25,28 @@
 </div>
 {% endif %}
 
-<div class="page-header">
-  <h1>Dashboards</h1>
-  <p>Organize governed KPIs, charts, and tables for the decisions your team follows.</p>
-</div>
-
-<div class="metrics">
-  <div class="metric"><div class="metric-label">Dashboard visuals</div><div class="metric-value">{{ charts|length }}</div></div>
-  <div class="metric"><div class="metric-label">Queries this month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
-  <div class="metric">
-    <div class="metric-label">Query limit</div>
-    <div class="metric-value" style="font-size:var(--font-xl);color:{% if query_status.blocked %}var(--danger){% elif query_status.warning %}var(--warning){% else %}var(--success){% endif %}">
-      {{ query_status.remaining_label }} left
-    </div>
-    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
-      {{ query_status.used_label }} / {{ query_status.limit_label }} used
-    </div>
-    <div class="metric-progress {% if query_status.blocked %}blocked{% elif query_status.warning %}warning{% endif %}">
-      <span style="width:{{ query_status.limit_pct }}%"></span>
-    </div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Remaining tokens</div>
-    <div class="metric-value" style="font-size:var(--font-xl);color:{% if token_status.unlimited or token_status.limit_pct < 80 %}var(--success){% else %}var(--warning){% endif %}">
-      {{ token_status.remaining_label }}
-    </div>
-    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
-      {% if token_status.unlimited %}No monthly token cap{% else %}{{ token_status.used_label }} / {{ token_status.limit_label }} used{% endif %}
-    </div>
-  </div>
-  <div class="metric"><div class="metric-label">Group</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
-  <div class="metric"><div class="metric-label">Tables access</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}All{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
-</div>
-
-{% if query_status.blocked %}
-{{ alert('Monthly query limit reached: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used. Ask your administrator to increase the workspace limit.', 'error', 'x-circle') }}
-{% elif query_status.warning %}
-{{ alert('Query usage is above 80%: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used this month.', 'amber', 'exclamation-triangle') }}
-{% endif %}
-
-{% if allowed_tables %}
-<div class="card" style="margin-bottom:1.5rem">
-  <div class="card-header">
-    <h2>Your table access ({{ allowed_tables|length }} tables)</h2>
-    <a href="/portal/kb" class="btn btn-secondary btn-sm">View Semantic Layer →</a>
-  </div>
-  <div class="card-body" style="padding:.875rem 1.25rem">
-    {% for t in allowed_tables %}<span class="table-pill">{{ t }}</span>{% endfor %}
-  </div>
-</div>
-{% elif allowed_tables is not none and allowed_tables|length == 0 %}
-<div class="alert alert-amber">You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
-{% endif %}
-
 {% if dashboard_artifact %}
-<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem;padding:.85rem 1rem;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius)">
+{% if dashboard_artifact %}
+{% set _editable = dashboard_artifact.can_edit %}
+{% set _is_draft = dashboard_artifact.status != 'published' %}
+{# The dashboard leads. It used to be an h2 below the account KPI strip and the
+   table-access card, under a permanently generic "Dashboards" h1 -- the page
+   was organised around the account rather than around the thing you opened. #}
+<header class="dash-header">
   <div>
-    <div style="font-size:var(--font-xs);font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--primary)">Dashboard artifact</div>
-    <h2 style="font-size:var(--font-xl);font-weight:800;margin:.2rem 0">{{ dashboard_artifact.name }}</h2>
-    <div style="font-size:var(--font-sm);color:var(--text-muted)">{{ dashboard_artifact.status|capitalize }} · Version {{ dashboard_artifact.version }} · {{ dashboard_artifact.visibility|capitalize }} · {{ dashboard_artifact.refresh_schedule|capitalize }} refresh{% if not dashboard_artifact.can_edit %} · Read only{% endif %}</div>
+    <div class="dash-header-kicker">Dashboard artifact</div>
+    <h1>{{ dashboard_artifact.name }}</h1>
+    <div class="dash-header-meta">
+      <span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ dashboard_artifact.status|capitalize }}</span>
+      <span>Version {{ dashboard_artifact.version }}</span>
+      <span aria-hidden="true">·</span>
+      <span>{{ dashboard_artifact.visibility|capitalize }}</span>
+      <span aria-hidden="true">·</span>
+      <span>{{ dashboard_artifact.refresh_schedule|capitalize }} refresh</span>
+      {% if not _editable %}<span aria-hidden="true">·</span><span>Read only</span>{% endif %}
+    </div>
   </div>
-  <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;justify-content:flex-end">
+  <div class="dash-header-actions">
     {% if dashboard_subscription %}
     <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe" style="margin:0">
       <button class="btn btn-secondary" type="submit" title="Stop following this dashboard">Following · {{ dashboard_subscription.cadence|capitalize }}</button>
@@ -164,7 +60,24 @@
     {% endif %}
     <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-secondary">Chat with dashboard</a>
   </div>
+</header>
+
+{# Every edit -- adding a chart, DRAGGING a tile, changing a palette, renaming a
+   card -- marks a team dashboard draft, and get_dashboard_for_view gates on
+   `visibility='team' AND status='published'`. So one drag makes the dashboard
+   vanish from every teammate's portal, and until now the page neither said so
+   nor offered any way to publish it back: publishing was a chat command only. #}
+{% if _editable and _is_draft and dashboard_artifact.visibility == 'team' %}
+<div class="dash-unpublished">
+  <div style="flex:1;min-width:0">
+    <strong>Your teammates cannot see this dashboard.</strong>
+    It has unpublished changes, and a team dashboard is only visible to others while it is published.
+  </div>
+  <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/publish">
+    <button class="btn btn-primary btn-sm" type="submit">Publish</button>
+  </form>
 </div>
+{% endif %}
 
 {% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="Dashboard tabs">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
 
@@ -176,17 +89,7 @@
 </form>
 {% endif %}
 
-<div class="artifact-details">
-  <details class="artifact-detail"><summary>Data sources · {{ dashboard_sources|length }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ source.source_type|replace('_',' ')|capitalize }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>No reusable sources yet</span></div>{% endfor %}</div></details>
-  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>Revision history · {{ dashboard_versions|length }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">Restore</button></form>{% else %}<span>Current</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:800">Published team dashboard</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">You can view and filter this dashboard. Only its owner can edit or restore it.</div></div>{% endif %}
-</div>
 {% endif %}
-
-{% if not dashboard_artifact and dashboards %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:15px;font-weight:800">Your dashboard artifacts</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ dashboards|length }} saved</span></div>
-<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:800">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}Shared with team · {% endif %}{{ item.status|capitalize }} · v{{ item.version }} · {{ item.chart_count }} visual{% if item.chart_count != 1 %}s{% endif %}</div></a>{% endfor %}</div>
-{% endif %}
-
 {% if charts %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
   <h2 style="font-size:15px;font-weight:700">{{ selected_tab }} visuals</h2>
@@ -285,6 +188,129 @@
 {% elif not dashboards %}
 <div class="empty-state"><h3 class="empty-state-title">No dashboards yet</h3><p class="empty-state-body">Create an analysis in Chat and add the resulting KPI, chart, or table to a new named dashboard.</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">Open Chat</a></div></div>
 {% endif %}
+{# Provenance is a footnote to the charts, not a two-column block above
+   them: it used to be the third thing on the page while the charts were
+   the fifth. #}
+<section class="artifact-details" aria-label="Dashboard provenance">
+  <details class="artifact-detail"><summary>Data sources · {{ dashboard_sources|length }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ source.source_type|replace('_',' ')|capitalize }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>No reusable sources yet</span></div>{% endfor %}</div></details>
+  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>Revision history · {{ dashboard_versions|length }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">Restore</button></form>{% else %}<span>Current</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:800">Published team dashboard</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">You can view and filter this dashboard. Only its owner can edit or restore it.</div></div>{% endif %}
+</section>
+
+{# The account's own numbers are context for the artifact above, not the
+   headline. On the library view below they lead, because there they ARE
+   the subject. #}
+<details class="artifact-detail" style="margin-bottom:1rem"><summary>Workspace usage and table access</summary><div style="margin-top:.9rem">
+
+<div class="metrics">
+  <div class="metric"><div class="metric-label">Dashboard visuals</div><div class="metric-value">{{ charts|length }}</div></div>
+  <div class="metric"><div class="metric-label">Queries this month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
+  <div class="metric">
+    <div class="metric-label">Query limit</div>
+    <div class="metric-value" style="font-size:var(--font-xl);color:{% if query_status.blocked %}var(--danger){% elif query_status.warning %}var(--warning){% else %}var(--success){% endif %}">
+      {{ query_status.remaining_label }} left
+    </div>
+    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
+      {{ query_status.used_label }} / {{ query_status.limit_label }} used
+    </div>
+    <div class="metric-progress {% if query_status.blocked %}blocked{% elif query_status.warning %}warning{% endif %}">
+      <span style="width:{{ query_status.limit_pct }}%"></span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Remaining tokens</div>
+    <div class="metric-value" style="font-size:var(--font-xl);color:{% if token_status.unlimited or token_status.limit_pct < 80 %}var(--success){% else %}var(--warning){% endif %}">
+      {{ token_status.remaining_label }}
+    </div>
+    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
+      {% if token_status.unlimited %}No monthly token cap{% else %}{{ token_status.used_label }} / {{ token_status.limit_label }} used{% endif %}
+    </div>
+  </div>
+  <div class="metric"><div class="metric-label">Group</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
+  <div class="metric"><div class="metric-label">Tables access</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}All{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
+</div>
+
+{% if query_status.blocked %}
+{{ alert('Monthly query limit reached: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used. Ask your administrator to increase the workspace limit.', 'error', 'x-circle') }}
+{% elif query_status.warning %}
+{{ alert('Query usage is above 80%: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used this month.', 'amber', 'exclamation-triangle') }}
+{% endif %}
+
+{% if allowed_tables %}
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header">
+    <h2>Your table access ({{ allowed_tables|length }} tables)</h2>
+    <a href="/portal/kb" class="btn btn-secondary btn-sm">View Semantic Layer →</a>
+  </div>
+  <div class="card-body" style="padding:.875rem 1.25rem">
+    {% for t in allowed_tables %}<span class="table-pill">{{ t }}</span>{% endfor %}
+  </div>
+</div>
+{% elif allowed_tables is not none and allowed_tables|length == 0 %}
+<div class="alert alert-amber">You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
+{% endif %}
+
+</div></details>
+{% else %}
+<div class="page-header">
+  <h1>Dashboards</h1>
+  <p>Organize governed KPIs, charts, and tables for the decisions your team follows.</p>
+</div>
+
+<div class="metrics">
+  <div class="metric"><div class="metric-label">Dashboard visuals</div><div class="metric-value">{{ charts|length }}</div></div>
+  <div class="metric"><div class="metric-label">Queries this month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
+  <div class="metric">
+    <div class="metric-label">Query limit</div>
+    <div class="metric-value" style="font-size:var(--font-xl);color:{% if query_status.blocked %}var(--danger){% elif query_status.warning %}var(--warning){% else %}var(--success){% endif %}">
+      {{ query_status.remaining_label }} left
+    </div>
+    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
+      {{ query_status.used_label }} / {{ query_status.limit_label }} used
+    </div>
+    <div class="metric-progress {% if query_status.blocked %}blocked{% elif query_status.warning %}warning{% endif %}">
+      <span style="width:{{ query_status.limit_pct }}%"></span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Remaining tokens</div>
+    <div class="metric-value" style="font-size:var(--font-xl);color:{% if token_status.unlimited or token_status.limit_pct < 80 %}var(--success){% else %}var(--warning){% endif %}">
+      {{ token_status.remaining_label }}
+    </div>
+    <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:4px">
+      {% if token_status.unlimited %}No monthly token cap{% else %}{{ token_status.used_label }} / {{ token_status.limit_label }} used{% endif %}
+    </div>
+  </div>
+  <div class="metric"><div class="metric-label">Group</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
+  <div class="metric"><div class="metric-label">Tables access</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}All{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
+</div>
+
+{% if query_status.blocked %}
+{{ alert('Monthly query limit reached: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used. Ask your administrator to increase the workspace limit.', 'error', 'x-circle') }}
+{% elif query_status.warning %}
+{{ alert('Query usage is above 80%: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used this month.', 'amber', 'exclamation-triangle') }}
+{% endif %}
+
+{% if allowed_tables %}
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header">
+    <h2>Your table access ({{ allowed_tables|length }} tables)</h2>
+    <a href="/portal/kb" class="btn btn-secondary btn-sm">View Semantic Layer →</a>
+  </div>
+  <div class="card-body" style="padding:.875rem 1.25rem">
+    {% for t in allowed_tables %}<span class="table-pill">{{ t }}</span>{% endfor %}
+  </div>
+</div>
+{% elif allowed_tables is not none and allowed_tables|length == 0 %}
+<div class="alert alert-amber">You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
+{% endif %}
+
+{% if not dashboard_artifact and dashboards %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:15px;font-weight:800">Your dashboard artifacts</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ dashboards|length }} saved</span></div>
+<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:800">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}Shared with team · {% endif %}{{ item.status|capitalize }} · v{{ item.version }} · {{ item.chart_count }} visual{% if item.chart_count != 1 %}s{% endif %}</div></a>{% endfor %}</div>
+{% endif %}
+
+{% endif %}
+
 
 </div>
 
@@ -1045,12 +1071,5 @@ function initFallbackDashboardDrag(grid) {
   <button type="button" class="unpin-toast-close" onclick="_commitUnpin()" aria-label="Dismiss">×</button>
 </div>
 
-<style>
-#unpin-toast{position:fixed;bottom:1.75rem;left:50%;transform:translateX(-50%) translateY(8px);z-index:9500;background:var(--gray-800,#1e293b);color:#f8fafc;border-radius:var(--radius);padding:.65rem 1rem;font-size:var(--font-base);font-weight:600;display:flex;align-items:center;gap:.75rem;box-shadow:0 4px 24px rgba(0,0,0,.28);opacity:0;transition:opacity .2s,transform .2s;white-space:nowrap}
-#unpin-toast.visible{opacity:1;transform:translateX(-50%) translateY(0)}
-.unpin-toast-undo{background:rgba(255,255,255,.15);border:none;color:inherit;cursor:pointer;font-weight:800;font-size:var(--font-sm);padding:3px 10px;border-radius:999px;transition:background .15s}
-.unpin-toast-undo:hover{background:rgba(255,255,255,.28)}
-.unpin-toast-close{background:none;border:none;color:rgba(255,255,255,.55);cursor:pointer;font-size:var(--font-xl);line-height:1;padding:0 2px;margin-left:.25rem;transition:color .15s}
-.unpin-toast-close:hover{color:#fff}
-</style>
+
 {% endblock %}

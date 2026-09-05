@@ -1284,6 +1284,35 @@ async def portal_dashboard_rollback(
     )
 
 
+@router.post("/dashboard/{dashboard_id}/publish")
+async def portal_dashboard_publish(request: Request, dashboard_id: int):
+    """Publish a dashboard so the rest of the team can see it again.
+
+    The portal had no way to do this at all: publishing was a chat command
+    only, while EVERY portal edit -- adding a chart, dragging a tile, changing
+    a palette, renaming a card -- marks the dashboard draft. Since
+    get_dashboard_for_view gates team visibility on
+    `visibility='team' AND status='published'`, one drag removed a team
+    dashboard from every teammate's portal with no warning and no way back
+    from this page.
+
+    store.publish_dashboard scopes its UPDATE by user_id AND account_id, so a
+    request for someone else's dashboard is a no-op rather than an error; the
+    redirect is the same either way and the caller learns nothing about a
+    dashboard that is not theirs.
+    """
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+    try:
+        store.publish_dashboard(int(dashboard_id), user["id"], user["account_id"])
+    except Exception as exc:
+        log.warning("Dashboard %s could not be published: %s", dashboard_id, exc)
+    return RedirectResponse(
+        f"/portal/dashboard?dashboard_id={int(dashboard_id)}", status_code=303
+    )
+
+
 @router.post("/dashboard/{dashboard_id}/subscribe")
 async def portal_dashboard_subscribe(
     request: Request,

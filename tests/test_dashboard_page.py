@@ -52,6 +52,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "portal" / "templates" / "portal_dashboard.html"
+STYLESHEET = ROOT / "static" / "css" / "dashboard.css"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -222,7 +223,7 @@ class TestTheTableTile:
         button = button[:button.index(">") + 1]
         assert "all:unset" not in button
         assert 'class="dash-th-sort"' in button
-        css = TEMPLATE.read_text(encoding="utf-8")
+        css = STYLESHEET.read_text(encoding="utf-8")
         assert ".dash-th-sort:focus-visible" in css
 
 
@@ -468,3 +469,225 @@ JSON.stringify({{rendered: _rendered, failed: _failed,
         # The bad one says so instead of shimmering forever.
         assert out["failed"] == ["bad"]
         assert out["skeletonsLeft"] == ["a", "c"]   # untouched by the stub
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# The redesign
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _headings(markup: str) -> list[tuple[str, str]]:
+    return [(m.group(1), re.sub(r"<[^>]+>", "", m.group(2)).strip())
+            for m in re.finditer(r"<(h[1-3])[^>]*>(.*?)</\1>", markup, re.S)]
+
+
+class TestThePageLeadsWithTheDashboard:
+    """The hierarchy was inverted. The h1 was a permanently generic
+    "Dashboards"; the dashboard you had actually opened was an h2 sitting BELOW
+    the account KPI strip and the table-access card."""
+
+    def test_the_open_dashboard_is_the_h1(self):
+        headings = _headings(_render([_chart(chart_json='{"type":"bar"}')]))
+        assert headings[0] == ("h1", "Pharmacy performance")
+
+    def test_the_generic_heading_is_gone_when_a_dashboard_is_open(self):
+        markup = _render([_chart(chart_json='{"type":"bar"}')])
+        assert "<h1>Dashboards</h1>" not in markup
+
+    def test_the_library_view_still_leads_with_dashboards(self):
+        """On the library view the account IS the subject, so it keeps the
+        generic heading and the KPI strip up front."""
+        from jinja2 import ChainableUndefined
+
+        import portal.routes as pr
+        env = pr.templates.env
+        previous, env.undefined = env.undefined, ChainableUndefined
+        try:
+            class _URL:
+                path = "/portal/dashboard"
+
+            class _Req:
+                url = _URL(); cookies = {}; headers = {}; query_params = {}
+
+            markup = env.get_template("portal_dashboard.html").render(
+                request=_Req(),
+                user={"id": 1, "name": "Ada", "account_id": "a", "role": "analyst"},
+                client={"client_name": "Acme"}, charts=[], dashboard_artifact=None,
+                dashboards=[{"id": 5, "name": "Ops", "status": "published",
+                             "version": 2, "chart_count": 3, "can_edit": 1}],
+                dashboard_filters=[], dashboard_sources=[], dashboard_tabs=[],
+                dashboard_versions=[], dashboard_subscription=None,
+                selected_tab="Overview", welcome=False, allowed_tables=["DW.SALES"],
+                group_tables=[], monthly_count=1,
+                query_status={"blocked": False, "warning": "", "limit_label": "1",
+                              "limit_pct": 1, "remaining_label": "1", "used_label": "1"},
+                token_status={"unlimited": True, "limit_pct": 1, "remaining_label": "—",
+                              "used_label": "0", "limit_label": "0"},
+                lang="en",
+            )
+        finally:
+            env.undefined = previous
+        assert _headings(markup)[0] == ("h1", "Dashboards")
+        assert "Ops" in markup
+
+    def test_the_account_context_is_demoted_but_not_lost(self):
+        """Still reachable on the dashboard view -- just no longer outranking
+        the artifact."""
+        markup = _render([_chart(chart_json='{"type":"bar"}')])
+        assert "Workspace usage and table access" in markup
+        assert "Remaining tokens" in markup      # the wiring test's literal
+        assert "Query limit" in markup
+
+
+class TestTheUnpublishedTeamDashboardIsVisible:
+    """Adding a chart, DRAGGING a tile, changing a palette or renaming a card
+    all mark a team dashboard draft, and get_dashboard_for_view gates on
+    `visibility='team' AND status='published'` -- so one drag made it vanish
+    from every teammate's portal. The page said nothing, and publishing was a
+    chat command only."""
+
+    def _render_status(self, status, visibility, can_edit=True):
+        from jinja2 import ChainableUndefined
+
+        import portal.routes as pr
+        env = pr.templates.env
+        previous, env.undefined = env.undefined, ChainableUndefined
+        try:
+            class _URL:
+                path = "/portal/dashboard"
+
+            class _Req:
+                url = _URL(); cookies = {}; headers = {}; query_params = {}
+
+            return env.get_template("portal_dashboard.html").render(
+                request=_Req(),
+                user={"id": 1, "name": "Ada", "account_id": "a", "role": "analyst"},
+                client={"client_name": "Acme"},
+                charts=[_chart(chart_json='{"type":"bar"}')],
+                dashboard_artifact={"id": 5, "name": "Ops", "status": status,
+                                    "visibility": visibility, "version": 3,
+                                    "can_edit": 1 if can_edit else 0,
+                                    "refresh_schedule": "daily", "thread_id": "t"},
+                dashboards=[], dashboard_filters=[], dashboard_sources=[],
+                dashboard_tabs=["Overview"], dashboard_versions=[],
+                dashboard_subscription=None, selected_tab="Overview", welcome=False,
+                allowed_tables=[], group_tables=[], monthly_count=1,
+                query_status={"blocked": False, "warning": "", "limit_label": "1",
+                              "limit_pct": 1, "remaining_label": "1", "used_label": "1"},
+                token_status={"unlimited": True, "limit_pct": 1, "remaining_label": "—",
+                              "used_label": "0", "limit_label": "0"},
+                lang="en",
+            )
+        finally:
+            env.undefined = previous
+
+    def test_a_draft_team_dashboard_says_teammates_cannot_see_it(self):
+        markup = self._render_status("draft", "team")
+        assert "teammates cannot see this dashboard" in markup.lower()
+        assert 'action="/portal/dashboard/5/publish"' in markup
+
+    def test_a_published_team_dashboard_says_nothing(self):
+        markup = self._render_status("published", "team")
+        assert "teammates cannot see" not in markup.lower()
+        assert "/publish" not in markup
+
+    def test_a_personal_draft_says_nothing(self):
+        """A personal dashboard has no audience to lose."""
+        markup = self._render_status("draft", "personal")
+        assert "teammates cannot see" not in markup.lower()
+
+    def test_a_viewer_who_cannot_edit_is_not_asked_to_publish(self):
+        markup = self._render_status("draft", "team", can_edit=False)
+        assert "/publish" not in markup
+
+    def test_the_status_is_a_pill_not_a_run_on_sentence(self):
+        markup = self._render_status("draft", "team")
+        assert 'class="dash-status is-draft"' in markup
+        assert 'class="dash-status is-published"' in self._render_status("published", "team")
+
+
+class TestThePublishEndpoint:
+
+    def _client(self):
+        import os
+        import tempfile
+        os.environ.setdefault("QUERYBOT_DB_PATH",
+                              os.path.join(tempfile.mkdtemp(), "dash.db"))
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        import portal.routes as pr
+        import store
+        store.init_db()
+        app = FastAPI()
+        app.include_router(pr.router)
+        return TestClient(app), pr, store
+
+    def _signed_in(self):
+        import os
+        client, pr, store = self._client()
+        account_id = f"acct{os.urandom(4).hex()}"
+        store.upsert_client(account_id, "T")
+        user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com")
+        client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
+        return client, store, account_id, user_id
+
+    def test_it_publishes_and_the_dashboard_reappears_for_the_team(self):
+        client, store, account_id, user_id = self._signed_in()
+        dashboard = store.create_dashboard(account_id, user_id, "t", "Ops",
+                                           visibility="team")
+        dashboard_id = int(dashboard["id"])
+        assert store.get_dashboard(dashboard_id, user_id, account_id)["status"] == "draft"
+
+        response = client.post(f"/portal/dashboard/{dashboard_id}/publish",
+                               follow_redirects=False)
+        assert response.status_code == 303
+        assert store.get_dashboard(dashboard_id, user_id, account_id)["status"] == "published"
+
+    def test_anonymous_cannot_publish(self):
+        client, _, _ = self._client()
+        response = client.post("/portal/dashboard/1/publish", follow_redirects=False)
+        assert response.status_code in (303, 401)
+        assert "/portal/login" in response.headers.get("location", "") or \
+            response.status_code == 401
+
+    def test_it_cannot_publish_someone_elses_dashboard(self):
+        """publish_dashboard's UPDATE is scoped by user_id AND account_id, so a
+        wrong owner is a no-op rather than an error -- assert the no-op."""
+        import os
+        client, store, account_id, user_id = self._signed_in()
+        other_id, _ = store.create_user(account_id, "Bob", f"{os.urandom(4).hex()}@x.com")
+        dashboard = store.create_dashboard(account_id, other_id, "t", "Theirs",
+                                           visibility="team")
+        client.post(f"/portal/dashboard/{int(dashboard['id'])}/publish",
+                    follow_redirects=False)
+        assert store.get_dashboard(int(dashboard["id"]), other_id,
+                                   account_id)["status"] == "draft"
+
+
+class TestLandmarksAndTableSemantics:
+
+    def test_the_provenance_block_is_a_landmark(self):
+        markup = _render([_chart(chart_json='{"type":"bar"}')])
+        assert '<section class="artifact-details"' in markup
+        assert 'aria-label="Dashboard provenance"' in markup
+
+    def test_the_page_css_lives_in_a_stylesheet_not_the_template(self):
+        """66 lines of CSS in a 989-line template is why nobody noticed that
+        eight of its declarations had been dead since production.css landed."""
+        assert "<style>" not in TEMPLATE.read_text(encoding="utf-8")
+        assert "/static/css/dashboard.css" in TEMPLATE.read_text(encoding="utf-8")
+
+    def test_the_stylesheet_still_loads_before_production_css(self):
+        """production.css calls itself the layer "loaded after page-specific
+        styles" -- a quieting pass that flattens gradients and removes the hover
+        lift. Loading this page's CSS after it would silently revert that."""
+        base = (ROOT / "portal" / "templates" / "portal_base.html").read_text(encoding="utf-8")
+        assert base.index("{% block head %}") < base.index("production.css")
+
+    def test_the_dead_declarations_were_deleted_not_promoted(self):
+        css = STYLESHEET.read_text(encoding="utf-8")
+        body = css[css.index("*/") + 2:]
+        # Each of these was overridden by production.css and read as though it
+        # applied. Re-adding one would be a silent visual regression.
+        assert "translateY(-1px)" not in body
+        assert "shadow-md" not in body
+        assert "linear-gradient(135deg" not in body
