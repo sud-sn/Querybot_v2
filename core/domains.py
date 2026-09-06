@@ -179,6 +179,21 @@ def allowed_tables_for(routing: Routing, *, existing: set[str] | None = None) ->
     return {t for t in existing if t.upper() in domain_tables}
 
 
+def secondary_scope(routing: Routing, *, existing: set[str]) -> set[str]:
+    """The tables a second opinion runs under.
+
+    The runner-up domain intersected with the user's own scope, exactly as
+    ``allowed_tables_for`` treats the primary: a second opinion is still an
+    answer this user is being shown, so it may never read a table they cannot
+    see. Empty whenever there is no runner-up, or none of it is visible --
+    and an empty scope means no second opinion, never an unscoped one.
+    """
+    if routing.secondary is None:
+        return set()
+    domain_tables = {t.upper() for t in routing.secondary.tables}
+    return {t for t in (existing or set()) if t.upper() in domain_tables}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Corroboration
 # ══════════════════════════════════════════════════════════════════════════════
@@ -294,10 +309,22 @@ class ScopeDecision:
     routing: Routing | None = None
     applied: bool = False
     reason: str = ""
+    # The tables a second opinion would be answered under: the runner-up
+    # domain intersected with what this user could see BEFORE the primary
+    # narrowed it. Computed here and nowhere else, because here is the only
+    # place that still holds the user's own scope -- by the time the pipeline
+    # reaches corroboration, `effective` has already been narrowed to the
+    # primary domain, and intersecting the runner-up with that would produce
+    # the empty set on every question.
+    secondary: set[str] = field(default_factory=set)
 
     @property
     def domain(self) -> str:
         return self.routing.primary.name if (self.routing and self.routing.primary) else ""
+
+    @property
+    def second_opinion(self) -> str:
+        return self.routing.secondary.name if (self.routing and self.routing.secondary) else ""
 
 
 def narrow_scope(
@@ -349,4 +376,5 @@ def narrow_scope(
             if allowed_tables is not None else None
         ),
         routing=routing, applied=True, reason=routing.reason,
+        secondary=secondary_scope(routing, existing=set(effective)),
     )

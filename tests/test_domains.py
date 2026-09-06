@@ -38,6 +38,7 @@ from core.domains import (  # noqa: E402
     describe,
     route,
     score_domain,
+    secondary_scope,
 )
 from core.i18n import MESSAGES  # noqa: E402
 
@@ -506,6 +507,91 @@ class TestNarrowingTheScope(unittest.TestCase):
         self.assertTrue(decision.applied)
         decision.effective.add("SOMETHING.ELSE")
         self.assertEqual(effective, self.ALL)
+
+
+class TestTheScopeASecondOpinionRunsUnder(unittest.TestCase):
+    """``secondary_scope`` — the runner-up domain, seen through the user's ACL.
+
+    Computed inside ``narrow_scope`` and nowhere else, because that is the
+    only point in the pipeline that still holds the un-narrowed scope: by the
+    time corroboration runs, ``effective`` has already been cut down to the
+    primary domain, and intersecting the runner-up with THAT produces the
+    empty set on every question two areas could answer.
+    """
+
+    ALL = {"SALES.ORDERS", "SALES.CUSTOMER", "FIN.GL", "FIN.AP"}
+
+    def _routing(self, question="sales and ledger together"):
+        return route(question, [SALES, FINANCE])
+
+    def test_the_runner_up_domain_is_the_second_opinions_scope(self):
+        routing = self._routing()
+        self.assertTrue(routing.should_corroborate)
+        scope = secondary_scope(routing, existing=self.ALL)
+        self.assertEqual(scope, {t for t in self.ALL
+                                 if t.upper() in {x.upper() for x in routing.secondary.tables}})
+        self.assertTrue(scope)
+
+    def test_it_never_reaches_a_table_the_user_cannot_see(self):
+        # A second opinion is still an answer this user is shown. Returning
+        # the domain's own table list would hand them one they have no
+        # permission for, and the validator would then accept it.
+        routing = self._routing()
+        visible = {"SALES.ORDERS"}
+        self.assertEqual(secondary_scope(routing, existing=visible), set())
+
+    def test_a_partially_visible_second_area_gives_what_is_visible(self):
+        routing = route("sales and ledger together", [SALES, FINANCE])
+        second = {t.upper() for t in routing.secondary.tables}
+        one = next(iter(second))
+        self.assertEqual(
+            secondary_scope(routing, existing={one, "SALES.ORDERS"}), {one})
+
+    def test_no_runner_up_means_no_second_opinion(self):
+        routing = route("what were bookings last month", [SALES, FINANCE])
+        self.assertIsNone(routing.secondary)
+        self.assertEqual(secondary_scope(routing, existing=self.ALL), set())
+
+    def test_an_unrouted_question_has_no_second_opinion(self):
+        routing = route("how many widgets shipped", [SALES, FINANCE])
+        self.assertFalse(routing.routed)
+        self.assertEqual(secondary_scope(routing, existing=self.ALL), set())
+
+    def test_the_decision_carries_it_beside_the_primary_scope(self):
+        from core.domains import narrow_scope
+
+        decision = narrow_scope(
+            "sales and ledger together", [SALES, FINANCE],
+            effective=self.ALL, allowed_tables=None,
+        )
+        self.assertTrue(decision.applied)
+        self.assertTrue(decision.secondary)
+        self.assertEqual(decision.second_opinion, decision.routing.secondary.name)
+        # The two scopes are disjoint: that is the whole point of asking
+        # twice, and an overlap would mean the second opinion could confirm
+        # the first from the same tables.
+        self.assertFalse(decision.secondary & decision.effective)
+
+    def test_a_decisive_route_carries_an_empty_second_scope(self):
+        from core.domains import narrow_scope
+
+        decision = narrow_scope(
+            "what were bookings last month", [SALES, FINANCE],
+            effective=self.ALL, allowed_tables=None,
+        )
+        self.assertTrue(decision.applied)
+        self.assertEqual(decision.secondary, set())
+        self.assertEqual(decision.second_opinion, "")
+
+    def test_an_unrouted_decision_carries_an_empty_second_scope(self):
+        from core.domains import narrow_scope
+
+        decision = narrow_scope(
+            "how many widgets shipped", [SALES, FINANCE],
+            effective=self.ALL, allowed_tables=None,
+        )
+        self.assertFalse(decision.applied)
+        self.assertEqual(decision.secondary, set())
 
 
 class TestThePipelineAppliesIt(unittest.TestCase):
