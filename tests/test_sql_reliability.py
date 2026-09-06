@@ -1162,16 +1162,83 @@ class FieldPlanRepairTests(unittest.TestCase):
         sql = "SELECT SUM(PAY_AMT) AS TOTAL FROM EMDW_DMART.FNN_FCT"
         self.assertEqual(self._repair(sql), "")
 
-    def test_pipeline_wires_repair_before_llm_retry(self):
-        import inspect
-        import core.query_pipeline as qp
-        src = inspect.getsource(qp)
-        self.assertIn("attempt_field_plan_repair(", src)
-        # Repair must run before the retryable/LLM-retry block.
-        self.assertLess(
-            src.index("attempt_field_plan_repair("),
-            src.index("retryable = ("),
+    def test_a_field_plan_mismatch_is_repaired_during_validation(self):
+        """Executed, not grepped.
+
+        The repair used to be inline in a 4,000-line function, so the only
+        available check was that its call site appeared before the LLM-retry
+        block. It lives in core.sql_attempt now, and the behaviour is the
+        assertion: a field-plan mismatch comes back valid, repaired, with the
+        repair named -- so the LLM retry budget is never spent on it.
+        """
+        from unittest.mock import patch
+
+        from core.sql_attempt import ValidationScope, validate_with_repairs
+
+        scope = ValidationScope(
+            known_tables={"S.F"}, db_type="azure_sql", allowed_tables={"S.F"},
+            table_columns={"S.F": {"AMT": "decimal"}},
         )
+        repaired_sql = "SELECT d.NAME, SUM(f.AMT) FROM S.F f JOIN S.D d ON d.ID=f.DID GROUP BY d.NAME"
+
+        with (
+            patch("core.validator.validate_sql",
+                  return_value=(False, "display field planned", "field_plan_mismatch")),
+            patch("core.pipeline_helpers.attempt_governed_temporal_metric_repair",
+                  return_value=""),
+            patch("core.pipeline_helpers.attempt_field_plan_repair",
+                  return_value=repaired_sql) as repair,
+        ):
+            attempt = validate_with_repairs("SELECT f.DID, SUM(f.AMT) FROM S.F f", scope)
+
+        repair.assert_called_once()
+        self.assertTrue(attempt.ok)
+        self.assertEqual(attempt.sql, repaired_sql)
+        self.assertIn("field_plan_repair", attempt.repairs)
+
+    def test_a_repair_that_does_not_apply_leaves_the_verdict_alone(self):
+        # The positive above proves nothing unless the no-op case is intact:
+        # a repair returning "" must not be mistaken for a fix.
+        from unittest.mock import patch
+
+        from core.sql_attempt import ValidationScope, validate_with_repairs
+
+        scope = ValidationScope(known_tables={"S.F"}, db_type="azure_sql")
+        with (
+            patch("core.validator.validate_sql",
+                  return_value=(False, "display field planned", "field_plan_mismatch")),
+            patch("core.pipeline_helpers.attempt_governed_temporal_metric_repair",
+                  return_value=""),
+            patch("core.pipeline_helpers.attempt_field_plan_repair", return_value=""),
+        ):
+            attempt = validate_with_repairs("SELECT 1", scope)
+
+        self.assertFalse(attempt.ok)
+        self.assertEqual(attempt.code, "field_plan_mismatch")
+        self.assertEqual(attempt.repairs, ())
+
+    def test_a_repair_that_raises_costs_its_own_fix_and_nothing_else(self):
+        # Fail-open, and loud: a repair that silently never fires looks
+        # exactly like a repair that never applies.
+        from unittest.mock import patch
+
+        from core.sql_attempt import ValidationScope, validate_with_repairs
+
+        scope = ValidationScope(known_tables={"S.F"}, db_type="azure_sql")
+        with (
+            patch("core.validator.validate_sql",
+                  return_value=(False, "display field planned", "field_plan_mismatch")),
+            patch("core.pipeline_helpers.attempt_governed_temporal_metric_repair",
+                  return_value=""),
+            patch("core.pipeline_helpers.attempt_field_plan_repair",
+                  side_effect=RuntimeError("planner exploded")),
+            self.assertLogs("querybot.sql_attempt", level="WARNING") as logged,
+        ):
+            attempt = validate_with_repairs("SELECT 1", scope)
+
+        self.assertFalse(attempt.ok)
+        self.assertEqual(attempt.code, "field_plan_mismatch")
+        self.assertTrue(any("field_plan_repair" in line for line in logged.output))
 
 
 class DiagnosticRenderingReliabilityTests(unittest.TestCase):

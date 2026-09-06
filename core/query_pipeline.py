@@ -40,6 +40,7 @@ from core.schema import (
 )
 from core.knowledge import load_retriever
 from core.validator import normalize_generated_sql, validate_sql
+from core.sql_attempt import Attempt, ValidationScope, run_attempt
 from core.query_semantics import (
     analyze_query_intent,
     build_generic_query_hints,
@@ -232,6 +233,41 @@ def _unknown_column_is_cross_schema(reason: str, schema_hint: str) -> bool:
         "exact column exists on"
     )
     return bool(marker) and schema_hint.casefold() not in suffix[:120]
+
+
+# The message a statement timeout produces. A literal rather than a catalogue
+# id: it is written into `exec_error`, which the failure path hashes, compares
+# and matches against `is_query_timeout` -- translating it would change what
+# those comparisons see.
+_QUERY_TIMEOUT_MESSAGE = (
+    "Query timed out after 3 minutes. Try narrowing your question with a "
+    "filter (e.g. date range or specific customer)."
+)
+
+
+def _trace_validation(trace_id, attempt) -> None:
+    """Record one attempt's verdict on the trace.
+
+    Split out so every candidate is traced identically. When more than one
+    attempt runs, "which query did it validate and why did that one fail" has
+    to be answerable per candidate rather than only for whichever survived.
+    """
+    _trace_update(
+        trace_id,
+        generated_sql=attempt.sql,
+        sql_validation_status="pass" if attempt.ok else "fail",
+        sql_validation_error="" if attempt.ok else attempt.reason,
+    )
+    _trace_step(
+        trace_id,
+        "validate_sql",
+        input_summary=attempt.sql,
+        output_summary=attempt.reason,
+        status="success" if attempt.ok else "error",
+        metadata={"code": attempt.code, "source": attempt.source,
+                  "repairs": list(attempt.repairs)},
+        duration_ms=attempt.validate_ms,
+    )
 
 
 def _entity_field_unavailable_reason(errors: list[dict] | None) -> str:
@@ -5446,160 +5482,70 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     await _send_live_stage(adapter, event, "validating_sql", _t("stage.validating_sql.label"), _t("stage.validating_sql.detail"))
     retry_count = 0
     semantic_context = _generation_semantic_context
-    _validate_t0 = time.time()
-    ok, reason, code = validate_sql(
-        sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context
+    # The validate-repair-execute sequence lives in core.sql_attempt now.
+    # It was inline here, and being inline was the constraint: a candidate
+    # query has to be executed before anything can judge it, and execution sat
+    # a thousand lines below generation -- so there was no way to produce a
+    # second candidate, and no way to scope one to a subject area without
+    # threading a parameter through every frame in between.
+    _scope = ValidationScope(
+        known_tables=all_known,
+        db_type=db_cfg["db_type"],
+        allowed_tables=query_scope_tables,
+        table_columns=all_columns,
+        semantic_context=semantic_context,
     )
-    _validate_ms = int((time.time() - _validate_t0) * 1000)
 
-    # When one governed expression metric and one approved Date Role fully
-    # determine a current-vs-previous period comparison, compile it from that
-    # executable contract before asking the LLM to retry. This repairs missing
-    # role joins, surrogate-key parsing, and truncated comparison CTEs with the
-    # same dynamic path for every client/schema.
-    if not ok and code in {
-        "field_plan_mismatch", "graph_plan_mismatch", "surrogate_date_conversion",
-        "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch",
-        "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch",
-        "period_comparison_shape", "parse",
-    }:
-        _temporal_repair_t0 = time.time()
-        try:
-            _governed_temporal_sql = attempt_governed_temporal_metric_repair(
-                sql, db_cfg["db_type"], all_known, query_scope_tables,
-                all_columns, semantic_context,
-            )
-        except Exception as _temporal_rep_exc:
-            _governed_temporal_sql = ""
-            log.debug("Governed temporal repair skipped: %s", _temporal_rep_exc)
-        if _governed_temporal_sql:
-            _trace_step(
-                trace_id,
-                "governed_temporal_repair",
-                input_summary=sql,
-                output_summary=_governed_temporal_sql,
-                metadata={"mode": "deterministic", "date_role": "approved"},
-                duration_ms=int((time.time() - _temporal_repair_t0) * 1000),
-            )
-            sql = _governed_temporal_sql
-            ok, reason, code = True, "OK", "ok"
-
-    # Display-field plan mismatches are mechanically fixable from the plan
-    # itself (add the dimension join, swap key → display column). Try that
-    # before burning an LLM retry — and before surfacing a validator error.
-    if not ok and code == "field_plan_mismatch":
-        _repair_t0 = time.time()
-        try:
-            _repaired_sql = attempt_field_plan_repair(
-                sql, db_cfg["db_type"], all_known, query_scope_tables,
-                all_columns, semantic_context,
-            )
-        except Exception as _rep_exc:
-            _repaired_sql = ""
-            log.debug("Field-plan repair skipped: %s", _rep_exc)
-        if _repaired_sql:
-            _trace_step(
-                trace_id,
-                "field_plan_repair",
-                input_summary=sql,
-                output_summary=_repaired_sql,
-                metadata={"mode": "deterministic"},
-                duration_ms=int((time.time() - _repair_t0) * 1000),
-            )
-            sql = _repaired_sql
-            ok, reason, code = True, "OK", "ok"
-
-    # A single validator suggestion is deterministic schema evidence, not an
-    # LLM guess. Apply it locally and require the complete query to validate
-    # again before execution; ambiguous cases still use the governed retry.
-    if not ok and code == "unknown_column":
-        from core.validator import validate_sql_detailed, repair_unambiguous_unknown_columns
-        _column_validation = validate_sql_detailed(
-            sql, all_known, db_cfg["db_type"], query_scope_tables,
-            all_columns, semantic_context,
+    def _trace_repair(kind: str, before: str, after: str, metadata: dict,
+                      duration_ms: int = 0) -> None:
+        _trace_step(
+            trace_id, kind,
+            input_summary=before, output_summary=after, metadata=metadata,
+            duration_ms=duration_ms,
         )
-        _column_repair = repair_unambiguous_unknown_columns(
-            sql, _column_validation, db_cfg["db_type"],
+
+    async def _announce_execution() -> None:
+        await _send_live_stage(
+            adapter, event, "executing_query",
+            _t("stage.executing_query.label"), _t("stage.executing_query.detail"),
         )
-        if _column_repair:
-            _repaired_validation = validate_sql_detailed(
-                _column_repair, all_known, db_cfg["db_type"], query_scope_tables,
-                all_columns, semantic_context,
-            )
-            if _repaired_validation.ok:
-                _trace_step(
-                    trace_id,
-                    "unknown_column_repair",
-                    input_summary=sql,
-                    output_summary=_column_repair,
-                    metadata={"mode": "deterministic", "errors": _column_validation.errors},
-                )
-                sql = _column_repair
-                ok, reason, code = True, "OK", "ok"
-        else:
-            _entity_field_reason = _entity_field_unavailable_reason(
-                _column_validation.errors
-            )
-            if _entity_field_reason:
-                # A cross-table substitution is a change of business meaning,
-                # not a safe SQL repair. Stop before the LLM retry and explain
-                # which entities actually expose the requested field.
-                reason = _entity_field_reason
-                code = "entity_field_unavailable"
 
-    _trace_update(
-        trace_id,
-        generated_sql=sql,
-        sql_validation_status="pass" if ok else "fail",
-        sql_validation_error="" if ok else reason,
+    _attempt = await run_attempt(
+        sql, _scope,
+        executor=_execute_with_policy,
+        timeout=_query_wait_timeout(db_cfg),
+        timeout_message=_QUERY_TIMEOUT_MESSAGE,
+        source="primary",
+        on_repair=_trace_repair,
+        on_validated=lambda a: _trace_validation(trace_id, a),
+        on_executing=_announce_execution,
     )
-    _trace_step(
-        trace_id,
-        "validate_sql",
-        input_summary=sql,
-        output_summary=reason,
-        status="success" if ok else "error",
-        metadata={"code": code},
-        duration_ms=_validate_ms,
-    )
-
-    if ok:
-        _exec_t0 = time.time()
-        try:
-            await _send_live_stage(adapter, event, "executing_query", _t("stage.executing_query.label"), _t("stage.executing_query.detail"))
-            _loop = asyncio.get_running_loop()
-            governed = await asyncio.wait_for(
-                _loop.run_in_executor(None, _execute_with_policy, sql, semantic_context),
-                timeout=_query_wait_timeout(db_cfg),
-            )
-            rows = governed.rows
-            _rows_truncated = bool(getattr(governed, "truncated", False))
-            sql = governed.sql
-            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows)}, duration_ms=int((time.time() - _exec_t0) * 1000))
-        except asyncio.TimeoutError:
-            exec_error = "Query timed out after 3 minutes. Try narrowing your question with a filter (e.g. date range or specific customer)."
-            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error", duration_ms=int((time.time() - _exec_t0) * 1000))
-            log.warning("Query timed out for %s", account_id)
-        except PolicyDeniedError as policy_error:
-            rows = None
-            exec_error = None
-            ok = False
-            last_reason = policy_error.decision.explanation or "Blocked by regulated data policy."
-            last_code = policy_error.decision.reason_code
-            _trace_step(
-                trace_id,
-                "policy_enforcement",
-                input_summary=sql,
-                output_summary={
-                    "reason": last_code,
-                    "audit_id": policy_error.decision.audit_id,
-                },
-                status="error",
-                duration_ms=int((time.time() - _exec_t0) * 1000),
-            )
-        except Exception as first_error:
-            exec_error = str(first_error)
-            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error", duration_ms=int((time.time() - _exec_t0) * 1000))
+    sql, ok, reason, code = _attempt.sql, _attempt.ok, _attempt.reason, _attempt.code
+    rows = _attempt.rows
+    exec_error = _attempt.exec_error
+    _rows_truncated = _attempt.truncated
+    if _attempt.policy_denied is not None:
+        last_reason, last_code = _attempt.reason, _attempt.code
+        _trace_step(
+            trace_id,
+            "policy_enforcement",
+            input_summary=sql,
+            output_summary={
+                "reason": last_code,
+                "audit_id": _attempt.policy_denied.audit_id,
+            },
+            status="error",
+            duration_ms=_attempt.execute_ms,
+        )
+    elif ok:
+        _trace_step(
+            trace_id, "execute_sql", input_summary=sql,
+            output_summary=(exec_error if exec_error
+                            else {"rows": len(rows or [])}),
+            status="error" if exec_error else "success",
+            duration_ms=_attempt.execute_ms,
+        )
+        if exec_error:
             log.warning("First execution failed for %s: %s",
                         account_id, exec_error[:100])
     else:

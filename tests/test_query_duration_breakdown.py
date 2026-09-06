@@ -188,19 +188,96 @@ class QueryPipelineWiringGuardTests(unittest.TestCase):
     def test_instrumented_call_sites_pass_duration_ms(self):
         # Every phase this feature instruments must actually measure and pass
         # duration_ms=, not rely on the store-layer default of 0.
+        #
+        # Validation, execution and the deterministic repairs moved into
+        # core.sql_attempt, so their markers are asserted behaviourally below
+        # rather than as source text -- which is stronger: a marker present in
+        # a phase that no longer runs would still pass this list.
         markers = [
             'duration_ms=int((time.time() - _kb_phase_t0) * 1000)',
             'duration_ms=int((time.time() - _examples_t0) * 1000)',
             'duration_ms=int((time.time() - _llm_gen_t0) * 1000)',
-            'duration_ms=int((time.time() - _repair_t0) * 1000)',
-            'duration_ms=_validate_ms',
-            'duration_ms=int((time.time() - _exec_t0) * 1000)',
             'duration_ms=int((time.time() - _retry_llm_t0) * 1000)',
             'duration_ms=int((time.time() - _retry_validate_t0) * 1000)',
             'duration_ms=int((time.time() - _retry_exec_t0) * 1000)',
         ]
         for marker in markers:
             self.assertIn(marker, self.src, f"missing wiring: {marker}")
+        # The extracted phases still reach the trace with a measured duration.
+        for marker in ('duration_ms=attempt.validate_ms',
+                       'duration_ms=_attempt.execute_ms',
+                       'duration_ms=duration_ms'):
+            self.assertIn(marker, self.src, f"missing wiring: {marker}")
+
+    def test_validation_measures_its_own_duration(self):
+        # A slow validator, so the assertion discriminates: >= 0 passes for a
+        # hardcoded zero, which is the exact defect this whole test class
+        # exists to catch.
+        import time as _time
+        from unittest.mock import patch
+
+        from core.sql_attempt import ValidationScope, validate_with_repairs
+
+        def _slow_validate(*args, **kwargs):
+            _time.sleep(0.01)
+            return (True, "OK", "ok")
+
+        scope = ValidationScope(known_tables={"S.T"}, db_type="azure_sql")
+        with patch("core.validator.validate_sql", _slow_validate):
+            attempt = validate_with_repairs("SELECT 1", scope)
+        self.assertGreaterEqual(attempt.validate_ms, 10)
+
+    def test_a_repair_reports_how_long_it_took(self):
+        # A repair step recorded at the store layer's default of zero is a
+        # phase that vanishes from the duration breakdown -- which is exactly
+        # what the extraction dropped on its first pass.
+        import time as _time
+        from unittest.mock import patch
+
+        from core.sql_attempt import ValidationScope, validate_with_repairs
+
+        recorded = []
+
+        def _slow_repair(*args, **kwargs):
+            _time.sleep(0.01)
+            return "SELECT 2"
+
+        scope = ValidationScope(known_tables={"S.T"}, db_type="azure_sql")
+        with (
+            patch("core.validator.validate_sql",
+                  return_value=(False, "planned", "field_plan_mismatch")),
+            patch("core.pipeline_helpers.attempt_governed_temporal_metric_repair",
+                  return_value=""),
+            patch("core.pipeline_helpers.attempt_field_plan_repair", _slow_repair),
+        ):
+            validate_with_repairs(
+                "SELECT 1", scope,
+                on_repair=lambda *a: recorded.append(a))
+
+        self.assertEqual(len(recorded), 1)
+        kind, before, after, metadata, duration_ms = recorded[0]
+        self.assertEqual(kind, "field_plan_repair")
+        self.assertEqual(after, "SELECT 2")
+        self.assertGreaterEqual(duration_ms, 10)
+
+    def test_execution_measures_its_own_duration(self):
+        import asyncio
+        import time as _time
+        from types import SimpleNamespace
+
+        from core.sql_attempt import Attempt, ValidationScope, execute
+
+        def _slow_executor(sql, semantic):
+            _time.sleep(0.01)
+            return SimpleNamespace(rows=[{"A": 1}], sql=sql, truncated=False)
+
+        attempt = Attempt(sql="SELECT 1", ok=True)
+        done = asyncio.run(execute(
+            attempt, executor=_slow_executor, semantic_context=None,
+            timeout=5, timeout_message="timed out",
+        ))
+        self.assertGreaterEqual(done.execute_ms, 10)
+        self.assertEqual(done.rows, [{"A": 1}])
 
     def test_retry_path_has_trace_steps(self):
         # Before this feature the retry path had zero _trace_step calls.
