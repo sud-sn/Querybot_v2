@@ -337,8 +337,34 @@ def _schema_column_index(schema_dir: str | None) -> dict[str, dict[str, dict]]:
 
 
 def _has_useful_synonym(column_name: str, terms: set[str]) -> bool:
-    physical = _humanize_column(column_name)
-    return any(_humanize_column(term) not in {"", physical} for term in terms)
+    """Does any of these terms teach the resolver something the name does not?
+
+    The gate is what stops the KB harvest writing a column's own name back as
+    its synonym. It compared humanised STRINGS, so "balance val amt" and
+    "bal val amount" read as two different useful terms when they are the same
+    three tokens in different abbreviation states -- and a column could fill
+    its whole synonym budget with re-spellings of itself while this returned
+    True.
+
+    Token sets instead, against the name AND its expansions: a term is useful
+    when it brings a word the column name cannot produce. "inventory value"
+    for BAL_VAL_AMT is useful; "balance val amt" is not.
+    """
+    from core.identifier_intelligence import tokenize_identifier
+    from core.schema_enrichment import ABBREVIATIONS
+
+    derivable: set[str] = set()
+    for token in tokenize_identifier(column_name) or []:
+        derivable.add(str(token).lower())
+        expansion = ABBREVIATIONS.get(str(token).upper())
+        if expansion:
+            derivable.update(expansion.lower().split())
+
+    for term in terms:
+        words = {w for w in str(term or "").lower().replace("_", " ").split() if w}
+        if words and words - derivable:
+            return True
+    return False
 
 
 def enrich_graph_from_kb(account_id: str, kb_dir: str, schema_dir: str | None = None) -> dict:
@@ -460,9 +486,24 @@ def _enrich_graph_from_kb(account_id: str, kb_dir: str, schema_dir: str | None) 
             if _TECHNICAL_NAME_RE.search(col) and not entry["metric_claim"]:
                 continue
             useful_synonym = _has_useful_synonym(col, entry["synonyms"])
-            if not entry["metric_claim"] and not useful_synonym:
-                continue
-            if entry["metric_claim"] and role != "metric" and not useful_synonym:
+            # Write this column if it teaches the resolver ANYTHING: a word
+            # its own name cannot produce, or a role. A date or an identifier
+            # is information no synonym carries -- THERAPY_START_DATE_ID has
+            # to be known as a date whether or not the knowledge base offered
+            # a novel word for it.
+            #
+            # Two conditions before this, and the metric-claim one was doing
+            # the same job badly: a KB "Key Metric" line on a column that is
+            # plainly a date was allowed to suppress the date. What both were
+            # really guarding against is a bogus claim on a column with no
+            # role and no new vocabulary, which is what remains.
+            #
+            # Under the older string-comparison gate the date survived by
+            # accident -- "therapy start" read as novel beside "therapy start
+            # date id" because the STRINGS differed. Comparing meaning
+            # exposed that the role had been riding on that accident.
+            classified = role in {"date", "identifier", "metric"}
+            if not (useful_synonym or classified):
                 continue
             merged_syns = set(entry["synonyms"])
             if prev and (prev.get("synonyms") or "").strip():

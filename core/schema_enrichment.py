@@ -23,6 +23,64 @@ from core.identifier_intelligence import (
 
 
 ABBREVIATIONS: dict[str, str] = {
+    # Generic business abbreviations. Every warehouse in every ERP writes
+    # these, so they belong here rather than in a pack -- a pack is for what
+    # ONE vendor or one tenant calls things.
+    #
+    # The gaps here were load-bearing. Without VAL, BAL_VAL_AMT expanded to
+    # "balance val amount" and its five generated synonyms were permutations
+    # of {bal|balance} x {val} x {amt|amount} -- so "inventory value" and
+    # "stock value" matched nothing, and the only phrasing that reached the
+    # column was the column name read back. Without STAT, STAT_CD was "stat
+    # code". Without REV, NET, MARG, DISC, TAX and PRC, the six most common
+    # words in a sales warehouse expanded to themselves.
+    "ADJ": "adjustment",
+    "ASM": "assembly",
+    "AVL": "available",
+    "BKORD": "back order",
+    "BO": "back order",
+    "BOM": "bill of materials",
+    "BR": "branch",
+    "BRN": "branch",
+    "COMP": "component",
+    "COST": "cost",
+    "DISC": "discount",
+    "DSCT": "discount",
+    "FILL": "fill",
+    "ISS": "issue",
+    "LOC": "location",
+    "MARG": "margin",
+    "MAT": "material",
+    "MAX": "maximum",
+    "MIN": "minimum",
+    "MOV": "movement",
+    "MRG": "margin",
+    "MTD": "month to date",
+    "NET": "net",
+    "OH": "on hand",
+    "PCT": "percent",
+    "PRC": "price",
+    "PRICE": "price",
+    "PROD": "production",
+    "PROF": "profit",
+    "PUR": "purchase",
+    "QTD": "quarter to date",
+    "RAW": "raw",
+    "RCPT": "receipt",
+    "REV": "revenue",
+    "RTE": "rate",
+    "SHIP": "shipping",
+    "STAT": "status",
+    "SUB": "sub",
+    "SUP": "supplier",
+    "SUPP": "supplier",
+    "TAX": "tax",
+    "VAL": "value",
+    "VAT": "vat",
+    "VEND": "vendor",
+    "VND": "vendor",
+    "WIP": "work in progress",
+    "YTD": "year to date",
     "ABC": "abc",
     "ACC": "account",
     "ACCT": "account",
@@ -309,55 +367,107 @@ def _expand_column(column: str, vocab=None) -> tuple[str, list[str]]:
     return analysis.expanded_name, list(analysis.evidence)
 
 
+# Trailing nouns that name the UNIT rather than the measure. "net sales
+# amount" is a reader's phrase; so is "net sales", and the matcher demands a
+# COMPLETE concept match -- core.semantic_model._runtime_match_score scores a
+# multi-word term only when every one of its words is in the question. So a
+# column that offers just the longest form answers only to the longest
+# phrasing: "balance value amount" matched "balance value amount by warehouse"
+# and not "balance value by warehouse".
+#
+# One level, and never down to a single word: "balance value" earns its place,
+# "balance" alone would claim every question containing the word.
+_UNIT_NOUNS = frozenset({
+    "amount", "quantity", "qty", "code", "number", "key", "percent",
+    "percentage", "rate", "value", "id", "indicator", "flag", "count",
+    "total", "sum", "no",
+})
+
+
+def head_term(expanded: str) -> str:
+    """"net sales amount" -> "net sales". "" when there is nothing to drop."""
+    words = str(expanded or "").split()
+    if len(words) < 3 or words[-1] not in _UNIT_NOUNS:
+        return ""
+    return " ".join(words[:-1])
+
+
+# How many terms one column contributes to the prompt and the matcher.
+MAX_BUSINESS_CANDIDATES = 6
+
+
 def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> list[str]:
+    """The business terms this column answers to, best first.
+
+    Two kinds of term, kept apart on purpose.
+
+    VOCABULARY is what a person would say: the ERP dictionary's label and its
+    synonyms, the date-role terms, the expanded name, the conversational
+    aliases a description column earns. These are what let a question REACH a
+    column it never names.
+
+    VARIANTS are the same words in different abbreviation states -- "bal val
+    amt" beside "balance val amount". They earn their place in the matcher,
+    because a reader who has seen the column name will type it. They are not
+    vocabulary, and they must not be ordered as though they were: this list is
+    capped, and its FIRST entry becomes the measure's display name in
+    core.semantic_model._measure_candidates.
+
+    Before the split, aliases were appended into one flat list and the cap ran
+    over the result -- so GRS_MARG_PCT was named "grs marg pct" and UNIT_PRC
+    was named "unit prc", each with the real English form ranked below a
+    permutation of its own abbreviations.
+    """
     col = _clean_identifier(column).upper()
     v = _active_vocab(vocab)
-    candidates: list[str] = []
+    vocabulary: list[str] = []
     date_role = detect_date_role(col, vocab=v)
     if date_role:
-        candidates.extend(date_role_terms(date_role))
+        vocabulary.extend(date_role_terms(date_role))
     governed_code, _, _ = resolve_governed_column_code(col, vocab=v)
     if governed_code in v.column_dict:
         label, synonyms = v.column_dict[governed_code]
-        candidates.extend([label.lower(), *[s.lower() for s in synonyms[:4]]])
+        vocabulary.extend([label.lower(), *[s.lower() for s in synonyms[:4]]])
+
+    # The expanded name is vocabulary for EVERY role, not only the four that
+    # used to list it. A column whose role is "attribute" or "status_filter"
+    # still has an English name, and leaving it out handed the first slot --
+    # and the display name with it -- to an abbreviation variant.
+    if expanded:
+        vocabulary.append(expanded)
+        shorter = head_term(expanded)
+        if shorter:
+            vocabulary.append(shorter)
     if role == "measure":
-        candidates.append(expanded)
         if "_AMT" in col or col in {"CUAM", "SAAM", "SGAM"}:
-            candidates.append(f"total {expanded}")
+            vocabulary.append(f"total {expanded}")
         if "CST" in col or col in {"UCOS", "DCOS"}:
-            candidates.append(f"{expanded} measure")
+            vocabulary.append(f"{expanded} measure")
         if "QTY" in col or col in {"TRQT", "ORQT", "IVQT", "DLQT"}:
-            candidates.append(f"total {expanded}")
-    elif role in {"dimension_key", "dimension", "identifier"}:
-        candidates.append(expanded)
-    elif role == "date_key":
-        candidates.append(expanded)
-    elif role == "status_filter":
-        candidates.append(expanded)
+            vocabulary.append(f"total {expanded}")
 
     # Description/name fields are how business users refer to a dimension,
     # not merely to a physical display column. Derive those conversational
     # aliases for every model (warehouse description -> warehouse / warehouse
-    # name, product description -> product / product name) before shorthand
-    # aliases consume the bounded candidate list.
+    # name, product description -> product / product name).
     display_match = re.match(r"^(.+?)\s+(?:description|name)$", expanded.strip())
     if display_match:
         business_entity = display_match.group(1).strip()
-        candidates.extend([expanded, business_entity, f"{business_entity} name"])
+        vocabulary.extend([business_entity, f"{business_entity} name"])
 
-    # Physical shorthand (``ord dt``), mixed expansion (``order dt``), and
+    # Physical shorthand ("ord dt"), mixed expansion ("order dt"), and
     # camel/Pascal-case variants come from the same engine used at retrieval
     # time. This keeps KB aliases symmetric with user-question normalization.
-    candidates.extend(analyze_identifier(column, vocab=v).aliases)
+    variants = list(analyze_identifier(column, vocab=v).aliases)
 
     seen: set[str] = set()
     deduped: list[str] = []
-    for candidate in candidates:
+    for candidate in [*vocabulary, *variants]:
         normalized = re.sub(r"\s+", " ", candidate).strip().lower()
         if normalized and normalized not in seen:
             seen.add(normalized)
             deduped.append(normalized)
-    return deduped[:6]
+    return deduped[:MAX_BUSINESS_CANDIDATES]
 
 
 def _role_for_column(column: str, data_type: str = "", distinct_values: str = "", vocab=None) -> tuple[str, list[str], list[str], str]:
