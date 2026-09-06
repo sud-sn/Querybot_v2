@@ -49,11 +49,27 @@ def save_state(account_id, state, state_data=None, business_desc=None):
 
 # ── DB config ─────────────────────────────────────────────────────────────────
 
-def get_client_db(account_id: str) -> dict | None:
-    client = store.get_client(account_id)
-    if not client:
+def get_client_db(
+    account_id: str,
+    *,
+    source_id: int | None = None,
+    domain_id: int | None = None,
+) -> dict | None:
+    """The warehouse connection a question runs against.
+
+    Resolved through store.resolve_db_config_id, which is the one place that
+    decides -- the source explicitly named, else the source declared for the
+    domain the question was routed to, else the workspace default, else
+    client.db_config_id for a workspace that has declared no sources.
+
+    Callers that pass neither argument get exactly what they got before: a
+    workspace with one connection has one default source pointing at it, and
+    one with none falls back to the column that has always held it.
+    """
+    if not store.get_client(account_id):
         return None
-    db_config_id = client.get("db_config_id")
+    db_config_id = store.resolve_db_config_id(
+        account_id, source_id=source_id, domain_id=domain_id)
     if not db_config_id:
         return None
     return store.get_db_config(db_config_id)

@@ -18,6 +18,11 @@ from store.db import init_db, get_db
 from store.domain_store import (
     save_domain, list_domains, get_domain, delete_domain,
 )
+from store.source_store import (
+    list_client_sources, get_client_source, save_client_source,
+    set_default_source, delete_client_source, source_for_domain,
+    default_source, resolve_db_config_id,
+)
 from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (
     save_metric, list_metrics, get_metric, update_metric,
@@ -160,6 +165,9 @@ from store.semantic_compile_store import (
 __all__ = [
     "init_db","get_db","encrypt","decrypt","decrypt_json","mask",
     "save_domain","list_domains","get_domain","delete_domain",
+    "list_client_sources","get_client_source","save_client_source",
+    "set_default_source","delete_client_source","source_for_domain",
+    "default_source","resolve_db_config_id",
     "set_system","get_system","get_all_system","SYSTEM_KEYS",
     "LLM_COST_RATES","calculate_cost","get_all_pricing","save_pricing",
     "log_kb_egress","list_kb_egress","get_kb_egress_summary","update_egress_masking",

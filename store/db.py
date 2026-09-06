@@ -1365,6 +1365,7 @@ def _run_migrations() -> None:
         _ensure_metric_test_table(conn)
         _ensure_learning_loop_tables(conn)
         _ensure_domain_tables(conn)
+        _ensure_client_source_tables(conn)
         _ensure_compliance_tables(conn)
         _ensure_semantic_compiler_tables(conn)
         for table, column, col_def in migrations:
@@ -2174,6 +2175,69 @@ def _ensure_domain_tables(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_domain_account
             ON domain(account_id, is_active);
+        """
+    )
+
+
+def _ensure_client_source_tables(conn: sqlite3.Connection) -> None:
+    """The connections a workspace can answer from.
+
+    A workspace has held exactly one warehouse connection since the product
+    started: ``client.db_config_id``. A tenant whose sales data is in
+    Snowflake and whose finance ledger is in Azure SQL has to be two
+    workspaces, with two knowledge bases, two graphs and no way to check one
+    area's number against the other's.
+
+    A source is a NAMED connection, optionally tied to a domain. That pairing
+    is the point: domains (A1) already scope a question to a subject area, and
+    a subject area whose tables live in a different warehouse is exactly the
+    case one connection per workspace cannot express.
+
+    Deliberately additive. ``client.db_config_id`` stays and stays
+    authoritative for a workspace with no sources declared, so an existing
+    tenant sees no change at all -- the backfill below gives each of them one
+    default source pointing at the connection they already had, and every
+    read goes through one resolver either way.
+
+    NO CROSS-SOURCE SQL, ever. Two connections mean two governed executions
+    and a local combine over released rows; a warehouse cannot join to a
+    warehouse it cannot see, and a plan that emitted SQL naming tables from
+    two connections would be a plan no validator on either side could check.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS client_source (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id   TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            db_config_id INTEGER NOT NULL,
+            name         TEXT    NOT NULL,
+            description  TEXT    NOT NULL DEFAULT '',
+            domain_id    INTEGER DEFAULT NULL,
+            is_default   INTEGER NOT NULL DEFAULT 0,
+            is_active    INTEGER NOT NULL DEFAULT 1,
+            created_at   TEXT    DEFAULT (datetime('now')),
+            updated_at   TEXT    DEFAULT (datetime('now')),
+            UNIQUE(account_id, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_client_source_account
+            ON client_source(account_id, is_active);
+        """
+    )
+
+    # Backfill: one default source per client that has a connection and no
+    # sources yet. Idempotent -- the NOT EXISTS makes a re-run a no-op, and a
+    # client whose only source was deliberately deleted is not resurrected
+    # because the row it would be built from is matched on account_id, not on
+    # db_config_id.
+    conn.execute(
+        """
+        INSERT INTO client_source (account_id, db_config_id, name, is_default)
+        SELECT c.account_id, c.db_config_id, 'Default', 1
+          FROM client c
+         WHERE c.db_config_id IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM client_source s WHERE s.account_id = c.account_id
+           )
         """
     )
 
