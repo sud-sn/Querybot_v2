@@ -208,3 +208,28 @@ def resolve_db_config_id(
 
     client = get_client(account_id) or {}
     return client.get("db_config_id") or None
+
+
+def db_config_for_domain_name(account_id: str, domain_name: str) -> int | None:
+    """The connection a named domain's tables live in, if one is declared.
+
+    Domain routing works in names -- the question matched "Finance", not
+    domain 22 -- so the lookup from a routed name to a connection lives here
+    rather than in the pipeline, next to the resolver that is the only other
+    place a connection is chosen.
+
+    Returns None when the domain has no source of its own, which means "use
+    whatever the caller was already using" rather than "refuse": a workspace
+    with one connection and several domains is the normal case, and every
+    domain in it shares that connection.
+    """
+    from store.domain_store import get_domain
+
+    name = str(domain_name or "").strip()
+    if not name:
+        return None
+    domain = get_domain(account_id, name)
+    if not domain or not domain.get("id"):
+        return None
+    source = source_for_domain(account_id, int(domain["id"]))
+    return int(source["db_config_id"]) if source else None

@@ -21,7 +21,7 @@ from store.domain_store import (
 from store.source_store import (
     list_client_sources, get_client_source, save_client_source,
     set_default_source, delete_client_source, source_for_domain,
-    default_source, resolve_db_config_id,
+    default_source, resolve_db_config_id, db_config_for_domain_name,
 )
 from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (
@@ -167,7 +167,7 @@ __all__ = [
     "save_domain","list_domains","get_domain","delete_domain",
     "list_client_sources","get_client_source","save_client_source",
     "set_default_source","delete_client_source","source_for_domain",
-    "default_source","resolve_db_config_id",
+    "default_source","resolve_db_config_id","db_config_for_domain_name",
     "set_system","get_system","get_all_system","SYSTEM_KEYS",
     "LLM_COST_RATES","calculate_cost","get_all_pricing","save_pricing",
     "log_kb_egress","list_kb_egress","get_kb_egress_summary","update_egress_masking",

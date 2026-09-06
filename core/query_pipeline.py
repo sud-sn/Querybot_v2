@@ -1453,6 +1453,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         semantic: dict | None = None,
         *,
         allowed_tables_override: set[str] | None = None,
+        db_cfg_override: dict | None = None,
     ):
         """Run one statement through the governed executor.
 
@@ -1465,7 +1466,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         attempt then reports "execution failed" and corroboration is
         permanently "not checked" on exactly the workspaces it was built for.
 
-        None means the primary scope, which is every other caller.
+        ``db_cfg_override`` is the same idea one layer down. A subject area
+        whose tables live in a different warehouse (A2) cannot be checked from
+        the primary's connection at all -- the tables are not there. None
+        means the workspace's own connection, which is every other caller and
+        every workspace with one.
+
+        Both default to None, which is the primary scope on the primary
+        connection: every other caller.
         """
         context = resolve_context(
             account_id,
@@ -1476,9 +1484,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             provider=provider,
             break_glass_grant_id=compliance_context.break_glass_grant_id,
         )
+        target = db_cfg_override or db_cfg
         return execute_governed_query(
-            db_cfg["credentials"],
-            db_cfg["db_type"],
+            target["credentials"],
+            target["db_type"],
             candidate_sql,
             context=context,
             known_tables=all_known,
@@ -6869,6 +6878,26 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     )
                 return raw
 
+            # A2: the second area may live on a different connection. Its
+            # tables are not in the primary's warehouse at all, so checking
+            # one area's number against the other's is only possible from the
+            # connection that holds them. None -- a workspace with one
+            # connection, or a domain with no source of its own -- keeps the
+            # primary's, which is every workspace that has not opted in.
+            _second_db_cfg = None
+            try:
+                _second_config_id = store.db_config_for_domain_name(
+                    account_id, _second_domain)
+                if _second_config_id and _second_config_id != (
+                        store.get_client(account_id) or {}).get("db_config_id"):
+                    _second_db_cfg = store.get_db_config(_second_config_id)
+            except Exception as _source_exc:  # noqa: BLE001
+                log.warning(
+                    "Corroboration source lookup failed for %s/%s; checking "
+                    "against the primary connection: %s",
+                    account_id, _second_domain, _source_exc,
+                )
+
             async def _run_second_opinion_attempt(candidate_sql: str, corroborating_scope):
                 def _execute_in_the_second_scope(sql: str, semantic: dict | None = None):
                     # The scope the attempt was validated against, carried
@@ -6880,6 +6909,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     return _execute_with_policy(
                         sql, semantic,
                         allowed_tables_override=corroborating_scope.allowed_tables,
+                        db_cfg_override=_second_db_cfg,
                     )
 
                 return await run_attempt(
@@ -6910,6 +6940,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "checked": _second_opinion.checked,
                     "agrees": _second_opinion.agrees,
                     "reason": _second_opinion.reason,
+                    # Which warehouse confirmed it. "Confirmed against
+                    # Finance" means something different when Finance is a
+                    # different database, and a trace that does not say so
+                    # cannot tell the two apart afterwards.
+                    "connection": (_second_db_cfg or {}).get("name") or "primary",
                 },
                 metadata=_second_opinion.as_dict(),
                 duration_ms=_second_opinion.duration_ms,

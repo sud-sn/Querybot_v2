@@ -376,6 +376,125 @@ class TestSourcesAreNamedAndTenantScoped(RealDatabase):
         self.assertEqual(saved["db_config_id"], self.azure)
 
 
+class TestADomainCanBeCheckedOnItsOwnConnection(RealDatabase):
+    """
+    The capability the whole of A2 exists for: checking one subject area's
+    number against another's when the second area's tables are in a different
+    warehouse.
+
+    Corroboration (A3) already runs the same question under the secondary
+    domain's scope. Without a connection to go with the scope it runs that
+    query against the primary's warehouse, where the second area's tables do
+    not exist — so the check fails as access_denied and corroboration reads
+    "not checked" on exactly the workspaces it was built for.
+    """
+
+    def _domain(self, name: str, tables: list[str]) -> int:
+        import store
+
+        store.save_domain(self.account_id, name, tables=tables)
+        return int(store.get_domain(self.account_id, name)["id"])
+
+    def test_a_domain_with_its_own_source_resolves_to_that_connection(self):
+        import store
+
+        self._set_legacy_connection(self.snowflake)
+        finance = self._domain("Finance", ["FIN.GL"])
+        store.save_client_source(self.account_id, "Ledger", self.azure,
+                                 domain_id=finance)
+        self.assertEqual(
+            store.db_config_for_domain_name(self.account_id, "Finance"), self.azure)
+
+    def test_a_domain_with_no_source_of_its_own_says_so(self):
+        import store
+
+        self._set_legacy_connection(self.snowflake)
+        self._domain("Sales", ["SALES.ORDERS"])
+        # A default source EXISTS, and this must still answer None. Falling
+        # back to it here would report "Sales lives on that connection" when
+        # nobody said so, and the caller would then hand the second opinion an
+        # override it did not need — which is how a redundant override becomes
+        # a wrong one the day the default changes.
+        store.save_client_source(self.account_id, "Warehouse", self.snowflake)
+        self.assertIsNotNone(store.default_source(self.account_id))
+        # None means "use whatever the caller was already using", not
+        # "refuse": a workspace with one connection and several domains is
+        # the normal case, and every domain in it shares that connection.
+        self.assertIsNone(
+            store.db_config_for_domain_name(self.account_id, "Sales"))
+
+    def test_a_domain_that_does_not_exist_says_so(self):
+        import store
+
+        for name in ("Nonexistent", "", None):
+            with self.subTest(name=name):
+                self.assertIsNone(
+                    store.db_config_for_domain_name(self.account_id, name))
+
+    # Two properties of db_config_for_domain_name are NOT tested here, and
+    # deliberately: the tenant scoping of its get_domain lookup, and its
+    # blank-name guard. Both are redundant with what runs after them —
+    # source_for_domain is itself account-scoped, so a domain id found across
+    # the tenant boundary still resolves to no source, and a blank name finds
+    # no domain either way. Removing either changes nothing observable, so a
+    # test for them could only be written by contriving a state the product
+    # cannot reach. They stay in the code as cheap defence; claiming coverage
+    # for them would be claiming coverage that cannot fail.
+
+    def test_another_tenants_domain_is_not_reachable_by_name(self):
+        import store
+
+        store.upsert_client("other-tenant", "portal")
+        store.save_domain("other-tenant", "Finance", tables=["FIN.GL"])
+        theirs = int(store.get_domain("other-tenant", "Finance")["id"])
+        store.save_client_source("other-tenant", "Ledger", self.azure,
+                                 domain_id=theirs)
+        # Same domain NAME, different tenant. Resolving by name across the
+        # tenant boundary would run one customer's corroboration against
+        # another customer's warehouse.
+        self.assertIsNone(
+            store.db_config_for_domain_name(self.account_id, "Finance"))
+
+    def test_the_executor_runs_against_the_connection_it_was_handed(self):
+        # The seam A2 turns on. _execute_with_policy is a closure over the
+        # primary db_cfg; the override is what lets the second opinion reach
+        # a different warehouse, and getting it wrong is silent — the query
+        # runs, against the wrong database, and returns a confident number.
+        import inspect
+
+        import core.query_pipeline as pipeline
+
+        source = inspect.getsource(pipeline._handle_query_impl)
+        self.assertIn("target = db_cfg_override or db_cfg", source)
+        self.assertIn('target["credentials"],', source)
+        self.assertIn('target["db_type"],', source)
+        # And nothing below it still reaches past the override.
+        executor = source[source.index("def _execute_with_policy("):]
+        executor = executor[:executor.index("return execute_governed_query(") + 600]
+        self.assertNotIn('db_cfg["credentials"]', executor)
+
+    def test_the_second_opinion_is_told_which_connection_to_use(self):
+        import inspect
+
+        import core.query_pipeline as pipeline
+
+        source = inspect.getsource(pipeline._handle_query_impl)
+        self.assertIn("db_cfg_override=_second_db_cfg", source)
+        self.assertIn("store.db_config_for_domain_name(", source)
+
+    def test_the_trace_records_which_connection_confirmed_it(self):
+        import inspect
+
+        import core.query_pipeline as pipeline
+
+        # "Confirmed against Finance" means something different when Finance
+        # is a different database, and a trace that does not say so cannot
+        # tell the two apart afterwards.
+        source = inspect.getsource(pipeline._handle_query_impl)
+        self.assertIn('"connection": (_second_db_cfg or {}).get("name") or "primary"',
+                      source)
+
+
 class TestNoCrossSourceSqlIsPossibleYet(RealDatabase):
     """
     The rule the whole design rests on: two connections mean two governed
