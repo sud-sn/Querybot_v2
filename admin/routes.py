@@ -4291,6 +4291,50 @@ async def graph_api_entity_filter(request: Request, account_id: str, entity_name
     return JSONResponse({"status": "ok"})
 
 
+def _join_check(account_id: str, relationship: dict):
+    """One verdict on a proposed join, for every route that stores one.
+
+    core.join_planner has always known a fact-to-fact edge is prohibited; it
+    just ran at QUERY time, where a refusal turns into "no path" and the admin
+    who saved the edge never hears about it. An edge saved through the canvas
+    came back 200 with status='confirmed' even when the planner would refuse
+    it on every question, forever -- and confirmed means discovery will never
+    overwrite it either.
+    """
+    from core.join_governance import check_join
+    from core.schema import load_schema_columns
+
+    entities = {
+        row["entity_name"]: dict(row)
+        for row in store.list_entities(account_id, active_only=False)
+    }
+    schema_columns = None
+    try:
+        state = store.get_client_state(account_id) or {}
+        schema_columns = load_schema_columns(str(state.get("schema_dir") or "")) or None
+    except Exception as exc:  # noqa: BLE001
+        # A schema we cannot read is "unverifiable", not "invalid": the
+        # structural checks still run, and the column check reports that it
+        # could not be made.
+        log.warning("Join check for %s could not load the schema: %s", account_id, exc)
+    return check_join(relationship, entities, schema_columns)
+
+
+def _flag_unverified_join(account_id: str, rel_id: int, verdict) -> None:
+    """Mark a stored-but-unverified join so a reader can find it.
+
+    A column absent from the DISCOVERED schema may be a real column behind a
+    stale discovery, so this is a flag rather than a refusal -- but an
+    unflagged one is invisible until a question fails on it.
+    """
+    if not (verdict.flags and rel_id):
+        return
+    try:
+        store.update_relationship_validation(account_id, int(rel_id), "broken")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not flag join %s for %s: %s", rel_id, account_id, exc)
+
+
 @router.post("/clients/{account_id}/graph/api/relationships")
 async def graph_api_rel_upsert(request: Request, account_id: str):
     if not _is_auth(request):
@@ -4308,6 +4352,19 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
     _api_to_col      = data.get("to_column", "").strip()
     _api_join_type   = data.get("join_type", "LEFT")
     _api_label       = data.get("label", "").strip()
+
+    _verdict = _join_check(account_id, {
+        "from_entity": _api_from_entity, "to_entity": _api_to_entity,
+        "from_column": _api_from_col, "to_column": _api_to_col,
+        "relationship_type": data.get("relationship_type", "many_to_one"),
+        "join_conditions": join_conditions,
+    })
+    if _verdict.refuses:
+        return JSONResponse(
+            {"status": "invalid", "code": _verdict.code, "message": _verdict.reason},
+            status_code=422,
+        )
+
     rid = store.save_relationship(
         account_id        = account_id,
         from_entity       = _api_from_entity,
@@ -4321,6 +4378,7 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
         where_clause      = data.get("where_clause", "").strip(),
         rel_id            = int(data.get("rel_id") or 0),
     )
+    _flag_unverified_join(account_id, rid, _verdict)
     # Sync confirmed relationship into the structured semantic model (S2-2).
     try:
         from core.semantic_model import patch_relationship
@@ -4486,25 +4544,49 @@ async def graph_api_rel_bulk(request: Request, account_id: str):
         except Exception:
             pass
 
+    # Per row, and the whole batch is not lost to one bad edge. A bulk editor
+    # that refuses everything because row 14 is a fact-to-fact join makes the
+    # admin find the needle themselves; one that applies the other 13 and says
+    # which one it kept back does the finding for them.
+    applied = 0
+    rejected: list[dict] = []
     for u in updates:
-        store.save_relationship(
+        candidate = {
+            "from_entity": str(u.get("from_entity", "")).strip(),
+            "to_entity": str(u.get("to_entity", "")).strip(),
+            "from_column": str(u.get("from_column", "")).strip(),
+            "to_column": str(u.get("to_column", "")).strip(),
+            "relationship_type": str(u.get("relationship_type", "many_to_one")),
+        }
+        verdict = _join_check(account_id, candidate)
+        if verdict.refuses:
+            rejected.append({
+                "id": u.get("id"),
+                "target": f"{candidate['from_entity']} → {candidate['to_entity']}",
+                "code": verdict.code, "message": verdict.reason,
+            })
+            continue
+        rel_id = store.save_relationship(
             account_id        = account_id,
-            from_entity       = str(u.get("from_entity", "")).strip(),
-            to_entity         = str(u.get("to_entity", "")).strip(),
-            from_column       = str(u.get("from_column", "")).strip(),
-            to_column         = str(u.get("to_column", "")).strip(),
-            relationship_type = str(u.get("relationship_type", "many_to_one")),
+            from_entity       = candidate["from_entity"],
+            to_entity         = candidate["to_entity"],
+            from_column       = candidate["from_column"],
+            to_column         = candidate["to_column"],
+            relationship_type = candidate["relationship_type"],
             join_type         = str(u.get("join_type", "LEFT")),
             label             = str(u.get("label", "")).strip(),
             where_clause      = str(u.get("where_clause", "")).strip(),
             rel_id            = int(u.get("id") or 0),
         )
+        _flag_unverified_join(account_id, rel_id, verdict)
+        applied += 1
 
-    if updates or deletes:
+    if applied or deletes:
         _after_semantic_approval(
-            account_id, f"bulk relationship edit ({len(updates)} updated, {len(deletes)} deleted)"
+            account_id, f"bulk relationship edit ({applied} updated, {len(deletes)} deleted)"
         )
-    return JSONResponse({"status": "ok", "updated": len(updates), "deleted": len(deletes)})
+    return JSONResponse({"status": "ok", "updated": applied,
+                         "deleted": len(deletes), "rejected": rejected})
 
 
 @router.post("/clients/{account_id}/graph/api/relationships/purge-audit")
