@@ -17,6 +17,9 @@ Public API
 
   build_csv_filename(question) → str
       Derive a filesystem-safe filename from a natural-language question.
+
+  content_disposition(filename) → str
+      The header value for a download, safe for a non-ASCII filename.
 """
 
 from __future__ import annotations
@@ -106,6 +109,61 @@ def _format_cell(val: Any, fmt: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # Filename helper
 # ══════════════════════════════════════════════════════════════════════════════
+
+def ascii_filename(name: str, *, fallback: str = "querybot_result") -> str:
+    """The same filename with every non-ASCII character folded away.
+
+    An HTTP header is latin-1, so a filename carrying a letter outside it —
+    "Škoda", "Łukasz", any CJK — raises UnicodeEncodeError when the response is
+    encoded and the reader gets a 500 instead of their download. Those are
+    ordinary values in a European dataset, and the filename is built from the
+    question, so the reader supplies them without knowing.
+
+    Accents fold to their base letter rather than being dropped, so "région"
+    stays readable as "region". The extension is preserved separately, because
+    a stem that folds away to nothing must still come back as a .csv rather
+    than as an extensionless fallback the browser will not open.
+    """
+    import unicodedata
+
+    raw = str(name or "")
+    stem, dot, ext = raw.rpartition(".")
+    if not dot or len(ext) > 8 or not ext.isalnum():
+        stem, ext = raw, ""
+
+    decomposed = unicodedata.normalize("NFKD", stem)
+    folded = "".join(c for c in decomposed if not unicodedata.combining(c))
+    ascii_stem = folded.encode("ascii", "ignore").decode("ascii")
+    ascii_stem = re.sub(r"[^\w.-]+", "_", ascii_stem)
+    ascii_stem = re.sub(r"_+", "_", ascii_stem).strip("_ .")
+    if not ascii_stem:
+        # The fallback is a caller's string and goes through the same filter:
+        # it reaches the header on exactly the path where the reader's own
+        # name folded away to nothing, so trusting it is trusting the one
+        # input nobody looks at.
+        ascii_stem = re.sub(r"[^\w.-]+", "_", str(fallback or "")).strip("_ .")
+    if not ascii_stem:
+        ascii_stem = "download"
+
+    ascii_ext = ext.encode("ascii", "ignore").decode("ascii")
+    return f"{ascii_stem}.{ascii_ext}" if ascii_ext else ascii_stem
+
+
+def content_disposition(filename: str, *, fallback: str = "querybot_result") -> str:
+    """A Content-Disposition value that survives a non-ASCII filename.
+
+    RFC 6266: an ASCII ``filename=`` for anything old, and a percent-encoded
+    ``filename*=UTF-8''`` that every current browser prefers. Emitting only the
+    first loses the accents; emitting only the raw name 500s the request.
+    """
+    from urllib.parse import quote
+
+    # ascii_filename is the single place a name is made header-safe, fallback
+    # included, so there is no second escape here to drift from it.
+    quoted = ascii_filename(filename, fallback=fallback)
+    encoded = quote(str(filename or quoted), safe="")
+    return f"attachment; filename=\"{quoted}\"; filename*=UTF-8''{encoded}"
+
 
 def build_csv_filename(question: str) -> str:
     """

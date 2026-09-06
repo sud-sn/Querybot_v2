@@ -2478,9 +2478,13 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
     writer.writerows(rows)
     buf.seek(0)
 
-    question_slug = (trace.get("question") or "query")[:40].lower()
-    question_slug = "".join(c if c.isalnum() else "_" for c in question_slug).strip("_")
-    filename = f"querybot_{question_slug}.csv"
+    # core.export owns this. The inline slug here had diverged from it and was
+    # Unicode-aware in the wrong direction: str.isalnum() keeps "Š", which the
+    # latin-1 header encoding then rejects, so a question naming a Škoda or a
+    # Łukasz returned a 500 instead of a download.
+    from core.export import build_csv_filename, content_disposition
+
+    filename = build_csv_filename(str(trace.get("question") or "query"))
     export_id = store.log_export_event(
         account_id=user["account_id"],
         user_id=str(user.get("id") or ""),
@@ -2499,7 +2503,7 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
         iter([buf.getvalue()]),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": content_disposition(filename),
             "X-QueryBot-Export-ID": export_id,
         },
     )

@@ -1237,6 +1237,19 @@ async def platform_delete(request: Request, platform_id: int = Form(...)):
 
 # ── Database configs ──────────────────────────────────────────────────────────
 
+def _download_header(filename: str) -> str:
+    """Content-Disposition for an admin download.
+
+    These filenames are built from an account id, so they are ASCII today —
+    but an account id is a tenant-supplied string and an HTTP header is
+    latin-1, so one non-ASCII character is a 500 rather than a download. Shared
+    with the portal export, which is where that actually happened.
+    """
+    from core.export import content_disposition
+
+    return content_disposition(filename)
+
+
 def _normalize_table_ref(value) -> str:
     """Normalize a schema/table reference without guessing missing parts."""
     parts = [
@@ -2900,7 +2913,7 @@ async def billing_export(request: Request, account_id: str):
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": _download_header(filename)},
     )
 
 
@@ -3110,7 +3123,7 @@ async def compliance_proof_pack(request: Request, account_id: str):
     filename = f"querybot-proof-pack-{account_id}-{pack['generated_at'][:10]}.json"
     return JSONResponse(
         pack,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _download_header(filename)},
     )
 
 
@@ -5378,7 +5391,7 @@ async def graph_export(request: Request, account_id: str):
         snapshot,
         headers={
             "Content-Disposition":
-                f'attachment; filename="entity_graph_{account_id}.json"'
+                _download_header(f"entity_graph_{account_id}.json")
         },
     )
 
@@ -8884,7 +8897,7 @@ async def client_llm_audit_csv(request: Request, account_id: str, days: int = 30
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": _download_header(filename)},
     )
 
 
