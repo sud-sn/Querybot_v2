@@ -60,20 +60,28 @@ _PLAIN_DATE_KEY_RE = re.compile(
     rf"(?:^|_)DATE{_DATE_KEY_SUFFIX}$"
 )
 
+# The spelled-out English form sits beside the ERP abbreviation on every role
+# that has one. IVC_DT was recognised and INVOICE_DATE was not -- so the most
+# ordinary column name in a warehouse carried no business date role at all, and
+# on a table holding both an invoice date and an order date a question about
+# invoicing had nothing to tell them apart. The alternates go on the role that
+# owns each word, never on the general one: REQUESTED_DELIVERY_DATE has to keep
+# reaching requested_delivery_date, which the specific-before-general ordering
+# below already guarantees as long as each pattern only claims its own word.
 _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:^|_)BOOK(?:ED|ING)?_DT(?:_|$)|(?:^|_)BKD_DT(?:_|$)"), "booked_date"),
-    (re.compile(r"(?:^|_)CUS_IVC_DT(?:_|$)|(?:^|_)SLR_IVC_DT(?:_|$)|(?:^|_)IVC_DT(?:_|$)|^IVDT$"), "invoice_date"),
-    (re.compile(r"(?:^|_)CCL_.*ORD_DT(?:_|$)|(?:^|_)CANCEL(?:LED|ED)?_.*ORD_DT(?:_|$)"), "cancelled_order_date"),
+    (re.compile(r"(?:^|_)CUS_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)SLR_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)(?:IVC|INVOICE|BILLING|BILLED)_DT(?:_|$)|^IVDT$"), "invoice_date"),
+    (re.compile(r"(?:^|_)CCL_.*(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)CANCEL(?:LED|ED)?_.*(?:ORD|ORDER)_DT(?:_|$)"), "cancelled_order_date"),
     (re.compile(r"(?:^|_)CUS_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)PCH_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)(?:ORD|ORDER)_DT(?:_|$)|^ORDT$"), "order_date"),
-    (re.compile(r"(?:^|_)RQD_.*DLV_DT(?:_|$)|(?:^|_)REQ(?:UESTED)?_.*DLV_DT(?:_|$)|^DWDT$"), "requested_delivery_date"),
-    (re.compile(r"(?:^|_)CFM_.*DLV_DT(?:_|$)|(?:^|_)CONF(?:IRMED)?_.*DLV_DT(?:_|$)|^CODT$"), "confirmed_delivery_date"),
-    (re.compile(r"(?:^|_)PLD_.*DLV_DT(?:_|$)|(?:^|_)PLANN?ED_.*DLV_DT(?:_|$)|^PLDT$"), "planned_delivery_date"),
-    (re.compile(r"(?:^|_)VLD_.*DLV_DT(?:_|$)|(?:^|_)VALID_.*DLV_DT(?:_|$)"), "valid_delivery_date"),
-    (re.compile(r"(?:^|_)DLV_DT(?:_|$)|(?:^|_)SHIP_DT(?:_|$)|^DLDT$|^DSDT$"), "delivery_date"),
+    (re.compile(r"(?:^|_)RQD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)REQ(?:UESTED)?_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_REQ(?:UESTED)?(?:_|$)|^DWDT$"), "requested_delivery_date"),
+    (re.compile(r"(?:^|_)CFM_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)CONF(?:IRMED)?_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_CONF(?:IRMED)?(?:_|$)|^CODT$"), "confirmed_delivery_date"),
+    (re.compile(r"(?:^|_)PLD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)PLANN?ED_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_PLANN?ED(?:_|$)|^PLDT$"), "planned_delivery_date"),
+    (re.compile(r"(?:^|_)VLD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)VALID_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_VALID(?:ATED)?(?:_|$)"), "valid_delivery_date"),
+    (re.compile(r"(?:^|_)(?:DLV|DELIVERY|DELIVERED)_DT(?:_|$)|(?:^|_)(?:SHIP|SHIPPED|SHIPMENT|SHIPPING)_DT(?:_|$)|^DLDT$|^DSDT$"), "delivery_date"),
     (re.compile(r"(?:^|_)DUE_DT(?:_|$)|^DUDT$"), "due_date"),
     (re.compile(r"(?:^|_)PAY(?:MENT)?_DT(?:_|$)|(?:^|_)PYM?T_DT(?:_|$)"), "payment_date"),
-    (re.compile(r"(?:^|_)RCT_DT(?:_|$)|(?:^|_)RECEIPT_DT(?:_|$)|(?:^|_)RCV_DT(?:_|$)|^RVDT$"), "receipt_date"),
-    (re.compile(r"(?:^|_)ACCT?_DT(?:_|$)|(?:^|_)ACCOUNTING_DT(?:_|$)|^ACDT$"), "accounting_date"),
+    (re.compile(r"(?:^|_)(?:RCT|RECEIPT|RCV|RECEIVED)_DT(?:_|$)|^RVDT$"), "receipt_date"),
+    (re.compile(r"(?:^|_)ACCT?_DT(?:_|$)|(?:^|_)(?:ACCOUNTING|POSTING|POSTED|LEDGER|GL)_DT(?:_|$)|^ACDT$"), "accounting_date"),
     (re.compile(r"(?:^|_)CUR_.*CST_DT(?:_|$)|(?:^|_)CURRENT_.*COST_DT(?:_|$)"), "current_cost_date"),
     (re.compile(r"(?:^|_)PRE_.*CST_DT(?:_|$)|(?:^|_)PREV(?:IOUS)?_.*COST_DT(?:_|$)|(?:^|_)PRIOR_.*COST_DT(?:_|$)"), "previous_cost_date"),
     (re.compile(r"(?:^|_)PCH_ORD_LIN_CRN_DT(?:_|$)|(?:^|_)ORD_LIN_CRN_DT(?:_|$)|(?:^|_)LINE_CRN_DT(?:_|$)|(?:^|_)LINE_CREATED?_DT(?:_|$)"), "order_line_creation_date"),

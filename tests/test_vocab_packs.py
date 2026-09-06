@@ -223,7 +223,15 @@ class DynamicsPackTests(unittest.TestCase):
         self.assertEqual(detect_date_role("DueDate", vocab=v).key, "due_date")
         self.assertEqual(detect_date_role("TransDate", vocab=v).key, "accounting_date")
         self.assertEqual(detect_date_role("ShippingDateRequested", vocab=v).key, "requested_delivery_date")
-        self.assertIsNone(detect_date_role("InvoiceDate", vocab=builtin_vocab()))
+        # The point of this line is that a pack maps names the builtins do not
+        # reach. InvoiceDate used to be such a name and no longer is: the
+        # builtin patterns carried IVC_DT and not INVOICE_DATE, so the most
+        # ordinary column name in a warehouse resolved to no role at all.
+        # TransDate is a genuinely Dynamics-only spelling, so it tests what
+        # this line is named for instead of testing a gap that got fixed.
+        self.assertIsNone(detect_date_role("TransDate", vocab=builtin_vocab()))
+        self.assertEqual(detect_date_role("InvoiceDate", vocab=builtin_vocab()).key,
+                         "invoice_date")
 
     def test_enrich_columns_role_and_confidence(self):
         from core.schema_enrichment import enrich_columns
