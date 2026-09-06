@@ -426,5 +426,165 @@ class TestTheBulkRoute(RealWorkspace):
         self.assertEqual(self._rows(), [])
 
 
+class TestGraphHealthFindsTheOnesAlreadySaved(RealWorkspace):
+    """
+    J1 refuses these at the moment of saving. This is how the ones saved
+    before it get found.
+
+    A workspace whose only fact tables were wired directly to each other, on a
+    column neither of them has, scored 94/100 and was told its entities had no
+    field properties. Seven health checks, none of which asked whether a join
+    could be traversed.
+    """
+
+    def _health(self):
+        from core.graph_health import check_graph_health
+
+        return check_graph_health(self.account_id)
+
+    def _codes(self, report):
+        return {issue.code for issue in report.issues}
+
+    def _store_edge(self, **kwargs):
+        import store
+
+        payload = {"account_id": self.account_id, "from_entity": "Sales",
+                   "to_entity": "Customer", "from_column": "CUSTOMER_ID",
+                   "to_column": "CUSTOMER_ID"}
+        payload.update(kwargs)
+        return store.save_relationship(**payload)
+
+    def test_an_unusable_join_is_an_error(self):
+        self._store_edge(to_entity="Stock", from_column="ITEM_ID",
+                         to_column="ITEM_ID")
+        report = self._health()
+        self.assertIn("RELATIONSHIP_UNUSABLE", self._codes(report))
+
+    def test_it_says_which_edge_and_why_without_repeating_itself(self):
+        self._store_edge(to_entity="Stock", from_column="ITEM_ID",
+                         to_column="ITEM_ID")
+        message = next(i.message for i in self._health().issues
+                       if i.code == "RELATIONSHIP_UNUSABLE")
+        self.assertIn("Sales", message)
+        self.assertIn("Stock", message)
+        self.assertIn("fact-to-fact", message)
+        self.assertEqual(message.lower().count("cannot be used"), 1)
+
+    def test_a_missing_column_is_an_error(self):
+        self._store_edge(to_column="MISSING_COL")
+        report = self._health()
+        self.assertIn("RELATIONSHIP_COLUMN_MISSING", self._codes(report))
+        message = next(i.message for i in report.issues
+                       if i.code == "RELATIONSHIP_COLUMN_MISSING")
+        self.assertIn("MISSING_COL", message)
+
+    def test_a_broken_validation_is_an_error(self):
+        import store
+
+        rel_id = self._store_edge()
+        store.update_relationship_validation(self.account_id, rel_id, "broken")
+        report = self._health()
+        self.assertIn("RELATIONSHIP_VALIDATION_BROKEN", self._codes(report))
+        # Severity, not just presence. A measured failure demoted to a warning
+        # costs 3 points instead of 10 and sits below the fold of a list
+        # sorted by severity.
+        severity = next(i.severity for i in report.issues
+                        if i.code == "RELATIONSHIP_VALIDATION_BROKEN")
+        self.assertEqual(severity, "error")
+
+    def test_a_row_from_before_the_column_existed_is_not_called_broken(self):
+        # SQLite hands back None for a legacy row, and the default decides
+        # what that means. Defaulting to "broken" would mark every join in
+        # every workspace that upgraded into this version.
+        import store
+
+        rel_id = self._store_edge()
+        with store.get_db() as conn:
+            conn.execute("UPDATE entity_relationships SET validation_status=NULL "
+                         "WHERE id=?", (rel_id,))
+        codes = self._codes(self._health())
+        self.assertNotIn("RELATIONSHIP_VALIDATION_BROKEN", codes)
+        self.assertNotIn("RELATIONSHIP_VALIDATION_WARNING", codes)
+
+    def test_a_validation_warning_is_a_warning(self):
+        import store
+
+        rel_id = self._store_edge()
+        store.update_relationship_validation(self.account_id, rel_id, "warning")
+        report = self._health()
+        self.assertIn("RELATIONSHIP_VALIDATION_WARNING", self._codes(report))
+        severity = next(i.severity for i in report.issues
+                        if i.code == "RELATIONSHIP_VALIDATION_WARNING")
+        self.assertEqual(severity, "warning")
+
+    def test_an_unprobed_join_is_not_reported_as_broken(self):
+        # Nobody has run the live probe, which is the only thing that sets
+        # these. Unmeasured is a different thing to tell somebody than broken,
+        # and a different thing to fix.
+        self._store_edge()
+        codes = self._codes(self._health())
+        self.assertNotIn("RELATIONSHIP_VALIDATION_BROKEN", codes)
+        self.assertNotIn("RELATIONSHIP_VALIDATION_WARNING", codes)
+
+    def test_a_healthy_join_raises_nothing(self):
+        self._store_edge()
+        codes = self._codes(self._health())
+        self.assertFalse({c for c in codes if c.startswith("RELATIONSHIP_")},
+                         codes)
+
+    def test_the_score_actually_moves(self):
+        clean = self._health().score
+        self._store_edge(to_entity="Stock", from_column="ITEM_ID",
+                         to_column="ITEM_ID")
+        self.assertLess(self._health().score, clean)
+
+    def test_an_orphaned_edge_is_reported_once_not_twice(self):
+        # Check 4 already names an edge whose entity is gone; running the
+        # join check on it as well would report the same row under two codes
+        # and cost the score twice.
+        self._store_edge(to_entity="Ghost")
+        codes = [i.code for i in self._health().issues]
+        self.assertIn("ORPHANED_RELATIONSHIP", codes)
+        self.assertNotIn("RELATIONSHIP_UNUSABLE", codes)
+
+    def test_an_inactive_edge_is_not_reported(self):
+        import store
+
+        rel_id = self._store_edge(to_entity="Stock", from_column="ITEM_ID",
+                                  to_column="ITEM_ID")
+        with store.get_db() as conn:
+            conn.execute("UPDATE entity_relationships SET is_active=0 WHERE id=?",
+                         (rel_id,))
+        self.assertNotIn("RELATIONSHIP_UNUSABLE", self._codes(self._health()))
+
+    def test_one_bad_row_does_not_kill_the_whole_report(self):
+        # A health report that dies on one row tells an admin nothing about
+        # the other two hundred.
+        import core.graph_health as health
+
+        self._store_edge()
+        with patch.object(health, "check_join",
+                          side_effect=RuntimeError("boom")):
+            report = self._health()
+        self.assertTrue(report.issues)
+        self.assertGreater(report.score, 0)
+
+    def test_health_and_the_save_path_agree(self):
+        # One vocabulary: a workspace cannot be told an edge is fine by one
+        # and impossible by the other.
+        import json as _json
+
+        response = self._save(to_entity="Stock", from_column="ITEM_ID",
+                              to_column="ITEM_ID")
+        self.assertEqual(response.status_code, 422)
+        refusal = _json.loads(response.body)["message"]
+
+        self._store_edge(to_entity="Stock", from_column="ITEM_ID",
+                         to_column="ITEM_ID")
+        message = next(i.message for i in self._health().issues
+                       if i.code == "RELATIONSHIP_UNUSABLE")
+        self.assertIn(refusal, message)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

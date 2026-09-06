@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from core.join_governance import check_join
+
 log = logging.getLogger("querybot.graph_health")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -236,6 +238,61 @@ def check_graph_health(account_id: str) -> HealthReport:
                 f"Relationship references unknown entity '{to_e}'. "
                 "The entity may have been deleted."
             )
+
+    # ── Check 4b: joins that can never be used ───────────────────────────────
+    #
+    # Every check above this asks whether the graph refers to things that
+    # exist. None of them asked whether a JOIN could be traversed -- so a
+    # workspace whose only fact tables were wired directly to each other, on a
+    # column neither of them has, scored 94/100 and was told its entities had
+    # no field properties.
+    #
+    # The verdict is core.join_governance's, which is core.join_planner's:
+    # one vocabulary, so a health warning and a query-time refusal say the
+    # same thing about the same edge. J1 refuses these at the moment of
+    # saving; this is how the ones saved before it get found.
+    entity_by_name = {e["entity_name"]: dict(e) for e in entities}
+    schema_for_check = schema_columns if schema_columns else None
+    for rel in relationships:
+        if not rel.get("is_active", 1):
+            continue
+        from_e = str(rel.get("from_entity") or "")
+        to_e = str(rel.get("to_entity") or "")
+        if from_e not in entity_names or to_e not in entity_names:
+            continue    # Check 4 already reported this one
+        try:
+            verdict = check_join(dict(rel), entity_by_name, schema_for_check)
+        except Exception as exc:  # noqa: BLE001
+            # A health report that dies on one bad row tells an admin nothing
+            # about the other two hundred.
+            log.warning("Join health check failed for %s→%s: %s", from_e, to_e, exc)
+            continue
+        edge = f"{from_e} → {to_e}"
+        if verdict.refuses:
+            report.add_error(
+                "RELATIONSHIP_UNUSABLE", from_e,
+                # The verdict already opens with "This join cannot be used";
+                # naming the edge is all this has to add.
+                f"{edge}: {verdict.reason}")
+        elif verdict.code == "column_missing":
+            report.add_error(
+                "RELATIONSHIP_COLUMN_MISSING", from_e,
+                f"Join {edge} names columns that are not in the discovered "
+                f"schema: {', '.join(verdict.missing_columns[:4])}.")
+
+        # Recorded by the validator's live probe, and only by it. A join
+        # nobody has probed is not broken -- it is unmeasured, which is a
+        # different thing to tell somebody and a different thing to fix.
+        validation = str(rel.get("validation_status") or "untested")
+        if validation == "broken":
+            report.add_error(
+                "RELATIONSHIP_VALIDATION_BROKEN", from_e,
+                f"Join {edge} failed validation the last time it was checked.")
+        elif validation == "warning":
+            report.add_warning(
+                "RELATIONSHIP_VALIDATION_WARNING", from_e,
+                f"Join {edge} matched fewer rows than expected when it was "
+                f"last validated.")
 
     # ── Check 5: disconnected entities ───────────────────────────────────────
     connected: set[str] = set()
