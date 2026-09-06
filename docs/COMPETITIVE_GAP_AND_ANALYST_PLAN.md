@@ -666,10 +666,10 @@ The end state, in the buyer's language:
 
 ## 10. Implementation status
 
-Ten commits on `fix/value-grounding-governance-and-sweep`, each with its tests
-executing the real function and each mutation-tested before it landed. The
-suite went from 6,627 to 7,053 tests; the baseline of four known environment
-failures is unchanged throughout.
+Thirteen commits on `fix/value-grounding-governance-and-sweep`, each with its
+tests executing the real function and each mutation-tested before it landed.
+The suite went from 6,627 to 7,113 tests; the baseline of four known
+environment failures is unchanged throughout.
 
 ### Landed
 
@@ -681,6 +681,9 @@ failures is unchanged throughout.
 | **G3** | `core/compliance/proof_pack.py` — five sections generated from the audit trail, downloadable, fingerprinted | `6df7292` |
 | **E2** | `core/curation_weight.py` — curation status weights the fused KB ranking, applied to ordering only | `144f25b` |
 | **B (part)** | `considered_facts` / `considered_date_roles` / `considered_metrics` on the compiled plan, ambiguity recorded on the trace, and `core/candidate_selection.py` as the selector | `9b34303` |
+| **Refactor** | `core/sql_attempt.py` — validate-repair-execute as a function of its inputs, lifted out of `_handle_query_impl` | `cd4322c` |
+| **B1** | `core/candidate_generation.py` + `verify_and_select` — a second query pinned to the discarded alternative, chosen by the verifier, with a disagreement dropping answer confidence below medium | `f36337d` |
+| **A1** | `core.domains.narrow_scope` threaded into the pipeline — a routed question narrows `effective` and `allowed_tables` together, after the ACL and the schema tab, before `query_scope_tables` | `bd4f60a` |
 | **D (D1–D3)** | `core/metric_coverage.py` — the question shapes a metric must survive, gaps naming the asset to add; wired into the chat draft and an admin API | `f0c0d78` |
 | **E1/E4** | `core/model_readiness.py` — one backlog ordered by measured outcome, plus `metadata_version` stamped on every answer | `348c94d` |
 | **A1/A3** | `store/domain_store.py` + `core/domains.py` — named subject areas, routing, and corroboration between two areas that can both answer | `c671ba2` |
@@ -715,20 +718,25 @@ Each was found by the work above rather than looked for, and each was live.
   token that genuinely leaked a non-hex value.
 - **95 lines of unreachable code in `graph_api_chat`**, kept "for source
   compatibility" that nothing depends on.
+- **The extraction dropped `duration_ms` from the deterministic repair
+  steps**, so those phases would have reported the store layer's default of
+  zero and vanished from the duration breakdown. Caught by the one source
+  scan that was pinned to the right thing.
+
+Four source scans were converted to executed assertions in the process. Each
+had been a scan *because* the code was inline in a 4,000-line function and
+could not be called; extracting it is what made the behaviour testable.
 
 ### Not landed, and why
 
-- **B1 — generating the extra candidates.** The selector and its trigger are
-  in place and the ambiguity rate is now measured, but a candidate has to be
-  executed before it can be selected, and execution sits a thousand lines
-  downstream of generation in `_handle_query_impl` through validation and the
-  compliance gate. Factoring that sequence into a callable unit is the next
-  commit's work; restructuring the product's most important function at speed
-  is how this codebase acquired the inert-code defects its testing doctrine
-  exists to prevent.
-- **A1 pipeline routing.** Domains, routing and scope-narrowing are built and
-  tested; threading the resolved scope into `_handle_query_impl` is the same
-  refactor B1 needs and is best done once, for both.
+- **A3 — running the corroborating query.** The comparison engine
+  (`core.domains.corroborate`) is built and tested, and routing now reports
+  when a second area could have answered. Executing that second query needs a
+  retrieval pass under the secondary domain's scope — the KB context and the
+  system prompt are assembled for the primary scope, and a corroborating
+  query generated against the wrong context would differ in ways the
+  comparison cannot attribute. That is a second retrieval pass, not a
+  parameter.
 - **A2 — multiple connections per workspace.** Deliberately deferred per §8;
   domains within one connection cover what "multiple apps in a tenant" means
   for a warehouse-backed customer.
@@ -748,8 +756,10 @@ built from the analysers we already own, with tests that execute it over fixed
 row sets. Self-contained, no schema change, and the piece the other two claims
 are built on.
 
-**The next one** is the `_handle_query_impl` refactor that B1 and A1 both need:
-extract the generate → validate → execute sequence into a callable unit, so a
-candidate can be produced and executed more than once and a domain's scope can
-be threaded through it. Everything else in this document is either landed or
-waiting on that.
+*(The `_handle_query_impl` refactor that B1 and A1 both needed is done —
+`cd4322c`. The extracted unit is `core/sql_attempt.py`, and both phases landed
+on top of it.)*
+
+**The next one** is A3: a retrieval pass under the secondary domain's scope,
+so the corroborating query is generated against the context it will run
+against. Everything else outstanding in §10 is independent of it.
