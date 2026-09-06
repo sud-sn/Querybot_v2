@@ -764,6 +764,56 @@ could not be called; extracting it is what made the behaviour testable.
   checking one area's number against another's when they are in different
   warehouses.
 
+### Landed since — joins and the semantic layer
+
+Two explorations, then everything they found, in the order it was built.
+
+- **J1 — a join that can never be used is refused when it is saved**
+  (`83114bc`). `core/join_planner` had always known a fact-to-fact edge was
+  prohibited; it ran at QUERY time, where a refusal turns into "no path" and
+  the admin who drew the edge never hears about it. The canvas returned 200
+  with `status='confirmed'` for an edge the planner would refuse forever — and
+  confirmed means discovery will never overwrite it either.
+  `core/join_governance.py` splits the two cases on purpose: structurally
+  impossible refuses the write; unverifiable (a column the discovered schema
+  lacks) stores and flags, because discovery may simply be stale.
+- **J2 — graph health can see the ones already saved** (`40fb8c6`). The check
+  above only helps edges saved after it. Health now walks the existing graph
+  through the same verdict and reports each with a remedy.
+- **J3 — the source mapping document** (`8cb9336`). Joins and column terms as
+  a spreadsheet a data team can produce: download, edit, upload, preview,
+  apply. Written in the warehouse's own table names rather than the entity
+  names somebody typed on a canvas. Additive — the JSON import it sits beside
+  replaces the whole graph. A composite key round-trips as rows sharing a
+  group; a stored join is matched on its COLUMN pair, so a mapping document
+  cannot overwrite one role-playing join with another.
+- **J4 — cross-system key equivalences belong to a tenant** (`681a862`). The
+  same idea existed three times and had drifted: a hardcoded constant with
+  eight entries, a builtin with three, a pack with three. One source now, and
+  it is the tenant's pack.
+- **S1-S3 — the synonym generator produces vocabulary, not spellings**
+  (`a2569bb`). Measured first: only 23% of generated synonyms introduced a
+  word the column name did not already contain, and the real matcher scored 0
+  for "inventory value", "stock value" and "balance value" against
+  `BAL_VAL_AMT`. 47 generic abbreviations, a head term so a column offering
+  only its longest form stops answering only to the longest phrasing, and a
+  candidate order that no longer gives the first slot to an abbreviation
+  ("grs marg pct" was a measure's display name).
+- **S4 — an accepted word reaches the resolver that needed it** (`5766fb2`).
+  `entity_properties.synonyms` reaches the resolver that picks a TABLE, not
+  the one that resolves a measure NAME to a column. So accepting a drafted
+  word did nothing for the question that proposed it. Confirmed by executing
+  the accept and reading `direct_aliases`: empty.
+- **S5 — a customer's trade is vocabulary, not a code change** (`5b8db59`).
+  Two industry packs — wholesale distribution, and the construction-products
+  trade on top of it — selected alongside whichever ERP pack the naming
+  detects. They carry abbreviations and aliases only, so they score zero in
+  pack detection and cannot displace, tie with, or narrow the margin for the
+  ERP pack. Three entries naming one customer are gone from the product's own
+  vocabulary, which only works because the tenant mechanism now does: the
+  naming-convention reference announced which packs were in force and then
+  printed the built-in prefixes regardless.
+
 ### Not landed, and why
 
 - **A2's local combine.** Comparison across connections works; COMBINATION
@@ -774,7 +824,16 @@ could not be called; extracting it is what made the behaviour testable.
   §8 never settled, and building a planner for it before a deal needs it would
   be speculative machinery with no caller — the defect class this branch has
   spent its time removing.
-- **The MCP surface** (§6, sequenced after G2, which is done).
+- **The MCP surface** (§6, sequenced after G2, which is done). Deferred by the
+  customer.
+
+- **An admin surface for the tenant vocabulary overlay.** `clients/<id>/vocab.json`
+  is the mechanism a tenant uses to declare their own abbreviations and entity
+  prefixes, and S5 made it load-bearing by removing the two entries that had
+  been put in the product instead. It is still a file on disk with no editor.
+  The Source Mapping document covers column TERMS; it does not cover token
+  expansions or prefixes. Small, and worth doing before the next tenant with
+  in-house abbreviations.
 
 *(The admin pages are done — domains in `3aa9322`, the readiness backlog and
 metric coverage in `ceb010c`. The claim that domains had "working, tested JSON
