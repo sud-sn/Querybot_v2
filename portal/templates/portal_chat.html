@@ -1141,12 +1141,13 @@ function renderDashboardPickerOptions(query = ''){
   const list = document.getElementById('dashboardPickerList');
   if (!list) return;
   list.setAttribute('aria-busy', 'false');
-  const needle = String(query || '').trim().toLowerCase();
+  // qbFold, not toLowerCase: a reader typing "region" means "région".
+  const needle = window.qbFold(String(query || '').trim());
   // Search description as well as name: two dashboards can legitimately share
   // a name, and the name alone gave the user no way to tell them apart.
   const visible = _dashboardPickerItems.filter(item => !needle
-    || String(item.name || '').toLowerCase().includes(needle)
-    || String(item.description || '').toLowerCase().includes(needle));
+    || window.qbFold(item.name).includes(needle)
+    || window.qbFold(item.description).includes(needle));
   if (!visible.length) {
     const empty = _dashboardPickerItems.length
       ? t('ui.pin.no_match', {query: query})
@@ -3407,9 +3408,9 @@ function _mountDataTableControls(wrapEl, question) {
   const filterEl = wrapEl.querySelector(`.data-table-filter[data-dt="${dtId}"]`);
   if (filterEl) {
     filterEl.addEventListener('input', () => {
-      const term = filterEl.value.toLowerCase();
+      const term = window.qbFold(filterEl.value);
       allRows.forEach(r => {
-        const text = Array.from(r.cells).map(c => c.textContent).join(' ').toLowerCase();
+        const text = window.qbFold(Array.from(r.cells).map(c => c.textContent).join(' '));
         r.classList.toggle('dt-hidden', term.length > 0 && !text.includes(term));
       });
       updateFoot();
@@ -5419,14 +5420,14 @@ async function restoreServerThread(threadId) {
 
 // ── History search filter ────────────────────────────────────────────────────
 function filterHistory(q) {
-  q = (q || '').toLowerCase().trim();
+  q = window.qbFold((q || '').trim());
   const clearBtn = document.getElementById('historySearchClear');
   if (clearBtn) clearBtn.style.display = q ? '' : 'none';
   const items = document.querySelectorAll('#historyList .hp-item');
   document.querySelectorAll('#historyList .hp-group-label').forEach(el => { el.style.display = q ? 'none' : ''; });
   let visible = 0;
   items.forEach(function(el) {
-    const text = (el.querySelector('.hp-q') || el).textContent.toLowerCase();
+    const text = window.qbFold((el.querySelector('.hp-q') || el).textContent);
     const show = !q || text.includes(q);
     el.style.display = show ? '' : 'none';
     if (show) visible++;

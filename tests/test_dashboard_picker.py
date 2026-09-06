@@ -58,6 +58,9 @@ TEMPLATE = ROOT / "portal" / "templates" / "portal_chat.html"
 # JavaScript, and three copies of a brace-balance walker is how they drift.
 from tests.js_lift import function as _function, const_block as _const_block
 
+SHELL = (Path(__file__).resolve().parents[1]
+         / "portal" / "templates" / "portal_base.html").read_text(encoding="utf-8")
+
 
 PICKER_FUNCTIONS = (
     # The page's own t(), so the harness resolves message ids exactly as the
@@ -140,6 +143,11 @@ var document = {{
     return [];
   }},
 }};
+// The shell's own diacritic-folding helper, lifted rather than stubbed: the
+// picker's search compares through it, and a stub here would let a change to
+// the real one pass unnoticed.
+var window = {{}};
+{_function(SHELL, "window.qbFold = function (value)")}
 function escHtml(s) {{
   return String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));

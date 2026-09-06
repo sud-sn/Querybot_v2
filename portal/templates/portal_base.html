@@ -104,6 +104,30 @@ window.qbParseNum = function (value) {
   if (!text || !/^-?\d*\.?\d+$/.test(text)) return NaN;
   return Number(text);
 };
+// Casefolded and stripped of accents, for matching what someone TYPED against
+// what is on screen. Every search box in the portal compared
+// `.toLowerCase()` on both sides, which is diacritic-blind in the wrong
+// direction: a French reader typing "region" matched nothing named "région",
+// and "cout" found no "coût". Nobody types the accents into a search box.
+//
+// NFD splits a letter from its accent and \p{Diacritic} removes the accent,
+// which covers é, è, ç, ü and the rest. The ligatures are separate: Unicode
+// gives œ and æ no decomposition at all, canonical or compatibility, so NFD
+// leaves them whole and "oeuf" would still not find "œuf" — a word a French
+// reader is more likely to type without the ligature than with it.
+//
+// Guarded because a very old engine has neither normalize nor \p{...}, and a
+// search that throws is worse than one that is merely accent-sensitive.
+window.qbFold = function (value) {
+  var text = String(value == null ? '' : value).toLowerCase()
+    .split('\u0153').join('oe')      // œ
+    .split('\u00e6').join('ae');     // æ
+  try {
+    return text.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  } catch (e) {
+    return text;
+  }
+};
 // One date, in one of the styles an administrator can choose. Mirrors
 // core.i18n.format_date; tests/test_date_format_language.py executes both and
 // compares them for every style rather than reading them side by side.

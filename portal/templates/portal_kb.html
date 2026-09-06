@@ -271,23 +271,25 @@ function _setConfidenceClass(pill, value){
     fieldCache.push({
       row: row,
       reviewRowId: reviewTarget,
-      colName:  (row.dataset.columnName || '').toLowerCase(),
-      meaning:  (row.querySelector('.field-meaning')  ? row.querySelector('.field-meaning').textContent  : '').toLowerCase(),
-      useCase:  (row.querySelector('.field-use-case') ? row.querySelector('.field-use-case').textContent : '').toLowerCase(),
-      synonyms: (row.querySelector('.field-synonyms') ? row.querySelector('.field-synonyms').textContent : '').toLowerCase(),
-      fieldType:(row.querySelector('.field-type')     ? row.querySelector('.field-type').textContent     : '').toLowerCase(),
+      colName:  window.qbFold(row.dataset.columnName),
+      meaning:  window.qbFold(row.querySelector('.field-meaning')  ? row.querySelector('.field-meaning').textContent  : ''),
+      useCase:  window.qbFold(row.querySelector('.field-use-case') ? row.querySelector('.field-use-case').textContent : ''),
+      synonyms: window.qbFold(row.querySelector('.field-synonyms') ? row.querySelector('.field-synonyms').textContent : ''),
+      fieldType:window.qbFold(row.querySelector('.field-type')     ? row.querySelector('.field-type').textContent     : ''),
     });
   });
 
   function doSearch(){
-    var q = input.value.trim().toLowerCase();
+    // qbFold both sides: a French column meaning is full of accents and
+    // nobody types them into a search box.
+    var q = window.qbFold(input.value.trim());
     var visibleCards = 0;
     var totalFields  = 0;
 
     document.querySelectorAll('.semantic-table-card').forEach(function(card){
-      var tName   = (card.dataset.tableName   || '');
-      var tFqn    = (card.dataset.tableFqn    || '');
-      var tSchema = (card.dataset.tableSchema || '');
+      var tName   = window.qbFold(card.dataset.tableName);
+      var tFqn    = window.qbFold(card.dataset.tableFqn);
+      var tSchema = window.qbFold(card.dataset.tableSchema);
       var tableHits = !q || tName.includes(q) || tFqn.includes(q) || tSchema.includes(q);
 
       var cardFieldCount = 0;

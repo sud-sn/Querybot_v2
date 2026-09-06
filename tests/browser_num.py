@@ -34,6 +34,7 @@ window.QB_DATE = {json.dumps(i18n.date_format(lang))};
 {lift(SHELL, "window.qbT = function (id, vars)")}
 {lift(SHELL, "window.qbNum = function (value, options)")}
 {lift(SHELL, "window.qbParseNum = function (value)")}
+{lift(SHELL, "window.qbFold = function (value)")}
 {lift(SHELL, "window.qbMonth = function (month, short)")}
 {lift(SHELL, "window.qbDate = function (year, month, day, style)")}
 {lift(SHELL, "window.qbTime = function (date)")}
