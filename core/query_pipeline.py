@@ -41,6 +41,8 @@ from core.schema import (
 from core.knowledge import load_retriever
 from core.validator import normalize_generated_sql, validate_sql
 from core.sql_attempt import Attempt, ValidationScope, run_attempt
+from core.candidate_generation import specs_for, variant_user_message
+from core.candidate_selection import candidate_count_for, verify_and_select
 from core.query_semantics import (
     analyze_query_intent,
     build_generic_query_hints,
@@ -243,6 +245,22 @@ _QUERY_TIMEOUT_MESSAGE = (
     "Query timed out after 3 minutes. Try narrowing your question with a "
     "filter (e.g. date range or specific customer)."
 )
+
+
+def clean_generated_sql(raw: str, question: str, db_type: str) -> str:
+    """The post-generation cleanup every candidate gets.
+
+    Fence stripping, the DISTINCT safety net for list-entity questions, and
+    dialect normalisation. Shared rather than inline because a variant that
+    skipped any of them would differ from the primary in ways the verifier
+    cannot attribute -- and the whole basis for comparing two candidates is
+    that the only difference between them is the decision under test.
+    """
+    sql = str(raw or "")
+    if sql.startswith("```"):
+        sql = "\n".join(sql.split("\n")[1:]).rsplit("```", 1)[0].strip()
+    sql = _inject_distinct_if_needed(sql, question)
+    return normalize_generated_sql(sql, db_type)
 
 
 def _trace_validation(trace_id, attempt) -> None:
@@ -5274,14 +5292,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         await adapter.send_message(event, f"⚠️ AI error: {e}")
         return
 
-    if sql.startswith("```"):
-        sql = "\n".join(sql.split("\n")[1:]).rsplit("```", 1)[0].strip()
-
-    # ── Safety net: inject SELECT DISTINCT for list-entity questions ──────────
-    # Fires only when the LLM forgot DISTINCT on a non-aggregate list query.
-    # Silently skipped for aggregate / GROUP BY / already-DISTINCT queries.
-    sql = _inject_distinct_if_needed(sql, question)
-    sql = normalize_generated_sql(sql, db_cfg["db_type"])
+    # Fence stripping, the DISTINCT safety net for list-entity questions
+    # (fires only when the model forgot it on a non-aggregate list query) and
+    # dialect normalisation. Shared with every candidate variant, so two
+    # candidates differ only in the decision under test.
+    sql = clean_generated_sql(sql, question, db_cfg["db_type"])
 
     # A sentinel is not accepted as the final result when the deterministic
     # planners produced enough structure to try a constrained recovery. This
@@ -5510,16 +5525,114 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _t("stage.executing_query.label"), _t("stage.executing_query.detail"),
         )
 
-    _attempt = await run_attempt(
-        sql, _scope,
-        executor=_execute_with_policy,
-        timeout=_query_wait_timeout(db_cfg),
-        timeout_message=_QUERY_TIMEOUT_MESSAGE,
-        source="primary",
-        on_repair=_trace_repair,
-        on_validated=lambda a: _trace_validation(trace_id, a),
-        on_executing=_announce_execution,
-    )
+    async def _generate_variant_sql(spec) -> str:
+        """One extra generation, pinned to the alternative the plan discarded.
+
+        The same prompt with one constraint appended -- see
+        core.candidate_generation. Returns "" on anything that is not usable
+        SQL, because a variant is an optional second opinion: it must never
+        cost the answer the primary already produced.
+        """
+        try:
+            with llm_audit_scope(
+                account_id=account_id,
+                question=question,
+                enabled=audit_enabled,
+                request_id=make_llm_audit_request_id(),
+                question_id=audit_request_id,
+                component="sql_candidate",
+            ):
+                raw, _v_in, _v_out = await llm_complete(
+                    system,
+                    variant_user_message(question, spec),
+                    provider, model, api_key,
+                    temperature=0.0,
+                    max_tokens=_sql_generation_max_tokens,
+                    **az_kwargs,
+                )
+        except Exception as variant_exc:
+            log.warning("Candidate %s generation failed: %s", spec.source, variant_exc)
+            return ""
+        candidate = clean_generated_sql(raw, question, db_cfg["db_type"])
+        if not candidate or "CANNOT_GENERATE" in candidate.upper():
+            log.info("Candidate %s produced no usable SQL", spec.source)
+            return ""
+        _trace_step(
+            trace_id, "generate_candidate",
+            output_summary={"source": spec.source, "dimension": spec.dimension,
+                            "choice": spec.choice, "tokens_out": _v_out},
+        )
+        return candidate
+
+    def _choose_candidate(attempts):
+        """Score every attempt against the plan and take the one it prefers.
+
+        A thin wrapper: the decision lives in core.candidate_selection so it
+        can be called from a test, which is precisely why the checks around
+        this code used to be source scans.
+        """
+        chosen, record = verify_and_select(
+            attempts,
+            analytical_plan=_analytical_plan,
+            resolution_plan=_resolution_plan,
+            request_plan=_analytical_request_plan,
+        )
+        _trace_step(
+            trace_id, "candidate_selection",
+            output_summary={"reason": record["reason"],
+                            "chosen": record["chosen_source"],
+                            "candidates": record["candidates"]},
+            metadata=record,
+            status="success" if record["chosen_source"] else "error",
+        )
+        return chosen, record
+
+    async def _run_one(candidate_sql: str, source: str):
+        return await run_attempt(
+            candidate_sql, _scope,
+            executor=_execute_with_policy,
+            timeout=_query_wait_timeout(db_cfg),
+            timeout_message=_QUERY_TIMEOUT_MESSAGE,
+            source=source,
+            on_repair=_trace_repair,
+            on_validated=lambda a: _trace_validation(trace_id, a),
+            on_executing=_announce_execution,
+        )
+
+    _attempt = await _run_one(sql, "primary")
+
+    # ── Candidate selection ─────────────────────────────────────────────────
+    # When the compiled plan left a decision open -- two facts arbitrated
+    # between, two date roles reachable -- the first query is a guess the
+    # product then presents with full confidence. Ask the same question again
+    # pinned to the alternative, run both, and let the VERIFIER choose.
+    #
+    # Not a vote. The research is explicit that the most-agreed answer is
+    # often not the right one, with an upper bound around 14% above what
+    # majority voting achieves; agreement only breaks ties the verifier
+    # already ranked equally. And two verified candidates returning different
+    # numbers produce no answer at all: that is a question the plan failed to
+    # disambiguate, and picking either is a coin toss dressed as fact.
+    #
+    # Skipped entirely when the SQL did not come from a generation call --
+    # a reused governed plan and a deterministically compiled one are not
+    # guesses, so there is nothing to second-guess and nothing to spend.
+    _candidate_attempts = [_attempt]
+    _candidate_selection = {}
+    if not (_reused_plan or _compiled_governed_sql):
+        _candidate_specs = specs_for(
+            _analytical_request_plan,
+            limit=candidate_count_for(_analytical_request_plan),
+        )
+        for _spec in _candidate_specs[1:]:
+            _variant_sql = await _generate_variant_sql(_spec)
+            if not _variant_sql:
+                continue
+            _candidate_attempts.append(await _run_one(_variant_sql, _spec.source))
+
+    if len(_candidate_attempts) > 1:
+        _attempt, _candidate_selection = _choose_candidate(_candidate_attempts)
+
     sql, ok, reason, code = _attempt.sql, _attempt.ok, _attempt.reason, _attempt.code
     rows = _attempt.rows
     exec_error = _attempt.exec_error
@@ -6787,6 +6900,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             request_plan=_analytical_request_plan,
         )
         _confidence_context["result_verification"] = _result_verification
+        if _candidate_selection:
+            # Answer confidence has to know the answer was chosen between
+            # candidates rather than arrived at directly, and on what basis.
+            _confidence_context["candidate_selection"] = _candidate_selection
         _trace_step(
             trace_id,
             "result_shape_verification",

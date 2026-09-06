@@ -105,7 +105,14 @@ def test_validation_runs_before_the_llm_retry_block():
     import core.query_pipeline as qp
 
     source = inspect.getsource(qp._handle_query_impl)
-    assert source.index("_attempt = await run_attempt(") < source.index("retryable = (")
+    # Pinned to where the chosen attempt's verdict BECOMES the pipeline's
+    # state, not to the call that produced it: the call moved into a helper
+    # the moment more than one candidate could be run, and an ordering check
+    # that breaks on that is checking the wrong thing.
+    adopted = source.index("sql, ok, reason, code = _attempt.sql")
+    assert adopted < source.index("retryable = (")
+    # And every candidate is attempted before the verdict is adopted.
+    assert source.index("_candidate_attempts = [_attempt]") < adopted
 
 
 def test_unknown_column_same_schema_does_not_crash_or_cross_scope():

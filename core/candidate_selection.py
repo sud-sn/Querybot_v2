@@ -282,3 +282,68 @@ def summarise(candidates: list[Candidate], chosen: Candidate | None,
             for c in candidates
         ],
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# From attempts to a decision
+# ══════════════════════════════════════════════════════════════════════════════
+
+def verify_and_select(
+    attempts: list,
+    *,
+    analytical_plan: Any = None,
+    resolution_plan: dict | None = None,
+    request_plan: dict | None = None,
+) -> tuple[Any, dict[str, Any]]:
+    """Score every executed attempt against the plan, then pick one.
+
+    Takes ``core.sql_attempt.Attempt`` objects and returns
+    ``(chosen_attempt, record)``. Lives here rather than in the pipeline
+    because a decision nobody can call is a decision nobody can test — which
+    is exactly why the checks around this code used to be source scans.
+
+    Verification is metadata-only: ``verify_result_shape`` compares the
+    executed shape with the compiled plan and never reads a value, so scoring
+    every candidate costs nothing beyond the queries already run.
+
+    When nothing is selected the FIRST attempt is returned anyway, so the
+    pipeline's existing failure path still has something to explain — but the
+    record says the answer was not agreed, which is what the caller must
+    surface rather than presenting one of two disagreeing numbers as fact.
+    """
+    from core.result_verifier import verify_result_shape
+
+    candidates: list[Candidate] = []
+    for attempt in attempts:
+        verification: dict = {}
+        if getattr(attempt, "rows", None) is not None:
+            try:
+                verification = verify_result_shape(
+                    attempt.rows,
+                    analytical_plan=analytical_plan,
+                    resolution_plan=resolution_plan,
+                    request_plan=request_plan,
+                )
+            except Exception as exc:
+                log.warning("Candidate %s could not be verified: %s",
+                            getattr(attempt, "source", "?"), exc)
+        candidates.append(Candidate(
+            sql=getattr(attempt, "sql", ""),
+            source=getattr(attempt, "source", "primary"),
+            validated=bool(getattr(attempt, "ok", False)),
+            validation_reason=str(getattr(attempt, "reason", "") or ""),
+            executed=getattr(attempt, "rows", None) is not None,
+            error=str(getattr(attempt, "exec_error", "") or ""),
+            rows=list(getattr(attempt, "rows", None) or []),
+            verification=verification,
+        ))
+
+    chosen, reason = select(candidates)
+    record = summarise(candidates, chosen, reason)
+    if chosen is None:
+        log.warning("No candidate selected: %s", reason)
+        return (attempts[0] if attempts else None), record
+    for attempt in attempts:
+        if getattr(attempt, "source", "") == chosen.source:
+            return attempt, record
+    return attempts[0], record

@@ -38,6 +38,7 @@ def build_answer_confidence(
     semantic_planning_failed: bool = False,
     fanout_risk: bool = False,
     result_verification: dict[str, Any] | None = None,
+    candidate_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -166,6 +167,32 @@ def build_answer_confidence(
         score -= 35
         warnings.append(
             "One or more relationships can multiply the requested result grain."
+        )
+
+    # When the plan left a decision open, the pipeline asks the question a
+    # second way and lets the verifier choose (core.candidate_selection). Two
+    # candidates the verifier likes equally, returning different numbers, mean
+    # the question was ambiguous in a way the plan did not capture -- the
+    # answer shown is one of them, and saying so is the difference between an
+    # explanation and a coin toss presented as fact.
+    selection = candidate_selection or {}
+    selection_reason = str(selection.get("reason") or "")
+    if selection_reason == "verified_candidates_disagree":
+        score = min(score - 25, 49)
+        warnings.append(
+            "Asking this question a second way produced a different figure, "
+            "and both queries checked out equally. Confirm which business "
+            "date or source table this question means."
+        )
+    elif selection_reason == "no_candidate_verified":
+        score -= 15
+        warnings.append(
+            "No version of this query matched the shape of the question."
+        )
+    elif selection_reason.startswith("agreement_of_"):
+        score += 5
+        reasons.append(
+            "A second query written a different way returned the same figure."
         )
 
     verification = result_verification or {}
