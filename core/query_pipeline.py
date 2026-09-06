@@ -5668,6 +5668,74 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         return chosen, record
 
+    async def _correct_result_shape(attempt):
+        """One correction pass, guided by what the verifier says is wrong.
+
+        A thin wrapper: the orchestration lives in core.execution_correction
+        so it can be called from a test, for the same reason candidate
+        selection moved out of here -- a 6,400-line function cannot be
+        executed by one, and the checks on the code inside it decay into
+        source scans that never run the thing they are named for.
+
+        core.result_verifier already knew that a "trend by month" came back
+        with one row and no date column. Its report was computed at the very
+        end of the turn, to score confidence -- so the product could say the
+        answer was probably the wrong shape and had no way to do anything
+        about it. This asks once, with that complaint in the prompt.
+
+        Non-destructive, which is the safety argument. The repair ladder below
+        overwrites rows and sql and, when a retry fails, leaves the turn
+        reporting the retry's failure. That is right for an attempt that
+        produced nothing and wrong here: a shape complaint means the first
+        attempt DID return usable rows, so a correction that fails would turn
+        a slightly-wrong answer into no answer at all.
+        """
+        from core.execution_correction import run_correction
+        from core.result_verifier import verify_result_shape
+
+        async def _generate(prompt: str) -> str:
+            with llm_audit_scope(
+                account_id=account_id,
+                question=question,
+                enabled=audit_enabled,
+                request_id=make_llm_audit_request_id(),
+                question_id=audit_request_id,
+                component="sql_shape_correction",
+            ):
+                raw, _c_in, _c_out = await llm_complete(
+                    system, prompt, provider, model, api_key,
+                    temperature=0.0,
+                    max_tokens=_sql_repair_max_tokens,
+                    **az_kwargs,
+                )
+            candidate = clean_generated_sql(raw, question, db_cfg["db_type"])
+            if not candidate or "CANNOT_GENERATE" in candidate.upper():
+                return ""
+            return candidate
+
+        return await run_correction(
+            attempt,
+            question=question,
+            verify=lambda rows: verify_result_shape(
+                rows,
+                analytical_plan=_analytical_plan,
+                resolution_plan=_resolution_plan,
+                request_plan=_analytical_request_plan,
+            ),
+            generate=_generate,
+            # Through the same governed path as every other attempt:
+            # validate, repair, then execute_governed_query under the scope
+            # this turn was granted.
+            execute=lambda candidate: _run_one(candidate, "shape_correction"),
+            on_trace=lambda record: _trace_step(
+                trace_id, "shape_correction",
+                input_summary=attempt.sql,
+                output_summary=record,
+                status="success" if record.get("adopted") else "error",
+                metadata=record,
+            ),
+        )
+
     async def _run_one(candidate_sql: str, source: str):
         return await run_attempt(
             candidate_sql, _scope,
@@ -5713,6 +5781,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     if len(_candidate_attempts) > 1:
         _attempt, _candidate_selection = _choose_candidate(_candidate_attempts)
+
+    # The chosen attempt ran. If the verifier objects to the shape of what came
+    # back, spend one pass correcting it -- before the repair ladder below,
+    # which only ever sees attempts that produced nothing.
+    _shape_correction: dict = {}
+    if not (_reused_plan or _compiled_governed_sql):
+        _attempt, _shape_correction = await _correct_result_shape(_attempt)
 
     sql, ok, reason, code = _attempt.sql, _attempt.ok, _attempt.reason, _attempt.code
     rows = _attempt.rows
@@ -5870,10 +5945,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
             from core.failure_messages import scrub_error_for_llm
 
+            # The DIAGNOSIS, beside the error. sanitize_db_error owns an
+            # ordered matcher that reads "Invalid object name" as "a table this
+            # query needs does not exist" plus the step that usually fixes it,
+            # and this prompt was handing over the driver's sentence and asking
+            # the model to re-derive what the product already knew.
+            from core.execution_correction import diagnose_execution_error
+
+            _diagnosis = diagnose_execution_error(exec_error)
+            _diagnosis_note = ""
+            if _diagnosis.diagnosis:
+                _diagnosis_note = f"What that means: {_diagnosis.diagnosis}\n"
+            if _diagnosis.next_step:
+                _diagnosis_note += f"How it is usually fixed: {_diagnosis.next_step}\n"
+
             retry_user = (
                 f"The following SQL failed with this error:\n"
                 f"SQL: {sql}\n"
                 f"Error: {scrub_error_for_llm(exec_error)}\n"
+                f"{_diagnosis_note}"
                 f"{col_fix_note}\n"
                 f"The original question was: {question}\n\n"
                 f"Rewrite the SQL to fix the error. Use ONLY column names that appear "
@@ -7128,6 +7218,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # Answer confidence has to know the answer was chosen between
         # candidates rather than arrived at directly, and on what basis.
         _confidence_context["candidate_selection"] = _candidate_selection
+    if _shape_correction:
+        # And that the first result was the wrong shape. A corrected answer and
+        # an answer that was right first time are not equally sure, and an
+        # answer whose correction was DISCARDED is the least sure of the three:
+        # the verifier objected and nothing fixed it.
+        _confidence_context["shape_correction"] = _shape_correction
 
     try:
         from core.result_verifier import verify_result_shape

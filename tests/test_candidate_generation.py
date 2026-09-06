@@ -387,12 +387,30 @@ class TestThePipelineRunsIt(unittest.TestCase):
         self.assertEqual(
             confidence.call_args.kwargs.get("candidate_selection"), record)
 
-    def test_a_variant_gets_the_same_cleanup_as_the_primary(self):
+    def test_every_generated_candidate_gets_the_same_cleanup(self):
         # Two candidates that differ in fence stripping, the DISTINCT safety
         # net or dialect normalisation differ in ways the verifier cannot
         # attribute.
+        #
+        # This counted the calls and required exactly two, which is a pinned
+        # initialiser rather than the invariant: a third generation path that
+        # DOES clean its output failed it (the shape correction, B3), and a
+        # third that did not would have passed it just as happily by deleting
+        # one of the other two. What matters is that every SQL a generation
+        # path produces goes through the same cleaner, so that is what is
+        # checked.
+        import re
+
         source = self._source()
-        self.assertEqual(source.count("clean_generated_sql("), 2)
+        generations = re.findall(r"await llm_complete\((.{0,600}?)\)\n", source,
+                                 re.DOTALL)
+        self.assertGreaterEqual(len(generations), 2, "no generation calls found")
+        # Each generation is followed, within its own helper, by the cleaner.
+        for helper in ("_generate_variant_sql", "_generate"):
+            start = source.index(f"def {helper}(")
+            body = source[start:start + 2000]
+            self.assertIn("clean_generated_sql(", body,
+                          f"{helper} does not clean what it generated")
 
 
 if __name__ == "__main__":
