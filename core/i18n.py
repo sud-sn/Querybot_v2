@@ -963,6 +963,102 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cette réponse a demandé {attempts} tentatives.",
     },
 
+    # ── The dispatcher's own replies (core/dispatcher.py) ────────────────────
+    # The front door: these are the first thing every turn hits, and every one
+    # of them was an English literal on a socket whose language had already
+    # been activated two frames earlier.
+    "dispatch.context_cleared": {
+        "en": "Context cleared. Your next question will start a new analysis.",
+        "fr": "Contexte effacé. Votre prochaine question démarrera une nouvelle analyse.",
+    },
+    "dispatch.proceed_hint": {
+        "en": "Reply **Proceed** to run this analysis.",
+        "fr": "Répondez **Continuer** pour lancer cette analyse.",
+    },
+    "dispatch.run_analysis_q": {
+        "en": "Would you like me to run this analysis?",
+        "fr": "Voulez-vous que je lance cette analyse ?",
+    },
+    "dispatch.proceed_or_ask": {
+        "en": "Reply **Proceed** to run the analysis, or ask a new question.",
+        "fr": "Répondez **Continuer** pour lancer l'analyse, ou posez une nouvelle question.",
+    },
+    "dispatch.access_requested": {
+        "en": "👋 *Welcome to QueryBot!*\n\nYour access request has been sent to your administrator.\nYou'll receive a message here once your access is approved.\n\n_You don't need to do anything — your admin will be in touch._",
+        "fr": "👋 *Bienvenue sur QueryBot !*\n\nVotre demande d'accès a été transmise à votre administrateur.\nVous recevrez un message ici dès que votre accès sera approuvé.\n\n_Vous n'avez rien à faire — votre administrateur vous recontactera._",
+    },
+    "dispatch.access_rejected": {
+        "en": "Your access request was not approved. Please contact your administrator for assistance.",
+        "fr": "Votre demande d'accès n'a pas été approuvée. Veuillez contacter votre administrateur pour obtenir de l'aide.",
+    },
+    "dispatch.no_reports": {
+        "en": "There's no report set up for this account yet — ask your admin to create one.",
+        "fr": "Aucun rapport n'est encore configuré pour ce compte — demandez à votre administrateur d'en créer un.",
+    },
+    "dispatch.report_not_found": {
+        "en": "I couldn't find a report called \"{name}\". Available reports: {available}.",
+        "fr": "Je n'ai trouvé aucun rapport nommé « {name} ». Rapports disponibles : {available}.",
+    },
+    "dispatch.which_report": {
+        "en": "Which report would you like? Available reports: {available}.",
+        "fr": "Quel rapport souhaitez-vous ? Rapports disponibles : {available}.",
+    },
+    "dispatch.report_offer_one": {
+        "en": "📊 Want to start the day with your **{name}** report? Reply **yes** to see it, or **no thanks** to skip.",
+        "fr": "📊 Voulez-vous commencer la journée avec votre rapport **{name}** ? Répondez **oui** pour l'afficher, ou **non merci** pour passer.",
+    },
+    "dispatch.report_offer_many": {
+        "en": "📊 Want to start the day with one of your reports?",
+        "fr": "📊 Voulez-vous commencer la journée avec l'un de vos rapports ?",
+    },
+    "dispatch.report_offer_fallback": {
+        "en": "Reply with a report name, or \"no thanks\" to skip.",
+        "fr": "Répondez avec le nom d'un rapport, ou « non merci » pour passer.",
+    },
+    "dispatch.no_thanks": {"en": "No thanks", "fr": "Non merci"},
+    "dispatch.not_registered_workspace": {
+        "en": "⚠️ This workspace is not registered with QueryBot.\nAsk your administrator to register it in the admin panel before sending queries.",
+        "fr": "⚠️ Cet espace de travail n'est pas enregistré auprès de QueryBot.\nDemandez à votre administrateur de l'enregistrer dans la console d'administration avant d'envoyer des questions.",
+    },
+    "dispatch.not_registered_user": {
+        "en": "Not registered yet — send any message for your registration link.",
+        "fr": "Pas encore inscrit — envoyez n'importe quel message pour recevoir votre lien d'inscription.",
+    },
+    "dispatch.workspace_not_ready": {
+        "en": "⚠️ This workspace isn't set up yet.\n\nAsk your administrator to finish the *Schema & Knowledge Base Setup* in the QueryBot admin panel before sending queries.",
+        "fr": "⚠️ Cet espace de travail n'est pas encore configuré.\n\nDemandez à votre administrateur de terminer la *configuration du schéma et de la base de connaissances* dans la console d'administration de QueryBot avant d'envoyer des questions.",
+    },
+    "dispatch.kb_building": {
+        "en": "⏳ Knowledge Base is still being built by the admin — try again in a few minutes.",
+        "fr": "⏳ La base de connaissances est encore en cours de construction par l'administrateur — réessayez dans quelques minutes.",
+    },
+    "dispatch.choose_option": {
+        "en": "Please choose one of the available options.",
+        "fr": "Veuillez choisir l'une des options proposées.",
+    },
+    "dispatch.reply_with_option": {
+        "en": "Please reply using one of the clarification options so I can continue.",
+        "fr": "Veuillez répondre en utilisant l'une des options de précision pour que je puisse continuer.",
+    },
+    "dispatch.clarification_expired": {
+        "en": "⏱️ Your previous clarification request timed out. Please ask your original question again and I'll pick it up from there.",
+        "fr": "⏱️ Votre demande de précision précédente a expiré. Reposez votre question initiale et je reprendrai à partir de là.",
+    },
+    "dispatch.whoami": {
+        "en": "*{name}* | {role} | Group: {group}\nTables: {tables}",
+        "fr": "*{name}* | {role} | Groupe : {group}\nTables : {tables}",
+    },
+    "dispatch.whoami.all_tables": {
+        "en": "All tables (admin)", "fr": "Toutes les tables (administrateur)",
+    },
+    "dispatch.whoami.no_group": {"en": "none", "fr": "aucun"},
+    "dispatch.status": {
+        "en": "*State:* {state}\n*Database:* {database}\n*Queries this month:* {used}/{limit}\n*User:* {user}",
+        "fr": "*État :* {state}\n*Base de données :* {database}\n*Requêtes ce mois-ci :* {used}/{limit}\n*Utilisateur :* {user}",
+    },
+    "dispatch.status.no_database": {"en": "not configured", "fr": "non configurée"},
+    "dispatch.status.no_user": {"en": "not registered", "fr": "non inscrit"},
+
     # ── Failure and zero-row cards (core/failure_messages.py) ────────────────
     # The BODY of every diagnostic card: the headline, why it happened and
     # what to do next. The section labels around these ("Most likely reason:",

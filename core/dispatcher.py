@@ -582,7 +582,7 @@ async def _run_query_with_guard_locked(
             adapter.last_result_id = None
         await adapter.send_message(
             event,
-            "Context cleared. Your next question will start a new analysis.",
+            _t("dispatch.context_cleared"),
         )
         return
 
@@ -619,7 +619,7 @@ async def _run_query_with_guard_locked(
                 else:
                     await adapter.send_message(
                         event,
-                        f"{_analyst_reply}\n\nReply **Proceed** to run this analysis.",
+                        f"{_analyst_reply}\n\n{_t('dispatch.proceed_hint')}",
                     )
                 return
             await adapter.send_message(event, _analyst_reply)
@@ -722,12 +722,7 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
     )
 
     if is_new:
-        await adapter.send_message(event,
-            "👋 *Welcome to QueryBot!*\n\n"
-            "Your access request has been sent to your administrator.\n"
-            "You'll receive a message here once your access is approved.\n\n"
-            "_You don't need to do anything — your admin will be in touch._"
-        )
+        await adapter.send_message(event, _t("dispatch.access_requested"))
         log.info(
             "Pending access request created: platform=%s user=%s account=%s name=%r",
             platform_type, zoom_user_id, account_id, display_name,
@@ -735,10 +730,7 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
     else:
         status = _pending.get("status", "pending")
         if status == "rejected":
-            await adapter.send_message(event,
-                "Your access request was not approved. "
-                "Please contact your administrator for assistance."
-            )
+            await adapter.send_message(event, _t("dispatch.access_rejected"))
         # If still pending: stay silent — they already got the "request sent" message
 
 
@@ -1150,8 +1142,7 @@ async def _handle_report_ask(account_id: str, portal_user: dict, text: str, even
 
     reports = report_store.list_reports(account_id)
     if not reports:
-        await adapter.send_message(event,
-            "There's no report set up for this account yet — ask your admin to create one.")
+        await adapter.send_message(event, _t("dispatch.no_reports"))
         return
 
     report = None
@@ -1159,8 +1150,8 @@ async def _handle_report_ask(account_id: str, portal_user: dict, text: str, even
         report = report_store.get_report_by_name(account_id, report_name)
         if report is None:
             names = ", ".join(f'"{r["name"]}"' for r in reports)
-            await adapter.send_message(event,
-                f"I couldn't find a report called \"{report_name}\". Available reports: {names}.")
+            await adapter.send_message(event, _t(
+                "dispatch.report_not_found", name=report_name, available=names))
             return
     elif len(reports) == 1:
         report = reports[0]
@@ -1168,8 +1159,8 @@ async def _handle_report_ask(account_id: str, portal_user: dict, text: str, even
         report = next((r for r in reports if r.get("is_default")), None)
         if report is None:
             names = ", ".join(f'"{r["name"]}"' for r in reports)
-            await adapter.send_message(event,
-                f"Which report would you like? Available reports: {names}.")
+            await adapter.send_message(event, _t(
+                "dispatch.which_report", available=names))
             return
 
     await _deliver_report_via_adapter(account_id, portal_user, report, event, adapter)
@@ -1275,13 +1266,13 @@ async def _offer_login_report_prompt(account_id: str, portal_user: dict, event, 
         )
         await adapter.send_message(
             event,
-            f"📊 Want to start the day with your **{report['name']}** report? "
-            "Reply **yes** to see it, or **no thanks** to skip.",
+            _t("dispatch.report_offer_one", name=report["name"]),
         )
         return
 
     options = [{"id": str(r["id"]), "label": r["name"], "value": str(r["id"])} for r in reports]
-    options.append({"id": "no_thanks", "label": "No thanks", "value": "no_thanks"})
+    options.append({"id": "no_thanks", "label": _t("dispatch.no_thanks"),
+                    "value": "no_thanks"})
     save_pending(
         account_id, event.user_id, "__login_report_prompt__",
         clarification_meta=prepare_clarification_meta(
@@ -1291,14 +1282,14 @@ async def _offer_login_report_prompt(account_id: str, portal_user: dict, event, 
         ),
         session_id=clarification_session_id(adapter, event),
     )
-    prompt = "📊 Want to start the day with one of your reports?"
+    prompt = _t("dispatch.report_offer_many")
     send_prompt = getattr(adapter, "send_clarification_prompt", None)
     if callable(send_prompt):
         await send_prompt(event, prompt, options)
     else:
         names = "\n".join(f"  • {r['name']}" for r in reports)
         await adapter.send_message(
-            event, f"{prompt}\n{names}\n\nReply with a report name, or \"no thanks\" to skip.",
+            event, f"{prompt}\n{names}\n\n{_t('dispatch.report_offer_fallback')}",
         )
 
 
@@ -1318,10 +1309,7 @@ async def dispatch(
     # auto-create a client row here anymore.
     client_row = store.get_client(account_id)
     if not client_row:
-        await adapter.send_message(event,
-            "⚠️ This workspace is not registered with QueryBot.\n"
-            "Ask your administrator to register it in the admin panel "
-            "before sending queries.")
+        await adapter.send_message(event, _t("dispatch.not_registered_workspace"))
         return
 
     # Capability questions are handled by the governed workspace guide in a
@@ -1343,13 +1331,15 @@ async def dispatch(
     if text.lower() == "whoami":
         pu = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
         if pu:
-            t = store.get_allowed_tables(pu)
-            tlist = ", ".join(sorted(t)) if t else "All tables (admin)"
-            await adapter.send_message(event,
-                f"*{pu['name']}* | {pu['role']} | Group: {pu['group_name'] or 'none'}\n"
-                f"Tables: {tlist}")
+            allowed = store.get_allowed_tables(pu)
+            tlist = (", ".join(sorted(allowed)) if allowed
+                     else _t("dispatch.whoami.all_tables"))
+            await adapter.send_message(event, _t(
+                "dispatch.whoami", name=pu["name"], role=pu["role"],
+                group=pu["group_name"] or _t("dispatch.whoami.no_group"),
+                tables=tlist))
         else:
-            await adapter.send_message(event, "Not registered yet — send any message for your registration link.")
+            await adapter.send_message(event, _t("dispatch.not_registered_user"))
         return
 
     if text.lower() == "status":
@@ -1358,25 +1348,21 @@ async def dispatch(
         used   = store.get_monthly_query_count(account_id)
         limit  = client.get("query_limit_monthly", 500)
         pu     = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
-        await adapter.send_message(event,
-            f"*State:* {get_state(account_id)['state']}\n"
-            f"*Database:* {db_cfg['name'] if db_cfg else 'not configured'}\n"
-            f"*Queries this month:* {used}/{limit}\n"
-            f"*User:* {pu['name'] if pu else 'not registered'}")
+        await adapter.send_message(event, _t(
+            "dispatch.status",
+            state=get_state(account_id)["state"],
+            database=db_cfg["name"] if db_cfg else _t("dispatch.status.no_database"),
+            used=used, limit=limit,
+            user=pu["name"] if pu else _t("dispatch.status.no_user")))
         return
 
     state = get_state(account_id).get("state", "NEW")
 
     if state in ("NEW", "SCHEMA_READY"):
-        await adapter.send_message(event,
-            "⚠️ This workspace isn't set up yet.\n\n"
-            "Ask your administrator to finish the *Schema & Knowledge Base Setup* "
-            "in the QueryBot admin panel before sending queries.")
+        await adapter.send_message(event, _t("dispatch.workspace_not_ready"))
         return
     if state == "KB_BUILDING":
-        await adapter.send_message(event,
-            "⏳ Knowledge Base is still being built by the admin — "
-            "try again in a few minutes.")
+        await adapter.send_message(event, _t("dispatch.kb_building"))
         return
 
     # For web portal sessions the user is already authenticated via
@@ -1539,13 +1525,13 @@ async def dispatch(
                     if callable(send_prompt):
                         await send_prompt(
                             event,
-                            cmeta.get("question") or "Would you like me to run this analysis?",
+                            cmeta.get("question") or _t("dispatch.run_analysis_q"),
                             opts,
                         )
                     else:
                         await adapter.send_message(
                             event,
-                            "Reply **Proceed** to run the analysis, or ask a new question.",
+                            _t("dispatch.proceed_or_ask"),
                         )
                     return
                 if cmeta.get("source") == "governed_result_cache" and opts:
@@ -1565,14 +1551,12 @@ async def dispatch(
                             await send_prompt(
                                 event,
                                 cmeta.get("question")
-                                or "Please choose one of the available options.",
+                                or _t("dispatch.choose_option"),
                                 opts,
                             )
                         else:
                             await adapter.send_message(
-                                event,
-                                "Please choose one of the available options.",
-                            )
+                                event, _t("dispatch.choose_option"))
                         return
                     attach_clarification_resolution(event, pending)
                     clear_pending(account_id, event.user_id, session_id=_pending_session_id)
@@ -1642,11 +1626,12 @@ async def dispatch(
                             else:
                                 retry_question = (
                                     cmeta.get("question")
-                                    or "Please choose one of the available options."
+                                    or _t("dispatch.choose_option")
                                 )
                             await send_prompt(event, retry_question, opts)
                         else:
-                            await adapter.send_message(event, "Please reply using one of the clarification options so I can continue.")
+                            await adapter.send_message(
+                                event, _t("dispatch.reply_with_option"))
                         return
                     selected_text = str(match.get("value") or match.get("label") or text).strip()
                     matched_option_id = str(match.get("id") or "") or None
@@ -1701,11 +1686,8 @@ async def dispatch(
                 # Only surface the hint if the reply looks like a short answer
                 # to a clarification, not a brand-new question.
                 if len(text.split()) <= 6 and not is_ddl_attempt(text):
-                    await adapter.send_message(event,
-                        "⏱️ Your previous clarification request timed out. "
-                        "Please ask your original question again and I'll pick "
-                        "it up from there."
-                    )
+                    await adapter.send_message(
+                        event, _t("dispatch.clarification_expired"))
                     return
 
         # ── Behavioral front door, data-aware kinds ────────────────────────
