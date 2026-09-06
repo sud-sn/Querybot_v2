@@ -567,7 +567,7 @@ class RunDueAlertChecksTests(unittest.TestCase):
         async def _fake_notify(account_id, user_id, message, chart=None):
             captured["message"] = message
 
-        def _check_side_effect(alert_id, db_cfg):
+        def _check_side_effect(alert_id, db_cfg, lang=None):
             if alert_id == "bad":
                 raise Exception("boom")
             return {"ok": True, "triggered": True, "message": "ok alert fired"}

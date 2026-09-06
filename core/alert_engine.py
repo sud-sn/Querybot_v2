@@ -276,7 +276,7 @@ def delete_alert(alert_id: str) -> bool:
     return True
 
 
-def check_alert_now(alert_id: str, db_cfg: dict) -> dict:
+def check_alert_now(alert_id: str, db_cfg: dict, lang: str | None = None) -> dict:
     """
     Re-run the alert's SQL and compare the result to the baseline.
 
@@ -416,11 +416,22 @@ def check_alert_now(alert_id: str, db_cfg: dict) -> dict:
     else:  # change_pct
         triggered = abs(delta_pct) >= threshold
 
-    direction = "increased" if current > baseline else "decreased"
-    message = (
-        f"{'⚠️ ALERT' if triggered else '✓ OK'}: "
-        f"{metric_col} is now {current:,.2f} "
-        f"({direction} {abs(delta_pct):.1f}% from baseline {baseline:,.2f})"
+    # The recipient's own language and notation, passed in rather than read
+    # from a ContextVar: this runs on the scheduler's thread with no request
+    # behind it, and an alert reaches somebody who did not ask for it — the
+    # least forgiving place to be in the wrong language, because there is no
+    # question of theirs on screen to give an English sentence context.
+    from core.i18n import format_decimal, format_percent, t
+
+    direction = t("alert.direction.up" if current > baseline else "alert.direction.down",
+                  lang=lang)
+    message = t(
+        "alert.triggered" if triggered else "alert.ok", lang=lang,
+        metric=metric_col,
+        current=format_decimal(current, 2, lang=lang),
+        direction=direction,
+        delta=format_percent(abs(delta_pct), 1, lang=lang),
+        baseline=format_decimal(baseline, 2, lang=lang),
     )
 
     # ── Persist check state ───────────────────────────────────────────────────
@@ -494,7 +505,19 @@ def run_due_alert_checks() -> None:
             if not db_cfg:
                 log.debug("run_due_alert_checks: no db_cfg for alert %s, skipping", alert.get("id"))
                 continue
-            result = check_alert_now(alert["id"], db_cfg)
+            # The row the alert will be delivered to decides the language.
+            recipient = None
+            try:
+                import store
+
+                if alert.get("user_id"):
+                    recipient = store.get_user(int(alert["user_id"]))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("run_due_alert_checks: could not read the recipient "
+                            "of alert %s (%s); answering in English",
+                            alert.get("id"), exc)
+            result = check_alert_now(
+                alert["id"], db_cfg, lang=(recipient or {}).get("lang") or "en")
         except Exception as exc:
             log.warning("run_due_alert_checks: check failed for alert %s: %s", alert.get("id"), exc)
             continue

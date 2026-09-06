@@ -208,26 +208,34 @@ def run_metric_for_report(account_id: str, user: dict, metric: dict) -> dict:
     return {"ok": True, "metric_name": metric_name, "rows": rows, "chart": chart}
 
 
-def _format_metric_line(result: dict) -> str:
-    """One text line summarizing a single metric result for the report message."""
-    metric_name = result.get("metric_name", "Metric")
+def _format_metric_line(result: dict, lang: str | None = None) -> str:
+    """One text line summarizing a single metric result for the report message.
+
+    ``lang`` is passed rather than read from the ambient ContextVar: a digest
+    is built on the scheduler's thread with no request behind it, and a
+    ContextVar does not cross that boundary. The recipient's row carries it.
+    """
+    from core.i18n import t
+
+    metric_name = result.get("metric_name") or t("digest.metric.unnamed", lang=lang)
     if not result.get("ok"):
-        reason = result.get("reason", "")
-        if reason == "access_denied":
-            return f"🔒 **{metric_name}** — you don't have access to this metric. Ask your admin for access."
-        return f"⚠️ **{metric_name}** — couldn't be computed right now."
+        if result.get("reason", "") == "access_denied":
+            return t("digest.metric.no_access", lang=lang, metric=metric_name)
+        return t("digest.metric.failed", lang=lang, metric=metric_name)
 
     rows = result.get("rows") or []
     if not rows:
-        return f"**{metric_name}** — no data."
+        return t("digest.metric.no_data", lang=lang, metric=metric_name)
     if len(rows) == 1 and len(rows[0]) == 1:
         from core.response_builder import _safe_cell
         value = next(iter(rows[0].values()))
-        return f"**{metric_name}**: {_safe_cell(value)}"
-    return f"**{metric_name}** — see chart below."
+        return t("digest.metric.value", lang=lang, metric=metric_name,
+                 value=_safe_cell(value))
+    return t("digest.metric.see_chart", lang=lang, metric=metric_name)
 
 
-def build_report_response(account_id: str, user: dict, report: dict) -> dict:
+def build_report_response(account_id: str, user: dict, report: dict,
+                          lang: str | None = None) -> dict:
     """
     Build the full reply for a report ask/digest: three deterministic
     (non-LLM) messages checked in order, then one message + chart per
@@ -237,8 +245,14 @@ def build_report_response(account_id: str, user: dict, report: dict) -> dict:
     `items` is empty whenever `ok` is False (nothing to render).
     """
     import store
+    from core.i18n import t
     from store import report_store
 
+    # The recipient's own language, not the caller's. A digest is built on a
+    # scheduler thread and delivered to somebody who did not ask for it, so
+    # there is no request activation to inherit and no question of theirs on
+    # screen to give an English sentence context.
+    lang = lang or (user or {}).get("lang") or "en"
     report_id = report.get("id")
     report_name = report.get("name") or "report"
 
@@ -246,7 +260,7 @@ def build_report_response(account_id: str, user: dict, report: dict) -> dict:
     if not all_metrics:
         return {
             "ok": False,
-            "message": "There are no metrics set up for this account yet — ask your admin to add some to the metric registry first.",
+            "message": t("digest.no_metrics_in_account", lang=lang),
             "items": [],
         }
 
@@ -254,7 +268,7 @@ def build_report_response(account_id: str, user: dict, report: dict) -> dict:
     if not report_metrics:
         return {
             "ok": False,
-            "message": f"The \"{report_name}\" report has no metrics assigned yet — ask your admin to add some.",
+            "message": t("digest.no_metrics_in_report", lang=lang, report=report_name),
             "items": [],
         }
 
@@ -262,7 +276,7 @@ def build_report_response(account_id: str, user: dict, report: dict) -> dict:
     for metric in report_metrics:
         result = run_metric_for_report(account_id, user, metric)
         items.append({
-            "text": _format_metric_line(result),
+            "text": _format_metric_line(result, lang),
             "chart": result.get("chart"),
         })
 

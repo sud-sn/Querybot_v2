@@ -970,6 +970,51 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.num.compact.million": {"en": "M", "fr": "M"},
     "ui.num.compact.billion": {"en": "B", "fr": "Md"},
 
+    # ── Proactive messages: digests and alerts ───────────────────────────────
+    # These reach a reader who did not ask for them, so they are the LEAST
+    # forgiving place to be in the wrong language — there is no question of
+    # theirs on screen to give them context. They also run on a scheduler
+    # thread with no request behind them, so the language is passed in from
+    # the recipient's row rather than read from a ContextVar that a thread
+    # boundary would have dropped.
+    "digest.no_metrics_in_account": {
+        "en": "There are no metrics set up for this account yet — ask your admin to add some to the metric registry first.",
+        "fr": "Aucun indicateur n'est encore configuré pour ce compte — demandez à votre administrateur d'en ajouter au registre des indicateurs.",
+    },
+    "digest.no_metrics_in_report": {
+        "en": "The \"{report}\" report has no metrics assigned yet — ask your admin to add some.",
+        "fr": "Le rapport « {report} » n'a encore aucun indicateur associé — demandez à votre administrateur d'en ajouter.",
+    },
+    "digest.metric.value": {"en": "**{metric}**: {value}", "fr": "**{metric}** : {value}"},
+    "digest.metric.no_data": {
+        "en": "**{metric}** — no data.",
+        "fr": "**{metric}** — aucune donnée.",
+    },
+    "digest.metric.see_chart": {
+        "en": "**{metric}** — see chart below.",
+        "fr": "**{metric}** — voir le graphique ci-dessous.",
+    },
+    "digest.metric.no_access": {
+        "en": "🔒 **{metric}** — you don't have access to this metric. Ask your admin for access.",
+        "fr": "🔒 **{metric}** — vous n'avez pas accès à cet indicateur. Demandez l'accès à votre administrateur.",
+    },
+    "digest.metric.failed": {
+        "en": "⚠️ **{metric}** — couldn't be computed right now.",
+        "fr": "⚠️ **{metric}** — n'a pas pu être calculé pour le moment.",
+    },
+    "digest.metric.unnamed": {"en": "Metric", "fr": "Indicateur"},
+
+    "alert.triggered": {
+        "en": "⚠️ ALERT: {metric} is now {current} ({direction} {delta} from baseline {baseline})",
+        "fr": "⚠️ ALERTE : {metric} est maintenant à {current} ({direction} de {delta} par rapport à la référence {baseline})",
+    },
+    "alert.ok": {
+        "en": "✓ OK: {metric} is now {current} ({direction} {delta} from baseline {baseline})",
+        "fr": "✓ OK : {metric} est maintenant à {current} ({direction} de {delta} par rapport à la référence {baseline})",
+    },
+    "alert.direction.up": {"en": "increased", "fr": "en hausse"},
+    "alert.direction.down": {"en": "decreased", "fr": "en baisse"},
+
     # ── The dispatcher's own replies (core/dispatcher.py) ────────────────────
     # The front door: these are the first thing every turn hits, and every one
     # of them was an English literal on a socket whose language had already
