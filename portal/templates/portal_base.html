@@ -72,6 +72,25 @@ window.qbNum = function (value, options) {
   var min = opts.min == null ? (Number.isInteger(n) ? 0 : 2) : opts.min;
   var max = opts.max == null ? Math.max(min, Number.isInteger(n) ? 0 : 2) : opts.max;
   var fixed = n.toFixed(max);
+  // toFixed rounds an exact tie AWAY FROM ZERO; Python's format -- and so
+  // every number the server writes, in a narrative, a digest or a table --
+  // rounds a tie to the EVEN digit. Left alone the two disagree by one in the
+  // last place, so a 2.5% share reads "3%" on the chart and "2%" in the
+  // sentence under it, on the same page, with nothing to say which is right.
+  //
+  // Only the tie needs correcting, and only in one direction: when the last
+  // kept digit is odd, rounding away from zero already lands on the even
+  // neighbour, which is what toFixed did. When it is even, half-to-even means
+  // truncate. The probe carries enough extra places to tell a true tie
+  // (a 5 with nothing but zeros after it) from 23.449999... which is not one.
+  var probe = Math.abs(n).toFixed(Math.min(20, max + 18));
+  var point = probe.indexOf('.');
+  if (/^50*$/.test(probe.slice(point + 1 + max))) {
+    var kept = probe.slice(0, max ? point + 1 + max : point);
+    if (Number(kept.charAt(kept.length - 1)) % 2 === 0) {
+      fixed = (n < 0 ? '-' : '') + kept;
+    }
+  }
   // toFixed pads to `max`; trim back to `min` without touching the digits
   // that carry value.
   if (max > min && fixed.indexOf('.') !== -1) {
@@ -88,6 +107,18 @@ window.qbNum = function (value, options) {
     whole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, window.QB_NUM.group);
   }
   return sign + whole + (parts[1] ? window.QB_NUM.decimal + parts[1] : '');
+};
+// A percentage, written the way this language writes one. Mirrors
+// core.i18n.format_percent, and tests/test_chart_annotation_language.py
+// executes both and compares them rather than reading them side by side.
+//
+// French puts a non-breaking space before the sign: "23,4 %", not "23.4%".
+// Every chart label that used `n.toFixed(1) + '%'` produced the English form
+// on a French page -- and a percentage drawn onto a canvas has no surrounding
+// prose to make the mismatch look deliberate.
+window.qbPct = function (value, digits) {
+  var d = digits == null ? 1 : digits;
+  return window.qbNum(value, {min: d, max: d}) + window.QB_NUM.percent_gap + '%';
 };
 // The inverse. The table's sort comparator and its column aggregate both read
 // back the text the cell formatter wrote, so a formatter that groups with a

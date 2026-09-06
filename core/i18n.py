@@ -2598,6 +2598,31 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.chart.no_value_column": {"en": "No value column to plot", "fr": "Aucune colonne de valeurs à tracer"},
     "ui.chat.chart.no_rows": {"en": "No rows to plot", "fr": "Aucune ligne à tracer"},
 
+    # Copy drawn onto a chart canvas, shared by the chat page and the
+    # dashboard, which build the same charts from two files. Under
+    # ``ui.chart.*`` rather than ``ui.chat.chart.*`` for that reason: a
+    # dashboard tile is not a chat message, and the second page reading an id
+    # named for the first is how one of them gets left behind on the next
+    # string that changes.
+    #
+    # These are the least forgiving strings in the product to leave in
+    # English. Body copy sits in a paragraph the reader can take as a whole;
+    # a word baked into a canvas label sits alone, four characters wide, next
+    # to a number -- there is no sentence around it to say what language the
+    # page is meant to be in.
+    "ui.chart.drop": {"en": "Drop", "fr": "Baisse"},
+    "ui.chart.gain": {"en": "Gain", "fr": "Hausse"},
+    "ui.chart.unspecified": {"en": "Unspecified", "fr": "Non précisé"},
+    "ui.chart.count": {"en": "Count", "fr": "Nombre"},
+    "ui.chart.value": {"en": "Value", "fr": "Valeur"},
+    "ui.chart.category": {"en": "Category", "fr": "Catégorie"},
+    "ui.chart.share_of_total": {"en": "Share of total", "fr": "Part du total"},
+    "ui.chart.retention": {"en": "Retention", "fr": "Rétention"},
+    "ui.chart.users": {"en": "Users", "fr": "Utilisateurs"},
+    "ui.chart.dropoff": {"en": "Drop-off", "fr": "Abandon"},
+    "ui.chart.from_prev": {"en": "{pct} from previous", "fr": "{pct} par rapport au précédent"},
+    "ui.chart.not_available": {"en": "N/A", "fr": "s.o."},
+
     # The artifact pane's own copy.
     "ui.chat.artifact.result": {"en": "Analysis result", "fr": "Résultat d'analyse"},
     "ui.chat.artifact.isolated": {"en": "Isolated result analysis", "fr": "Analyse de résultat isolée"},

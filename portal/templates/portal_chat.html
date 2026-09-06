@@ -2017,13 +2017,19 @@ function _chartFormatFor(payload, col) {
   if (/revenue|sales|amount|amt|charge|cost|cogs|price|profit|salary|usd|balance/i.test(String(col))) return 'currency';
   return 'number';
 }
-function _chartColumnLabel(payload, col) {
+// `fallback` is display copy for the case where there is no column at all,
+// so it is returned verbatim. It used to be passed in as `col` and fell
+// through the prettifier below -- which is right for an identifier
+// (total_revenue -> Total Revenue) and wrong for a translated phrase, which
+// French does not title-case word by word.
+function _chartColumnLabel(payload, col, fallback) {
   const key = _chartNormKey(col);
   const roles = payload?.column_roles || payload?.chart_spec?.column_roles || {};
   for (const [raw, meta] of Object.entries(roles)) {
     if (_chartNormKey(raw) === key && meta?.label) return String(meta.label);
   }
-  return String(col || 'Value')
+  if (!col) return fallback == null ? t('ui.chart.value') : String(fallback);
+  return String(col)
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, ch => ch.toUpperCase());
 }
@@ -2076,7 +2082,7 @@ function _buildAnnotationMarkPoints(payload, labels, values) {
     const labelBorder = status.border[kind];
     const pct = Number(entry.pct_change);
     const pctLabel = Number.isFinite(pct)
-      ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
+      ? `${pct > 0 ? '+' : ''}${window.qbPct(pct, 1)}`
       : '';
     points.push({
       name: t(isDrop ? 'ui.chat.chart.biggest_drop' : 'ui.chat.chart.biggest_gain'),
@@ -2097,7 +2103,7 @@ function _buildAnnotationMarkPoints(payload, labels, values) {
         show: true,
         position: isDrop ? 'bottom' : 'top',
         distance: 9,
-        formatter: `${isDrop ? '↓' : '↑'} ${pctLabel} ${isDrop ? 'Drop' : 'Gain'}`,
+        formatter: `${isDrop ? '↓' : '↑'} ${pctLabel} ${t(isDrop ? 'ui.chart.drop' : 'ui.chart.gain')}`,
         fontSize: 10,
         fontWeight: 800,
         lineHeight: 16,
@@ -2143,8 +2149,8 @@ function buildChartOption(payload) {
   );
   const formatFor   = col => _chartFormatFor(payload, col);
   const valueFmt    = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
-  const xLabel      = _chartColumnLabel(payload, xKey || 'Category');
-  const yLabel      = _chartColumnLabel(payload, yKey || 'Value');
+  const xLabel      = _chartColumnLabel(payload, xKey, t('ui.chart.category'));
+  const yLabel      = _chartColumnLabel(payload, yKey, t('ui.chart.value'));
   // Chart furniture comes from the theme tokens (see /static/js/chart-palettes.js)
   // so the frame sits in the same neutrals as the product around it.
   const chrome      = window.QB_CHART_THEME();
@@ -2275,7 +2281,7 @@ function buildChartOption(payload) {
   // ── Pie / Donut ───────────────────────────────────────────────────────────
   if (type === 'pie' || type === 'donut') {
     const pieData = rows.map(r => ({
-      name:  String((xKey && r?.[xKey]) ?? 'Unspecified'),
+      name:  String((xKey && r?.[xKey]) ?? t('ui.chart.unspecified')),
       value: _chartNumber(yKey ? r?.[yKey] : null),
     }));
     const pieTotal = pieData.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
@@ -2293,15 +2299,16 @@ function buildChartOption(payload) {
       tooltip: {
         ...tooltipStyle,
         trigger: 'item',
-        formatter: p => `<strong>${escHtml(xLabel)}: ${escHtml(String(p.name??'Unspecified'))}</strong><br/>`
+        formatter: p => `<strong>${escHtml(xLabel)}: ${escHtml(String(p.name ?? t('ui.chart.unspecified')))}</strong><br/>`
           + `${escHtml(yLabel)}: <strong>${valueFmt(p.value, yKey)}</strong><br/>`
-          + `<span style="opacity:.7">Share of total: ${Number(p.percent ?? pieShare(p.value)).toFixed(1)}%</span>`,
+          + `<span style="opacity:.7">${escHtml(t('ui.chart.share_of_total'))}: `
+          + `${window.qbPct(Number(p.percent ?? pieShare(p.value)), 1)}</span>`,
       },
       legend: {
         orient: compactPie ? 'horizontal' : 'vertical',
         ...(compactPie ? { left:'center', bottom:0 } : { right:10, top:'middle' }),
         textStyle: { color: axisColor, fontSize: 11 },
-        formatter: name => `${name.length > 16 ? name.slice(0,15)+'…' : name} · ${(pieLegend.get(name) || 0).toFixed(1)}%`,
+        formatter: name => `${name.length > 16 ? name.slice(0,15)+'…' : name} · ${window.qbPct(pieLegend.get(name) || 0, 1)}`,
       },
       series: [{
         type: 'pie',
@@ -2310,7 +2317,7 @@ function buildChartOption(payload) {
         data: pieData,
         label: {
           show: labels.length <= 8,
-          formatter: p => `${String(p.name || 'Unspecified').slice(0,16)}\n${Number(p.percent ?? pieShare(p.value)).toFixed(1)}%`,
+          formatter: p => `${String(p.name || t('ui.chart.unspecified')).slice(0,16)}\n${window.qbPct(Number(p.percent ?? pieShare(p.value)), 1)}`,
           color: axisColor,
           fontSize: 11,
         },
@@ -2351,8 +2358,10 @@ function buildChartOption(payload) {
           const absKey = `__abs_${pk}`;
           const abs = rows[yi]?.[absKey];
           return `<strong>${escHtml(cohort)}</strong> — ${escHtml(pk)}<br/>`
-            + `Retention: <strong>${val != null ? val.toFixed(1) + '%' : 'N/A'}</strong>`
-            + (abs != null ? `<br/><span style="opacity:.7">Users: ${abs}</span>` : '');
+            + `${escHtml(t('ui.chart.retention'))}: <strong>`
+            + `${val != null ? window.qbPct(val, 1) : escHtml(t('ui.chart.not_available'))}</strong>`
+            + (abs != null ? `<br/><span style="opacity:.7">${escHtml(t('ui.chart.users'))}: `
+                             + `${window.qbNum(abs, {max: 0})}</span>` : '');
         },
       },
       grid: { left: 80, right: 100, top: 32, bottom: 40 },
@@ -2379,14 +2388,14 @@ function buildChartOption(payload) {
         right: 4, top: 'center',
         inRange: { color: window.QB_HEATMAP_RAMP },
         textStyle: { color: axisColor, fontSize: 10 },
-        formatter: v => v.toFixed(0) + '%',
+        formatter: v => window.qbPct(v, 0),
       },
       series: [{
         type: 'heatmap',
         data: hmData,
         label: {
           show: periodKeys.length <= 12,
-          formatter: p => p.data[2] != null ? p.data[2].toFixed(0) + '%' : '',
+          formatter: p => p.data[2] != null ? window.qbPct(p.data[2], 0) : '',
           color: chrome.tooltipText,
           fontSize: 9,
         },
@@ -2502,10 +2511,12 @@ function buildChartOption(payload) {
         trigger: 'item',
         formatter: p => {
           const d = funnelData[p.dataIndex] ?? {};
-          const conv = d.__conv != null ? ` (${d.__conv.toFixed(1)}% from prev)` : '';
-          const drop = d.__drop != null && d.__drop > 0 ? `<br/><span style="opacity:.7">Drop-off: ${valueFmt(d.__drop, countKey)}</span>` : '';
+          const conv = d.__conv != null
+            ? ` (${t('ui.chart.from_prev', {pct: window.qbPct(d.__conv, 1)})})` : '';
+          const drop = d.__drop != null && d.__drop > 0
+            ? `<br/><span style="opacity:.7">${escHtml(t('ui.chart.dropoff'))}: ${valueFmt(d.__drop, countKey)}</span>` : '';
           return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>`
-            + `Count: <strong>${valueFmt(d.__count, countKey)}</strong>${escHtml(conv)}${drop}`;
+            + `${escHtml(t('ui.chart.count'))}: <strong>${valueFmt(d.__count, countKey)}</strong>${escHtml(conv)}${drop}`;
         },
       },
       legend: { show: false },
@@ -2521,7 +2532,7 @@ function buildChartOption(payload) {
         label: {
           show: true,
           position: 'inside',
-          formatter: p => `${escHtml(String(p.name ?? ''))}\n${p.value.toFixed(1)}%`,
+          formatter: p => `${escHtml(String(p.name ?? ''))}\n${window.qbPct(p.value, 1)}`,
           color: '#fff',
           fontSize: 12,
           fontWeight: 'bold',
@@ -2738,7 +2749,7 @@ function buildChartOption(payload) {
         name: t('ui.chat.chart.value_range'), nameTextStyle: { color: axisColor, fontSize: 10 },
       },
       yAxis: {
-        type: 'value', name: 'Count',
+        type: 'value', name: t('ui.chart.count'),
         nameTextStyle: { color: axisColor, fontSize: 10 },
         axisLabel: { color: axisColor, fontSize: 11 },
         splitLine: { show: true, lineStyle: { color: gridColor } },
@@ -2853,7 +2864,7 @@ function buildChartOption(payload) {
         breadcrumb: { show: false },
         label: {
           show: true,
-          formatter: p => `${escHtml(String(p.name ?? ''))}\n${(p.value / totalVal * 100).toFixed(1)}%`,
+          formatter: p => `${escHtml(String(p.name ?? ''))}\n${window.qbPct(p.value / totalVal * 100, 1)}`,
           color: '#fff',
           fontSize: 11,
           overflow: 'truncate',
@@ -2928,7 +2939,7 @@ function buildChartOption(payload) {
     option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,yKey,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,y2,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[_chartNumber(r?.[yKey]),_chartNumber(r?.[y2]),String(xKey ? (r?.[xKey]??'') : '')]), itemStyle:{color:colors[0], opacity:.8} }];
-    option.tooltip.formatter = p => `<strong>${escHtml(xLabel)}: ${escHtml(String(p.value?.[2]??'Unspecified'))}</strong><br/>${escHtml(_chartColumnLabel(payload,yKey||'X'))}: <strong>${valueFmt(p.value?.[0], yKey)}</strong><br/>${escHtml(_chartColumnLabel(payload,y2||'Y'))}: <strong>${valueFmt(p.value?.[1], y2)}</strong>`;
+    option.tooltip.formatter = p => `<strong>${escHtml(xLabel)}: ${escHtml(String(p.value?.[2] ?? t('ui.chart.unspecified')))}</strong><br/>${escHtml(_chartColumnLabel(payload,yKey||'X'))}: <strong>${valueFmt(p.value?.[0], yKey)}</strong><br/>${escHtml(_chartColumnLabel(payload,y2||'Y'))}: <strong>${valueFmt(p.value?.[1], y2)}</strong>`;
     return option;
   }
 

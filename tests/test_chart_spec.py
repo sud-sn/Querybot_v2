@@ -512,14 +512,24 @@ class ChartRendererTemplateTests(unittest.TestCase):
         self.assertIn("valueFmt(p.value, p.seriesName)", src)
 
     def test_pie_renderers_name_category_and_share_in_labels_legends_and_tooltips(self):
+        # The two copy strings this used to pin -- "Share of total:" and
+        # "Unspecified" -- are message ids now, because a pie drawn for a
+        # French reader was labelled in English. Pinning the English words
+        # made this test object to that fix while never once checking that a
+        # slice actually gets named or that a share actually gets shown.
+        #
+        # What it can honestly check from source is that the structural pieces
+        # are still wired up. The behaviour it is named for is proved by
+        # execution in tests/test_chart_annotation_language.py, which builds a
+        # real pie option and calls the label, legend and tooltip formatters
+        # it returns, in both languages.
         for path in [self.CHAT, self.DASH]:
             src = self._read(path)
-            compact = src.replace(" ", "")
             self.assertIn("function _chartColumnLabel", src)
-            self.assertIn("Share of total:", src)
+            self.assertIn("ui.chart.share_of_total", src)
+            self.assertIn("ui.chart.unspecified", src)
             self.assertIn("pieLegend", src)
             self.assertIn("compactPie", src)
-            self.assertIn("p.name||'Unspecified'", compact)
             self.assertIn("pieShare(p.value)", src)
 
     def test_mainstream_chart_tooltips_include_dynamic_dimension_label(self):
