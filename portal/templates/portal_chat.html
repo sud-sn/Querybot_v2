@@ -3728,7 +3728,7 @@ function renderArtifactPreview(msg){
   const tabs = [];
   const panels = [];
   if (hasChart || hasKpi) {
-    tabs.push('<button type="button" class="artifact-tab active" data-artifact-tab="visual">${t('ui.chat.card.visual')}</button>');
+    tabs.push(`<button type="button" class="artifact-tab active" data-artifact-tab="visual">${t('ui.chat.card.visual')}</button>`);
     let visual = '';
     if (hasKpi) {
       const kpi = msg.kpi || {};

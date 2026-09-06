@@ -257,8 +257,22 @@ def _python_worker_entry(connection, rows: list[dict], code: str) -> None:
         _apply_worker_limits()
         validation = validate_python_analysis(code)
         environment = _python_environment(rows)
+        # One namespace, not two. With a separate locals mapping the helper
+        # table is invisible inside a comprehension, a generator or a lambda:
+        # those compile to their own code objects, and a code object resolves
+        # a free name against GLOBALS, never against the enclosing exec's
+        # locals. `[round(v, 2) for v in values]` therefore raised
+        # "NameError: name 'round' is not defined" on analysis the validator
+        # had just approved -- and a comprehension is how the last line of one
+        # of these is naturally written.
+        #
+        # __builtins__ is pinned inside the namespace rather than dropped:
+        # exec injects the real builtins module into any globals mapping that
+        # does not already carry the key, so removing it here would hand the
+        # sandbox open() and __import__.
+        environment["__builtins__"] = {}
         compiled = compile(ast.parse(code, mode="exec"), "<governed-analysis>", "exec")
-        exec(compiled, {"__builtins__": {}}, environment)
+        exec(compiled, environment)
         output = _normalise_python_output(environment.get("result"))
         encoded = json.dumps(output, ensure_ascii=True, allow_nan=False, default=str)
         if len(encoded.encode("utf-8")) > _MAX_OUTPUT_BYTES:

@@ -135,3 +135,103 @@ def test_governed_python_requires_explicit_result_and_bounded_output():
             'result = [{"value": i} for i in range(2001)]',
             timeout_seconds=5,
         )
+
+
+# ── The exec namespace ────────────────────────────────────────────────────────
+# The worker used to run the analysis as exec(code, {"__builtins__": {}}, env),
+# which put the 32 helpers in LOCALS. A comprehension compiles to its own code
+# object, and a code object resolves a free name against GLOBALS -- so every
+# helper was invisible inside one and the analysis died with "NameError: name
+# 'round' is not defined" AFTER the validator had approved it. GROUP_CODE above
+# ends in a list comprehension, which is why the test for it had been failing
+# and was being carried as an "environment" failure.
+#
+# Only the comprehension forms the validator permits are covered: GeneratorExp
+# and Lambda are refused outright (they raise UnsafeAnalysisCode), so a test
+# for those would prove nothing about this fix.
+
+_SCOPE_SHAPES = [
+    ("list comprehension",
+     'result = [{"m": get(row, "month"), "v": round(number(get(row, "revenue")), 2)}\n'
+     '          for row in rows]'),
+    ("nested list comprehension",
+     'peak = max([abs(number(get(row, "revenue"))) for row in rows])\n'
+     'result = [{"peak": round(peak, 2)}]'),
+    ("set comprehension",
+     'months = {str(get(row, "month")) for row in rows}\n'
+     'result = [{"months": len(months)}]'),
+]
+
+
+@pytest.mark.parametrize("shape,code", _SCOPE_SHAPES, ids=[s for s, _ in _SCOPE_SHAPES])
+def test_helpers_are_visible_inside_every_scope_that_makes_its_own_frame(shape, code):
+    validate_python_analysis(code)          # the validator lets it through ...
+    result = run_governed_python_analysis(ROWS, code, timeout_seconds=5)
+    assert result.rows, shape               # ... so this has to actually run
+
+
+@pytest.mark.parametrize("code", [
+    'result = [{"t": sum(number(get(row, "revenue")) for row in rows)}]',
+    'f = lambda r: number(get(r, "revenue"))\nresult = [{"v": f(row)} for row in rows]',
+])
+def test_the_scopes_this_fix_does_not_reach_are_refused_not_broken(code):
+    # Recorded so the coverage above is not mistaken for the whole story:
+    # these two never reach the namespace at all.
+    with pytest.raises(UnsafeAnalysisCode):
+        validate_python_analysis(code)
+
+
+class _Pipe:
+    """The worker's end of the process boundary."""
+
+    def __init__(self):
+        self.payload = None
+
+    def send(self, value):
+        self.payload = value
+
+    def close(self):
+        pass
+
+
+def _run_worker_past_the_validator(code):
+    """Execute the real worker with the validator opened.
+
+    The validator is the gate, so the only way to reach the namespace behind
+    it is to open the gate. That is a boundary mock -- the worker still
+    compiles and executes the code itself, which is the thing under test.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import core.analysis_sandbox as sandbox
+
+    stub = SimpleNamespace(code_hash="0" * 64, ast_nodes=0, helper_calls=())
+    pipe = _Pipe()
+    with patch.object(sandbox, "validate_python_analysis", return_value=stub):
+        sandbox._python_worker_entry(pipe, ROWS, code)
+    return pipe.payload
+
+
+def test_the_namespace_is_still_sealed_against_builtins():
+    """Defence in depth, asserted where it lives.
+
+    Every other escape test in this module goes through
+    validate_python_analysis, so all of them pass against a worker that
+    executes with the real builtins module in scope -- and moving the helpers
+    into globals is exactly what makes exec inject builtins when the key is
+    absent. This asserts the pin, not the gate.
+    """
+    payload = _run_worker_past_the_validator(
+        "result = [{'leaked': __import__('os').getcwd()}]")
+    assert payload["ok"] is False
+    assert "__import__" in payload["error"]
+
+
+def test_the_seal_test_fails_for_the_right_reason():
+    # The same harness on code that uses only the helper table must succeed,
+    # or the assertion above would pass on a worker that is simply broken.
+    payload = _run_worker_past_the_validator(
+        'result = [{"n": round(number(get(row, "revenue")), 1)} for row in rows]')
+    assert payload["ok"] is True
+    assert len(payload["rows"]) == len(ROWS)
