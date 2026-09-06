@@ -963,6 +963,124 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cette réponse a demandé {attempts} tentatives.",
     },
 
+    # ── Answer confidence (core/answer_confidence.py) ────────────────────────
+    # The verdict, the reasons and the watch-outs on every answer card. This
+    # module built all of them as English literals and imported no i18n at
+    # all, so the one panel a reader opens to find out whether to trust a
+    # number was the one panel that never spoke their language.
+    "confidence.level.high": {"en": "High confidence", "fr": "Confiance élevée"},
+    "confidence.level.medium": {"en": "Medium confidence", "fr": "Confiance moyenne"},
+    "confidence.level.low": {"en": "Low confidence", "fr": "Confiance faible"},
+
+    "confidence.reason.validation_passed": {
+        "en": "SQL passed schema validation.",
+        "fr": "La requête SQL a passé la validation du schéma.",
+    },
+    "confidence.warn.validation_attention": {
+        "en": "SQL needed validation attention before it could be trusted.",
+        "fr": "La requête SQL a nécessité une vérification avant de pouvoir être validée.",
+    },
+    "confidence.warn.repair_retry": {
+        "en": "The SQL needed a repair retry before execution.",
+        "fr": "La requête SQL a dû être corrigée avant de pouvoir être exécutée.",
+    },
+    "confidence.reason.no_retry": {
+        "en": "No SQL repair retry was needed.",
+        "fr": "Aucune correction de la requête SQL n'a été nécessaire.",
+    },
+    "confidence.reason.rows_returned.one": {
+        "en": "The query returned {rows} row.",
+        "fr": "La requête a renvoyé {rows} ligne.",
+    },
+    "confidence.reason.rows_returned.other": {
+        "en": "The query returned {rows} rows.",
+        "fr": "La requête a renvoyé {rows} lignes.",
+    },
+    "confidence.warn.no_rows": {
+        "en": "The query ran successfully but returned no rows.",
+        "fr": "La requête s'est exécutée correctement mais n'a renvoyé aucune ligne.",
+    },
+    "confidence.warn.empty_table": {
+        "en": "One table used by the query has no records: {tables}.",
+        "fr": "Une table utilisée par la requête ne contient aucun enregistrement : {tables}.",
+    },
+    "confidence.reason.known_tables": {
+        "en": "The answer used known database tables.",
+        "fr": "La réponse s'appuie sur des tables connues de la base de données.",
+    },
+    "confidence.warn.null_metric": {
+        "en": "Records matched the filter, but the requested metric values were null or missing.",
+        "fr": "Des enregistrements correspondent au filtre, mais les valeurs de l'indicateur demandé sont nulles ou absentes.",
+    },
+    "confidence.warn.derived_metric_gap": {
+        "en": "'{metric}' looks like a calculated business metric with no approved formula — this result may total a raw column instead of the real calculation. Ask your administrator to define the formula in the Metric Registry or Business Terms.",
+        "fr": "« {metric} » ressemble à un indicateur métier calculé sans formule approuvée — ce résultat additionne peut-être une colonne brute au lieu du calcul réel. Demandez à votre administrateur de définir la formule dans le registre des indicateurs ou le glossaire métier.",
+    },
+    "confidence.warn.weak_retrieval": {
+        "en": "The question matched the knowledge base only weakly — the answer may use the wrong table. Naming the metric or table explicitly usually fixes this.",
+        "fr": "La question ne correspond que faiblement à la base de connaissances — la réponse utilise peut-être la mauvaise table. Nommer explicitement l'indicateur ou la table suffit généralement à corriger cela.",
+    },
+    "confidence.warn.retrieval_unscored": {
+        "en": "Knowledge-base relevance could not be scored for this question, so the tables used were not filtered for relevance.",
+        "fr": "La pertinence de la base de connaissances n'a pas pu être évaluée pour cette question ; les tables utilisées n'ont donc pas été filtrées selon leur pertinence.",
+    },
+    "confidence.reason.semantic_plan": {
+        "en": "Business terms were mapped through the semantic layer.",
+        "fr": "Les termes métier ont été rattachés via la couche sémantique.",
+    },
+    "confidence.warn.semantic_planning_failed": {
+        "en": "The business-term mapping could not be built for this question, so the columns, joins and date range in this answer were chosen without it. Treat the result as unconfirmed.",
+        "fr": "Le rattachement des termes métier n'a pas pu être construit pour cette question ; les colonnes, les jointures et la période de cette réponse ont donc été choisies sans lui. Considérez le résultat comme non confirmé.",
+    },
+    "confidence.warn.suggested_relationships": {
+        "en": "The query used unreviewed relationship suggestions; its joins require administrator review.",
+        "fr": "La requête s'appuie sur des relations suggérées non revues ; ses jointures doivent être validées par un administrateur.",
+    },
+    "confidence.reason.graph_used": {
+        "en": "Configured entity relationships were used.",
+        "fr": "Les relations entre entités configurées ont été utilisées.",
+    },
+    "confidence.warn.graph_resolution_failed": {
+        "en": "Relationship checks could not run for this question, so the joins between tables in this answer were not verified against your approved relationships. Treat the result as unconfirmed.",
+        "fr": "Les contrôles de relations n'ont pas pu s'exécuter pour cette question ; les jointures entre tables de cette réponse n'ont donc pas été vérifiées par rapport à vos relations approuvées. Considérez le résultat comme non confirmé.",
+    },
+    "confidence.warn.fanout_risk": {
+        "en": "One or more relationships can multiply the requested result grain.",
+        "fr": "Une ou plusieurs relations peuvent multiplier la granularité demandée du résultat.",
+    },
+    "confidence.warn.candidates_disagree": {
+        "en": "Asking this question a second way produced a different figure, and both queries checked out equally. Confirm which business date or source table this question means.",
+        "fr": "Poser cette question d'une autre manière a produit un chiffre différent, et les deux requêtes se valent. Confirmez quelle date de gestion ou quelle table source cette question désigne.",
+    },
+    "confidence.warn.no_candidate_verified": {
+        "en": "No version of this query matched the shape of the question.",
+        "fr": "Aucune version de cette requête ne correspond à la forme de la question.",
+    },
+    "confidence.reason.candidates_agree": {
+        "en": "A second query written a different way returned the same figure.",
+        "fr": "Une seconde requête, écrite différemment, a renvoyé le même chiffre.",
+    },
+    "confidence.reason.second_area_agrees": {
+        "en": "A second subject area was asked the same question and returned the same figure.",
+        "fr": "La même question a été posée à un second domaine, qui a renvoyé le même chiffre.",
+    },
+    "confidence.warn.second_area_disagrees": {
+        "en": "A second subject area answers this question differently. The figure shown is from the area this question was routed to; which source the business treats as authoritative is worth confirming.",
+        "fr": "Un second domaine répond différemment à cette question. Le chiffre affiché provient du domaine vers lequel la question a été orientée ; il vaut la peine de confirmer quelle source fait foi pour l'entreprise.",
+    },
+    "confidence.warn.verification_unavailable": {
+        "en": "The result could not be checked against the shape of the question, so nothing confirms it answers what was asked.",
+        "fr": "Le résultat n'a pas pu être vérifié par rapport à la forme de la question ; rien ne confirme donc qu'il répond à ce qui a été demandé.",
+    },
+    "confidence.reason.shape_matched": {
+        "en": "The returned result shape matched the analytical request.",
+        "fr": "La forme du résultat renvoyé correspond à la demande analytique.",
+    },
+    "confidence.warn.shape_mismatch": {
+        "en": "The returned result shape did not fully match the analytical request.",
+        "fr": "La forme du résultat renvoyé ne correspond pas entièrement à la demande analytique.",
+    },
+
     # ── Cross-domain corroboration (core/domains.py) ─────────────────────────
     "corroboration.agrees": {
         "en": "Confirmed against {source}, which reports the same figure.",

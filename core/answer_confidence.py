@@ -1,6 +1,22 @@
+"""How much friction an answer met, said in the reader's own language.
+
+Every string here used to be an English literal and this module imported no
+i18n at all — so the one panel a reader opens to decide whether to trust a
+number was the one panel that never spoke their language. A French user got
+"Confiance" as a heading over "SQL passed schema validation."
+
+The ids resolve through the ambient language ContextVar, which both callers
+already run inside: core.result_renderer._send_results and
+core.pipeline_helpers._build_zero_row_message are reached from
+_handle_query_impl, which activates the reader's language around the whole
+turn. `lang` is still accepted for a caller that has one and no activation.
+"""
+
 from __future__ import annotations
 
 from typing import Any
+
+from core.i18n import format_count, plural, t
 
 
 def _level(score: int) -> str:
@@ -11,12 +27,11 @@ def _level(score: int) -> str:
     return "low"
 
 
-def _label(level: str) -> str:
-    return {
-        "high": "High confidence",
-        "medium": "Medium confidence",
-        "low": "Low confidence",
-    }.get(level, "Medium confidence")
+def _label(level: str, lang: str | None = None) -> str:
+    return t(f"confidence.level.{level if level in _LEVELS else 'medium'}", lang=lang)
+
+
+_LEVELS = ("high", "medium", "low")
 
 
 def build_answer_confidence(
@@ -40,6 +55,7 @@ def build_answer_confidence(
     result_verification: dict[str, Any] | None = None,
     candidate_selection: dict[str, Any] | None = None,
     corroboration: dict[str, Any] | None = None,
+    lang: str | None = None,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -69,66 +85,63 @@ def build_answer_confidence(
 
     if validation in {"ok", "pass", "trusted_metric"}:
         score += 15
-        reasons.append("SQL passed schema validation.")
+        reasons.append(t("confidence.reason.validation_passed", lang=lang))
     else:
         # validation is always a non-empty string here (normalised above)
         score -= 25
-        warnings.append("SQL needed validation attention before it could be trusted.")
+        warnings.append(t("confidence.warn.validation_attention", lang=lang))
 
     if retries:
         score -= min(20, 10 * retries)
-        warnings.append("The SQL needed a repair retry before execution.")
+        warnings.append(t("confidence.warn.repair_retry", lang=lang))
     else:
-        reasons.append("No SQL repair retry was needed.")
+        reasons.append(t("confidence.reason.no_retry", lang=lang))
 
     if row_count is not None:
         if rows > 0:
             score += 10
-            reasons.append(f"The query returned {rows} row{'s' if rows != 1 else ''}.")
+            reasons.append(plural(
+                "confidence.reason.rows_returned", rows, lang=lang,
+                # French takes the singular at zero as well as one, and writes
+                # thousands with a narrow no-break space -- neither of which
+                # an f-string with a bolted-on "s" can produce.
+                rows=format_count(rows, lang=lang),
+            ))
         else:
             score -= 20
-            warnings.append("The query ran successfully but returned no rows.")
+            warnings.append(t("confidence.warn.no_rows", lang=lang))
 
     if empty:
         score -= 35
         listed = ", ".join(empty[:3])
         suffix = "..." if len(empty) > 3 else ""
-        warnings.append(f"One table used by the query has no records: {listed}{suffix}.")
+        warnings.append(t("confidence.warn.empty_table", lang=lang,
+                          tables=f"{listed}{suffix}"))
     elif used_tables:
-        reasons.append("The answer used known database tables.")
+        reasons.append(t("confidence.reason.known_tables", lang=lang))
 
     if null_metric_issue:
         score -= 25
-        warnings.append("Records matched the filter, but the requested metric values were null or missing.")
+        warnings.append(t("confidence.warn.null_metric", lang=lang))
 
     if derived_metric_gap:
         score -= 25
-        warnings.append(
-            f"'{derived_metric_gap}' looks like a calculated business metric with no "
-            "approved formula — this result may total a raw column instead of the real "
-            "calculation. Ask your administrator to define the formula in the Metric "
-            "Registry or Business Terms."
-        )
+        warnings.append(t("confidence.warn.derived_metric_gap", lang=lang,
+                          metric=derived_metric_gap))
 
     if weak_retrieval:
         score -= 20
-        warnings.append(
-            "The question matched the knowledge base only weakly — the answer may "
-            "use the wrong table. Naming the metric or table explicitly usually fixes this."
-        )
+        warnings.append(t("confidence.warn.weak_retrieval", lang=lang))
     elif retrieval_unscored:
         # The re-ranker produced no scores, so the relevance floor never ran and
         # weak_retrieval could not be raised. Retrieval was unfiltered — which
         # is not the same as relevant, and used to be indistinguishable from it.
         score -= 10
-        warnings.append(
-            "Knowledge-base relevance could not be scored for this question, so "
-            "the tables used were not filtered for relevance."
-        )
+        warnings.append(t("confidence.warn.retrieval_unscored", lang=lang))
 
     if has_semantic_plan:
         score += 5
-        reasons.append("Business terms were mapped through the semantic layer.")
+        reasons.append(t("confidence.reason.semantic_plan", lang=lang))
     elif semantic_planning_failed:
         # Field planning RAISED rather than finding nothing. Four guarantees
         # went with it in one step: term-to-column bindings, the required join
@@ -136,21 +149,15 @@ def build_answer_confidence(
         # the window. The answer was written from raw prose and looks identical
         # to a planned one.
         score -= 30
-        warnings.append(
-            "The business-term mapping could not be built for this question, so "
-            "the columns, joins and date range in this answer were chosen "
-            "without it. Treat the result as unconfirmed."
-        )
+        warnings.append(t("confidence.warn.semantic_planning_failed", lang=lang))
 
     if has_graph_context:
         if str(graph_scope or "").lower() == "suggested_fallback":
             score -= 35
-            warnings.append(
-                "The query used unreviewed relationship suggestions; its joins require administrator review."
-            )
+            warnings.append(t("confidence.warn.suggested_relationships", lang=lang))
         else:
             score += 5
-            reasons.append("Configured entity relationships were used.")
+            reasons.append(t("confidence.reason.graph_used", lang=lang))
     elif graph_resolution_failed and len(set(used_tables)) > 1:
         # Entity-graph resolution raised instead of returning "no graph", so
         # nothing checked the joins in this SQL against the approved ones. A
@@ -158,17 +165,11 @@ def build_answer_confidence(
         # multi-table one is the model's own join plan, executed. Without this
         # the answer scored identically to a query that needed no governance.
         score -= 35
-        warnings.append(
-            "Relationship checks could not run for this question, so the joins "
-            "between tables in this answer were not verified against your "
-            "approved relationships. Treat the result as unconfirmed."
-        )
+        warnings.append(t("confidence.warn.graph_resolution_failed", lang=lang))
 
     if fanout_risk:
         score -= 35
-        warnings.append(
-            "One or more relationships can multiply the requested result grain."
-        )
+        warnings.append(t("confidence.warn.fanout_risk", lang=lang))
 
     # When the plan left a decision open, the pipeline asks the question a
     # second way and lets the verifier choose (core.candidate_selection). Two
@@ -180,21 +181,13 @@ def build_answer_confidence(
     selection_reason = str(selection.get("reason") or "")
     if selection_reason == "verified_candidates_disagree":
         score = min(score - 25, 49)
-        warnings.append(
-            "Asking this question a second way produced a different figure, "
-            "and both queries checked out equally. Confirm which business "
-            "date or source table this question means."
-        )
+        warnings.append(t("confidence.warn.candidates_disagree", lang=lang))
     elif selection_reason == "no_candidate_verified":
         score -= 15
-        warnings.append(
-            "No version of this query matched the shape of the question."
-        )
+        warnings.append(t("confidence.warn.no_candidate_verified", lang=lang))
     elif selection_reason.startswith("agreement_of_"):
         score += 5
-        reasons.append(
-            "A second query written a different way returned the same figure."
-        )
+        reasons.append(t("confidence.reason.candidates_agree", lang=lang))
 
     # A second subject area was asked the same question and its answer
     # compared (core.corroboration_run). Scored separately from the candidate
@@ -217,10 +210,8 @@ def build_answer_confidence(
         line = str(second_opinion.get("line") or "").strip()
         if second_opinion.get("agrees"):
             score += 5
-            reasons.append(line or (
-                "A second subject area was asked the same question and "
-                "returned the same figure."
-            ))
+            reasons.append(
+                line or t("confidence.reason.second_area_agrees", lang=lang))
         else:
             # 49, not 59. The reader-facing surface shows a warning inline
             # only when the verdict is LOW, and puts everything else behind a
@@ -232,12 +223,8 @@ def build_answer_confidence(
             # two answers to the question, which the reader cannot resolve by
             # rephrasing it.
             score = min(score - 20, 49)
-            warnings.append(line or (
-                "A second subject area answers this question differently. "
-                "The figure shown is from the area this question was routed "
-                "to; which source the business treats as authoritative is "
-                "worth confirming."
-            ))
+            warnings.append(
+                line or t("confidence.warn.second_area_disagrees", lang=lang))
 
     verification = result_verification or {}
     verification_status = str(verification.get("status") or "").lower()
@@ -247,22 +234,21 @@ def build_answer_confidence(
         # defence against a schema-valid but business-wrong answer reporting
         # "no issues found" precisely because it never looked.
         score -= 15
-        warnings.append(
-            "The result could not be checked against the shape of the question, "
-            "so nothing confirms it answers what was asked."
-        )
+        warnings.append(t("confidence.warn.verification_unavailable", lang=lang))
     elif verification_status == "pass":
         score += 5
-        reasons.append("The returned result shape matched the analytical request.")
+        reasons.append(t("confidence.reason.shape_matched", lang=lang))
     elif verification_status in {"warning", "fail"}:
         score -= 10 if verification_status == "warning" else 30
         details = list(verification.get("errors") or []) + list(
             verification.get("warnings") or []
         )
+        # `details` comes from core.result_verifier and is English today;
+        # the fallback beside it is not, so the reader gets their own
+        # language whenever the verifier had nothing specific to say.
         warnings.append(
-            str(details[0])
-            if details
-            else "The returned result shape did not fully match the analytical request."
+            str(details[0]) if details
+            else t("confidence.warn.shape_mismatch", lang=lang)
         )
         if verification_status == "fail":
             # A safe, executable query can still answer the wrong shape.  Do
@@ -281,7 +267,7 @@ def build_answer_confidence(
     return {
         "score": score,
         "level": level,
-        "label": _label(level),
+        "label": _label(level, lang),
         "reasons": reasons[:5],
         "warnings": warnings[:5],
     }
