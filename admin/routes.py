@@ -3028,6 +3028,122 @@ async def compliance_save_egress(request: Request, account_id: str):
     )
 
 
+@router.get("/clients/{account_id}/drafts", response_class=HTMLResponse)
+async def drafts_page(request: Request, account_id: str, notice: str = ""):
+    """The review queue: what the drafters propose, as a diff, with two buttons.
+
+    Pending proposals are read from the store rather than re-drafted on every
+    view. Drafting reads the schema, the value index and the question log; a
+    page that did it on load would make an admin wait on three scans to see a
+    queue that has not changed since yesterday, and would quietly re-propose
+    things they had rejected an hour ago.
+
+    The metric shapes ARE computed on view, because they are advisory and are
+    not staged anywhere to be read back.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from core.draft_review import TARGET_KIND
+
+    error = ""
+    proposals = []
+    try:
+        for row in store.list_graph_change_proposals(account_id, "pending"):
+            if str(row.get("target_kind") or "") != TARGET_KIND:
+                continue
+            item = dict(row)
+            before, payload = item.get("before") or {}, item.get("payload") or {}
+            # The diff the reviewer reads, computed here rather than stored:
+            # a proposal staged last week against a row that has since moved
+            # must show what accepting it would do NOW, and the accept path
+            # refuses it on exactly that difference.
+            item["diff"] = {
+                key: (str(before.get(key) or ""), str(value or ""))
+                for key, value in payload.items()
+                if str(before.get(key) or "") != str(value or "")
+            }
+            proposals.append(item)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Draft queue failed for %s: %s", account_id, exc, exc_info=True)
+        error = str(exc)[:200]
+
+    shapes = []
+    try:
+        from core.draft_review import _metric_rows
+        from core.model_drafts import metric_shape_drafts
+        shapes = list(metric_shape_drafts(_metric_rows(account_id)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Metric shapes unavailable for %s: %s", account_id, exc)
+
+    return _resp(request, "client_drafts.html", {
+        "client": client,
+        "proposals": proposals,
+        "shapes": shapes,
+        "notice": notice,
+        "error": error,
+    })
+
+
+@router.post("/clients/{account_id}/drafts/refresh")
+async def drafts_refresh(request: Request, account_id: str):
+    """Re-run the drafters and stage anything new."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    if not store.get_client(account_id):
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from core.draft_review import gather, stage
+
+    try:
+        drafts = gather(account_id)
+        result = stage(account_id, drafts.applicable)
+        notice = (f"Drafted {result['staged_count']} new proposal(s); "
+                  f"{result['skipped_count']} already reviewed or queued.")
+        if drafts.error:
+            notice += f" Some evidence was unavailable: {drafts.error}"
+    except Exception as exc:  # noqa: BLE001
+        log.error("Drafting failed for %s: %s", account_id, exc, exc_info=True)
+        notice = f"Drafting failed: {str(exc)[:160]}"
+
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/drafts?notice={quote(notice)}", status_code=303)
+
+
+@router.post("/clients/{account_id}/drafts/{proposal_id}/accept")
+async def drafts_accept(request: Request, account_id: str, proposal_id: int):
+    """Accept one drafted proposal, through the same path the graph uses."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    try:
+        response = await graph_accept_change_proposal(request, account_id, proposal_id)
+        body = json.loads(bytes(response.body).decode("utf-8") or "{}")
+        notice = (body.get("message") or "Applied.") if response.status_code != 200 \
+            else "Applied."
+    except HTTPException as exc:
+        notice = str(exc.detail)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Draft accept failed for %s/%s: %s", account_id, proposal_id, exc,
+                  exc_info=True)
+        notice = f"Could not apply: {str(exc)[:160]}"
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/drafts?notice={quote(notice)}", status_code=303)
+
+
+@router.post("/clients/{account_id}/drafts/{proposal_id}/reject")
+async def drafts_reject(request: Request, account_id: str, proposal_id: int):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    applied = store.review_graph_change_proposal(account_id, proposal_id, "rejected")
+    notice = "Rejected; it will not be proposed again." if applied \
+        else "That proposal is no longer pending."
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/drafts?notice={quote(notice)}", status_code=303)
+
+
 @router.get("/clients/{account_id}/readiness", response_class=HTMLResponse)
 async def readiness_page(request: Request, account_id: str):
     """What to model next, in the order that fixes the most questions.
@@ -5412,6 +5528,21 @@ async def graph_accept_change_proposal(
                     )
         except Exception as exc:
             log.warning("Graph Chat semantic-model sync deferred: %s", exc)
+    elif proposal.get("target_kind") == "property":
+        # A drafted column meaning (core/draft_review.py). Same discipline as
+        # the two branches above: the target is re-read and the accept is
+        # refused when it moved, because a proposal is a diff against a state
+        # and applying one against a different state applies something nobody
+        # reviewed.
+        from core.draft_review import apply_property_proposal
+
+        store.save_graph_version(
+            account_id, label=f"before drafted proposal {proposal_id}",
+            created_by="model_drafts")
+        applied, message = apply_property_proposal(account_id, proposal)
+        if not applied:
+            return JSONResponse({"status": "conflict", "message": message},
+                                status_code=409)
     else:
         raise HTTPException(status_code=400, detail="Unsupported graph proposal target")
 

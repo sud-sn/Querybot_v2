@@ -679,3 +679,58 @@ def lookup_fuzzy(
                            "value": val, "method": "fuzzy", "score": round(score, 4)})
     scored.sort(key=lambda m: m["score"], reverse=True)
     return scored[:limit]
+
+
+# How many values of one column are read back for drafting. The index holds up
+# to its build cap per column; a drafter only needs enough of them to find the
+# words readers use beside one, and reading all of a high-cardinality column
+# would put a customer list in memory to no purpose.
+DRAFTING_VALUES_PER_COLUMN = 40
+
+
+def sample_values_by_column(
+    account_id: str,
+    *,
+    per_column: int = DRAFTING_VALUES_PER_COLUMN,
+    max_columns: int = 400,
+    base_dir: str = _DEFAULT_BASE_DIR,
+) -> list[dict]:
+    """``[{table_fqn, column, values}]`` -- what each indexed column holds.
+
+    Every other reader here answers "is this phrase a value, and where?".
+    ``core.model_drafts`` asks the opposite question: given a column, what does
+    it hold, so that questions mentioning one of those values can be found.
+
+    Only columns the index holds COMPLETELY are returned. A column truncated at
+    the build cap holds a prefix, and a drafter reasoning from a prefix would
+    propose vocabulary from whichever values happened to sort first -- the same
+    reason ``column_meta.complete`` exists for the absence claim.
+
+    Never raises. This feeds an admin-time report; an account with no index
+    gets an empty list, not an error page.
+    """
+    conn = _open_ro(account_id, base_dir)
+    if conn is None:
+        return []
+    try:
+        columns = conn.execute(
+            "SELECT table_fqn, column_name FROM column_meta WHERE complete=1 "
+            "ORDER BY table_fqn, column_name LIMIT ?",
+            (int(max_columns),),
+        ).fetchall()
+        out: list[dict] = []
+        for table_fqn, column_name in columns:
+            values = [row[0] for row in conn.execute(
+                "SELECT value FROM column_value WHERE table_fqn=? AND column_name=? "
+                "ORDER BY value LIMIT ?",
+                (table_fqn, column_name, int(per_column)),
+            ).fetchall()]
+            if values:
+                out.append({"table_fqn": table_fqn, "column": column_name,
+                            "values": values})
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("value index sample for %s unavailable: %s", account_id, exc)
+        return []
+    finally:
+        conn.close()

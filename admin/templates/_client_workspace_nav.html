@@ -25,7 +25,7 @@
 {% set _is_overview   = (_seg == '') %}
 {% set _is_model      = _seg in ['setup', 'kb', 'graph', 'date-roles', 'metrics', 'glossary', 'domains', 'reports'] %}
 {% set _is_activity   = _seg in ['queries', 'traces', 'egress', 'billing'] %}
-{% set _is_quality    = _seg in ['model-health', 'evals', 'learning-queue', 'readiness'] %}
+{% set _is_quality    = _seg in ['model-health', 'evals', 'learning-queue', 'readiness', 'drafts'] %}
 {% set _is_access     = _seg in ['users', 'groups', 'pending-users'] %}
 {% set _is_compliance = (_seg == 'compliance') %}
 {% set _is_configure  = _seg in ['settings', 'advanced'] %}
@@ -74,6 +74,7 @@
   <nav class="client-workspace-secondary" aria-label="Quality tools">
     <a href="{{ _b }}/model-health" class="{% if _seg == 'model-health' %}active{% endif %}">Model Health</a>
     <a href="{{ _b }}/readiness" class="{% if _seg == 'readiness' %}active{% endif %}">What To Model Next</a>
+    <a href="{{ _b }}/drafts" class="{% if _seg == 'drafts' %}active{% endif %}">Drafted For Review</a>
     <a href="{{ _b }}/learning-queue" class="{% if _seg == 'learning-queue' %}active{% endif %}">Flagged Answers</a>
     <a href="{{ _b }}/evals" class="{% if _seg == 'evals' %}active{% endif %}">Evaluations</a>
   </nav>

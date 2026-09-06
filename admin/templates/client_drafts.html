@@ -1,0 +1,156 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% block title %}Drafted For Review — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Drafted For Review", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.dq-hero{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);box-shadow:var(--shadow);margin-bottom:1.1rem}
+.dq-hero h1{font-size:20px;font-weight:900;margin:0}
+.dq-hero p{font-size:var(--font-base);color:var(--text-muted);line-height:1.6;
+  margin:.4rem 0 0;max-width:780px}
+.dq-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.9rem;align-items:center}
+.dq-row{border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);margin-bottom:.55rem;padding:.8rem 1rem}
+.dq-head{display:flex;gap:.75rem;align-items:baseline;flex-wrap:wrap}
+.dq-target{font-weight:800;font-size:var(--font-base)}
+.dq-kind{font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.04em;
+  font-weight:700;color:var(--text-muted)}
+.dq-conf{margin-left:auto;font-size:var(--font-xs);font-weight:700;color:var(--text-muted)}
+.dq-reason{font-size:var(--font-sm);color:var(--text-muted);margin:.35rem 0 .5rem;
+  line-height:1.5}
+.dq-diff{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.dq-diff table{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
+.dq-diff th{text-align:left;font-size:var(--font-xs);text-transform:uppercase;
+  letter-spacing:.04em;color:var(--text-muted);padding:.4rem .6rem;
+  background:var(--surface-2);font-weight:700}
+.dq-diff td{padding:.4rem .6rem;border-top:1px solid var(--border);
+  vertical-align:top;word-break:break-word}
+.dq-was{color:var(--text-muted);text-decoration:line-through}
+.dq-now{font-weight:700}
+.dq-empty-was{color:var(--text-muted);font-style:italic}
+.dq-buttons{display:flex;gap:.45rem;margin-top:.6rem}
+.dq-evidence{margin-top:.5rem;font-size:var(--font-xs);color:var(--text-muted)}
+.dq-evidence li{margin:.15rem 0}
+.dq-shape{display:flex;gap:.85rem;align-items:flex-start;padding:.7rem 1rem;
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);margin-bottom:.5rem}
+.dq-count{flex:0 0 auto;min-width:44px;text-align:center}
+.dq-count-num{font-size:18px;font-weight:900;line-height:1.1}
+.dq-count-lab{font-size:var(--font-xs);color:var(--text-muted);font-weight:700}
+.dq-note{font-size:var(--font-sm);color:var(--text-muted);line-height:1.6}
+</style>
+{% endblock %}
+{% block content %}
+
+<div class="dq-hero">
+  <h1>Drafted For Review</h1>
+  <p>
+    What To Model Next says what to fix. This says what the answer probably is,
+    so the work is confirming rather than typing. Every row below is a proposal
+    against the workspace as it stands — nothing here has been applied, and a
+    column an administrator has already confirmed is never proposed over.
+  </p>
+  <div class="dq-actions">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/drafts/refresh">
+      <button class="btn btn-primary" type="submit">Draft from the current workspace</button>
+    </form>
+    <a class="btn btn-sm" href="/admin/clients/{{ client.account_id }}/readiness">What To Model Next</a>
+  </div>
+</div>
+
+{% if error %}
+<div class="card"><div class="card-body">
+  <p class="dq-note">The drafters could not read this workspace: <code>{{ error }}</code></p>
+</div></div>
+{% endif %}
+
+{% if notice %}
+<div class="card"><div class="card-body"><p class="dq-note">{{ notice }}</p></div></div>
+{% endif %}
+
+{% if proposals %}
+  {% for p in proposals %}
+  <div class="dq-row">
+    <div class="dq-head">
+      <span class="dq-target">{{ p.target_id }}</span>
+      <span class="dq-kind">{{ p.action.replace('set_', '').replace('_', ' ') }}</span>
+      <span class="dq-conf">{{ p.confidence_score }}% confident</span>
+    </div>
+    {% if p.reason %}<div class="dq-reason">{{ p.reason }}</div>{% endif %}
+    <div class="dq-diff">
+      <table>
+        <thead><tr><th>Field</th><th>Now</th><th>Proposed</th></tr></thead>
+        <tbody>
+        {% for field, pair in (p.diff or {}).items() %}
+          <tr>
+            <td>{{ field.replace('_', ' ') }}</td>
+            <td>{% if pair[0] %}<span class="dq-was">{{ pair[0] }}</span>
+                {% else %}<span class="dq-empty-was">not set</span>{% endif %}</td>
+            <td><span class="dq-now">{{ pair[1] }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="dq-buttons">
+      <form method="post"
+            action="/admin/clients/{{ client.account_id }}/drafts/{{ p.id }}/accept">
+        <button class="btn btn-primary btn-sm" type="submit">Accept</button>
+      </form>
+      <form method="post"
+            action="/admin/clients/{{ client.account_id }}/drafts/{{ p.id }}/reject">
+        <button class="btn btn-sm" type="submit">Reject</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+{% elif not error %}
+  {{ empty_state(
+      title="Nothing drafted",
+      body="Either every column this workspace can reach already carries a
+            confirmed meaning, or there is not yet enough evidence to draft
+            one. Drafting reads the schema, the value index and the questions
+            people have asked — a workspace with no question history has only
+            the first of the three.") }}
+{% endif %}
+
+{% if shapes %}
+<div class="card">
+  <div class="card-header"><h2 class="card-title">Measures people keep asking for</h2></div>
+  <div class="card-body">
+    <p class="dq-note" style="margin-bottom:.8rem">
+      Question shapes asked repeatedly that no governed metric answered. These
+      have no Accept button on purpose: a definition guessed from question text
+      is a governed measure nobody wrote, and a wrong one is worse than a
+      missing one. Build the metric knowing it is wanted.
+    </p>
+    {% for s in shapes %}
+    <div class="dq-shape">
+      <div class="dq-count">
+        <div class="dq-count-num">{{ s.payload.occurrences }}</div>
+        <div class="dq-count-lab">asked</div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="dq-target">{{ s.payload.shape }}</div>
+        {% if s.evidence %}
+        <ul class="dq-evidence">
+          {% for q in s.evidence %}<li>“{{ q }}”</li>{% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+      <a class="btn btn-sm" href="/admin/clients/{{ client.account_id }}/metrics">Author</a>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
