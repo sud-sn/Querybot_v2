@@ -282,8 +282,14 @@ def corroborate(
     )
 
 
-def describe(result: Corroboration, *, lang: str = "en") -> str:
-    """The one line a user is shown about the second source."""
+def describe(result: Corroboration, *, lang: str | None = None) -> str:
+    """The one line a user is shown about the second source.
+
+    ``lang`` defaults to None rather than "en" so the request's own language
+    ContextVar decides. An explicit "en" default would have pinned every
+    reader to English on the one path that runs inside the pipeline's
+    activation, which is the path that renders this.
+    """
     from core.i18n import format_decimal, format_percent, t
 
     if not result.checked:

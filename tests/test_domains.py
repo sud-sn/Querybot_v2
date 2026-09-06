@@ -320,6 +320,22 @@ class TestWhatTheUserIsTold(unittest.TestCase):
         self.assertIn("1,400", english)
         self.assertIn("28.6%", english)
 
+    def test_the_readers_own_language_decides_when_none_is_passed(self):
+        # An explicit "en" default would have pinned every reader to English
+        # on the one path that renders this: the renderer runs inside the
+        # request's language activation and passes no lang at all.
+        from core.i18n import activate_language, deactivate_language
+
+        result = corroborate([{"V": 1000.0}], [{"V": 1400.0}],
+                             secondary_source="Finance")
+        token = activate_language("fr")
+        try:
+            ambient = describe(result)
+        finally:
+            deactivate_language(token)
+        self.assertEqual(ambient, describe(result, lang="fr"))
+        self.assertNotEqual(ambient, describe(result, lang="en"))
+
     def test_every_corroboration_id_exists_in_both_languages(self):
         ids = [k for k in MESSAGES if k.startswith("corroboration.")]
         self.assertGreaterEqual(len(ids), 2)

@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from core.domains import Corroboration, corroborate
+from core.domains import Corroboration, corroborate, describe
 from core.sql_attempt import Attempt, ValidationScope
 
 log = logging.getLogger("querybot.corroboration")
@@ -316,4 +316,29 @@ async def run_second_opinion(
         duration_ms=_elapsed(),
         corroboration=result,
         detail={"truncated": bool(attempt.truncated)},
+    )
+
+
+def describe_second_opinion(payload: dict | None, *, lang: str | None = None) -> str:
+    """The one line a reader gets about the second area.
+
+    Takes the dict :meth:`SecondOpinion.as_dict` produces, because that is
+    what survives onto the confidence context — the dataclass does not cross
+    that boundary. Empty for a run that did not complete: a reader takes
+    either sentence as a statement about their data, and "the second area was
+    never asked" is not one of them.
+    """
+    data = payload or {}
+    if not data.get("checked"):
+        return ""
+    return describe(
+        Corroboration(
+            checked=True,
+            agrees=bool(data.get("agrees")),
+            primary_value=data.get("primary_value"),
+            secondary_value=data.get("secondary_value"),
+            relative_difference=data.get("relative_difference"),
+            secondary_source=str(data.get("domain") or ""),
+        ),
+        lang=lang,
     )

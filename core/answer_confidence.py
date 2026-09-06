@@ -39,6 +39,7 @@ def build_answer_confidence(
     fanout_risk: bool = False,
     result_verification: dict[str, Any] | None = None,
     candidate_selection: dict[str, Any] | None = None,
+    corroboration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -194,6 +195,40 @@ def build_answer_confidence(
         reasons.append(
             "A second query written a different way returned the same figure."
         )
+
+    # A second subject area was asked the same question and its answer
+    # compared (core.corroboration_run). Scored separately from the candidate
+    # check above because it is a different claim: two candidates disagreeing
+    # means the QUESTION was ambiguous, two areas disagreeing means the
+    # BUSINESS has two answers to it -- and only one of those is something the
+    # reader can resolve by rephrasing.
+    #
+    # `checked` is the gate, and it is the whole point of the field: a second
+    # opinion that failed to run reports checked=False, and neither the credit
+    # nor the warning applies. Reading `agrees` alone would score every
+    # failed run as a disagreement.
+    second_opinion = corroboration or {}
+    if second_opinion.get("checked"):
+        # `line` is the reader-facing sentence, already translated and already
+        # carrying both figures and the gap -- see
+        # core.corroboration_run.describe_second_opinion. Scoring does not do
+        # i18n, so it takes the sentence when the caller rendered one and
+        # states the finding plainly when nobody did.
+        line = str(second_opinion.get("line") or "").strip()
+        if second_opinion.get("agrees"):
+            score += 5
+            reasons.append(line or (
+                "A second subject area was asked the same question and "
+                "returned the same figure."
+            ))
+        else:
+            score = min(score - 20, 59)
+            warnings.append(line or (
+                "A second subject area answers this question differently. "
+                "The figure shown is from the area this question was routed "
+                "to; which source the business treats as authoritative is "
+                "worth confirming."
+            ))
 
     verification = result_verification or {}
     verification_status = str(verification.get("status") or "").lower()

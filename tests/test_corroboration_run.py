@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.corroboration_run import (  # noqa: E402
     CARRIED_CONTEXT_KEYS,
+    describe_second_opinion,
     MAX_CONTEXT_DOCUMENTS,
     SecondOpinion,
     build_context,
@@ -546,6 +547,347 @@ class TestTheGeneratedSqlIsCleanedTheSameWay(unittest.TestCase):
         opinion = _run(boundaries)
         self.assertEqual(opinion.reason, "not_answerable_there")
         self.assertEqual(boundaries.calls, ["retrieve", "generate"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# What the reader is told
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTheLineTheReaderGets(unittest.TestCase):
+
+    AGREES = {"checked": True, "agrees": True, "domain": "Supply Chain"}
+    DISAGREES = {
+        "checked": True, "agrees": False, "domain": "Supply Chain",
+        "primary_value": 1000.0, "secondary_value": 2700.0,
+        "relative_difference": 0.6296,
+    }
+
+    def test_agreement_names_the_area_that_confirmed_it(self):
+        line = describe_second_opinion(self.AGREES)
+        self.assertIn("Supply Chain", line)
+
+    def test_disagreement_carries_both_figures_and_the_gap(self):
+        line = describe_second_opinion(self.DISAGREES)
+        self.assertIn("Supply Chain", line)
+        self.assertIn("2,700", line)
+        self.assertIn("1,000", line)
+        self.assertIn("63.0", line)
+
+    def test_a_run_that_did_not_happen_says_nothing(self):
+        # Either sentence reads as a statement about the reader's data.
+        # "The second area was never asked" is not one of them.
+        self.assertEqual(
+            describe_second_opinion({"checked": False, "domain": "Supply Chain",
+                                     "reason": "retrieval_failed"}), "")
+        self.assertEqual(describe_second_opinion({}), "")
+        self.assertEqual(describe_second_opinion(None), "")
+
+    def test_the_line_is_translated(self):
+        self.assertNotEqual(
+            describe_second_opinion(self.AGREES, lang="fr"),
+            describe_second_opinion(self.AGREES, lang="en"),
+        )
+        self.assertIn("Supply Chain", describe_second_opinion(self.AGREES, lang="fr"))
+
+    def test_the_ambient_language_decides_when_none_is_given(self):
+        # The renderer runs inside the request's language activation and
+        # passes no lang; an "en" default would have pinned every reader to
+        # English on the one path that renders this.
+        from core.i18n import activate_language, deactivate_language
+
+        token = activate_language("fr")
+        try:
+            line = describe_second_opinion(self.DISAGREES)
+        finally:
+            deactivate_language(token)
+        self.assertEqual(line, describe_second_opinion(self.DISAGREES, lang="fr"))
+        self.assertNotEqual(line, describe_second_opinion(self.DISAGREES, lang="en"))
+
+
+class TestWhatItDoesToConfidence(unittest.TestCase):
+    """The score has to move, and move differently from a candidate check.
+
+    Two candidates disagreeing means the QUESTION was ambiguous. Two subject
+    areas disagreeing means the BUSINESS has two answers to it — and only one
+    of those is something the reader can resolve by rephrasing.
+    """
+
+    def _score(self, corroboration=None):
+        from core.answer_confidence import build_answer_confidence
+        return build_answer_confidence(
+            # No semantic plan and no retry: the baseline lands at 95, below
+            # the ceiling and below no cap. A +5 credit is invisible on an
+            # answer already scoring 100 and equally invisible under the
+            # retry cap at 75 -- either fixture passes whether the credit is
+            # applied or not.
+            validation_code="ok", row_count=12, tables_used=["S.F"],
+            corroboration=corroboration,
+        )
+
+    def test_the_baseline_leaves_room_for_a_credit_to_show(self):
+        # Guards the fixture, not the feature: this test class proves nothing
+        # about the agreement credit if the baseline is already capped.
+        self.assertLess(self._score()["score"], 100)
+
+    def test_a_second_area_that_agrees_raises_the_score(self):
+        self.assertGreater(
+            self._score({"checked": True, "agrees": True})["score"],
+            self._score()["score"],
+        )
+
+    def test_a_second_area_that_disagrees_lowers_it_and_caps_it(self):
+        baseline = self._score()["score"]
+        scored = self._score({"checked": True, "agrees": False})
+        self.assertLess(scored["score"], baseline)
+        self.assertLessEqual(scored["score"], 59)
+        self.assertNotEqual(scored["level"], "high")
+
+    def test_a_disagreement_is_stated_not_just_scored(self):
+        scored = self._score({"checked": True, "agrees": False})
+        self.assertTrue(any("second subject area" in w.lower()
+                            for w in scored["warnings"]))
+
+    def test_the_rendered_sentence_is_used_when_there_is_one(self):
+        line = describe_second_opinion({
+            "checked": True, "agrees": False, "domain": "Supply Chain",
+            "primary_value": 1000.0, "secondary_value": 2700.0,
+            "relative_difference": 0.6296,
+        })
+        scored = self._score({"checked": True, "agrees": False, "line": line})
+        self.assertIn(line, scored["warnings"])
+
+    def test_a_run_that_did_not_happen_changes_nothing(self):
+        # The gate is `checked`, not `agrees`: reading agrees alone would
+        # score every failed second opinion as a disagreement.
+        baseline = self._score()
+        for payload in ({"checked": False, "agrees": False, "reason": "no_context"},
+                        {"checked": False, "reason": "retrieval_failed"},
+                        {}, None):
+            scored = self._score(payload)
+            self.assertEqual(scored["score"], baseline["score"], payload)
+            self.assertEqual(scored["warnings"], baseline["warnings"], payload)
+            self.assertEqual(scored["reasons"], baseline["reasons"], payload)
+
+
+class TestTheRendererReadsWhatThePipelineWrote(unittest.TestCase):
+    """Write API to read API, on the identity key that spans them.
+
+    The pipeline writes ``confidence_context["domain"]["corroboration"]`` and
+    the renderer has to read that exact path. A mismatch is the quietest bug
+    in this codebase: every lookup misses, nothing raises, and an answer a
+    second area contradicts is presented at full confidence.
+    """
+
+    @staticmethod
+    def _pipeline_payload(agrees):
+        """Built the way the pipeline builds it, not hand-written."""
+        from core.domains import Corroboration
+
+        opinion = SecondOpinion(
+            checked=True, domain="Supply Chain", reason="disagreement",
+            corroboration=Corroboration(
+                checked=True, agrees=agrees, primary_value=1000.0,
+                secondary_value=2700.0, relative_difference=0.6296,
+                secondary_source="Supply Chain"),
+        )
+        return {"name": "Sales", "reason": "two_plausible_domains",
+                "second_opinion": "Supply Chain",
+                "corroboration": opinion.as_dict()}
+
+    def _render(self, domain_payload):
+        from unittest.mock import AsyncMock, MagicMock
+
+        import core.result_renderer as rr
+
+        adapter = MagicMock()
+        adapter.send_message = AsyncMock()
+        adapter.send_result = AsyncMock()
+        adapter.cache_result = None
+        with patch.object(rr, "build_answer_confidence",
+                          wraps=rr.build_answer_confidence) as confidence:
+            try:
+                asyncio.run(rr._send_results(
+                    MagicMock(), adapter, "revenue by month",
+                    [{"MONTH": "2026-01", "REVENUE": 1000.0}],
+                    "SELECT 1", 12, None, "acct",
+                    {"db_type": "azure_sql", "credentials": {}},
+                    confidence_context={"domain": domain_payload},
+                    cache_result=False,
+                ))
+            except Exception:
+                # The renderer does far more than build confidence; what it
+                # does after is not this test's business, and it has already
+                # happened by the time anything else can fail.
+                pass
+        confidence.assert_called()
+        return confidence.call_args.kwargs.get("corroboration")
+
+    def test_a_disagreement_reaches_the_scorer(self):
+        received = self._render(self._pipeline_payload(agrees=False))
+        self.assertTrue(received.get("checked"))
+        self.assertFalse(received.get("agrees"))
+        self.assertEqual(received.get("secondary_value"), 2700.0)
+
+    def test_the_reader_facing_sentence_is_attached_on_the_way_through(self):
+        received = self._render(self._pipeline_payload(agrees=False))
+        self.assertIn("Supply Chain", received.get("line") or "")
+        self.assertIn("2,700", received.get("line") or "")
+
+    def test_an_agreement_reaches_the_scorer_too(self):
+        received = self._render(self._pipeline_payload(agrees=True))
+        self.assertTrue(received.get("agrees"))
+        self.assertIn("Supply Chain", received.get("line") or "")
+
+    def test_a_workspace_with_no_domains_passes_an_empty_signal(self):
+        self.assertEqual(self._render({}), {})
+
+    def test_a_second_opinion_that_did_not_run_carries_no_sentence(self):
+        payload = {"name": "Sales", "second_opinion": "Supply Chain",
+                   "corroboration": SecondOpinion(
+                       checked=False, domain="Supply Chain",
+                       reason="retrieval_failed").as_dict()}
+        received = self._render(payload)
+        self.assertFalse(received.get("checked"))
+        self.assertNotIn("line", received)
+
+
+class TestThePipelineRunsIt(unittest.TestCase):
+    """The block has to be reached, and reached in the right order.
+
+    Source-level, because the block lives inside a 4,000-line function that
+    cannot be called from a test. Everything it *decides* was moved into
+    core/corroboration_run.py precisely so it could be, and is executed above;
+    what is left here is ordering and reachability, which is all a source
+    check can honestly assert.
+    """
+
+    @staticmethod
+    def _source():
+        import inspect
+
+        import core.query_pipeline as qp
+        return inspect.getsource(qp._handle_query_impl)
+
+    def test_it_runs_only_when_a_second_area_could_answer(self):
+        self.assertIn(
+            "if _domain_secondary_tables and _domain_routing is not None and rows:",
+            self._source())
+
+    def test_the_second_scope_comes_from_the_un_narrowed_decision(self):
+        # Recomputing it from `effective` here would intersect the runner-up
+        # with the primary domain and be empty on every question.
+        self.assertIn("_domain_secondary_tables = set(_scope_decision.secondary)",
+                      self._source())
+
+    def test_it_runs_after_the_answer_is_final(self):
+        source = self._source()
+        settled = source.index("query_row_count=len(rows)")
+        corroborated = source.index("_second_opinion = await run_second_opinion(")
+        self.assertLess(settled, corroborated)
+
+    def test_it_runs_before_the_answer_is_scored(self):
+        source = self._source()
+        corroborated = source.index("_second_opinion = await run_second_opinion(")
+        scored = source.index("_confidence_context = {")
+        self.assertLess(corroborated, scored)
+
+    def test_it_runs_before_post_processing_rewrites_the_rows(self):
+        # Forecasting and what-if replace `rows` in place. Comparing against
+        # a projected row would corroborate a number the warehouse never
+        # returned.
+        source = self._source()
+        corroborated = source.index("_second_opinion = await run_second_opinion(")
+        self.assertLess(corroborated, source.index("compute_whatif(rows"))
+
+    def test_the_result_reaches_answer_confidence(self):
+        self.assertIn(
+            '"corroboration": (\n                    _second_opinion.as_dict()',
+            self._source())
+
+    def test_a_failure_costs_the_second_opinion_and_nothing_else(self):
+        source = self._source()
+        block = source[source.index("_second_opinion = None"):]
+        block = block[:block.index('"formatting_results"')]
+        self.assertIn("except Exception as _corroboration_exc", block)
+        # Loud: a second opinion that never runs looks identical to one that
+        # ran and found nothing, and the confidence panel says nothing either
+        # way.
+        self.assertIn("log.error(", block)
+        self.assertIn("_second_opinion = None", block[block.index("except Exception"):])
+
+    def test_the_call_site_matches_the_signature_it_calls(self):
+        """The block is fail-open; a bad call would only ever be a log line.
+
+        A missing or renamed keyword raises TypeError on every question,
+        the handler catches it, and the feature is dead from the moment it
+        merges — which is exactly how a governance gate once shipped inert.
+        Bind the real call site's keywords against the real signature.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(self._source()))
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "run_second_opinion"
+        ]
+        self.assertEqual(len(calls), 1)
+        call = calls[0]
+        self.assertFalse(any(kw.arg is None for kw in call.keywords),
+                         "a **kwargs splat would hide a missing argument")
+        bound = inspect.signature(run_second_opinion).bind(
+            *[object() for _ in call.args],
+            **{kw.arg: object() for kw in call.keywords},
+        )
+        self.assertIn("scope", bound.arguments)
+        self.assertIn("tables", bound.arguments)
+        self.assertIn("primary_rows", bound.arguments)
+
+    def test_the_attempt_call_site_matches_run_attempt(self):
+        import ast
+        import inspect
+        import textwrap
+
+        from core.sql_attempt import run_attempt
+
+        tree = ast.parse(textwrap.dedent(self._source()))
+        inner = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "_run_second_opinion_attempt"
+        ]
+        self.assertEqual(len(inner), 1)
+        calls = [
+            node for node in ast.walk(inner[0])
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "run_attempt"
+        ]
+        self.assertEqual(len(calls), 1)
+        inspect.signature(run_attempt).bind(
+            *[object() for _ in calls[0].args],
+            **{kw.arg: object() for kw in calls[0].keywords},
+        )
+
+    def test_it_uses_a_fresh_retriever(self):
+        # The primary retrieval's `retriever` is bound inside a try/except
+        # thousands of lines above and may never have been assigned.
+        source = self._source()
+        block = source[source.index("def _retrieve_for_second_opinion"):]
+        self.assertIn("load_retriever(account_id)", block[:600])
+
+    def test_the_second_generation_is_audited_under_its_own_component(self):
+        source = self._source()
+        block = source[source.index("async def _generate_second_opinion"):]
+        self.assertIn('component="corroboration"', block[:900])
+
+    def test_the_second_query_goes_through_the_same_governed_executor(self):
+        source = self._source()
+        block = source[source.index("async def _run_second_opinion_attempt"):]
+        block = block[:block.index("_second_opinion = await run_second_opinion(")]
+        self.assertIn("executor=_execute_with_policy", block)
+        self.assertIn("run_attempt(", block)
 
 
 if __name__ == "__main__":

@@ -1195,6 +1195,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # widens, drops the route when the user can see none of the domain, and
     # leaves an un-routed question exactly as it was.
     _domain_routing = None
+    _domain_secondary_tables: set[str] = set()
     try:
         from core.domains import narrow_scope as _narrow_to_domain
 
@@ -1208,6 +1209,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             allowed_tables = _scope_decision.allowed_tables
             if _scope_decision.applied:
                 _domain_routing = _scope_decision.routing
+                # The tables a second opinion would run under, kept here
+                # because this is the last point that holds the user's scope
+                # before it is narrowed to the primary domain.
+                _domain_secondary_tables = set(_scope_decision.secondary)
             _trace_step(
                 trace_id, "domain_routing",
                 output_summary={
@@ -6629,6 +6634,109 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             return
 
+    # ── Second opinion — the same question, asked of the other area ─────────
+    # Routing already decided that a runner-up subject area could plausibly
+    # have answered this. Running it is the part that costs something: its own
+    # retrieval under its own tables, its own prompt, one generation and one
+    # governed query. core/corroboration_run.py owns the sequence; everything
+    # passed in here is a boundary — the vector store, the model, the
+    # executor — so the decision-making is testable without any of them.
+    #
+    # Never allowed to cost the answer. Every failure inside reports "not
+    # checked", and the whole block is fail-open on top of that: a user told
+    # that two areas disagree, when in fact the second query never ran, has
+    # been told something false about their own data.
+    _second_opinion = None
+    if _domain_secondary_tables and _domain_routing is not None and rows:
+        from core.corroboration_run import run_second_opinion
+
+        _second_domain = (
+            _domain_routing.secondary.name if _domain_routing.secondary else ""
+        )
+        try:
+            await _send_live_stage(
+                adapter, event, "corroborating",
+                _t("stage.corroborating.label"),
+                _t("stage.corroborating.detail", domain=_second_domain),
+            )
+
+            def _retrieve_for_second_opinion(tables: set[str]) -> list[str]:
+                """The second area's knowledge base, and only its own.
+
+                A fresh retriever rather than the one the primary retrieval
+                built: that one is bound inside a try/except several thousand
+                lines above and may never have been assigned.
+                """
+                _second_retriever = load_retriever(account_id)
+                return [
+                    _clamp_kb_doc(doc) for doc in
+                    _second_retriever.retrieve(
+                        _analysis_question, n=8, allowed_tables=set(tables),
+                    )
+                ]
+
+            async def _generate_second_opinion(system_prompt: str, user_message: str) -> str:
+                with llm_audit_scope(
+                    account_id=account_id,
+                    question=question,
+                    enabled=audit_enabled,
+                    request_id=make_llm_audit_request_id(),
+                    question_id=audit_request_id,
+                    component="corroboration",
+                ):
+                    raw, _c_in, _c_out = await llm_complete(
+                        system_prompt, user_message,
+                        provider, model, api_key,
+                        temperature=0.0,
+                        max_tokens=_sql_generation_max_tokens,
+                        **az_kwargs,
+                    )
+                return raw
+
+            async def _run_second_opinion_attempt(candidate_sql: str, corroborating_scope):
+                return await run_attempt(
+                    candidate_sql, corroborating_scope,
+                    executor=_execute_with_policy,
+                    timeout=_query_wait_timeout(db_cfg),
+                    timeout_message=_QUERY_TIMEOUT_MESSAGE,
+                    source="corroboration",
+                    on_repair=_trace_repair,
+                )
+
+            _second_opinion = await run_second_opinion(
+                question,
+                domain=_second_domain,
+                tables=_domain_secondary_tables,
+                primary_rows=rows,
+                primary_domain=_domain_routing.primary.name,
+                scope=_scope,
+                retrieve=_retrieve_for_second_opinion,
+                generate=_generate_second_opinion,
+                execute=_run_second_opinion_attempt,
+            )
+            _trace_step(
+                trace_id, "corroboration",
+                input_summary=_second_opinion.sql,
+                output_summary={
+                    "domain": _second_opinion.domain,
+                    "checked": _second_opinion.checked,
+                    "agrees": _second_opinion.agrees,
+                    "reason": _second_opinion.reason,
+                },
+                metadata=_second_opinion.as_dict(),
+                duration_ms=_second_opinion.duration_ms,
+                status="success" if _second_opinion.agrees else "error",
+            )
+        except Exception as _corroboration_exc:  # noqa: BLE001
+            # Loud, not silent: a second opinion that never runs looks
+            # identical to one that ran and found nothing to report, and the
+            # confidence panel would then say nothing either way.
+            log.error(
+                "Second opinion against %s failed for %s on %r",
+                _second_domain, account_id, question[:200], exc_info=True,
+            )
+            _second_opinion = None
+
     await _send_live_stage(adapter, event, "formatting_results", _t("stage.formatting_results.label"), _t("stage.formatting_results.detail"))
     # Record this turn in conversation history (web portal only)
     _add_history = getattr(adapter, "add_to_history", None)
@@ -6676,6 +6784,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 "second_opinion": (
                     _domain_routing.secondary.name
                     if _domain_routing.secondary else ""
+                ),
+                # What the second area said, or why it did not say anything.
+                # Absent when no second area could answer; "not checked" when
+                # one could and the run did not complete -- the difference the
+                # confidence panel needs, because "confirmed" is read as
+                # evidence and must never stand in for "never asked".
+                "corroboration": (
+                    _second_opinion.as_dict() if _second_opinion is not None else {}
                 ),
             }
             if _domain_routing is not None and _domain_routing.routed

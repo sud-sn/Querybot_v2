@@ -760,6 +760,19 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     dur_label  = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
     _has_confidence_context = bool(confidence_context)
     confidence_context = confidence_context or {}
+
+    # What a second subject area said about this same question, if one was
+    # asked (core/corroboration_run.py). Rendered here rather than in the
+    # scorer because the sentence is translated and the scorer is not: it
+    # carries both figures and the gap, which is what makes a disagreement
+    # actionable rather than merely alarming.
+    _corroboration = dict(
+        (confidence_context.get("domain") or {}).get("corroboration") or {}
+    )
+    if _corroboration.get("checked"):
+        from core.corroboration_run import describe_second_opinion
+
+        _corroboration["line"] = describe_second_opinion(_corroboration)
     null_metric_issue = detect_null_metric_issue(rows)
     zero_match_result = detect_zero_match_result(rows)
     confidence = build_answer_confidence(
@@ -781,6 +794,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         zero_match_result=zero_match_result,
         result_verification=confidence_context.get("result_verification") or {},
         candidate_selection=confidence_context.get("candidate_selection") or {},
+        corroboration=_corroboration,
     )
 
     chart_override = str(

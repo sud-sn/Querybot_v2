@@ -1685,6 +1685,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Verifying table access, structure, and execution safety.",
         "fr": "Vérification des accès aux tables, de la structure et de la sûreté d'exécution.",
     },
+    "stage.corroborating.label": {
+        "en": "Checking a second source",
+        "fr": "Vérification auprès d'une deuxième source",
+    },
+    "stage.corroborating.detail": {
+        "en": "Asking the same question of {domain} and comparing the answers.",
+        "fr": "La même question est posée à {domain} et les réponses sont comparées.",
+    },
     "stage.executing_query.label": {"en": "Running query", "fr": "Exécution de la requête"},
     "stage.executing_query.detail": {
         "en": "Executing the SQL against your connected data source.",
