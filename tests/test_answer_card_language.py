@@ -229,14 +229,14 @@ class TestANamedPeriodComparison:
         conjugates and agrees the participle with the measure, so there is no
         seam in the middle for a translated adverb to slot into."""
         headline = self._answer()["headline"]
-        assert headline.startswith("Revenue a augmenté de 10.0% entre 2025 et 2026")
+        assert headline.startswith("Revenue a augmenté de 10,0 % entre 2025 et 2026")
         assert "rose" not in headline
 
     def test_the_mover_clause_is_french(self, french):
         assert "c'est Pumps qui a le plus varié" in self._answer()["headline"]
 
     def test_the_comparison_is_french(self, french):
-        assert self._answer()["comparison"] == "+10.0% par rapport à 2025"
+        assert self._answer()["comparison"] == "+10,0 % par rapport à 2025"
 
     def test_english_is_unchanged(self):
         answer = self._answer()
@@ -321,7 +321,7 @@ class TestTheInsightSummary:
 
     def test_a_falling_series_is_french(self, french):
         assert _card(SERIES, "revenue by month")["insight_summary"] == \
-            "Revenue a reculé de 40.0% entre 2026-01 et 2026-04. Pic : 100 en 2026-01."
+            "Revenue a reculé de 40,0 % entre 2026-01 et 2026-04. Pic : 100 en 2026-01."
 
     def test_english_is_unchanged(self):
         assert _card(SERIES, "revenue by month")["insight_summary"] == \
@@ -351,7 +351,7 @@ class TestTheAnomalyCallouts:
 
     def test_they_are_french(self, french):
         messages = [c["message"] for c in _card(SERIES, "revenue by month")["anomaly_callouts"]]
-        assert messages == ["Plus forte baisse : 2026-03 → 2026-04 (-25.0%)",
+        assert messages == ["Plus forte baisse : 2026-03 → 2026-04 (-25,0 %)",
                             "3 périodes de baisse consécutives"]
 
     def test_english_is_unchanged(self):
@@ -376,7 +376,7 @@ class TestTheDecisionSignal:
 
     def test_the_line_is_french(self, french):
         assert _card(SERIES, "revenue by month")["decision_signal"]["line"] == \
-            "Tendance baissière durable (-40% au total) — à examiner avant que " \
+            "Tendance baissière durable (-40 % au total) — à examiner avant que " \
             "cela ne s'aggrave."
 
     def test_english_is_unchanged(self):
@@ -634,3 +634,81 @@ class TestTheLanguageRuleReachesTheModel:
             current_label="2026", prior_label="2025",
         )
         assert "Rédigez toute votre réponse en français" in system
+
+
+class TestPercentagesAreWrittenTheWayEachLanguageWritesThem:
+    """The figures inside the sentences, not just the sentences.
+
+    Every one of these was built with `f"{pct:.1f}%"` and dropped into a
+    translated string, so a French reader got "en hausse de 12.3%" — a dot
+    where the comma goes and no no-break space before the sign, in a sentence
+    that was otherwise correct French. `format_percent` was already right
+    beside them, and the assertions in this module were written against the
+    broken output.
+    """
+
+    NBSP = " "
+
+    def _fr(self, fn, *args, **kwargs):
+        from core.i18n import activate_language, deactivate_language
+
+        token = activate_language("fr")
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            deactivate_language(token)
+
+    def _en(self, fn, *args, **kwargs):
+        from core.i18n import activate_language, deactivate_language
+
+        token = activate_language("en")
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            deactivate_language(token)
+
+    def test_a_movement_suffix_uses_the_readers_notation(self):
+        import core.response_builder as rb
+
+        french = self._fr(rb._movement_suffix, "Le total a progressé", 12.34)
+        english = self._en(rb._movement_suffix, "The total rose", 12.34)
+        assert "12,3" + self.NBSP + "%" in french
+        assert "12.3%" in english
+        assert "12.3%" not in french
+
+    def test_a_signed_percentage_keeps_its_sign_in_both(self):
+        import core.response_builder as rb
+
+        assert self._en(rb._signed_percent, 12.34) == "+12.3%"
+        assert self._fr(rb._signed_percent, 12.34) == "+12,3" + self.NBSP + "%"
+        # A negative already carries its own sign; it must not get two.
+        assert self._fr(rb._signed_percent, -8.0, 0).count("-") == 1
+        assert "+" not in self._fr(rb._signed_percent, -8.0, 0)
+
+    def test_zero_is_not_given_a_plus(self):
+        import core.response_builder as rb
+
+        assert not self._en(rb._signed_percent, 0.0).startswith("+")
+
+    def test_a_value_that_is_not_a_number_yields_nothing(self):
+        import core.response_builder as rb
+
+        assert self._fr(rb._signed_percent, None) == ""
+        assert self._fr(rb._signed_percent, "n/a") == ""
+
+    def test_no_french_narrative_still_carries_an_english_percentage(self):
+        """A sweep, because the sites are spread over a thousand lines."""
+        import re
+
+        rows = [{"month": f"2026-0{i}", "revenue": v}
+                for i, v in enumerate([100, 90, 80, 60], 1)]
+        card = self._fr(_card, rows, "revenue by month")
+        prose = " ".join(str(v) for k, v in card.items()
+                         if k in ("insight_summary", "headline")
+                         and isinstance(v, str))
+        prose += " ".join(str(c.get("message", ""))
+                          for c in (card.get("anomaly_callouts") or []))
+        prose += str((card.get("decision_signal") or {}).get("line", ""))
+        assert prose.strip()
+        # "12.3%" — a dot before the decimal and no gap before the sign.
+        assert not re.search(r"\d\.\d\s*%", prose), prose

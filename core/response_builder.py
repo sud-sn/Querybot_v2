@@ -12,6 +12,7 @@ from core.display_formats import normalize_display_format
 from core.i18n import (
     format_date as _format_date,
     format_decimal as _format_decimal,
+    format_percent as _format_percent,
     number_format as _number_format,
     plural as _t_plural,
     t as _t,
@@ -1305,7 +1306,7 @@ def build_answer(
                 msg_id = ("answer.period_rose" if rose
                           else "answer.period_fell" if fell
                           else "answer.period_flat")
-                headline = _t(msg_id, measure=measure, pct=f"{abs(pct):.1f}%",
+                headline = _t(msg_id, measure=measure, pct=_format_percent(abs(pct), 1),
                               old=_pair["oldest_label"], new=_pair["newest_label"])
             riser = _pair["top_riser"] or _pair["top_faller"]
             if riser:
@@ -1315,7 +1316,7 @@ def build_answer(
                 headline = _t(
                     "answer.period_mover" if mover else "answer.period_mover_unnamed",
                     sentence=headline, mover=mover, change=change)
-            comparison = (_t("answer.period_versus", pct=f"{pct:+.1f}%",
+            comparison = (_t("answer.period_versus", pct=_signed_percent(pct),
                              old=_pair["oldest_label"])
                           if pct is not None
                           else _t("answer.period_compared", old=_pair["oldest_label"]))
@@ -1606,7 +1607,7 @@ def compute_chip_eligibility(
             _add(
                 "compare", _t("chip.compare"),
                 82 if abs(pct_change) >= 10 else 73,
-                _t("chip.compare_hint", pct=f"{sign}{pct_change:.1f}%"),
+                _t("chip.compare_hint", pct=f"{sign}{_format_percent(pct_change, 1)}"),
             )
 
         # diagnose: root-cause chip for significant movement
@@ -1618,7 +1619,7 @@ def compute_chip_eligibility(
             _add(
                 "diagnose", _t(f"chip.diagnose_{_shape}"),
                 88 if abs(pct_change) >= 10 else 80,
-                _t(f"chip.diagnose_{_shape}_hint", pct=f"{abs(pct_change):.1f}%"),
+                _t(f"chip.diagnose_{_shape}_hint", pct=_format_percent(abs(pct_change), 1)),
             )
 
         # compare_prior: available when the semantic model knows the date role
@@ -1708,6 +1709,22 @@ def _dynamic_actions(ctx: dict) -> list[dict]:
 
 # ── Insight Layer helpers — pure statistics, no LLM call ─────────────────────
 
+def _signed_percent(value, digits: int = 1) -> str:
+    """A percentage that states its direction, written for the reader.
+
+    "+12.3%" is an English number: French writes "+12,3 %", with a comma and a
+    no-break space before the sign. The sign is prepended rather than left to
+    the formatter because a leading "+" is a choice these call sites make and
+    a bare format_percent has no opinion about it.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    sign = "+" if number > 0 else ""
+    return f"{sign}{_format_percent(number, digits)}"
+
+
 def _movement_suffix(sentence: str, pct: float | None) -> str:
     """Attach the direction to a finished clause, or just close it.
 
@@ -1718,9 +1735,11 @@ def _movement_suffix(sentence: str, pct: float | None) -> str:
     if pct is None:
         return f"{sentence}."
     if pct > 0:
-        return _t("answer.note.up", sentence=sentence, pct=f"{abs(pct):.1f}%")
+        return _t("answer.note.up", sentence=sentence,
+                  pct=_format_percent(abs(pct), 1))
     if pct < 0:
-        return _t("answer.note.down", sentence=sentence, pct=f"{abs(pct):.1f}%")
+        return _t("answer.note.down", sentence=sentence,
+                  pct=_format_percent(abs(pct), 1))
     return _t("answer.note.unchanged", sentence=sentence)
 
 
@@ -1831,7 +1850,7 @@ def _build_insight_summary(
         shape = {"increasing": "up", "decreasing": "down"}.get(direction, "flat")
         if pct is not None:
             base = _t(f"answer.note.trended_{shape}", measure=value_col,
-                      pct=f"{abs(pct):.1f}%", first=first, last=last_)
+                      pct=_format_percent(abs(pct), 1), first=first, last=last_)
         else:
             base = _t(f"answer.note.remained_{shape}", measure=value_col,
                       first=first, last=last_)
@@ -1902,7 +1921,7 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
                 "type": "drop", "icon": "↓",
                 "message": _t("answer.callout.biggest_drop",
                               old=drop["from_period"], new=drop["to_period"],
-                              pct=f"{drop['pct_change']:.1f}%"),
+                              pct=_signed_percent(drop["pct_change"])),
                 "severity": "warning",
             })
         if gain.get("pct_change") is not None and gain["pct_change"] > 10:
@@ -1910,7 +1929,7 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
                 "type": "gain", "icon": "↑",
                 "message": _t("answer.callout.biggest_gain",
                               old=gain["from_period"], new=gain["to_period"],
-                              pct=f"+{gain['pct_change']:.1f}%"),
+                              pct=_signed_percent(abs(gain["pct_change"]))),
                 "severity": "success",
             })
         if streak >= 3:
@@ -2019,13 +2038,13 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         streak = ts.get("longest_decline_streak", 0)
         if direction == "decreasing" and streak >= 3:
             return {
-                "line": (_t("answer.signal.decline_pct", pct=f"{pct:+.0f}%")
+                "line": (_t("answer.signal.decline_pct", pct=_signed_percent(pct, 0))
                          if pct is not None else _t("answer.signal.decline")),
                 "tone": "watch", "basis": "decline",
             }
         if direction == "increasing" and pct is not None and pct >= 10:
             return {
-                "line": _t("answer.signal.growth", pct=f"+{pct:.0f}%"),
+                "line": _t("answer.signal.growth", pct=_signed_percent(abs(pct), 0)),
                 "tone": "positive", "basis": "growth",
             }
         if direction == "stable":
@@ -2063,7 +2082,7 @@ def _why_it_matters(ctx: dict) -> str:
         # all -- the English sentence reads "0.0% flat than the starting
         # period", which nobody would have noticed until it was translated.
         shape = "higher" if pct > 0 else "lower" if pct < 0 else "flat"
-        return _t(f"analysis.why.{shape}", pct=f"{abs(pct):.1f}%")
+        return _t(f"analysis.why.{shape}", pct=_format_percent(abs(pct), 1))
     if mode == "ranking":
         top_items = ctx.get("top_items") or []
         if len(top_items) >= 2:
@@ -2111,7 +2130,7 @@ def build_analysis_response(action: str, contract: dict) -> dict:
             if pct is not None:
                 shape = "up" if pct > 0 else "down" if pct < 0 else "flat"
                 bullets.append(_t(f"analysis.explain.direction_{shape}",
-                                  pct=f"{abs(pct):.1f}%"))
+                                  pct=_format_percent(abs(pct), 1)))
         elif mode == "ranking":
             top_items = contract.get("top_items") or []
             if top_items:
@@ -2148,7 +2167,7 @@ def build_analysis_response(action: str, contract: dict) -> dict:
             stats = contract.get("distribution_stats") or {}
             if stats.get("top_3_share_pct") is not None:
                 body = _t("analysis.detail.concentrated",
-                          pct=f"{stats['top_3_share_pct']:.1f}%")
+                          pct=_format_percent(stats["top_3_share_pct"], 1))
             else:
                 body = _t("analysis.detail.distribution")
             bullets = [
@@ -2187,7 +2206,7 @@ def build_analysis_response(action: str, contract: dict) -> dict:
             )
             if cmp.get("pct_change") is not None:
                 bullets.append(_t("analysis.compare.pct_change",
-                                  pct=f"{abs(cmp['pct_change']):.1f}%"))
+                                  pct=_format_percent(abs(cmp["pct_change"]), 1)))
         elif mode == "ranking":
             cmp = contract.get("comparison_stats") or {}
             if cmp.get("leader") and cmp.get("runner_up"):
@@ -2196,7 +2215,7 @@ def build_analysis_response(action: str, contract: dict) -> dict:
                           gap=_format_number(cmp.get("gap", 0.0)))
                 if cmp.get("leader_share_pct") is not None:
                     bullets.append(_t("analysis.compare.leader_share",
-                                      pct=f"{cmp['leader_share_pct']:.1f}%"))
+                                      pct=_format_percent(cmp["leader_share_pct"], 1)))
             elif cmp.get("leader"):
                 body = _t("analysis.compare.only_one", leader=cmp["leader"])
             else:
