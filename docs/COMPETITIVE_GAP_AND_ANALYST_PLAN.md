@@ -689,6 +689,11 @@ environment failures is unchanged throughout.
 | **A1/A3** | `store/domain_store.py` + `core/domains.py` — named subject areas, routing, and corroboration between two areas that can both answer | `c671ba2` |
 | **F2** | `core/recovery.py` — a corrected run reads as a correction; the re-plan budget asserted against the one the pipeline enforces | `a961157` |
 | **A3** | `core/corroboration_run.py` — the second area's own retrieval, prompt, scope and governed query, compared against the answer given, moving answer confidence | `3613f90`, `a4c1e56` |
+| **Defects** | The chat page's script never parsed; the analysis sandbox crashed on comprehensions; the second opinion executed under the wrong scope; five shipped-but-inert features | `a33f817`, `f837181`, `afc4136` |
+| **A1 (surface)** | Subject Areas admin page — Phase A could not run for any tenant before it, because nothing ever called `save_domain` | `3aa9322` |
+| **E1/D3 (surfaces)** | What To Model Next, and per-metric Coverage — both had tested endpoints and no reader | `ceb010c` |
+| **D4** | `core/synonym_mining.py` — words readers use, mined from failure-then-rephrase pairs, queued for one-click acceptance | `83b998e` |
+| **French** | The confidence verdict, the failure and zero-row cards, the dispatcher, pre-sign-in language, the dashboard, percentages in prose, download filenames, diacritic-blind search, and the chat-header toggle | `3216e94`…`83b998e` |
 
 ### Defects found and fixed along the way
 
@@ -733,12 +738,18 @@ could not be called; extracting it is what made the behaviour testable.
 - **A2 — multiple connections per workspace.** Deliberately deferred per §8;
   domains within one connection cover what "multiple apps in a tenant" means
   for a warehouse-backed customer.
-- **D4** (synonyms mined from failed questions), **E2b** (moving example
+- **E2b** (moving example
   retrieval off its older ChromaDB path), **E3** (auto-drafting date roles and
   metric proposals for review), **F1** (in-loop clarification), and the **MCP
   surface** (§6, sequenced after G2, which is now done).
-- **Admin pages for domains and the readiness backlog.** Both have working,
-  tested JSON endpoints; neither has a screen yet.
+*(The admin pages are done — domains in `3aa9322`, the readiness backlog and
+metric coverage in `ceb010c`. The claim that domains had "working, tested JSON
+endpoints" was wrong: there was no endpoint and no writer at all, which is why
+the whole phase was inert.)*
+
+- **`docs/LIVE_TEST_PLAN.md`** covers everything on this branch as cases for a
+  live warehouse, a live model and a real browser — the things 7,418 automated
+  tests structurally cannot reach.
 
 ---
 
