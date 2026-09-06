@@ -300,6 +300,53 @@ class TestThePipelineRunsIt(unittest.TestCase):
         self.assertIn('_confidence_context["candidate_selection"] = _candidate_selection',
                       source)
 
+    def test_the_selection_is_not_written_inside_a_handler_that_can_swallow_it(self):
+        """It used to live inside the result-shape verifier's try.
+
+        Those two signals are independent, so a crash in verify_result_shape
+        dropped the candidate-disagreement warning with it — and the answer
+        was then presented at full confidence with exactly the finding the
+        handler's own comment says it is defending against removed. The
+        handler rebuilds result_verification and nothing else.
+
+        Structural, not textual: the assertion is that the assignment has no
+        Try ancestor, which is the property that broke.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        import core.query_pipeline as qp
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(qp._handle_query_impl)))
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+
+        target = None
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Subscript)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "_confidence_context"
+                    and isinstance(node.slice, ast.Constant)
+                    and node.slice.value == "candidate_selection"
+                    and isinstance(node.ctx, ast.Store)):
+                target = node
+        self.assertIsNotNone(target, "the assignment was not found at all")
+
+        enclosing_tries = []
+        node = target
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, ast.Try):
+                enclosing_tries.append(node)
+        self.assertEqual(
+            enclosing_tries, [],
+            "candidate_selection is assigned inside a try; a handler that does "
+            "not re-assign it will drop the disagreement warning",
+        )
+
     def test_the_renderer_reads_what_the_pipeline_wrote(self):
         """Write API to read API, on the identity key that spans them.
 

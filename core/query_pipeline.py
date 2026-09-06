@@ -1448,7 +1448,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         break_glass_grant_id=getattr(event, "break_glass_grant_id", None),
     )
 
-    def _execute_with_policy(candidate_sql: str, semantic: dict | None = None):
+    def _execute_with_policy(
+        candidate_sql: str,
+        semantic: dict | None = None,
+        *,
+        allowed_tables_override: set[str] | None = None,
+    ):
+        """Run one statement through the governed executor.
+
+        ``allowed_tables_override`` exists for the second opinion, which runs
+        under a DIFFERENT subject area's tables than the answer it is checking.
+        This closure reads `effective`, and `effective` was narrowed to the
+        PRIMARY domain long before -- so without the override
+        execute_governed_query re-validates the corroborating query against
+        the primary's tables and refuses it as access_denied, every time. The
+        attempt then reports "execution failed" and corroboration is
+        permanently "not checked" on exactly the workspaces it was built for.
+
+        None means the primary scope, which is every other caller.
+        """
         context = resolve_context(
             account_id,
             portal_user,
@@ -1465,7 +1483,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             context=context,
             known_tables=all_known,
             table_columns=all_columns,
-            allowed_tables=effective,
+            allowed_tables=(
+                effective if allowed_tables_override is None
+                else allowed_tables_override
+            ),
             semantic_context=semantic,
         )
 
@@ -6694,9 +6715,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 return raw
 
             async def _run_second_opinion_attempt(candidate_sql: str, corroborating_scope):
+                def _execute_in_the_second_scope(sql: str, semantic: dict | None = None):
+                    # The scope the attempt was validated against, carried
+                    # through to the executor. execute_governed_query
+                    # re-validates independently -- that is the guarantee
+                    # working -- so handing it the primary's tables would
+                    # refuse this query as access_denied after it had already
+                    # passed the second area's validation.
+                    return _execute_with_policy(
+                        sql, semantic,
+                        allowed_tables_override=corroborating_scope.allowed_tables,
+                    )
+
                 return await run_attempt(
                     candidate_sql, corroborating_scope,
-                    executor=_execute_with_policy,
+                    executor=_execute_in_the_second_scope,
                     timeout=_query_wait_timeout(db_cfg),
                     timeout_message=_QUERY_TIMEOUT_MESSAGE,
                     source="corroboration",
@@ -7073,6 +7106,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # distribution, KPI, and so on).  It is metadata-only and never logs row
     # values.  A mismatch lowers answer confidence instead of silently showing
     # a schema-valid but business-wrong shape.
+    # Written BEFORE the shape verification below, not inside it. These two
+    # signals are independent, and assigning this one inside that try meant a
+    # verifier crash silently dropped the candidate-disagreement warning --
+    # the answer was then presented at full confidence with the very finding
+    # the surrounding comment says it is defending against removed. Same for
+    # the second opinion.
+    if _candidate_selection:
+        # Answer confidence has to know the answer was chosen between
+        # candidates rather than arrived at directly, and on what basis.
+        _confidence_context["candidate_selection"] = _candidate_selection
+
     try:
         from core.result_verifier import verify_result_shape
 
@@ -7083,10 +7127,6 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             request_plan=_analytical_request_plan,
         )
         _confidence_context["result_verification"] = _result_verification
-        if _candidate_selection:
-            # Answer confidence has to know the answer was chosen between
-            # candidates rather than arrived at directly, and on what basis.
-            _confidence_context["candidate_selection"] = _candidate_selection
         _trace_step(
             trace_id,
             "result_shape_verification",

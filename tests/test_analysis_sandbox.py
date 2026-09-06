@@ -208,7 +208,13 @@ def _run_worker_past_the_validator(code):
 
     stub = SimpleNamespace(code_hash="0" * 64, ast_nodes=0, helper_calls=())
     pipe = _Pipe()
-    with patch.object(sandbox, "validate_python_analysis", return_value=stub):
+    # _apply_worker_limits is the OTHER boundary here, and it is not optional
+    # to mock: production calls this entry point in a forked child, so its
+    # setrlimit(RLIMIT_CPU, 4) / RLIMIT_AS 512MB / RLIMIT_NOFILE 16 land on
+    # that child. Called in-process they land on pytest, which is then killed
+    # a few thousand tests later — a failure that looks nothing like its cause.
+    with patch.object(sandbox, "validate_python_analysis", return_value=stub), \
+            patch.object(sandbox, "_apply_worker_limits", lambda: None):
         sandbox._python_worker_entry(pipe, ROWS, code)
     return pipe.payload
 

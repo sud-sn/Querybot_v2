@@ -623,6 +623,93 @@ class TestTheWholeChainThroughTheRealValidator(unittest.TestCase):
 # What the reader is told
 # ══════════════════════════════════════════════════════════════════════════════
 
+class TestTheExecutorRunsUnderTheScopeItWasHanded(unittest.TestCase):
+    """The half the earlier end-to-end class could not see.
+
+    Those tests injected an executor that returned canned rows and ignored
+    table scope. Production's does not: ``execute_governed_query``
+    re-validates independently — that is the argument-independent guarantee
+    working — so an executor pinned to the PRIMARY area's tables refuses the
+    corroborating query as access_denied after it has already passed the
+    second area's validation. The attempt then reports "execution failed" and
+    corroboration is permanently "not checked" on exactly the workspaces the
+    feature exists for.
+
+    So the executor here re-validates against the scope it is given, the way
+    the real one does.
+    """
+
+    def _run(self, generated_sql, *, executor_scope):
+        """`executor_scope` is what the executor believes it may read."""
+        from core.sql_attempt import run_attempt
+
+        boundaries = _Boundaries(sql=generated_sql)
+        refusals = []
+
+        def _governed_executor(sql, semantic_context):
+            # What execute_governed_query does before it runs anything.
+            verdict = validate_sql_detailed(
+                sql, KNOWN_TABLES, "azure_sql", executor_scope,
+                TABLE_COLUMNS, semantic_context,
+            )
+            if not verdict.ok:
+                refusals.append(verdict.code)
+                raise ValueError(verdict.reason)
+            return SimpleNamespace(rows=[{"TOTAL": 1000.0}], sql=sql, truncated=False)
+
+        async def _execute(sql, scope):
+            return await run_attempt(
+                sql, scope, executor=_governed_executor, timeout=10,
+                timeout_message="timed out", source="corroboration",
+            )
+
+        opinion = asyncio.run(run_second_opinion(
+            "what was revenue by warehouse",
+            domain="Supply Chain", tables={STOCK_FACT},
+            primary_rows=[{"TOTAL": 1000.0}], primary_domain="Sales",
+            scope=PRIMARY_SCOPE,
+            retrieve=boundaries.retrieve, generate=boundaries.generate,
+            execute=_execute,
+        ))
+        return opinion, refusals
+
+    def test_an_executor_scoped_to_the_second_area_completes_the_comparison(self):
+        opinion, refusals = self._run(STOCK_SQL, executor_scope={STOCK_FACT})
+        self.assertEqual(refusals, [])
+        self.assertTrue(opinion.checked, opinion.detail)
+        self.assertTrue(opinion.agrees)
+
+    def test_an_executor_still_pinned_to_the_primary_refuses_every_second_opinion(self):
+        # The defect, reproduced: the corroborating SQL passes the second
+        # area's validation and is then refused by an executor that believes
+        # it may only read the first area's tables.
+        opinion, refusals = self._run(
+            STOCK_SQL, executor_scope=PRIMARY_SCOPE.allowed_tables)
+        self.assertEqual(refusals, ["access_denied"])
+        self.assertFalse(opinion.checked)
+        self.assertEqual(opinion.reason, "execution_failed")
+
+    def test_the_scope_the_module_hands_the_executor_is_the_second_areas(self):
+        # The contract this rests on: run_second_opinion passes the
+        # corroborating scope to the execute callback, so a caller that reads
+        # it gets the right tables without having to know how they were built.
+        seen = {}
+
+        async def _capture(sql, scope):
+            seen["allowed"] = scope.allowed_tables
+            return _attempt(sql, rows=[{"TOTAL": 1000.0}])
+
+        boundaries = _Boundaries()
+        asyncio.run(run_second_opinion(
+            "q", domain="Supply Chain", tables={STOCK_FACT, WAREHOUSE},
+            primary_rows=[{"TOTAL": 1.0}], primary_domain="Sales",
+            scope=PRIMARY_SCOPE, retrieve=boundaries.retrieve,
+            generate=boundaries.generate, execute=_capture,
+        ))
+        self.assertEqual(seen["allowed"], {STOCK_FACT, WAREHOUSE})
+        self.assertNotEqual(seen["allowed"], PRIMARY_SCOPE.allowed_tables)
+
+
 class TestTheLineTheReaderGets(unittest.TestCase):
 
     AGREES = {"checked": True, "agrees": True, "domain": "Supply Chain"}
@@ -963,12 +1050,73 @@ class TestThePipelineRunsIt(unittest.TestCase):
         block = source[source.index("async def _generate_second_opinion"):]
         self.assertIn('component="corroboration"', block[:900])
 
-    def test_the_second_query_goes_through_the_same_governed_executor(self):
+    def test_the_corroborating_executor_is_not_the_primarys(self):
+        """The bug this replaced: executor=_execute_with_policy.
+
+        That closure reads `effective`, which the domain block narrowed to the
+        PRIMARY area — so execute_governed_query re-validated the second
+        area's query against the first area's tables and refused it every
+        time. Pinned through the AST rather than by text: what matters is the
+        VALUE of the executor keyword at the call site.
+        """
+        import ast
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(self._source()))
+        inner = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.AsyncFunctionDef)
+                 and n.name == "_run_second_opinion_attempt"]
+        self.assertEqual(len(inner), 1)
+        call = [n for n in ast.walk(inner[0])
+                if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "run_attempt"][0]
+        executor = [kw.value for kw in call.keywords if kw.arg == "executor"][0]
+        self.assertIsInstance(executor, ast.Name)
+        self.assertNotEqual(
+            executor.id, "_execute_with_policy",
+            "the second opinion is executing under the primary area's tables",
+        )
+        # And the executor it does use has to read the scope it was handed.
+        helper = [n for n in ast.walk(inner[0])
+                  if isinstance(n, ast.FunctionDef) and n.name == executor.id]
+        self.assertEqual(len(helper), 1)
+        self.assertIn("corroborating_scope.allowed_tables",
+                      ast.unparse(helper[0]))
+
+    def test_the_second_query_still_goes_through_the_governed_executor(self):
+        """Scoped differently, governed identically.
+
+        This test used to assert `executor=_execute_with_policy` verbatim,
+        which certified the defect above as correct: the wiring it pinned was
+        the one that ran the second area's query against the first area's
+        tables. What actually matters is that the corroborating query reaches
+        the same governed executor — policy, row cap, read-only enforcement —
+        and it does, through the scoped wrapper.
+        """
         source = self._source()
         block = source[source.index("async def _run_second_opinion_attempt"):]
         block = block[:block.index("_second_opinion = await run_second_opinion(")]
-        self.assertIn("executor=_execute_with_policy", block)
+        self.assertIn("_execute_with_policy(", block)
         self.assertIn("run_attempt(", block)
+        self.assertIn("allowed_tables_override=", block)
+
+    def test_the_override_defaults_to_the_primary_scope_for_everyone_else(self):
+        # Every other caller of _execute_with_policy passes no override and
+        # must keep running under `effective`. A default of anything else
+        # would silently rescope the primary answer.
+        import ast
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(self._source()))
+        fn = [n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_execute_with_policy"]
+        self.assertEqual(len(fn), 1)
+        kwonly = {a.arg: d for a, d in
+                  zip(fn[0].args.kwonlyargs, fn[0].args.kw_defaults)}
+        self.assertIn("allowed_tables_override", kwonly)
+        self.assertIsInstance(kwonly["allowed_tables_override"], ast.Constant)
+        self.assertIsNone(kwonly["allowed_tables_override"].value)
+        self.assertIn("effective if allowed_tables_override is None",
+                      ast.unparse(fn[0]))
 
 
 if __name__ == "__main__":
