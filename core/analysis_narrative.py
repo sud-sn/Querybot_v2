@@ -105,7 +105,7 @@ _COUNT_FIELDS = {"count", "n_total", "n_top", "n_bottom", "n", "turns"}
 _RAW_FIELDS = {"r", "r_squared", "cv", "ratio", "multiple"}
 
 
-def format_number_for(name: str, value: float, lang: str) -> str:
+def format_number_for(name: str, value: float, lang: str | None) -> str:
     """One placeholder value, written the way ``lang`` writes it."""
     if name in _PERCENT_FIELDS:
         return format_percent(value, 1 if value % 1 else 0, lang=lang)
@@ -187,7 +187,7 @@ def humanise_column(name: str) -> str:
     return cleaned
 
 
-def placeholders_for(finding: Finding, lang: str, *, labels_available: bool) -> dict[str, str]:
+def placeholders_for(finding: Finding, lang: str | None, *, labels_available: bool) -> dict[str, str]:
     """Every ``{name}`` the finding's sentence needs, already formatted."""
     values: dict[str, str] = {
         name: format_number_for(name, value, lang)
@@ -207,7 +207,7 @@ def placeholders_for(finding: Finding, lang: str, *, labels_available: bool) -> 
 class Phraser(Protocol):
     name: str
 
-    def phrase(self, findings: list[Finding], *, lang: str,
+    def phrase(self, findings: list[Finding], *, lang: str | None,
                labels_available: bool) -> list[str]: ...
 
 
@@ -216,7 +216,7 @@ class TemplatePhraser:
 
     name = "template"
 
-    def phrase(self, findings: list[Finding], *, lang: str = "en",
+    def phrase(self, findings: list[Finding], *, lang: str | None = None,
                labels_available: bool = True) -> list[str]:
         out: list[str] = []
         for finding in findings:
@@ -286,11 +286,18 @@ def evidence_id(evidence: AnalysisEvidence) -> str:
 def build_narrative(
     evidence: AnalysisEvidence,
     *,
-    lang: str = "en",
+    lang: str | None = None,
     limit: int = DEFAULT_LIMIT,
     phraser: Phraser | None = None,
 ) -> Narrative:
     """Say what the evidence found, in ``lang``.
+
+    ``lang`` defaults to None rather than "en" so the reader's own language
+    decides. The one production caller —
+    ``core.response_builder._regulated_analysis_fallback`` — passes none, and
+    with an "en" default the card came back with a French title from ``_t``
+    two lines below and an English body and bullets underneath it. Every
+    narrative.* id has had a French value since the day it was written.
 
     Never raises and never returns None: a result with nothing notable in it
     gets the "nothing stands out" sentence, which is itself a useful answer
@@ -469,7 +476,7 @@ def enforce_checked_numbers(
     text: str,
     evidence: AnalysisEvidence,
     *,
-    lang: str = "en",
+    lang: str | None = None,
     limit: int = DEFAULT_LIMIT,
 ) -> Narrative:
     """Accept a model's prose only if every figure in it was computed.
@@ -506,7 +513,7 @@ def enforce_checked_numbers(
 # The prompt a model may see
 # ══════════════════════════════════════════════════════════════════════════════
 
-def evidence_for_prompt(evidence: AnalysisEvidence, *, lang: str = "en") -> dict[str, Any]:
+def evidence_for_prompt(evidence: AnalysisEvidence, *, lang: str | None = None) -> dict[str, Any]:
     """The only thing an LLM phraser is ever given.
 
     Findings, their numbers and their column names — no rows, no cells, and no

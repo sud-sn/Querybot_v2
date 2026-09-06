@@ -349,5 +349,66 @@ class TheLanguageIsScopedToTheRequest(unittest.TestCase):
         self.assertIn("ranks first", card["body"].lower())
 
 
+class TestTheComputedAnalysisCardIsWrittenInTheReadersLanguage(unittest.TestCase):
+    """The regulated tenant's analysis card, end to end.
+
+    Every narrative.* id has had a French value since the day it was written,
+    and the card still came back half English: _regulated_analysis_fallback
+    calls build_narrative with no lang, whose default was "en", while the
+    _t() calls two lines below it took the reader's language from the
+    ContextVar. A French title over an English body and English bullets.
+
+    Executes the real card builder rather than build_narrative directly —
+    passing lang= in is what a test would do that cannot see this defect.
+    """
+
+    ROWS = [
+        {"region": "North", "revenue": 1000.0},
+        {"region": "South", "revenue": 250.0},
+        {"region": "East", "revenue": 120.0},
+    ]
+
+    def _card(self, lang):
+        from core.i18n import activate_language, deactivate_language
+        from core.response_builder import _regulated_analysis_fallback
+
+        token = activate_language(lang)
+        try:
+            return _regulated_analysis_fallback("why", rows=self.ROWS)
+        finally:
+            deactivate_language(token)
+
+    def test_the_body_and_bullets_are_french_not_only_the_title(self):
+        card = self._card("fr")
+        self.assertTrue(card["computed"])
+        self.assertTrue(card["body"])
+        english = self._card("en")
+        self.assertNotEqual(card["body"], english["body"])
+        self.assertNotEqual(card["title"], english["title"])
+        self.assertNotEqual(list(card["bullets"]), list(english["bullets"]))
+
+    def test_the_figures_are_written_the_way_french_writes_them(self):
+        # A narrow no-break space groups thousands, a comma is the decimal
+        # separator, and a no-break space precedes the percent sign.
+        card = self._card("fr")
+        body = card["body"]
+        self.assertIn("\u202f", body)          # 1 000
+        self.assertIn("\u00a0%", body)         # 73 %
+        self.assertNotIn(",0", body.split("%")[0].replace("\u202f", ""))
+
+    def test_english_is_unchanged(self):
+        card = self._card("en")
+        self.assertIn("1,000", card["body"])
+        self.assertIn("73%", card["body"])
+
+    def test_the_whole_card_is_one_language(self):
+        # The defect's signature: a translated shell around untranslated
+        # content. Nothing in the French card should equal its English twin.
+        french, english = self._card("fr"), self._card("en")
+        for key in ("title", "body", "secondary"):
+            self.assertNotEqual(french[key], english[key], key)
+
+
+
 if __name__ == "__main__":
     unittest.main()
