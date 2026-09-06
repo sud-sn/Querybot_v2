@@ -703,6 +703,49 @@ Pass: its display name is business English — "gross margin percent", not
 actually type.
 **False pass:** a column whose name is already words.
 
+### 11.4 · Industry vocabulary (packs)
+
+The packs shipped so far all answered "how does this ERP spell its columns".
+Two now answer "what trade is this customer in", and they layer on top.
+
+**L11-19 · An industry pack is offered without displacing the ERP one** — *new*
+Steps: open **Client Settings** on a workspace whose source system is already
+selected. Tick a pack under *Industry vocabulary* and save.
+Pass: both are ticked afterwards. Then open the setup wizard: it still shows
+the ERP pack as the source system, not "Multiple packs configured".
+**False pass:** a workspace with no source system selected — the interaction
+being tested is the two coexisting.
+
+**L11-20 · The wizard's source list contains no industry pack** — *new*
+Steps: open **Setup → Source application**.
+Pass: only ERP/CRM products are listed. Choosing one there and saving must
+leave the industry packs still ticked in Client Settings.
+
+**L11-21 · Discovery reads the trade's words** — *new*
+Steps: with the distribution pack selected, re-run schema discovery and open a
+table whose columns use the trade's spellings (SHOWRM, PCTR, BKLG, WTRWKS).
+Pass: their business meanings read as English — "showroom sales amount",
+"profit centre code" — where before they read as the raw abbreviation.
+**False pass:** a table whose column names are already words.
+
+**L11-22 · An acronym people say is left as it is** — *regression*
+Steps: find a column containing HVAC, SKU, PVF or RMA.
+Pass: the generated meaning still contains that acronym. Expanding it produces
+a phrase longer than anything a person types, which then matches nothing.
+
+**L11-23 · Selecting an industry pack does not change table detection** —
+*regression*
+Steps: note which ERP pack the workspace auto-detected before, tick an industry
+pack, and re-run discovery.
+Pass: the same ERP pack is still detected and applied. An industry pack carries
+no table or column dictionary and must not be able to win, tie, or narrow the
+margin.
+
+**L11-24 · The product never names a customer** — *regression*
+Steps: read the naming-convention reference the KB build produces.
+Pass: the entity-prefix table lists what your packs declare and no customer's
+company name that nobody selected.
+
 ## Sign-off
 
 A case is **not** passed until the false-pass line has been considered. Record

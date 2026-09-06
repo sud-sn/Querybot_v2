@@ -25,17 +25,23 @@ from core.vocab_packs import (
     _merge_pack, _clone_builtin, activate_vocab, deactivate_vocab,
 )
 
-_ALL_PACK_IDS = {
+# ERP packs describe how a database SPELLS its columns; industry packs
+# describe what the customer's business calls things. Both are terminology
+# packs an admin can select, and both must load.
+_ERP_PACK_IDS = {
     "infor_m3", "generic_star_schema", "sap", "oracle_ebs",
     "dynamics", "netsuite", "jde",
 }
+_INDUSTRY_PACK_IDS = {"wholesale_distribution", "construction_products"}
+_ALL_PACK_IDS = _ERP_PACK_IDS | _INDUSTRY_PACK_IDS
 
 
 class PackLoadingTests(unittest.TestCase):
     def test_all_shipped_packs_parse(self):
         manifests = {m["pack_id"]: m for m in list_available_packs()}
         self.assertEqual(set(manifests), _ALL_PACK_IDS)
-        for complete in ("infor_m3", "generic_star_schema", "dynamics", "netsuite"):
+        for complete in ("infor_m3", "generic_star_schema", "dynamics", "netsuite",
+                         *sorted(_INDUSTRY_PACK_IDS)):
             self.assertEqual(manifests[complete]["status"], "complete", complete)
         for stub in ("sap", "oracle_ebs", "jde"):
             self.assertEqual(manifests[stub]["status"], "stub", stub)

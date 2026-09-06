@@ -617,7 +617,6 @@ ENTITY_PREFIX_VOCABULARY: dict[str, str] = {
     "ITM_BUS_ARA": "Item Business Area",
     "ITM_STS": "Item Status",
     "PDC_GRP": "Product Group",
-    "EMCO_RGN": "Company Region",
     "PC_DVN": "Profit Center Division",
 }
 
@@ -857,7 +856,13 @@ def build_naming_convention_doc(vocab=None) -> str:
         "| Prefix | Business Entity |",
         "| --- | --- |",
     ]
-    for prefix, entity in sorted(ENTITY_PREFIX_VOCABULARY.items()):
+    # The ACTIVE vocabulary, not the module constant: this block already
+    # announces which terminology packs are in force a few lines above, and
+    # then used to print the built-in prefixes regardless of what those packs
+    # said. A tenant whose warehouse prefixes its own columns could declare it
+    # and never see it reach the model.
+    for prefix, entity in sorted({**ENTITY_PREFIX_VOCABULARY,
+                                  **(v.entity_prefixes or {})}.items()):
         lines.append(f"| `{prefix}_` | {entity} |")
 
     lines += [

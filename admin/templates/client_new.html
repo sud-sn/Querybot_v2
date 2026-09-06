@@ -103,8 +103,11 @@
           <label for="f_source_pack">Source application</label>
           <select id="f_source_pack" name="erp_packs">
             <option value="">Other / custom database (normal schema)</option>
+          {# Source systems only. Industry vocabulary layers on top of one of
+             these and is chosen in Client Settings, where it can be added
+             rather than substituted. #}
           {% for pack in erp_packs_available %}
-            {% if pack.status != 'stub' %}
+            {% if pack.status != 'stub' and pack.pack_kind != 'industry' %}
             <option value="{{ pack.pack_id }}">{{ pack.erp_name }}</option>
             {% endif %}
           {% endfor %}

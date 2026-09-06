@@ -331,7 +331,7 @@
           <label style="font-weight:600">ERP terminology packs</label>
           <p class="form-note">Vocabulary packs merge over QueryBot's built-in defaults for KB build and question matching. Leave all unchecked for the standard (Infor M3 / DMS) vocabulary. Re-run the KB build after changing packs.</p>
           <div class="choice-grid" style="margin-top:.7rem">
-          {% for pack in erp_packs_available %}
+          {% for pack in erp_packs_available %}{% if pack.pack_kind != 'industry' %}
           <label class="choice-card">
             <input type="checkbox" name="erp_packs" value="{{ pack.pack_id }}"
                    {% if pack.pack_id in client_erp_packs %}checked{% endif %}
@@ -341,7 +341,21 @@
               <span class="choice-card-description">{{ pack.description }}</span>
             </span>
           </label>
-          {% endfor %}
+          {% endif %}{% endfor %}
+          </div>
+          <label style="font-weight:600;display:block;margin-top:1rem">Industry vocabulary</label>
+          <p class="form-note">What the business calls things, rather than how the database spells it. Layers on top of the ERP pack above — select both.</p>
+          <div class="choice-grid" style="margin-top:.7rem">
+          {% for pack in erp_packs_available %}{% if pack.pack_kind == 'industry' %}
+          <label class="choice-card">
+            <input type="checkbox" name="erp_packs" value="{{ pack.pack_id }}"
+                   {% if pack.pack_id in client_erp_packs %}checked{% endif %}>
+            <span class="choice-card-copy">
+              <span class="choice-card-title">{{ pack.erp_name }}</span>
+              <span class="choice-card-description">{{ pack.description }}</span>
+            </span>
+          </label>
+          {% endif %}{% endfor %}
           </div>
         </div>
         {% endif %}

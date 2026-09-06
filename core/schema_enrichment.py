@@ -129,7 +129,6 @@ ABBREVIATIONS: dict[str, str] = {
     "DESC": "description",
     "DT": "date",
     "DVN": "division",
-    "EMCO": "company",
     "EQP": "equipment",
     "FCY": "facility",
     "FCT": "fact",
@@ -384,6 +383,32 @@ _UNIT_NOUNS = frozenset({
 })
 
 
+_STUTTER_MAX_WORDS = 4
+
+
+def drop_repeated_unit(expanded: str) -> str:
+    """"quantity on hand quantity" -> "quantity on hand".
+
+    A vocabulary entry whose expansion already names its unit, sitting in front
+    of a column suffix that names the same unit, reads as a stutter and matches
+    worse than either half: the runtime matcher wants every word of a term to
+    be in the question, and nobody types the word twice. Easy to write by
+    accident -- QOH means "quantity on hand" to the person adding it, and
+    QOH_QTY then reads "quantity on hand quantity".
+
+    Bounded three ways, because a repeated word is not always a mistake. Only
+    the LAST word; only a unit noun; and only in a phrase short enough that the
+    repeat can only be the stutter. "tax amount percent of total amount" is six
+    words and both amounts are meant, so it is left alone.
+    """
+    words = str(expanded or "").split()
+    if not 2 <= len(words) <= _STUTTER_MAX_WORDS:
+        return str(expanded or "")
+    if words[-1] not in _UNIT_NOUNS or words[-1] not in words[:-1]:
+        return str(expanded or "")
+    return " ".join(words[:-1])
+
+
 def head_term(expanded: str) -> str:
     """"net sales amount" -> "net sales". "" when there is nothing to drop."""
     words = str(expanded or "").split()
@@ -619,6 +644,7 @@ def enrich_columns(
         data_type = meta.get("type", "")
         distinct_values = meta.get("distinct_values", "")
         expanded, expansion_evidence = _expand_column(column, vocab=v)
+        expanded = drop_repeated_unit(expanded)
         role, role_evidence, warnings, default_filter = _role_for_column(column, data_type, distinct_values, vocab=v)
         evidence = [*expansion_evidence, *role_evidence]
         confidence = _confidence(column, role, evidence, expanded, vocab=v)

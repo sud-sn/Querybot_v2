@@ -104,7 +104,7 @@ _pack_cache: dict[str, tuple[float, dict]] = {}
 
 
 def list_available_packs() -> list[dict]:
-    """Return pack manifests (id, erp_name, status, description) for the UI."""
+    """Return pack manifests (id, erp_name, kind, status, description) for the UI."""
     manifests: list[dict] = []
     if not _PACKS_DIR.is_dir():
         return manifests
@@ -117,6 +117,11 @@ def list_available_packs() -> list[dict]:
         manifests.append({
             "pack_id": data.get("pack_id") or path.stem,
             "erp_name": data.get("erp_name") or path.stem,
+            # "erp" describes how a database spells its columns; "industry"
+            # describes what the customer's business calls things. They layer:
+            # a distributor running M3 wants both, and the surfaces that pick
+            # ONE source system must not offer the second kind at all.
+            "pack_kind": str(data.get("pack_kind") or "erp"),
             "status": data.get("status") or "complete",
             "description": data.get("description") or "",
             "version": data.get("version") or 1,

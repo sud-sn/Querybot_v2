@@ -2311,8 +2311,17 @@ def _client_erp_pack_ids(client: dict | None) -> list[str]:
 
 
 def _setup_source_pack_value(client: dict | None) -> str:
-    """Value shown by the setup wizard's single source-system selector."""
-    pack_ids = _client_erp_pack_ids(client)
+    """Value shown by the setup wizard's single source-system selector.
+
+    Source packs only. An industry pack sits alongside one of them, and
+    counting it here would show "Multiple packs configured" -- a state this
+    page then refuses to save -- to every workspace that selected one.
+    """
+    industry = {
+        str(pack.get("pack_id") or "")
+        for pack in _list_erp_packs() if pack.get("pack_kind") == "industry"
+    }
+    pack_ids = [p for p in _client_erp_pack_ids(client) if p not in industry]
     if not pack_ids:
         return "other"
     if len(pack_ids) == 1:
@@ -8886,6 +8895,17 @@ async def admin_setup_source_system(
             ),
             selected,
         )
+
+    # An industry pack is not a source system: it layers on top of one, and it
+    # is chosen on a different page. Saving a source system here must add to it
+    # rather than replace the list, or opening the wizard silently drops the
+    # vocabulary somebody selected in Client Settings.
+    industry = {
+        str(pack.get("pack_id") or "")
+        for pack in manifests if pack.get("pack_kind") == "industry"
+    }
+    kept = [p for p in _client_erp_pack_ids(client) if p in industry]
+    selected_ids = [*selected_ids, *kept]
 
     changed = _client_erp_pack_ids(client) != selected_ids
     store.update_client_meta(account_id, erp_packs=json.dumps(selected_ids))

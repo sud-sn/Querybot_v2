@@ -1,0 +1,168 @@
+{
+  "pack_id": "wholesale_distribution",
+  "erp_name": "Wholesale Distribution",
+  "pack_kind": "industry",
+  "version": 1,
+  "status": "complete",
+  "description": "Industry vocabulary for distributors and manufacturers who sell through branches, counters and showrooms: profit centres, back orders, fill rate, on-hand, turns, receiving and returns. Expands the warehouse's SPELLINGS (SHOWRM, PCTR, BKLG) and deliberately leaves acronyms people actually say (SKU, RMA, DSO) alone. Carries no table or column dictionary, so it never competes with the ERP pack your database's naming detects — select it alongside that pack.",
+  "abbreviations": {
+    "BKLG": "backlog",
+    "BLKT": "blanket",
+    "BRCH": "branch",
+    "BRNCH": "branch",
+    "CATLG": "catalogue",
+    "CHBK": "chargeback",
+    "CLSD": "closed",
+    "CMSN": "commission",
+    "CMT": "committed",
+    "CNSGN": "consignment",
+    "CNTR": "counter",
+    "CONTR": "contract",
+    "CTRT": "contract",
+    "CRDT": "credit",
+    "CYC": "cycle",
+    "CYCCNT": "cycle count",
+    "DIST": "distributor",
+    "DOH": "days on hand",
+    "DROPSHP": "drop ship",
+    "DSHP": "drop ship",
+    "ETA": "estimated arrival",
+    "EXCS": "excess",
+    "FCST": "forecast",
+    "FRC": "forecast",
+    "HLD": "hold",
+    "LDT": "lead time",
+    "LDTM": "lead time",
+    "MFR": "manufacturer",
+    "NONSTK": "non stock",
+    "OBSL": "obsolete",
+    "OPN": "open",
+    "OTD": "on time delivery",
+    "PCTR": "profit centre",
+    "PKSLP": "packing slip",
+    "PRTL": "partial",
+    "PTL": "partial",
+    "QOH": "quantity on hand",
+    "QTE": "quote",
+    "QUOT": "quote",
+    "REBT": "rebate",
+    "RBTE": "rebate",
+    "RETL": "retail",
+    "ROP": "reorder point",
+    "RSTK": "restocking",
+    "SFTY": "safety",
+    "SHOWRM": "showroom",
+    "SHWRM": "showroom",
+    "STKD": "stocked",
+    "STKOUT": "stock out",
+    "STO": "stock transfer order",
+    "SURCH": "surcharge",
+    "TERR": "territory",
+    "TURNS": "turns",
+    "WHSE": "warehouse",
+    "WHSL": "wholesale",
+    "WILLCALL": "will call",
+    "WLCL": "will call",
+    "XDOC": "cross dock"
+  },
+  "direct_aliases": {
+    "ON_HAND_QTY": [
+      "on hand",
+      "on hand quantity",
+      "stock on hand",
+      "quantity on hand"
+    ],
+    "QTY_ON_HAND": [
+      "on hand",
+      "on hand quantity",
+      "stock on hand",
+      "quantity on hand"
+    ],
+    "QOH": [
+      "on hand",
+      "quantity on hand",
+      "stock on hand"
+    ],
+    "BACK_ORDER_QTY": [
+      "back order",
+      "back ordered quantity",
+      "on back order"
+    ],
+    "BKORD_QTY": [
+      "back order",
+      "back ordered quantity",
+      "on back order"
+    ],
+    "FILL_RATE": [
+      "fill rate",
+      "line fill",
+      "service level"
+    ],
+    "LEAD_TIME_DAYS": [
+      "lead time",
+      "days of lead time",
+      "supplier lead time"
+    ],
+    "REORDER_POINT": [
+      "reorder point",
+      "order point",
+      "reorder level"
+    ],
+    "SAFETY_STOCK_QTY": [
+      "safety stock",
+      "buffer stock"
+    ],
+    "PROFIT_CENTER": [
+      "profit centre",
+      "profit center",
+      "branch",
+      "location"
+    ],
+    "PROFIT_CENTRE": [
+      "profit centre",
+      "profit center",
+      "branch",
+      "location"
+    ],
+    "PFT_CTR_CD": [
+      "profit centre",
+      "profit center",
+      "branch code"
+    ],
+    "PFT_CTR_NM": [
+      "profit centre name",
+      "profit center name",
+      "branch name"
+    ],
+    "BRANCH_CD": [
+      "branch",
+      "branch code",
+      "location code"
+    ],
+    "BRANCH_NM": [
+      "branch name",
+      "location name"
+    ],
+    "GROSS_MARGIN_PCT": [
+      "gross margin percent",
+      "gross margin",
+      "GP percent",
+      "margin percent"
+    ],
+    "GROSS_PROFIT_AMT": [
+      "gross profit",
+      "gross margin dollars",
+      "GP dollars"
+    ],
+    "INVENTORY_TURNS": [
+      "inventory turns",
+      "stock turns",
+      "turnover"
+    ],
+    "DAYS_ON_HAND": [
+      "days on hand",
+      "days of stock",
+      "days of supply"
+    ]
+  }
+}

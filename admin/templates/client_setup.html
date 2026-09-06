@@ -247,8 +247,12 @@
             {% if client_source_pack == 'multiple' %}
             <option value="multiple" selected disabled>Multiple packs configured in Client Settings</option>
             {% endif %}
+            {# Source systems only. An industry pack layers ON TOP of one of
+               these; offering it in a single-choice list would let an admin
+               replace their ERP vocabulary with it. Client Settings has the
+               multi-select that adds them. #}
             {% for pack in erp_packs_available %}
-              {% if pack.status != 'stub' %}
+              {% if pack.status != 'stub' and pack.pack_kind != 'industry' %}
               <option value="{{ pack.pack_id }}" {% if pack.pack_id == client_source_pack %}selected{% endif %}>
                 {{ pack.erp_name }}
               </option>

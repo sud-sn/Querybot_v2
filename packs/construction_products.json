@@ -1,0 +1,68 @@
+{
+  "pack_id": "construction_products",
+  "erp_name": "Construction Products Distribution",
+  "pack_kind": "industry",
+  "version": 1,
+  "status": "complete",
+  "description": "Trade vocabulary for plumbing and heating, waterworks, HVAC, industrial PVF and oilfield supply. Expands the warehouse's SPELLINGS (WTRWKS, PLBG, FTGS, OILFLD) and leaves the trade's acronyms (HVAC, PVF, BTU, PSI) as the words people actually type. Carries no table or column dictionary, so it never competes with the ERP pack your database's naming detects — select it alongside that pack.",
+  "abbreviations": {
+    "BLR": "boiler",
+    "BRS": "brass",
+    "CHLR": "chiller",
+    "CNDS": "condenser",
+    "DRNG": "drainage",
+    "DUCT": "duct",
+    "ELEC": "electrical",
+    "FAUC": "faucet",
+    "FIXT": "fixture",
+    "FXTR": "fixture",
+    "FTG": "fitting",
+    "FTGS": "fittings",
+    "FURN": "furnace",
+    "GALV": "galvanised",
+    "HTG": "heating",
+    "HTR": "heater",
+    "INDL": "industrial",
+    "IRRG": "irrigation",
+    "MECH": "mechanical",
+    "MUNI": "municipal",
+    "OILFLD": "oilfield",
+    "PLBG": "plumbing",
+    "PLMB": "plumbing",
+    "RFRG": "refrigeration",
+    "SEPT": "septic",
+    "SEWR": "sewer",
+    "SUMP": "sump",
+    "TRD": "trade",
+    "VLV": "valve",
+    "VNT": "vent",
+    "WTRWKS": "waterworks"
+  },
+  "direct_aliases": {
+    "PRODUCT_LINE_CD": [
+      "product line",
+      "trade",
+      "category"
+    ],
+    "PRODUCT_LINE_NM": [
+      "product line",
+      "trade",
+      "category name"
+    ],
+    "PDC_LINE_CD": [
+      "product line",
+      "trade",
+      "category"
+    ],
+    "TRADE_CD": [
+      "trade",
+      "product line",
+      "business line"
+    ],
+    "TRADE_NM": [
+      "trade",
+      "product line",
+      "business line"
+    ]
+  }
+}

@@ -180,18 +180,31 @@ class TestTheDefaultSuffixesAreUnambiguous:
 # ── The packs on disk ────────────────────────────────────────────────────────
 
 
+def _pack_kind(pack_id: str) -> str:
+    pack = json.loads((PACKS_DIR / f"{pack_id}.json").read_text(encoding="utf-8"))
+    return str(pack.get("pack_kind") or "erp")
+
+
 class TestEveryPackDeclaresItsJoinVocabulary:
     PACK_IDS = sorted(p.stem for p in PACKS_DIR.glob("*.json"))
+    # Join keys are an ERP's convention. An INDUSTRY pack says what the
+    # business calls things and has no opinion about how the warehouse spells
+    # a foreign key -- it layers on top of whichever ERP pack does.
+    ERP_PACK_IDS = [p for p in PACK_IDS if _pack_kind(p) == "erp"]
 
     def test_the_packs_are_the_ones_we_think_they_are(self):
         assert "infor_m3" in self.PACK_IDS
         assert len(self.PACK_IDS) >= 6
+        assert self.ERP_PACK_IDS, "no ERP packs found"
+        assert set(self.ERP_PACK_IDS) != set(self.PACK_IDS), (
+            "the industry packs disappeared, or lost their pack_kind"
+        )
 
-    @pytest.mark.parametrize("pack_id", PACK_IDS)
+    @pytest.mark.parametrize("pack_id", ERP_PACK_IDS)
     def test_a_pack_states_something_about_joins(self, pack_id):
         """A pack that says nothing leaves its clients on the builtin default,
         which knows only the conventions generic enough to be safe everywhere.
-        Every pack should say what its own ERP does."""
+        Every ERP pack should say what its own ERP does."""
         pack = json.loads((PACKS_DIR / f"{pack_id}.json").read_text(encoding="utf-8"))
         declared = (
             pack.get("join_key_codes")
@@ -199,6 +212,16 @@ class TestEveryPackDeclaresItsJoinVocabulary:
             or pack.get("join_key_suffixes")
         )
         assert declared, f"{pack_id} declares no join vocabulary"
+
+    @pytest.mark.parametrize("pack_id", PACK_IDS)
+    def test_an_industry_pack_says_nothing_about_join_keys(self, pack_id):
+        """The other half: an industry pack that started declaring join keys
+        would be making claims about a database it knows nothing about."""
+        if _pack_kind(pack_id) == "erp":
+            return
+        pack = json.loads((PACKS_DIR / f"{pack_id}.json").read_text(encoding="utf-8"))
+        for key in ("join_key_codes", "join_qualifier_codes", "join_key_suffixes"):
+            assert not pack.get(key), f"{pack_id} declares {key}"
 
     @pytest.mark.parametrize("pack_id", PACK_IDS)
     def test_no_code_is_both_a_key_and_a_qualifier(self, pack_id):
