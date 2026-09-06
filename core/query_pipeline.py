@@ -6725,7 +6725,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 },
                 metadata=_second_opinion.as_dict(),
                 duration_ms=_second_opinion.duration_ms,
-                status="success" if _second_opinion.agrees else "error",
+                # Three states, not two. "Not checked" is not a failure of
+                # this step -- the second area declined, or had no knowledge
+                # base -- and marking it red would tell a reviewer a
+                # disagreement was found where none was looked for.
+                status=(
+                    "not_checked" if not _second_opinion.checked
+                    else "success" if _second_opinion.agrees
+                    else "error"
+                ),
             )
         except Exception as _corroboration_exc:  # noqa: BLE001
             # Loud, not silent: a second opinion that never runs looks

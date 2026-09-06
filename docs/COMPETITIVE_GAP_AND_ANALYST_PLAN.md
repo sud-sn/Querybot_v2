@@ -688,6 +688,7 @@ environment failures is unchanged throughout.
 | **E1/E4** | `core/model_readiness.py` — one backlog ordered by measured outcome, plus `metadata_version` stamped on every answer | `348c94d` |
 | **A1/A3** | `store/domain_store.py` + `core/domains.py` — named subject areas, routing, and corroboration between two areas that can both answer | `c671ba2` |
 | **F2** | `core/recovery.py` — a corrected run reads as a correction; the re-plan budget asserted against the one the pipeline enforces | `a961157` |
+| **A3** | `core/corroboration_run.py` — the second area's own retrieval, prompt, scope and governed query, compared against the answer given, moving answer confidence | `3613f90`, `a4c1e56` |
 
 ### Defects found and fixed along the way
 
@@ -729,14 +730,6 @@ could not be called; extracting it is what made the behaviour testable.
 
 ### Not landed, and why
 
-- **A3 — running the corroborating query.** The comparison engine
-  (`core.domains.corroborate`) is built and tested, and routing now reports
-  when a second area could have answered. Executing that second query needs a
-  retrieval pass under the secondary domain's scope — the KB context and the
-  system prompt are assembled for the primary scope, and a corroborating
-  query generated against the wrong context would differ in ways the
-  comparison cannot attribute. That is a second retrieval pass, not a
-  parameter.
 - **A2 — multiple connections per workspace.** Deliberately deferred per §8;
   domains within one connection cover what "multiple apps in a tenant" means
   for a warehouse-backed customer.
@@ -760,6 +753,20 @@ are built on.
 `cd4322c`. The extracted unit is `core/sql_attempt.py`, and both phases landed
 on top of it.)*
 
-**The next one** is A3: a retrieval pass under the secondary domain's scope,
-so the corroborating query is generated against the context it will run
-against. Everything else outstanding in §10 is independent of it.
+*(A3 is done — `3613f90` and `a4c1e56`. The second retrieval pass turned out
+to be the easy half; the part that needed care was the semantic context. The
+validator's raw fact-to-fact join guard reads `semantic_plan.known_fact_tables`
+and returns **nothing at all** when fewer than two facts are known, so handing
+a corroborating query an empty context would not weaken that guard, it would
+remove it — for the one query nobody reads before it is compared against a
+user's answer. The fact list is a property of the workspace's compiled model
+rather than of the question, so it is carried across; the primary's resolved
+graph and field plans are not.)*
+
+**The next one** is a matter of choice rather than sequence: nothing left in
+§10 blocks anything else. The largest remaining gap against the evaluation is
+**E3** — auto-drafting date roles and metric proposals for review — because it
+is the one that most directly reduces the manual modelling a new client has to
+do before the product answers well. The cheapest are the two **admin pages**:
+domains and the readiness backlog both have working, tested endpoints and no
+screen.
