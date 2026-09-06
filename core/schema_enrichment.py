@@ -221,16 +221,21 @@ _NUMBERED_SERIES: list[tuple[re.Pattern, str, str]] = [
 _INFRA_PREFIXES = ("AZ_", "ETL_", "DW_", "SYS_", "META_", "STG_", "CDC_")
 _INFRA_CAMEL    = {"accountingEntity", "variationNumber", "timestamp", "deleted", "archived"}
 
-KNOWN_JOIN_EQUIVALENTS: dict[str, list[str]] = {
-    "CUS_ORD_NUM": ["ORNO"],
-    "CUS_ORD_LIN_NUM": ["PONR"],
-    "CUS_ORD_LIN_SFX": ["POSX"],
-    "DLV_NUM": ["DLIX"],
-    "CUS_IVC_NUM": ["IVNO"],
-    "CUS_DMS_KEY": ["CUNO", "PYNO"],
-    "WHS_DMS_KEY": ["WHLO"],
-    "FCY_DMS_KEY": ["FACI"],
-}
+# Cross-system key equivalences live in the vocabulary packs as
+# `join_synonyms`, per tenant. They used to be a constant here -- eight Infor
+# M3 codes, no override -- while the pack system carried the same idea for the
+# planner, and the two had drifted to three entries against eight.
+def join_equivalents_for(column: str, vocab=None) -> list[str]:
+    """Codes that mean the same key as ``column``, for this tenant.
+
+    Sorted, because the vocabulary stores these as a SET. Unsorted, a column
+    with two equivalents renders as "CUNO, PYNO" on one build and "PYNO, CUNO"
+    on the next -- which puts a gratuitous diff in every regenerated knowledge
+    base and a cache miss in every prompt built from one.
+    """
+    v = _active_vocab(vocab)
+    return sorted(str(code).upper()
+                  for code in (v.join_synonyms or {}).get(str(column or "").upper(), ()))
 
 
 @dataclass
@@ -507,7 +512,7 @@ def enrich_columns(
         role, role_evidence, warnings, default_filter = _role_for_column(column, data_type, distinct_values, vocab=v)
         evidence = [*expansion_evidence, *role_evidence]
         confidence = _confidence(column, role, evidence, expanded, vocab=v)
-        join_equivalents = KNOWN_JOIN_EQUIVALENTS.get(column.upper(), [])
+        join_equivalents = join_equivalents_for(column, vocab=v)
         date_role = detect_date_role(column, vocab=v)
         candidates = _metric_candidates(column, expanded, role, vocab=v)
         enriched.append(

@@ -438,10 +438,28 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertEqual(code, "ok")
 
     def test_semantic_plan_maps_division_question_to_correct_tables(self):
-        plan = build_semantic_field_plan(
-            "For each division, what percentage of total invoice line amount comes from each item group?",
-            COLUMNS,
+        # Under the Infor M3 pack, because this fixture is unmistakably M3 --
+        # OOLINE, DIVI, CUS_ORD_NUM -- and the join it expects is found
+        # through CUS_ORD_NUM = ORNO, which is M3 vocabulary.
+        #
+        # It used to pass with no pack because three M3 codes were in the
+        # BUILTIN, which meant every tenant carried them. Saying which tenant
+        # this fixture speaks as is what makes the assertion mean something.
+        from core.vocab_packs import (
+            _clone_builtin, _merge_pack, activate_vocab, deactivate_vocab,
+            load_pack,
         )
+
+        _vocab = _clone_builtin()
+        _merge_pack(_vocab, load_pack("infor_m3"), "infor_m3")
+        _token = activate_vocab(_vocab)
+        try:
+            plan = build_semantic_field_plan(
+                "For each division, what percentage of total invoice line amount comes from each item group?",
+                COLUMNS,
+            )
+        finally:
+            deactivate_vocab(_token)
         self.assertTrue(plan["enabled"])
         fields = {(f["term"], f["column"], f["table"]) for f in plan["fields"]}
         self.assertTrue(any(col == "DIVI" and table.endswith("OOLINE") for _, col, table in fields))

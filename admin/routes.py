@@ -10031,11 +10031,24 @@ async def admin_discover_schema(
                             pass
             _masking_config = state_data_existing.get("masking_config") or None
             _discover_industry = store.get_compliance_profile(account_id).get("industry", "")
-            count = discover_and_write(creds, db_type, schema_dir,
-                                       allowed_tables=allowed_set,
-                                       masking_config=_masking_config,
-                                       seed_key=account_id,
-                                       industry=_discover_industry)
+            # Under THIS tenant's vocabulary. Discovery builds the join map
+            # and detects date roles through core.vocab_packs' ContextVar, and
+            # nothing was setting it -- so a workspace with the Infor M3 pack
+            # selected had its schema discovered as though it had none, and
+            # the pack only started applying at question time.
+            from core.vocab_packs import (
+                activate_vocab, deactivate_vocab, vocab_for_account,
+            )
+
+            _discovery_vocab_token = activate_vocab(vocab_for_account(account_id))
+            try:
+                count = discover_and_write(creds, db_type, schema_dir,
+                                           allowed_tables=allowed_set,
+                                           masking_config=_masking_config,
+                                           seed_key=account_id,
+                                           industry=_discover_industry)
+            finally:
+                deactivate_vocab(_discovery_vocab_token)
             next_state = dict(state_data_existing)
             next_state["schema_dir"] = schema_dir
             # ── Schema drift detection ─────────────────────────────────────────

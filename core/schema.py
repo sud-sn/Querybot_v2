@@ -829,7 +829,20 @@ def _build_join_map(master: dict) -> str:
         is_date_dimension_table,
         joins_date_dimension,
     )
-    from core.schema_enrichment import KNOWN_JOIN_EQUIVALENTS
+    from core.vocab_packs import get_active_vocab
+
+    # The tenant's own cross-system key equivalences, not a constant. This was
+    # an eight-entry dict of Infor M3 codes compiled into schema_enrichment.py
+    # with no per-tenant override, so a customer whose warehouse names its keys
+    # differently could not have them recognised without a code change. The
+    # pack system already carried `join_synonyms` for the PLANNER; the two had
+    # drifted to three entries against eight.
+    # Sorted on both axes: the vocabulary stores these as sets, and an
+    # unsorted join map is a gratuitous diff on every rebuild.
+    join_equivalents = {
+        str(column).upper(): sorted(str(code).upper() for code in codes)
+        for column, codes in sorted((get_active_vocab().join_synonyms or {}).items())
+    }
 
     lines = [
         "# Cross-Table Join Map",
@@ -956,10 +969,11 @@ def _build_join_map(master: dict) -> str:
                 })
 
     # ── Pass 2: ERP↔DMS alias joins (different column names, same concept) ────
-    # KNOWN_JOIN_EQUIVALENTS e.g. {"CUS_ORD_NUM": ["ORNO"], "DLV_NUM": ["DLIX"]}
+    # join_synonyms from the tenant's vocabulary, e.g.
+    # {"CUS_ORD_NUM": ["ORNO"], "DLV_NUM": ["DLIX"]}
     # Finds tables that have the DMS column on one side and the ERP code on the other.
     alias_lines: list[str] = []
-    for dms_col, erp_codes in KNOWN_JOIN_EQUIVALENTS.items():
+    for dms_col, erp_codes in join_equivalents.items():
         dms_tables = col_to_tables.get(dms_col.upper(), [])
         for erp_code in erp_codes:
             erp_tables = col_to_tables.get(erp_code.upper(), [])

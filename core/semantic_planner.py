@@ -145,11 +145,17 @@ _DIRECT_ALIASES = {
     "MLLMDT": {"m3 last modified date"},
 }
 
-_JOIN_SYNONYMS = {
-    "CUS_ORD_NUM": {"ORNO"},
-    "CUS_ORD_LIN_NUM": {"PONR"},
-    "CUS_ORD_LIN_SFX": {"POSX"},
-}
+# Cross-system key equivalences are TENANT vocabulary and live in the packs as
+# `join_synonyms` (packs/infor_m3.json carries the eight Infor M3 ones). This
+# was three of those same M3 codes in the BUILTIN, so every workspace was told
+# CUS_ORD_NUM and ORNO were the same key whether or not it ran M3 -- and a
+# customer whose warehouse names its keys differently had no way to say so
+# without a code change.
+#
+# Empty by design, not by oversight: a warehouse with M3-shaped identifiers
+# auto-applies the pack (core.identifier_intelligence.detect_naming_profile),
+# so an M3 tenant gets all eight rather than the three that used to be here.
+_JOIN_SYNONYMS: dict[str, set[str]] = {}
 
 # Column-name suffixes that may establish a join edge when no pack is active.
 # Every one of these says, in the modeller's own naming, "this column is a key

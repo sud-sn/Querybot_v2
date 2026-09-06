@@ -1916,14 +1916,30 @@
     ]
   },
   "join_synonyms": {
-    "CUS_ORD_NUM": [
-      "ORNO"
+    "CUS_DMS_KEY": [
+      "CUNO",
+      "PYNO"
+    ],
+    "CUS_IVC_NUM": [
+      "IVNO"
     ],
     "CUS_ORD_LIN_NUM": [
       "PONR"
     ],
     "CUS_ORD_LIN_SFX": [
       "POSX"
+    ],
+    "CUS_ORD_NUM": [
+      "ORNO"
+    ],
+    "DLV_NUM": [
+      "DLIX"
+    ],
+    "FCY_DMS_KEY": [
+      "FACI"
+    ],
+    "WHS_DMS_KEY": [
+      "WHLO"
     ]
   },
   "numbered_series": [

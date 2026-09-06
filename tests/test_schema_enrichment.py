@@ -1,3 +1,4 @@
+import contextlib
 import unittest
 
 from core.schema_enrichment import (
@@ -6,6 +7,26 @@ from core.schema_enrichment import (
     format_schema_intelligence,
     parse_schema_markdown,
 )
+
+
+@contextlib.contextmanager
+def _m3_vocab():
+    """Run the block under the Infor M3 pack, as an M3 tenant would.
+
+    Cross-system key equivalences are tenant vocabulary now, so a test that
+    asserts on them has to say which tenant it is speaking as.
+    """
+    from core.vocab_packs import (
+        _clone_builtin, _merge_pack, activate_vocab, deactivate_vocab, load_pack,
+    )
+
+    vocab = _clone_builtin()
+    _merge_pack(vocab, load_pack("infor_m3"), "infor_m3")
+    token = activate_vocab(vocab)
+    try:
+        yield vocab
+    finally:
+        deactivate_vocab(token)
 
 
 class SchemaEnrichmentTests(unittest.TestCase):
@@ -53,15 +74,38 @@ class SchemaEnrichmentTests(unittest.TestCase):
         self.assertEqual(enriched["DEL_REC_IND"].default_filter, "")
         self.assertIn("do NOT auto-filter", " ".join(enriched["DEL_REC_IND"].evidence))
 
-    def test_detects_known_join_aliases_for_order_line_tables(self):
+    def test_join_aliases_come_from_the_tenants_pack_not_from_everyone(self):
+        # These are Infor M3 codes. They used to be in the BUILTIN vocabulary,
+        # so every workspace was told CUS_ORD_NUM and ORNO were the same key
+        # whether or not it ran M3 — and a customer whose warehouse names its
+        # keys differently could not say so without a code change.
+        #
+        # With the pack, all eight. Without it, none: that is the point.
         cols = ["CUS_ORD_NUM", "CUS_ORD_LIN_NUM", "CUS_ORD_LIN_SFX", "DLV_NUM"]
 
-        enriched = {c.column: c for c in enrich_columns(cols)}
+        with _m3_vocab():
+            enriched = {c.column: c for c in enrich_columns(cols)}
+            self.assertEqual(enriched["CUS_ORD_NUM"].join_equivalents, ["ORNO"])
+            self.assertEqual(enriched["CUS_ORD_LIN_NUM"].join_equivalents, ["PONR"])
+            self.assertEqual(enriched["CUS_ORD_LIN_SFX"].join_equivalents, ["POSX"])
+            self.assertEqual(enriched["DLV_NUM"].join_equivalents, ["DLIX"])
 
-        self.assertEqual(enriched["CUS_ORD_NUM"].join_equivalents, ["ORNO"])
-        self.assertEqual(enriched["CUS_ORD_LIN_NUM"].join_equivalents, ["PONR"])
-        self.assertEqual(enriched["CUS_ORD_LIN_SFX"].join_equivalents, ["POSX"])
-        self.assertEqual(enriched["DLV_NUM"].join_equivalents, ["DLIX"])
+        plain = {c.column: c for c in enrich_columns(cols)}
+        for column in cols:
+            self.assertEqual(plain[column].join_equivalents, [], column)
+
+    def test_an_m3_warehouse_gets_the_pack_without_anybody_selecting_it(self):
+        # The safety net for the change above: an M3-shaped warehouse must
+        # auto-apply the pack, or moving these out of the builtin would take
+        # them away from the tenants they were put there for.
+        from core.identifier_intelligence import detect_naming_profile
+
+        profile = detect_naming_profile(
+            ["CUS_ORD_NUM", "CUS_DMS_KEY", "WHS_DMS_KEY", "ORNO", "CUNO",
+             "WHLO", "ITNO", "ORQT", "IVDT"],
+            ["ERP_CUS_ORD_FCT", "DMS_CUSTOMER", "OOHEAD", "MITMAS"],
+        )
+        self.assertIn("infor_m3", profile.get("auto_applied_packs") or [])
 
     def test_parses_schema_markdown_and_preserves_metadata(self):
         schema_md = """
@@ -80,10 +124,11 @@ class SchemaEnrichmentTests(unittest.TestCase):
         self.assertEqual(enriched["CUS_IVC_LIN_AMT"].role, "measure")
 
     def test_format_block_includes_kb_generation_rules(self):
-        block = format_schema_intelligence(
-            "CUS_ORD_IVC_FCT",
-            ["CUS_ORD_NUM", "CUS_DMS_KEY", "CUS_IVC_LIN_AMT", "DEL_REC_IND"],
-        )
+        with _m3_vocab():
+            block = format_schema_intelligence(
+                "CUS_ORD_IVC_FCT",
+                ["CUS_ORD_NUM", "CUS_DMS_KEY", "CUS_IVC_LIN_AMT", "DEL_REC_IND"],
+            )
 
         self.assertIn("SCHEMA INTELLIGENCE", block)
         self.assertIn("CUS_IVC_LIN_AMT: role=measure", block)
