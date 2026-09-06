@@ -1716,7 +1716,7 @@ function renderDiagnosticCard(rawText){
   if (!/Most likely reason:/i.test(text) || !/SQL tried:/i.test(text)) return '';
   const lines = text.split(/\n+/).map(x => x.trim()).filter(Boolean);
   const headline = lines[0] || t('ui.chat.diag.no_match');
-  const confidence = (_extractDiagnosticSection(text, 'Confidence:', ['Most likely reason:']) || '').replace(/\n/g, ' ').trim();
+  const confidence = (_extractDiagnosticSection(text, 'Confidence:', ['Kind:', 'Most likely reason:']) || '').replace(/\n/g, ' ').trim();
   const reason = _extractDiagnosticSection(text, 'Most likely reason:', ['Suggested next step:', 'Why:', 'Technical details:', 'SQL tried:']);
   const nextStep = _extractDiagnosticSection(text, 'Suggested next step:', ['Why:', 'Technical details:', 'SQL tried:']);
   const why = _diagnosticBullets(_extractDiagnosticSection(text, 'Why:', ['Technical details:', 'SQL tried:']));
@@ -1729,11 +1729,20 @@ function renderDiagnosticCard(rawText){
   const techHtml = technical.length
     ? `<div class="diagnostic-section"><div class="diagnostic-label">${t('ui.chat.diag.technical')}</div><ul class="diagnostic-list">${technical.slice(0,5).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
     : '';
-  // Matched against the SERVER's headline, which is English wire text --
-  // see the note beside the diagnostic ids in core/i18n.py.
-  const kicker = t(/could not run|database error/i.test(headline) ? 'ui.chat.diag.query_failed'
-               : /could not build a trusted|could not answer/i.test(headline) ? 'ui.chat.diag.validation'
-               : 'ui.chat.diag.no_rows');
+  // The server states the kind (core/answer_formatter.py). It used to be
+  // inferred by regex-matching the English headline, which made the headline
+  // wire format -- translating it downgraded every French failure to the
+  // "no rows" kicker. The old regexes stay as the fallback so cards rendered
+  // from history, and any adapter that has not been updated, still read right.
+  const kindMatch = text.match(/^Kind:\s*([a-z_]+)\s*$/mi);
+  const kind = kindMatch ? kindMatch[1].toLowerCase() : '';
+  const kickerId = kind === 'execution' ? 'ui.chat.diag.query_failed'
+                 : kind === 'validation' ? 'ui.chat.diag.validation'
+                 : kind === 'empty' ? 'ui.chat.diag.no_rows'
+                 : /could not run|database error/i.test(headline) ? 'ui.chat.diag.query_failed'
+                 : /could not build a trusted|could not answer/i.test(headline) ? 'ui.chat.diag.validation'
+                 : 'ui.chat.diag.no_rows';
+  const kicker = t(kickerId);
   return `<div class="diagnostic-card" data-raw="${encodeURIComponent(rawText)}">
     <div class="diagnostic-kicker">${kicker}</div>
     <div class="diagnostic-title">${escHtml(headline)}</div>

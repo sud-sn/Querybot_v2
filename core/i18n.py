@@ -963,6 +963,421 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cette réponse a demandé {attempts} tentatives.",
     },
 
+    # ── Failure and zero-row cards (core/failure_messages.py) ────────────────
+    # The BODY of every diagnostic card: the headline, why it happened and
+    # what to do next. The section labels around these ("Most likely reason:",
+    # "Kind:", "SQL tried:") are wire format and stay English — the portal
+    # extracts by them and renders its own translated heading — so these are
+    # the strings a reader actually reads, and they were all English inside a
+    # fully French card.
+    #
+    # sanitize_db_error's `cleaned` field is deliberately NOT here: it is the
+    # database's own error text, kept verbatim for the technical-details
+    # section and for support to search on.
+    "fail.db.login_timeout.reason": {
+        "en": "The database did not respond in time.",
+        "fr": "La base de données n'a pas répondu dans le délai imparti.",
+    },
+    "fail.db.login_timeout.next_step": {
+        "en": "Try again in a minute; if it keeps happening, ask your administrator to check that the database is running and reachable.",
+        "fr": "Réessayez dans une minute ; si le problème persiste, demandez à votre administrateur de vérifier que la base de données fonctionne et qu'elle est accessible.",
+    },
+    "fail.db.login_failed.reason": {
+        "en": "QueryBot could not sign in to the database.",
+        "fr": "QueryBot n'a pas pu se connecter à la base de données.",
+    },
+    "fail.db.login_failed.next_step": {
+        "en": "Ask your administrator to verify the database credentials in the connection settings.",
+        "fr": "Demandez à votre administrateur de vérifier les identifiants de la base de données dans les paramètres de connexion.",
+    },
+    "fail.db.missing_table.reason": {
+        "en": "A table this query needs does not exist in the database.",
+        "fr": "Une table nécessaire à cette requête n'existe pas dans la base de données.",
+    },
+    "fail.db.missing_table.next_step": {
+        "en": "Ask your administrator to re-run schema discovery so QueryBot's table list matches the database.",
+        "fr": "Demandez à votre administrateur de relancer la découverte du schéma afin que la liste des tables de QueryBot corresponde à la base de données.",
+    },
+    "fail.db.missing_column.reason": {
+        "en": "A column this query used does not exist in the database.",
+        "fr": "Une colonne utilisée par cette requête n'existe pas dans la base de données.",
+    },
+    "fail.db.missing_column.next_step": {
+        "en": "Rephrase using a field shown in a previous answer, or ask your administrator to rebuild the knowledge base.",
+        "fr": "Reformulez en utilisant un champ affiché dans une réponse précédente, ou demandez à votre administrateur de reconstruire la base de connaissances.",
+    },
+    "fail.db.unbound_identifier.reason": {
+        "en": "The query referenced a table that was not joined in.",
+        "fr": "La requête fait référence à une table qui n'a pas été jointe.",
+    },
+    "fail.db.unbound_identifier.next_step": {
+        "en": "Try asking the question again in different words; if it persists, ask your administrator to check the metric's join configuration.",
+        "fr": "Reformulez la question autrement ; si le problème persiste, demandez à votre administrateur de vérifier la configuration des jointures de l'indicateur.",
+    },
+    "fail.db.group_by_shape.reason": {
+        "en": "The query mixed grouped and ungrouped columns in a way the database rejects.",
+        "fr": "La requête mélange des colonnes agrégées et non agrégées d'une manière que la base de données refuse.",
+    },
+    "fail.db.group_by_shape.next_step": {
+        "en": "Try asking the question again — often rephrasing with an explicit breakdown (e.g. 'by customer') fixes this.",
+        "fr": "Reformulez la question — préciser explicitement une répartition (par exemple « par client ») suffit souvent à corriger cela.",
+    },
+    "fail.db.permission_denied.reason": {
+        "en": "The database account does not have permission to read this data.",
+        "fr": "Le compte de base de données n'a pas l'autorisation de lire ces données.",
+    },
+    "fail.db.permission_denied.next_step": {
+        "en": "Ask your administrator to grant read access to the table mentioned in the technical details.",
+        "fr": "Demandez à votre administrateur d'accorder un accès en lecture à la table mentionnée dans les détails techniques.",
+    },
+    "fail.db.syntax.reason": {
+        "en": "The generated query had a syntax error.",
+        "fr": "La requête générée comporte une erreur de syntaxe.",
+    },
+    "fail.db.syntax.next_step": {
+        "en": "Rephrase the question more simply — one metric and one breakdown at a time usually works best.",
+        "fr": "Reformulez la question plus simplement — un seul indicateur et une seule répartition à la fois fonctionnent généralement mieux.",
+    },
+    "fail.db.conversion.reason": {
+        "en": "A date or number in the query did not match the column's format.",
+        "fr": "Une date ou un nombre de la requête ne correspond pas au format de la colonne.",
+    },
+    "fail.db.conversion.next_step": {
+        "en": "Try stating the date or number differently (for example 'in March 2025' instead of a raw date).",
+        "fr": "Essayez d'exprimer la date ou le nombre autrement (par exemple « en mars 2025 » plutôt qu'une date brute).",
+    },
+    "fail.db.divide_by_zero.reason": {
+        "en": "The calculation divided by zero for this data.",
+        "fr": "Le calcul a effectué une division par zéro sur ces données.",
+    },
+    "fail.db.divide_by_zero.next_step": {
+        "en": "Ask your administrator to add a divide-by-zero guard (NULLIF) to this metric's formula.",
+        "fr": "Demandez à votre administrateur d'ajouter une protection contre la division par zéro (NULLIF) à la formule de cet indicateur.",
+    },
+    "fail.db.timeout.reason": {
+        "en": "The query took too long and was stopped.",
+        "fr": "La requête a pris trop de temps et a été interrompue.",
+    },
+    "fail.db.timeout.next_step": {
+        "en": "Try narrowing the question — add a date range or a specific customer/product filter.",
+        "fr": "Essayez de restreindre la question — ajoutez une période ou un filtre sur un client ou un produit précis.",
+    },
+    "fail.db.link_lost.reason": {
+        "en": "The connection to the database was interrupted.",
+        "fr": "La connexion à la base de données a été interrompue.",
+    },
+    "fail.db.link_lost.next_step": {
+        "en": "Try again — this is usually temporary. If it persists, ask your administrator to check network access to the database.",
+        "fr": "Réessayez — c'est généralement temporaire. Si le problème persiste, demandez à votre administrateur de vérifier l'accès réseau à la base de données.",
+    },
+    "fail.db.deadlock.reason": {
+        "en": "The database was busy and cancelled this query to resolve a conflict.",
+        "fr": "La base de données était occupée et a annulé cette requête pour résoudre un conflit.",
+    },
+    "fail.db.deadlock.next_step": {
+        "en": "Try again in a moment.",
+        "fr": "Réessayez dans un instant.",
+    },
+    "fail.db.service_limit.reason": {
+        "en": "The database is paused or has reached a service limit, so it is not accepting queries right now.",
+        "fr": "La base de données est en pause ou a atteint une limite de service ; elle n'accepte donc aucune requête pour le moment.",
+    },
+    "fail.db.service_limit.next_step": {
+        "en": "This is a database subscription limit rather than a problem with the question — rephrasing will not help. Ask your administrator to check the database's compute tier or billing status; the technical details below name the limit and when it resets.",
+        "fr": "Il s'agit d'une limite d'abonnement de la base de données et non d'un problème lié à la question — la reformuler n'y changera rien. Demandez à votre administrateur de vérifier le niveau de calcul ou l'état de facturation de la base de données ; les détails techniques ci-dessous précisent la limite atteinte et sa date de réinitialisation.",
+    },
+    "fail.db.unexpected.reason": {
+        "en": "The database reported an unexpected error.",
+        "fr": "La base de données a signalé une erreur inattendue.",
+    },
+    "fail.db.unexpected.next_step": {
+        "en": "Try rephrasing the question; if it keeps failing, share the technical details with your administrator.",
+        "fr": "Reformulez la question ; si l'échec persiste, transmettez les détails techniques à votre administrateur.",
+    },
+
+    # ── Failure headlines and generic advice ─────────────────────────────────
+    "fail.exec.headline": {
+        "en": "I could not run this query against your database.",
+        "fr": "Je n'ai pas pu exécuter cette requête sur votre base de données.",
+    },
+    "fail.validation.headline": {
+        "en": "I could not build a trusted query for this question.",
+        "fr": "Je n'ai pas pu construire une requête fiable pour cette question.",
+    },
+    "fail.generic.headline": {
+        "en": "I could not answer this question.",
+        "fr": "Je n'ai pas pu répondre à cette question.",
+    },
+    "fail.generic.reason": {
+        "en": "Something went wrong while preparing or running the query.",
+        "fr": "Un problème est survenu lors de la préparation ou de l'exécution de la requête.",
+    },
+    "fail.generic.next_step": {
+        "en": "Try rephrasing the question, or contact your administrator.",
+        "fr": "Reformulez la question ou contactez votre administrateur.",
+    },
+    "fail.generic.next_step_technical": {
+        "en": "Try rephrasing the question; if it keeps failing, share the technical details with your administrator.",
+        "fr": "Reformulez la question ; si l'échec persiste, transmettez les détails techniques à votre administrateur.",
+    },
+    "fail.v.default.next_step": {
+        "en": "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'). If it keeps failing, ask your administrator to review the field mapping for this term.",
+        "fr": "Essayez de nommer explicitement l'indicateur et la répartition (par exemple « chiffre d'affaires total par client »). Si l'échec persiste, demandez à votre administrateur de revoir le rattachement de champ pour ce terme.",
+    },
+    "fail.zero_row.headline": {
+        "en": "I could not find matching records for this question.",
+        "fr": "Je n'ai trouvé aucun enregistrement correspondant à cette question.",
+    },
+    "fail.zero_row.reason": {
+        "en": "The query returned no rows for the selected data.",
+        "fr": "La requête n'a renvoyé aucune ligne pour les données sélectionnées.",
+    },
+    "fail.zero_row.next_step": {
+        "en": "Check the filters, selected schema, or field mapping.",
+        "fr": "Vérifiez les filtres, le schéma sélectionné ou le rattachement des champs.",
+    },
+    "fail.db.error_prefix": {
+        "en": "Database error: {detail}",
+        "fr": "Erreur de base de données : {detail}",
+    },
+
+    "fail.v.default.reason": {
+        "en": "The generated query did not pass QueryBot's safety and accuracy checks.",
+        "fr": "La requête générée n'a pas passé les contrôles de sûreté et d'exactitude de QueryBot.",
+    },
+    "fail.v.suggestions": {
+        "en": "Closest known terms in your data: {terms}.",
+        "fr": "Termes connus les plus proches dans vos données : {terms}.",
+    },
+    "fail.timeout.detail_seconds": {
+        "en": "The database stopped the query after {seconds} seconds.",
+        "fr": "La base de données a interrompu la requête au bout de {seconds} secondes.",
+    },
+    "fail.timeout.detail": {
+        "en": "The database stopped the query before it finished.",
+        "fr": "La base de données a interrompu la requête avant la fin de son exécution.",
+    },
+
+    # Query-timeout guidance. The indexed-column advice is the actionable half
+    # — "the database did not respond" is true and useless.
+    "fail.timeout.indexed.reason": {
+        "en": "{detail} This question filters and joins {fact} on {key}, so it reads the whole table unless that column is indexed.",
+        "fr": "{detail} Cette question filtre et joint {fact} sur {key} ; elle lit donc toute la table à moins que cette colonne ne soit indexée.",
+    },
+    "fail.timeout.indexed.next_step": {
+        "en": "Ask your database administrator to add an index on {fact} ({key}). Until then, narrowing the question — a single month, or one customer or warehouse — keeps it inside the time limit.",
+        "fr": "Demandez à votre administrateur de base de données d'ajouter un index sur {fact} ({key}). En attendant, restreindre la question — un seul mois, ou un seul client ou entrepôt — permet de rester dans le délai imparti.",
+    },
+    "fail.timeout.generic.next_step": {
+        "en": "Narrow the question with a date range or a specific customer, product or warehouse. If it keeps happening on simple questions, ask your administrator to review indexing on the queried tables.",
+        "fr": "Restreignez la question avec une période ou un client, un produit ou un entrepôt précis. Si cela se reproduit sur des questions simples, demandez à votre administrateur de revoir l'indexation des tables interrogées.",
+    },
+
+    # ── Validation refusals (core/failure_messages.py) ───────────────────────
+    # One reason and, where there is specific advice, one next step per
+    # validator code. The codes themselves stay as codes: they are the audit
+    # record and the pipeline gates on them.
+    "fail.v.field_plan_mismatch.reason": {
+        "en": "The generated query did not use the approved business field mapping for one of the terms in your question.",
+        "fr": "La requête générée n'a pas utilisé le rattachement de champ métier approuvé pour l'un des termes de votre question.",
+    },
+    "fail.v.entity_field_unavailable.reason": {
+        "en": "The requested field is not available for the business entity named in your question.",
+        "fr": "Le champ demandé n'est pas disponible pour l'entité métier citée dans votre question.",
+    },
+    "fail.v.unknown_column.reason": {
+        "en": "The generated query used a column that does not exist in your data.",
+        "fr": "La requête générée utilise une colonne qui n'existe pas dans vos données.",
+    },
+    "fail.v.unknown_table.reason": {
+        "en": "The generated query used a table that does not exist in your data.",
+        "fr": "La requête générée utilise une table qui n'existe pas dans vos données.",
+    },
+    "fail.v.access_denied.reason": {
+        "en": "Your account does not have access to one of the tables this question needs.",
+        "fr": "Votre compte n'a pas accès à l'une des tables nécessaires à cette question.",
+    },
+    "fail.v.anti_join_shape.reason": {
+        "en": "This question asks about missing records, and the generated query did not check for them correctly.",
+        "fr": "Cette question porte sur des enregistrements absents, et la requête générée ne les a pas recherchés correctement.",
+    },
+    "fail.v.composition_shape.reason": {
+        "en": "The generated query did not preserve the requested category-by-category composition and would have produced a misleading distribution.",
+        "fr": "La requête générée n'a pas conservé la composition catégorie par catégorie demandée et aurait produit une répartition trompeuse.",
+    },
+    "fail.v.date_key_format.reason": {
+        "en": "The generated query used a date key column incorrectly.",
+        "fr": "La requête générée a mal utilisé une colonne de clé de date.",
+    },
+    "fail.v.metric_formula_mismatch.reason": {
+        "en": "The generated query did not use the approved formula for a metric mentioned in your question.",
+        "fr": "La requête générée n'a pas utilisé la formule approuvée d'un indicateur cité dans votre question.",
+    },
+    "fail.v.null_aggregate_diagnostic.reason": {
+        "en": "The generated query could not distinguish 'zero' from 'no data' for this metric.",
+        "fr": "La requête générée n'a pas pu distinguer « zéro » de « aucune donnée » pour cet indicateur.",
+    },
+    "fail.v.order_alias_mismatch.reason": {
+        "en": "The generated query sorted by a column it did not select.",
+        "fr": "La requête générée trie sur une colonne qu'elle n'a pas sélectionnée.",
+    },
+    "fail.v.period_comparison_shape.reason": {
+        "en": "The generated period comparison did not aggregate the metric before calculating the prior-period change.",
+        "fr": "La comparaison de périodes générée n'a pas agrégé l'indicateur avant de calculer l'écart avec la période précédente.",
+    },
+    "fail.v.parse.reason": {
+        "en": "The generated query was not valid SQL.",
+        "fr": "La requête générée n'est pas du SQL valide.",
+    },
+    "fail.v.ddl.reason": {
+        "en": "The generated query tried an operation that is not allowed — only read-only questions are supported.",
+        "fr": "La requête générée a tenté une opération interdite — seules les questions en lecture seule sont prises en charge.",
+    },
+    "fail.v.cannot_generate.reason": {
+        "en": "I could not turn this question into a query using the available data.",
+        "fr": "Je n'ai pas pu transformer cette question en requête à partir des données disponibles.",
+    },
+    "fail.v.dialect_mismatch.reason": {
+        "en": "The generated query used SQL syntax that does not match your database.",
+        "fr": "La requête générée utilise une syntaxe SQL qui ne correspond pas à votre base de données.",
+    },
+    "fail.v.production_shape.reason": {
+        "en": "The generated query was not structured safely enough to run (missing explicit columns or an unqualified join).",
+        "fr": "La requête générée n'était pas structurée de façon assez sûre pour être exécutée (colonnes non explicitées ou jointure non qualifiée).",
+    },
+    "fail.v.top_n_shape.reason": {
+        "en": "The generated query did not correctly limit results to the top/bottom values you asked for.",
+        "fr": "La requête générée n'a pas correctement limité les résultats aux valeurs les plus hautes ou les plus basses demandées.",
+    },
+    "fail.v.graph_plan_mismatch.reason": {
+        "en": "The generated query did not follow the approved relationships between your tables.",
+        "fr": "La requête générée n'a pas suivi les relations approuvées entre vos tables.",
+    },
+    "fail.v.multi_statement.reason": {
+        "en": "The generated query tried to run more than one statement at once.",
+        "fr": "La requête générée a tenté d'exécuter plusieurs instructions à la fois.",
+    },
+    "fail.v.not_select.reason": {
+        "en": "The generated query was not a read-only SELECT statement.",
+        "fr": "La requête générée n'était pas une instruction SELECT en lecture seule.",
+    },
+    "fail.v.reused_plan_empty.reason": {
+        "en": "A previously successful query for this question returned no rows under the current data, so I tried to regenerate it.",
+        "fr": "Une requête auparavant concluante pour cette question n'a renvoyé aucune ligne sur les données actuelles ; j'ai donc tenté de la régénérer.",
+    },
+    "fail.v.surrogate_date_conversion.reason": {
+        "en": "The generated query tried to read a date directly from an internal row-ID column instead of joining to the real calendar date.",
+        "fr": "La requête générée a tenté de lire une date directement depuis une colonne d'identifiant technique au lieu de joindre le vrai calendrier.",
+    },
+    "fail.v.temporal_anchor_missing.reason": {
+        "en": "The generated query did not anchor the relative time period (like 'this month') on the governed business date.",
+        "fr": "La requête générée n'a pas rattaché la période relative (comme « ce mois-ci ») à la date de gestion approuvée.",
+    },
+    "fail.v.temporal_anchor_mismatch.reason": {
+        "en": "The generated query anchored the relative time period on the wrong date column.",
+        "fr": "La requête générée a rattaché la période relative à la mauvaise colonne de date.",
+    },
+    "fail.v.temporal_role_mismatch.reason": {
+        "en": "The generated query used a different date than the approved default date for this data.",
+        "fr": "La requête générée a utilisé une date différente de la date par défaut approuvée pour ces données.",
+    },
+    "fail.v.temporal_anchor_unscoped.reason": {
+        "en": "The generated query calculated the relative time period from the full date calendar instead of your actual data, which can include dates with no records yet.",
+        "fr": "La requête générée a calculé la période relative à partir du calendrier complet plutôt que de vos données réelles, ce qui peut inclure des dates encore sans enregistrement.",
+    },
+    "fail.v.source_fact_mismatch.reason": {
+        "en": "The generated query measured the amount from a different business dataset than the one this question resolved to.",
+        "fr": "La requête générée a mesuré le montant à partir d'un jeu de données métier différent de celui auquel cette question a été rattachée.",
+    },
+    "fail.v.raw_fact_to_fact_join.reason": {
+        "en": "The generated query joined two business event tables directly, which would multiply the totals.",
+        "fr": "La requête générée a joint directement deux tables d'événements métier, ce qui aurait multiplié les totaux.",
+    },
+    "fail.v.fanout_aggregate.reason": {
+        "en": "The generated query could count the same rows more than once, which would overstate the totals.",
+        "fr": "La requête générée pourrait compter plusieurs fois les mêmes lignes, ce qui surestimerait les totaux.",
+    },
+    "fail.v.derived_measure_mismatch.reason": {
+        "en": "The generated query did not calculate this metric the way its approved definition requires.",
+        "fr": "La requête générée n'a pas calculé cet indicateur conformément à sa définition approuvée.",
+    },
+    "fail.v.locking_select.reason": {
+        "en": "The generated query asked the database for a lock, which read-only questions are not allowed to do.",
+        "fr": "La requête générée a demandé un verrou à la base de données, ce que les questions en lecture seule n'ont pas le droit de faire.",
+    },
+    "fail.v.access_denied.next_step": {
+        "en": "Ask your administrator to grant your group access to the table named in the technical details.",
+        "fr": "Demandez à votre administrateur d'accorder à votre groupe l'accès à la table citée dans les détails techniques.",
+    },
+    "fail.v.cannot_generate.next_step": {
+        "en": "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'), or add a time range.",
+        "fr": "Essayez de nommer explicitement l'indicateur et la répartition (par exemple « chiffre d'affaires total par client »), ou ajoutez une période.",
+    },
+    "fail.v.dialect_mismatch.next_step": {
+        "en": "Try rephrasing the question; if it keeps failing, ask your administrator to check the connected database type.",
+        "fr": "Reformulez la question ; si l'échec persiste, demandez à votre administrateur de vérifier le type de base de données connectée.",
+    },
+    "fail.v.graph_plan_mismatch.next_step": {
+        "en": "Try rephrasing the question; if it keeps failing, ask your administrator to review the Entity Graph relationships for these tables.",
+        "fr": "Reformulez la question ; si l'échec persiste, demandez à votre administrateur de revoir les relations du graphe d'entités pour ces tables.",
+    },
+    "fail.v.composition_shape.next_step": {
+        "en": "Try naming the measure and category explicitly (for example, 'net revenue by state'). If it keeps failing, ask your administrator to review the measure definition and dimension relationship.",
+        "fr": "Essayez de nommer explicitement la mesure et la catégorie (par exemple « chiffre d'affaires net par région »). Si l'échec persiste, demandez à votre administrateur de revoir la définition de la mesure et la relation de dimension.",
+    },
+    "fail.v.entity_field_unavailable.next_step": {
+        "en": "Choose one of the available entity alternatives listed above, or ask your administrator to add or map this field for the requested entity in the Semantic Layer.",
+        "fr": "Choisissez l'une des entités proposées ci-dessus, ou demandez à votre administrateur d'ajouter ou de rattacher ce champ à l'entité demandée dans la couche sémantique.",
+    },
+    "fail.v.surrogate_date_conversion.next_step": {
+        "en": "Try rephrasing the question; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+        "fr": "Reformulez la question ; si l'échec persiste, demandez à votre administrateur de vérifier la configuration des rôles de date pour cette table.",
+    },
+    "fail.v.reused_plan_empty.next_step": {
+        "en": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
+        "fr": "Essayez de restreindre la question (une période ou un filtre précis) — les données sous-jacentes ont pu changer depuis le dernier succès de cette question.",
+    },
+    "fail.v.temporal_anchor_missing.next_step": {
+        "en": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+        "fr": "Reformulez la question ; si l'échec persiste, demandez à votre administrateur de vérifier la configuration des rôles de date pour cette table.",
+    },
+    "fail.v.temporal_anchor_mismatch.next_step": {
+        "en": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+        "fr": "Reformulez la question ; si l'échec persiste, demandez à votre administrateur de vérifier la configuration des rôles de date pour cette table.",
+    },
+    "fail.v.temporal_role_mismatch.next_step": {
+        "en": "Name the date you mean explicitly (e.g. 'by dispense date'), or ask your administrator to change the default date role.",
+        "fr": "Nommez explicitement la date que vous visez (par exemple « par date de délivrance »), ou demandez à votre administrateur de modifier le rôle de date par défaut.",
+    },
+    "fail.v.temporal_anchor_unscoped.next_step": {
+        "en": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+        "fr": "Reformulez la question ; si l'échec persiste, demandez à votre administrateur de vérifier la configuration des rôles de date pour cette table.",
+    },
+    "fail.v.source_fact_mismatch.next_step": {
+        "en": "Name the business dataset you mean (for example 'from purchase order receipts'), or ask your administrator to review which dataset this metric and these business terms belong to.",
+        "fr": "Nommez le jeu de données métier que vous visez (par exemple « à partir des réceptions de commandes »), ou demandez à votre administrateur de vérifier à quel jeu de données appartiennent cet indicateur et ces termes métier.",
+    },
+    "fail.v.raw_fact_to_fact_join.next_step": {
+        "en": "Ask about one business event at a time, or ask your administrator to approve a relationship path between these two tables in the Entity Graph.",
+        "fr": "Posez une question sur un seul événement métier à la fois, ou demandez à votre administrateur d'approuver un chemin de relation entre ces deux tables dans le graphe d'entités.",
+    },
+    "fail.v.fanout_aggregate.next_step": {
+        "en": "Try asking for one breakdown at a time. If it keeps failing, ask your administrator to review the relationship cardinality in the Entity Graph.",
+        "fr": "Demandez une seule répartition à la fois. Si l'échec persiste, demandez à votre administrateur de revoir la cardinalité des relations dans le graphe d'entités.",
+    },
+    "fail.v.derived_measure_mismatch.next_step": {
+        "en": "Ask your administrator to review this metric's approved formula in the Semantic Layer.",
+        "fr": "Demandez à votre administrateur de revoir la formule approuvée de cet indicateur dans la couche sémantique.",
+    },
+    "fail.v.locking_select.next_step": {
+        "en": "Ask the question again without any wording that implies changing or locking data.",
+        "fr": "Reposez la question sans formulation impliquant de modifier ou de verrouiller des données.",
+    },
+    "fail.v.order_alias_mismatch.next_step": {
+        "en": "Try asking again; this is usually a transient generation slip.",
+        "fr": "Reformulez la question ; il s'agit généralement d'une erreur passagère de génération.",
+    },
+
     # ── Answer confidence (core/answer_confidence.py) ────────────────────────
     # The verdict, the reasons and the watch-outs on every answer card. This
     # module built all of them as English literals and imported no i18n at

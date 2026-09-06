@@ -16,6 +16,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
+
+def _t(msg_id: str, **kw) -> str:
+    """Resolve a catalogue id in the reader's language.
+
+    Deferred import: core.i18n is large and this module is imported from the
+    validator's error paths. The language comes from the request's ContextVar,
+    which _handle_query_impl activates around the whole turn.
+    """
+    from core.i18n import t
+
+    return t(msg_id, **kw)
+
 _MAX_TECH_CHARS = 300
 
 
@@ -44,93 +56,26 @@ def _clip(text: Any, limit: int = _MAX_TECH_CHARS) -> str:
 
 # Ordered: first match wins. Matchers run against the CLEANED error text
 # (driver prefixes stripped), case-insensitive.
-_DB_ERROR_MAP: list[tuple[str, str, str]] = [
-    (
-        r"login timeout|HYT00",
-        "The database did not respond in time.",
-        "Try again in a minute; if it keeps happening, ask your administrator to check that the database is running and reachable.",
-    ),
-    (
-        r"login failed|\b18456\b|\b28000\b",
-        "QueryBot could not sign in to the database.",
-        "Ask your administrator to verify the database credentials in the connection settings.",
-    ),
-    (
-        r"invalid object name|\b208\b.*object|table or view does not exist|\bORA-00942\b",
-        "A table this query needs does not exist in the database.",
-        "Ask your administrator to re-run schema discovery so QueryBot's table list matches the database.",
-    ),
-    (
-        r"invalid column name|\bORA-00904\b",
-        "A column this query used does not exist in the database.",
-        "Rephrase using a field shown in a previous answer, or ask your administrator to rebuild the knowledge base.",
-    ),
-    (
-        r"multi-part identifier .* could not be bound|\b4104\b",
-        "The query referenced a table that was not joined in.",
-        "Try asking the question again in different words; if it persists, ask your administrator to check the metric's join configuration.",
-    ),
-    (
-        r"is invalid in the select list because it is not contained in either an aggregate|\b8120\b|not a GROUP BY expression|\bORA-00979\b",
-        "The query mixed grouped and ungrouped columns in a way the database rejects.",
-        "Try asking the question again — often rephrasing with an explicit breakdown (e.g. 'by customer') fixes this.",
-    ),
-    (
-        r"permission was denied|\b229\b.*denied|\b297\b|insufficient privileges|\bORA-01031\b",
-        "The database account does not have permission to read this data.",
-        "Ask your administrator to grant read access to the table mentioned in the technical details.",
-    ),
-    (
-        r"incorrect syntax|syntax error|\bORA-00933\b|\bORA-00936\b",
-        "The generated query had a syntax error.",
-        "Rephrase the question more simply — one metric and one breakdown at a time usually works best.",
-    ),
-    (
-        r"conversion failed|error converting data type|\b241\b|\b245\b|\b8114\b|\bORA-01722\b|\bORA-01861\b",
-        "A date or number in the query did not match the column's format.",
-        "Try stating the date or number differently (for example 'in March 2025' instead of a raw date).",
-    ),
-    (
-        r"divide by zero|\b8134\b|\bORA-01476\b",
-        "The calculation divided by zero for this data.",
-        "Ask your administrator to add a divide-by-zero guard (NULLIF) to this metric's formula.",
-    ),
-    (
-        r"timed out|timeout expired|query timeout",
-        "The query took too long and was stopped.",
-        "Try narrowing the question — add a date range or a specific customer/product filter.",
-    ),
-    (
-        r"communication link|\b08S01\b|connection (?:was )?(?:closed|reset|broken)|TCP Provider",
-        "The connection to the database was interrupted.",
-        "Try again — this is usually temporary. If it persists, ask your administrator to check network access to the database.",
-    ),
-    (
-        r"deadlock|\b1205\b",
-        "The database was busy and cancelled this query to resolve a conflict.",
-        "Try again in a moment.",
-    ),
-    # Service paused / quota exhausted. Without this the message fell through
-    # to the generic default, which tells the user to rephrase the question --
-    # advice that cannot possibly help, because no wording reaches a database
-    # that is switched off. Observed live: an Azure SQL free-tier allowance ran
-    # out mid-session and every question for the rest of the month was answered
-    # with "try rephrasing".
-    #
-    # Deliberately last: it is the broadest matcher here, and an error that
-    # also mentions a timeout or a login failure is better described by those.
-    (
-        r"free (?:amount )?(?:allowance|limit)|monthly free amount|"
-        r"database is paused|is paused for the remainder|auto-paused|"
-        r"resource limit (?:has been )?reached|quota (?:has been )?exceeded|"
-        r"service objective .* exhausted|\b40613\b",
-        "The database is paused or has reached a service limit, so it is not "
-        "accepting queries right now.",
-        "This is a database subscription limit rather than a problem with the "
-        "question — rephrasing will not help. Ask your administrator to check "
-        "the database's compute tier or billing status; the technical details "
-        "below name the limit and when it resets.",
-    ),
+#
+# The second element is a catalogue stem, not prose: fail.db.<stem>.reason and
+# .next_step. These sentences are the body of the card a reader actually reads,
+# and holding them here as English literals is what made a French failure card
+# French only down to its headings.
+_DB_ERROR_MAP: list[tuple[str, str]] = [
+    ('login timeout|HYT00', "login_timeout"),
+    ('login failed|\\b18456\\b|\\b28000\\b', "login_failed"),
+    ('invalid object name|\\b208\\b.*object|table or view does not exist|\\bORA-00942\\b', "missing_table"),
+    ('invalid column name|\\bORA-00904\\b', "missing_column"),
+    ('multi-part identifier .* could not be bound|\\b4104\\b', "unbound_identifier"),
+    ('is invalid in the select list because it is not contained in either an aggregate|\\b8120\\b|not a GROUP BY expression|\\bORA-00979\\b', "group_by_shape"),
+    ('permission was denied|\\b229\\b.*denied|\\b297\\b|insufficient privileges|\\bORA-01031\\b', "permission_denied"),
+    ('incorrect syntax|syntax error|\\bORA-00933\\b|\\bORA-00936\\b', "syntax"),
+    ('conversion failed|error converting data type|\\b241\\b|\\b245\\b|\\b8114\\b|\\bORA-01722\\b|\\bORA-01861\\b', "conversion"),
+    ('divide by zero|\\b8134\\b|\\bORA-01476\\b', "divide_by_zero"),
+    ('timed out|timeout expired|query timeout', "timeout"),
+    ('communication link|\\b08S01\\b|connection (?:was )?(?:closed|reset|broken)|TCP Provider', "link_lost"),
+    ('deadlock|\\b1205\\b', "deadlock"),
+    ('free (?:amount )?(?:allowance|limit)|monthly free amount|database is paused|is paused for the remainder|auto-paused|resource limit (?:has been )?reached|quota (?:has been )?exceeded|service objective .* exhausted|\\b40613\\b', "service_limit"),
 ]
 
 
@@ -180,34 +125,23 @@ def build_query_timeout_guidance(
         if isinstance(policy, dict)
     ]
     detail = (
-        f"The database stopped the query after {timeout_seconds} seconds."
+        _t("fail.timeout.detail_seconds", seconds=timeout_seconds)
         if timeout_seconds
-        else "The database stopped the query before it finished."
+        else _t("fail.timeout.detail")
     )
     for policy in policies:
         fact = str(policy.get("fact_table") or policy.get("anchor_table") or "").strip()
         key = str(policy.get("fact_column") or "").strip()
         if fact and key:
             return {
-                "reason": (
-                    f"{detail} This question filters and joins "
-                    f"{fact} on {key}, so it reads the whole table unless that "
-                    "column is indexed."
-                ),
-                "next_step": (
-                    f"Ask your database administrator to add an index on "
-                    f"{fact} ({key}). Until then, narrowing the question — a "
-                    "single month, or one customer or warehouse — keeps it "
-                    "inside the time limit."
-                ),
+                "reason": _t("fail.timeout.indexed.reason",
+                             detail=detail, fact=fact, key=key),
+                "next_step": _t("fail.timeout.indexed.next_step",
+                                fact=fact, key=key),
             }
     return {
         "reason": detail,
-        "next_step": (
-            "Narrow the question with a date range or a specific customer, "
-            "product or warehouse. If it keeps happening on simple questions, "
-            "ask your administrator to review indexing on the queried tables."
-        ),
+        "next_step": _t("fail.timeout.generic.next_step"),
     }
 
 
@@ -236,13 +170,19 @@ def sanitize_db_error(raw: str) -> dict[str, str]:
     """
     cleaned = _clean_db_error(raw)
     probe = f"{raw or ''} || {cleaned}"
-    for pattern, plain_reason, next_step in _DB_ERROR_MAP:
+    for pattern, stem in _DB_ERROR_MAP:
         if re.search(pattern, probe, re.IGNORECASE):
-            return {"plain_reason": plain_reason, "next_step": next_step, "cleaned": cleaned}
+            return {
+                "plain_reason": _t(f"fail.db.{stem}.reason"),
+                "next_step": _t(f"fail.db.{stem}.next_step"),
+                "cleaned": cleaned,
+            }
+    # `cleaned` is the database's own words and stays exactly as it came --
+    # untranslated on purpose, because it is what support searches on.
     first_sentence = re.split(r"(?<=[.!?])\s", cleaned, maxsplit=1)[0][:200].strip()
     return {
-        "plain_reason": first_sentence or "The database reported an unexpected error.",
-        "next_step": "Try rephrasing the question; if it keeps failing, share the technical details with your administrator.",
+        "plain_reason": first_sentence or _t("fail.db.unexpected.reason"),
+        "next_step": _t("fail.db.unexpected.next_step"),
         "cleaned": cleaned,
     }
 
@@ -424,68 +364,61 @@ def suggest_closest_terms(
 # ── Validator-code translations ───────────────────────────────────────────────
 
 _VALIDATION_REASONS: dict[str, str] = {
-    "field_plan_mismatch": "The generated query did not use the approved business field mapping for one of the terms in your question.",
-    "entity_field_unavailable": "The requested field is not available for the business entity named in your question.",
-    "unknown_column": "The generated query used a column that does not exist in your data.",
-    "unknown_table": "The generated query used a table that does not exist in your data.",
-    "access_denied": "Your account does not have access to one of the tables this question needs.",
-    "anti_join_shape": "This question asks about missing records, and the generated query did not check for them correctly.",
-    "composition_shape": "The generated query did not preserve the requested category-by-category composition and would have produced a misleading distribution.",
-    "date_key_format": "The generated query used a date key column incorrectly.",
-    "metric_formula_mismatch": "The generated query did not use the approved formula for a metric mentioned in your question.",
-    "null_aggregate_diagnostic": "The generated query could not distinguish 'zero' from 'no data' for this metric.",
-    "order_alias_mismatch": "The generated query sorted by a column it did not select.",
-    "period_comparison_shape": "The generated period comparison did not aggregate the metric before calculating the prior-period change.",
-    "parse": "The generated query was not valid SQL.",
-    "ddl": "The generated query tried an operation that is not allowed — only read-only questions are supported.",
-    "cannot_generate": "I could not turn this question into a query using the available data.",
-    "dialect_mismatch": "The generated query used SQL syntax that does not match your database.",
-    "production_shape": "The generated query was not structured safely enough to run (missing explicit columns or an unqualified join).",
-    "top_n_shape": "The generated query did not correctly limit results to the top/bottom values you asked for.",
-    "graph_plan_mismatch": "The generated query did not follow the approved relationships between your tables.",
-    "multi_statement": "The generated query tried to run more than one statement at once.",
-    "not_select": "The generated query was not a read-only SELECT statement.",
-    "reused_plan_empty": "A previously successful query for this question returned no rows under the current data, so I tried to regenerate it.",
-    "surrogate_date_conversion": "The generated query tried to read a date directly from an internal row-ID column instead of joining to the real calendar date.",
-    "temporal_anchor_missing": "The generated query did not anchor the relative time period (like 'this month') on the governed business date.",
-    "temporal_anchor_mismatch": "The generated query anchored the relative time period on the wrong date column.",
-    "temporal_role_mismatch": "The generated query used a different date than the approved default date for this data.",
-    "temporal_anchor_unscoped": "The generated query calculated the relative time period from the full date calendar instead of your actual data, which can include dates with no records yet.",
-    # These five had no business-facing translation, so the raw developer
-    # message reached the user. The live example was source_fact_mismatch,
-    # which showed a business user "The compiled analytical plan requires
-    # EMDW_DMART.CUS_ORD_IVC_FCT as measure fact source(s), but the SQL scans ...".
-    "source_fact_mismatch": "The generated query measured the amount from a different business dataset than the one this question resolved to.",
-    "raw_fact_to_fact_join": "The generated query joined two business event tables directly, which would multiply the totals.",
-    "fanout_aggregate": "The generated query could count the same rows more than once, which would overstate the totals.",
-    "derived_measure_mismatch": "The generated query did not calculate this metric the way its approved definition requires.",
-    "locking_select": "The generated query asked the database for a lock, which read-only questions are not allowed to do.",
+    "field_plan_mismatch": "fail.v.field_plan_mismatch.reason",
+    "entity_field_unavailable": "fail.v.entity_field_unavailable.reason",
+    "unknown_column": "fail.v.unknown_column.reason",
+    "unknown_table": "fail.v.unknown_table.reason",
+    "access_denied": "fail.v.access_denied.reason",
+    "anti_join_shape": "fail.v.anti_join_shape.reason",
+    "composition_shape": "fail.v.composition_shape.reason",
+    "date_key_format": "fail.v.date_key_format.reason",
+    "metric_formula_mismatch": "fail.v.metric_formula_mismatch.reason",
+    "null_aggregate_diagnostic": "fail.v.null_aggregate_diagnostic.reason",
+    "order_alias_mismatch": "fail.v.order_alias_mismatch.reason",
+    "period_comparison_shape": "fail.v.period_comparison_shape.reason",
+    "parse": "fail.v.parse.reason",
+    "ddl": "fail.v.ddl.reason",
+    "cannot_generate": "fail.v.cannot_generate.reason",
+    "dialect_mismatch": "fail.v.dialect_mismatch.reason",
+    "production_shape": "fail.v.production_shape.reason",
+    "top_n_shape": "fail.v.top_n_shape.reason",
+    "graph_plan_mismatch": "fail.v.graph_plan_mismatch.reason",
+    "multi_statement": "fail.v.multi_statement.reason",
+    "not_select": "fail.v.not_select.reason",
+    "reused_plan_empty": "fail.v.reused_plan_empty.reason",
+    "surrogate_date_conversion": "fail.v.surrogate_date_conversion.reason",
+    "temporal_anchor_missing": "fail.v.temporal_anchor_missing.reason",
+    "temporal_anchor_mismatch": "fail.v.temporal_anchor_mismatch.reason",
+    "temporal_role_mismatch": "fail.v.temporal_role_mismatch.reason",
+    "temporal_anchor_unscoped": "fail.v.temporal_anchor_unscoped.reason",
+    "source_fact_mismatch": "fail.v.source_fact_mismatch.reason",
+    "raw_fact_to_fact_join": "fail.v.raw_fact_to_fact_join.reason",
+    "fanout_aggregate": "fail.v.fanout_aggregate.reason",
+    "derived_measure_mismatch": "fail.v.derived_measure_mismatch.reason",
+    "locking_select": "fail.v.locking_select.reason",
 }
 
 _VALIDATION_NEXT_STEPS: dict[str, str] = {
-    "access_denied": "Ask your administrator to grant your group access to the table named in the technical details.",
-    "cannot_generate": "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'), or add a time range.",
-    "dialect_mismatch": "Try rephrasing the question; if it keeps failing, ask your administrator to check the connected database type.",
-    "graph_plan_mismatch": "Try rephrasing the question; if it keeps failing, ask your administrator to review the Entity Graph relationships for these tables.",
-    "composition_shape": "Try naming the measure and category explicitly (for example, 'net revenue by state'). If it keeps failing, ask your administrator to review the measure definition and dimension relationship.",
-    "entity_field_unavailable": "Choose one of the available entity alternatives listed above, or ask your administrator to add or map this field for the requested entity in the Semantic Layer.",
-    "surrogate_date_conversion": "Try rephrasing the question; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
-    "reused_plan_empty": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
-    "temporal_anchor_missing": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
-    "temporal_anchor_mismatch": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
-    "temporal_role_mismatch": "Name the date you mean explicitly (e.g. 'by dispense date'), or ask your administrator to change the default date role.",
-    "temporal_anchor_unscoped": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
-    "source_fact_mismatch": "Name the business dataset you mean (for example 'from purchase order receipts'), or ask your administrator to review which dataset this metric and these business terms belong to.",
-    "raw_fact_to_fact_join": "Ask about one business event at a time, or ask your administrator to approve a relationship path between these two tables in the Entity Graph.",
-    "fanout_aggregate": "Try asking for one breakdown at a time. If it keeps failing, ask your administrator to review the relationship cardinality in the Entity Graph.",
-    "derived_measure_mismatch": "Ask your administrator to review this metric's approved formula in the Semantic Layer.",
-    "locking_select": "Ask the question again without any wording that implies changing or locking data.",
-    "order_alias_mismatch": "Try asking again; this is usually a transient generation slip.",
+    "access_denied": "fail.v.access_denied.next_step",
+    "cannot_generate": "fail.v.cannot_generate.next_step",
+    "dialect_mismatch": "fail.v.dialect_mismatch.next_step",
+    "graph_plan_mismatch": "fail.v.graph_plan_mismatch.next_step",
+    "composition_shape": "fail.v.composition_shape.next_step",
+    "entity_field_unavailable": "fail.v.entity_field_unavailable.next_step",
+    "surrogate_date_conversion": "fail.v.surrogate_date_conversion.next_step",
+    "reused_plan_empty": "fail.v.reused_plan_empty.next_step",
+    "temporal_anchor_missing": "fail.v.temporal_anchor_missing.next_step",
+    "temporal_anchor_mismatch": "fail.v.temporal_anchor_mismatch.next_step",
+    "temporal_role_mismatch": "fail.v.temporal_role_mismatch.next_step",
+    "temporal_anchor_unscoped": "fail.v.temporal_anchor_unscoped.next_step",
+    "source_fact_mismatch": "fail.v.source_fact_mismatch.next_step",
+    "raw_fact_to_fact_join": "fail.v.raw_fact_to_fact_join.next_step",
+    "fanout_aggregate": "fail.v.fanout_aggregate.next_step",
+    "derived_measure_mismatch": "fail.v.derived_measure_mismatch.next_step",
+    "locking_select": "fail.v.locking_select.next_step",
+    "order_alias_mismatch": "fail.v.order_alias_mismatch.next_step",
 }
-_DEFAULT_VALIDATION_NEXT_STEP = (
-    "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'). "
-    "If it keeps failing, ask your administrator to review the field mapping for this term."
-)
+_DEFAULT_VALIDATION_NEXT_STEP = "fail.v.default.next_step"
 
 
 def translate_failure(
@@ -509,9 +442,11 @@ def translate_failure(
             info = sanitize_db_error(exception_text or reason)
             technical = []
             if info["cleaned"]:
-                technical.append(f"Database error: {_clip(info['cleaned'])}")
+                technical.append(
+                    _t("fail.db.error_prefix", detail=_clip(info["cleaned"])))
             return {
-                "headline": "I could not run this query against your database.",
+                "kind": "execution",
+                "headline": _t("fail.exec.headline"),
                 "most_likely_reason": info["plain_reason"],
                 "suggested_next_step": info["next_step"],
                 "technical_notes": technical,
@@ -524,37 +459,45 @@ def translate_failure(
                 # alternatives and is more useful than a generic translation.
                 plain = _clip(reason)
             else:
-                plain = _VALIDATION_REASONS.get(
-                    code_key,
-                    "The generated query did not pass QueryBot's safety and accuracy checks.",
+                plain = (
+                    _t(_VALIDATION_REASONS[code_key])
+                    if code_key in _VALIDATION_REASONS
+                    else _t("fail.v.default.reason")
                 )
             technical = []
             if code_key:
                 technical.append(f"Validation: {code_key}")
             if reason and code_key != "entity_field_unavailable":
                 technical.append(_clip(reason))
-            next_step = _VALIDATION_NEXT_STEPS.get(code_key, _DEFAULT_VALIDATION_NEXT_STEP)
+            next_step = _t(_VALIDATION_NEXT_STEPS.get(
+                code_key, _DEFAULT_VALIDATION_NEXT_STEP))
             if suggestions:
-                next_step += f" Closest known terms in your data: {', '.join(suggestions)}."
+                next_step += " " + _t("fail.v.suggestions",
+                                      terms=", ".join(suggestions))
             return {
-                "headline": "I could not build a trusted query for this question.",
+                "kind": "validation",
+                "headline": _t("fail.validation.headline"),
                 "most_likely_reason": plain,
                 "suggested_next_step": next_step,
                 "technical_notes": technical,
             }
 
         # Unknown kind — generic but safe.
-        technical = [t for t in [_clip(reason or exception_text)] if t]
+        technical = [note for note in [_clip(reason or exception_text)] if note]
         return {
-            "headline": "I could not answer this question.",
-            "most_likely_reason": "Something went wrong while preparing or running the query.",
-            "suggested_next_step": "Try rephrasing the question; if it keeps failing, share the technical details with your administrator.",
+            "kind": "validation",
+            "headline": _t("fail.generic.headline"),
+            "most_likely_reason": _t("fail.generic.reason"),
+            "suggested_next_step": _t("fail.generic.next_step_technical"),
             "technical_notes": technical,
         }
     except Exception:
+        # Fail-open: a reader gets a card rather than a stack trace. Kept
+        # literal-free so even this path speaks their language.
         return {
-            "headline": "I could not answer this question.",
-            "most_likely_reason": "Something went wrong while preparing or running the query.",
-            "suggested_next_step": "Try rephrasing the question, or contact your administrator.",
+            "kind": "validation",
+            "headline": _t("fail.generic.headline"),
+            "most_likely_reason": _t("fail.generic.reason"),
+            "suggested_next_step": _t("fail.generic.next_step"),
             "technical_notes": [],
         }

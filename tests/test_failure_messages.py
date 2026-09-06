@@ -73,7 +73,12 @@ class SanitizeDbErrorTests(unittest.TestCase):
 
 
 class TranslateFailureTests(unittest.TestCase):
-    _KEYS = {"headline", "most_likely_reason", "suggested_next_step", "technical_notes"}
+    # `kind` was added so the portal can pick a card kicker from a machine
+    # token instead of regex-matching the English headline -- which made the
+    # headline wire format and downgraded every translated failure to the
+    # "no rows" kicker.
+    _KEYS = {"headline", "most_likely_reason", "suggested_next_step",
+             "technical_notes", "kind"}
 
     def test_validation_kind_maps_known_code(self):
         rca = translate_failure(
