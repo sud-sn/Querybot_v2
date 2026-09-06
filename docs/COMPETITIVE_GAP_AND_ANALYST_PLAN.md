@@ -733,22 +733,56 @@ Four source scans were converted to executed assertions in the process. Each
 had been a scan *because* the code was inline in a 4,000-line function and
 could not be called; extracting it is what made the behaviour testable.
 
+### Landed since
+
+- **E3 — draft everything; the human confirms** (`fc13287`, `a69e97d`).
+  `core/model_drafts.py` proposes date roles, column vocabulary mined from the
+  value index against the question log, and metric shapes asked repeatedly
+  that no measure answered. Nothing writes: `core/draft_review.py` stages the
+  applicable ones as `graph_change_proposal` rows, and accepting one re-reads
+  the target and refuses when it moved. Metric shapes are never staged — the
+  Accept button for one would have to invent SQL. Reachable from the workspace
+  nav and from What To Model Next.
+- **B3 — execution-guided self-correction** (`092a228`). One pass, guided by
+  the verifier's structured complaint and by `sanitize_db_error`'s reading of
+  a driver error rather than the driver's sentence. Non-destructive: adopted
+  only when strictly better, so a correction that fails cannot turn a
+  slightly-wrong answer into no answer.
+- **F1 — in-loop clarification** (`d407200`). When the repair ladder runs out
+  and the workspace holds two or more close terms, one focused question with
+  those terms as options, inside the clarification budget that already exists.
+  Only for failures a reader's answer can resolve.
+- **E2b — example retrieval on the KB's path** (`a8e0801`). Dense + BM25 + RRF
+  + cross-encoder, with an author, a verified-at stamp, the semantic model
+  version and a revocation flag. Stale demotes, revoked drops. Removed 93
+  lines of dead ChromaDB code — a shadowed retriever and an embedder with no
+  caller, between them the last chromadb usage in the product.
+- **A2 (partly) — named connections** (`5eedd10`, `aafdc9c`). `client_source`
+  behind one resolver, additive, with a startup backfill so an existing
+  workspace is unchanged. Corroboration now runs against the connection the
+  second subject area lives on, which is the capability A2's rationale names:
+  checking one area's number against another's when they are in different
+  warehouses.
+
 ### Not landed, and why
 
-- **A2 — multiple connections per workspace.** Deliberately deferred per §8;
-  domains within one connection cover what "multiple apps in a tenant" means
-  for a warehouse-backed customer.
-- **E2b** (moving example
-  retrieval off its older ChromaDB path), **E3** (auto-drafting date roles and
-  metric proposals for review), **F1** (in-loop clarification), and the **MCP
-  surface** (§6, sequenced after G2, which is now done).
+- **A2's local combine.** Comparison across connections works; COMBINATION
+  does not. The plan calls for one question compiled into N single-source
+  queries plus a governed combine over released rows, and the missing piece is
+  upstream of the combine itself: nothing decides that a question needs two
+  sources. Domain routing narrows to one. That decision is a design question
+  §8 never settled, and building a planner for it before a deal needs it would
+  be speculative machinery with no caller — the defect class this branch has
+  spent its time removing.
+- **The MCP surface** (§6, sequenced after G2, which is done).
+
 *(The admin pages are done — domains in `3aa9322`, the readiness backlog and
 metric coverage in `ceb010c`. The claim that domains had "working, tested JSON
 endpoints" was wrong: there was no endpoint and no writer at all, which is why
 the whole phase was inert.)*
 
 - **`docs/LIVE_TEST_PLAN.md`** covers everything on this branch as cases for a
-  live warehouse, a live model and a real browser — the things 7,418 automated
+  live warehouse, a live model and a real browser — the things 7,817 automated
   tests structurally cannot reach.
 
 ---
@@ -774,10 +808,11 @@ user's answer. The fact list is a property of the workspace's compiled model
 rather than of the question, so it is carried across; the primary's resolved
 graph and field plans are not.)*
 
-**The next one** is a matter of choice rather than sequence: nothing left in
-§10 blocks anything else. The largest remaining gap against the evaluation is
-**E3** — auto-drafting date roles and metric proposals for review — because it
-is the one that most directly reduces the manual modelling a new client has to
-do before the product answers well. The cheapest are the two **admin pages**:
-domains and the readiness backlog both have working, tested endpoints and no
-screen.
+*(E3, B3, F1, E2b and the first two thirds of A2 are done — see "Landed
+since" above.)*
+
+**What is left** is two things, and neither is blocked by the other. The MCP
+surface is a scoping decision about which tools to expose. A2's local combine
+is a design decision first and code second: nothing in the product currently
+decides that one question needs two sources, because domain routing narrows to
+one — so the combine has no caller until that is settled.

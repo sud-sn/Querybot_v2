@@ -2,7 +2,7 @@
 
 Everything on this branch, as cases a tester can run against a **live warehouse,
 a live model and a real browser**. It is deliberately not a restatement of the
-unit suite: 7,500 automated tests already run on every commit, and what they
+unit suite: 7,817 automated tests already run on every commit, and what they
 cannot reach is exactly what this plan covers — a real Snowflake/Oracle/Azure
 SQL connection, a real LLM with its own latency and refusals, real Qdrant
 retrieval, a real browser rendering real fonts, and real multi-tenant data.
@@ -431,6 +431,162 @@ warrant them (check the trace `ambiguity` and `domain_routing` fields), not on
 every question. Compare token spend against a pre-branch baseline if available.
 
 ---
+
+---
+
+## 10 · Drafting, correction and connections
+
+The five items that landed after the first draft of this plan. All five share
+a shape: the product already knew something and had no way to act on it.
+
+### 10.1 · Drafted for review (E3)
+
+**L10-1 · The drafters propose what the backlog only names** — *new*
+Steps: open **Drafted For Review** on a workspace with a schema, a value index
+and at least a week of questions. Press **Draft from the current workspace**.
+Pass: date-role proposals for date columns, and column-synonym proposals for
+opaque columns whose values people name in questions. Each row shows a diff.
+**False pass:** an empty queue read as "nothing to do". Check the three inputs
+first — a workspace with no value index and no question history can only
+produce date roles, and one whose columns are all already confirmed produces
+nothing by design.
+
+**L10-2 · A confirmed column is never proposed over** — *regression*
+Setup: confirm a date column's role by hand, deliberately as `dimension`.
+Steps: re-run drafting.
+Pass: that column does not appear. The admin's answer stands even when the
+vocabulary disagrees with it.
+
+**L10-3 · Accept applies it; the resolver sees it** — *new*
+Steps: accept a date-role proposal, then ask a question that needs that date.
+Pass: the property page shows the role confirmed with its synonyms, and the
+question filters on that column.
+**False pass:** checking only the admin page. The point of the role is that
+the RESOLVER reads it; verify with a question, not with a screenshot.
+
+**L10-4 · Accepting a stale proposal is refused** — *new*
+Steps: draft a proposal, then edit that column by hand, then accept the
+proposal.
+Pass: refused with a message saying the column changed; the proposal stays
+pending and your hand edit survives.
+**False pass:** accepting immediately. The refusal only fires when the row
+moved AFTER staging, so a test that accepts straight away proves nothing.
+
+**L10-5 · Rejection is final** — *new*
+Steps: reject a proposal, then press Draft again.
+Pass: it does not come back.
+
+**L10-6 · Drafting twice does not double the queue** — *new*
+Pass: the second run reports 0 new and the queue length is unchanged.
+
+**L10-7 · Measures people keep asking for** — *new*
+Pass: repeated question shapes that no metric answered are listed with their
+count and example questions, and have **no Accept button** — only Author.
+**False pass:** expecting SQL. A definition guessed from question text is a
+governed measure nobody wrote; the list is the case for building one.
+
+### 10.2 · Execution-guided correction (B3)
+
+**L10-8 · A wrong-shaped answer is corrected once** — *new*
+Steps: ask for a trend by month against a metric whose obvious query returns
+one row.
+Pass: the trace shows a `shape_correction` step, and the answer is a real
+trend. The correction runs once, not repeatedly.
+
+**L10-9 · A correction that does not help is discarded** — *new*
+Steps: find a question where the corrected query is no better.
+Pass: the ORIGINAL answer is shown, and the trace records the correction as
+attempted and not adopted.
+**False pass:** seeing an answer and assuming the correction worked. Read the
+trace — "attempted, discarded" and "never attempted" are different states and
+only one of them cost a model call.
+
+**L10-10 · A refusal is never rewritten around** — *regression*
+Steps: ask something a row policy refuses.
+Pass: no correction is attempted. Rewriting until a refusal stops being a
+refusal is getting around governance rather than working with it.
+
+**L10-11 · The database's own diagnosis reaches the repair**
+Steps: point a workspace at a table that has been renamed, then ask about it.
+Pass: the repaired query is a real attempt at the right table, not a re-run of
+the same name. The trace's repair prompt carries the plain reason and the
+next step, not only the driver's sentence.
+
+### 10.3 · Asking instead of giving up (F1)
+
+**L10-12 · A dead end becomes a question** — *new*
+Steps: ask for a measure by a name close to, but not exactly, one the
+workspace holds (e.g. "customer ordered qty" where it holds "purchase order
+quantity" and "order line quantity").
+Pass: instead of a failure card you get one question with those terms as
+options. Picking one re-runs the original question and answers it.
+**False pass:** a workspace with only ONE close term, or none. Below two
+options nothing is asked, on purpose — one suggestion is a correction the
+product should be making itself.
+
+**L10-13 · A failure a reader cannot fix is not put to them** — *regression*
+Steps: stop the warehouse, then ask anything.
+Pass: a plain failure card. No "which did you mean?".
+**False pass:** any question at all here is a fail, however well written.
+Asking about a database outage implies the outage was the reader's phrasing.
+
+**L10-14 · Only one recovery question per turn** — *new*
+Pass: answering the question and hitting a second dead end does not produce a
+second one.
+
+### 10.4 · Example retrieval (E2b)
+
+**L10-15 · An exemplar is found by its identifier** — *new*
+Setup: a validated example whose question names a rare column
+(`NDC_CODE`, a product code) that no other example mentions.
+Steps: ask a question using that identifier.
+Pass: that example is in the prompt (visible in the trace's retrieved
+examples).
+**False pass:** a question that is also semantically close. Use one where the
+identifier is the ONLY thing shared — that is what the lexical leg is for.
+
+**L10-16 · A revoked example never appears** — *new*
+Pass: after marking an example revoked it is absent from every prompt, at any
+rank and on any question.
+
+**L10-17 · A stale example is demoted, not dropped** — *new*
+Setup: rebuild the KB so the semantic model version changes.
+Pass: examples from before the rebuild still appear, below fresher ones.
+**False pass:** a workspace whose examples ALL predate the field — those count
+as current by design, and nothing will look demoted.
+
+### 10.5 · Connections (A2)
+
+**L10-18 · An existing workspace is unchanged** — *regression*
+Steps: restart the service on a workspace that has never seen this feature.
+Pass: it has exactly one source named "Default" pointing at the connection it
+already had, and every question answers exactly as before.
+**False pass:** a workspace created after the upgrade. Use one whose database
+predates it, or the backfill is not the thing being tested.
+
+**L10-19 · A second connection answers its own subject area** — *new*
+Setup: a second database connection, a domain whose tables live in it, and
+that domain tied to the source.
+Steps: ask a question that routes to that domain.
+Pass: the answer comes from the second warehouse; the trace names the
+connection.
+
+**L10-20 · One area is checked against another across connections** — *new*
+Steps: ask a question two domains on different connections can both answer.
+Pass: the answer carries a confirmation (or a disagreement) and the trace's
+corroboration step names the second connection, not "primary".
+**False pass:** both domains on one connection. The trace says `primary` and
+the whole point is untested.
+
+**L10-21 · No query ever spans two connections** — *regression*
+Steps: read the SQL of every query in the traces from L10-19 and L10-20.
+Pass: each names tables from exactly one connection. Two connections mean two
+governed executions compared, never one federated query.
+
+**L10-22 · A deleted default promotes another** — *new*
+Steps: delete the default source of a workspace that has two.
+Pass: the other becomes default and questions keep answering. A workspace with
+sources and no default cannot answer a question that names no domain.
 
 ## Sign-off
 
