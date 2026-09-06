@@ -23,7 +23,7 @@
 {% set _seg  = _tail.split('/')[0] if _tail else '' %}
 
 {% set _is_overview   = (_seg == '') %}
-{% set _is_model      = _seg in ['setup', 'kb', 'graph', 'date-roles', 'metrics', 'glossary', 'reports'] %}
+{% set _is_model      = _seg in ['setup', 'kb', 'graph', 'date-roles', 'metrics', 'glossary', 'domains', 'reports'] %}
 {% set _is_activity   = _seg in ['queries', 'traces', 'egress', 'billing'] %}
 {% set _is_quality    = _seg in ['model-health', 'evals', 'learning-queue'] %}
 {% set _is_access     = _seg in ['users', 'groups', 'pending-users'] %}
@@ -61,6 +61,7 @@
     <a href="{{ _b }}/metrics" class="{% if _seg == 'metrics' %}active{% endif %}">Metrics</a>
     <a href="{{ _b }}/reports" class="{% if _seg == 'reports' %}active{% endif %}">Reports</a>
     <a href="{{ _b }}/glossary" class="{% if _seg == 'glossary' %}active{% endif %}">Glossary</a>
+    <a href="{{ _b }}/domains" class="{% if _seg == 'domains' %}active{% endif %}">Subject Areas</a>
   </nav>
   {% elif _is_activity %}
   <nav class="client-workspace-secondary" aria-label="Activity and history">

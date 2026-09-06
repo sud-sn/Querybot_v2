@@ -1,0 +1,216 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% block title %}Subject Areas — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Subject Areas", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.area-card{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:1rem;
+  background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+.area-head{padding:.75rem 1rem;background:var(--surface-2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap}
+.area-name{font-size:15px;font-weight:800;color:var(--text)}
+.area-sub{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px}
+.area-body{padding:1rem}
+.tbl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.25rem .75rem;
+  max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);padding:.6rem}
+.tbl-grid label{display:flex;gap:.4rem;align-items:center;font-size:var(--font-sm);
+  font-family:var(--font-mono,monospace);color:var(--text)}
+.chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:var(--font-2xs);
+  font-weight:700;background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border);
+  margin:0 .25rem .25rem 0;font-family:var(--font-mono,monospace)}
+.field{margin-bottom:.75rem}
+.field label{display:block;font-size:var(--font-sm);font-weight:700;margin-bottom:.25rem}
+.field input[type=text],.field textarea{width:100%}
+.hint{font-size:var(--font-xs);color:var(--text-muted);margin-top:.2rem}
+#routePreview{font-size:var(--font-sm);margin-top:.5rem;min-height:1.2em}
+</style>
+{% endblock %}
+{% block content %}
+
+{% if saved %}<div class="alert alert-success">{% if saved == 'removed' %}Subject area removed.{% else %}Saved.{% endif %}</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>Subject areas</h2></div>
+  <div class="card-body">
+    <p class="hint" style="font-size:var(--font-sm)">
+      An area names a set of tables and the words people use for them — sales,
+      supply chain, finance. A question whose wording matches one area is answered
+      inside it, so the planner, the retriever and the validator all see that
+      area's tables and nothing else. A question that matches no area is answered
+      exactly as it is today, so adding areas cannot make an un-grouped workspace
+      worse.
+    </p>
+    <p class="hint" style="font-size:var(--font-sm)">
+      When a <strong>second</strong> area scores close to the winner, the same
+      question is also run there and the two answers compared. Agreement raises
+      the answer's confidence; a disagreement is shown to the reader with both
+      figures. That only happens when the runner-up is within
+      {{ (decisive_margin * 100) | round | int }}% of the winner and both clear a
+      score of {{ min_route_score }} — so ordinary questions are answered once.
+    </p>
+  </div>
+</div>
+
+{% if not table_choices %}
+<div class="alert alert-warning">
+  This workspace has no Knowledge Base tables selected yet, so there is nothing to
+  group. Finish Setup step 2 first.
+</div>
+{% endif %}
+
+{% if shared %}
+<div class="card">
+  <div class="card-header"><h3>Tables in more than one area</h3></div>
+  <div class="card-body">
+    <p class="hint">Not a fault — a shared dimension belongs in several areas. Worth
+      knowing, because two areas that share their facts will always agree.</p>
+    {% for table, names in shared.items() %}
+      <div><span class="chip">{{ table }}</span> <span class="area-sub">{{ names | join(", ") }}</span></div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% for domain in domains %}
+<form class="area-card" method="post" action="/admin/clients/{{ client.account_id }}/domains/save">
+  <input type="hidden" name="original_name" value="{{ domain.name }}">
+  <div class="area-head">
+    <div>
+      <div class="area-name">{{ domain.name }}</div>
+      <div class="area-sub">{{ domain.tables | length }} table{{ '' if domain.tables | length == 1 else 's' }}</div>
+    </div>
+    <div style="display:flex;gap:.4rem">
+      <button class="btn btn-primary btn-sm" type="submit">Save</button>
+      <button class="btn btn-sm" type="submit" formaction="/admin/clients/{{ client.account_id }}/domains/delete"
+              formnovalidate onclick="return confirm('Remove {{ domain.name }}? Questions will stop routing to it.')">Remove</button>
+    </div>
+  </div>
+  <div class="area-body">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" name="name" value="{{ domain.name }}" required>
+      <div class="hint">The word people use for this area. Matched as a whole phrase.</div>
+    </div>
+    <div class="field">
+      <label>Other words for it</label>
+      <input type="text" name="synonyms" value="{{ domain.synonyms or '' }}">
+      <div class="hint">Comma separated — "bookings, orders, pipeline". These do most of the routing.</div>
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea name="description" rows="2">{{ domain.description or '' }}</textarea>
+    </div>
+    <div class="field">
+      <label>Tables</label>
+      <div class="tbl-grid">
+        {% for table in table_choices %}
+          <label><input type="checkbox" name="tables" value="{{ table }}"
+            {% if table in domain.tables %}checked{% endif %}>{{ table }}</label>
+        {% endfor %}
+      </div>
+      <div class="hint">A user still only sees the tables they already have access to — an
+        area narrows that set, it never widens it.</div>
+    </div>
+  </div>
+</form>
+{% endfor %}
+
+<form class="area-card" method="post" action="/admin/clients/{{ client.account_id }}/domains/save">
+  <div class="area-head">
+    <div class="area-name">Add a subject area</div>
+    <button class="btn btn-primary btn-sm" type="submit">Create</button>
+  </div>
+  <div class="area-body">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" name="name" placeholder="Sales" required>
+    </div>
+    <div class="field">
+      <label>Other words for it</label>
+      <input type="text" name="synonyms" placeholder="bookings, orders, pipeline">
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea name="description" rows="2" placeholder="Orders, invoices and the customers behind them"></textarea>
+    </div>
+    <div class="field">
+      <label>Tables</label>
+      <div class="tbl-grid">
+        {% for table in table_choices %}
+          <label><input type="checkbox" name="tables" value="{{ table }}">{{ table }}</label>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</form>
+
+{% if unassigned %}
+<div class="card">
+  <div class="card-header"><h3>Not in any area ({{ unassigned | length }})</h3></div>
+  <div class="card-body">
+    <p class="hint">Questions about these are answered across the whole workspace, as before.</p>
+    {% for table in unassigned %}<span class="chip">{{ table }}</span>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header"><h3>Try a question</h3></div>
+  <div class="card-body">
+    <p class="hint">Check the wording against a real question before a user does.</p>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <input type="text" id="routeQ" style="flex:1;min-width:260px" placeholder="what were bookings last month">
+      <button class="btn btn-sm" type="button" id="routeGo">Check</button>
+    </div>
+    <div id="routePreview"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var go = document.getElementById('routeGo');
+  var box = document.getElementById('routeQ');
+  var out = document.getElementById('routePreview');
+  if (!go || !box || !out) return;
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  async function check() {
+    var q = box.value.trim();
+    if (!q) { out.textContent = ''; return; }
+    out.textContent = 'Checking…';
+    try {
+      var res = await fetch('/admin/api/clients/{{ client.account_id }}/domains/route?q=' + encodeURIComponent(q));
+      if (!res.ok) { out.textContent = 'Could not check that question.'; return; }
+      var data = await res.json();
+      if (!data.primary) {
+        out.innerHTML = '<strong>No area matched.</strong> Answered across the whole workspace, as before.';
+        return;
+      }
+      var line = '<strong>' + esc(data.primary) + '</strong> answers this.';
+      if (data.corroborates) {
+        line += ' <strong>' + esc(data.secondary) + '</strong> is close enough to be asked as well, and the two answers compared.';
+      }
+      var scores = (data.considered || []).map(function (m) {
+        return esc(m.name) + ' ' + m.score;
+      }).join(' · ');
+      out.innerHTML = line + '<div class="hint">' + scores + '</div>';
+    } catch (err) {
+      out.textContent = 'Could not check that question.';
+    }
+  }
+  go.addEventListener('click', check);
+  box.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); check(); } });
+})();
+</script>
+{% endblock %}

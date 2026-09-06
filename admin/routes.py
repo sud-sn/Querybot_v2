@@ -7568,6 +7568,139 @@ async def date_context_delete(request: Request, account_id: str, binding_id: int
 # Business glossary (semantic layer) — CRUD + auto-populate
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Subject areas (domains) ───────────────────────────────────────────────────
+# core/domains.py routes a question to the area it belongs to and, where two
+# areas could both answer, checks one against the other. All of it was
+# unreachable: store.save_domain had no caller outside its own module, so
+# list_domains returned [] for every tenant and the narrowing block in the
+# pipeline was a no-op on every question. This is the writer.
+
+
+def _domain_table_choices(client: dict) -> list[str]:
+    """The tables an admin can put in an area: the workspace's own KB tables."""
+    import json as _json
+
+    try:
+        state_data = _json.loads(client.get("state_data") or "{}")
+    except Exception:
+        state_data = {}
+    return sorted({
+        _normalize_table_ref(t)
+        for t in _parse_selected_schema_tables(state_data.get("kb_tables"))
+        if _normalize_table_ref(t)
+    })
+
+
+@router.get("/clients/{account_id}/domains", response_class=HTMLResponse)
+async def domains_page(request: Request, account_id: str):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from core.domains import DECISIVE_MARGIN, MIN_ROUTE_SCORE
+
+    domains = store.list_domains(account_id, active_only=False)
+    choices = _domain_table_choices(client)
+    # Which tables sit in more than one area. Not an error -- a shared
+    # dimension legitimately belongs to several -- but overlap is what decides
+    # whether a second opinion can disagree, so an admin should see it.
+    seen: dict[str, list[str]] = {}
+    for domain in domains:
+        for table in domain.get("tables") or []:
+            seen.setdefault(str(table).upper(), []).append(domain["name"])
+    return _resp(request, "client_domains.html", {
+        "client": client,
+        "domains": domains,
+        "table_choices": choices,
+        "unassigned": [t for t in choices if t not in seen],
+        "shared": {t: names for t, names in seen.items() if len(names) > 1},
+        "min_route_score": MIN_ROUTE_SCORE,
+        "decisive_margin": DECISIVE_MARGIN,
+        "saved": request.query_params.get("saved"),
+        "error": request.query_params.get("error"),
+    })
+
+
+@router.post("/clients/{account_id}/domains/save")
+async def domains_save(
+    request: Request,
+    account_id: str,
+    name: str = Form(...),
+    original_name: str = Form(""),
+    description: str = Form(""),
+    synonyms: str = Form(""),
+    tables: list[str] = Form([]),
+):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from urllib.parse import quote
+
+    clean = name.strip()
+    if not clean:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/domains?error={quote('A name is required')}",
+            status_code=303)
+    try:
+        store.save_domain(
+            account_id, clean,
+            tables=[_normalize_table_ref(t) for t in tables if str(t).strip()],
+            description=description.strip(),
+            synonyms=synonyms.strip(),
+        )
+        # A rename is a new row plus a dead one: save_domain keys on the name,
+        # so without this the old area keeps routing questions to itself.
+        previous = original_name.strip()
+        if previous and previous != clean:
+            store.delete_domain(account_id, previous)
+    except Exception as exc:  # noqa: BLE001
+        log.error("domains_save failed for %s: %s", account_id, exc)
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/domains?error={quote(str(exc)[:120])}",
+            status_code=303)
+    log.info("Subject area %r saved for %s", clean, account_id)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/domains?saved=1", status_code=303)
+
+
+@router.post("/clients/{account_id}/domains/delete")
+async def domains_delete(request: Request, account_id: str, name: str = Form(...)):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    store.delete_domain(account_id, name.strip())
+    log.info("Subject area %r removed for %s", name.strip(), account_id)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/domains?saved=removed", status_code=303)
+
+
+@router.get("/api/clients/{account_id}/domains/route")
+async def domains_route_preview(request: Request, account_id: str):
+    """What a given question would route to, before anyone asks it for real.
+
+    Routing decides which tables the planner, the retriever and the validator
+    all see, so an admin needs to be able to check an area's vocabulary
+    against a real question rather than discovering it from a bad answer.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.domains import route as _route
+
+    question = request.query_params.get("q") or ""
+    routing = _route(question, store.list_domains(account_id))
+    return JSONResponse({
+        "question": question,
+        "reason": routing.reason,
+        "primary": routing.primary.name if routing.primary else "",
+        "secondary": routing.secondary.name if routing.secondary else "",
+        "corroborates": routing.should_corroborate,
+        "considered": [
+            {"name": m.name, "score": m.score, "matched": list(m.matched)}
+            for m in routing.considered
+        ],
+    })
+
+
 @router.get("/clients/{account_id}/glossary", response_class=HTMLResponse)
 async def glossary_page(request: Request, account_id: str):
     if not _is_auth(request):
