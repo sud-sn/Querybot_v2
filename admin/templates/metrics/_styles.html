@@ -423,6 +423,23 @@
 .mr-cov-count{font-weight:600;color:var(--text-muted)}
 .mr-cov-list{margin:.2rem 0 0 1.1rem;padding:0;font-size:var(--font-sm);color:var(--text-muted)}
 .mr-cov-more{font-style:italic}
+
+/* Mined synonym proposals: a phrase readers used, the metric it means, and
+   the evidence for it. */
+.syn-row{display:flex;gap:.85rem;align-items:flex-start;padding:.65rem .8rem;
+  border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);
+  margin-bottom:.45rem}
+.syn-row.syn-done{opacity:.55}
+.syn-body{flex:1;min-width:0}
+.syn-phrase{font-size:14px;font-weight:800;color:var(--text)}
+.syn-arrow{color:var(--text-muted);font-weight:600;margin:0 .2rem}
+.syn-metric{font-weight:700;color:var(--primary)}
+.syn-detail{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px}
+.syn-examples{margin-top:.3rem;display:flex;flex-wrap:wrap;gap:.3rem}
+.syn-examples span{font-size:var(--font-2xs);color:var(--text-muted);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+  padding:1px 7px;font-style:italic}
+.syn-accept{flex:0 0 auto}
 </style>
 <!-- Pass db_type to JS -->
 <script>window._qbDbType = "{{ db_type | default('azure_sql') }}";</script>

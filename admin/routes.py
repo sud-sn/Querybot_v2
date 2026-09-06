@@ -3073,6 +3073,86 @@ async def readiness_page(request: Request, account_id: str):
     })
 
 
+@router.get("/api/clients/{account_id}/synonym-proposals")
+async def synonym_proposals_api(request: Request, account_id: str):
+    """Words readers use for a metric that the metric does not know.
+
+    Mined from failure-then-rephrase pairs in this account's own query log:
+    somebody asked for a measure, got nothing, said it differently, and the
+    second attempt bound to a metric. Whatever they stopped saying is a word
+    that means that metric to them and to nobody in the model.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.synonym_mining import MIN_OCCURRENCES, mine
+
+    proposals = mine(account_id)
+    return JSONResponse({
+        "min_occurrences": MIN_OCCURRENCES,
+        "proposals": [
+            {
+                "metric_id": p.metric_id,
+                "metric_name": p.metric_name,
+                "phrase": p.phrase,
+                "occurrences": p.occurrences,
+                "examples": list(p.examples),
+                "detail": p.detail,
+                "strong": p.strong,
+            }
+            for p in proposals
+        ],
+    })
+
+
+@router.post("/clients/{account_id}/metrics/{metric_id}/synonyms/accept")
+async def accept_synonym(
+    request: Request,
+    account_id: str,
+    metric_id: int,
+    phrase: str = Form(...),
+):
+    """Add one mined phrase to a metric's synonyms, on an admin's click.
+
+    The mining never writes: a proposal is a queue entry, because a synonym
+    written straight onto a governed metric from a mistyped question would let
+    anyone who can ask a question rename a measure. This is the human step.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from urllib.parse import quote
+
+    clean = " ".join(str(phrase or "").split()).strip().lower()
+    if not clean:
+        raise HTTPException(status_code=400, detail="A phrase is required.")
+
+    metric = next(
+        (m for m in store.list_metrics(account_id, active_only=False)
+         if int(m.get("id") or 0) == int(metric_id)),
+        None,
+    )
+    if not metric:
+        raise HTTPException(status_code=404, detail="No such metric.")
+
+    existing = [s.strip() for s in str(metric.get("synonyms") or "").split(",") if s.strip()]
+    if clean in {s.lower() for s in existing}:
+        # Idempotent: a double click must not duplicate the phrase, and the
+        # admin should not be told it failed either.
+        return JSONResponse({"ok": True, "synonyms": ", ".join(existing),
+                             "already": True})
+
+    merged = ", ".join(existing + [clean])
+    try:
+        store.update_metric(int(metric_id), {"synonyms": merged}, account_id=account_id)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Accepting synonym %r for metric %s failed: %s",
+                  clean, metric_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)[:160]) from exc
+
+    log.info("Synonym %r accepted onto metric %s for %s", clean, metric_id, account_id)
+    _after_semantic_approval(account_id, f"synonym '{clean}' accepted")
+    return JSONResponse({"ok": True, "synonyms": merged, "already": False})
+
+
 @router.get("/api/clients/{account_id}/readiness")
 async def model_readiness_api(request: Request, account_id: str):
     """What to model next, in the order that fixes the most questions.

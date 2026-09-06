@@ -1,0 +1,97 @@
+{# Words readers use for a metric that the metric does not know.
+
+   Mined from this account's own query log: somebody asked for a measure, got
+   nothing, said it differently, and the second attempt bound to a metric.
+   Whatever they stopped saying is a word that means that metric to them and to
+   nobody in the model — and it will fail again next week for the next person.
+
+   Loaded on demand rather than on render: mining walks the query log, and the
+   metrics page is opened far more often than the queue changes. #}
+<div class="card" id="synonymProposalsCard" style="display:none">
+  <div class="card-header">
+    <h3>Words readers used that this workspace does not know</h3>
+    <span class="badge badge-amber" id="synProposalCount"></span>
+  </div>
+  <div class="card-body">
+    <p style="font-size:var(--font-sm);color:var(--text-muted);margin:0 0 .75rem;max-width:760px">
+      Each row is a question that failed, followed within minutes by the same
+      reader asking it differently and getting an answer. The phrase they
+      dropped is a name for that metric which the metric does not carry.
+      Accepting one adds it to that metric's synonyms; nothing here is applied
+      on its own.
+    </p>
+    <div id="synonymProposalList"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var card = document.getElementById("synonymProposalsCard");
+  var list = document.getElementById("synonymProposalList");
+  var count = document.getElementById("synProposalCount");
+  if (!card || !list) return;
+
+  var acct = location.pathname.match(/\/clients\/([^/]+)\//);
+  if (!acct) return;
+  var ACCT = acct[1];
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function row(p) {
+    return '<div class="syn-row" data-metric="' + p.metric_id + '">'
+      + '<div class="syn-body">'
+      + '<div class="syn-phrase">“' + esc(p.phrase) + '”'
+      + ' <span class="syn-arrow">&rarr;</span> '
+      + '<span class="syn-metric">' + esc(p.metric_name) + "</span></div>"
+      + '<div class="syn-detail">' + esc(p.detail) + "</div>"
+      + (p.examples && p.examples.length
+          ? '<div class="syn-examples">' + p.examples.slice(0, 3).map(function (q) {
+              return "<span>“" + esc(q) + "”</span>";
+            }).join("") + "</div>"
+          : "")
+      + "</div>"
+      + '<button type="button" class="btn btn-sm btn-primary syn-accept" '
+      + 'data-metric="' + p.metric_id + '" data-phrase="' + esc(p.phrase) + '">'
+      + "Add synonym</button></div>";
+  }
+
+  function accept(btn) {
+    var body = new FormData();
+    body.append("phrase", btn.dataset.phrase);
+    btn.disabled = true;
+    btn.textContent = "Adding…";
+    fetch("/admin/clients/" + ACCT + "/metrics/" + btn.dataset.metric + "/synonyms/accept",
+          {method: "POST", body: body})
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function () {
+        var rowEl = btn.closest(".syn-row");
+        if (rowEl) rowEl.classList.add("syn-done");
+        btn.textContent = "Added";
+      })
+      .catch(function () {
+        // Said, not swallowed: a button that goes quiet reads as success.
+        btn.disabled = false;
+        btn.textContent = "Could not add — retry";
+      });
+  }
+
+  fetch("/admin/api/clients/" + ACCT + "/synonym-proposals")
+    .then(function (r) { return r.ok ? r.json() : {proposals: []}; })
+    .then(function (data) {
+      var proposals = (data && data.proposals) || [];
+      if (!proposals.length) return;          // nothing to review: stay hidden
+      card.style.display = "";
+      if (count) count.textContent = proposals.length + " to review";
+      list.innerHTML = proposals.slice(0, 25).map(row).join("");
+      list.addEventListener("click", function (e) {
+        var btn = e.target.closest(".syn-accept");
+        if (btn) accept(btn);
+      });
+    })
+    .catch(function () { /* a queue that cannot load is not an error state */ });
+})();
+</script>
