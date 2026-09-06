@@ -1039,7 +1039,8 @@ class TestDualRetrieveSimilarExamples(unittest.TestCase):
         """A filesystem-style path 'clients/my_tenant' -> parts[1] = 'my_tenant'."""
         captured = {}
 
-        def _fake_legacy(account_id, question, n=3, allowed_tables=None):
+        def _fake_legacy(account_id, question, n=3, allowed_tables=None,
+                         semantic_model_version=""):
             captured["account_id"] = account_id
             return []
 

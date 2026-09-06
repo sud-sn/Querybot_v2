@@ -62,6 +62,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger("querybot.vector_store")
@@ -1030,11 +1031,26 @@ def re_embed_single_file(
 def upsert_examples(
     account_id: str,
     examples: list[tuple[str, str, str]],   # (question, sql, fqn)
+    *,
+    author: str = "",
+    semantic_model_version: str = "",
+    revoked: bool = False,
 ) -> None:
     """
     Embed validated (question, sql, fqn) examples into Qdrant.
     The question is embedded; sql and fqn travel as payload.
     Idempotent — question hash used as ID so duplicates are overwritten.
+
+    Provenance travels with the example, because an exemplar is injected into
+    every SQL prompt and was previously anonymous and undated. ``author`` says
+    who stands behind it, ``verified_at`` when it was last known to run, and
+    ``semantic_model_version`` which model it was written against — the last
+    one lets retrieval demote an example whose tables have since changed shape
+    instead of trusting it equally with one written this morning.
+
+    ``revoked`` marks an example somebody has said is wrong. Retrieval drops
+    those outright rather than demoting them: demoting a wrong answer still
+    puts it in the prompt on a quiet day.
     """
     from qdrant_client.models import PointStruct
     if not examples:
@@ -1042,6 +1058,7 @@ def upsert_examples(
 
     questions = [q for q, _, _ in examples]
     vectors   = _embed(questions)
+    verified_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     points = []
     for (question, sql, fqn), vector in zip(examples, vectors):
@@ -1062,6 +1079,10 @@ def upsert_examples(
                 "question":    question,
                 "sql":         sql,
                 "ts":          int(time.time()),
+                "author":      author,
+                "verified_at": verified_at,
+                "semantic_model_version": semantic_model_version,
+                "revoked":     bool(revoked),
             },
         ))
 
@@ -1465,30 +1486,57 @@ class QdrantKBRetriever:
 # Example retrieval — mirrors retrieve_similar_examples in core/examples.py
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _example_is_current(payload: dict, model_version: str) -> bool:
+    """Was this example verified under the semantic model in force now?
+
+    An example with no recorded version predates the field. Treated as
+    current rather than stale: marking every legacy example stale on the day
+    the field ships would demote the entire corpus at once, which is a change
+    in retrieval quality dressed up as a provenance improvement.
+    """
+    if not model_version:
+        return True
+    stored = str(payload.get("semantic_model_version") or "")
+    return not stored or stored == model_version
+
+
 def retrieve_similar_examples(
     account_id: str,
     question: str,
     n: int = 3,
     allowed_tables: set[str] | None = None,
+    semantic_model_version: str = "",
 ) -> list[dict]:
     """
-    Return the top-n most semantically similar validated examples.
+    Return the top-n validated examples closest to the question.
 
-    Each result: {"question": str, "sql": str, "table": str}
+    Each result: {"question", "sql", "table", "author", "verified_at", "stale"}.
     Returns [] if no examples exist yet.
+
+    HYBRID, on the same path the knowledge base uses. This was dense-only --
+    one embedding, one ANN search, no lexical leg and no reranker -- while the
+    KB it sits beside in the same prompt had long since moved to dense + BM25
+    + RRF + cross-encoder. Examples are the one retrieval in the product where
+    the lexical leg matters most: an exemplar is chosen because it shares a
+    MEASURE NAME with the question, and a column name is exactly the token a
+    dense embedding smooths away.
+
+    Revoked examples are never returned, at any rank. A revoked exemplar is
+    one somebody has said is wrong, and demoting a wrong answer still leaves
+    it in the prompt on a quiet day.
     """
     from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
 
-    count = _qdrant().count(
-        collection_name=_COLLECTION,
-        count_filter=Filter(must=[
-            FieldCondition(key="account_id", match=MatchValue(value=account_id)),
-            FieldCondition(key="doc_type",   match=MatchValue(value="example")),
-        ]),
-        exact=False,
-    ).count
-    if count == 0:
-        return []
+    def _payload_ok(payload: dict) -> bool:
+        if not payload.get("sql"):
+            return False
+        if payload.get("revoked"):
+            return False
+        if allowed_tables is not None:
+            table = str(payload.get("table_name") or "").upper()
+            if table and table not in {t.upper() for t in allowed_tables}:
+                return False
+        return True
 
     must = [
         FieldCondition(key="account_id", match=MatchValue(value=account_id)),
@@ -1498,28 +1546,81 @@ def retrieve_similar_examples(
         must.append(
             FieldCondition(key="fqn", match=MatchAny(any=[t.upper() for t in allowed_tables]))
         )
+    query_filter = Filter(must=must)
 
+    if _qdrant().count(collection_name=_COLLECTION, count_filter=query_filter,
+                       exact=False).count == 0:
+        return []
+
+    # ── dense ─────────────────────────────────────────────────────────────
+    pool = max(n * 2, _RERANK_POOL)
+    dense: list[dict] = []
     try:
-        hits = _qdrant().query_points(
+        dense = [h.payload for h in _qdrant().query_points(
             collection_name=_COLLECTION,
             query=_embed([question])[0],
-            query_filter=Filter(must=must),
-            limit=n,
+            query_filter=query_filter,
+            limit=pool,
             with_payload=True,
             search_params={"hnsw_ef": _EF_SEARCH},
-        ).points
-    except Exception as e:
-        log.error("Example retrieval failed: %s", e)
+        ).points if h.payload]
+    except Exception as exc:  # noqa: BLE001
+        log.error("Example dense retrieval failed: %s", exc)
+
+    # ── lexical ───────────────────────────────────────────────────────────
+    # Best-effort, exactly as the KB path treats it: rank_bm25 missing or a
+    # cold corpus degrades to dense-only rather than to nothing.
+    lexical: list[dict] = []
+    try:
+        allowed_fqns = (sorted({t.upper() for t in allowed_tables})
+                        if allowed_tables is not None else None)
+        built = _get_bm25(account_id, allowed_fqns, doc_types=["example"])
+        if built:
+            bm25_obj, bm25_docs = built
+            lexical = _bm25_search(bm25_obj, bm25_docs, question, pool,
+                                   doc_types=["example"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Example BM25 retrieval unavailable: %s", exc)
+
+    candidates = _rrf_fuse(dense, lexical) if lexical else dense
+    candidates = [payload for payload in candidates if _payload_ok(payload)]
+    if not candidates:
         return []
+
+    ranked = _rerank(question, candidates[:_RERANK_POOL], top_n=len(candidates))
+
+    # ── staleness, applied after ranking and never as a filter ────────────
+    #
+    # Every current example before every stale one, each group keeping the
+    # order the reranker gave it. Demoted, never dropped: an exemplar written
+    # before a KB rebuild is usually still the best answer available, and
+    # hard-filtering it leaves the prompt with nothing where it had something
+    # imperfect.
+    #
+    # A numeric penalty added to the rank was the first version and does not
+    # work: a penalty small enough to preserve order within a group is small
+    # enough to tie across groups, and one large enough to separate them is
+    # doing what this two-key sort does, less legibly.
+    ordered = [
+        payload for _, payload in sorted(
+            enumerate(ranked),
+            key=lambda pair: (
+                not _example_is_current(pair[1], semantic_model_version),
+                pair[0],
+            ),
+        )
+    ]
 
     return [
         {
-            "question": h.payload.get("question", ""),
-            "sql":      h.payload.get("sql", ""),
-            "table":    h.payload.get("table_name", ""),
+            "question":    payload.get("question", ""),
+            "sql":         payload.get("sql", ""),
+            "table":       payload.get("table_name", ""),
+            "author":      payload.get("author", ""),
+            "verified_at": payload.get("verified_at", ""),
+            "stale":       not _example_is_current(payload, semantic_model_version),
         }
-        for h in hits
-        if h.payload.get("sql")
+        for payload in ordered[:n]
     ]
 
 

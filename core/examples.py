@@ -553,96 +553,15 @@ def _add_row_cap(sql: str, db_type: str, n: int = 1) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ChromaDB embedding for validated examples
+# Retrieval at query time — see retrieve_similar_examples below.
+#
+# A ChromaDB embedder and a ChromaDB retriever used to live here. Examples
+# moved to Qdrant, and the Qdrant retriever was added LOWER IN THIS FILE under
+# the same name — so the ChromaDB one was shadowed at import and never ran
+# again, while the embedder lost its last caller. They stayed for the same
+# reason dead code always stays: nothing failed. Between them they were the
+# last chromadb import in the product.
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _embed_examples(validated: list[tuple[str, str, str]], chroma_dir: str) -> None:
-    """Embed validated (question, sql, table) into a separate ChromaDB collection."""
-    import chromadb
-    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-
-    ef     = SentenceTransformerEmbeddingFunction(model_name=_EMBEDDING_MODEL)
-    client = chromadb.PersistentClient(path=chroma_dir)
-
-    # Get or create — safe for incremental updates
-    try:
-        col = client.get_collection(_EXAMPLES_COLL, embedding_function=ef)
-    except Exception:
-        col = client.create_collection(_EXAMPLES_COLL, embedding_function=ef)
-
-    # Build documents: embed the question (used for retrieval)
-    # Store the SQL as metadata so we can retrieve it
-    docs, ids, metas = [], [], []
-    for i, (question, sql, table_name) in enumerate(validated):
-        doc_id = f"ex_{abs(hash(question)) % 10**9}"
-        docs.append(question)
-        ids.append(doc_id)
-        metas.append({"sql": sql, "table": table_name,
-                      "question": question})
-
-    if docs:
-        # Upsert — safe on re-runs
-        try:
-            col.upsert(documents=docs, ids=ids, metadatas=metas)
-        except Exception as e:
-            log.error("Failed to embed examples: %s", e)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Retrieval at query time
-# ══════════════════════════════════════════════════════════════════════════════
-
-def retrieve_similar_examples(
-    question: str,
-    chroma_dir: str,
-    n: int = 3,
-    allowed_tables: set[str] | None = None,
-) -> list[dict]:
-    """
-    Return the top-n most semantically similar validated examples to the question.
-    Each result: {"question": str, "sql": str, "table": str}
-    Returns empty list if no examples exist yet.
-    """
-    import chromadb
-    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-
-    try:
-        ef     = SentenceTransformerEmbeddingFunction(model_name=_EMBEDDING_MODEL)
-        client = chromadb.PersistentClient(path=chroma_dir)
-        col    = client.get_collection(_EXAMPLES_COLL, embedding_function=ef)
-    except Exception:
-        return []  # Collection does not exist yet — no examples
-
-    total = col.count()
-    if total == 0:
-        return []
-
-    try:
-        results = col.query(
-            query_texts=[question],
-            n_results=min(n * 2, total),
-            include=["documents", "metadatas"],
-        )
-    except Exception as e:
-        log.error("Example retrieval failed: %s", e)
-        return []
-
-    metas = results.get("metadatas", [[]])[0]
-    examples = []
-    for meta in metas:
-        if allowed_tables is not None:
-            tbl = (meta.get("table") or "").upper()
-            if tbl and tbl not in allowed_tables:
-                continue
-        examples.append({
-            "question": meta.get("question", ""),
-            "sql":      meta.get("sql", ""),
-            "table":    meta.get("table", ""),
-        })
-        if len(examples) >= n:
-            break
-
-    return examples
 
 
 def _is_stale_null_diagnostic_example(sql: str) -> bool:
@@ -889,29 +808,44 @@ def retrieve_similar_examples(
         if len(parts) >= 2:
             account_id = parts[1]
 
+    # The semantic model in force right now. Both stores use it the same way
+    # -- to DEMOTE an example written against an older model, never to drop
+    # one -- so it is computed once here rather than twice, differently.
+    current_version = ""
+    if kb_dir:
+        try:
+            from core.semantic_model import semantic_model_fingerprint
+            current_version = semantic_model_fingerprint(kb_dir)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("semantic model fingerprint unavailable (non-fatal): %s", exc)
+
     # 1. Legacy examples (querybot_kb, doc_type="example")
     legacy: list[dict] = []
     try:
-        legacy = _qs_retrieve(account_id, question, n=n, allowed_tables=allowed_tables)
-    except Exception as exc:
-        log.debug("legacy example retrieval skipped (non-fatal): %s", exc)
+        legacy = _qs_retrieve(account_id, question, n=n,
+                              allowed_tables=allowed_tables,
+                              semantic_model_version=current_version)
+    except Exception as exc:  # noqa: BLE001
+        # WARNING, not debug. Non-fatal is not the same as unremarkable: this
+        # returning nothing means every SQL prompt loses its few-shot
+        # grounding, which does not fail anything and quietly makes every
+        # answer worse. Debug level is how "always broken" and "nothing to
+        # retrieve" became indistinguishable.
+        log.warning("Legacy example retrieval failed for %s (prompts will have "
+                    "no few-shot examples): %s", account_id, exc)
 
     # 2. Governed examples (querybot_governed) -- best-effort
     governed: list[dict] = []
     try:
         from core.governed_store import retrieve_governed_examples
-        current_version = ""
-        if kb_dir:
-            from core.semantic_model import semantic_model_fingerprint
-            current_version = semantic_model_fingerprint(kb_dir)
         governed = retrieve_governed_examples(
             account_id, question, n=n,
             allowed_tables=allowed_tables,
             schema_scope=schema_scope,
             current_semantic_model_version=current_version,
         )
-    except Exception as exc:
-        log.debug("governed example retrieval skipped (non-fatal): %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Governed example retrieval failed for %s: %s", account_id, exc)
 
     if not governed:
         return legacy[:n]

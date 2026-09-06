@@ -146,17 +146,43 @@ class WiringMarkerTests(unittest.TestCase):
         self.assertIn('semantic_model_version=c.get("semantic_model_version", "")', body)
 
     def test_examples_retrieval_computes_current_version_from_kb_dir(self):
-        # retrieve_similar_examples is defined TWICE in this file — an
-        # earlier legacy ChromaDB-based version, then the real dual-source
-        # (governed + legacy Qdrant) one that's actually live (Python keeps
-        # only the last definition). rindex to make sure this test checks
-        # the function that actually runs, not the dead first definition.
-        src = (ROOT / "core" / "examples.py").read_text(encoding="utf-8")
-        start = src.rindex("def retrieve_similar_examples(")
-        body = src[start:start + 3200]
-        self.assertIn('kb_dir: str = ""', body)
-        self.assertIn("from core.semantic_model import semantic_model_fingerprint", body)
-        self.assertIn("current_semantic_model_version=current_version", body)
+        # EXECUTED, not sliced. This read 3,200 characters from the start of
+        # the function and searched them, which broke the moment a comment was
+        # added above the line it was looking for — the assertion silently
+        # fell outside the window. Its comment also said the function was
+        # defined twice, with a dead ChromaDB version first; that one has
+        # since been deleted, so the rindex it justified was guarding against
+        # nothing.
+        from unittest.mock import patch
+
+        import core.examples as examples
+        import core.governed_store as governed_store
+        import core.semantic_model as semantic_model
+        import core.vector_store as vector_store
+
+        seen = {}
+
+        def _legacy(account_id, question, n=3, allowed_tables=None,
+                    semantic_model_version=""):
+            seen["legacy"] = semantic_model_version
+            return []
+
+        def _governed(account_id, question, n=3, allowed_tables=None,
+                      schema_scope="", current_semantic_model_version=""):
+            seen["governed"] = current_semantic_model_version
+            return []
+
+        with patch.object(vector_store, "retrieve_similar_examples",
+                          side_effect=_legacy), \
+                patch.object(governed_store, "retrieve_governed_examples",
+                             side_effect=_governed), \
+                patch.object(semantic_model, "semantic_model_fingerprint",
+                             return_value="fp-123") as fingerprint:
+            examples.retrieve_similar_examples("q", "acct", kb_dir="/kb/dir")
+
+        fingerprint.assert_called_once_with("/kb/dir")
+        self.assertEqual(seen["governed"], "fp-123")
+        self.assertEqual(seen["legacy"], "fp-123")
 
     def test_query_pipeline_passes_kb_dir_to_example_retrieval(self):
         src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
