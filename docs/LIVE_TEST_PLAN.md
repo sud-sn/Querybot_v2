@@ -2,7 +2,7 @@
 
 Everything on this branch, as cases a tester can run against a **live warehouse,
 a live model and a real browser**. It is deliberately not a restatement of the
-unit suite: 7,418 automated tests already run on every commit, and what they
+unit suite: 7,500 automated tests already run on every commit, and what they
 cannot reach is exactly what this plan covers — a real Snowflake/Oracle/Azure
 SQL connection, a real LLM with its own latency and refusals, real Qdrant
 retrieval, a real browser rendering real fonts, and real multi-tenant data.
@@ -349,6 +349,59 @@ Pass: each finds the accented entry.
 **L8-13 · Nothing renders a raw message id**
 Steps: walk every French screen.
 Pass: no text of the form `ui.something.something` or `fail.v.something`.
+
+**L8-14 · A digest arrives in the recipient's language** — *new*
+Setup: two users on the same account subscribed to the same scheduled report,
+one with `lang='fr'` and one with `lang='en'`. Let the scheduler deliver it —
+do **not** trigger it from a signed-in browser session.
+Pass: each recipient's digest is in their own language, and the French one
+writes figures as `1 234,50`, not `1,234.50`.
+**False pass:** triggering the digest from your own logged-in session. The
+scheduler runs on its own thread with no request behind it, so a browser-
+triggered send can pick up a language that the real 8am delivery never sees —
+which is the exact bug this case exists to catch. Check the delivery timestamp
+matches the schedule, not your click.
+
+**L8-15 · An alert arrives in the recipient's language** — *new*
+Setup: an alert owned by a French user on a metric you can move; trip it.
+Pass: the notification reads `⚠️ ALERTE : … est maintenant à 1 234,50 (en
+hausse de 23,4 %…)`. The direction word is French too, not "increased" inside a
+French sentence.
+**False pass:** reading only the figures. The sentence template, the direction
+word and the numbers are three separate translations and the first version of
+this shipped with only the last two done — a French-looking number inside an
+English sentence passes a careless look.
+
+**L8-16 · An alert for a deleted user still fires** — *new*
+Setup: an alert whose `user_id` no longer resolves to a row.
+Pass: the alert still delivers, in English, and the log carries a warning
+naming the alert. It must not be dropped.
+
+**L8-17 · Chart labels are drawn in French** — *new*
+Steps: as a French user, produce one of each: a time series with a biggest
+drop/gain annotation, a pie, a funnel, a cohort heatmap, a treemap, a
+histogram. Repeat on a **pinned dashboard tile**, not only in chat.
+Pass: every word drawn on the canvas is French — `↓ -23,4 % Baisse`, `Part du
+total`, `Abandon`, `Rétention`, `Nombre`, `Non précisé` — and every percentage
+uses a comma and a no-break space (`23,4 %`).
+**False pass:** checking the tooltip only. The tooltip name and the label drawn
+on the canvas are two different strings and shipped in two different languages
+once already. Hover *and* look at the chart itself. Equally, checking chat only:
+the dashboard builds its charts from its own copy of the code.
+
+**L8-18 · A slice with no category says so in French** — *new*
+Steps: a pie over a dimension with NULLs.
+Pass: the slice reads `Non précisé`, in the legend, the label and the tooltip.
+
+**L8-19 · The chart and the sentence round the same way** — *new*
+Steps: find a figure that lands exactly on a half at the displayed precision
+(a 2.5% share, an 80.5% retention).
+Pass: the number on the chart and the same number in the narrative, the table
+and any digest agree exactly. `2.5%` must not read `3%` on the chart and `2%`
+in the sentence under it.
+**False pass:** a value that is not an exact tie. `23.45` is stored just below
+its own decimal literal, so it rounds down everywhere regardless and proves
+nothing. Use a value that is exactly representable: 0.5, 2.5, 80.5.
 
 ---
 
