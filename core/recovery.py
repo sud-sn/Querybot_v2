@@ -49,6 +49,22 @@ SUPERSEDABLE_STEPS = ATTEMPT_STEPS | {
     "reused_plan_empty",
 }
 
+# The steps whose success means the run actually got somewhere, as opposed to
+# an attempt that merely ran. Only these can supersede an earlier failure.
+#
+# The anchor used to be any non-failed superedable step, and the repair paths
+# log their generation as `llm_generate_sql` with the store's default status of
+# "success" -- so on a run that generated, failed validation, regenerated and
+# failed validation again, the FIRST failure was relabelled "superseded" by the
+# second generation. A run that ended in failure had one of its two real
+# failures hidden, which is precisely the quiet rewriting of failures this
+# module's docstring says it must not do.
+OUTCOME_STEPS = frozenset({
+    "validate_sql",
+    "zero_row_fresh_date_filtered",
+    "reused_plan_empty",
+})
+
 # The statuses that mean an attempt did not work out.
 FAILED_STATUSES = frozenset({"error", "failed", "invalid"})
 
@@ -97,17 +113,24 @@ def mark_superseded(steps: list[dict]) -> list[dict]:
     Returns new dicts; the input is not mutated, and every returned step keeps
     its ``original_status`` so the audit record still says what happened.
 
-    Only failures BEFORE a success are superseded. A failure after the last
-    success is the run's actual outcome and stays an error — relabelling that
-    would turn a broken run into a tidy one, which is the opposite of the
-    point.
+    Only failures before a later OUTCOME succeeded are superseded, and the
+    outcome steps are the narrow set in ``OUTCOME_STEPS`` — not any step that
+    merely ran. A failure after the last such success is the run's actual
+    outcome and stays an error; relabelling that would turn a broken run into
+    a tidy one, which is the opposite of the point.
+
+    The distinction is not academic. The repair paths log their generation as
+    ``llm_generate_sql`` with the store's default status of "success", so
+    anchoring on "any step that did not fail" meant a second generation
+    superseded the first validation failure — on a run that then failed
+    validation again and answered nothing.
     """
     if not steps:
         return []
 
     last_success = -1
     for index, step in enumerate(steps):
-        if _name(step) in SUPERSEDABLE_STEPS and _status(step) not in FAILED_STATUSES:
+        if _name(step) in OUTCOME_STEPS and _status(step) not in FAILED_STATUSES:
             last_success = index
 
     out: list[dict] = []

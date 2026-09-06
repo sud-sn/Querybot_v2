@@ -222,7 +222,16 @@ def build_answer_confidence(
                 "returned the same figure."
             ))
         else:
-            score = min(score - 20, 59)
+            # 49, not 59. The reader-facing surface shows a warning inline
+            # only when the verdict is LOW, and puts everything else behind a
+            # collapsed disclosure -- so a cap at 59 landed one point above
+            # the threshold and hid the disagreement behind a click nobody has
+            # a reason to make. The candidate-disagreement branch above caps
+            # at 49 for the same reason. Two areas disagreeing is at least as
+            # serious as two candidates disagreeing: it means the business has
+            # two answers to the question, which the reader cannot resolve by
+            # rephrasing it.
+            score = min(score - 20, 49)
             warnings.append(line or (
                 "A second subject area answers this question differently. "
                 "The figure shown is from the area this question was routed "

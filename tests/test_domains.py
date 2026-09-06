@@ -632,7 +632,7 @@ class TestThePipelineAppliesIt(unittest.TestCase):
         # retriever looking at the whole workspace.
         source = self._source()
         narrowed = source.index("_scope_decision = _narrow_to_domain(")
-        derived = source.index("query_scope_tables = effective if")
+        derived = source.index("query_scope_tables = (")
         self.assertLess(narrowed, derived)
 
     def test_it_runs_after_the_selected_schema_narrows_the_scope(self):
@@ -656,6 +656,31 @@ class TestThePipelineAppliesIt(unittest.TestCase):
         source = self._source()
         self.assertIn("if _scope_decision.applied:\n                _domain_routing = _scope_decision.routing",
                       source)
+
+    def test_a_routed_question_scopes_the_validator_as_well_as_the_executor(self):
+        """The two must not disagree, and for an admin they did.
+
+        query_scope_tables feeds the retriever, the prompt grounding and the
+        ValidationScope; `effective` feeds execute_governed_query. An
+        unrestricted admin has allowed_tables None and no schema tab, so
+        query_scope_tables stayed None while `effective` had been narrowed to
+        the domain — generation over the whole workspace, validation over the
+        whole workspace, then access_denied at execution. Default posture for
+        an admin, not an edge case.
+        """
+        source = self._source()
+        start = source.index("query_scope_tables = (")
+        block = source[start:start + 400]
+        self.assertIn("_domain_routing is not None", block)
+
+    def test_the_scope_is_still_unrestricted_when_nothing_narrowed_it(self):
+        # An admin with no ACL, no schema tab and no routed domain must keep
+        # None, which means "unrestricted" everywhere downstream. Turning it
+        # into a set would silently restrict every admin in the product.
+        source = self._source()
+        start = source.index("query_scope_tables = (")
+        block = source[start:start + 400]
+        self.assertIn("else None", block)
 
     def test_the_answering_domain_reaches_answer_confidence(self):
         self.assertIn('"domain": (', self._source())

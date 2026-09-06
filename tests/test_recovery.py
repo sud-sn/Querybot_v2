@@ -317,5 +317,73 @@ class TestTheStoreAnnotatesOnRead(unittest.TestCase):
         self.assertIn("validate_sql", trace["recovery"]["unresolved"])
 
 
+class TestAFailureIsNotHiddenByARunThatNeverRecovered(unittest.TestCase):
+    """The anchor has to be an OUTCOME, not any step that happened to run.
+
+    The repair paths log their generation as `llm_generate_sql` with the
+    store's default status of "success". Anchoring on "any superedable step
+    that did not fail" therefore let a second GENERATION supersede the first
+    validation failure — on a run that then failed validation again and
+    answered nothing. One of two real failures vanished from the trace, which
+    is exactly the quiet rewriting of failures this module exists not to do.
+    """
+
+    @staticmethod
+    def _steps(*pairs):
+        return [{"step_name": n, "status": s} for n, s in pairs]
+
+    def test_two_failed_attempts_stay_two_failures(self):
+        from core.recovery import mark_superseded
+
+        out = mark_superseded(self._steps(
+            ("llm_generate_sql", "success"), ("validate_sql", "error"),
+            ("llm_generate_sql", "success"), ("validate_sql", "error"),
+        ))
+        self.assertEqual([s["status"] for s in out],
+                         ["success", "error", "success", "error"])
+        self.assertFalse(any(s["superseded"] for s in out))
+
+    def test_a_run_that_did_recover_still_supersedes_the_earlier_failure(self):
+        # The discriminating half: the fix must not stop supersession working.
+        from core.recovery import SUPERSEDED, mark_superseded
+
+        out = mark_superseded(self._steps(
+            ("llm_generate_sql", "success"), ("validate_sql", "error"),
+            ("llm_generate_sql", "success"), ("validate_sql", "success"),
+        ))
+        self.assertEqual(out[1]["status"], SUPERSEDED)
+        self.assertTrue(out[1]["superseded"])
+        self.assertEqual(out[1]["original_status"], "error")
+
+    def test_the_summary_agrees_with_the_labels(self):
+        from core.recovery import summarise
+
+        failed = summarise(self._steps(
+            ("llm_generate_sql", "success"), ("validate_sql", "error"),
+            ("llm_generate_sql", "success"), ("validate_sql", "error"),
+        ))
+        self.assertFalse(failed.recovered)
+        self.assertEqual(failed.superseded, 0)
+        self.assertEqual(list(failed.unresolved), ["validate_sql", "validate_sql"])
+
+        recovered = summarise(self._steps(
+            ("llm_generate_sql", "success"), ("validate_sql", "error"),
+            ("llm_generate_sql", "success"), ("validate_sql", "success"),
+        ))
+        self.assertTrue(recovered.recovered)
+        self.assertEqual(recovered.superseded, 1)
+        self.assertEqual(list(recovered.unresolved), [])
+
+    def test_a_generation_step_alone_cannot_anchor_a_supersession(self):
+        from core.recovery import mark_superseded
+
+        # No outcome step at all: nothing succeeded, so nothing is superseded.
+        out = mark_superseded(self._steps(
+            ("validate_sql", "error"), ("llm_generate_sql", "success"),
+        ))
+        self.assertFalse(any(s["superseded"] for s in out))
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2049,7 +2049,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Downstream query scope. For unrestricted admins this remains None unless
     # they explicitly select a schema tab; then the selected schema must also
     # constrain retrieval, prompt grounding, validation, and repair.
-    query_scope_tables = effective if (allowed_tables is not None or schema_hint) else None
+    # `_domain_routing is not None` is the third case, and without it a routed
+    # question was scoped in two different places at once. An unrestricted
+    # admin has allowed_tables None and no schema tab, so this stayed None --
+    # the retriever, the prompt and the validator all saw the whole workspace
+    # while the EXECUTOR was pinned to the domain-narrowed `effective`.
+    # Generation then landed on an out-of-domain table, passed validation, and
+    # was refused by execute_governed_query as access_denied. That is the
+    # default posture for an admin, not an edge case.
+    query_scope_tables = (
+        effective
+        if (allowed_tables is not None or schema_hint or _domain_routing is not None)
+        else None
+    )
 
     matched_metric = store.match_metric(account_id, question)
     if matched_metric:

@@ -17,8 +17,12 @@ Two things are asserted hardest:
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import sys
+import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -602,3 +606,106 @@ class TestOneUnreadableSettingDoesNotTakeDownTheRest(unittest.TestCase):
         import store
         self.assertEqual(store.get_system("openai_api_key"), "sk-readable")
         self.assertEqual(store.get_all_system()["openai_api_key"], "sk-readable")
+
+
+# ── Proof of refusal ──────────────────────────────────────────────────────────
+
+class TestARefusalIsRecordedEvenWithCallLoggingOff(unittest.TestCase):
+    """The evidence of refusal is the point of the clause it serves.
+
+    record_llm_blocked used to share record_llm_call's `enabled` gate, which
+    is the client's "enable LLM audit" toggle — and that column defaults to 0.
+    So on a default workspace an air-gapped refusal blocked correctly and
+    recorded nothing, and the proof pack's refusals section, which reads
+    exactly these rows, reported "0 model calls were refused" for a tenant
+    that had refused some.
+
+    That gate is about the volume of CALL logging. A refusal is not a call: it
+    carries no prompt, no payload and no data, and it is rare by construction.
+    """
+
+    def setUp(self):
+        import store
+
+        self._dir = tempfile.mkdtemp(prefix="qb-refusal-")
+        self._saved = {k: os.environ.get(k) for k in ("DB_PATH", "QUERYBOT_DB_PATH")}
+        path = os.path.join(self._dir, "d.db")
+        os.environ["DB_PATH"] = path
+        os.environ["QUERYBOT_DB_PATH"] = path
+        store.init_db()
+        self.account_id = f"acct-ref-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(self.account_id, "portal")
+
+    def tearDown(self):
+        for key, value in self._saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+    def _blocked_rows(self):
+        import store
+
+        with store.get_db() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT status, component, payload_preview_sanitized "
+                "FROM llm_call_log WHERE account_id=? AND status='blocked'",
+                (self.account_id,),
+            ).fetchall()]
+
+    def _refuse(self, *, enabled):
+        from core.llm_audit import llm_audit_scope, record_llm_blocked
+
+        with llm_audit_scope(
+            account_id=self.account_id, question="what is revenue",
+            enabled=enabled, request_id="r1", question_id="q1",
+            component="sql_generation",
+        ):
+            record_llm_blocked("llm_complete", "egress posture: airgapped")
+
+    def test_the_refusal_is_recorded_with_the_audit_toggle_off(self):
+        self._refuse(enabled=False)
+        rows = self._blocked_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "blocked")
+        self.assertIn("airgapped", rows[0]["payload_preview_sanitized"])
+
+    def test_it_is_still_recorded_with_the_toggle_on(self):
+        self._refuse(enabled=True)
+        self.assertEqual(len(self._blocked_rows()), 1)
+
+    def test_the_proof_pack_counts_it_either_way(self):
+        # The read side, from the write side, with nothing passed between.
+        from core.compliance.proof_pack import refusals_section
+
+        self._refuse(enabled=False)
+        section = refusals_section(self.account_id, 30)
+        self.assertEqual(section["total"], 1)
+        self.assertIn("1 model calls were refused", section["statement"])
+
+    def test_with_no_account_in_scope_nothing_is_written(self):
+        """The remaining gate, and it is quieter than the database's.
+
+        llm_call_log has a foreign key to client, so a refusal attributed to a
+        made-up account is refused by SQLite anyway — the guard is defence in
+        depth over that. What it adds is silence: without it, every scope-less
+        call site raises an IntegrityError into this function's fail-open
+        handler and logs a warning, and a steady drip of "audit write failed"
+        is exactly the noise that hides a real audit failure.
+        """
+        import store
+
+        from core.llm_audit import record_llm_blocked
+
+        with self.assertNoLogs("querybot.llm_audit", level="WARNING"):
+            record_llm_blocked("llm_complete", "no scope here")
+
+        # And for ANY account, not just this one: a refusal filed under an
+        # invented id would have the pack reporting a refusal that belongs to
+        # nobody.
+        with store.get_db() as conn:
+            everywhere = conn.execute(
+                "SELECT account_id FROM llm_call_log WHERE status='blocked'"
+            ).fetchall()
+        self.assertEqual([dict(r) for r in everywhere], [])

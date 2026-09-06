@@ -314,8 +314,6 @@ class TestTheRetrieverWiring(CurationCase):
         self.assertTrue(_json)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestTheSearchPathActuallyCallsIt(CurationCase):
@@ -397,3 +395,81 @@ class TestOrderingKeyDirectly(unittest.TestCase):
     def test_a_scored_candidate_with_no_curation_keeps_its_score(self):
         self.assertAlmostEqual(
             ordering_key({"fqn": "S.A", "_rerank_score": 0.42}, {}), 0.42)
+
+
+class TestTheHeaderSpellingTheIndexActuallyCarries(unittest.TestCase):
+    """The lookup has to survive the spellings a KB header really uses.
+
+    core/schema.py writes `# DB.SCHEMA.TABLE` when a database is configured
+    and `# [SCHEMA].[TABLE]` when one is not, and the retriever returns that
+    line verbatim as the hit's fqn. The signals are keyed on what the stores
+    hold — the bare or schema-qualified name; the entity graph has no database
+    column at all. Matching the whole string only meant the bracketed form
+    matched nothing on any tenant, and a three-part header never matched a
+    two-part signal, so a table modelled as an entity with column roles scored
+    zero unless it also carried a description. Silent: the boost became 1.0
+    and nothing logged.
+    """
+
+    SCORES = {"SALES.ORDERS": 0.8, "ORDERS": 0.1}
+
+    def _order(self, fqn):
+        from core.curation_weight import ordering_key
+
+        return ordering_key({"fqn": fqn, "_rerank_score": 1.0}, self.SCORES)
+
+    def test_a_bracketed_header_gets_the_boost_its_curation_earned(self):
+        self.assertEqual(self._order("[SALES].[ORDERS]"), self._order("SALES.ORDERS"))
+        self.assertGreater(self._order("[SALES].[ORDERS]"), 1.0)
+
+    def test_a_database_qualified_header_gets_it_too(self):
+        self.assertEqual(self._order("MYDB.SALES.ORDERS"), self._order("SALES.ORDERS"))
+
+    def test_a_quoted_header_gets_it_too(self):
+        self.assertEqual(self._order('"sales"."orders"'), self._order("SALES.ORDERS"))
+
+    def test_the_most_qualified_match_wins(self):
+        from core.curation_weight import score_for_table
+
+        # DB.SALES.ORDERS must resolve to the SALES.ORDERS entry, not to the
+        # bare ORDERS one -- otherwise two tables of the same name in
+        # different schemas would share a score.
+        self.assertEqual(score_for_table(self.SCORES, "MYDB.SALES.ORDERS"), 0.8)
+        self.assertEqual(score_for_table(self.SCORES, "MYDB.OTHER.ORDERS"), 0.1)
+
+    def test_a_table_nobody_curated_is_still_unboosted(self):
+        from core.curation_weight import score_for_table
+
+        self.assertEqual(score_for_table(self.SCORES, "FIN.LEDGER"), 0.0)
+        self.assertEqual(self._order("FIN.LEDGER"), 1.0)
+
+    def test_an_empty_or_missing_name_scores_nothing(self):
+        from core.curation_weight import score_for_table
+
+        for value in ("", None, "  ", "..", "[].[]"):
+            self.assertEqual(score_for_table(self.SCORES, value), 0.0, repr(value))
+
+
+class TestEveryTestInThisFileRunsWhenTheFileIsRun(unittest.TestCase):
+    """A stray unittest.main() sat in the middle of this module.
+
+    Run as `python tests/test_curation_weight.py` it executed 25 of the 29
+    tests and printed OK — silently skipping the two classes below it,
+    including the one that proves the search path reaches the curation step.
+    pytest collected all 29 either way, so CI never noticed.
+    """
+
+    def test_the_entry_point_guard_is_the_last_thing_in_the_file(self):
+        from pathlib import Path
+
+        source = Path(__file__).read_text(encoding="utf-8")
+        # Split so this assertion does not match itself.
+        needle = 'if __name__ == "__' + 'main__":'
+        self.assertEqual(source.count(needle), 1)
+        remaining = source[source.index(needle):]
+        self.assertNotIn("\nclass ", remaining)
+        self.assertNotIn("\ndef test", remaining)
+
+
+if __name__ == "__main__":
+    unittest.main()

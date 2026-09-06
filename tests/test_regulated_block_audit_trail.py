@@ -88,7 +88,21 @@ class RecordLlmBlockedTests(unittest.TestCase):
             record_llm_blocked("analysis", "should not be written")
         log_call.assert_not_called()
 
-    def test_noop_when_scope_disabled(self):
+    def test_a_refusal_is_recorded_even_with_call_logging_disabled(self):
+        """Reversed deliberately: this test used to encode the defect.
+
+        record_llm_blocked shared record_llm_call's `enabled` gate — the
+        client's "enable LLM audit" toggle, which defaults to 0. So on a
+        DEFAULT workspace an air-gapped refusal blocked correctly and recorded
+        nothing, and the proof pack's refusals section, which reads exactly
+        these rows, then reported "0 model calls were refused" for a tenant
+        that had refused some. The evidence of refusal is the entire point of
+        the clause it serves.
+
+        The toggle governs the volume of CALL logging. A refusal is not a
+        call: no prompt, no payload, no data — it is the record that nothing
+        was sent, and refusals are rare by construction.
+        """
         from core.llm_audit import llm_audit_scope, record_llm_blocked
 
         with patch("store.log_llm_call") as log_call:
@@ -96,7 +110,18 @@ class RecordLlmBlockedTests(unittest.TestCase):
                 account_id="acct-1", question="q", enabled=False,
                 request_id="req1", component="analysis",
             ):
-                record_llm_blocked("analysis", "should not be written")
+                record_llm_blocked("analysis", "egress posture: airgapped")
+        log_call.assert_called_once()
+        self.assertEqual(log_call.call_args.kwargs["status"], "blocked")
+        self.assertEqual(log_call.call_args.kwargs["account_id"], "acct-1")
+
+    def test_noop_without_an_account_to_attribute_it_to(self):
+        # The gate that remains. Inventing an account id would have the pack
+        # report a refusal belonging to nobody.
+        from core.llm_audit import record_llm_blocked
+
+        with patch("store.log_llm_call") as log_call:
+            record_llm_blocked("analysis", "no scope here")
         log_call.assert_not_called()
 
 

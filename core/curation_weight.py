@@ -60,7 +60,44 @@ _cache: dict[str, tuple[float, dict[str, float]]] = {}
 
 
 def _normalise(table: str) -> str:
-    return str(table or "").strip().upper()
+    """Uppercase, with the delimiters a catalogue writes stripped off.
+
+    A bare ``.strip().upper()`` left ``[SALES].[ORDERS]`` intact, and the
+    stores hold the same table as ``SALES.ORDERS`` -- so on every workspace
+    whose KB header uses the bracketed form (which is what core/schema.py
+    writes when no database is configured) every lookup missed and the boost
+    was silently 1.0. Nothing logged and nothing failed.
+    """
+    parts = [
+        part.strip().strip('"').strip("'").strip("[]").strip()
+        for part in str(table or "").split(".")
+    ]
+    return ".".join(part for part in parts if part).upper()
+
+
+def score_for_table(scores: dict[str, float], fqn: str) -> float:
+    """This table's curation score, whatever spelling its document used.
+
+    The indexed name comes from the document's H1: ``DB.SCHEMA.TABLE`` where a
+    database is configured, ``[SCHEMA].[TABLE]`` where one is not. The signals
+    are keyed on what the stores hold, which is the bare or schema-qualified
+    name -- the entity graph has no database column at all. Matching the whole
+    string only meant a three-part header never matched a two-part signal, so
+    a table modelled as an entity and given column roles scored zero unless it
+    also happened to carry a description row.
+
+    Progressively shorter suffixes, most-qualified first, so a genuine
+    ``DB.SALES.ORDERS`` entry still wins over a bare ``ORDERS``.
+    """
+    name = _normalise(fqn)
+    if not name:
+        return 0.0
+    parts = name.split(".")
+    for start in range(len(parts)):
+        candidate = ".".join(parts[start:])
+        if candidate in scores:
+            return scores[candidate]
+    return 0.0
 
 
 def signals_for(account_id: str) -> dict[str, dict[str, bool]]:
@@ -171,7 +208,7 @@ def ordering_key(hit: dict[str, Any], scores: dict[str, float]) -> float:
     score = hit.get("_rerank_score")
     if score is None:
         return 0.0
-    curation = scores.get(_normalise(hit.get("fqn") or ""), 0.0)
+    curation = score_for_table(scores, hit.get("fqn") or "")
     return float(score) * (1.0 + MAX_BOOST * curation)
 
 
@@ -190,7 +227,7 @@ def apply(hits: list[dict], scores: dict[str, float]) -> list[dict]:
         if hit.get("_rerank_score") is None:
             unscored.append(hit)
             continue
-        hit["_curation_score"] = scores.get(_normalise(hit.get("fqn") or ""), 0.0)
+        hit["_curation_score"] = score_for_table(scores, hit.get("fqn") or "")
         scored.append(hit)
     scored.sort(key=lambda h: ordering_key(h, scores), reverse=True)
     return scored + unscored

@@ -370,13 +370,23 @@ def record_llm_blocked(component: str, reason: str) -> None:
     and is logging that decision instead of the (never-built) prompt.
 
     Unlike record_llm_call, there is no system/user prompt to hash or
-    preview — status="blocked" plus the reason IS the audit record. Uses the
-    same ambient scope (account_id/enabled) as record_llm_call, so this
-    respects the client's existing "enable LLM audit" toggle rather than
-    forcing extra rows for clients who opted out of audit logging entirely.
+    preview — status="blocked" plus the reason IS the audit record.
+
+    Deliberately NOT gated on the client's "enable LLM audit" toggle, which
+    record_llm_call is. That gate is about the volume of call logging; a
+    refusal is not a call. enable_llm_audit defaults to 0, so gating this
+    meant that on a default workspace an air-gapped refusal blocked correctly
+    and recorded nothing at all — and the proof pack's refusals section, which
+    reads exactly these rows, then reported "0 model calls were refused" for a
+    tenant that had refused some. The evidence of refusal is the entire point
+    of the clause it serves.
+
+    There is no privacy cost to that. A refusal row carries no prompt, no
+    payload and no data — it is the record that nothing was sent. Refusals are
+    rare by construction, so there is no volume cost either.
     """
     scope = _AUDIT_SCOPE.get()
-    if not scope or not scope.get("enabled") or not scope.get("account_id"):
+    if not scope or not scope.get("account_id"):
         return
     try:
         import store

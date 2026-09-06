@@ -796,8 +796,32 @@ class TestWhatItDoesToConfidence(unittest.TestCase):
         baseline = self._score()["score"]
         scored = self._score({"checked": True, "agrees": False})
         self.assertLess(scored["score"], baseline)
-        self.assertLessEqual(scored["score"], 59)
+        self.assertLessEqual(scored["score"], 49)
         self.assertNotEqual(scored["level"], "high")
+
+    def test_a_disagreement_is_scored_low_so_the_reader_sees_it_without_clicking(self):
+        """The cap is a display decision, not only a score.
+
+        portal_chat.html renders a warning beside the confidence pill only
+        when the verdict is LOW, and puts everything else inside a collapsed
+        disclosure. A cap at 59 is "medium", one point above the threshold, so
+        the sentence naming both figures sat behind a click the reader has no
+        reason to make. The candidate-disagreement branch caps at 49 already.
+        """
+        self.assertEqual(self._score({"checked": True, "agrees": False})["level"], "low")
+
+    def test_it_is_scored_no_softer_than_two_candidates_disagreeing(self):
+        # Two areas disagreeing means the BUSINESS has two answers to the
+        # question. That is not the milder of the two findings.
+        areas = self._score({"checked": True, "agrees": False})
+        candidates = self._score()
+        from core.answer_confidence import build_answer_confidence
+
+        candidates = build_answer_confidence(
+            validation_code="ok", row_count=12, tables_used=["S.F"],
+            candidate_selection={"reason": "verified_candidates_disagree"},
+        )
+        self.assertLessEqual(areas["score"], candidates["score"])
 
     def test_a_disagreement_is_stated_not_just_scored(self):
         scored = self._score({"checked": True, "agrees": False})
