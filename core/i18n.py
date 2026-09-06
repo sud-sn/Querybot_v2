@@ -963,6 +963,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cette réponse a demandé {attempts} tentatives.",
     },
 
+    # Asked when the repair ladder runs out and the workspace holds vocabulary
+    # close to what the reader typed. Deliberately does not apologise: the
+    # reader picked words the product does not know, which is a gap in the
+    # model, and the sentence that says so without blaming them is the one
+    # that gets an answer back.
+    "recovery.clarify.question": {
+        "en": "I could not build a query for that. Which of these did you mean?",
+        "fr": "Je n'ai pas pu construire de requête pour cela. Lequel de ces éléments vouliez-vous dire ?",
+    },
+    "recovery.clarify.prompt": {
+        "en": "Pick one and I will re-run your question with it.",
+        "fr": "Choisissez-en un et je relancerai votre question avec.",
+    },
+
     # Compact KPI magnitudes. French abbreviates a billion as "Md", not "B" --
     # "B" reads as "billion" in the French long scale, which is a thousand
     # times larger.

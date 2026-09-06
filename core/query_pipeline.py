@@ -6565,6 +6565,59 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 if (last_code or "").lower() in {"unknown_column", "cannot_generate", "field_plan_mismatch"}
                 else []
             )
+
+            # F1 -- ask before giving up. Those suggestions were already
+            # computed and were only ever printed as "did you mean" prose on
+            # the card that ends the turn. When there are two or more of them
+            # and the failure is one a reader's answer can actually resolve,
+            # ask instead: the reader picks a term the workspace really holds
+            # and the question re-runs, rather than being told what went wrong
+            # and left to guess what to type.
+            from core.recovery_clarification import (
+                SOURCE as _RECOVERY_SOURCE, build as _build_recovery_question,
+            )
+
+            _recovery_q = _build_recovery_question(
+                code=last_code,
+                question=question,
+                suggestions=_suggest,
+                allowed=bool(event.user_id)
+                and can_request_clarification(event, _RECOVERY_SOURCE),
+                # No lang= : handle_query activates the reader's language on
+                # the ContextVar for the whole turn and this runs on that same
+                # thread, so t() reads it. Passing one here would be a second
+                # source of truth for the same fact.
+            )
+            if _recovery_q.should_ask:
+                _recovery_meta = prepare_clarification_meta(
+                    event, _recovery_q.meta(), source=_RECOVERY_SOURCE)
+                _save_pending_clarification(question, context, _recovery_meta)
+                _send_prompt = getattr(adapter, "send_clarification_prompt", None)
+                if callable(_send_prompt):
+                    await _send_prompt(event, _recovery_q.question,
+                                       _recovery_meta.get("options") or [])
+                else:
+                    await adapter.send_message(
+                        event,
+                        f"❓ {_recovery_q.question}\n\n"
+                        + "\n".join(f"• {option}" for option in _recovery_q.options)
+                        + f"\n\n_{_t('recovery.clarify.prompt')}_")
+                _trace_step(
+                    trace_id, "recovery_clarification",
+                    input_summary=last_code,
+                    output_summary={"options": list(_recovery_q.options),
+                                    "reason": _recovery_q.reason},
+                )
+                _trace_finish(
+                    trace_id, status="success", answer_type="clarification",
+                    row_count=0,
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                    final_answer_summary="Repair exhausted; asked which term was meant",
+                )
+                return
+            log.info("Recovery clarification not offered for %s: %s",
+                     account_id, _recovery_q.reason)
+
             _rca = translate_failure(
                 kind="validation", code=last_code, reason=last_reason,
                 sql=sql, question=question,
