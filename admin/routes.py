@@ -3028,6 +3028,51 @@ async def compliance_save_egress(request: Request, account_id: str):
     )
 
 
+@router.get("/clients/{account_id}/readiness", response_class=HTMLResponse)
+async def readiness_page(request: Request, account_id: str):
+    """What to model next, in the order that fixes the most questions.
+
+    core/model_readiness.py has been built and tested since it shipped and had
+    only a JSON endpoint, which means it answered a question nobody could ask.
+    Four quality scores already existed and none of them said what to DO; this
+    one is ordered by how many failing question shapes each remedy resolves,
+    measured from the metric coverage reports rather than weighted by guess.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from core.model_readiness import build_report
+
+    try:
+        report = build_report(account_id)
+        error = ""
+    except Exception as exc:  # noqa: BLE001
+        log.error("Readiness report failed for %s: %s", account_id, exc, exc_info=True)
+        report, error = None, str(exc)[:200]
+
+    return _resp(request, "client_readiness.html", {
+        "client": client,
+        "report": report,
+        # Where each remedy is applied, so a row is one click from being
+        # fixed. Keyed on core.model_readiness._KIND_WEIGHT, and a test walks
+        # that mapping rather than this list: a row that says what to fix and
+        # not where is a dead end, and a kind added there without a
+        # destination here would silently become one.
+        "destinations": {
+            "date_role": f"/admin/clients/{account_id}/date-roles",
+            "dimensions": f"/admin/clients/{account_id}/metrics",
+            "described": f"/admin/clients/{account_id}/kb",
+            "synonym": f"/admin/clients/{account_id}/glossary",
+            "grain": f"/admin/clients/{account_id}/metrics",
+            "column_synonyms": f"/admin/clients/{account_id}/kb",
+        },
+        "error": error,
+    })
+
+
 @router.get("/api/clients/{account_id}/readiness")
 async def model_readiness_api(request: Request, account_id: str):
     """What to model next, in the order that fixes the most questions.

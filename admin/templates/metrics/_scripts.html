@@ -2841,5 +2841,86 @@ document.querySelectorAll(".formula-editor,.metric-builder-row-expression").forE
   }
 
   function escHtml2(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  // ── Coverage ──────────────────────────────────────────────────────────────
+  // A metric that compiles is not a metric that works. core/metric_coverage.py
+  // generates the question shapes a real user asks a metric in -- "top 10 by
+  // it", "how has it changed this quarter", by a name nobody wrote down -- and
+  // resolves each against the metric as saved. It has answered this since it
+  // shipped and had only a JSON endpoint, so nobody could ask it.
+  window.showMetricCoverage = function (metricId, btn) {
+    var panel = document.getElementById("coverage-" + metricId);
+    if (!panel) return;
+    if (panel.style.display !== "none") { panel.style.display = "none"; return; }
+    panel.style.display = "";
+    panel.innerHTML = '<div class="mr-cov-load">Checking the question shapes…</div>';
+    if (btn) btn.disabled = true;
+
+    // Same account-id source the rest of this file uses: the path, not a
+    // global nobody defines.
+    var _acct = location.pathname.match(/\/clients\/([^/]+)\//);
+    if (!_acct) {
+      panel.style.display = "none";
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    fetch("/admin/api/clients/" + _acct[1] + "/metrics/" + metricId + "/coverage")
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      })
+      .then(function (data) { panel.innerHTML = renderCoverage(data); })
+      .catch(function () {
+        // Said plainly rather than left as an empty panel: a coverage report
+        // that silently shows nothing reads as "no gaps".
+        panel.innerHTML = '<div class="mr-cov-load">Coverage could not be checked '
+                        + 'for this metric right now.</div>';
+      })
+      .then(function () { if (btn) btn.disabled = false; });
+  };
+
+  function renderCoverage(data) {
+    var total = Number(data.total || 0);
+    var ok = Number(data.resolvable || 0);
+    var gaps = data.gaps || [];
+    var pct = total ? Math.round((ok / total) * 100) : 0;
+    var tone = data.complete ? "green" : (pct >= 60 ? "amber" : "red");
+
+    var head = '<div class="mr-cov-head">'
+      + '<span class="mr-cov-score ' + tone + '">' + ok + " / " + total + "</span>"
+      + '<span class="mr-cov-sum">' + escHtml2(data.summary || "") + "</span></div>";
+
+    if (!gaps.length) {
+      return head + '<div class="mr-cov-ok">Every generated question shape '
+                  + "resolves to this metric.</div>";
+    }
+
+    // Grouped by what is MISSING, because the fix is per asset, not per
+    // question: one synonym can close six rows at once.
+    var byMissing = {};
+    gaps.forEach(function (g) {
+      var key = g.missing || g.reason || "unknown";
+      (byMissing[key] = byMissing[key] || []).push(g);
+    });
+
+    var body = Object.keys(byMissing).map(function (missing) {
+      var rows = byMissing[missing];
+      return '<div class="mr-cov-group">'
+        + '<div class="mr-cov-missing">Add: ' + escHtml2(missing)
+        + ' <span class="mr-cov-count">closes ' + rows.length + " question"
+        + (rows.length === 1 ? "" : "s") + "</span></div>"
+        + '<ul class="mr-cov-list">'
+        + rows.slice(0, 6).map(function (g) {
+            return "<li>" + escHtml2(g.question) + "</li>";
+          }).join("")
+        + (rows.length > 6
+            ? '<li class="mr-cov-more">and ' + (rows.length - 6) + " more</li>"
+            : "")
+        + "</ul></div>";
+    }).join("");
+
+    return head + body;
+  }
 })();
 </script>

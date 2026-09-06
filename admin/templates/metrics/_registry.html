@@ -62,6 +62,12 @@
     <span class="mr-formula-preview" title="{{ m.sql_template | e }}">{{ m.sql_template }}</span>
     {% if m.synonyms %}<span class="mr-sep">·</span><span class="mr-synonyms" title="Synonyms: {{ m.synonyms | e }}">{{ m.synonyms }}</span>{% endif %}
     <div class="mr-actions">
+      {# core/metric_coverage.py has answered this since it shipped and had only
+         a JSON endpoint. A metric that compiles is not a metric that works: the
+         same definition is asked about as "top 10 by it", as "how has it changed
+         this quarter", and by a name nobody wrote down. #}
+      <button class="btn btn-xs btn-secondary" onclick="showMetricCoverage({{ m.id }}, this)"
+              title="Which real question shapes this metric answers">Coverage</button>
       <button class="btn btn-xs btn-secondary" onclick="toggleMetricEdit({{ m.id }})">Edit</button>
       <button class="mr-del-btn" title="Delete metric" aria-label="Delete metric" onclick="deleteMetricFetch({{ m.id }}, '{{ m.name | e }}', this)"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L5.772 5.79m13.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg></button>
     </div>
@@ -72,6 +78,8 @@
     <span class="meta-pill">{{ (m.result_format or 'number') | capitalize }}</span>
     {% if m.last_validated_at %}<span class="meta-pill" title="Last validated">✓ {{ m.last_validated_at[:10] }}</span>{% endif %}
   </div>
+
+  <div id="coverage-{{ m.id }}" class="metric-row-expand mr-coverage" style="display:none"></div>
 
   <div id="edit-{{ m.id }}" class="metric-row-expand" style="display:none">
     <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/update" class="metric-form">

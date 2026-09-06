@@ -1,0 +1,125 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% block title %}What To Model Next — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "What To Model Next", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.rd-hero{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);box-shadow:var(--shadow);margin-bottom:1.1rem}
+.rd-hero h1{font-size:20px;font-weight:900;margin:0}
+.rd-hero p{font-size:var(--font-base);color:var(--text-muted);line-height:1.6;
+  margin:.4rem 0 0;max-width:760px}
+.rd-stats{display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:.9rem}
+.rd-stat{min-width:120px}
+.rd-stat-num{font-size:22px;font-weight:900;line-height:1.1}
+.rd-stat-lab{font-size:var(--font-xs);color:var(--text-muted);text-transform:uppercase;
+  letter-spacing:.04em;font-weight:700}
+.rd-row{display:flex;gap:.85rem;align-items:flex-start;padding:.8rem 1rem;
+  border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);
+  margin-bottom:.55rem}
+.rd-rank{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:flex;
+  align-items:center;justify-content:center;font-size:var(--font-xs);font-weight:800;
+  background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
+.rd-body{flex:1;min-width:0}
+.rd-remedy{font-size:14px;font-weight:800;color:var(--text)}
+.rd-subject{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px;
+  font-family:var(--font-mono,monospace);overflow-wrap:anywhere}
+.rd-detail{font-size:var(--font-sm);color:var(--text-muted);margin-top:.35rem;font-style:italic}
+.rd-unblocks{flex:0 0 auto;text-align:right}
+.rd-unblocks-num{font-size:17px;font-weight:900;color:var(--primary)}
+.rd-unblocks-lab{font-size:var(--font-2xs);color:var(--text-muted);text-transform:uppercase;
+  letter-spacing:.04em;font-weight:700}
+.rd-kind{display:inline-block;padding:1px 7px;border-radius:999px;font-size:var(--font-2xs);
+  font-weight:700;background:var(--surface-2);color:var(--text-muted);
+  border:1px solid var(--border);margin-bottom:.25rem}
+.rd-hint{font-size:var(--font-xs);color:var(--text-muted)}
+</style>
+{% endblock %}
+{% block content %}
+
+{% if error %}
+<div class="alert alert-error">
+  The readiness report could not be built: {{ error }}
+</div>
+{% endif %}
+
+<div class="rd-hero">
+  <h1>What to model next</h1>
+  <p>
+    One list, ordered by how many failing question shapes each fix would
+    resolve. The count beside a row is measured from this workspace's metric
+    coverage reports, not weighted by guess — so working down this list is the
+    fastest route to more questions being answerable, and the list gets shorter
+    rather than longer.
+  </p>
+  {% if report %}
+  <div class="rd-stats">
+    <div class="rd-stat">
+      <div class="rd-stat-num">{{ report.tables_described }}/{{ report.tables_total }}</div>
+      <div class="rd-stat-lab">Tables described</div>
+    </div>
+    <div class="rd-stat">
+      <div class="rd-stat-num">{{ report.metrics_complete }}/{{ report.metrics_total }}</div>
+      <div class="rd-stat-lab">Metrics complete</div>
+    </div>
+    <div class="rd-stat">
+      <div class="rd-stat-num">{{ report.total_unblocked }}</div>
+      <div class="rd-stat-lab">Questions unblocked</div>
+    </div>
+    <div class="rd-stat">
+      <div class="rd-stat-num">{{ report.items | length }}</div>
+      <div class="rd-stat-lab">Items outstanding</div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if report and report.items %}
+  {% for item in report.items %}
+  <div class="rd-row">
+    <div class="rd-rank">{{ loop.index }}</div>
+    <div class="rd-body">
+      <span class="rd-kind">{{ item.kind.replace('_', ' ') }}</span>
+      <div class="rd-remedy">{{ item.remedy }}</div>
+      <div class="rd-subject">{{ item.subject }}</div>
+      {% if item.detail %}<div class="rd-detail">e.g. “{{ item.detail }}”</div>{% endif %}
+    </div>
+    <div class="rd-unblocks">
+      <div class="rd-unblocks-num">{{ item.unblocks }}</div>
+      <div class="rd-unblocks-lab">question{{ '' if item.unblocks == 1 else 's' }}</div>
+      {% if destinations.get(item.kind) %}
+      <a class="btn btn-sm" style="margin-top:.4rem" href="{{ destinations[item.kind] }}">Fix</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% elif report %}
+  {{ empty_state(
+      title="Nothing outstanding",
+      body="Every table this workspace can query is described and every metric is
+            complete enough for the question shapes it is asked in. New tables or
+            metrics will show up here as they are added.") }}
+{% endif %}
+
+{% if report %}
+<div class="card">
+  <div class="card-body">
+    <p class="rd-hint">
+      Model version <code>{{ report.metadata_version }}</code> — a hash over the
+      tables, metrics, relationships and date roles as they stand now. Every
+      answer is stamped with the version it was produced under, so an answer
+      carrying a different one was produced against an older model and is not
+      comparable to one produced today.
+    </p>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
