@@ -413,6 +413,152 @@ class TestAcceptingOneAppliesIt(RealWorkspace):
         self.assertGreater(len(store.list_graph_versions(self.account_id)), before)
 
 
+class TestAnAcceptedWordReachesTheResolver(RealWorkspace):
+    """The drafter's whole premise is "these are the words readers used". An
+    accepted word that only helps pick the TABLE has not kept that promise.
+
+    entity_properties.synonyms reaches core.graph_resolver, which decides which
+    table a question is about. It does not reach direct_aliases, which is what
+    resolves a measure NAME to a column — that comes from
+    table_description.column_synonyms via core.vocab_packs. So the question
+    that produced the proposal still failed after somebody accepted it.
+    """
+
+    def _aliases(self, column="STAT_CD"):
+        """What the resolver would see, WITHOUT clearing the cache first.
+
+        Clearing it here would do the product's job for it: the vocabulary
+        cache key is built from file mtimes, so a term saved to the database
+        changes nothing it watches and the stale vocabulary is served until the
+        process restarts. That is the "I accepted it and nothing happened"
+        failure, and a test that resets the cache cannot see it.
+        """
+        from core.vocab_packs import vocab_for_account
+
+        return {t.casefold() for t in
+                (vocab_for_account(self.account_id).direct_aliases or {}).get(column, [])}
+
+    def _accept_vocabulary(self):
+        from core.draft_review import gather, stage
+
+        stage(self.account_id, gather(self.account_id).applicable)
+        pending = self._pending()
+        target = next(t for t in pending if t.endswith(".STAT_CD"))
+        return self._accept(pending[target]["id"]), pending[target]
+
+    def test_before_the_accept_the_word_resolves_to_nothing(self):
+        # The fixture is real before the claim is made about it.
+        self.assertEqual(self._aliases(), set())
+
+    def test_the_accept_takes_effect_without_a_restart(self):
+        # Warmed first, exactly as a running process has it warmed, and never
+        # cleared by the test. Without the explicit invalidation inside the
+        # accept, this reads the vocabulary from before it.
+        self.assertEqual(self._aliases(), set())     # warms the cache
+        self._accept_vocabulary()
+        self.assertTrue(self._aliases())
+
+    def test_the_accepted_word_becomes_a_way_to_reach_the_column(self):
+        response, proposal = self._accept_vocabulary()
+        self.assertEqual(response.status_code, 200)
+
+        payload = proposal["payload"]
+        if isinstance(payload, str):
+            import json as _json
+            payload = _json.loads(payload or "{}")
+        proposed = {t.strip().casefold()
+                    for t in str(payload.get("synonyms") or "").split(",")
+                    if t.strip()}
+        self.assertTrue(proposed)
+        self.assertTrue(proposed <= self._aliases(),
+                        f"{proposed - self._aliases()} never reached the resolver")
+
+    def test_it_is_also_still_on_the_property(self):
+        # Both readers, not one instead of the other: the graph resolver scores
+        # a table on these too.
+        self._accept_vocabulary()
+        self.assertTrue(self._properties()["STAT_CD"]["synonyms"])
+
+    def test_the_terms_are_filed_under_the_entitys_table(self):
+        import store
+
+        self._accept_vocabulary()
+        stored = store.list_table_descriptions(self.account_id)
+        self.assertEqual(list(stored), ["SALES.ORDERS"])
+        self.assertIn("STAT_CD", stored["SALES.ORDERS"]["column_synonym_map"])
+
+    def test_a_second_accept_does_not_drop_the_first(self):
+        import store
+
+        store.save_table_description(
+            self.account_id, "SALES.ORDERS",
+            column_synonyms={"NET_AMOUNT": ["takings"]})
+        self._accept_vocabulary()
+        stored = store.list_table_descriptions(self.account_id)["SALES.ORDERS"]
+        self.assertEqual(stored["column_synonym_map"]["NET_AMOUNT"], ["takings"])
+        self.assertIn("STAT_CD", stored["column_synonym_map"])
+
+    def test_a_word_an_admin_typed_on_the_column_survives_the_accept(self):
+        import store
+
+        store.save_table_description(
+            self.account_id, "SALES.ORDERS",
+            column_synonyms={"STAT_CD": ["progress"]})
+        self._accept_vocabulary()
+        terms = store.list_table_descriptions(
+            self.account_id)["SALES.ORDERS"]["column_synonym_map"]["STAT_CD"]
+        self.assertEqual(terms[0], "progress")
+        self.assertGreater(len(terms), 1)
+
+    def test_the_bare_table_key_an_admin_already_used_is_reused(self):
+        # Descriptions are keyed by whatever the admin selected, which may be
+        # bare where the graph is qualified. A second key leaves two rows for
+        # one table and the one they edit is not the one this wrote.
+        import store
+
+        store.save_table_description(self.account_id, "ORDERS",
+                                     column_synonyms={"NET_AMOUNT": ["takings"]})
+        self._accept_vocabulary()
+        self.assertEqual(list(store.list_table_descriptions(self.account_id)),
+                         ["ORDERS"])
+
+    def test_publishing_survives_a_store_that_will_not_take_it(self):
+        # The accept itself must still stand, and the admin must be told.
+        import store
+
+        from core.draft_review import publish_column_terms
+
+        with patch.object(store, "save_table_description",
+                          side_effect=RuntimeError("locked")):
+            message = publish_column_terms(
+                self.account_id, "Orders", "STAT_CD", "delivered")
+        self.assertIn("could not be published", message)
+
+    def test_an_entity_with_no_table_says_so_rather_than_failing_quietly(self):
+        import store
+
+        from core.draft_review import publish_column_terms
+
+        store.save_entity(account_id=self.account_id, entity_name="Ghost",
+                          table_name="", schema_name="", entity_type="fact")
+        message = publish_column_terms(self.account_id, "Ghost", "X", "a word")
+        self.assertIn("not mapped to a table", message)
+
+    def test_a_proposal_with_no_words_publishes_nothing(self):
+        # Asserted on the WRITE, because the store drops an empty term list on
+        # the way back out — so "nothing was stored" cannot tell a skipped
+        # write from a pointless one.
+        import store
+
+        from core.draft_review import publish_column_terms
+
+        with patch.object(store, "save_table_description") as saved:
+            self.assertEqual(
+                publish_column_terms(self.account_id, "Orders", "STAT_CD", "  ,  "), "")
+        saved.assert_not_called()
+        self.assertEqual(store.list_table_descriptions(self.account_id), {})
+
+
 class TestTheConflictRuleItself(unittest.TestCase):
     """property_conflict, directly — every branch, without HTTP in the way."""
 

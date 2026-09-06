@@ -316,4 +316,96 @@ def apply_property_proposal(account_id: str, proposal: dict) -> tuple[bool, str]
         generated_by=str(proposal.get("generated_by") or "model_drafts"),
         reason=str(proposal.get("reason") or ""),
     )
-    return True, f"{entity}.{column} updated."
+    warning = publish_column_terms(account_id, entity, column, merged["synonyms"])
+    return True, f"{entity}.{column} updated." + (f" {warning}" if warning else "")
+
+
+def publish_column_terms(account_id: str, entity: str, column: str,
+                         synonyms: str) -> str:
+    """Put an accepted column's words where the RESOLVER reads them.
+
+    entity_properties.synonyms reaches core.graph_resolver, which decides which
+    TABLE a question is about. It does not reach direct_aliases, which is what
+    decides which COLUMN a measure name resolves to -- that comes from
+    table_description.column_synonyms (core.vocab_packs.vocab_for_account).
+
+    So an admin could accept exactly the words a reader used for a measure and
+    the question that produced the proposal would still fail to resolve it.
+    The drafter's whole premise is "these are the words people used"; a word
+    that only helps pick the table is not what it promised.
+
+    Merged, never replaced: a mapping document or the setup page may have put
+    other terms on this column and other columns on this table, and an accept
+    of one proposal must not drop any of them.
+
+    Returns "" on success, or a sentence for the admin when the terms were
+    saved on the property but could not be published.
+    """
+    import store
+
+    terms = [t.strip() for t in str(synonyms or "").split(",") if t.strip()]
+    if not terms:
+        return ""
+    try:
+        table = _table_for_entity(account_id, entity)
+        if not table:
+            return (f"{entity} is not mapped to a table, so the terms were "
+                    f"saved but nothing will resolve to them yet.")
+
+        stored = store.list_table_descriptions(account_id) or {}
+        key = _stored_key(stored, table)
+        entry = stored.get(key) or {}
+        merged = dict(entry.get("column_synonym_map") or {})
+        existing = list(merged.get(str(column).upper(), []))
+        seen = {t.casefold() for t in existing}
+        for term in terms:
+            if term.casefold() not in seen:
+                existing.append(term)
+                seen.add(term.casefold())
+        # Upper because that is how parse_column_synonyms keys the map that
+        # was just read. The store raises it again on the way in, so this is
+        # for the dict in hand rather than for what lands on disk.
+        merged[str(column).upper()] = existing
+        store.save_table_description(
+            account_id, key,
+            description=str(entry.get("description") or ""),
+            synonyms=str(entry.get("synonyms") or ""),
+            column_synonyms=merged,
+            updated_by="model_drafts",
+        )
+        # The vocabulary cache key is built from file mtimes, so a term saved
+        # to the DATABASE changes nothing it watches.
+        from core.vocab_packs import forget_account_vocab
+        forget_account_vocab(account_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not publish terms for %s.%s on %s: %s",
+                    entity, column, account_id, exc)
+        return "The terms were saved but could not be published to the resolver."
+    return ""
+
+
+def _table_for_entity(account_id: str, entity: str) -> str:
+    import store
+
+    for row in store.list_entities(account_id, active_only=False):
+        if str(row.get("entity_name") or "") != entity:
+            continue
+        table = str(row.get("table_name") or "").strip()
+        schema = str(row.get("schema_name") or "").strip()
+        return f"{schema}.{table}" if (schema and table) else table
+    return ""
+
+
+def _stored_key(stored: dict, table: str) -> str:
+    """The key this table's terms are already filed under, or the new one.
+
+    Descriptions are keyed by whatever the admin selected, which may be bare
+    where the graph is qualified. Writing a second key would leave two rows for
+    one table, and the one the admin edits would not be the one this wrote.
+    """
+    bare = table.split(".")[-1].upper()
+    for key in stored:
+        candidate = str(key).upper()
+        if candidate == table.upper() or candidate.split(".")[-1] == bare:
+            return str(key)
+    return table

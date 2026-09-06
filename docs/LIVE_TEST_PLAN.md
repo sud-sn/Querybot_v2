@@ -746,6 +746,30 @@ Steps: read the naming-convention reference the KB build produces.
 Pass: the entity-prefix table lists what your packs declare and no customer's
 company name that nobody selected.
 
+### 11.5 · An accepted draft reaches the resolver
+
+**L11-25 · Accepting a drafted word answers the question that proposed it** —
+*new*
+Setup: **Drafted For Review** showing a column-vocabulary proposal — the words
+readers used beside a value of that column.
+Steps: note the question in the proposal's evidence, accept the proposal, then
+ask that question.
+Pass: it resolves to that column. Before this, accepting wrote the word where
+the table resolver reads it and not where the measure resolver does, so the
+question that produced the proposal still failed.
+**False pass:** a question the workspace could already answer. Ask it first and
+confirm it fails.
+
+**L11-26 · The accept takes effect without a restart** — *regression*
+Steps: immediately after L11-25, in the same session, ask again.
+Pass: still resolves. The vocabulary cache is keyed on file times.
+
+**L11-27 · Accepting one column does not clear the others** — *regression*
+Setup: a table with column terms typed on the setup page for several columns.
+Steps: accept a draft for one of them.
+Pass: the other columns keep their terms, and the accepted column keeps the
+words that were already on it as well as the new ones.
+
 ## Sign-off
 
 A case is **not** passed until the false-pass line has been considered. Record
