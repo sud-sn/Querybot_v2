@@ -11495,3 +11495,170 @@ async def admin_learning_queue_count(request: Request, account_id: str):
     except Exception as exc:
         log.error("admin_learning_queue_count error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Source mapping document (CSV joins + column terms) ────────────────────────
+
+def _mapping_table_for_entity(account_id: str):
+    """entity name → the qualified table it points at, for the export."""
+    lookup: dict[str, str] = {}
+    for row in store.list_entities(account_id, active_only=False):
+        table = str(row.get("table_name") or "").strip()
+        if not table:
+            continue
+        schema = str(row.get("schema_name") or "").strip()
+        lookup[str(row.get("entity_name") or "")] = f"{schema}.{table}" if schema else table
+    return lambda name: lookup.get(str(name or ""), "")
+
+
+async def _mapping_uploaded_text(request: Request) -> tuple[str, str, str]:
+    """(kind, text, error) from either the file field or the pasted box."""
+    form = await request.form()
+    kind = "terms" if str(form.get("kind") or "joins") == "terms" else "joins"
+    text = str(form.get("text") or "")
+
+    upload = form.get("file")
+    if upload is not None and getattr(upload, "filename", ""):
+        raw = await upload.read()
+        if len(raw) > 4_000_000:
+            return kind, "", "That file is larger than 4 MB — split it up."
+        for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            return kind, "", "Could not read that file as text — save it as CSV."
+    if not text.strip():
+        return kind, "", "Nothing to import — choose a file or paste the rows."
+    return kind, text, ""
+
+
+def _mapping_plan(account_id: str, kind: str, text: str):
+    from core import mapping_csv, mapping_import
+
+    if kind == "terms":
+        return mapping_import.plan_terms(account_id, mapping_csv.parse_terms(text))
+    return mapping_import.plan_joins(account_id, mapping_csv.parse_joins(text))
+
+
+def _mapping_context(request: Request, account_id: str, client: dict) -> dict:
+    from core import mapping_csv
+
+    return {
+        "client": client,
+        "join_columns": list(mapping_csv.JOIN_COLUMNS),
+        "term_columns": list(mapping_csv.TERM_COLUMNS),
+        "max_rows": mapping_csv.MAX_ROWS,
+        "kind": "joins",
+        "text": "",
+        "plan": None,
+        "error": request.query_params.get("error", ""),
+        "saved": request.query_params.get("saved", ""),
+    }
+
+
+@router.get("/clients/{account_id}/mapping", response_class=HTMLResponse)
+async def mapping_page(request: Request, account_id: str):
+    """Upload / download the source mapping document."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    return _resp(request, "client_mapping.html",
+                 _mapping_context(request, account_id, client))
+
+
+@router.post("/clients/{account_id}/mapping/preview", response_class=HTMLResponse)
+async def mapping_preview(request: Request, account_id: str):
+    """Parse and resolve the upload, and show what applying it WOULD do."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    kind, text, error = await _mapping_uploaded_text(request)
+    ctx = _mapping_context(request, account_id, client)
+    ctx.update(kind=kind, text=text, error=error)
+    if not error:
+        try:
+            ctx["plan"] = _mapping_plan(account_id, kind, text).as_dict()
+        except Exception as exc:  # noqa: BLE001
+            log.error("Mapping preview failed for %s: %s", account_id, exc)
+            ctx["error"] = f"Could not read that file: {exc}"
+    return _resp(request, "client_mapping.html", ctx)
+
+
+@router.post("/clients/{account_id}/mapping/apply")
+async def mapping_apply(request: Request, account_id: str):
+    """Apply the rows the plan accepts. The plan is recomputed here.
+
+    Deliberately not the preview's plan carried over: the graph may have moved
+    between the two clicks, and a stale plan would write a row that has since
+    stopped being valid. Recomputing costs a second and means what is applied
+    was checked against the graph it is being written into.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    if not store.get_client(account_id):
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from core import mapping_import
+
+    kind, text, error = await _mapping_uploaded_text(request)
+    if error:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/mapping?error={quote(error)}", status_code=303)
+    try:
+        plan = _mapping_plan(account_id, kind, text)
+        if kind == "terms":
+            result = mapping_import.apply_terms(account_id, plan)
+        else:
+            result = mapping_import.apply_joins(account_id, plan)
+            if result.get("applied"):
+                _after_semantic_approval(
+                    account_id, f"mapping document imported ({result['applied']} joins)")
+    except Exception as exc:  # noqa: BLE001
+        log.error("Mapping import failed for %s: %s", account_id, exc)
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/mapping?error={quote(f'Import failed: {exc}')}",
+            status_code=303)
+
+    msg = (f"Imported {result.get('applied', 0)} of {len(plan.rows)} rows — "
+           f"{result.get('created', 0)} new, {result.get('updated', 0)} amended, "
+           f"{result.get('unchanged', 0)} already present, "
+           f"{result.get('rejected', 0)} rejected.")
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/mapping?saved={quote(msg)}", status_code=303)
+
+
+@router.get("/clients/{account_id}/mapping/joins.csv")
+async def mapping_download_joins(request: Request, account_id: str):
+    """The current join map, in the shape the importer reads back."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.mapping_csv import render_joins
+
+    body = render_joins(store.list_relationships(account_id, active_only=False),
+                        _mapping_table_for_entity(account_id))
+    return StreamingResponse(
+        iter([body]), media_type="text/csv",
+        headers={"Content-Disposition":
+                 _download_header(f"querybot_joins_{account_id[:12]}.csv")})
+
+
+@router.get("/clients/{account_id}/mapping/terms.csv")
+async def mapping_download_terms(request: Request, account_id: str):
+    """The current column terms, in the shape the importer reads back."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.mapping_csv import render_terms
+
+    body = render_terms(store.list_table_descriptions(account_id) or {})
+    return StreamingResponse(
+        iter([body]), media_type="text/csv",
+        headers={"Content-Disposition":
+                 _download_header(f"querybot_column_terms_{account_id[:12]}.csv")})

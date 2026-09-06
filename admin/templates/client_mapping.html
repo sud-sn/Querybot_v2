@@ -1,0 +1,172 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert %}
+{% block title %}Source Mapping — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Source Mapping", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.mp-hero{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);box-shadow:var(--shadow);margin-bottom:1.1rem}
+.mp-hero h1{font-size:20px;font-weight:900;margin:0}
+.mp-hero p{font-size:var(--font-base);color:var(--text-muted);line-height:1.6;
+  margin:.4rem 0 0;max-width:800px}
+.mp-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.1rem}
+@media (max-width:820px){.mp-grid{grid-template-columns:1fr}}
+.mp-card{border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);padding:1rem}
+.mp-card h2{font-size:var(--font-base);font-weight:800;margin:0 0 .35rem}
+.mp-card p{font-size:var(--font-sm);color:var(--text-muted);line-height:1.55;margin:0 0 .7rem}
+.mp-cols{font-family:var(--font-mono,monospace);font-size:var(--font-xs);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:.45rem .6rem;margin:0 0 .7rem;word-break:break-word;color:var(--text-muted)}
+.mp-form{display:flex;flex-direction:column;gap:.55rem}
+.mp-form input[type=file]{font-size:var(--font-sm)}
+.mp-form textarea{width:100%;min-height:120px;font-family:var(--font-mono,monospace);
+  font-size:var(--font-xs);padding:.5rem;border:1px solid var(--border);
+  border-radius:var(--radius);background:var(--surface-2);color:var(--text);resize:vertical}
+.mp-actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.mp-sum{display:flex;gap:.5rem;flex-wrap:wrap;margin:.2rem 0 .9rem}
+.mp-chip{font-size:var(--font-xs);font-weight:700;padding:.25rem .6rem;
+  border-radius:999px;border:1px solid var(--border);background:var(--surface-2)}
+.mp-chip.create{color:var(--success,#177245)}
+.mp-chip.update{color:var(--info,#1257a0)}
+.mp-chip.reject{color:var(--danger,#a01212)}
+.mp-table{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.mp-table table{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
+.mp-table th{text-align:left;font-size:var(--font-xs);text-transform:uppercase;
+  letter-spacing:.04em;color:var(--text-muted);padding:.45rem .65rem;
+  background:var(--surface-2);font-weight:700}
+.mp-table td{padding:.45rem .65rem;border-top:1px solid var(--border);
+  vertical-align:top;word-break:break-word}
+.mp-act{font-weight:800;font-size:var(--font-xs);text-transform:uppercase;
+  letter-spacing:.03em;white-space:nowrap}
+.mp-act.create{color:var(--success,#177245)}
+.mp-act.update{color:var(--info,#1257a0)}
+.mp-act.unchanged{color:var(--text-muted)}
+.mp-act.reject{color:var(--danger,#a01212)}
+.mp-line{color:var(--text-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.mp-target{font-family:var(--font-mono,monospace);font-size:var(--font-xs)}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mp-hero">
+  <h1>Source mapping document</h1>
+  <p>Joins and column terms as a spreadsheet, written in the warehouse's own
+     names rather than the graph's. Download what is here, edit it, upload it
+     back — nothing is written until you have seen exactly what would change.
+     An upload adds and amends the rows it names and leaves everything else
+     alone.</p>
+</div>
+
+{% if saved %}{{ alert(message=saved, type="success", icon_name="check") }}{% endif %}
+{% if error %}{{ alert(message=error, type="error", icon_name="alert-triangle") }}{% endif %}
+
+<div class="mp-grid">
+  <div class="mp-card">
+    <h2>Joins</h2>
+    <p>One row per join. A composite key is several rows sharing a
+       <code>group</code>. Tables may be bare or schema-qualified; the
+       importer resolves them to the graph.</p>
+    <div class="mp-cols">{{ join_columns|join(',') }}</div>
+    <form class="mp-form" method="post" enctype="multipart/form-data"
+          action="/admin/clients/{{ client.account_id }}/mapping/preview">
+      <input type="hidden" name="kind" value="joins">
+      <input type="file" name="file" accept=".csv,text/csv">
+      <div class="mp-actions">
+        <button class="btn btn-sm btn-primary" type="submit">Preview changes</button>
+        <a class="btn btn-sm" href="/admin/clients/{{ client.account_id }}/mapping/joins.csv">Download current</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="mp-card">
+    <h2>Column terms</h2>
+    <p>The words your people use for a column, so a question can find it.
+       One row per column; terms separated by commas. Saved terms outrank
+       everything the product guessed.</p>
+    <div class="mp-cols">{{ term_columns|join(',') }}</div>
+    <form class="mp-form" method="post" enctype="multipart/form-data"
+          action="/admin/clients/{{ client.account_id }}/mapping/preview">
+      <input type="hidden" name="kind" value="terms">
+      <input type="file" name="file" accept=".csv,text/csv">
+      <div class="mp-actions">
+        <button class="btn btn-sm btn-primary" type="submit">Preview changes</button>
+        <a class="btn btn-sm" href="/admin/clients/{{ client.account_id }}/mapping/terms.csv">Download current</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if plan %}
+{% set s = plan.summary %}
+<div class="mp-card">
+  <h2>What this {{ 'column terms' if kind == 'terms' else 'join' }} file would do</h2>
+  <div class="mp-sum">
+    <span class="mp-chip create">{{ s.created }} new</span>
+    <span class="mp-chip update">{{ s.updated }} amended</span>
+    <span class="mp-chip">{{ s.unchanged }} already present</span>
+    <span class="mp-chip reject">{{ s.rejected }} rejected</span>
+    {% if s.flagged %}<span class="mp-chip reject">{{ s.flagged }} stored but unverified</span>{% endif %}
+    {% if s.parse_problems %}<span class="mp-chip reject">{{ s.parse_problems }} unreadable rows</span>{% endif %}
+  </div>
+
+  {% if s.fatal %}
+    {{ alert(message=s.fatal, type="error", icon_name="alert-triangle") }}
+  {% endif %}
+
+  {% if plan.problems %}
+  <div class="mp-table" style="margin-bottom:.9rem">
+    <table>
+      <thead><tr><th>Line</th><th>Problem</th><th>Detail</th></tr></thead>
+      <tbody>
+        {% for p in plan.problems %}
+        <tr>
+          <td class="mp-line">{{ p.line }}</td>
+          <td class="mp-act reject">{{ p.reason }}</td>
+          <td>{{ p.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if plan.rows %}
+  <div class="mp-table">
+    <table>
+      <thead><tr><th>Line</th><th>Action</th><th>Target</th><th>What changes</th></tr></thead>
+      <tbody>
+        {% for r in plan.rows %}
+        <tr>
+          <td class="mp-line">{{ r.line }}</td>
+          <td class="mp-act {{ r.action }}">{{ r.action }}</td>
+          <td class="mp-target">{{ r.target }}</td>
+          <td>{{ r.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if s.created or s.updated %}
+  <form method="post" style="margin-top:.9rem"
+        action="/admin/clients/{{ client.account_id }}/mapping/apply">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <textarea name="text" hidden>{{ text }}</textarea>
+    <button class="btn btn-sm btn-primary" type="submit">
+      Apply {{ s.created + s.updated }} change{{ '' if (s.created + s.updated) == 1 else 's' }}
+    </button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

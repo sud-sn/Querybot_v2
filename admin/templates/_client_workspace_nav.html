@@ -23,7 +23,7 @@
 {% set _seg  = _tail.split('/')[0] if _tail else '' %}
 
 {% set _is_overview   = (_seg == '') %}
-{% set _is_model      = _seg in ['setup', 'kb', 'graph', 'date-roles', 'metrics', 'glossary', 'domains', 'reports'] %}
+{% set _is_model      = _seg in ['setup', 'kb', 'graph', 'mapping', 'date-roles', 'metrics', 'glossary', 'domains', 'reports'] %}
 {% set _is_activity   = _seg in ['queries', 'traces', 'egress', 'billing'] %}
 {% set _is_quality    = _seg in ['model-health', 'evals', 'learning-queue', 'readiness', 'drafts'] %}
 {% set _is_access     = _seg in ['users', 'groups', 'pending-users'] %}
@@ -57,6 +57,7 @@
     <a href="{{ _b }}/setup" class="{% if _seg == 'setup' %}active{% endif %}">Setup</a>
     <a href="{{ _b }}/kb" class="{% if _seg == 'kb' %}active{% endif %}">Knowledge Base</a>
     <a href="{{ _b }}/graph" class="{% if _seg == 'graph' %}active{% endif %}">Relationships</a>
+    <a href="{{ _b }}/mapping" class="{% if _seg == 'mapping' %}active{% endif %}">Source Mapping</a>
     <a href="{{ _b }}/date-roles" class="{% if _seg == 'date-roles' %}active{% endif %}">Dates</a>
     <a href="{{ _b }}/metrics" class="{% if _seg == 'metrics' %}active{% endif %}">Metrics</a>
     <a href="{{ _b }}/reports" class="{% if _seg == 'reports' %}active{% endif %}">Reports</a>

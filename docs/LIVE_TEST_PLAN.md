@@ -588,6 +588,121 @@ Steps: delete the default source of a workspace that has two.
 Pass: the other becomes default and questions keep answering. A workspace with
 sources and no default cannot answer a question that names no domain.
 
+## 11 · Joins and vocabulary as a document
+
+The graph and the column terms were both editable only one field at a time,
+through surfaces this product wrote. A data team's mapping document is a
+spreadsheet, and until now there was no way to hand one over.
+
+### 11.1 · Governed joins (J1, J2)
+
+**L11-1 · A join that can never be used is refused when it is saved** — *new*
+Steps: on **Relationships**, draw an edge between two fact tables and save it.
+Pass: the save is refused, the message says why (fact-to-fact), and the canvas
+still shows no such edge.
+**False pass:** an edge between a fact and a dimension. That one is legal.
+
+**L11-2 · A column the schema does not have is stored and flagged** — *new*
+Steps: save an edge whose FK column is spelled wrong.
+Pass: it saves, and the edge shows as **broken** in validation. It is not
+refused: the discovered schema may simply be stale.
+
+**L11-3 · One bad row does not lose the batch** — *regression*
+Steps: in the bulk relationship editor, change several joins at once, one of
+them into a fact-to-fact edge, and save.
+Pass: the others are applied and the response names the one that was not.
+
+**L11-4 · Graph health finds the ones already saved** — *new*
+Setup: a workspace whose graph predates the check above.
+Steps: open **Relationships** and read the health panel.
+Pass: any pre-existing unusable edge is listed with the reason and a remedy.
+
+### 11.2 · The source mapping document (J3)
+
+**L11-5 · The current joins download as a spreadsheet** — *new*
+Steps: **Data & Model → Source Mapping → Download current** (joins).
+Pass: the file names *tables*, not entity names, and a composite key comes out
+as several rows sharing a `group`.
+**False pass:** a workspace with no composite joins — the grouping is untested.
+
+**L11-6 · The downloaded file uploads back unchanged** — *new*
+Steps: upload the file from L11-5 without editing it, and preview.
+Pass: every row reads **already present**, and no Apply button is offered.
+**False pass:** rows reading *new*. That means the export and the importer
+disagree about identity, which is the bug this case exists to find.
+
+**L11-7 · The preview writes nothing** — *new*
+Steps: edit one label in the file, upload, preview, then leave the page without
+applying. Re-open **Relationships**.
+Pass: the label is unchanged. A dry run that writes is not a dry run.
+
+**L11-8 · Applying changes only the rows the file names** — *new*
+Steps: from a file containing one join, change its label and apply.
+Pass: the label changes, the join keeps its id, and every other join in the
+graph is untouched.
+**False pass:** a workspace with one join. The additive property is the point.
+
+**L11-9 · An impossible row is rejected and named** — *new*
+Steps: add a row joining two fact tables, and one naming a table the workspace
+does not have. Upload and preview.
+Pass: both appear as **rejected** with their line numbers and a reason; the
+good rows in the same file are still applied.
+
+**L11-10 · A composite key survives the round trip** — *new*
+Steps: write two rows sharing a `group` for one join, apply, then download.
+Pass: the graph holds one join with two conditions, and the download reproduces
+the same two rows.
+
+**L11-11 · Role-playing joins are not merged** — *new*
+Setup: a fact joined to the date dimension twice — order date and delivery
+date.
+Steps: download, change one label, upload and apply.
+Pass: two joins remain. If one disappears, the importer is matching on the
+entity pair instead of the column pair.
+
+**L11-12 · A qualified table reaches the table it names** — *new*
+Setup: two schemas holding a table of the same name.
+Steps: upload a row naming the qualified table.
+Pass: the join lands on that schema's entity.
+
+**L11-13 · A file out of a spreadsheet still loads** — *new*
+Steps: open the download in Excel, save it, and upload it again.
+Pass: it loads. Excel writes a BOM and may re-case the header; neither should
+matter.
+
+**L11-14 · Column terms upload and are used the same day** — *new*
+Steps: download the column terms, add a word your people use for a measure,
+upload and apply. Then ask a question using that word.
+Pass: the question resolves to that measure.
+**False pass:** a word the product already knew. Check the download first —
+if the term is already listed, the test proves nothing.
+
+**L11-15 · A terms file naming three columns does not clear the rest** — *new*
+Steps: upload a terms file containing only some of a table's columns.
+Pass: the other columns keep their terms.
+
+**L11-16 · The upload needs no restart** — *regression*
+Steps: immediately after L11-14, without restarting the service, ask the
+question again in a new session.
+Pass: it still resolves. The vocabulary cache is keyed on file times, so a term
+saved to the database has to invalidate it explicitly.
+
+### 11.3 · Vocabulary belongs to the tenant (J4, S1-S3)
+
+**L11-17 · Key equivalences come from the tenant's pack** — *new*
+Setup: two workspaces, one with the ERP pack selected and one without.
+Steps: run schema discovery on both and read a table's schema-intelligence
+block.
+Pass: the pack's workspace lists the cross-system key equivalences; the other
+lists none. They are that ERP's convention, not a fact about databases.
+
+**L11-18 · Generated synonyms are words, not spellings** — *new*
+Steps: after discovery, open a measure the product named itself.
+Pass: its display name is business English — "gross margin percent", not
+"grs marg pct" — and its terms include a shorter head form somebody would
+actually type.
+**False pass:** a column whose name is already words.
+
 ## Sign-off
 
 A case is **not** passed until the false-pass line has been considered. Record
