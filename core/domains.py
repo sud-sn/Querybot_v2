@@ -283,3 +283,70 @@ def describe(result: Corroboration, *, lang: str = "en") -> str:
         secondary=format_decimal(result.secondary_value, lang=lang),
         gap=format_percent((result.relative_difference or 0.0) * 100, 1, lang=lang),
     )
+
+
+@dataclass(frozen=True)
+class ScopeDecision:
+    """The table scope a question runs under, after domain routing."""
+
+    effective: set[str]
+    allowed_tables: set[str] | None
+    routing: Routing | None = None
+    applied: bool = False
+    reason: str = ""
+
+    @property
+    def domain(self) -> str:
+        return self.routing.primary.name if (self.routing and self.routing.primary) else ""
+
+
+def narrow_scope(
+    question: str,
+    domains: list[dict],
+    *,
+    effective: set[str],
+    allowed_tables: set[str] | None,
+) -> ScopeDecision:
+    """Apply domain routing to a user's table scope.
+
+    Returns the scope the question should run under. Three outcomes, and the
+    distinction between the last two is the point:
+
+    * routed, and the user can see some of the domain — scope narrows;
+    * routed, but the user can see NONE of it — the route is dropped and the
+      original scope stands, because narrowing to nothing would answer
+      nothing and would look identical to the question having no answer;
+    * not routed — nothing changes, so adding domains cannot make an
+      un-domained workspace worse.
+
+    ``allowed_tables`` is narrowed alongside ``effective`` when it is set:
+    they are two views of the same permission, and letting them disagree is
+    how a validator ends up scoped differently from the retriever.
+    """
+    routing = route(question, domains or [])
+    if not routing.routed:
+        return ScopeDecision(
+            effective=set(effective), allowed_tables=allowed_tables,
+            routing=routing, applied=False, reason=routing.reason,
+        )
+
+    narrowed = allowed_tables_for(routing, existing=set(effective)) or set()
+    if not narrowed:
+        log.info(
+            "Domain %s matched but none of its tables are visible; "
+            "keeping the existing scope", routing.primary.name,
+        )
+        return ScopeDecision(
+            effective=set(effective), allowed_tables=allowed_tables,
+            routing=routing, applied=False, reason="no_visible_tables",
+        )
+
+    domain_tables = {t.upper() for t in routing.primary.tables}
+    return ScopeDecision(
+        effective=narrowed,
+        allowed_tables=(
+            {t for t in allowed_tables if t.upper() in domain_tables}
+            if allowed_tables is not None else None
+        ),
+        routing=routing, applied=True, reason=routing.reason,
+    )

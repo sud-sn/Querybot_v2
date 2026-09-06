@@ -404,3 +404,163 @@ class TestTheDomainStore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Applying a route to a user's scope
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestNarrowingTheScope(unittest.TestCase):
+    """``narrow_scope`` is the decision the pipeline makes.
+
+    Extracted from ``_handle_query_impl`` for the same reason everything else
+    was: a decision nobody can call is a decision nobody can test. The three
+    outcomes it distinguishes are what make domains safe to switch on.
+    """
+
+    ALL = {"SALES.ORDERS", "SALES.CUSTOMER", "FIN.GL", "FIN.AP"}
+
+    def _narrow(self, question, *, effective=None, allowed=None, domains=None):
+        from core.domains import narrow_scope
+        return narrow_scope(
+            question, domains if domains is not None else [SALES, FINANCE],
+            effective=self.ALL if effective is None else effective,
+            allowed_tables=allowed,
+        )
+
+    def test_a_routed_question_is_scoped_to_its_domain(self):
+        decision = self._narrow("what were bookings last month")
+        self.assertTrue(decision.applied)
+        self.assertEqual(decision.domain, "Sales")
+        self.assertEqual(decision.effective, {"SALES.ORDERS", "SALES.CUSTOMER"})
+
+    def test_an_unrouted_question_keeps_every_table_it_had(self):
+        # Adding domains must not make an un-domained question worse.
+        decision = self._narrow("how many widgets shipped")
+        self.assertFalse(decision.applied)
+        self.assertEqual(decision.effective, self.ALL)
+        self.assertEqual(decision.reason, "no_domain_matched")
+
+    def test_a_workspace_with_no_domains_changes_nothing(self):
+        decision = self._narrow("what were bookings", domains=[])
+        self.assertFalse(decision.applied)
+        self.assertEqual(decision.effective, self.ALL)
+
+    def test_the_users_own_restriction_still_wins(self):
+        decision = self._narrow(
+            "what were bookings", effective={"SALES.ORDERS"},
+            allowed={"SALES.ORDERS"})
+        self.assertTrue(decision.applied)
+        self.assertEqual(decision.effective, {"SALES.ORDERS"})
+        self.assertEqual(decision.allowed_tables, {"SALES.ORDERS"})
+
+    def test_allowed_tables_is_narrowed_alongside_effective(self):
+        # Two views of one permission. Letting them disagree is how a
+        # validator ends up scoped differently from the retriever.
+        decision = self._narrow(
+            "what were bookings",
+            allowed={"SALES.ORDERS", "SALES.CUSTOMER", "FIN.GL"})
+        self.assertEqual(decision.effective, {"SALES.ORDERS", "SALES.CUSTOMER"})
+        self.assertEqual(decision.allowed_tables, {"SALES.ORDERS", "SALES.CUSTOMER"})
+        self.assertNotIn("FIN.GL", decision.allowed_tables)
+
+    def test_an_admin_with_no_restriction_keeps_none(self):
+        # allowed_tables is None for an unrestricted admin, and None means
+        # "unrestricted" everywhere downstream -- turning it into a set here
+        # would silently restrict them.
+        decision = self._narrow("what were bookings", allowed=None)
+        self.assertTrue(decision.applied)
+        self.assertIsNone(decision.allowed_tables)
+
+    def test_a_domain_the_user_cannot_see_drops_the_route(self):
+        # Narrowing to nothing would answer nothing, and would look identical
+        # to the question having no answer.
+        decision = self._narrow(
+            "what were bookings", effective={"FIN.GL"}, allowed={"FIN.GL"})
+        self.assertFalse(decision.applied)
+        self.assertEqual(decision.reason, "no_visible_tables")
+        self.assertEqual(decision.effective, {"FIN.GL"})
+        self.assertEqual(decision.allowed_tables, {"FIN.GL"})
+
+    def test_a_second_opinion_is_reported_when_two_areas_could_answer(self):
+        decision = self._narrow("sales and ledger together")
+        self.assertTrue(decision.applied)
+        self.assertTrue(decision.routing.should_corroborate)
+        self.assertNotEqual(decision.routing.secondary.name, decision.domain)
+
+    def test_the_returned_scope_is_not_an_alias_of_the_callers(self):
+        # The decision returns a new set even on the paths that change
+        # nothing, so a caller that mutates what it got back cannot reach
+        # into the pipeline's own scope. Asserting the inputs are unchanged
+        # after the call is not enough -- narrow_scope does not mutate them
+        # either way, so that assertion passes on an aliased return.
+        effective = set(self.ALL)
+        decision = self._narrow("how many widgets shipped", effective=effective)
+        self.assertFalse(decision.applied)
+        decision.effective.add("SOMETHING.ELSE")
+        self.assertEqual(effective, self.ALL)
+
+    def test_a_routed_scope_is_not_an_alias_either(self):
+        effective = set(self.ALL)
+        decision = self._narrow("what were bookings", effective=effective)
+        self.assertTrue(decision.applied)
+        decision.effective.add("SOMETHING.ELSE")
+        self.assertEqual(effective, self.ALL)
+
+
+class TestThePipelineAppliesIt(unittest.TestCase):
+    """The narrowing has to be reached, and reached before anything reads scope."""
+
+    @staticmethod
+    def _source():
+        import inspect
+
+        import core.query_pipeline as qp
+        return inspect.getsource(qp._handle_query_impl)
+
+    def test_the_route_is_applied_to_both_scope_variables(self):
+        source = self._source()
+        self.assertIn("effective = _scope_decision.effective", source)
+        self.assertIn("allowed_tables = _scope_decision.allowed_tables", source)
+
+    def test_it_runs_before_the_query_scope_is_derived(self):
+        # query_scope_tables is built from `effective`, and everything below
+        # it -- retrieval, planning, validation, repair -- reads that.
+        # Narrowing after it would scope the validator and leave the
+        # retriever looking at the whole workspace.
+        source = self._source()
+        narrowed = source.index("_scope_decision = _narrow_to_domain(")
+        derived = source.index("query_scope_tables = effective if")
+        self.assertLess(narrowed, derived)
+
+    def test_it_runs_after_the_selected_schema_narrows_the_scope(self):
+        # A domain narrows WITHIN whatever schema the user selected, rather
+        # than competing with it -- so a Sales domain spanning two schemas
+        # cannot pull a question back out of the schema tab the user is on.
+        source = self._source()
+        schema = source.index("effective = {t for t in effective if _in_schema(t)}")
+        narrowed = source.index("_scope_decision = _narrow_to_domain(")
+        self.assertLess(schema, narrowed)
+
+    def test_it_runs_after_the_users_own_acl_is_applied(self):
+        # A domain narrows a permission; it must never be the thing that
+        # grants one.
+        source = self._source()
+        acl = source.index("effective = {t for t in all_known if t in allowed_tables}")
+        narrowed = source.index("_scope_decision = _narrow_to_domain(")
+        self.assertLess(acl, narrowed)
+
+    def test_only_an_applied_route_is_carried_forward(self):
+        source = self._source()
+        self.assertIn("if _scope_decision.applied:\n                _domain_routing = _scope_decision.routing",
+                      source)
+
+    def test_the_answering_domain_reaches_answer_confidence(self):
+        self.assertIn('"domain": (', self._source())
+
+    def test_a_routing_failure_costs_the_scope_not_the_answer(self):
+        source = self._source()
+        block = source[source.index("_domain_routing = None"):]
+        block = block[:block.index("query_scope_tables")]
+        self.assertIn("except Exception as _domain_exc", block)
+        self.assertIn('log.warning("Domain routing unavailable', block)

@@ -1183,6 +1183,49 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 f"Switch to a different schema or ask your administrator to grant access.")
             return
 
+    # ── Domain scoping — which subject area this question belongs to ─────────
+    # A workspace is not one undifferentiated schema: there is a sales area, a
+    # supply-chain area, a finance area, each with its own vocabulary. Routing
+    # a question to one narrows what the planner, the retriever, the value
+    # index and the validator all see -- they already read `effective`, so a
+    # domain is a name attached to a mechanism that exists rather than a
+    # second scoping system beside it.
+    #
+    # The decision itself is in core.domains.narrow_scope: narrows never
+    # widens, drops the route when the user can see none of the domain, and
+    # leaves an un-routed question exactly as it was.
+    _domain_routing = None
+    try:
+        from core.domains import narrow_scope as _narrow_to_domain
+
+        _domains = store.list_domains(account_id)
+        if _domains:
+            _scope_decision = _narrow_to_domain(
+                question, _domains,
+                effective=effective, allowed_tables=allowed_tables,
+            )
+            effective = _scope_decision.effective
+            allowed_tables = _scope_decision.allowed_tables
+            if _scope_decision.applied:
+                _domain_routing = _scope_decision.routing
+            _trace_step(
+                trace_id, "domain_routing",
+                output_summary={
+                    "domain": _scope_decision.domain,
+                    "applied": _scope_decision.applied,
+                    "reason": _scope_decision.reason,
+                    "tables": len(effective),
+                    "second_opinion": (
+                        _scope_decision.routing.secondary.name
+                        if _scope_decision.routing
+                        and _scope_decision.routing.secondary else ""
+                    ),
+                },
+                status="success" if _scope_decision.applied else "error",
+            )
+    except Exception as _domain_exc:  # noqa: BLE001
+        log.warning("Domain routing unavailable for %s: %s", account_id, _domain_exc)
+
     _trace_update(
         trace_id,
         selected_schema=schema_hint,
@@ -6622,6 +6665,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _confidence_context = {
         "validation_code": last_code or code or "ok",
         "retry_count": retry_count,
+        # Which subject area answered, when the workspace has any. The gap
+        # this closes is that nothing could say where an answer came from --
+        # and where a second area could also have answered it, that a second
+        # opinion was available.
+        "domain": (
+            {
+                "name": _domain_routing.primary.name,
+                "reason": _domain_routing.reason,
+                "second_opinion": (
+                    _domain_routing.secondary.name
+                    if _domain_routing.secondary else ""
+                ),
+            }
+            if _domain_routing is not None and _domain_routing.routed
+            else {}
+        ),
         # The fetch stopped at its row cap, so `rows` is the head of a larger
         # result. Row-level statistics were refused upstream; the renderer
         # turns this into a caveat so a missing chart has a stated reason.
