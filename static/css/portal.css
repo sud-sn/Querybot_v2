@@ -532,6 +532,23 @@ body { background: var(--bg); }
 .portal-lang-switch .portal-lang-option span {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The same switcher on the signed-out pages, where there is no sidebar to
+   inherit from: the login and registration screens are the first thing a
+   customer sees and were the only ones with no way to choose a language. */
+.portal-lang-switch-bare {
+  justify-content: center; gap: 6px; padding: 14px 0 0;
+  background: transparent; border: 0;
+}
+.portal-lang-switch-bare .portal-lang-option {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-soft);
+  font-size: var(--font-xs); cursor: pointer;
+}
+.portal-lang-switch-bare .portal-lang-option:hover {
+  color: var(--text); border-color: var(--text-soft);
+}
+
 .portal-drawer-backdrop { display: none; }
 
 .portal-mobile-bar { min-height: 52px; padding: 0 12px; z-index: 300; }

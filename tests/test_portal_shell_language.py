@@ -175,14 +175,29 @@ class TestTheLanguageSwitcher:
                         saved=None, error=None)
         assert 'name="next" value="/portal/chat?thread=abc123"' in markup
 
-    def test_it_is_not_offered_before_sign_in(self):
-        """The endpoint writes a row, so it needs a user. The login page picks
-        the language up from Accept-Language instead, which is the only signal
-        that exists before authentication."""
+    def test_it_is_offered_before_sign_in_too(self):
+        """Reversed deliberately: this used to assert the switcher was absent.
+
+        The reasoning was that the endpoint writes a row, so it needs a user —
+        but Accept-Language is not a choice, it is a guess about the browser,
+        and a French speaker on a browser that asks for English first had no
+        way out of English on the one screen that matters most. The signed-out
+        form posts the same endpoint and sets only the cookie.
+        """
         markup = render("portal_notifications.html", path="/portal/login",
                         user=None, alerts=[], reports=[], subscriptions={},
                         saved=None, error=None)
-        assert "portal-lang-switch" not in markup
+        assert "portal-lang-switch-bare" in markup
+        assert "/portal/api/language" in markup
+
+    def test_the_signed_out_switcher_is_the_bare_one_not_the_sidebar(self):
+        # The sidebar version lives inside the app shell and inherits its
+        # styling from the Settings/Logout links beside it; rendering that one
+        # on a page with no sidebar would be invisible.
+        markup = render("portal_notifications.html", path="/portal/login",
+                        user=None, alerts=[], reports=[], subscriptions={},
+                        saved=None, error=None)
+        assert "portal-sidebar" not in markup
 
 
 class TestTheReturnPathIsNotAnOpenRedirect:

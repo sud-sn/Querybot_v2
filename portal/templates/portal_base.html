@@ -245,6 +245,28 @@ window.qbEnumLabel = function (group, value) {
     </header>
 {% endif %}
 
+{% if not user %}
+{# The login and registration screens are the first thing a customer ever sees,
+   and they were the only screens with no way to choose a language: the whole
+   switcher lived inside the signed-in shell, so a French speaker on a browser
+   that asks for English in first position had no way out of English. Same form
+   and same endpoint as the one in the sidebar; signed out it sets the cookie
+   and writes no row, because there is no row yet. #}
+<form class="portal-lang-switch portal-lang-switch-bare" method="post"
+      action="/portal/api/language" aria-label="{{ t('ui.lang.label') }}">
+  <input type="hidden" name="next" value="{{ current_portal_path }}">
+  <span class="sr-only">{{ t('ui.lang.current', language=language_name) }}</span>
+  {% for option in language_options %}
+  <button type="submit" name="lang" value="{{ option.code }}"
+          class="portal-lang-option"
+          title="{{ t('ui.lang.switch_to', language=option.name) }}">
+    {{ ic("globe", 16) }}
+    <span lang="{{ option.code }}">{{ option.name }}</span>
+  </button>
+  {% endfor %}
+</form>
+{% endif %}
+
 <div class="main">
   {% block breadcrumb %}{% endblock %}
   {% block content %}{% endblock %}

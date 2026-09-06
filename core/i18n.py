@@ -963,6 +963,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cette réponse a demandé {attempts} tentatives.",
     },
 
+    # Compact KPI magnitudes. French abbreviates a billion as "Md", not "B" --
+    # "B" reads as "billion" in the French long scale, which is a thousand
+    # times larger.
+    "ui.num.compact.thousand": {"en": "K", "fr": "k"},
+    "ui.num.compact.million": {"en": "M", "fr": "M"},
+    "ui.num.compact.billion": {"en": "B", "fr": "Md"},
+
     # ── The dispatcher's own replies (core/dispatcher.py) ────────────────────
     # The front door: these are the first thing every turn hits, and every one
     # of them was an English literal on a socket whose language had already

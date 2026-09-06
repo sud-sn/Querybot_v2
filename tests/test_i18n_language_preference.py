@@ -175,6 +175,12 @@ class TestTheCatalogueIsWellFormed:
     # that is spelled the same in French, and listing them explicitly is what
     # makes the test below able to catch a copy-paste that was never translated.
     IDENTICAL_BY_DESIGN = {
+        "ui.num.compact.million",       # "M" is the SI prefix, not a word:
+                                        # French abbreviates a million the same
+                                        # way. Its neighbours do differ -- "k"
+                                        # is lower case and a billion is "Md",
+                                        # because "B" reads as the French long
+                                        # -scale billion, a thousand times more.
         "answer.total",                 # the same word in French
         "ui.chat.table_count.one",      # "table" is the same word, singular
         "ui.chat.table_count.other",    # and plural
@@ -421,9 +427,21 @@ class TestTheSwitcher:
         client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
         return client, user_id
 
-    def test_an_anonymous_switch_is_refused(self):
+    def test_an_anonymous_switch_sets_the_cookie_and_writes_no_row(self):
+        """Reversed deliberately: this used to assert a 401.
+
+        The endpoint writes a row AND a cookie, and the 401 was reasoning from
+        the row — but the cookie is the only preference the pre-auth pages
+        have, and refusing the whole call meant the login and registration
+        screens, the first thing a customer ever sees, were the only screens in
+        the product with no way to choose a language. Signed out it now sets
+        the cookie and writes nothing, because there is no row yet.
+        """
         client, _ = _probe_client()
-        assert client.post("/portal/api/language", json={"lang": "fr"}).status_code == 401
+        response = client.post("/portal/api/language", json={"lang": "fr"})
+        assert response.status_code == 200
+        assert response.json()["lang"] == "fr"
+        assert client.cookies.get("qb_lang") == "fr"
 
     def test_it_writes_the_row_and_the_cookie(self):
         client, user_id = self._signed_in()

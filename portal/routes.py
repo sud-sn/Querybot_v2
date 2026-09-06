@@ -41,6 +41,7 @@ from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
 from core.i18n import (
     catalogue_for, date_format, number_format, translator_for, LANGUAGE_NAMES,
+    DEFAULT_LANGUAGE, activate_language, deactivate_language,
     SUPPORTED_LANGUAGES,
     enum_label as i18n_enum_label, plural as i18n_plural, t as i18n_t,
 )
@@ -81,6 +82,50 @@ def _set_language_cookie(resp, request: Request, lang: str) -> None:
         samesite="lax",
         secure=_cookie_secure(request),
     )
+
+
+def _carry_language_through_login(resp, request: Request, user: dict) -> None:
+    """Reconcile the signed-in row with the language the visitor was reading in.
+
+    Login used to refresh the cookie from ``user.lang`` unconditionally, which
+    threw away the choice the visitor had just made: they read a French login
+    page, signed in, and landed on an English dashboard.
+
+    ``portal_user.lang`` is ``NOT NULL DEFAULT 'en'``, so the row cannot
+    distinguish "chose English" from "never chose" — both are ``'en'``. Rather
+    than restructure that column, the rule is asymmetric and says so:
+
+    * a stored NON-default language always wins, on any device, because it can
+      only have got there by someone choosing it, and losing a deliberate
+      preference is the worse error;
+    * otherwise the visitor's own cookie wins and is written back to the row,
+      so it follows them to their next device.
+
+    The case this cannot serve is a reader who deliberately chose English and
+    then signs in from a browser whose cookie says French. They get French, and
+    the switcher is one click away on every page.
+    """
+    stored = store.normalise_language(str((user or {}).get("lang") or ""))
+    if stored != DEFAULT_LANGUAGE:
+        _set_language_cookie(resp, request, stored)
+        return
+
+    chosen = request.cookies.get(_LANG_COOKIE)
+    if not chosen:
+        _set_language_cookie(resp, request, stored)
+        return
+
+    chosen = store.normalise_language(chosen)
+    if chosen != stored:
+        try:
+            store.set_user_language(user["id"], chosen)
+        except Exception as exc:  # noqa: BLE001
+            # Loud: the reader keeps their language for this session either
+            # way, but it will not follow them to another device, and nothing
+            # else in the product would say so.
+            log.warning("Could not adopt the pre-login language for user %s: %s",
+                        user.get("id"), exc)
+    _set_language_cookie(resp, request, chosen)
 
 
 def _request_language(request: Request) -> str:
@@ -537,20 +582,33 @@ def _guess_safe_metric_suggestions(
     return suggestions
 
 
-def _compact_number(value: int | float | None) -> str:
-    """Format KPI numbers for compact UI display."""
+def _compact_number(value: int | float | None, lang: str | None = None) -> str:
+    """Format KPI numbers for compact UI display, the way the reader writes them.
+
+    Both halves were English: `f"{compact:.1f}"` puts a dot where French puts a
+    comma, and `f"{int(n):,}"` groups with a comma, which a French reader reads
+    as the decimal separator — so a KPI of 1234 rendered "1,234" and said one
+    and a bit. The suffixes are translated too: "B" is a billion in English and
+    a thousand times more than that in the French long scale, where the
+    abbreviation is "Md".
+    """
+    from core.i18n import format_count, format_decimal, t
+
     try:
         n = float(value or 0)
     except Exception:
         n = 0
     sign = "-" if n < 0 else ""
     n = abs(n)
-    for suffix, threshold in (("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
+    for msg_id, threshold in (("billion", 1_000_000_000),
+                              ("million", 1_000_000),
+                              ("thousand", 1_000)):
         if n >= threshold:
-            compact = n / threshold
-            text = f"{compact:.1f}".rstrip("0").rstrip(".")
-            return f"{sign}{text}{suffix}"
-    return f"{sign}{int(n):,}"
+            compact = round(n / threshold, 1)
+            text = (format_count(int(compact), lang=lang) if compact == int(compact)
+                    else format_decimal(compact, 1, lang=lang))
+            return f"{sign}{text}{t(f'ui.num.compact.{msg_id}', lang=lang)}"
+    return f"{sign}{format_count(int(n), lang=lang)}"
 
 
 def _query_limit_status(account_id: str, lang: str | None = None) -> dict:
@@ -824,14 +882,12 @@ async def portal_login_submit(
     if user.get("is_temp_pw"):
         resp = RedirectResponse("/portal/change-password?forced=1", status_code=303)
         _set_portal_cookie(resp, request, user["id"])
-        _set_language_cookie(resp, request, (user or {}).get("lang"))
+        _carry_language_through_login(resp, request, user)
         return resp
 
     resp = RedirectResponse("/portal/dashboard", status_code=303)
     _set_portal_cookie(resp, request, user["id"])
-    # The row is authoritative; refresh the chrome cookie from it on every
-    # login so a preference set on one device follows the user to the next.
-    _set_language_cookie(resp, request, (user or {}).get("lang"))
+    _carry_language_through_login(resp, request, user)
     return resp
 
 
@@ -843,10 +899,13 @@ async def portal_set_language(request: Request):
     (read by the page chrome, and the only signal the pre-auth pages have).
     Accepts either JSON or a form post so the switcher works with or without
     JavaScript.
+
+    Signed out, it sets the cookie and writes no row, because there is no row
+    yet. This used to 401, which meant the login and registration screens --
+    the first thing a customer ever sees -- were the only screens in the
+    product with no way to choose a language.
     """
     user = _get_portal_user(request)
-    if not user:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
 
     requested, back = "", ""
     try:
@@ -862,6 +921,15 @@ async def portal_set_language(request: Request):
             back = _safe_portal_redirect(form.get("next"))
         except Exception:
             requested = ""
+
+    if not user:
+        # No row to write. The cookie is the whole preference until they sign
+        # in, and login adopts it when their row has none.
+        stored = store.normalise_language(requested)
+        resp = (RedirectResponse(back, status_code=303) if back
+                else JSONResponse({"lang": stored}))
+        _set_language_cookie(resp, request, stored)
+        return resp
 
     try:
         stored = store.set_user_language(user["id"], requested)
@@ -1014,6 +1082,20 @@ async def portal_dashboard(request: Request):
     if not user:
         return _login_redirect()
 
+    # The template layer resolves the language on its own (see
+    # _language_context), but everything this route formats in PYTHON --
+    # KPI magnitudes, tile values, dates -- reads the ContextVar, and no
+    # portal route activated it. So the chrome came back French around
+    # English numbers. Activated for the body of the render and released
+    # after it, the same shape gateway/webhooks.py uses for the socket.
+    _lang_token = activate_language(_request_language(request))
+    try:
+        return await _render_dashboard(request, user)
+    finally:
+        deactivate_language(_lang_token)
+
+
+async def _render_dashboard(request: Request, user: dict):
     legacy_dashboard = store.migrate_legacy_charts(user["account_id"], user["id"])
     requested_dashboard = None
     dashboard_id = request.query_params.get("dashboard_id")
