@@ -5143,8 +5143,12 @@ async def graph_suggest(request: Request, account_id: str):
                              "message": "_schema.json not found. Run Discovery first."})
 
     from core.schema import _normalize_schema
-    schema = _normalize_schema(_json.loads(schema_path.read_text()))
-    join_map = join_map_path.read_text() if join_map_path.exists() else ""
+    # encoding is explicit on every _schema.json read: read_text() otherwise
+    # uses the platform locale codec (cp1252 on Windows), and a tenant whose
+    # schema carries an accented table or column name raises UnicodeDecodeError.
+    schema = _normalize_schema(_json.loads(schema_path.read_text(encoding="utf-8")))
+    join_map = (join_map_path.read_text(encoding="utf-8")
+                if join_map_path.exists() else "")
 
     # ── Deterministic pre-pass: detect role-playing dimensions ───────────────
     # A role-playing dimension = two or more FK-looking columns in a fact table
@@ -10168,7 +10172,8 @@ async def admin_discover_schema(
                 if _schema_path.exists():
                     from core.schema import _normalize_schema as _ns3
                     from core.schema import discovered_tables as _tables_only3
-                    _schema = _tables_only3(_ns3(_json.loads(_schema_path.read_text())))
+                    _schema = _tables_only3(_ns3(_json.loads(
+                        _schema_path.read_text(encoding="utf-8"))))
                     for _tkey, _tmeta in _schema.items():
                         # _schema.json carries non-table entries alongside the
                         # tables — "__db_fk_constraints__" holds a LIST of the
@@ -10504,7 +10509,8 @@ async def admin_build_kb(
                 if _schema_path.exists():
                     from core.schema import _normalize_schema as _ns4
                     from core.schema import discovered_tables as _tables_only4
-                    _schema = _tables_only4(_ns4(_json.loads(_schema_path.read_text())))
+                    _schema = _tables_only4(_ns4(_json.loads(
+                        _schema_path.read_text(encoding="utf-8"))))
                     for _tkey, _tmeta in _schema.items():
                         # _schema.json carries non-table entries alongside the
                         # tables — "__db_fk_constraints__" holds a LIST of the

@@ -359,9 +359,23 @@ def get_suggestions(
         try:
             _p = Path(schema_dir) / "_schema.json"
             if _p.exists():
-                schema_tables = {t.upper() for t in json.loads(_p.read_text())}
+                # encoding is explicit: read_text() otherwise uses the platform
+                # locale codec, which is cp1252 on Windows, and a tenant whose
+                # schema carries an accented table or column name would raise
+                # UnicodeDecodeError here.
+                schema_tables = {
+                    t.upper()
+                    for t in json.loads(_p.read_text(encoding="utf-8"))
+                }
         except Exception:
-            pass
+            # Not silent. schema_tables staying None makes
+            # _entry_matches_schema return True for everything, so a failure
+            # here does not surface as an error -- it surfaces as suggestions
+            # for tables that are not in the discovered schema.
+            log.warning(
+                "Suggestion schema filter disabled: could not read %s",
+                Path(schema_dir) / "_schema.json", exc_info=True,
+            )
 
     def _table_allowed(entry: dict) -> bool:
         """

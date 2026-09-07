@@ -303,7 +303,8 @@ class TestEgressArchitectureGuards(unittest.TestCase):
 
     def test_sync_includes_egress_count_in_result(self):
         """sync_external_logs result dict must include egress_count key."""
-        src = open(os.path.join(os.path.dirname(__file__), "..", "core", "log_export.py")).read()
+        src = open(os.path.join(os.path.dirname(__file__), "..", "core", "log_export.py"),
+                   encoding="utf-8").read()
         self.assertIn('"egress_count"', src)
 
     def test_migration_adds_egress_watermark_columns(self):

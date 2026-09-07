@@ -406,7 +406,12 @@ class TestTheAdminSurfacesKeepTheTwoKindsApart(unittest.TestCase):
 
         env = Environment(loader=FileSystemLoader(str(ROOT / "admin" / "templates")))
         rendered = env.from_string(
-            (ROOT / "admin" / "templates" / "client_setup.html").read_text()
+            # encoding is not optional here: the template carries non-ASCII
+            # since the French work, and read_text() defaults to the locale
+            # codec -- cp1252 on Windows -- so this passes on the CI box and
+            # fails on a developer machine.
+            (ROOT / "admin" / "templates" / "client_setup.html")
+            .read_text(encoding="utf-8")
             .split('<select id="setup_source_pack"')[1].split("</select>")[0]
         ).render(erp_packs_available=routes._list_erp_packs(),
                  client_source_pack="other")
