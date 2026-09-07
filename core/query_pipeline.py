@@ -5962,11 +5962,26 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             from core.execution_correction import diagnose_execution_error
 
             _diagnosis = diagnose_execution_error(exec_error)
+            # Scrubbed, because the diagnosis is NOT already safe. When no
+            # pattern in _DB_ERROR_MAP matches, sanitize_db_error falls back to
+            # the driver's own first sentence and returns it verbatim -- by
+            # design, so support can search on it. That is correct for the
+            # user's error card and wrong here: this string is two lines above
+            # scrub_error_for_llm(exec_error) in the same prompt, so the
+            # unmatched case handed the model exactly the values the line above
+            # was masking. Executed: "Arithmetic overflow error for type
+            # varchar, value = 1234567.890000." arrived intact through this
+            # channel while the line above rendered "value = [number].[number]".
             _diagnosis_note = ""
             if _diagnosis.diagnosis:
-                _diagnosis_note = f"What that means: {_diagnosis.diagnosis}\n"
+                _diagnosis_note = (
+                    f"What that means: {scrub_error_for_llm(_diagnosis.diagnosis)}\n"
+                )
             if _diagnosis.next_step:
-                _diagnosis_note += f"How it is usually fixed: {_diagnosis.next_step}\n"
+                _diagnosis_note += (
+                    f"How it is usually fixed: "
+                    f"{scrub_error_for_llm(_diagnosis.next_step)}\n"
+                )
 
             retry_user = (
                 f"The following SQL failed with this error:\n"

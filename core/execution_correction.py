@@ -87,6 +87,15 @@ def diagnose_execution_error(exec_error: str) -> CorrectionDecision:
     sentence into a plain reason and a next step. The repair prompt was built
     from the raw sentence and never asked for the reading, so the model had to
     re-derive from "Invalid object name 'X'" what the product already knew.
+
+    THE RETURNED TEXT IS NOT SCRUBBED. When no pattern matches,
+    ``sanitize_db_error`` falls back to the driver's own first sentence and
+    returns it verbatim -- deliberately, so support can search on it. That is
+    right for the user's own error card and wrong for a prompt: any caller
+    putting ``diagnosis`` or ``next_step`` in front of a model must pass it
+    through ``core.failure_messages.scrub_error_for_llm`` first. The repair
+    prompt in core/query_pipeline.py did not, and shipped unmasked values to
+    the model two lines above the same error being masked.
     """
     if not str(exec_error or "").strip():
         return CorrectionDecision()

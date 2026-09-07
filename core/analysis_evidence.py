@@ -30,7 +30,9 @@ Nothing here calls an LLM, opens a connection, or logs a value.
 
 from __future__ import annotations
 
+import datetime
 import logging
+import re
 from dataclasses import dataclass, field
 from statistics import mean, median, stdev
 from typing import Any
@@ -297,11 +299,126 @@ _CV_HIGH = 0.6
 _CV_LOW = 0.08
 
 
+_MONTH_ORDINALS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+# Exact spellings only — abbreviation or full name, nothing in between. Used
+# for a period column that carries month names and no year.
+_BARE_MONTHS: dict[str, tuple[int, int, int]] = {}
+for _abbr, _n in _MONTH_ORDINALS.items():
+    _BARE_MONTHS[_abbr] = (0, _n, 0)
+for _n, _full in enumerate(
+        ["january", "february", "march", "april", "may", "june", "july",
+         "august", "september", "october", "november", "december"], start=1):
+    _BARE_MONTHS[_full] = (0, _n, 0)
+del _abbr, _n, _full
+
+
+def period_order_key(value: object) -> tuple[int, int, int] | None:
+    """A sortable (year, month, day) for one period label, or None.
+
+    None means "this cannot be ordered", and the only correct response to that
+    is to compute no trend at all. Guessing an order produces a confident
+    statement of the wrong direction, which is worse than saying nothing.
+
+    Handles what a warehouse actually returns in a period column: real dates,
+    ISO strings, the YYYYMM / YYYYMMDD integer keys the date-role work
+    documents, quarter and month labels, and a bare month name for the common
+    "revenue by month" result that carries no year.
+    """
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return (value.year, value.month, value.day)
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    if text.isdigit():
+        if len(text) == 8:                       # 20240115
+            return (int(text[:4]), int(text[4:6]), int(text[6:]))
+        if len(text) == 6:                       # 202401
+            return (int(text[:4]), int(text[4:]), 0)
+        if len(text) == 4:                       # 2024
+            return (int(text), 0, 0)
+        return None
+
+    iso = re.match(r"^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$", text)
+    if iso:
+        return (int(iso.group(1)), int(iso.group(2)), int(iso.group(3) or 0))
+
+    quarter = re.match(r"^Q([1-4])[\s\-/]*(\d{4})$", text, re.I)
+    if quarter:
+        return (int(quarter.group(2)), (int(quarter.group(1)) - 1) * 3 + 1, 0)
+    quarter = re.match(r"^(\d{4})[\s\-/]*Q([1-4])$", text, re.I)
+    if quarter:
+        return (int(quarter.group(1)), (int(quarter.group(2)) - 1) * 3 + 1, 0)
+
+    named = re.match(r"^([A-Za-z]{3,9})\.?\s+(\d{4})$", text)
+    if named:
+        month = _MONTH_ORDINALS.get(named.group(1)[:3].lower())
+        if month:
+            return (int(named.group(2)), month, 0)
+
+    named = re.match(r"^(\d{4})\s+([A-Za-z]{3,9})$", text)
+    if named:
+        month = _MONTH_ORDINALS.get(named.group(2)[:3].lower())
+        if month:
+            return (int(named.group(1)), month, 0)
+
+    # A bare month name, for "revenue by month" with no year column. Year 0
+    # sorts them against each other and never against a labelled period.
+    #
+    # Matched EXACTLY, against the abbreviation and the full name, never by
+    # prefix. A three-letter prefix test reads "Nova" as November, "Maritime"
+    # as March and "Mayfield" as May -- the precise bug that
+    # core.stat_signals._is_temporal_col already carries a fix for, and which
+    # an earlier draft of this function reintroduced.
+    return _BARE_MONTHS.get(text.lower())
+
+
+def _values_in_period_order(
+    rows: list[dict], value_col: str, period_col: str
+) -> list[float] | None:
+    """The measure, ordered by its period. None when the order is unknowable.
+
+    This is the whole fix for a real defect: the series used to be read in
+    whatever order the rows arrived, so the identical three months at 100,
+    200, 300 reported `trend_up` ascending and `trend_down` descending. A
+    "top 10 by revenue" result carries a period column and is sorted by
+    revenue, so the analysis stated the reverse of the truth to precisely the
+    regulated tenants this feature was written for.
+    """
+    pairs: list[tuple[tuple[int, int, int], float]] = []
+    for row in rows:
+        value = _to_float(row.get(value_col))
+        if value is None:
+            continue
+        key = period_order_key(row.get(period_col))
+        if key is None:
+            log.warning(
+                "No trend computed: period column %r holds %r, which has no "
+                "known ordering", period_col, row.get(period_col),
+            )
+            return None
+        pairs.append((key, value))
+
+    # Mixed shapes -- some labelled with a year, some not -- cannot be placed
+    # on one axis, and sorting them would interleave silently.
+    if len({key[0] == 0 for key, _ in pairs}) > 1:
+        log.warning("No trend computed: period column %r mixes labels with "
+                    "and without a year", period_col)
+        return None
+
+    pairs.sort(key=lambda pair: pair[0])
+    return [value for _, value in pairs]
+
+
 def trend_findings(rows: list[dict], value_col: str, period_col: str) -> list[Finding]:
     """Direction, size and any reversal in a series ordered by period."""
-    values = [_to_float(row.get(value_col)) for row in rows]
-    values = [v for v in values if v is not None]
-    if len(values) < 2:
+    values = _values_in_period_order(rows, value_col, period_col)
+    if values is None or len(values) < 2:
         return []
 
     first, last = values[0], values[-1]

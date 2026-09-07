@@ -1457,8 +1457,16 @@ function setConnectionState(state, note){
 }
 function _showSkeletonBubble(){
   if (document.getElementById('skeletonBubble')) return;
-  const t = thread();
-  if (!t) return;
+  // Named threadEl, not t. A local `const t` here shadowed the translator
+  // declared at the top of this script, so the two translated labels below
+  // were calling a <div> and threw TypeError on the first status frame of
+  // every question -- taking startDoodle() and the elapsed timer with them.
+  // The whole function scope sees the local binding, so the collision is
+  // silent at parse time and only fires at runtime.
+  // (No id is spelled out in this comment: the catalogue-coverage test reads
+  // every quoted id the page mentions, and a truncated example fails it.)
+  const threadEl = thread();
+  if (!threadEl) return;
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   div.id = 'skeletonBubble';
@@ -1478,7 +1486,7 @@ function _showSkeletonBubble(){
     + '<span class="agent-run-id" id="agentRunId"></span></div>'
     + '<div class="answer-progress-steps" id="answerProgressSteps" hidden></div>'
     + '</div></div>';
-  t.appendChild(div);
+  threadEl.appendChild(div);
   const sourceBrand = document.getElementById('processingBrand');
   const brandSlot = document.getElementById('answerProgressBrandSlot');
   if (sourceBrand && brandSlot) {

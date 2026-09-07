@@ -141,9 +141,33 @@ def calls_section(account_id: str, days: int) -> dict:
             without_values += 1
 
     sent = with_values + without_values
+
+    # An empty log is not evidence that nothing happened. `enable_llm_audit`
+    # is `INTEGER NOT NULL DEFAULT 0` (store/db.py:93), so on a workspace that
+    # never turned it on there are no rows to find -- and this section used to
+    # read that silence as "No model calls were made in this period." and put
+    # it in front of an auditor. It is the one sentence in the pack that must
+    # never be wrong, and on a default workspace it always was.
+    #
+    # Absence of a record and absence of a call are different claims, and the
+    # pack may only make the one it can support.
+    audit_enabled = _audit_is_enabled(account_id)
+    if sent:
+        statement = f"{without_values} of {sent} model calls carried no data value."
+    elif audit_enabled:
+        statement = "No model calls were made in this period."
+    else:
+        statement = (
+            "No model calls are recorded for this period. Call auditing is not "
+            "enabled for this workspace, so this is an absence of records and "
+            "not evidence that no calls were made. Enable call auditing to make "
+            "this section attestable."
+        )
+
     return {
         "window_days": int(days),
         "total": len(rows),
+        "call_audit_enabled": audit_enabled,
         "by_status": by_status,
         "by_component": by_component,
         "endpoints_used": sorted(endpoints),
@@ -155,11 +179,26 @@ def calls_section(account_id: str, days: int) -> dict:
             "calls_with_no_manifest": unknown,
             "sources": value_sources,
         },
-        "statement": (
-            f"{without_values} of {sent} model calls carried no data value."
-            if sent else "No model calls were made in this period."
-        ),
+        "attestable": bool(audit_enabled),
+        "statement": statement,
     }
+
+
+def _audit_is_enabled(account_id: str) -> bool:
+    """Is call auditing on for this workspace?
+
+    Fails closed: if the flag cannot be read, the pack reports the section as
+    not attestable rather than claiming a clean period it cannot evidence.
+    """
+    import store
+
+    try:
+        client = store.get_client(account_id) or {}
+        return bool(client.get("enable_llm_audit"))
+    except Exception:
+        log.warning("Could not read enable_llm_audit for %s; reporting the "
+                    "calls section as not attestable", account_id, exc_info=True)
+        return False
 
 
 def refusals_section(account_id: str, days: int, limit: int = 200) -> dict:
