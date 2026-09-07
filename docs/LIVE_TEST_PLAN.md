@@ -2,7 +2,7 @@
 
 Everything on this branch, as cases a tester can run against a **live warehouse,
 a live model and a real browser**. It is deliberately not a restatement of the
-unit suite: 7,817 automated tests already run on every commit, and what they
+unit suite: 8,024 automated tests already run on every commit, and what they
 cannot reach is exactly what this plan covers — a real Snowflake/Oracle/Azure
 SQL connection, a real LLM with its own latency and refusals, real Qdrant
 retrieval, a real browser rendering real fonts, and real multi-tenant data.
