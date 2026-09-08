@@ -78,6 +78,31 @@ def _json_safe(value):
     return str(value)
 
 
+def _category_axis(rows: list[dict], text_cols: list[str],
+                   headers: list[str]) -> str:
+    """The column to put along the category axis.
+
+    Was text_cols[0]. On a result grouped by two things -- a warehouse and a
+    month -- that column repeats once per member of the other one, and the axis
+    came back reading "Halifax Branch St…" four times over with no way to tell
+    the bars apart.
+
+    Prefers a text column whose values are distinct, since an axis is a list of
+    categories and a category named twice is two bars the reader cannot
+    separate. Falls back to the first column when every candidate repeats: the
+    chart is then genuinely two-dimensional, which needs a grouped series
+    rather than a different axis, and drawing the old shape beats drawing
+    nothing.
+    """
+    if not text_cols:
+        return headers[0] if headers else ""
+    for col in text_cols:
+        seen = [str(row.get(col, "")) for row in rows]
+        if len(set(seen)) == len(seen):
+            return col
+    return text_cols[0]
+
+
 def _to_float(value) -> float | None:
     try:
         raw = str(value).strip().replace("$", "").replace(",", "").replace("%", "")
@@ -449,7 +474,7 @@ def build_chart_payload(
         return None
 
     x_spec = spec.get("x") or {}
-    x_key = x_spec.get("column") or (text_cols[0] if text_cols else headers[0])
+    x_key = x_spec.get("column") or _category_axis(rows, text_cols, headers)
     spec_y = [c.get("column") for c in (spec.get("y") or []) if c.get("column")]
     if effective_type == "scatter":
         y_keys = (spec_y or numeric_cols)[:2]

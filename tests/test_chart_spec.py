@@ -473,7 +473,20 @@ class ChartAnnotationTests(unittest.TestCase):
         )
         self.assertIn("silent: true", src)
         self.assertIn("formatter: `${isDrop ? '↓' : '↑'} ${pctLabel}", src)
-        self.assertIn("top: hasAnnotations ? (yKeys.length > 1 ? 68 : 58)", src)
+        # Was a source assertion on the exact grid expression, which broke on
+        # a reformat that changed no behaviour. What matters is that an
+        # annotated chart reserves more room above the plot than a plain one,
+        # or the callouts print over the topmost marks.
+        from tests.test_chart_annotation_language import _build
+
+        base = {"rows": [{"m": f"2026-0{n}", "v": n * 10} for n in range(1, 6)],
+                "x_key": "m", "y_keys": ["v"], "chart_type": "line"}
+        annotated = dict(base, annotations={
+            "biggest_period_gain": {"index": 3, "pct": 25.0, "label": "2026-04"}})
+        plain_top = int(_build("portal_chat.html", "en", base, "String(opt.grid.top)"))
+        noted_top = int(_build("portal_chat.html", "en", annotated,
+                               "String(opt.grid.top)"))
+        self.assertGreater(noted_top, plain_top)
         self.assertIn("backgroundColor: labelBackground", src)
 
     def test_dashboard_refresh_and_renderer_keep_annotations(self):
@@ -1078,3 +1091,78 @@ class PeriodComparisonChartTests(unittest.TestCase):
                 {"WAREHOUSE": "West", "REVENUE": 600, "MARGIN_PCT": 15.0}]
         payload = build_chart_payload(rows, None, "Revenue", "revenue by warehouse")
         self.assertEqual(payload["y_keys"], ["REVENUE", "MARGIN_PCT"])
+
+
+class TestTheCategoryAxisNamesEachCategoryOnce:
+    """The axis came back reading "Halifax Branch St…" four times over.
+
+    A result grouped by two things -- a warehouse and a month -- repeats its
+    first text column once per member of the other one, and x_key was
+    text_cols[0]. Four bars carried the same label with nothing to separate
+    them, on a chart captioned "Showing the 20 largest of 24".
+    """
+
+    @staticmethod
+    def _axis(rows, text_cols, headers=()):
+        from core.chart import _category_axis
+
+        return _category_axis(list(rows), list(text_cols), list(headers))
+
+    def test_the_column_that_repeats_is_passed_over(self):
+        rows = [{"PERIOD": p, "WHS_NM": w}
+                for p in ("2026-03", "2026-04", "2026-05")
+                for w in ("Halifax", "Calgary")]
+        # PERIOD repeats (2 warehouses each) and so does WHS_NM (3 months
+        # each): with both present neither can carry the axis alone. Narrow it
+        # to one month and the warehouse becomes the distinct one.
+        rows_one_month = [r for r in rows if r["PERIOD"] == "2026-03"]
+        assert self._axis(rows_one_month, ["PERIOD", "WHS_NM"]) == "WHS_NM"
+
+    def test_a_distinct_column_wins_over_a_repeating_first_one(self):
+        rows = [{"A": "same", "B": "one"}, {"A": "same", "B": "two"}]
+        assert self._axis(rows, ["A", "B"]) == "B"
+
+    def test_the_first_column_is_kept_when_it_is_already_distinct(self):
+        rows = [{"A": "one", "B": "x"}, {"A": "two", "B": "y"}]
+        assert self._axis(rows, ["A", "B"]) == "A"
+
+    def test_a_genuinely_two_dimensional_result_still_draws(self):
+        # Every candidate repeats. There is no axis that separates these bars
+        # -- that wants a grouped series, not a different column -- so it keeps
+        # the old choice rather than refusing to chart anything.
+        rows = [{"PERIOD": p, "WHS_NM": w}
+                for p in ("2026-03", "2026-04")
+                for w in ("Halifax", "Calgary")]
+        assert self._axis(rows, ["PERIOD", "WHS_NM"]) == "PERIOD"
+
+    def test_a_result_with_no_text_column_falls_back_to_a_header(self):
+        assert self._axis([], [], ["ONLY_NUMERIC"]) == "ONLY_NUMERIC"
+
+    def test_nothing_at_all_is_not_a_crash(self):
+        assert self._axis([], [], []) == ""
+
+    def test_this_is_only_the_fallback(self):
+        """Recorded so the next reader does not over-claim it, as I did.
+
+        build_chart_payload uses this ONLY when core.chart_spec left the axis
+        unpinned. The spec normally does pin one -- a temporal column, or the
+        primary dimension -- so the duplicated axis seen live ("Halifax Branch
+        St…" four times) is not fixed by choosing a different column: the rows
+        were warehouse x month and no single column separates them. That wants
+        a grouped series, which is a feature rather than a fix.
+        """
+        import core.chart as chart
+
+        rows = [{"PERIOD": "2026-03", "WHS_NM": n, "REVENUE_AMT": v}
+                for n, v in (("Halifax", 1200.0), ("Calgary", 1100.0))]
+        reached = []
+        real = chart._category_axis
+        chart._category_axis = lambda *a: (reached.append(1), real(*a))[1]
+        try:
+            chart.build_chart_payload(rows, "bar", "R", "revenue by warehouse")
+        finally:
+            chart._category_axis = real
+        assert not reached, (
+            "the spec no longer pins the axis, so this helper now decides it "
+            "for real results — the comment above needs revisiting"
+        )

@@ -1738,6 +1738,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "« {dimension} » ne fait pas partie des dimensions approuvées de cette métrique. Ajoutez-la si les questions doivent pouvoir la ventiler ainsi.",
     },
 
+    # ── Chart captions that say the chart is a subset ────────────────────────
+    # Built as English template literals in the page, so a French reader was
+    # told "Showing the 20 largest of 24" under an otherwise French card.
+    "ui.chart.cap.largest_of": {
+        "en": "Showing the {shown} largest of {total}",
+        "fr": "Affichage des {shown} plus grands sur {total}",
+    },
+    "ui.chart.cap.pie_remainder": {
+        "en": "Top {shown} of {total}, remainder grouped",
+        "fr": "Les {shown} premiers sur {total}, le reste regroupé",
+    },
+    "ui.chart.cap.series_hidden": {
+        "en": "{count} more series not shown",
+        "fr": "{count} séries supplémentaires non affichées",
+    },
+
     # ── Asking which business date to use ────────────────────────────────────
     # Built as English literals inside the pipeline, so the clarification card
     # arrived with French chrome and an English question inside it.

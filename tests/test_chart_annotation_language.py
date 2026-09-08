@@ -535,3 +535,74 @@ class TestNoChartLabelGoesBackToEnglishNotation:
             f"{page} writes a percentage with toFixed, which is English "
             f"notation on every page: " + "; ".join(offenders)
         )
+
+
+# ── The caption that says the chart is a subset ──────────────────────────────
+# Two defects, seen together on one live chart: the caption was an English
+# template literal in the page, and it sat on the same row as the legend, so
+# "Showing the 20 largest of 24" printed straight through the series names.
+
+def _wide(series: int = 1) -> dict:
+    """24 categories -- past CATEGORY_CAP -- with `series` measures each."""
+    keys = [f"v{i}" for i in range(series)]
+    rows = [{"cat": f"Warehouse {n:02d}", **{k: n * (i + 1) for i, k in enumerate(keys)}}
+            for n in range(24)]
+    return {"rows": rows, "x_key": "cat", "y_keys": keys, "chart_type": "bar"}
+
+
+class TestTheSubsetCaptionIsInTheReadersLanguage:
+
+    def test_the_caption_says_so_in_english(self):
+        text = _build("portal_chat.html", "en", _wide(), "opt.title.subtext")
+        assert text == "Showing the 20 largest of 24"
+
+    def test_the_caption_says_so_in_french(self):
+        text = _build("portal_chat.html", "fr", _wide(), "opt.title.subtext")
+        assert text == "Affichage des 20 plus grands sur 24"
+
+    def test_a_chart_showing_everything_carries_no_caption(self):
+        payload = {"rows": [{"cat": "A", "v": 1}, {"cat": "B", "v": 2}],
+                   "x_key": "cat", "y_keys": ["v"], "chart_type": "bar"}
+        assert _build("portal_chat.html", "en", payload,
+                      "opt.title === undefined ? 'none' : 'present'") == "none"
+
+    def test_dropped_series_are_named_in_french_too(self):
+        # Nine measures against an eight-slot palette: one series is dropped
+        # rather than drawn in a colour another series already has.
+        text = _build("portal_chat.html", "fr", _wide(series=9), "opt.title.subtext")
+        assert "séries supplémentaires non affichées" in text
+
+
+class TestTheCaptionAndTheLegendDoNotOverlap:
+    """They both sat on the top row and drew through each other. The forecast
+    chart already stacked them; every other type did not."""
+
+    def test_the_caption_drops_below_a_legend(self):
+        top = _build("portal_chat.html", "en", _wide(series=3), "String(opt.title.top)")
+        legend = _build("portal_chat.html", "en", _wide(series=3),
+                        "String(opt.legend.top)")
+        assert int(top) > int(legend), (
+            f"caption at {top} is not below the legend at {legend}"
+        )
+
+    def test_the_caption_stays_at_the_top_when_there_is_no_legend(self):
+        assert _build("portal_chat.html", "en", _wide(), "String(opt.title.top)") == "2"
+
+    def test_the_plot_area_clears_both(self):
+        # The grid has to start below whatever is stacked above it, or the
+        # caption prints over the topmost bars instead of over the legend.
+        stacked = int(_build("portal_chat.html", "en", _wide(series=3),
+                             "String(opt.grid.top)"))
+        caption = int(_build("portal_chat.html", "en", _wide(series=3),
+                             "String(opt.title.top)"))
+        assert stacked > caption + 11, (
+            f"grid starts at {stacked}, caption sits at {caption}"
+        )
+
+    def test_a_chart_with_no_caption_does_not_reserve_the_space(self):
+        payload = {"rows": [{"cat": f"W{n}", "a": n, "b": n * 2} for n in range(5)],
+                   "x_key": "cat", "y_keys": ["a", "b"], "chart_type": "bar"}
+        with_caption = int(_build("portal_chat.html", "en", _wide(series=2),
+                                  "String(opt.grid.top)"))
+        without = int(_build("portal_chat.html", "en", payload, "String(opt.grid.top)"))
+        assert without < with_caption

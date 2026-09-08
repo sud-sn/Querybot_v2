@@ -2252,19 +2252,28 @@ function buildChartOption(payload) {
   const capParts = [];
   if (truncatedFrom) {
     capParts.push((type === 'pie' || type === 'donut')
-      ? `Top ${PIE_CAP} of ${truncatedFrom}, remainder grouped`
-      : `Showing the ${CATEGORY_CAP} largest of ${truncatedFrom}`);
+      ? t('ui.chart.cap.pie_remainder', { shown: PIE_CAP, total: truncatedFrom })
+      : t('ui.chart.cap.largest_of', { shown: CATEGORY_CAP, total: truncatedFrom }));
   }
   if (droppedSeries) {
-    capParts.push(`${droppedSeries} more series not shown`);
+    capParts.push(t('ui.chart.cap.series_hidden', { count: droppedSeries }));
   }
+  // Stacked under the legend, not laid over it. Both used to sit on the top
+  // row and drew straight through each other -- "Showing the 20 largest of 24"
+  // printed across the series names on any grouped result wide enough to be
+  // truncated. The forecast chart already carries this fix; this is the same
+  // one for every other type.
+  const capLegend = yKeys.length > 1;
   const capNotice = capParts.length ? {
     text: '',
     subtext: capParts.join(' · '),
     left: 'center',
-    top: 2,
+    top: capLegend ? 24 : 2,
     subtextStyle: { color: axisColor, fontSize: 11 },
   } : undefined;
+  // What sits above the plot, so the grid can clear it: a legend row, a
+  // caption row, or both stacked.
+  const capReserve = (capParts.length ? (capLegend ? 42 : 20) : 0);
 
   const horizontal = type === 'bar' && (longLabels || manyLabels) && !temporal;
 
@@ -2905,11 +2914,13 @@ function buildChartOption(payload) {
         textStyle: { color: axisColor, fontSize: 10 } },
     ] : undefined,
     grid: horizontal
-      ? { left: 148, right: 28, top: 28, bottom: 20, containLabel: false }
+      ? { left: 148, right: 28, top: 28 + capReserve, bottom: 20,
+          containLabel: false }
       : {
           left: 56,
           right: 24,
-          top: hasAnnotations ? (yKeys.length > 1 ? 68 : 58) : (yKeys.length > 1 ? 44 : 24),
+          top: (hasAnnotations ? (yKeys.length > 1 ? 68 : 58)
+                               : (yKeys.length > 1 ? 44 : 24)) + capReserve,
           // + room for the zoom slider when one is present, or it lands
           // on top of the axis labels.
           bottom: (longLabels ? 82 : (hasAnnotations ? 58 : 48))

@@ -112,14 +112,30 @@ def test_series_are_capped_to_the_validated_palette_length(source):
 
 
 def test_the_reader_is_told_when_a_chart_is_a_subset(source):
-    """A chart that silently shows part of the data is read as all of it."""
-    assert "capNotice" in source
-    for path in ("title: capNotice,",):
-        assert source.count(path) == 2, (
-            "the cap notice must reach both the pie branch and the cartesian "
-            "base, or one of them shows a subset silently"
-        )
-    assert "more series not shown" in source
+    """A chart that silently shows part of the data is read as all of it.
+
+    This asserted on the page's source, so it broke the day the caption moved
+    into the message catalogue and would have passed for a caption that
+    resolved to nothing. It runs the real builder now: what matters is that a
+    truncated chart carries a caption saying so, on both the cartesian and the
+    pie branches.
+    """
+    from tests.test_chart_annotation_language import _build
+
+    wide = {"rows": [{"cat": f"W{n:02d}", "v": n} for n in range(24)],
+            "x_key": "cat", "y_keys": ["v"], "chart_type": "bar"}
+    assert "24" in _build("portal_chat.html", "en", wide, "opt.title.subtext")
+
+    pie = dict(wide, chart_type="pie")
+    assert "24" in _build("portal_chat.html", "en", pie, "opt.title.subtext"), (
+        "the pie branch shows a subset silently"
+    )
+
+    many = {"rows": [{"cat": f"W{n:02d}",
+                      **{f"v{i}": n + i for i in range(9)}} for n in range(3)],
+            "x_key": "cat", "y_keys": [f"v{i}" for i in range(9)],
+            "chart_type": "bar"}
+    assert "series" in _build("portal_chat.html", "en", many, "opt.title.subtext")
 
 
 def test_a_chart_with_nothing_to_draw_says_so(source):
