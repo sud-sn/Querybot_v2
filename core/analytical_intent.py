@@ -621,11 +621,35 @@ def _fiscal_start_month(text: str) -> int | None:
     return _MONTH_NUMBERS.get(match.group(1).casefold())
 
 
+def _t(msg_id: str, **kw) -> str:
+    """Resolve a catalogue id in the reader's language.
+
+    Deferred import, matching core/failure_messages.py and core/answer_rca.py.
+    The language comes from the request's ContextVar, which _handle_query_impl
+    activates around the whole turn.
+
+    THE INVARIANT THIS MODULE MUST KEEP: an option's ``label`` is what the
+    reader sees and is translated; its ``value`` is what gets fed back into the
+    pipeline as their answer and stays English. core/dispatcher.py reads
+    ``match.get("value") or match.get("label")``, so an option with a
+    translated label and no value would put French into the planner's input.
+    Every option built here carries a non-empty English value, and a test
+    asserts it for all of them at once.
+    """
+    from core.i18n import t
+
+    return t(msg_id, **kw)
+
+
 def _fiscal_month_options() -> tuple[dict[str, str], ...]:
+    # The label is the reader's month name; the value stays English because it
+    # is re-planned, not read. core.i18n.month_name already knows both.
+    from core.i18n import month_name
+
     return tuple(
         {
             "id": f"fiscal-start-{month}",
-            "label": name.title(),
+            "label": month_name(month),
             "value": f"The fiscal year starts in {name.title()}",
         }
         for name, month in _MONTH_NUMBERS.items()
@@ -769,11 +793,9 @@ def plan_analytical_intent(
                 options = _subject_options(metrics)
                 clarification = ClarificationRequest(
                     slot="subject",
-                    question=(
-                        "Which business area or metric should I use for this snapshot?"
-                        if intent == "daily_snapshot"
-                        else "Which business area or metric would you like me to analyse?"
-                    ),
+                    question=_t("clar.subject.snapshot"
+                                if intent == "daily_snapshot"
+                                else "clar.subject.overview"),
                     options=options,
                     reason="The request does not identify a governed measure or subject area.",
                 )
@@ -781,7 +803,7 @@ def plan_analytical_intent(
         unresolved.append("metric")
         clarification = ClarificationRequest(
             slot="metric",
-            question="What measure should I use to rank them?",
+            question=_t("clar.metric.ranking"),
             options=_relevant_metric_options(text, metrics),
             reason="A ranking requires a governed measure.",
         )
@@ -792,10 +814,10 @@ def plan_analytical_intent(
             unresolved.append("business_definition")
             clarification = ClarificationRequest(
                 slot="business_definition",
-                question=(
-                    f"How should I define '{business_concepts[0]}' for this analysis? "
-                    "Please include the business rule or threshold to use."
-                ),
+                # The concept is the reader's own word, interpolated, never
+                # looked up.
+                question=_t("clar.business_definition",
+                            concept=business_concepts[0]),
                 reason="This analytical concept has no matching governed definition.",
             )
 
@@ -808,25 +830,15 @@ def plan_analytical_intent(
         unresolved.append("recent_window")
         clarification = ClarificationRequest(
             slot="recent_window",
-            question=(
-                "What comparison window should I use for 'recently'?"
-            ),
-            options=(
+            question=_t("clar.recent_window"),
+            options=tuple(
                 {
-                    "id": "recent-7-days",
-                    "label": "Last 7 vs previous 7 days",
-                    "value": "Compare the last 7 observed business days with the previous 7 observed business days.",
-                },
-                {
-                    "id": "recent-30-days",
-                    "label": "Last 30 vs previous 30 days",
-                    "value": "Compare the last 30 observed business days with the previous 30 observed business days.",
-                },
-                {
-                    "id": "recent-90-days",
-                    "label": "Last 90 vs previous 90 days",
-                    "value": "Compare the last 90 observed business days with the previous 90 observed business days.",
-                },
+                    "id": f"recent-{days}-days",
+                    "label": _t("clar.recent_window.option", days=days),
+                    "value": (f"Compare the last {days} observed business days "
+                              f"with the previous {days} observed business days."),
+                }
+                for days in (7, 30, 90)
             ),
             reason="A decrease requires both a recent period and a comparable baseline.",
         )
@@ -838,19 +850,16 @@ def plan_analytical_intent(
         unresolved.append("calendar_basis")
         clarification = ClarificationRequest(
             slot="calendar_basis",
-            question=(
-                f"Should I interpret {named_quarter} using calendar quarters "
-                "or your fiscal quarters?"
-            ),
+            question=_t("clar.calendar_basis", quarter=named_quarter),
             options=(
                 {
                     "id": "calendar-basis-calendar",
-                    "label": "Calendar quarters",
+                    "label": _t("clar.calendar_basis.calendar"),
                     "value": "Use calendar quarters for this request",
                 },
                 {
                     "id": "calendar-basis-fiscal",
-                    "label": "Fiscal quarters",
+                    "label": _t("clar.calendar_basis.fiscal"),
                     "value": "Use fiscal quarters for this request",
                 },
             ),
@@ -865,7 +874,7 @@ def plan_analytical_intent(
         unresolved.append("fiscal_year_start_month")
         clarification = ClarificationRequest(
             slot="fiscal_year_start_month",
-            question="Which month does your fiscal year start?",
+            question=_t("clar.fiscal_year_start"),
             options=_fiscal_month_options(),
             reason="Fiscal Q1 cannot be calculated safely without the fiscal year start month.",
         )

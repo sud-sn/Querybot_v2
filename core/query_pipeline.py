@@ -655,6 +655,37 @@ _DATE_KEY_QUALIFIERS = {
 }
 
 
+def source_clarification_question(*, lang: str | None = None) -> str:
+    """"Which source?", in the reader's language.
+
+    Lifted to module level for the same reason the date questions were in
+    7eb0246: it was a literal buried inside _handle_query_impl, a 6,484-line
+    async function that needs an event, an adapter, a store and a live LLM
+    before it will run one line. Nothing could test it, and nothing did.
+    """
+    return _t("clar.source.several_datasets", lang=lang)
+
+
+def join_clarification_question(*, lang: str | None = None) -> str:
+    """"Which relationship?", in the reader's language."""
+    return _t("clar.join.several_paths", lang=lang)
+
+
+def count_clarification_question(entity: str, option_count: int,
+                                 *, lang: str | None = None) -> str:
+    """"Which identifier counts one business event?", in two shapes.
+
+    The entity is the reader's own term and is interpolated, never looked up.
+    It arrives already pluralised by the caller so the English stays what it
+    was; that pluralisation is a bare "s" and is wrong for an irregular noun
+    ("companys"), which is a real defect and a separate one -- fixing it here
+    would change English copy under cover of a translation change.
+    """
+    return _t("clar.count.one_candidate" if option_count == 1
+              else "clar.count.several_candidates",
+              entity=entity, lang=lang)
+
+
 def date_clarification_question(*, ambiguous: bool, allow_free_text: bool,
                                 lang: str | None = None) -> str:
     """Which form of "which business date?" to ask.
@@ -2998,10 +3029,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         ):
             _source_options = source_clarification_options(_source_scope)
             if _source_options:
-                _source_question = (
-                    "I found more than one relevant business dataset. "
-                    "Which source should I use for this analysis?"
-                )
+                _source_question = source_clarification_question()
                 _save_pending_clarification(
                     _semantic_plan_question,
                     context_with_terms,
@@ -3172,20 +3200,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         if _count_target_resolution.get("status") == "ambiguous":
             _count_options = count_target_clarification_options(_count_target_resolution)
-            _count_question = (
-                (
-                    f"I found one possible business identifier for counting "
-                    f"{_analytical_plan.counted_entity}s, but its event grain is not "
-                    "approved strongly enough for me to assume it. Does this meaning "
-                    "represent one business event for this question?"
-                )
-                if len(_count_options) == 1
-                else (
-                    f"I found more than one possible business identifier for counting "
-                    f"{_analytical_plan.counted_entity}s. Which meaning represents one "
-                    "business event for this question?"
-                )
-            )
+            _count_question = count_clarification_question(
+                f"{_analytical_plan.counted_entity}s", len(_count_options))
             if _count_options and can_request_clarification(event, "count_target"):
                 _save_pending_clarification(
                     _semantic_plan_question,
@@ -4527,10 +4543,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             and can_request_clarification(event, "graph_join_path")
         ):
             _join_options = list(_graph_ctx.get("clarification_options") or [])[:5]
-            _join_question = (
-                "I found more than one equally governed relationship path for "
-                "this analysis. Which business relationship should I use?"
-            )
+            _join_question = join_clarification_question()
             _save_pending_clarification(
                 _semantic_plan_question,
                 context_with_terms,

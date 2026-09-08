@@ -1839,6 +1839,62 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Plusieurs événements métier liés ont une date par défaut. "
               "Quel contexte de date dois-je utiliser ?",
     },
+    "clar.subject.snapshot": {
+        "en": "Which business area or metric should I use for this snapshot?",
+        "fr": "Quel domaine ou indicateur dois-je utiliser pour cet instantané ?",
+    },
+    "clar.subject.overview": {
+        "en": "Which business area or metric would you like me to analyse?",
+        "fr": "Quel domaine ou indicateur souhaitez-vous que j'analyse ?",
+    },
+    "clar.metric.ranking": {
+        "en": "What measure should I use to rank them?",
+        "fr": "Quel indicateur dois-je utiliser pour établir ce classement ?",
+    },
+    "clar.business_definition": {
+        "en": "How should I define '{concept}' for this analysis? Please include the business rule or threshold to use.",
+        "fr": "Comment dois-je définir « {concept} » pour cette analyse ? Indiquez la règle métier ou le seuil à utiliser.",
+    },
+    "clar.recent_window": {
+        "en": "What comparison window should I use for 'recently'?",
+        "fr": "Quelle fenêtre de comparaison dois-je utiliser pour « récemment » ?",
+    },
+    "clar.recent_window.option": {
+        "en": "Last {days} vs previous {days} days",
+        "fr": "Les {days} derniers jours par rapport aux {days} précédents",
+    },
+    "clar.calendar_basis": {
+        "en": "Should I interpret {quarter} using calendar quarters or your fiscal quarters?",
+        "fr": "Dois-je interpréter {quarter} selon les trimestres civils ou selon vos trimestres fiscaux ?",
+    },
+    "clar.calendar_basis.calendar": {
+        "en": "Calendar quarters",
+        "fr": "Trimestres civils",
+    },
+    "clar.calendar_basis.fiscal": {
+        "en": "Fiscal quarters",
+        "fr": "Trimestres fiscaux",
+    },
+    "clar.fiscal_year_start": {
+        "en": "Which month does your fiscal year start?",
+        "fr": "Quel mois marque le début de votre exercice fiscal ?",
+    },
+    "clar.source.several_datasets": {
+        "en": "I found more than one relevant business dataset. Which source should I use for this analysis?",
+        "fr": "J'ai trouvé plusieurs jeux de données pertinents. Quelle source dois-je utiliser pour cette analyse ?",
+    },
+    "clar.join.several_paths": {
+        "en": "I found more than one equally governed relationship path for this analysis. Which business relationship should I use?",
+        "fr": "J'ai trouvé plusieurs chemins de relation également approuvés pour cette analyse. Quelle relation métier dois-je utiliser ?",
+    },
+    "clar.count.one_candidate": {
+        "en": "I found one possible business identifier for counting {entity}, but its event grain is not approved strongly enough for me to assume it. Does this meaning represent one business event for this question?",
+        "fr": "J'ai trouvé un identifiant métier possible pour compter {entity}, mais son grain d'événement n'est pas approuvé avec assez de certitude pour que je le suppose. Cette signification représente-t-elle un événement métier unique pour cette question ?",
+    },
+    "clar.count.several_candidates": {
+        "en": "I found more than one possible business identifier for counting {entity}. Which meaning represents one business event for this question?",
+        "fr": "J'ai trouvé plusieurs identifiants métier possibles pour compter {entity}. Quelle signification représente un événement métier unique pour cette question ?",
+    },
     "clar.date.no_default_free_text": {
         "en": "I found these relevant business dates, but none is an "
               "unambiguous approved default. Which date should I use? If it "
