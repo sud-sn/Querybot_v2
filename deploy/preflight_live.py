@@ -151,11 +151,22 @@ def report(account_id: str) -> int:
     try:
         from core.graph_health import check_graph_health
         health = check_graph_health(account_id)
-        errors = [i for i in (health.issues or [])
-                  if str(getattr(i, "severity", "") or i.get("severity", "")) == "ERROR"]
-        line(OK if not errors else WARN, "health",
+        # Compared against "ERROR" here while core.graph_health stores
+        # SEVERITY_ERROR = "error", so this counted zero on every workspace and
+        # reported "0 error(s)" over a graph that had them. Case-folded, and
+        # taken from the module's own constant rather than a spelling.
+        from core.graph_health import SEVERITY_ERROR
+
+        errors = [
+            i for i in (health.issues or [])
+            if str(getattr(i, "severity", None)
+                   or (i.get("severity") if isinstance(i, dict) else "")
+                   ).strip().lower() == SEVERITY_ERROR
+        ]
+        line(OK if not errors else GAP, "health",
              f"score {health.score}, {len(errors)} error(s), "
              f"{len(health.issues or [])} issue(s) total")
+        gaps += bool(errors)
     except Exception as exc:      # noqa: BLE001
         line(WARN, "health", f"could not run: {exc}")
 
