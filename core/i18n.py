@@ -1298,6 +1298,82 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Check the filters, selected schema, or field mapping.",
         "fr": "Vérifiez les filtres, le schéma sélectionné ou le rattachement des champs.",
     },
+    "fail.zero_row.validation.headline": {
+        "en": "I could not produce a trusted answer for this question.",
+        "fr": "Je n'ai pas pu produire une réponse fiable à cette question.",
+    },
+    "fail.zero_row.validation.reason": {
+        "en": "The generated SQL did not pass the validation checks.",
+        "fr": "La requête SQL générée n'a pas passé les contrôles de validation.",
+    },
+    "fail.zero_row.validation.next_step": {
+        "en": "Ask an administrator to review the field mapping or rephrase the question with a specific metric and table.",
+        "fr": "Demandez à un administrateur de revoir le rattachement des champs, ou reformulez la question en nommant un indicateur et une table précis.",
+    },
+    "fail.zero_row.unmatched.reason": {
+        "en": "There is no {label} matching '{literal}' in the data.",
+        "fr": "Aucune correspondance dans les données pour {label} « {literal} ».",
+    },
+    "fail.zero_row.unmatched.reason_unnamed": {
+        "en": "There is no value matching '{literal}' in the data.",
+        "fr": "Aucune valeur ne correspond à « {literal} » dans les données.",
+    },
+    "fail.zero_row.unmatched.next_step_closest": {
+        "en": "Closest values in your data: {values} — try one of these.",
+        "fr": "Valeurs les plus proches dans vos données : {values} — essayez l'une d'elles.",
+    },
+    "fail.zero_row.unmatched.next_step": {
+        "en": "Check the spelling, or ask without the filter to see the available values.",
+        "fr": "Vérifiez l'orthographe, ou posez la question sans le filtre pour voir les valeurs disponibles.",
+    },
+    "fail.zero_row.empty_table.reason": {
+        "en": "One of the tables needed for this answer has no records: {tables}.",
+        "fr": "L'une des tables nécessaires à cette réponse ne contient aucun enregistrement : {tables}.",
+    },
+    "fail.zero_row.empty_table.next_step": {
+        "en": "Check whether that source table should contain data for the selected schema, or map the business term to another populated table.",
+        "fr": "Vérifiez si cette table source doit contenir des données pour le schéma sélectionné, ou rattachez le terme métier à une autre table alimentée.",
+    },
+    "fail.zero_row.join.reason": {
+        "en": "The selected join path did not produce matching records for the current data.",
+        "fr": "Le chemin de jointure sélectionné n'a produit aucun enregistrement correspondant pour les données actuelles.",
+    },
+    "fail.zero_row.join.next_step": {
+        "en": "Check whether the relationship keys match in the database, or choose a less restrictive join path.",
+        "fr": "Vérifiez que les clés de relation correspondent dans la base de données, ou choisissez un chemin de jointure moins restrictif.",
+    },
+    "fail.zero_row.filters.reason": {
+        "en": "The filters produced no matching rows.",
+        "fr": "Les filtres n'ont produit aucune ligne correspondante.",
+    },
+    "fail.zero_row.filters.reason_mapped": {
+        "en": "The mapped fields were valid, but the filters produced no matching rows.",
+        "fr": "Les champs rattachés étaient valides, mais les filtres n'ont produit aucune ligne correspondante.",
+    },
+    "fail.zero_row.filters_joins.reason": {
+        "en": "The filters, joins, or selected schema produced no matching rows.",
+        "fr": "Les filtres, les jointures ou le schéma sélectionné n'ont produit aucune ligne correspondante.",
+    },
+    "fail.zero_row.filters_joins.reason_mapped": {
+        "en": "The mapped fields were valid, but the filters, joins, or selected schema produced no matching rows.",
+        "fr": "Les champs rattachés étaient valides, mais les filtres, les jointures ou le schéma sélectionné n'ont produit aucune ligne correspondante.",
+    },
+    "fail.zero_row.broaden.next_step": {
+        "en": "Try broadening the filter, checking the selected schema, or confirming the business field mapping.",
+        "fr": "Essayez d'élargir le filtre, de vérifier le schéma sélectionné ou de confirmer le rattachement des champs métier.",
+    },
+    "rca.success.headline": {
+        "en": "Here are the results I found.",
+        "fr": "Voici les résultats que j'ai trouvés.",
+    },
+    "rca.success.reason": {
+        "en": "The query completed successfully and returned data.",
+        "fr": "La requête s'est exécutée correctement et a renvoyé des données.",
+    },
+    "rca.success.next_step": {
+        "en": "Use the query details if you want to audit the fields and tables behind the answer.",
+        "fr": "Consultez le détail de la requête pour auditer les champs et les tables à l'origine de la réponse.",
+    },
     "fail.db.error_prefix": {
         "en": "Database error: {detail}",
         "fr": "Erreur de base de données : {detail}",

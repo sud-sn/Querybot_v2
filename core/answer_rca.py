@@ -4,6 +4,20 @@ import re
 from typing import Any
 
 
+def _t(msg_id: str, **kw) -> str:
+    """Resolve a catalogue id in the reader's language.
+
+    Deferred import, matching core/failure_messages.py: the language comes from
+    the request's ContextVar, which _handle_query_impl activates around the
+    whole turn. The zero-row card is built inline in that coroutine -- the only
+    executor hop nearby wraps the table-count query, not this -- so the
+    ContextVar is live and no lang needs threading through.
+    """
+    from core.i18n import t
+
+    return t(msg_id, **kw)
+
+
 try:
     import sqlglot
     from sqlglot import exp as sg_exp
@@ -105,9 +119,9 @@ def build_business_rca(
 
     if validation not in {"ok", "pass", "trusted_metric"}:
         return {
-            "headline": "I could not produce a trusted answer for this question.",
-            "most_likely_reason": "The generated SQL did not pass the validation checks.",
-            "suggested_next_step": "Ask an administrator to review the field mapping or rephrase the question with a specific metric and table.",
+            "headline": _t("fail.zero_row.validation.headline"),
+            "most_likely_reason": _t("fail.zero_row.validation.reason"),
+            "suggested_next_step": _t("fail.zero_row.validation.next_step"),
             "technical_notes": technical_notes,
         }
 
@@ -116,19 +130,28 @@ def build_business_rca(
     # generic empty-table / join-path reasons.
     if row_count == 0 and unmatched_literals:
         first = unmatched_literals[0]
-        label = first.get("business_name") or first.get("column") or "value"
-        reason = f"There is no {label} matching '{first.get('literal')}' in the data."
+        # The business name is tenant DATA, so it is interpolated, never
+        # translated. A separate id for the unnamed case rather than an English
+        # word "value" glued into a French sentence.
+        label = first.get("business_name") or first.get("column") or ""
+        if label:
+            reason = _t("fail.zero_row.unmatched.reason",
+                        label=label, literal=first.get("literal"))
+        else:
+            reason = _t("fail.zero_row.unmatched.reason_unnamed",
+                        literal=first.get("literal"))
         closest = [c for c in (first.get("closest") or []) if c]
         if closest:
             listed = ", ".join(f"'{c}'" for c in closest[:3])
-            next_step = f"Closest values in your data: {listed} — try one of these."
+            next_step = _t("fail.zero_row.unmatched.next_step_closest",
+                           values=listed)
         else:
-            next_step = "Check the spelling, or ask without the filter to see the available values."
+            next_step = _t("fail.zero_row.unmatched.next_step")
         technical_notes.append(
             f"Unmatched filter literal: {first.get('column')} = '{first.get('literal')}'"
         )
         return {
-            "headline": "I could not find matching records for this question.",
+            "headline": _t("fail.zero_row.headline"),
             "most_likely_reason": reason,
             "suggested_next_step": next_step,
             "technical_notes": technical_notes,
@@ -137,9 +160,10 @@ def build_business_rca(
     if row_count == 0 and empty:
         listed = ", ".join(empty[:3])
         return {
-            "headline": "I could not find matching records for this question.",
-            "most_likely_reason": f"One of the tables needed for this answer has no records: {listed}.",
-            "suggested_next_step": "Check whether that source table should contain data for the selected schema, or map the business term to another populated table.",
+            "headline": _t("fail.zero_row.headline"),
+            "most_likely_reason": _t("fail.zero_row.empty_table.reason",
+                                     tables=listed),
+            "suggested_next_step": _t("fail.zero_row.empty_table.next_step"),
             "technical_notes": technical_notes,
         }
 
@@ -151,9 +175,9 @@ def build_business_rca(
     # legitimately matched nothing.
     if row_count == 0 and (graph.get("enabled") or graph.get("detected")) and len(tables) > 1:
         return {
-            "headline": "I could not find matching records for this question.",
-            "most_likely_reason": "The selected join path did not produce matching records for the current data.",
-            "suggested_next_step": "Check whether the relationship keys match in the database, or choose a less restrictive join path.",
+            "headline": _t("fail.zero_row.headline"),
+            "most_likely_reason": _t("fail.zero_row.join.reason"),
+            "suggested_next_step": _t("fail.zero_row.join.next_step"),
             "technical_notes": technical_notes,
         }
 
@@ -162,21 +186,23 @@ def build_business_rca(
         # otherwise this is just a single-table WHERE clause that correctly
         # matched nothing, and saying "joins" implies a problem that isn't
         # there.
-        clause = "filters, joins, or selected schema" if len(tables) > 1 else "filters"
-        if plan.get("enabled"):
-            reason = f"The mapped fields were valid, but the {clause} produced no matching rows."
-        else:
-            reason = f"The {clause} produced no matching rows."
+        # Four whole sentences rather than one with a clause spliced into it.
+        # "The {clause} produced no matching rows" cannot be translated: French
+        # word order and agreement do not survive an English fragment dropped
+        # into the middle of the sentence.
+        stem = "filters_joins" if len(tables) > 1 else "filters"
+        suffix = "reason_mapped" if plan.get("enabled") else "reason"
+        reason = _t(f"fail.zero_row.{stem}.{suffix}")
         return {
-            "headline": "I could not find matching records for this question.",
+            "headline": _t("fail.zero_row.headline"),
             "most_likely_reason": reason,
-            "suggested_next_step": "Try broadening the filter, checking the selected schema, or confirming the business field mapping.",
+            "suggested_next_step": _t("fail.zero_row.broaden.next_step"),
             "technical_notes": technical_notes,
         }
 
     return {
-        "headline": "Here are the results I found.",
-        "most_likely_reason": "The query completed successfully and returned data.",
-        "suggested_next_step": "Use the query details if you want to audit the fields and tables behind the answer.",
+        "headline": _t("rca.success.headline"),
+        "most_likely_reason": _t("rca.success.reason"),
+        "suggested_next_step": _t("rca.success.next_step"),
         "technical_notes": technical_notes,
     }
