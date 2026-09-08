@@ -96,6 +96,74 @@ class ItRefusesRatherThanGuesses(unittest.TestCase):
         self.assertEqual(_trends(rows), [])
 
 
+class ASecondDimensionIsNotASeries(unittest.TestCase):
+    """The same defect from the other side, found on live data.
+
+    Ordering the rows by period fixed reading them in arrival order. It did not
+    fix the assumption underneath: that there is ONE value per period. "Revenue
+    by warehouse for the last three months" gives a row per warehouse per
+    month, so first and last are two different warehouses a quarter apart and
+    the percentage between them describes nothing.
+
+    On the live workspace this reported "+1,437.3% from 2026-03 to 2026-06" and
+    "Biggest gain: 2026-03 -> 2026-04 (+1,308.2%)" in KEY INSIGHTS, worded with
+    the same confidence as a real finding.
+    """
+
+    @staticmethod
+    def _grid(per_period: dict[str, list[float]]):
+        return [{"WHS_NM": f"W{i}", "PERIOD": period, "REVENUE": value}
+                for period, values in per_period.items()
+                for i, value in enumerate(values)]
+
+    FLAT_GRID = {"2026-03": [100.0, 200.0, 300.0, 400.0],
+                 "2026-04": [100.0, 200.0, 300.0, 400.0],
+                 "2026-05": [100.0, 200.0, 300.0, 400.0],
+                 "2026-06": [100.0, 200.0, 300.0, 400.0]}
+
+    def test_four_warehouses_all_flat_produce_no_trend(self):
+        # Every warehouse ends the quarter exactly where it started. Any trend
+        # finding here is arithmetic on two unrelated rows.
+        rows = self._grid(self.FLAT_GRID)
+        self.assertEqual(trend_findings(rows, "REVENUE", "PERIOD"), [])
+
+    def test_it_does_not_reach_the_narrative_either(self):
+        # Through build_evidence, which is what the answer card actually calls.
+        self.assertEqual(_trends(self._grid(self.FLAT_GRID)), [])
+
+    def test_no_reversal_is_invented_from_the_grid_either(self):
+        # The sawtooth of walking 100,200,300,400 four times reads as six
+        # turns to a detector that thinks the list is a series.
+        rows = self._grid(self.FLAT_GRID)
+        self.assertEqual(
+            [f for f in build_evidence(rows).findings if f.kind == "trend_reversal"],
+            [])
+
+    def test_a_grid_that_really_does_rise_still_gets_no_trend(self):
+        # Refusing is not "detect the trend anyway when the totals agree".
+        # This function cannot know the measure is additive -- summing a
+        # margin percentage per period would be a second wrong answer -- so a
+        # caller that wants the total's trend has to aggregate first.
+        rows = self._grid({"2026-03": [100.0, 100.0],
+                           "2026-04": [200.0, 200.0],
+                           "2026-05": [300.0, 300.0]})
+        self.assertEqual(trend_findings(rows, "REVENUE", "PERIOD"), [])
+
+    def test_the_same_measure_aggregated_first_does_trend(self):
+        # And the caller that does aggregate gets its finding, so the refusal
+        # above is a contract about the input, not a feature being withdrawn.
+        rows = [{"PERIOD": "2026-03", "REVENUE": 200.0},
+                {"PERIOD": "2026-04", "REVENUE": 400.0},
+                {"PERIOD": "2026-05", "REVENUE": 600.0}]
+        found = trend_findings(rows, "REVENUE", "PERIOD")
+        self.assertEqual([f.kind for f in found][:1], ["trend_up"])
+        self.assertEqual(found[0].numbers["pct"], 200.0)
+
+    def test_one_row_per_period_is_still_a_series(self):
+        # The guard must not fire on the ordinary case it sits next to.
+        self.assertEqual(_trends(RISING), ["trend_up"])
+
+
 class ThePeriodKeyKnowsRealWarehouseShapes(unittest.TestCase):
 
     def test_iso_strings(self):

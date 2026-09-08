@@ -411,6 +411,25 @@ def _values_in_period_order(
                     "and without a year", period_col)
         return None
 
+    # More than one row per period is not a series. The result is grouped by
+    # something else as well, so first and last are two different members of
+    # that other dimension a few months apart, and the percentage between them
+    # describes nothing. "Revenue by warehouse for the last three months"
+    # gives a row per warehouse per month; on live data where every warehouse
+    # was flat this reported +1,437% growth and six reversals.
+    #
+    # Refused rather than summed per period: this function cannot know whether
+    # the measure is additive, and a total over a ratio column would be a
+    # second wrong answer wearing the first one's clothes. A caller that wants
+    # the trend of the total has to aggregate before asking.
+    periods = {key for key, _ in pairs}
+    if len(periods) != len(pairs):
+        log.warning(
+            "No trend computed: %d rows across %d periods on %r — the result "
+            "is grouped by another dimension as well, so it is not a series",
+            len(pairs), len(periods), period_col)
+        return None
+
     pairs.sort(key=lambda pair: pair[0])
     return [value for _, value in pairs]
 
