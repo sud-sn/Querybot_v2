@@ -151,5 +151,78 @@ class OneRowPerLabelBeforeAnybodyLeads(unittest.TestCase):
         self.assertEqual(stats["leader"], "Halifax")
 
 
+class TheProseUsesTheBusinessNameNotTheSpelling(unittest.TestCase):
+    """"across 6 whs nm", "Break down by Sup", "Current Revenue".
+
+    _display_label was replace("_", " ").title(), so every place the narrative
+    named a column it printed the warehouse's spelling at a reader who never
+    chose it. core.schema_enrichment resolves these against the tenant's active
+    vocabulary -- the same expansion that names the semantic model's measures
+    -- and nothing in this layer was asking it.
+    """
+
+    def test_a_warehouse_code_reads_as_words(self):
+        from core.response_builder import _display_label
+
+        self.assertEqual(_display_label("WHS_NM"), "Warehouse Name")
+        self.assertEqual(_display_label("BAL_VAL_AMT"), "Balance Value Amount")
+        self.assertEqual(_display_label("SUP_NM"), "Supplier Name")
+
+    def test_a_column_already_in_words_is_unchanged(self):
+        from core.response_builder import _display_label
+
+        self.assertEqual(_display_label("CURRENT_REVENUE"), "Current Revenue")
+        self.assertEqual(_display_label("REVENUE"), "Revenue")
+
+    def test_an_infrastructure_column_is_not_given_a_business_name(self):
+        # The expansion answers "data platform field: ..." for these, which is
+        # a description rather than a label.
+        from core.response_builder import _display_label
+
+        self.assertEqual(_display_label("AZ_UPD_TS"), "Az Upd Ts")
+
+    def test_nothing_in_makes_nothing_out(self):
+        from core.response_builder import _display_label
+
+        self.assertEqual(_display_label(""), "")
+        self.assertEqual(_display_label(None), "")
+
+    def test_a_broken_vocabulary_costs_a_label_not_an_answer(self):
+        from unittest.mock import patch
+
+        import core.schema_enrichment as se
+        from core.response_builder import _display_label
+
+        with patch.object(se, "enrich_columns", side_effect=RuntimeError("boom")):
+            self.assertEqual(_display_label("WHS_NM"), "Whs Nm")
+
+    def test_the_sentence_a_reader_sees_says_warehouse(self):
+        # Through the real summary builder, on the live shape.
+        import core.response_builder as rb
+
+        rows = grid()
+        ctx = rb.summarize_result_context(rows, QUESTION)
+        brief = {"mode": ctx["mode"], "category_breakdown": {
+            "top_5": ctx["top_items"],
+            "leader_share_pct": ctx["comparison_stats"]["leader_share_pct"],
+            "label_column": ctx["label_col"], "category_count": 3}}
+        sentence = rb._build_insight_summary(rows, ctx, brief)
+        self.assertIn("warehouse names", sentence)
+        self.assertNotIn("whs", sentence.lower())
+
+    def test_the_counted_label_is_plural(self):
+        # It follows a count. "across 3 warehouse name" only became visibly
+        # wrong once the label stopped being an abbreviation.
+        import core.response_builder as rb
+
+        rows = grid()
+        ctx = rb.summarize_result_context(rows, QUESTION)
+        brief = {"mode": ctx["mode"], "category_breakdown": {
+            "top_5": ctx["top_items"],
+            "leader_share_pct": ctx["comparison_stats"]["leader_share_pct"],
+            "label_column": ctx["label_col"], "category_count": 3}}
+        self.assertIn("3 warehouse names", rb._build_insight_summary(rows, ctx, brief))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -328,8 +328,12 @@ class TestTheInsightSummary:
             "Revenue trended down 40.0% from 2026-01 to 2026-04. Peak: 100 in 2026-01."
 
     def test_a_ranking_is_french(self, french):
+        # "sur 3 regions", not "sur 3 region": the label follows a count. It is
+        # pluralised in English because the label itself is English -- it comes
+        # from expanding a column name, in either language. Translating the
+        # label is a separate gap.
         assert _card(RANKING, "revenue by region")["insight_summary"] == \
-            "North arrive en tête avec 900 (92.8 % du total), sur 3 region."
+            "North arrive en tête avec 900 (92.8 % du total), sur 3 regions."
 
     def test_the_french_percent_sign_takes_a_space(self, french):
         """French typography puts a space before %, and the reader notices its
