@@ -78,6 +78,46 @@ def _json_safe(value):
     return str(value)
 
 
+def _pivot_by_series(
+    rows: list[dict], x_key: str, series_col: str, y_key: str,
+) -> tuple[list[dict], list[str]]:
+    """One row per x label, one key per group value.
+
+    This is the only place in the stack where the grouping column's VALUES
+    still exist. The projection below drops every column but [x, *y], so by the
+    time the payload reaches the browser the group is gone -- which is why no
+    fix for this was possible in the templates, however cleverly they detected
+    that the axis repeated.
+
+    The shape it produces is the one both pages already draw: one series per
+    key in the row dict. So a grouped chart needs no new renderer branch, no
+    new payload concept and no new chart type -- the multi-series path written
+    for several MEASURES draws several GROUPS without knowing the difference.
+
+    A cell the result never returned stays None. It reaches the browser as
+    null, which ECharts draws as a gap: a warehouse that opened in March has no
+    bar in January rather than a bar reading zero, because zero is a claim and
+    nobody made it.
+
+    Order is first-seen on both axes, so a period axis keeps whatever order the
+    query's ORDER BY produced.
+    """
+    order_x: list[str] = []
+    order_g: list[str] = []
+    cells: dict[str, dict[str, float | None]] = {}
+    for row in rows:
+        x = "" if row.get(x_key) is None else str(row.get(x_key))
+        group = "" if row.get(series_col) is None else str(row.get(series_col))
+        if x not in cells:
+            cells[x] = {}
+            order_x.append(x)
+        if group not in order_g:
+            order_g.append(group)
+        cells[x][group] = _to_float(row.get(y_key))
+    pivoted = [{x_key: x, **{g: cells[x].get(g) for g in order_g}} for x in order_x]
+    return pivoted, order_g
+
+
 def _category_axis(rows: list[dict], text_cols: list[str],
                    headers: list[str]) -> str:
     """The column to put along the category axis.
@@ -493,6 +533,18 @@ def build_chart_payload(
     # first passthrough type that actually renders, and every answer died on
     # "Object of type Decimal is not JSON serializable" AFTER the SQL had run
     # and the forecast had been computed.
+    # A second dimension gets a series each. chart_spec decides WHETHER (it is
+    # the layer that knows every column's role); this reshapes the rows, and
+    # only for the cartesian types with a series slot to give away.
+    series_col = (spec.get("series") or {}).get("column")
+    grouped_by = None
+    grouped_measure = None
+    if (series_col and series_col != x_key and len(y_keys) == 1
+            and effective_type in {"bar", "line", "area"}):
+        grouped_measure = y_keys[0]
+        rows, y_keys = _pivot_by_series(rows, x_key, series_col, grouped_measure)
+        grouped_by = series_col
+
     _passthrough_types = {"funnel", "histogram", "boxplot", "forecast"}
     if effective_type in _passthrough_types:
         clean_rows = [
@@ -522,6 +574,27 @@ def build_chart_payload(
     for row in clean_rows:
         row.pop("__forecast_meta", None)
 
+    # The pivoted keys are group VALUES, not columns, so nothing in column_roles
+    # describes them -- and the browser reads that map for the axis title, the
+    # legend entry and the tooltip's number format. Registered here with the
+    # measure's own format, so a grouped currency chart still prints $1,000.00
+    # rather than 1000, and the legend reads "2026-03" rather than a blank.
+    #
+    # Gated on the pivot having actually run. Keyed on the group value alone it
+    # would rewrite a real column's label whenever chart_spec proposed a series
+    # and the type did not take one -- which is L4 (raw column codes in prose)
+    # reintroduced through the fix for L5.
+    column_roles = dict(spec.get("column_roles") or {})
+    if grouped_by:
+        measure_role = column_roles.get(grouped_measure) or {}
+        for group_value in y_keys:
+            column_roles[group_value] = {
+                **measure_role,
+                "column": group_value,
+                "label": group_value,
+                "role": "measure",
+            }
+
     payload = {
         "title": title,
         "chart_type": effective_type,
@@ -535,13 +608,15 @@ def build_chart_payload(
         "recommended_type": spec.get("recommended_type"),
         "allowed_types": spec.get("allowed_types") or [],
         "renderable_types": spec.get("renderable_types") or [],
-        "column_roles": spec.get("column_roles") or {},
+        "column_roles": column_roles,
+        "grouped_by": grouped_by,
+        "grouped_measure": grouped_measure,
         "chart_warnings": spec.get("warnings") or [],
         "chart_confidence": spec.get("confidence"),
         "column_formats": column_formats or {},
     }
 
-    if annotations and effective_type in _ANNOTATABLE_TYPES:
+    if annotations and effective_type in _ANNOTATABLE_TYPES and not grouped_by:
         known_periods = {str(r.get(x_key, "")) for r in clean_rows}
         chart_annotations = {}
         for kind in ("biggest_period_drop", "biggest_period_gain"):

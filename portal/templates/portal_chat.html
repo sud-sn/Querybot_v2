@@ -2211,8 +2211,16 @@ function buildChartOption(payload) {
     const cap = (type === 'pie' || type === 'donut') ? PIE_CAP : CATEGORY_CAP;
     if (rows.length > cap) {
       truncatedFrom = rows.length;
+      // Ranked on the whole bar, not its first segment. Keyed on yKey alone
+      // this dropped the largest category in the chart whenever its magnitude
+      // sat in a later series -- and still captioned the result "the N
+      // largest". A grouped chart (one series per period) makes that the
+      // ordinary case rather than a corner: the categories would be ranked by
+      // whichever period happened to come first.
+      const _capMagnitude = r => yKeys.reduce(
+        (sum, k) => sum + Math.abs(_chartNumber(r?.[k]) || 0), 0);
       const ranked = rows.slice().sort(
-        (a, b) => Math.abs(_chartNumber(b?.[yKey])) - Math.abs(_chartNumber(a?.[yKey])));
+        (a, b) => _capMagnitude(b) - _capMagnitude(a));
       const head = ranked.slice(0, cap);
       // A pie is a part-to-whole claim, so the tail cannot simply vanish —
       // dropping it would make the remaining slices add up to a different total
@@ -4379,7 +4387,13 @@ function appendChart(payload, opts = {}){
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   const _chartTitle = escHtml(payload.title || payload.question || t('ui.chat.chart.result'));
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${escHtml(t('ui.chat.chart.rows', {count: rows.length, duration: payload.duration_label || ''}))}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">${t('ui.chat.chart.pin')}</button><button type="button" class="chart-btn" data-action="copy">${t('ui.chat.chart.copy_summary')}</button><button type="button" class="chart-btn" data-action="expand" title="${t('ui.chat.chart.expand')}" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  // The RESULT's row count, not the chart's. A grouped chart pivots a row per
+  // category per period into one row per category, so rows.length is the
+  // number of bars on the axis -- saying "3 rows" under a twelve-row answer
+  // would contradict the table directly below it.
+  const _chartRowCount = (typeof payload.row_count === 'number')
+    ? payload.row_count : rows.length;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${escHtml(t('ui.chat.chart.rows', {count: _chartRowCount, duration: payload.duration_label || ''}))}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">${t('ui.chat.chart.pin')}</button><button type="button" class="chart-btn" data-action="copy">${t('ui.chat.chart.copy_summary')}</button><button type="button" class="chart-btn" data-action="expand" title="${t('ui.chat.chart.expand')}" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
   thread().appendChild(div);
   const [pinBtn, copyBtn, expandBtn] = div.querySelectorAll('.chart-btn');
   if (!payload.pin_token) {

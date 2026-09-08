@@ -296,6 +296,83 @@ def _primary_dimension(dimensions: list[str], roles: dict[str, dict]) -> str | N
     return dimensions[0]
 
 
+# The most series a grouped chart may draw. Eight is the length of the validated
+# palette (static/js/chart-palettes.js), so a ninth group either wraps the
+# colours -- two series drawn identically -- or is silently dropped by the chat
+# page's seriesCap while the dashboard, which has no cap at all, keeps drawing
+# it. A grid wider than the palette is a table.
+_SERIES_CAP = 8
+
+
+def _labels_of(rows: list[dict], col: str) -> list[str]:
+    return [("" if row.get(col) is None else str(row.get(col))) for row in rows]
+
+
+def _series_dimension(
+    rows: list[dict], x_col: str | None, roles: dict[str, dict],
+    headers: list[str],
+) -> str | None:
+    """The column that splits rows sharing an x label into separate series.
+
+    "Revenue by warehouse for the last three months" returns a row per
+    warehouse PER MONTH. Plotted as one series the axis carries each warehouse
+    once per month and the line walks between rows belonging to different
+    months -- a single jagged series that is really three flat ones
+    interleaved. What the reader needs is a series per month, which is a chart
+    both pages can already draw: they build one series per key in the row dict.
+    All that was missing is knowing WHICH column splits the rows.
+
+    Returns None whenever a grouped chart would be a guess, and the caller then
+    leaves the result exactly as it draws today. The rules, in order:
+
+    * x labels already distinct -- nothing to split, and this is the gate that
+      makes every one-dimensional result byte-identical to before.
+    * the candidate must be categorical and not the x column itself.
+    * between 2 and _SERIES_CAP distinct values. One value splits nothing; more
+      than the palette cannot be drawn honestly.
+    * every (x, group) cell must appear once. A repeated cell means a THIRD
+      dimension, and no two-axis chart can show three.
+    A column functionally dependent on x -- a region that is fixed per warehouse
+    -- falls out of the cell rule rather than needing one of its own: it cannot
+    produce a distinct cell per row when x already repeats.
+    * the grid must be at least half full, so a nearly-empty cross product does
+      not become eight series of mostly gaps.
+    * no group VALUE may collide with a column name, because the pivot uses
+      those values as row keys.
+
+    More than one candidate qualifying means the result has more dimensions
+    than a chart has axes, and picking one of them would be arbitrary. None.
+    """
+    if not x_col or not rows:
+        return None
+    x_labels = _labels_of(rows, x_col)
+    distinct_x = set(x_labels)
+    if len(distinct_x) == len(x_labels):
+        return None
+
+    header_names = {str(h) for h in headers}
+    qualifying: list[str] = []
+    for col in headers:
+        if col == x_col:
+            continue
+        if roles.get(col, {}).get("role") not in {"dimension", "identifier", "temporal"}:
+            continue
+        values = _labels_of(rows, col)
+        groups = set(values)
+        if not 2 <= len(groups) <= _SERIES_CAP:
+            continue
+        if groups & header_names:
+            continue
+        pairs = set(zip(x_labels, values))
+        if len(pairs) != len(rows):
+            continue
+        if len(rows) * 2 < len(distinct_x) * len(groups):
+            continue
+        qualifying.append(col)
+
+    return qualifying[0] if len(qualifying) == 1 else None
+
+
 def _format_for_column(col: str, explicit_formats: dict[str, str]) -> str:
     key = _norm(col)
     explicit = explicit_formats.get(key)
@@ -508,8 +585,6 @@ def infer_chart_spec(
         allowed = ["line", "area", "bar", "table"]
         x_col = _first(temporals)
         y_cols = measures[:4]
-        if dimensions:
-            series_col = _first([c for c in dimensions if c != x_col])
     elif share_q and composition_measures and dimensions and len(rows) <= 6 and len(composition_measures) == 1:
         x_col = _primary_dimension(dimensions, roles)
         y_cols = composition_measures[:1]
@@ -590,6 +665,59 @@ def infer_chart_spec(
             )
         if "table" not in allowed:
             allowed.append("table")
+
+    # ── A second dimension becomes a series, not a longer axis ───────────────
+    # Until now `series` was cut into the contract and never wired up: it was
+    # assigned in the trend branch alone, and read by nothing -- not by
+    # build_chart_payload, not by either template. So a result grouped by two
+    # things was drawn as one series walking between rows that belong to
+    # different groups.
+    #
+    # This is the only place that knows every column's role AND has the final
+    # chart type in hand, so it is where the choice belongs.
+    if recommended in {"bar", "line", "area"} and x_col:
+        series_col = _series_dimension(rows, x_col, roles, headers)
+        if series_col:
+            # The series slot now belongs to the group, so only one measure can
+            # be drawn: two dimensions of variation cannot share it.
+            if len(y_cols) == 2:
+                warnings.append(
+                    f"Grouped by {roles[series_col]['label']}, so only "
+                    f"{roles[y_cols[0]]['label']} is drawn; "
+                    f"{roles[y_cols[1]]['label']} stays in the table."
+                )
+            elif len(y_cols) > 2:
+                warnings.append(
+                    f"Grouped by {roles[series_col]['label']}, so only "
+                    f"{roles[y_cols[0]]['label']} is drawn; the other "
+                    f"measures stay in the table."
+                )
+            y_cols = y_cols[:1]
+            # A scatter needs two measures. Leaving it offered after the
+            # truncation ships a button that draws an empty chart.
+            allowed = [t for t in allowed if t != "scatter"]
+    elif recommended in {"pie", "donut"} and x_col and _labels_of(rows, x_col):
+        # A pie is a part-to-whole claim. The renderer totals the rows sharing
+        # a slice name -- it has to, or one category is drawn twice -- and a
+        # total is only a whole when the measure adds up. Commit 4452268 fixed
+        # the drawing and said the choice of chart belongs upstream; this is
+        # upstream.
+        labels = _labels_of(rows, x_col)
+        if len(set(labels)) != len(labels) and y_cols:
+            from core.analysis_contract import measure_class_for_column
+
+            if measure_class_for_column(y_cols[0]) != "additive":
+                intent = "breakdown"
+                recommended = "bar"
+                allowed = ["bar"] + [t for t in allowed
+                                     if t not in {"pie", "donut", "bar"}]
+                warnings.append(
+                    f"{roles[y_cols[0]]['label']} cannot be totalled across "
+                    f"the repeated categories, so a share of the whole would "
+                    f"be misleading; showing a bar chart instead."
+                )
+                if "table" not in allowed:
+                    allowed.append("table")
 
     if x_col and roles.get(x_col, {}).get("is_technical_id"):
         warnings.append(

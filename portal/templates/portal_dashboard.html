@@ -566,7 +566,12 @@ function buildDashboardOption(payload){
           bottom:rotation?72:(hasAnnotations?56:42),
           containLabel:true,
         },
-    tooltip: { ...ttBase, trigger:isLine?'axis':'item', formatter: yKeys.length>1?multiTT:singleTT },
+    // 'axis' whenever there is more than one series, not only for lines. With
+    // 'item' the reader hovering a grouped bar gets the one segment under the
+    // cursor, and multiTT then renders a one-row "comparison" -- on a chart
+    // whose entire purpose is comparing the series side by side. The chat page
+    // has always used 'axis' here; this is the two copies agreeing again.
+    tooltip: { ...ttBase, trigger:(isLine||yKeys.length>1)?'axis':'item', formatter: yKeys.length>1?multiTT:singleTT },
     xAxis: horizontal
       ? {type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKey,true)}}
       : {type:'category',data:shortLbl,axisTick:{show:false},axisLine:{lineStyle:{color:theme.axisLine}},axisLabel:{color:theme.axis,interval,rotate:rotation,formatter:(v,i)=>shortLbl[i]}},
