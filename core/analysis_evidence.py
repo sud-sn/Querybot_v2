@@ -440,8 +440,20 @@ def _values_in_period_order(
     revenue, so the analysis stated the reverse of the truth to precisely the
     regulated tenants this feature was written for.
     """
+    # Every row's period, whether or not it reports a measure. Counted only
+    # over the rows that DO report one, a grid with a single non-null cell per
+    # period collapses to one pair per period and reads as a clean series --
+    # so a sparse quarter of alternating warehouses passed the repeat check
+    # below and produced "upward trend, 300%" between two different warehouses
+    # three quarters apart. Whether a result is one-dimensional is a property
+    # of its rows, not of which of them happen to be populated.
+    seen_periods: list[tuple[int, int, int]] = []
+
     pairs: list[tuple[tuple[int, int, int], float]] = []
     for row in rows:
+        raw_key = period_order_key(row.get(period_col))
+        if raw_key is not None:
+            seen_periods.append(raw_key)
         value = _to_float(row.get(value_col))
         if value is None:
             continue
@@ -472,12 +484,11 @@ def _values_in_period_order(
     # the measure is additive, and a total over a ratio column would be a
     # second wrong answer wearing the first one's clothes. A caller that wants
     # the trend of the total has to aggregate before asking.
-    periods = {key for key, _ in pairs}
-    if len(periods) != len(pairs):
+    if len(set(seen_periods)) != len(seen_periods):
         log.warning(
             "No trend computed: %d rows across %d periods on %r — the result "
             "is grouped by another dimension as well, so it is not a series",
-            len(pairs), len(periods), period_col)
+            len(seen_periods), len(set(seen_periods)), period_col)
         return None
 
     pairs.sort(key=lambda pair: pair[0])

@@ -229,6 +229,137 @@ class TestAFrenchPeriodColumnCanStillTrend(unittest.TestCase):
         self.assertEqual(period_order_key("2024 décembre"), (2024, 12, 0))
 
 
+class TestTheGridIsStillAGridWhenItIsSparse(unittest.TestCase):
+    """The two holes the first fix left, both reproduced at HEAD before this.
+
+    An adversarial review of the earlier commit rebuilt the finding's exact
+    sentence twice over, in English and in French, with that commit in place.
+    It narrowed the defect; it did not close it. Two causes, and neither is in
+    the detector that was fixed:
+
+    1. _values_in_period_order counted periods only over the rows that REPORT a
+       measure. A grid with one non-null cell per period collapses to one pair
+       per period and reads as a clean series -- so a quarter of alternating
+       warehouses passed the repeat check and produced "upward trend, 300%"
+       between two different warehouses three quarters apart. Whether a result
+       is one-dimensional is a property of its rows, not of which of them
+       happen to be populated.
+
+    2. core.response_builder._looks_temporal -- a fourth private temporal
+       classifier -- knew English month names and nothing else. No quarters at
+       all, no French. _narrative_label_column asks it whether a repeating
+       column is a calendar to skip; answer "no" and the repeating calendar
+       becomes the dimension the whole narrative is written about.
+
+    The first fix taught period_order_key French and then leaned on a helper
+    that had the same hole.
+    """
+
+    QUARTERS = ("Q1 2026", "Q2 2026", "Q3 2026", "Q4 2026")
+    MONTHS_FR = ("janvier", "février", "mars", "avril", "mai", "juin")
+
+    def sparse_quarters(self):
+        filled = {("Q1 2026", "Halifax"): 100.0, ("Q2 2026", "Calgary"): 200.0,
+                  ("Q3 2026", "Halifax"): 300.0, ("Q4 2026", "Calgary"): 400.0}
+        return [{"FISCAL_QTR": q, "WHS_NM": w, "REVENUE_AMT": filled.get((q, w))}
+                for q in self.QUARTERS for w in ("Halifax", "Calgary")]
+
+    def sparse_months_fr(self):
+        filled = {(m, "Halifax" if i % 2 == 0 else "Calgary"): 100.0 * (i + 1)
+                  for i, m in enumerate(self.MONTHS_FR)}
+        return [{"MOIS": m, "ENTREPOT": w, "CHIFFRE": filled.get((m, w))}
+                for m in self.MONTHS_FR for w in ("Halifax", "Calgary")]
+
+    def test_a_sparse_quarter_grid_reports_no_trend(self):
+        self.assertNotIn("temporal", kinds(self.sparse_quarters()))
+
+    def test_a_sparse_french_month_grid_reports_no_trend(self):
+        self.assertNotIn("temporal", kinds(self.sparse_months_fr()))
+
+    def test_the_quarter_grid_is_described_by_its_warehouse(self):
+        # The other half: with the calendar unrecognised, the imbalance signal
+        # described the QUARTERS for a question about warehouses.
+        signal = one(self.sparse_quarters(), "group_imbalance")
+        if signal is not None:
+            self.assertEqual(signal["col"], "WHS_NM")
+
+    def test_the_shared_rule_refuses_the_sparse_grid_on_its_own(self):
+        # Asserted at the rule itself, not only through compute_signals. With
+        # _looks_temporal now recognising quarters, the label-column choice
+        # keeps the sparse grid away from the trend branch -- so testing only
+        # the signal would leave this fix protected by the other one and
+        # untested by either. trend_findings is the public entry point that
+        # reaches _values_in_period_order directly.
+        from core.analysis_evidence import trend_findings
+
+        self.assertEqual(
+            trend_findings(self.sparse_quarters(), "REVENUE_AMT", "FISCAL_QTR"),
+            [])
+
+    def test_and_still_accepts_a_series_that_has_a_gap(self):
+        from core.analysis_evidence import trend_findings
+
+        rows = [{"FISCAL_QTR": q, "REVENUE_AMT": v}
+                for q, v in zip(self.QUARTERS, (100.0, None, 300.0, 400.0))]
+        found = trend_findings(rows, "REVENUE_AMT", "FISCAL_QTR")
+        self.assertEqual([f.kind for f in found][:1], ["trend_up"])
+
+    def test_a_genuine_quarterly_series_still_trends(self):
+        rows = [{"FISCAL_QTR": q, "REVENUE_AMT": v}
+                for q, v in zip(self.QUARTERS, (100.0, 200.0, 300.0, 400.0))]
+        self.assertEqual(one(rows, "temporal")["direction"], "upward")
+
+    def test_a_genuine_french_series_still_trends(self):
+        rows = [{"MOIS": m, "CHIFFRE": v} for m, v in
+                zip(self.MONTHS_FR, (100.0, 150.0, 200.0, 260.0, 300.0, 360.0))]
+        self.assertEqual(one(rows, "temporal")["direction"], "upward")
+
+    def test_a_series_with_a_missing_reading_is_still_a_series(self):
+        # Refusing a sparse GRID must not become refusing a gap. One period
+        # that reported nothing is still one row per period.
+        rows = [{"FISCAL_QTR": q, "REVENUE_AMT": v}
+                for q, v in zip(self.QUARTERS, (100.0, None, 300.0, 400.0))]
+        self.assertEqual(one(rows, "temporal")["direction"], "upward")
+
+
+class TestWhatCountsAsACalendarLabel(unittest.TestCase):
+    """core.response_builder._looks_temporal, directly."""
+
+    def temporal(self, labels):
+        from core.response_builder import _looks_temporal
+
+        return _looks_temporal(labels)
+
+    def test_quarters_in_both_orders(self):
+        self.assertTrue(self.temporal(["Q1 2026", "Q2 2026"]))
+        self.assertTrue(self.temporal(["2026-Q1", "2026-Q2"]))
+
+    def test_the_french_quarter_letter(self):
+        self.assertTrue(self.temporal(["T1 2026", "T2 2026"]))
+
+    def test_french_months_accented_and_not(self):
+        self.assertTrue(self.temporal(["janvier", "février", "mars"]))
+        self.assertTrue(self.temporal(["janvier", "fevrier", "aout"]))
+
+    def test_english_months_still_count(self):
+        self.assertTrue(self.temporal(["January", "February"]))
+        self.assertTrue(self.temporal(["Jan 2024", "Feb 2024"]))
+        self.assertTrue(self.temporal(["2026-01", "2026-02"]))
+
+    def test_a_place_is_not_a_month_in_either_language(self):
+        # "Mayfield" read as May was already true before quarters and French
+        # were added; "Marseille" would have started reading as mars the moment
+        # they were. Every token is a whole word now, which settles both.
+        for labels in (["Nova", "Maritime", "Mayfield"],
+                       ["Marseille", "Marne"],
+                       ["Augusta", "Decatur"],
+                       ["Januscorp", "Februs"],
+                       ["Update", "Mandate"],
+                       ["Halifax", "Calgary"]):
+            with self.subTest(labels=labels):
+                self.assertFalse(self.temporal(labels))
+
+
 class TestTheThreeDetectorsAgree(unittest.TestCase):
     """The point of using the shared rules rather than a sixth private one."""
 

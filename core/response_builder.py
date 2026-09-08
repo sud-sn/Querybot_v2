@@ -561,22 +561,54 @@ def _narrative_label_column(rows: list[dict], text_cols: list[str]) -> str:
 
 
 def _looks_temporal(values: list[str]) -> bool:
+    """Do these labels name periods?
+
+    This is the fourth private temporal classifier in the codebase, and it was
+    the narrowest: English month names only, with no quarters at all. That is
+    load-bearing rather than cosmetic, because _narrative_label_column asks it
+    whether a repeating column is a calendar to skip over. Answer "no" for
+    "Q1 2026" or "janvier" and the repeating calendar becomes the dimension the
+    whole narrative is written about -- which is how a sparse quarter grid
+    still reported "upward trend, 300%" between two different warehouses three
+    quarters apart, after the trend detector itself had been fixed.
+
+    Quarters and the French month names are added here rather than in a fifth
+    place. The remaining copies are core.stat_signals._is_temporal_col (the
+    values-and-name classifier), core.insight (which already listed quarters,
+    so the two disagreed) and core.analysis_evidence.period_order_key (which
+    answers a harder question -- what ORDER, not merely whether). Consolidating
+    all four is worth doing and is bigger than this fix; the comment is here so
+    the next person finds them together.
+    """
     sample = " ".join(v.lower() for v in values[:8] if v)
-    # Full month names and long tokens — safe for substring match
-    substr_tokens = [
+    # Every token is matched as a WHOLE WORD. The long names used to be
+    # substring-matched, which read "Mayfield" as May and would have read
+    # "Marseille" as mars the moment French was added. A period label is a
+    # whole label; nothing is gained by finding one inside a longer word, and a
+    # warehouse or a customer called Mayfield is not a month.
+    tokens = [
+        # English, full and abbreviated
         "january", "february", "march", "april", "may", "june",
         "july", "august", "september", "october", "november", "december",
+        "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept",
+        "oct", "nov", "dec",
+        # French. The product ships French tenants whose warehouses hold French
+        # period labels, which is why core.stat_signals._is_temporal_col has
+        # carried them since it was written and this has not.
+        "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
+        "juillet", "août", "aout", "septembre", "octobre", "novembre",
+        "décembre", "decembre",
+        # Grain words, both languages
         "week", "month", "quarter", "year", "date",
-    ]
-    # Short abbreviations — need word boundary to avoid false positives
-    wb_tokens = [
-        "jan", "feb", "mar", "apr", "jun", "jul", "aug",
-        "sep", "oct", "nov", "dec",
+        "semaine", "mois", "trimestre", "année", "annee",
     ]
     return (
         bool(re.search(r"\b\d{4}[-/]\d{1,2}([-/]\d{1,2})?\b", sample))
-        or any(tok in sample for tok in substr_tokens)
-        or any(re.search(r"\b" + tok + r"\b", sample) for tok in wb_tokens)
+        # Q1 2026, 2026-Q1, T1 2026 (trimestre). Absent entirely before, so a
+        # fiscal-quarter column read as an ordinary business dimension.
+        or bool(re.search(r"\b(?:q|t)[1-4]\b", sample))
+        or any(re.search(r"\b" + re.escape(tok) + r"\b", sample)
+               for tok in tokens)
     )
 
 
