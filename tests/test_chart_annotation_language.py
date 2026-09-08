@@ -354,6 +354,15 @@ _BUILDER_DEPS = {
         "function buildChartOption(payload)",
     ),
     "portal_dashboard.html": (
+        # Two of these were missing, and it was invisible: every payload the
+        # file happened to build for the dashboard took the pie or funnel
+        # branch, which does not reach them. A bar or a line raised
+        # "ReferenceError: isTemporalLabel is not defined" -- so the promise in
+        # this module's docstring, that every assertion runs against BOTH
+        # pages, held only for the branches nobody had written a cartesian
+        # test for. TestBothPagesCanDrawACartesianChart below is the guard.
+        "function isTemporalLabel(v)",
+        "function truncateLabel(l, n=16)",
         "function escHtmlDash(value)",
         "function _fmtNum(v)",
         "function _qbMoney(body, symbol)",
@@ -400,6 +409,47 @@ PIE = {"rows": [{"m": "Jan", "v": 10}, {"m": None, "v": 30}],
        "x_key": "m", "y_keys": ["v"], "chart_type": "pie"}
 PIE_NO_X = {"rows": [{"v": 10}, {"v": 30}],
             "x_key": None, "y_keys": ["v"], "chart_type": "pie"}
+
+
+BAR = {"rows": [{"WHS_NM": "Halifax", "REVENUE_AMT": 10.0},
+                {"WHS_NM": "Calgary", "REVENUE_AMT": 20.0}],
+       "x_key": "WHS_NM", "y_keys": ["REVENUE_AMT"], "chart_type": "bar"}
+
+
+class TestBothPagesCanDrawACartesianChartAtAll:
+    """The guard for this module's own promise.
+
+    Its docstring says every assertion here runs against BOTH pages. That held
+    only for the branches the fixtures happened to reach: every payload in the
+    file was a pie, a funnel or an annotation set, and none of those touches
+    the dashboard's cartesian code. Two helpers it needs were missing from
+    _BUILDER_DEPS, so a bar or a line raised
+
+        ReferenceError: isTemporalLabel is not defined
+
+    -- and nothing failed, because nothing asked. A harness gap does not
+    announce itself; it just quietly narrows what the suite covers.
+
+    These two tests are cheap and they fail loudly the moment either page's
+    cartesian branch stops being executable here.
+    """
+
+    @pytest.mark.parametrize("page", PAGES)
+    def test_a_bar_chart_builds(self, page):
+        drawn = json.loads(_build(
+            page, "en", BAR,
+            "JSON.stringify({n: opt.series.length,"
+            " axis: (opt.xAxis.data || opt.xAxis[0].data)})"))
+        assert drawn["n"] == 1, page
+        assert drawn["axis"] == ["Halifax", "Calgary"], page
+
+    @pytest.mark.parametrize("page", PAGES)
+    def test_a_line_chart_builds(self, page):
+        # A second cartesian type, because the two pages branch on the type
+        # name and a helper reached only by one of them would slip through.
+        line = {**BAR, "chart_type": "line"}
+        assert json.loads(_build(
+            page, "en", line, "JSON.stringify(opt.series.length)")) == 1, page
 
 
 class TestThePieSliceIsLabelledInTheReadersLanguage:
