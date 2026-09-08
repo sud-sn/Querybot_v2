@@ -266,28 +266,73 @@ def compute_signals(rows: list[dict]) -> list[dict]:
 
     # ── Categorical signals ───────────────────────────────────────────────────
     if text_cols and numeric_cols:
-        label_col  = text_cols[0]
+        # The dimension the reader asked about, not simply the first text
+        # column. On a result grouped by two things the calendar repeats once
+        # per warehouse, and describing the result along that axis reports the
+        # imbalance BETWEEN MONTHS -- four periods at 25% each, no leader --
+        # for a question about warehouses. The narrative layer and the evidence
+        # engine were taught this in c7d0689 and 4452268; this detector runs on
+        # the same rows and must not disagree with them.
+        #
+        # Imported inside the function: core.response_builder reaches this
+        # module through core.analysis_evidence, so a module-scope import here
+        # would close the cycle.
+        from core.response_builder import _narrative_label_column
+
+        label_col  = _narrative_label_column(rows, text_cols)
         value_col  = numeric_cols[0]
-        vals = [_to_float(r.get(value_col)) or 0.0 for r in rows]
-        total = sum(vals)
-        if total > 0 and len(rows) >= 2:
-            leader_pct = max(vals) / total
-            if leader_pct > 0.35:
-                # Leader dominates — group imbalance
-                leader_val = rows[vals.index(max(vals))].get(label_col, "")
-                signals.append({
-                    "type": "group_imbalance",
-                    "col": label_col,
-                    "value": round(leader_pct * 100, 1),
-                    "leader": str(leader_val)[:40],
-                    "label": f"{label_col} is dominated by one group ({leader_pct*100:.0f}% share)",
-                })
+
+        # ── One row per label before any share is computed ────────────────────
+        # A result grouped by two things carries a row per label PER PERIOD.
+        # Dividing one of those rows by a total summed over all of them
+        # understates every share by the period count -- on live data a genuine
+        # 37.5% leader came out at 9.4%, under the threshold below, so the
+        # signal did not merely understate: it disappeared. The identical
+        # defect in core.analysis_evidence.concentration_findings was fixed in
+        # 4452268; this is the same rule, from the same place.
+        #
+        # collapse_rows_by_label refuses when the measure may not be summed --
+        # a margin percentage, a stock balance -- and then there is no share to
+        # report rather than a share of a total nobody can compute.
+        from core.analysis_contract import collapse_rows_by_label
+
+        collapsed = collapse_rows_by_label(rows, label_col, value_col)
+        if collapsed:
+            total = sum(value for _, value in collapsed)
+            if total > 0 and len(collapsed) >= 2:
+                leader_val, leader_num = max(collapsed, key=lambda pair: pair[1])
+                leader_pct = leader_num / total
+                if leader_pct > 0.35:
+                    # Leader dominates — group imbalance
+                    signals.append({
+                        "type": "group_imbalance",
+                        "col": label_col,
+                        "value": round(leader_pct * 100, 1),
+                        "leader": str(leader_val)[:40],
+                        "label": f"{label_col} is dominated by one group ({leader_pct*100:.0f}% share)",
+                    })
 
         # Temporal column
         if _is_temporal_col(label_col, rows):
-            # Detect trend direction from first→last value
-            first_v = _to_float(rows[0].get(value_col))
-            last_v  = _to_float(rows[-1].get(value_col))
+            # ── The series, in period order, or not at all ────────────────────
+            # first→last was read straight off the rows in arrival order, and
+            # with no check that a period appears once. So "revenue by
+            # warehouse for the last three months" -- a row per warehouse per
+            # month -- compared the FIRST warehouse in the first month with the
+            # LAST warehouse in the last month and called the difference a
+            # trend. On a quarter where every warehouse was exactly flat it
+            # reported a 25% decline, and that signal is not decoration: it
+            # produces the follow-up chip inviting the reader to investigate
+            # the decline, and it grounds the model's other suggestions.
+            #
+            # The shared rule, from the module that already refuses this:
+            # ordered by period, and None when a period repeats or the labels
+            # have no known ordering.
+            from core.analysis_evidence import _values_in_period_order
+
+            ordered = _values_in_period_order(rows, value_col, label_col)
+            first_v = ordered[0] if ordered and len(ordered) >= 2 else None
+            last_v = ordered[-1] if ordered and len(ordered) >= 2 else None
             if first_v is not None and last_v is not None and first_v != 0:
                 pct = abs((last_v - first_v) / first_v * 100)
                 # A flat band, because there was none: any first != last was

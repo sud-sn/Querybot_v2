@@ -304,16 +304,66 @@ _MONTH_ORDINALS = {
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 
+# Full month names, in every language the product ships, keyed on the exact
+# spelling.
+#
+# core.stat_signals._is_temporal_col has recognised French period labels since
+# it was written -- "because the product ships French tenants whose warehouses
+# hold French period labels" -- and this function did not. So a French tenant
+# whose period column reads "janvier, février, mars" had that column correctly
+# identified as temporal and then, one step later, declared to have "no known
+# ordering": every trend on French-labelled periods was silently refused, in
+# the detector, in the evidence engine, and in everything downstream of them.
+# The refusal is the right behaviour for a label nobody can order. It was the
+# wrong answer here, and it was invisible because refusing looks exactly like
+# having nothing to say.
+#
+# Accents both ways: a warehouse export is as likely to hold "fevrier" as
+# "février", and neither is a typo the reader should pay for.
+_MONTH_NAMES: dict[str, int] = {}
+for _n, _spellings in enumerate([
+        ("january", "janvier"),
+        ("february", "février", "fevrier"),
+        ("march", "mars"),
+        ("april", "avril"),
+        ("may", "mai"),
+        ("june", "juin"),
+        ("july", "juillet"),
+        ("august", "août", "aout"),
+        ("september", "septembre"),
+        ("october", "octobre"),
+        ("november", "novembre"),
+        ("december", "décembre", "decembre")], start=1):
+    for _spelling in _spellings:
+        _MONTH_NAMES[_spelling] = _n
+del _n, _spellings, _spelling
+
 # Exact spellings only — abbreviation or full name, nothing in between. Used
 # for a period column that carries month names and no year.
 _BARE_MONTHS: dict[str, tuple[int, int, int]] = {}
 for _abbr, _n in _MONTH_ORDINALS.items():
     _BARE_MONTHS[_abbr] = (0, _n, 0)
-for _n, _full in enumerate(
-        ["january", "february", "march", "april", "may", "june", "july",
-         "august", "september", "october", "november", "december"], start=1):
-    _BARE_MONTHS[_full] = (0, _n, 0)
-del _abbr, _n, _full
+for _name, _n in _MONTH_NAMES.items():
+    _BARE_MONTHS[_name] = (0, _n, 0)
+del _abbr, _name, _n
+
+
+def _month_ordinal(token: str) -> int | None:
+    """The month a name or abbreviation denotes, or None.
+
+    Exact spelling first. The prefix lookup below it is the ENGLISH
+    abbreviation table, so it must never be asked about a full name in another
+    language: "juin" and "juillet" both begin "jui", and a table that grew a
+    "jui" entry would silently fold July into June. Ordering the two lookups
+    this way means that can never happen, rather than happening to be safe
+    because of which abbreviations the table holds today.
+
+    The prefix lookup is also reached only from a pattern that requires a
+    four-digit year beside the name, which is what keeps "Nova" from being
+    read as November.
+    """
+    lowered = token.lower()
+    return _MONTH_NAMES.get(lowered) or _MONTH_ORDINALS.get(lowered[:3])
 
 
 def period_order_key(value: object) -> tuple[int, int, int] | None:
@@ -355,15 +405,15 @@ def period_order_key(value: object) -> tuple[int, int, int] | None:
     if quarter:
         return (int(quarter.group(1)), (int(quarter.group(2)) - 1) * 3 + 1, 0)
 
-    named = re.match(r"^([A-Za-z]{3,9})\.?\s+(\d{4})$", text)
+    named = re.match(r"^([^\W\d_]{3,9})\.?\s+(\d{4})$", text, re.UNICODE)
     if named:
-        month = _MONTH_ORDINALS.get(named.group(1)[:3].lower())
+        month = _month_ordinal(named.group(1))
         if month:
             return (int(named.group(2)), month, 0)
 
-    named = re.match(r"^(\d{4})\s+([A-Za-z]{3,9})$", text)
+    named = re.match(r"^(\d{4})\s+([^\W\d_]{3,9})$", text, re.UNICODE)
     if named:
-        month = _MONTH_ORDINALS.get(named.group(2)[:3].lower())
+        month = _month_ordinal(named.group(2))
         if month:
             return (int(named.group(1)), month, 0)
 
