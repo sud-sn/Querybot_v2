@@ -528,9 +528,29 @@ class GovernedCacheWiringTests(unittest.TestCase):
     def test_cache_planner_has_zero_value_exposure(self):
         block = self._cache_block()
         self.assertNotIn("get_stats(", block)
-        self.assertNotIn("build_duckdb_system_prompt", block)
         self.assertNotIn("_generate_duckdb_sql", block)
         self.assertIn('"cached_values_forwarded": False', block)
+
+    def test_the_value_forwarding_prompt_builder_no_longer_exists(self):
+        """core.query_router.build_duckdb_system_prompt is gone, deliberately.
+
+        It composed an LLM prompt with the cached result's min, max, average
+        and categorical values in it. The governance change that made this
+        planner forward no values removed it from the path and left it in the
+        module: importable, documented, and a ready-made way to undo that
+        change.
+
+        Asserted by NAME rather than as a substring of the planner's source,
+        because a deleted symbol makes a substring check vacuously true --
+        which is the failure mode this whole sweep exists to remove.
+        """
+        import core.query_router
+
+        self.assertFalse(
+            hasattr(core.query_router, "build_duckdb_system_prompt"),
+            "the value-forwarding prompt builder is back; the result-cache "
+            "planner must send no cached values to a model",
+        )
 
     def test_bound_literal_failure_is_fail_closed(self):
         block = self._cache_block()

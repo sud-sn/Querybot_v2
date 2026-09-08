@@ -558,6 +558,45 @@ def _literals_from_sql_regex(sql: str) -> list[tuple[str, str]]:
     return out
 
 
+def _tables_in_sql(sql: str) -> set[str]:
+    """Upper-cased table names a statement reads, in every shape they appear.
+
+    Both the bare name and the qualified forms, because the index stores a
+    fully-qualified table_fqn and the SQL may name it any of the ways a
+    warehouse accepts. Returns an empty set when the statement cannot be
+    parsed, which the caller reads as "scope unknown" rather than "no tables".
+    """
+    names: set[str] = set()
+    try:
+        import sqlglot
+        from sqlglot import exp as sg_exp
+
+        for table in sqlglot.parse_one(sql).find_all(sg_exp.Table):
+            parts = [p for p in (table.catalog, table.db, table.name) if p]
+            if not parts:
+                continue
+            names.add(".".join(parts).upper())
+            names.add(str(table.name).upper())
+    except Exception:  # noqa: BLE001
+        for match in re.finditer(
+                r"\b(?:from|join)\s+([A-Za-z_][\w.\[\]\"]*)", sql or "",
+                flags=re.I):
+            raw = match.group(1).strip().strip('"').replace("[", "").replace("]", "")
+            names.add(raw.upper())
+            names.add(raw.rsplit(".", 1)[-1].upper())
+    return names
+
+
+def _table_matches(table_fqn: str, query_tables: set[str]) -> bool:
+    """Does an indexed table appear in this query, under any qualification?"""
+    if not query_tables:
+        return False
+    fqn = str(table_fqn or "").upper()
+    if fqn in query_tables:
+        return True
+    return fqn.rsplit(".", 1)[-1] in query_tables
+
+
 def find_unmatched_literals(
     sql: str,
     account_id: str,
@@ -610,19 +649,49 @@ def find_unmatched_literals(
         # exactly the reasoning already applied to unindexed columns below.
         # Reporting it anyway would tell the user their value does not exist
         # on the strength of a list we know to be partial.
+        #
+        # COMPLETENESS IS PER TABLE, and this read used to drop the table.
+        # "SELECT column_name FROM column_meta WHERE complete = 1" made
+        # REGION_NM complete everywhere because ONE table's copy of it was
+        # complete -- so a query against a table whose REGION_NM had been
+        # truncated at the cap was told, confidently, that its value does not
+        # exist. core.value_index.column_is_complete has always taken the
+        # table; nothing called it.
         try:
-            complete_columns = {
-                row[0].upper()
-                for row in conn.execute(
-                    "SELECT column_name FROM column_meta WHERE complete = 1"
-                ).fetchall()
-            }
+            meta_rows = conn.execute(
+                "SELECT table_fqn, column_name, complete FROM column_meta"
+            ).fetchall()
         except sqlite3.Error:
             # Index predates column_meta. Nothing is provably complete, so
             # nothing is provably absent.
-            complete_columns = set()
+            meta_rows = []
     finally:
         conn.close()
+
+    # The tables this query actually reads, so completeness can be judged on
+    # the copy of the column it is asking about.
+    query_tables = _tables_in_sql(sql)
+    scoped: dict[str, list[bool]] = {}
+    everywhere: dict[str, list[bool]] = {}
+    for table_fqn, column_name, complete in meta_rows:
+        key = str(column_name).upper()
+        everywhere.setdefault(key, []).append(bool(complete))
+        if _table_matches(str(table_fqn), query_tables):
+            scoped.setdefault(key, []).append(bool(complete))
+
+    def _provably_complete(column: str) -> bool:
+        """Is this column's value list complete for the table being queried?
+
+        Scoped when the query's tables are recognised. When they are not -- an
+        unparseable statement, a CTE, a table the index has never seen -- we
+        have learned nothing about scope, so this falls back to the older and
+        strictly more conservative rule: every copy of the column must be
+        complete. Falling back to "unproven" instead would silence the feature
+        entirely for those queries, which is a worse answer than the one it
+        replaces.
+        """
+        flags = scoped.get(column) or everywhere.get(column) or []
+        return bool(flags) and all(flags)
 
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
@@ -634,9 +703,12 @@ def find_unmatched_literals(
         if len(lit) < 3 or _DATE_LIKE_RE.match(lit) or key in seen:
             continue
         seen.add(key)
+        # Keep this: purge_uncleared_columns deletes column_value rows only, so
+        # a column whose values were retracted still has a column_meta row
+        # claiming complete. The two checks are not redundant.
         if column.upper() not in indexed_columns:
             continue
-        if column.upper() not in complete_columns:
+        if not _provably_complete(column.upper()):
             continue
         if lookup_exact(account_id, lit, allowed_tables, base_dir=base_dir):
             continue

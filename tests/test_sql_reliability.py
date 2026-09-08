@@ -13,7 +13,7 @@ from core.semantic_planner import build_semantic_field_plan
 from core.validator import has_identity_filter, normalize_generated_sql, validate_sql, validate_sql_detailed
 from core.answer_confidence import build_answer_confidence
 from core.answer_rca import build_business_rca, extract_sql_tables
-from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
+from core.query_router import should_route_to_result_cache
 from core.response_builder import build_assistant_response, detect_null_metric_issue
 
 
@@ -1977,13 +1977,6 @@ class ResultTransformationRoutingTests(unittest.TestCase):
                 ["Warehouse", "TotalRevenue"],
             )
         )
-
-    def test_duckdb_prompt_prefers_chr_for_letter_flags(self):
-        prompt = build_duckdb_system_prompt(
-            [{"name": "Warehouse", "type": "BIGINT"}, {"name": "TotalRevenue", "type": "DOUBLE"}],
-        )
-        self.assertIn("chr(CAST(64 +", prompt)
-        self.assertIn("return the original useful columns PLUS the new computed column", prompt)
 
     def test_implicit_contribution_routes_when_cached_measure_is_named(self):
         self.assertTrue(

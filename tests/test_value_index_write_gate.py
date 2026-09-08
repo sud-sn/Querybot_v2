@@ -416,6 +416,147 @@ class TestAbsenceIsOnlyClaimedWhenItCanBeProven(_Harness):
         from core.value_index import column_is_complete
         self.assertFalse(column_is_complete("never_built", DIM, "X", base_dir=self.base))
 
+    # ── F29 · completeness is per TABLE, and the live gate dropped it ──────
+    TWO_TABLE_SCHEMA = {
+        "CHATBOT_DB.CLIN.DIM_SMALL": {
+            "columns": [{"name": "REGION_NM", "type": "nvarchar"}]},
+        "CHATBOT_DB.CLIN.DIM_BIG": {
+            "columns": [{"name": "REGION_NM", "type": "nvarchar"}]},
+    }
+
+    def _build_two_tables(self):
+        """One table's REGION_NM harvested whole, the other truncated."""
+        small = [{"REGION_NM": n} for n in ("North", "South", "East")]
+        big = [{"REGION_NM": f"R{i:02d}"} for i in range(30)]
+
+        def _query(_c, _d, sql, max_rows=0):
+            return big if "DIM_BIG" in sql.upper() else small
+
+        profile = {"policy_pack_key": "", "industry": ""}
+        with patch("core.compliance.policy_engine.is_regulated", return_value=False), \
+             patch("store.get_compliance_profile", return_value=profile), \
+             patch("core.schema.load_schema_json",
+                   return_value=self.TWO_TABLE_SCHEMA):
+            build_value_index(
+                self.account, {"x": 1}, "azure_sql", "unused",
+                run_query_fn=_query, base_dir=self.base, per_column_cap=10,
+            )
+
+    def _unmatched(self, sql):
+        from core.value_resolver import find_unmatched_literals
+
+        return [row["literal"] for row in
+                find_unmatched_literals(sql, self.account, base_dir=self.base)]
+
+    def test_the_two_tables_really_do_differ(self):
+        # The fixture's own premise, so a later failure is about the gate and
+        # not about the harvest.
+        from core.value_index import column_is_complete
+
+        self._build_two_tables()
+        self.assertTrue(column_is_complete(
+            self.account, "CHATBOT_DB.CLIN.DIM_SMALL", "REGION_NM",
+            base_dir=self.base))
+        self.assertFalse(column_is_complete(
+            self.account, "CHATBOT_DB.CLIN.DIM_BIG", "REGION_NM",
+            base_dir=self.base))
+
+    def test_a_truncated_columns_absence_is_not_claimed(self):
+        """The defect: one table's complete REGION_NM made every REGION_NM
+        complete, so a query against the truncated one was told, confidently,
+        that its value does not exist. The gate read
+        `SELECT column_name FROM column_meta WHERE complete = 1` -- no table.
+        """
+        self._build_two_tables()
+        self.assertEqual(self._unmatched(
+            "SELECT 1 FROM CHATBOT_DB.CLIN.DIM_BIG b "
+            "WHERE b.REGION_NM = 'Yorkshire Dales'"), [])
+
+    def test_the_complete_table_still_reports(self):
+        # Scoping must not withdraw the feature from the table that earned it.
+        self._build_two_tables()
+        self.assertEqual(self._unmatched(
+            "SELECT 1 FROM CHATBOT_DB.CLIN.DIM_SMALL s "
+            "WHERE s.REGION_NM = 'Yorkshire Dales'"), ["Yorkshire Dales"])
+
+    def test_the_table_is_matched_however_the_sql_spells_it(self):
+        self._build_two_tables()
+        for sql in (
+            "select 1 from chatbot_db.clin.dim_small s where s.region_nm = 'Yorkshire Dales'",
+            "SELECT 1 FROM DIM_SMALL WHERE REGION_NM = 'Yorkshire Dales'",
+            'SELECT 1 FROM "CHATBOT_DB"."CLIN"."DIM_SMALL" WHERE REGION_NM = \'Yorkshire Dales\'',
+        ):
+            with self.subTest(sql=sql[:40]):
+                self.assertEqual(self._unmatched(sql), ["Yorkshire Dales"])
+
+    def test_a_join_of_both_says_nothing(self):
+        # One of the two copies is a prefix, so the query cannot prove absence.
+        self._build_two_tables()
+        self.assertEqual(self._unmatched(
+            "SELECT 1 FROM CHATBOT_DB.CLIN.DIM_SMALL s "
+            "JOIN CHATBOT_DB.CLIN.DIM_BIG b ON 1=1 "
+            "WHERE s.REGION_NM = 'Yorkshire Dales'"), [])
+
+    def test_an_unrecognised_query_falls_back_to_the_older_stricter_rule(self):
+        """Not to "unproven", which would silence the feature entirely.
+
+        When the tables cannot be identified nothing has been learned about
+        scope, so every copy of the column must be complete -- which is exactly
+        what the code did before, and is strictly more conservative than
+        reporting.
+        """
+        self._build_two_tables()
+        self.assertEqual(
+            self._unmatched("NOT SQL AT ALL REGION_NM = 'Yorkshire Dales'"), [])
+
+    def _index_conn(self):
+        import sqlite3
+
+        from core.value_index import _index_path
+
+        return sqlite3.connect(_index_path(self.account, self.base))
+
+    def test_a_column_with_no_completeness_row_is_not_assumed_complete(self):
+        """Not knowing is not the same as knowing it is complete.
+
+        `all([])` is True, so a column with values indexed and no column_meta
+        row would sail through a bare all() and let the product claim absence
+        from a list nothing vouches for.
+        """
+        self._build_two_tables()
+        conn = self._index_conn()
+        try:
+            conn.execute("DELETE FROM column_meta WHERE column_name = 'REGION_NM'")
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual(self._unmatched(
+            "SELECT 1 FROM CHATBOT_DB.CLIN.DIM_SMALL s "
+            "WHERE s.REGION_NM = 'Yorkshire Dales'"), [])
+
+    def test_a_retracted_column_claims_nothing_though_its_meta_says_complete(self):
+        """Why the indexed-columns check is not redundant with this one.
+
+        purge_uncleared_columns deletes column_value rows only. A column
+        reclassified as PHI after the build therefore keeps a column_meta row
+        saying complete=1 while its values are gone -- and a completeness check
+        alone would read that as "provably absent" from an empty list.
+        """
+        self._build_two_tables()
+        conn = self._index_conn()
+        try:
+            conn.execute("DELETE FROM column_value WHERE column_name = 'REGION_NM'")
+            conn.commit()
+            still_complete = conn.execute(
+                "SELECT COUNT(*) FROM column_meta "
+                "WHERE column_name = 'REGION_NM' AND complete = 1").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertGreater(still_complete, 0, "the premise no longer holds")
+        self.assertEqual(self._unmatched(
+            "SELECT 1 FROM CHATBOT_DB.CLIN.DIM_SMALL s "
+            "WHERE s.REGION_NM = 'Yorkshire Dales'"), [])
+
     def test_a_literal_missing_from_a_truncated_column_is_not_reported(self):
         """The user-visible half: we must not say a value does not exist on the
         strength of a list we know to be partial."""
