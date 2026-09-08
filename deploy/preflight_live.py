@@ -62,6 +62,15 @@ def report(account_id: str) -> int:
          "" if state == "READY" else "discovery/KB build has not finished")
     gaps += state != "READY"
 
+    # Without this the portal serves a lock screen where the chat surface
+    # should be, and every case that asks a question is untestable.
+    chat_on = bool(client.get("chat_ui_enabled"))
+    line(OK if chat_on else GAP, "internal chat UI",
+         "enabled" if chat_on
+         else "off — /portal/chat shows a lock screen; turn it on in "
+              "Client Settings")
+    gaps += not chat_on
+
     cstate = store.get_client_state(account_id) or {}
     schema_dir = str(cstate.get("schema_dir") or "")
     has_schema = bool(schema_dir and (Path(schema_dir) / "_schema.json").is_file())
