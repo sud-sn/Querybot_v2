@@ -770,6 +770,44 @@ Steps: accept a draft for one of them.
 Pass: the other columns keep their terms, and the accepted column keeps the
 words that were already on it as well as the new ones.
 
+### 11.6 · Found live, fixed, and only checkable live
+
+These reproduce defects the live run surfaced. The first three now have unit
+tests; the wiring behind L11-30 does not, because reaching that branch needs a
+full pipeline run against an ambiguous date context — which is exactly what
+this document is for.
+
+**L11-28 · A grouped result is not described as a time series** — *regression*
+Steps: ask something that groups by a dimension AND spans periods —
+"compare revenue by warehouse for the last 3 months".
+Pass: the headline names the dimension you asked about, the KEY INSIGHTS talk
+about warehouses, and no percentage change between two periods appears.
+**False pass:** a question that groups by one thing only. This defect needs
+both a grouping and a date range; with one dimension it never fires.
+*Was:* "+1,437.3% from 2026-03 to 2026-06" on data where every warehouse was
+flat, and the word warehouse nowhere in the prose.
+
+**L11-29 · A leader is a leader, not one of its months** — *regression*
+Steps: on the same answer, read the leader and the runner-up.
+Pass: two different members of the dimension, and the leader's share is of the
+whole result.
+**False pass:** not checking the runner-up. The leader alone looks right.
+
+**L11-30 · The clarification card is French throughout** — *regression*
+Setup: the portal in French, and a metric with more than one business date.
+Steps: ask a question that triggers the "which date should I use?" card.
+Pass: the question sentence AND the date chips are French — "Date de facture",
+"Date de livraison confirmée" — not only the chrome around them.
+**False pass:** reading only the labels the template renders ("Précision
+demandée", "Continuer"). Those were always French; the question and the chips
+came from the server and had never entered the catalogue.
+
+**L11-31 · Column names read as business words** — *regression*
+Steps: read any answer's narrative and its follow-up suggestions.
+Pass: "3 warehouse names", not "6 whs nm"; "Break down by supplier", not
+"Break down by Sup".
+**False pass:** a table whose columns are already spelled in words.
+
 ## Sign-off
 
 A case is **not** passed until the false-pass line has been considered. Record

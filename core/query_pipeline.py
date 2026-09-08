@@ -655,6 +655,52 @@ _DATE_KEY_QUALIFIERS = {
 }
 
 
+def date_clarification_question(*, ambiguous: bool, allow_free_text: bool,
+                                lang: str | None = None) -> str:
+    """Which form of "which business date?" to ask.
+
+    Three questions, because three situations read differently to the person
+    answering: several connected events each carrying a default; no approved
+    default at all, where they may type one; and a metric with several valid
+    dates and no free text.
+
+    Lifted out of the pipeline because it was three English literals buried in
+    a branch nothing could execute, which is how the card came to be French
+    around an English question.
+    """
+    if ambiguous:
+        return _t("clar.date.several_defaults", lang=lang)
+    if allow_free_text:
+        return _t("clar.date.no_default_free_text", lang=lang)
+    return _t("clar.date.several_valid", lang=lang)
+
+
+def date_option_label(item: dict, disambiguated: str = "",
+                      *, lang: str | None = None) -> str:
+    """The label one date chip carries, in the reader's language.
+
+    The card around these chips is translated and the chips were not: a French
+    reader was asked, in French, to choose between "Confirmed Delivery Date"
+    and "Invoice Date".
+
+    ``disambiguated`` is the caller's already-resolved label, which may carry a
+    table name to tell two same-named roles apart. It wins when it says more
+    than the role does, because losing it would make the two chips identical --
+    the one thing this card exists to prevent.
+    """
+    from core.date_roles import translated_label
+
+    base = str(item.get("context_name") or item.get("date_role")
+               or "Business date").strip()
+    shown = str(disambiguated or "").strip() or base
+    role = str(item.get("date_role") or "")
+    translated = translated_label(role, base, lang=lang)
+    if shown != base:
+        # Disambiguated: keep it, it is the only thing separating two chips.
+        return shown
+    return translated
+
+
 def _date_option_identity(binding: dict) -> tuple[str, str]:
     """Physical identity of a date role, used to key and to order stably."""
     return (
@@ -4018,13 +4064,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _stable_date_labels = _date_option_labels(_all_date_bindings)
 
                 def _date_choice_option(item: dict, index: int) -> dict:
-                    base_label = str(
-                        item.get("context_name")
-                        or item.get("date_role")
-                        or "Business date"
-                    ).strip()
-                    label = _stable_date_labels.get(
-                        _date_option_identity(item), base_label
+                    label = date_option_label(
+                        item,
+                        _stable_date_labels.get(_date_option_identity(item), ""),
                     )
                     option = {
                         "id": f"date_role_{index}",
@@ -4091,23 +4133,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _option["business_suggestions"] = list(
                         _business_date_suggestions
                     )
-                if _date_fact_inference.get("status") == "ambiguous":
-                    _date_question = (
-                        "More than one connected business event has a default date. "
-                        "Which date context should I use?"
-                    )
-                else:
-                    if _date_context_resolution.get("allow_free_text"):
-                        _date_question = (
-                            "I found these relevant business dates, but none is an "
-                            "unambiguous approved default. Which date should I use? "
-                            "If it is not listed, enter its business name below."
-                        )
-                    else:
-                        _date_question = (
-                            "This metric has more than one valid business date. "
-                            "Which date context should I use?"
-                        )
+                _date_question = date_clarification_question(
+                    ambiguous=_date_fact_inference.get("status") == "ambiguous",
+                    allow_free_text=bool(
+                        _date_context_resolution.get("allow_free_text")),
+                )
                 if event.user_id and _date_options:
                     _pending_temporal_window = detect_temporal_window(
                         _semantic_plan_question

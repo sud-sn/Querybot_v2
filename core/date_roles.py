@@ -492,6 +492,32 @@ def generated_date_role_synonyms(role: DateRole, column_name: str = "", vocab=No
     return tuple(result)
 
 
+def translated_label(role_key: str, fallback: str = "", *,
+                     lang: str | None = None) -> str:
+    """A role's label in the reader's language.
+
+    The clarification card offers these as chips, and they were the English
+    constants below: a French reader was asked which date to use, in French,
+    and handed "Confirmed Delivery Date" to choose from.
+
+    Keyed on the role KEY rather than on its English label, so a workspace
+    whose warehouse spells the column differently still lands on the same
+    translation. Returns the fallback -- normally whatever the caller was
+    about to show -- for a role with no catalogue entry, because an
+    untranslated label beats no label.
+    """
+    key = str(role_key or "").strip().lower()
+    if not key:
+        return fallback
+    from core.i18n import lookup
+
+    translated = lookup(f"date_role.{key}", lang)
+    # lookup returns the id itself when it knows nothing about it.
+    if not translated or translated == f"date_role.{key}":
+        return fallback or key.replace("_", " ").title()
+    return translated
+
+
 def relationship_matches_date_role(question: str, label: str = "", description: str = "") -> bool:
     q = normalize_date_role_text(question)
     if not q:

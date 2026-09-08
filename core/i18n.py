@@ -1737,6 +1737,58 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "'{dimension}' is not one of this metric's approved dimensions. Add it if questions should be able to break the metric down that way.",
         "fr": "« {dimension} » ne fait pas partie des dimensions approuvées de cette métrique. Ajoutez-la si les questions doivent pouvoir la ventiler ainsi.",
     },
+
+    # ── Asking which business date to use ────────────────────────────────────
+    # Built as English literals inside the pipeline, so the clarification card
+    # arrived with French chrome and an English question inside it.
+    "clar.date.several_defaults": {
+        "en": "More than one connected business event has a default date. "
+              "Which date context should I use?",
+        "fr": "Plusieurs événements métier liés ont une date par défaut. "
+              "Quel contexte de date dois-je utiliser ?",
+    },
+    "clar.date.no_default_free_text": {
+        "en": "I found these relevant business dates, but none is an "
+              "unambiguous approved default. Which date should I use? If it "
+              "is not listed, enter its business name below.",
+        "fr": "J'ai trouvé ces dates métier pertinentes, mais aucune n'est une "
+              "valeur par défaut approuvée sans ambiguïté. Quelle date "
+              "dois-je utiliser ? Si elle n'est pas listée, saisissez son nom "
+              "métier ci-dessous.",
+    },
+    "clar.date.several_valid": {
+        "en": "This metric has more than one valid business date. "
+              "Which date context should I use?",
+        "fr": "Cet indicateur a plusieurs dates métier valides. "
+              "Quel contexte de date dois-je utiliser ?",
+    },
+
+    # ── Business date roles ──────────────────────────────────────────────────
+    # The clarification card offers these as chips. They were the role
+    # constants from core.date_roles, so a French reader picking a date was
+    # shown "Confirmed Delivery Date" inside an otherwise French card. Keyed
+    # on the role KEY, so a workspace whose warehouse spells the column
+    # differently still lands on the same translation.
+    "date_role.booked_date": {"en": "Booked Date", "fr": "Date d'enregistrement de commande"},
+    "date_role.invoice_date": {"en": "Invoice Date", "fr": "Date de facture"},
+    "date_role.order_date": {"en": "Order Date", "fr": "Date de commande"},
+    "date_role.cancelled_order_date": {"en": "Cancelled Order Date", "fr": "Date d'annulation de commande"},
+    "date_role.requested_delivery_date": {"en": "Requested Delivery Date", "fr": "Date de livraison demandée"},
+    "date_role.confirmed_delivery_date": {"en": "Confirmed Delivery Date", "fr": "Date de livraison confirmée"},
+    "date_role.planned_delivery_date": {"en": "Planned Delivery Date", "fr": "Date de livraison planifiée"},
+    "date_role.valid_delivery_date": {"en": "Valid Delivery Date", "fr": "Date de livraison valide"},
+    "date_role.delivery_date": {"en": "Delivery Date", "fr": "Date de livraison"},
+    "date_role.due_date": {"en": "Due Date", "fr": "Date d'échéance"},
+    "date_role.payment_date": {"en": "Payment Date", "fr": "Date de paiement"},
+    "date_role.receipt_date": {"en": "Receipt Date", "fr": "Date de réception"},
+    "date_role.accounting_date": {"en": "Accounting Date", "fr": "Date comptable"},
+    "date_role.current_cost_date": {"en": "Current Cost Date", "fr": "Date du coût actuel"},
+    "date_role.previous_cost_date": {"en": "Previous Cost Date", "fr": "Date du coût précédent"},
+    "date_role.order_line_creation_date": {"en": "Order Line Creation Date", "fr": "Date de création de la ligne de commande"},
+    "date_role.creation_date": {"en": "Creation Date", "fr": "Date de création"},
+    "date_role.registration_date": {"en": "Registration Date", "fr": "Date d'enregistrement"},
+    "date_role.modified_date": {"en": "Last Modified Date", "fr": "Date de dernière modification"},
+
     "coverage.gap.no_date_role": {
         "en": "No business date is bound to this metric, so it cannot answer questions about a period. Add a date role.",
         "fr": "Aucune date métier n'est associée à cette métrique : elle ne peut pas répondre aux questions portant sur une période. Ajoutez un rôle de date.",
