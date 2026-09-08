@@ -153,5 +153,118 @@ class TestThePreflightCountsRealErrors(unittest.TestCase):
         self.assertNotIn("error", self.severities())
 
 
+class TestThePreflightReadsTheCompliancePosture(unittest.TestCase):
+    """F31 · Four cases in the plan only mean anything on a regulated tenant.
+
+    L3-1, L3-2, L3-3 and L8-10 — the whole Phase-C computed-analysis section —
+    require regulated mode. deploy/preflight_live.py never read the compliance
+    profile at all: a grep for "compliance", "regulated" or "policy_engine"
+    returned nothing across the file. So on a standard workspace it printed
+    "No blocking gaps", exited 0, and a tester recorded four passes for
+    behaviour that was never exercised.
+
+    That is the same shape as the bug the class above fixes, and as the pytest
+    command that ran zero tests: a tool that cannot see a prerequisite reports
+    its own blind spot as readiness.
+
+    A warn rather than a gap — the workspace is fine, a section of the plan is
+    not runnable on it. And BOTH postures get one, because advising a standard
+    tenant to switch to regulated without saying what that turns off would be
+    the same defect mirrored.
+    """
+
+    def lines(self, mode, pack_key="", regulated=None):
+        """Every line the real report() prints, for one stored posture."""
+        import importlib.util
+        from unittest.mock import patch
+
+        import store
+
+        spec = importlib.util.spec_from_file_location(
+            "_preflight_posture", Path(__file__).resolve().parents[1]
+            / "deploy" / "preflight_live.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        printed: list[str] = []
+        module.line = lambda mark, label, detail="": printed.append(
+            f"{mark}|{label}|{detail}")
+        profile = ({"mode": mode, "policy_pack_key": pack_key}
+                   if mode is not None else {})
+        is_reg = (str(mode or "") == "regulated") if regulated is None else regulated
+        with patch.object(store, "get_client",
+                          return_value={"client_name": "T", "state": "READY",
+                                        "chat_ui_enabled": 1}), \
+             patch.object(store, "get_client_state",
+                          return_value={"schema_dir": "/nonexistent"}), \
+             patch.object(store, "get_compliance_profile", return_value=profile), \
+             patch("core.compliance.policy_engine.is_regulated",
+                   return_value=is_reg):
+            module.report("acct")
+        return printed, module
+
+    def posture(self, *args, **kw):
+        printed, module = self.lines(*args, **kw)
+        found = [row for row in printed if "compliance mode" in row
+                 or "no posture chosen" in row]
+        self.assertTrue(found, printed)
+        return found[0], module
+
+    def test_a_standard_workspace_is_told_which_cases_it_cannot_run(self):
+        row, module = self.posture("standard")
+        self.assertTrue(row.startswith(module.WARN), row)
+        for case in ("L3-1", "L3-2", "L3-3", "L8-10"):
+            with self.subTest(case=case):
+                self.assertIn(case, row)
+
+    def test_and_told_not_to_record_them_as_passes(self):
+        row, _ = self.posture("standard")
+        self.assertIn("not-run", row)
+
+    def test_a_regulated_workspace_with_a_pack_is_told_they_are_runnable(self):
+        row, module = self.posture("regulated", "healthcare_pharmacy_v1")
+        self.assertTrue(row.startswith(module.OK), row)
+        self.assertIn("L3-1", row)
+
+    def test_regulated_with_no_pack_is_not_reported_as_ready(self):
+        # is_regulated is true, but the value index harvests nothing without a
+        # resolvable pack, so a different section of the plan goes dark.
+        row, module = self.posture("regulated", "")
+        self.assertTrue(row.startswith(module.WARN), row)
+        self.assertIn("L10-1", row)
+
+    def test_regulated_mode_is_told_what_it_turns_off(self):
+        # The mirrored defect: advising a switch without naming the cost.
+        printed, _ = self.lines("regulated", "healthcare_pharmacy_v1")
+        disabled = [r for r in printed if "disables cases too" in r]
+        self.assertTrue(disabled, printed)
+        self.assertIn("L11-31", disabled[0])
+
+    def test_an_unset_posture_is_not_silently_treated_as_either(self):
+        row, module = self.posture(None)
+        self.assertTrue(row.startswith(module.WARN), row)
+        self.assertIn("L3-1", row)
+
+    def test_a_mode_stored_in_the_wrong_case_is_called_out(self):
+        # is_regulated compares the exact literal, so "REGULATED" behaves as
+        # standard — which looks like a configured regulated tenant to anyone
+        # reading the settings page.
+        row, module = self.posture("REGULATED", regulated=False)
+        self.assertTrue(row.startswith(module.WARN), row)
+        self.assertIn("L3-1", row)
+        # Asserted on the DETAIL, not the row: "REGULATED" is in the label
+        # either way, so checking the row alone passes whether or not the
+        # explanation is there.
+        detail = row.split("|", 2)[2]
+        self.assertIn("behaves as standard", detail)
+        self.assertIn("'regulated'", detail)
+
+    def test_the_section_is_printed_at_all(self):
+        # The finding itself: there was no compliance line anywhere.
+        printed, _ = self.lines("standard")
+        self.assertTrue(any("compliance" in row.lower() or "posture" in row.lower()
+                            for row in printed), printed)
+
+
 if __name__ == "__main__":
     unittest.main()

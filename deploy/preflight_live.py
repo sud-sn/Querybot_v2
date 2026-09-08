@@ -220,6 +220,76 @@ def report(account_id: str) -> int:
          + ("" if len(users) >= 2
             else " — L1-3 and L9-x need one RESTRICTED and one unrestricted"))
 
+    # ── 4b · compliance posture ──────────────────────────────────────────
+    # Four cases in the plan — L3-1, L3-2, L3-3 and L8-10, the whole Phase-C
+    # computed-analysis section — only mean anything on a REGULATED workspace.
+    # This tool never read the posture, so it certified a standard workspace as
+    # ready and a tester recorded four passes for behaviour that was never
+    # exercised. A preflight that cannot see a prerequisite reports its own
+    # blind spot as readiness.
+    #
+    # A warn, not a gap: the workspace is fine, a section of the plan is not
+    # runnable on it. Both postures get one, because switching to regulated to
+    # unlock those four would silently disable others.
+    print("\nCompliance posture")
+    try:
+        from core.compliance.packs import get_pack
+        from core.compliance.policy_engine import is_regulated
+
+        profile = store.get_compliance_profile(account_id) or {}
+        raw_mode = str(profile.get("mode") or "")
+        regulated = is_regulated(account_id)
+        pack_key = str(profile.get("policy_pack_key") or "")
+        pack = get_pack(pack_key) if pack_key else None
+
+        if not raw_mode:
+            line(WARN, "no posture chosen",
+                 "L3-1, L3-2, L3-3 and L8-10 need regulated mode. The analysis "
+                 "card already behaves regulated (is_regulated fails closed), "
+                 "but the regulated question scrub does not run — so L3-3's "
+                 "egress evidence is not what a regulated workspace produces")
+        elif regulated and pack:
+            line(OK, f"compliance mode = {raw_mode}",
+                 f"pack {pack_key} — L3-1, L3-2, L3-3 and L8-10 are runnable")
+        elif regulated:
+            line(WARN, f"compliance mode = {raw_mode}",
+                 f"no resolvable policy pack ({pack_key or 'unset'}) — the "
+                 "value index harvests nothing, so L10-1..L10-8 cannot run "
+                 "and readiness reports profile_selected as failing")
+        else:
+            detail = ("L3-1, L3-2, L3-3 and L8-10 need regulated mode; record "
+                      "them as not-run, not as passes")
+            if raw_mode.strip().lower() == "regulated":
+                # The product compares the exact literal.
+                detail = (f"stored as {raw_mode!r}, which is not the literal "
+                          f"'regulated' the product compares — this workspace "
+                          f"behaves as standard, so " + detail)
+            line(WARN, f"compliance mode = {raw_mode}", detail)
+
+        if regulated:
+            line(WARN, "regulated mode disables cases too",
+                 "the follow-up-suggestion half of L11-31 returns nothing by "
+                 "design here — record it as not-run rather than a failure")
+
+        try:
+            from core.compliance.readiness import assess
+
+            failing = [c for c in (assess(account_id) or {}).get("controls", [])
+                       if str(c.get("status")) not in {"pass", "ok", "n/a"}]
+            if failing:
+                line(WARN, f"{len(failing)} readiness control(s) not passing",
+                     ", ".join(str(c.get("id") or c.get("name") or "?")
+                               for c in failing[:5]))
+        except Exception as exc:      # noqa: BLE001
+            line(WARN, "readiness assessment unavailable", type(exc).__name__)
+    except Exception as exc:          # noqa: BLE001
+        # A preflight that cannot read the posture must SAY so rather than
+        # print nothing, which is the shape of the defect it is fixing.
+        line(GAP, "compliance posture unreadable",
+             f"{type(exc).__name__}: {exc} — cannot tell which plan sections "
+             f"are runnable")
+        gaps += 1
+
     # ── 5 · retrieval ────────────────────────────────────────────────────
     print("\nRetrieval")
     try:
