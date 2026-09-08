@@ -431,7 +431,7 @@ def execute_result_command(
     if not source:
         return ResultCommandOutcome(
             handled=not command.fallback_allowed,
-            message="That result is no longer available. Run the business question again.",
+            message=_t("reply.rc.no_snapshot"),
         )
 
     source_id = str(source.get("result_id") or "")
@@ -444,7 +444,7 @@ def execute_result_command(
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,
-                message="Restored the previous result.",
+                message=_t("reply.rc.restored"),
                 snapshot=restored,
                 operation="undo",
                 rows_before=before,
@@ -456,7 +456,7 @@ def execute_result_command(
         if not rows:
             return ResultCommandOutcome(
                 handled=not command.fallback_allowed,
-                message="The current result has no rows to transform.",
+                message=_t("reply.rc.no_rows"),
                 source_result_id=source_id,
             )
 
@@ -474,11 +474,8 @@ def execute_result_command(
                 return ResultCommandOutcome(
                     handled=True,
                     ok=False,
-                    message=(
-                        f"The current result has only {len(rows)} data point(s), so it cannot "
-                        f"be shown as a {presentation_type} chart. Ask for the same metric "
-                        "by day, week, month, or another business dimension first."
-                    ),
+                    message=_t("reply.rc.too_few_points",
+                               count=len(rows), chart=presentation_type),
                     source_result_id=source_id,
                 )
             metadata = dict(source.get("metadata") or {})
@@ -498,14 +495,16 @@ def execute_result_command(
                 metadata=metadata,
             )
             label = (
-                "best-fit chart" if presentation_type == "auto"
+                _t("reply.rc.best_fit_chart") if presentation_type == "auto"
+                # The chart TYPE is a wire value the reader also picked from a
+                # control, so it is interpolated rather than looked up.
                 else "table" if presentation_type == "table"
                 else f"{presentation_type} chart"
             )
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,
-                message=f"Showing the current result as a {label}.",
+                message=_t("reply.rc.showing_as", chart=label),
                 snapshot=snapshot,
                 operation="presentation",
                 rows_before=before,
@@ -567,7 +566,7 @@ def execute_result_command(
             if affected <= 0:
                 return ResultCommandOutcome(
                     handled=True,
-                    message="I found the value locally, but it did not remove any rows.",
+                    message=_t("reply.rc.no_rows_removed"),
                     source_result_id=source_id,
                     rows_before=before,
                     rows_after=before,
@@ -588,7 +587,7 @@ def execute_result_command(
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,
-                message=f"Created a filtered result with {affected} row{'s' if affected != 1 else ''} excluded.",
+                message=_plural("reply.rc.excluded", affected),
                 snapshot=snapshot,
                 operation="exclude",
                 rows_before=before,
@@ -618,7 +617,8 @@ def execute_result_command(
                     return _format_clarification(
                         source_id,
                         before,
-                        f"Which measure should I use to find the {extreme} result?",
+                        _t("reply.rc.which_measure_extreme",
+                           extreme=_t(f"reply.rc.extreme.{extreme}")),
                         [
                             (
                                 _business_column_label(column),
@@ -632,7 +632,7 @@ def execute_result_command(
                         command,
                         source_id,
                         before,
-                        "The current result has no numeric business measure to rank.",
+                        _t("reply.rc.no_measure_to_rank"),
                     )
             descending = command.direction != "asc"
             order_keyword = "DESC" if descending else "ASC"
@@ -683,12 +683,15 @@ def execute_result_command(
             )
             position = "last" if not descending and not order_column else "first"
             if command.infer_metric and order_column:
-                message = (
-                    f"Kept the {('highest' if descending else 'lowest')} result "
-                    f"by {_business_column_label(order_column)}."
-                )
+                message = _t(
+                    "reply.rc.kept_extreme",
+                    extreme=_t("reply.rc.extreme.highest" if descending
+                               else "reply.rc.extreme.lowest"),
+                    measure=_business_column_label(order_column))
             else:
-                message = f"Kept the {position} {len(transformed)} rows from the current result."
+                message = _t("reply.rc.kept_rows",
+                             position=_t(f"reply.rc.position.{position}"),
+                             count=len(transformed))
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,
@@ -746,7 +749,7 @@ def execute_result_command(
                     command,
                     source_id,
                     before,
-                    "Those periods were not found in the current result.",
+                    _t("reply.rc.periods_not_found"),
                 )
             snapshot = cache.derive_snapshot(
                 session_id,
@@ -768,7 +771,7 @@ def execute_result_command(
                 "filter",
                 source_id,
                 before,
-                f"Kept {len(transformed)} matching rows from the cached result.",
+                _t("reply.rc.kept_matching", count=len(transformed)),
             )
 
         if command.action == "sort":
@@ -807,7 +810,7 @@ def execute_result_command(
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,
-                message=f"Sorted the cached result {direction.lower()}.",
+                message=_t("reply.rc.sorted", direction=direction.lower()),
                 snapshot=snapshot,
                 operation="sort",
                 rows_before=before,
@@ -824,7 +827,7 @@ def execute_result_command(
             if _normalise_value(value) in _MASKED_MARKERS:
                 return _command_error(
                     command, source_id, before,
-                    "A generic masked value cannot be used as a filter. Use a visible value or row number.",
+                    _t("reply.rc.masked_filter"),
                 )
             sql_operator, parameter = _filter_sql(command.operator, value)
             transform_sql = (
@@ -861,7 +864,7 @@ def execute_result_command(
             )
             return _command_success(
                 snapshot, "filter", source_id, before,
-                f"Filtered the cached result to {len(transformed)} matching rows.",
+                _t("reply.rc.filtered", count=len(transformed)),
             )
 
         if command.action == "aggregate":
@@ -876,7 +879,7 @@ def execute_result_command(
             if metric != "*" and command.aggregation != "count" and not _column_is_numeric(rows, metric):
                 return _command_error(
                     command, source_id, before,
-                    "That measure is not numeric in the current result.",
+                    _t("reply.rc.measure_not_numeric"),
                 )
             output_column = _aggregate_output_name(command.aggregation, metric)
             sql_metric = "*" if metric == "*" else _quote_identifier(metric)
@@ -913,7 +916,7 @@ def execute_result_command(
             )
             return _command_success(
                 snapshot, "aggregate", source_id, before,
-                f"Summarized the cached result into {len(transformed)} groups.",
+                _t("reply.rc.summarized", count=len(transformed)),
             )
 
         if command.action == "contribution":
@@ -924,7 +927,7 @@ def execute_result_command(
             if not _column_is_numeric(rows, metric):
                 return _command_error(
                     command, source_id, before,
-                    "That contribution measure is not numeric in the current result.",
+                    _t("reply.rc.contribution_not_numeric"),
                 )
             metric_token = _safe_output_token(metric)
             total_column = (
@@ -967,7 +970,7 @@ def execute_result_command(
             )
             return _command_success(
                 snapshot, "contribution", source_id, before,
-                "Calculated percentage contribution from the cached result.",
+                _t("reply.rc.contribution_done"),
             )
 
         if command.action in {"profit_percentage", "ratio"}:
@@ -984,7 +987,7 @@ def execute_result_command(
                 if not revenue or not (gross_profit or cost):
                     return _command_error(
                         command, source_id, before,
-                        "The cached result needs revenue plus cost or gross profit columns.",
+                        _t("reply.rc.need_revenue_cost"),
                     )
                 numerator = gross_profit or cost
                 denominator = revenue
@@ -1003,7 +1006,7 @@ def execute_result_command(
             if not _column_is_numeric(rows, numerator) or not _column_is_numeric(rows, denominator):
                 return _command_error(
                     command, source_id, before,
-                    "Both calculation fields must be numeric in the cached result.",
+                    _t("reply.rc.calc_fields_not_numeric"),
                 )
             if subtract:
                 expression = (
@@ -1043,7 +1046,7 @@ def execute_result_command(
             )
             return _command_success(
                 snapshot, command.action, source_id, before,
-                "Calculated the percentage locally from the cached result.",
+                _t("reply.rc.percentage_done"),
             )
     except (LookupError, ValueError) as exc:
         return ResultCommandOutcome(
@@ -1076,7 +1079,7 @@ def _execute_format_command(
             if not isinstance(item, dict):
                 return _command_error(
                     command, original_source_id, before,
-                    "One of the requested display formats was not valid.",
+                    _t("reply.rc.format_invalid"),
                 )
             nested = ResultCommand(
                 "format",
@@ -1108,8 +1111,8 @@ def _execute_format_command(
     kind = str(requested.get("type") or "").lower()
     if not kind:
         return _format_clarification(
-            source_id, before, "Which format should I use?", [
-                ("Month and year (Jan-26)", "format this result as MMM-YY"),
+            source_id, before, _t("reply.rc.which_format"), [
+                (_t("reply.rc.fmt.month_year"), "format this result as MMM-YY"),
                 ("Currency", "format this result as USD currency"),
                 ("Percentage", "format this result as percentage, values are already 0 to 100"),
                 ("Number", "format this result as a number with 2 decimal places"),
@@ -1150,7 +1153,7 @@ def _execute_format_command(
         if column not in candidates and kind != "text":
             return _command_error(
                 command, source_id, before,
-                f"{column} does not contain values compatible with the requested {kind} format.",
+                _t("reply.rc.column_incompatible", column=column, format=kind),
             )
     elif len(candidates) == 1:
         column = candidates[0]
@@ -1159,13 +1162,13 @@ def _execute_format_command(
         return _format_clarification(
             source_id,
             before,
-            f"Which column should I format as {kind}?",
+            _t("reply.rc.which_column_format", format=kind),
             [(candidate, f"format {candidate} as {suffix}") for candidate in candidates[:8]],
         )
     else:
         return _command_error(
             command, source_id, before,
-            f"I could not find a column compatible with the requested {kind} format.",
+            _t("reply.rc.no_compatible_column", format=kind),
         )
 
     preserve_existing_type = bool(requested.pop("preserve_existing_type", False))
@@ -1180,7 +1183,7 @@ def _execute_format_command(
 
     if kind == "date" and not requested.get("style"):
         return _format_clarification(
-            source_id, before, f"Which date format should I use for {column}?", [
+            source_id, before, _t("reply.rc.which_date_format", column=column), [
                 ("Jan-26", f"format {column} as MMM-YY"),
                 ("January 2026", f"format {column} as full month and year"),
                 ("2026-01", f"format {column} as YYYY-MM"),
@@ -1193,7 +1196,7 @@ def _execute_format_command(
         and not (preserve_existing_type and existing_kind == "currency")
     ):
         return _format_clarification(
-            source_id, before, f"Which currency should I use for {column}?", [
+            source_id, before, _t("reply.rc.which_currency", column=column), [
                 (code, f"format {column} as {code} currency")
                 for code in ("USD", "INR", "EUR", "GBP")
             ],
@@ -1211,15 +1214,15 @@ def _execute_format_command(
             requested["scale"] = "as_is"
         else:
             return _format_clarification(
-                source_id, before, f"How are the percentage values in {column} stored?", [
+                source_id, before, _t("reply.rc.how_percent_stored", column=column), [
                     ("Fractions (0.25 = 25%)", f"format {column} as percentage, values are fractions 0 to 1"),
-                    ("Percent values (25 = 25%)", f"format {column} as percentage, values are already 0 to 100"),
+                    (_t("reply.rc.fmt.percent_100"), f"format {column} as percentage, values are already 0 to 100"),
                 ],
             )
 
     spec = normalize_display_format(requested)
     if not spec:
-        return _command_error(command, source_id, before, "That display format is not supported.")
+        return _command_error(command, source_id, before, _t("reply.rc.format_unsupported"))
     formats = dict(source.get("column_formats") or {})
     formats[column] = coarse_format(spec)
     metadata = dict(source.get("metadata") or {})
@@ -1244,7 +1247,7 @@ def _execute_format_command(
     return ResultCommandOutcome(
         handled=True,
         ok=True,
-        message=f"Formatted {column} as {_format_label(spec)}. Raw values are unchanged.",
+        message=_t("reply.rc.formatted", column=column, format=_format_label(spec)),
         snapshot=snapshot,
         operation="format",
         rows_before=before,
@@ -1269,7 +1272,12 @@ def _format_clarification(
         clarification_required=True,
         clarification_prompt=prompt,
         clarification_options=[
-            {"id": f"format-{index}", "label": label, "value": label, "resolved_question": question}
+            # The label is translated; the VALUE is the re-plannable English
+            # question, which is also what resolved_question carries and what
+            # core/dispatcher.py reads first. Setting value to the label would
+            # have put a French string where a question belongs.
+            {"id": f"format-{index}", "label": label, "value": question,
+             "resolved_question": question}
             for index, (label, question) in enumerate(choices, start=1)
         ],
     )
@@ -1292,13 +1300,28 @@ def _format_instruction(spec: dict) -> str:
 
 
 def _format_label(spec: dict) -> str:
-    if spec.get("type") == "date":
-        return _format_instruction(spec)
-    if spec.get("type") == "currency":
-        return f"{spec.get('currency_code', '')} currency".strip()
-    if spec.get("type") == "percentage":
-        return "percentage"
-    return f"a number with {spec.get('fraction_digits', 2)} decimal places"
+    """What the reader is told a column was formatted as.
+
+    Deliberately separate from _format_instruction, which is the same idea in
+    the PLANNER's language: its output goes into a clarification option's
+    resolved_question and is fed back to the pipeline, so it stays English.
+    This one only ever reaches a person.
+    """
+    kind = spec.get("type")
+    if kind == "date":
+        style = str(spec.get("style") or "")
+        known = {"month_year_short", "month_year_long", "iso",
+                 "day_month_year", "month_day_year", "day_month_name_year"}
+        return _t(f"reply.rc.label.date.{style}" if style in known
+                  else "reply.rc.label.date.other")
+    if kind == "currency":
+        # The ISO code is data.
+        return _t("reply.rc.label.currency",
+                  code=spec.get("currency_code", "")).strip()
+    if kind == "percentage":
+        return _t("reply.rc.label.percentage")
+    return _t("reply.rc.label.number",
+              digits=spec.get("fraction_digits", 2))
 
 
 def _command_error(
@@ -1402,7 +1425,7 @@ def _filter_sql(operator: str, value: Any) -> tuple[str, Any]:
         return "ILIKE", f"{value}%"
     if operator == "ends_with":
         return "ILIKE", f"%{value}"
-    raise ValueError("That filter operator is not supported locally.")
+    raise ValueError(_t("reply.rc.operator_unsupported"))
 
 
 def _filter_matches(actual: Any, operator: str, expected: Any) -> bool:
@@ -1640,7 +1663,7 @@ def _bare_month_multi_year_error(target: str, matches: list[tuple[str, Any]]) ->
     if reference is None or reference[0] is not None:
         return ""
     if len(_distinct_years([value for _, value in matches])) > 1:
-        return "That month matches more than one year in the current result."
+        return _t("reply.rc.month_many_years")
     return ""
 
 
@@ -1651,7 +1674,7 @@ def _resolve_exclusions(
     if row_match:
         index = int(row_match.group(1)) - 1
         if index < 0 or index >= len(rows):
-            return [], "That row number is outside the current result."
+            return [], _t("reply.rc.row_out_of_range")
         # Match the whole row using every value so duplicate displayed values
         # do not accidentally remove unrelated records.
         return [list(rows[index].items())], ""
@@ -1679,10 +1702,7 @@ def _resolve_exclusions(
         if len(whole_matches) == 1:
             return [[whole_matches[0]]], ""
         if len(whole_matches) > 1:
-            return [], (
-                "That value appears in more than one field in the current result. "
-                "Use a more specific value or say `exclude row N`."
-            )
+            return [], _t("reply.rc.value_many_fields")
 
     targets = [
         _clean_target(part)
@@ -1690,21 +1710,18 @@ def _resolve_exclusions(
         if _clean_target(part)
     ]
     if len(targets) <= 1:
-        return [], "I could not find that value in the current result."
+        return [], _t("reply.rc.value_not_found")
 
     resolved: list[list[tuple[str, Any]]] = []
     for target in targets:
         matches = _find_temporal_value_matches(rows, target)
         if not matches:
-            return [], "One of those values was not found in the current result."
+            return [], _t("reply.rc.some_values_not_found")
         multi_year_error = _bare_month_multi_year_error(target, matches)
         if multi_year_error:
             return [], multi_year_error
         if len(matches) > 1:
-            return [], (
-                "One of those values appears in more than one field. "
-                "Use a more specific value or say `exclude row N`."
-            )
+            return [], _t("reply.rc.some_values_many_fields")
         resolved.append([matches[0]])
     return resolved, ""
 
@@ -1731,7 +1748,7 @@ def _build_reference_clarification(
             })
         if len(options) > 1:
             options.sort(key=lambda option: option["label"])
-            return "Which month did you mean?", options
+            return _t("reply.rc.which_month"), options
 
     matches = _find_value_matches(rows, target_text)
     row_options: list[dict[str, str]] = []
@@ -1749,7 +1766,7 @@ def _build_reference_clarification(
             })
             break
     if len(row_options) > 1:
-        return "That reference matches more than one row. Which one did you mean?", row_options
+        return _t("reply.rc.which_row"), row_options
     return None
 
 
@@ -1763,13 +1780,13 @@ def _resolve_inclusions(
         if _clean_temporal_subset_target(part)
     ]
     if not targets:
-        return "", [], "No periods were provided."
+        return "", [], _t("reply.rc.no_periods")
 
     matches_by_target: list[dict[str, list[Any]]] = []
     for target in targets:
         matches = _find_temporal_value_matches(rows, target)
         if not matches:
-            return "", [], f"I could not find {target!r} in the current result."
+            return "", [], _t("reply.rc.not_found_in_result", target=repr(target))
         grouped: dict[str, list[Any]] = {}
         for column, value in matches:
             if value not in grouped.setdefault(column, []):
@@ -1780,7 +1797,7 @@ def _resolve_inclusions(
     for grouped in matches_by_target[1:]:
         common_columns &= set(grouped)
     if not common_columns:
-        return "", [], "Those periods do not resolve to one field in the current result."
+        return "", [], _t("reply.rc.periods_many_fields")
 
     def column_score(column: str) -> tuple[int, int]:
         tokens = _semantic_tokens(column)
@@ -1794,7 +1811,7 @@ def _resolve_inclusions(
 
     ranked = sorted(common_columns, key=column_score, reverse=True)
     if len(ranked) > 1 and column_score(ranked[0]) == column_score(ranked[1]):
-        return "", [], "More than one date field matches. Name the result column explicitly."
+        return "", [], _t("reply.rc.many_date_fields")
     column = ranked[0]
     selected: list[Any] = []
     for target, grouped in zip(targets, matches_by_target):
@@ -1861,6 +1878,37 @@ def _find_value_matches(rows: list[dict], target: str) -> list[tuple[str, Any]]:
     return list(unique.values())
 
 
+def _t(msg_id: str, **kw) -> str:
+    """Resolve a catalogue id in the reader's language.
+
+    Deferred import, matching core/failure_messages.py and core/answer_rca.py.
+
+    THE INVARIANT THIS MODULE KEEPS: a clarification option's ``label`` is what
+    the reader sees and is translated; its ``resolved_question`` is what
+    core/dispatcher.py re-plans and stays English. That precedence is real --
+    dispatcher reads resolved_question BEFORE value and label -- so translating
+    a label cannot change what the pipeline is asked.
+    """
+    from core.i18n import t
+
+    return t(msg_id, **kw)
+
+
+def _plural(stem: str, count, **kw) -> str:
+    """The .one / .other form of a count message, in the reader's language.
+
+    French takes the singular for zero and English does not, which is why this
+    goes through the catalogue's rule rather than a bolted-on "s".
+
+    core.i18n.plural fills {count} from its own second argument, so callers
+    pass the number once and never as a keyword -- doing both is a TypeError,
+    because "count" is also the parameter's name.
+    """
+    from core.i18n import plural
+
+    return plural(stem, count, **kw)
+
+
 def _column_display_label(column: str) -> str:
     """The business name a reader was shown for this column, or its spelling.
 
@@ -1897,7 +1945,7 @@ def _resolve_column(rows: list[dict], target: str) -> tuple[str, str]:
     if len(labelled) == 1:
         return labelled[0], ""
     if len(labelled) > 1:
-        return "", "That field name is ambiguous. Use the exact result column name."
+        return "", _t("reply.rc.field_ambiguous")
 
     partial = [
         column for column in columns
@@ -1909,16 +1957,16 @@ def _resolve_column(rows: list[dict], target: str) -> tuple[str, str]:
     if len(semantic) == 1:
         return semantic[0], ""
     if len(semantic) > 1:
-        return "", "That field name is ambiguous. Use the exact result column name."
+        return "", _t("reply.rc.field_ambiguous")
     if not partial:
-        return "", "That field is not present in the current result."
-    return "", "That field name is ambiguous. Use the exact result column name."
+        return "", _t("reply.rc.field_absent")
+    return "", _t("reply.rc.field_ambiguous")
 
 
 def resolve_result_column(rows: list[dict], target: str) -> tuple[str, str]:
     """Public, local-only result-column resolver used by governed planners."""
     if not rows:
-        return "", "The current result has no columns to resolve."
+        return "", _t("reply.rc.no_columns")
     return _resolve_column(rows, target)
 
 

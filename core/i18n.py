@@ -4826,6 +4826,274 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Sure -- ask me a question and I'll explain my plan before running it, e.g. \"explain your plan: what was net revenue for last 7 days\".",
         "fr": "Bien sûr — posez-moi une question et j'expliquerai mon plan avant de l'exécuter, par exemple « explique ton plan : quel était le chiffre d'affaires net sur les 7 derniers jours ».",
     },
+    "reply.rc.label.date.month_year_short": {
+        "en": "MMM-YY",
+        "fr": "MMM-AA",
+    },
+    "reply.rc.label.date.month_year_long": {
+        "en": "full month and year",
+        "fr": "mois et année en toutes lettres",
+    },
+    "reply.rc.label.date.iso": {
+        "en": "YYYY-MM",
+        "fr": "AAAA-MM",
+    },
+    "reply.rc.label.date.day_month_year": {
+        "en": "DD-MM-YYYY",
+        "fr": "JJ-MM-AAAA",
+    },
+    "reply.rc.label.date.month_day_year": {
+        "en": "MM-DD-YYYY",
+        "fr": "MM-JJ-AAAA",
+    },
+    "reply.rc.label.date.day_month_name_year": {
+        "en": "DD-MMM-YYYY",
+        "fr": "JJ-MMM-AAAA",
+    },
+    "reply.rc.label.date.other": {
+        "en": "date format",
+        "fr": "format de date",
+    },
+    "reply.rc.label.currency": {
+        "en": "{code} currency",
+        "fr": "devise {code}",
+    },
+    "reply.rc.label.percentage": {
+        "en": "percentage",
+        "fr": "pourcentage",
+    },
+    "reply.rc.label.number": {
+        "en": "a number with {digits} decimal places",
+        "fr": "un nombre à {digits} décimales",
+    },
+    "reply.rc.no_snapshot": {
+        "en": "That result is no longer available. Run the business question again.",
+        "fr": "Ce résultat n'est plus disponible. Reposez la question métier.",
+    },
+    "reply.rc.restored": {
+        "en": "Restored the previous result.",
+        "fr": "Résultat précédent rétabli.",
+    },
+    "reply.rc.no_rows": {
+        "en": "The current result has no rows to transform.",
+        "fr": "Le résultat actuel ne contient aucune ligne à transformer.",
+    },
+    "reply.rc.too_few_points": {
+        "en": "The current result has only {count} data point(s), so it cannot be shown as a {chart} chart. Ask for the same metric by day, week, month, or another business dimension first.",
+        "fr": "Le résultat actuel ne contient que {count} point(s) de données ; il ne peut donc pas être affiché sous forme de graphique {chart}. Demandez d'abord le même indicateur par jour, semaine, mois ou une autre dimension métier.",
+    },
+    "reply.rc.best_fit_chart": {
+        "en": "best-fit chart",
+        "fr": "graphique le plus adapté",
+    },
+    "reply.rc.showing_as": {
+        "en": "Showing the current result as a {chart}.",
+        "fr": "Résultat actuel affiché sous forme de {chart}.",
+    },
+    "reply.rc.no_rows_removed": {
+        "en": "I found the value locally, but it did not remove any rows.",
+        "fr": "J'ai trouvé la valeur localement, mais elle n'a supprimé aucune ligne.",
+    },
+    "reply.rc.excluded.one": {
+        "en": "Created a filtered result with {count} row excluded.",
+        "fr": "Résultat filtré créé, avec {count} ligne exclue.",
+    },
+    "reply.rc.excluded.other": {
+        "en": "Created a filtered result with {count} rows excluded.",
+        "fr": "Résultat filtré créé, avec {count} lignes exclues.",
+    },
+    "reply.rc.which_measure_extreme": {
+        "en": "Which measure should I use to find the {extreme} result?",
+        "fr": "Quel indicateur dois-je utiliser pour trouver le résultat le plus {extreme} ?",
+    },
+    "reply.rc.extreme.highest": {
+        "en": "highest",
+        "fr": "élevé",
+    },
+    "reply.rc.extreme.lowest": {
+        "en": "lowest",
+        "fr": "faible",
+    },
+    "reply.rc.no_measure_to_rank": {
+        "en": "The current result has no numeric business measure to rank.",
+        "fr": "Le résultat actuel ne contient aucun indicateur métier numérique à classer.",
+    },
+    "reply.rc.kept_extreme": {
+        "en": "Kept the {extreme} result by {measure}.",
+        "fr": "Résultat le plus {extreme} conservé selon {measure}.",
+    },
+    "reply.rc.kept_rows": {
+        "en": "Kept the {position} {count} rows from the current result.",
+        "fr": "{count} {position} lignes du résultat actuel conservées.",
+    },
+    "reply.rc.position.first": {
+        "en": "first",
+        "fr": "premières",
+    },
+    "reply.rc.position.last": {
+        "en": "last",
+        "fr": "dernières",
+    },
+    "reply.rc.periods_not_found": {
+        "en": "Those periods were not found in the current result.",
+        "fr": "Ces périodes sont introuvables dans le résultat actuel.",
+    },
+    "reply.rc.kept_matching": {
+        "en": "Kept {count} matching rows from the cached result.",
+        "fr": "{count} lignes correspondantes conservées depuis le résultat en cache.",
+    },
+    "reply.rc.sorted": {
+        "en": "Sorted the cached result {direction}.",
+        "fr": "Résultat en cache trié {direction}.",
+    },
+    "reply.rc.masked_filter": {
+        "en": "A generic masked value cannot be used as a filter. Use a visible value or row number.",
+        "fr": "Une valeur masquée générique ne peut pas servir de filtre. Utilisez une valeur visible ou un numéro de ligne.",
+    },
+    "reply.rc.filtered": {
+        "en": "Filtered the cached result to {count} matching rows.",
+        "fr": "Résultat en cache filtré à {count} lignes correspondantes.",
+    },
+    "reply.rc.measure_not_numeric": {
+        "en": "That measure is not numeric in the current result.",
+        "fr": "Cet indicateur n'est pas numérique dans le résultat actuel.",
+    },
+    "reply.rc.summarized": {
+        "en": "Summarized the cached result into {count} groups.",
+        "fr": "Résultat en cache résumé en {count} groupes.",
+    },
+    "reply.rc.contribution_not_numeric": {
+        "en": "That contribution measure is not numeric in the current result.",
+        "fr": "Cet indicateur de contribution n'est pas numérique dans le résultat actuel.",
+    },
+    "reply.rc.contribution_done": {
+        "en": "Calculated percentage contribution from the cached result.",
+        "fr": "Contribution en pourcentage calculée depuis le résultat en cache.",
+    },
+    "reply.rc.need_revenue_cost": {
+        "en": "The cached result needs revenue plus cost or gross profit columns.",
+        "fr": "Le résultat en cache doit contenir le chiffre d'affaires ainsi que le coût ou la marge brute.",
+    },
+    "reply.rc.calc_fields_not_numeric": {
+        "en": "Both calculation fields must be numeric in the cached result.",
+        "fr": "Les deux champs de calcul doivent être numériques dans le résultat en cache.",
+    },
+    "reply.rc.percentage_done": {
+        "en": "Calculated the percentage locally from the cached result.",
+        "fr": "Pourcentage calculé localement depuis le résultat en cache.",
+    },
+    "reply.rc.format_invalid": {
+        "en": "One of the requested display formats was not valid.",
+        "fr": "L'un des formats d'affichage demandés n'était pas valide.",
+    },
+    "reply.rc.which_format": {
+        "en": "Which format should I use?",
+        "fr": "Quel format dois-je utiliser ?",
+    },
+    "reply.rc.fmt.month_year": {
+        "en": "Month and year (Jan-26)",
+        "fr": "Mois et année (janv.-26)",
+    },
+    "reply.rc.fmt.percent_100": {
+        "en": "Percent values (25 = 25%)",
+        "fr": "Valeurs en pourcentage (25 = 25 %)",
+    },
+    "reply.rc.column_incompatible": {
+        "en": "{column} does not contain values compatible with the requested {format} format.",
+        "fr": "{column} ne contient pas de valeurs compatibles avec le format {format} demandé.",
+    },
+    "reply.rc.which_column_format": {
+        "en": "Which column should I format as {format}?",
+        "fr": "Quelle colonne dois-je mettre au format {format} ?",
+    },
+    "reply.rc.no_compatible_column": {
+        "en": "I could not find a column compatible with the requested {format} format.",
+        "fr": "Je n'ai trouvé aucune colonne compatible avec le format {format} demandé.",
+    },
+    "reply.rc.which_date_format": {
+        "en": "Which date format should I use for {column}?",
+        "fr": "Quel format de date dois-je utiliser pour {column} ?",
+    },
+    "reply.rc.which_currency": {
+        "en": "Which currency should I use for {column}?",
+        "fr": "Quelle devise dois-je utiliser pour {column} ?",
+    },
+    "reply.rc.how_percent_stored": {
+        "en": "How are the percentage values in {column} stored?",
+        "fr": "Comment les valeurs en pourcentage de {column} sont-elles stockées ?",
+    },
+    "reply.rc.format_unsupported": {
+        "en": "That display format is not supported.",
+        "fr": "Ce format d'affichage n'est pas pris en charge.",
+    },
+    "reply.rc.formatted": {
+        "en": "Formatted {column} as {format}. Raw values are unchanged.",
+        "fr": "{column} mise au format {format}. Les valeurs brutes sont inchangées.",
+    },
+    "reply.rc.operator_unsupported": {
+        "en": "That filter operator is not supported locally.",
+        "fr": "Cet opérateur de filtre n'est pas pris en charge localement.",
+    },
+    "reply.rc.month_many_years": {
+        "en": "That month matches more than one year in the current result.",
+        "fr": "Ce mois correspond à plusieurs années dans le résultat actuel.",
+    },
+    "reply.rc.row_out_of_range": {
+        "en": "That row number is outside the current result.",
+        "fr": "Ce numéro de ligne est en dehors du résultat actuel.",
+    },
+    "reply.rc.value_many_fields": {
+        "en": "That value appears in more than one field in the current result. Use a more specific value or say `exclude row N`.",
+        "fr": "Cette valeur apparaît dans plusieurs champs du résultat actuel. Utilisez une valeur plus précise ou dites « exclure la ligne N ».",
+    },
+    "reply.rc.value_not_found": {
+        "en": "I could not find that value in the current result.",
+        "fr": "Je n'ai pas trouvé cette valeur dans le résultat actuel.",
+    },
+    "reply.rc.some_values_not_found": {
+        "en": "One of those values was not found in the current result.",
+        "fr": "L'une de ces valeurs est introuvable dans le résultat actuel.",
+    },
+    "reply.rc.some_values_many_fields": {
+        "en": "One of those values appears in more than one field. Use a more specific value or say `exclude row N`.",
+        "fr": "L'une de ces valeurs apparaît dans plusieurs champs. Utilisez une valeur plus précise ou dites « exclure la ligne N ».",
+    },
+    "reply.rc.which_month": {
+        "en": "Which month did you mean?",
+        "fr": "De quel mois s'agit-il ?",
+    },
+    "reply.rc.which_row": {
+        "en": "That reference matches more than one row. Which one did you mean?",
+        "fr": "Cette référence correspond à plusieurs lignes. Laquelle vouliez-vous dire ?",
+    },
+    "reply.rc.no_periods": {
+        "en": "No periods were provided.",
+        "fr": "Aucune période n'a été fournie.",
+    },
+    "reply.rc.not_found_in_result": {
+        "en": "I could not find {target} in the current result.",
+        "fr": "Je n'ai pas trouvé {target} dans le résultat actuel.",
+    },
+    "reply.rc.periods_many_fields": {
+        "en": "Those periods do not resolve to one field in the current result.",
+        "fr": "Ces périodes ne correspondent pas à un champ unique du résultat actuel.",
+    },
+    "reply.rc.many_date_fields": {
+        "en": "More than one date field matches. Name the result column explicitly.",
+        "fr": "Plusieurs champs de date correspondent. Nommez explicitement la colonne du résultat.",
+    },
+    "reply.rc.field_ambiguous": {
+        "en": "That field name is ambiguous. Use the exact result column name.",
+        "fr": "Ce nom de champ est ambigu. Utilisez le nom exact de la colonne du résultat.",
+    },
+    "reply.rc.field_absent": {
+        "en": "That field is not present in the current result.",
+        "fr": "Ce champ n'est pas présent dans le résultat actuel.",
+    },
+    "reply.rc.no_columns": {
+        "en": "The current result has no columns to resolve.",
+        "fr": "Le résultat actuel ne contient aucune colonne à résoudre.",
+    },
     "reply.plan.no_match": {
         "en": "I don't have a clear table match for this yet — I'd generate the query the normal way and you can review the SQL once it runs.",
         "fr": "Je n'ai pas encore de correspondance de table claire pour cette question — je génèrerais la requête normalement et vous pourrez relire le SQL une fois qu'elle aura été exécutée.",
