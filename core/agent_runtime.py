@@ -10,13 +10,29 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 import store
 from core.llm_audit import sanitize_llm_text
 
 log = logging.getLogger("querybot.agent_runtime")
+
+
+def _t(msg_id: str, **kw) -> str:
+    """Resolve a catalogue id in the reader's language.
+
+    Deferred import, matching the other producers in core/. The language comes
+    from the request's ContextVar.
+
+    Every use below is inside a function or a default_factory, never a
+    module-level default: a default evaluated at import time would freeze
+    whichever language happened to load first and serve it to every tenant.
+    """
+    from core.i18n import t
+
+    return t(msg_id, **kw)
+
 
 _active_run: ContextVar["AgentRunSession | None"] = ContextVar(
     "querybot_active_agent_run", default=None,
@@ -66,7 +82,11 @@ class AgentRunSession:
     status: str = "running"
     current_stage: str = "understanding"
     tool_name: str = "query_data"
-    label: str = "Understanding your request"
+    # default_factory, not a plain default: a module-level default is
+    # evaluated once at import and would serve whichever language loaded first
+    # to every tenant thereafter.
+    label: str = field(
+        default_factory=lambda: _t("stage.understanding.label"))
     detail: str = ""
 
     @classmethod
@@ -81,10 +101,14 @@ class AgentRunSession:
         purpose_id: str = "",
         max_tool_calls: int = 5,
         initial_tool: str = "query_data",
-        initial_label: str = "Understanding your request",
-        initial_detail: str = "Read-only governed query pipeline",
+        initial_label: str = "",
+        initial_detail: str = "",
         initial_metadata: dict | None = None,
     ) -> "AgentRunSession":
+        # Resolved here rather than in the signature, for the same reason as
+        # the field above. An explicit label from the caller still wins.
+        initial_label = initial_label or _t("stage.understanding.label")
+        initial_detail = initial_detail or _t("stage.understanding.detail")
         user_id = int(portal_user["id"])
         objective_sanitized = _sanitize_objective(account_id, objective)
         allowed_tables = store.get_allowed_tables(portal_user)
@@ -120,7 +144,8 @@ class AgentRunSession:
             thread_id=thread["id"],
             run_id=run["id"],
             tool_name=_safe_text(initial_tool, 96) or "query_data",
-            label=_safe_text(initial_label, 200) or "Understanding your request",
+            label=(_safe_text(initial_label, 200)
+                   or _t("stage.understanding.label")),
             detail=_safe_text(initial_detail, 500),
         )
         store.add_agent_message(
@@ -177,7 +202,7 @@ class AgentRunSession:
             run_id=run["id"],
             status="running",
             current_stage="resolving_clarification",
-            label="Applying your clarification",
+            label=_t("stage.resolving_clarification.label"),
         )
         store.update_agent_run(
             run_id=session.run_id,
@@ -193,7 +218,7 @@ class AgentRunSession:
             step_index=session.step_index,
             status="running",
             label=session.label,
-            detail="Clarification received; resuming governed query",
+            detail=_t("stage.resolving_clarification.detail"),
         )
         store.add_agent_message(
             thread_id=session.thread_id,

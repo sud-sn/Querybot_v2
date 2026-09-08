@@ -2531,6 +2531,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Vérification de vos accès et des données disponibles.",
     },
     "stage.analysing_results.label": {"en": "Analysing results", "fr": "Analyse des résultats"},
+    "stage.understanding.label": {
+        "en": "Understanding your request",
+        "fr": "Compréhension de votre demande",
+    },
+    "stage.understanding.detail": {
+        "en": "Read-only governed query pipeline",
+        "fr": "Chaîne de requête gouvernée en lecture seule",
+    },
+    "stage.resolving_clarification.label": {
+        "en": "Applying your clarification",
+        "fr": "Prise en compte de votre précision",
+    },
+    "stage.resolving_clarification.detail": {
+        "en": "Clarification received; resuming governed query",
+        "fr": "Précision reçue ; reprise de la requête gouvernée",
+    },
     "stage.analysing_results.detail": {
         "en": "Running a governed analysis on the previously returned data.",
         "fr": "Analyse gouvernée des données déjà renvoyées.",
@@ -4673,6 +4689,26 @@ MESSAGES: dict[str, dict[str, str]] = {
     "reply.plan.explain_hint": {
         "en": "Sure -- ask me a question and I'll explain my plan before running it, e.g. \"explain your plan: what was net revenue for last 7 days\".",
         "fr": "Bien sûr — posez-moi une question et j'expliquerai mon plan avant de l'exécuter, par exemple « explique ton plan : quel était le chiffre d'affaires net sur les 7 derniers jours ».",
+    },
+    "reply.plan.no_match": {
+        "en": "I don't have a clear table match for this yet — I'd generate the query the normal way and you can review the SQL once it runs.",
+        "fr": "Je n'ai pas encore de correspondance de table claire pour cette question — je génèrerais la requête normalement et vous pourrez relire le SQL une fois qu'elle aura été exécutée.",
+    },
+    "reply.plan.single_table": {
+        "en": "I'd answer this using the {table} table.",
+        "fr": "Je répondrais à cette question à partir de la table {table}.",
+    },
+    "reply.plan.joined_tables": {
+        "en": "I'd answer this using {anchor} joined to {others}.",
+        "fr": "Je répondrais à cette question à partir de {anchor} jointe à {others}.",
+    },
+    "reply.plan.single_table.unreviewed": {
+        "en": "I'd answer this using the {table} table (this join uses an unreviewed suggestion, not an admin-confirmed one — worth double-checking the result).",
+        "fr": "Je répondrais à cette question à partir de la table {table} (cette jointure repose sur une suggestion non revue plutôt que sur une relation confirmée par un administrateur — le résultat mérite une vérification).",
+    },
+    "reply.plan.joined_tables.unreviewed": {
+        "en": "I'd answer this using {anchor} joined to {others} (this join uses an unreviewed suggestion, not an admin-confirmed one — worth double-checking the result).",
+        "fr": "Je répondrais à cette question à partir de {anchor} jointe à {others} (cette jointure repose sur une suggestion non revue plutôt que sur une relation confirmée par un administrateur — le résultat mérite une vérification).",
     },
     "reply.plan.preview_suffix": {
         "en": "{summary} Say \"go ahead\" to run it, or tell me what to change.",

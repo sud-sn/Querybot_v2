@@ -22,6 +22,16 @@ import time
 from dataclasses import dataclass
 
 
+def _t(msg_id: str, **kw) -> str:
+    """Resolve a catalogue id in the reader's language.
+
+    Deferred import, matching the other producers in core/.
+    """
+    from core.i18n import t
+
+    return t(msg_id, **kw)
+
+
 @dataclass(frozen=True)
 class PlanPreview:
     question: str
@@ -44,10 +54,7 @@ def build_plan_preview(question: str, account_id: str, db_type: str) -> PlanPrev
     if not resolution.get("enabled") or not anchor:
         return PlanPreview(
             question=question,
-            summary=(
-                "I don't have a clear table match for this yet — I'd generate "
-                "the query the normal way and you can review the SQL once it runs."
-            ),
+            summary=_t("reply.plan.no_match"),
             tables=(),
             graph_scope="",
         )
@@ -56,19 +63,26 @@ def build_plan_preview(question: str, account_id: str, db_type: str) -> PlanPrev
     tables = tuple([anchor] + detected)
     graph_scope = str(resolution.get("graph_scope") or "confirmed")
 
+    # Four whole sentences, not one assembled from clauses. The summary is
+    # interpolated into the translated reply.plan.preview_suffix, so building
+    # it out of English fragments produced a French sentence with an English
+    # clause welded into it -- and a fragment like "joined to" cannot carry
+    # French agreement or word order wherever the caller happens to drop it.
+    #
+    # Table names are tenant DATA: bolded here, interpolated, never looked up.
+    unreviewed = ".unreviewed" if graph_scope == "suggested_fallback" else ""
     if detected:
-        table_line = f"**{anchor}** joined to {', '.join(f'**{t}**' for t in detected)}"
+        summary = _t(
+            f"reply.plan.joined_tables{unreviewed}",
+            anchor=f"**{anchor}**",
+            others=", ".join(f"**{t}**" for t in detected))
     else:
-        table_line = f"the **{anchor}** table"
+        summary = _t(f"reply.plan.single_table{unreviewed}",
+                     table=f"**{anchor}**")
 
-    caveat = (
-        " (this join uses an unreviewed suggestion, not an admin-confirmed one — "
-        "worth double-checking the result)"
-        if graph_scope == "suggested_fallback" else ""
-    )
     return PlanPreview(
         question=question,
-        summary=f"I'd answer this using {table_line}{caveat}.",
+        summary=summary,
         tables=tables,
         graph_scope=graph_scope,
     )
