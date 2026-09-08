@@ -444,7 +444,11 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("query_status.remaining_label", dashboard_html)
         self.assertIn("query-kpi-pill", chat_html)
         self.assertIn("refreshQueryLimitStatus", chat_html)
-        self.assertIn("Queries left", chat_html)
+        # The label moved into the catalogue, so the chat page carries the id
+        # and core.i18n carries the copy. Asserting the id here and the copy
+        # there keeps this wiring check checking WIRING, which is what it is
+        # named for -- it never verified the words anyway.
+        self.assertIn("ui.chat.usage.remaining", chat_html)
         self.assertIn("qb-query-limit-status", portal_base)
         self.assertIn("pollQueryLimit", portal_base)
         self.assertIn("query_limit_monthly", store_src)

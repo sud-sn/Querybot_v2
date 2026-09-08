@@ -281,16 +281,31 @@ class TestTheBrowserWritesPercentagesLikePython:
 
 class TestTheCatalogueCoversTheChartWords:
 
+    # Chart words that are genuinely the same in French. Listed here rather
+    # than pattern-matched, so the next copy-pasted "translation" still fails.
+    IDENTICAL_BY_DESIGN = {
+        # A box plot's whiskers. French abbreviates maximum and minimum the
+        # same way; its median ("Méd") and its mean ("Moyenne") do not, which
+        # is why only these two are here.
+        "ui.chart.box.max",
+        "ui.chart.box.min",
+    }
+
     def test_every_chart_id_has_a_distinct_french_form(self):
         chart_ids = [k for k in i18n.MESSAGES if k.startswith("ui.chart.")]
         assert chart_ids, "the ui.chart.* namespace is empty"
+        identical = set()
         for msg_id in chart_ids:
             entry = i18n.MESSAGES[msg_id]
             assert entry.get("fr"), msg_id
-            assert entry["en"] != entry["fr"], (
-                f"{msg_id} reads the same in both languages; if that is "
-                f"deliberate it belongs in the identical-by-design allowlist"
-            )
+            if entry["en"] == entry["fr"]:
+                identical.add(msg_id)
+        assert identical == self.IDENTICAL_BY_DESIGN, (
+            f"reads the same in both languages: "
+            f"{sorted(identical - self.IDENTICAL_BY_DESIGN)}; "
+            f"now translated, drop from the allowlist: "
+            f"{sorted(self.IDENTICAL_BY_DESIGN - identical)}"
+        )
 
     def test_the_ids_the_pages_ask_for_all_exist(self):
         # A t() call for an id that is not in the catalogue renders the id

@@ -71,26 +71,194 @@ class TestEveryIdThePageUsesResolves:
 
 class TestNothingObviousWasLeftBehind:
 
+    # A "/" opens a regex when the previous significant character cannot end
+    # an expression -- otherwise it is division. The standard heuristic, and
+    # sufficient for this page.
+    _BEFORE_REGEX = set("(,=:[!&|?{};+-*%~^") | {"\n"}
+
+    @classmethod
+    def _starts_a_regex(cls, js: str, i: int) -> bool:
+        if js[i + 1 : i + 2] in ("/", "*", ""):
+            return False
+        j = i - 1
+        while j >= 0 and js[j] in " \t":
+            j -= 1
+        if j < 0:
+            return True
+        if js[j] in cls._BEFORE_REGEX:
+            return True
+        # `return /re/` and `typeof /re/`
+        return bool(re.search(r"\b(return|typeof|case|in|of|new|delete)$",
+                              js[max(0, j - 9):j + 1]))
+
+    @staticmethod
+    def _skip_regex(js: str, i: int) -> int:
+        """Index just past the closing "/" (and any flags) of a regex."""
+        i, n, in_class = i + 1, len(js), False
+        while i < n:
+            c = js[i]
+            if c == "\\":
+                i += 2
+                continue
+            if c == "\n":
+                return i          # not a regex after all; give up safely
+            if c == "[":
+                in_class = True
+            elif c == "]":
+                in_class = False
+            elif c == "/" and not in_class:
+                i += 1
+                while i < n and js[i].isalpha():
+                    i += 1
+                return i
+            i += 1
+        return i
+
+    @staticmethod
+    def _skip_interpolation(js: str, i: int) -> int:
+        """Index just past the ``}`` closing a ${...}, i starting inside it."""
+        depth, n = 1, len(js)
+        while i < n and depth:
+            c = js[i]
+            if c == "\\":
+                i += 2
+            elif c == "{":
+                depth, i = depth + 1, i + 1
+            elif c == "}":
+                depth, i = depth - 1, i + 1
+            elif c == "/" and TestNothingObviousWasLeftBehind._starts_a_regex(js, i):
+                # A regex inside an interpolation, which can hold a quote:
+                #     `"${String(v).replace(/"/g, \'""\')}"`
+                # is the CSV escaper on this page. Read as a string start, that
+                # lone " pairs with one inside the next literal and the lexer
+                # desyncs for 95,000 characters -- silently skipping a third of
+                # the file, which is the same "reports its blind spot as clean"
+                # failure this scanner exists to catch.
+                i = TestNothingObviousWasLeftBehind._skip_regex(js, i)
+            elif c in "'\"":
+                j = i + 1
+                while j < n and js[j] != c:
+                    j += 2 if js[j] == "\\" else 1
+                i = j + 1
+            elif c == "`":
+                # A template literal nested inside an interpolation, which can
+                # hold interpolations of its own. Recursing here is the whole
+                # trick: skipping to the "matching" backtick without it loses
+                # sync, and every span after that reports CODE as copy.
+                i, _ = TestNothingObviousWasLeftBehind._read_template(js, i)
+            else:
+                i += 1
+        return i
+
+    @staticmethod
+    def _read_template(js: str, i: int):
+        """(index past the closing backtick, static text) for js[i] == '`'."""
+        i, out, n = i + 1, [], len(js)
+        while i < n:
+            c = js[i]
+            if c == "\\":
+                i += 2
+            elif c == "`":
+                return i + 1, "".join(out)
+            elif c == "$" and js[i + 1 : i + 2] == "{":
+                # Interpolations are values, not copy.
+                i = TestNothingObviousWasLeftBehind._skip_interpolation(js, i + 2)
+                out.append(" ")
+            else:
+                out.append(c)
+                i += 1
+        return i, "".join(out)
+
+    @classmethod
+    def _string_literals(cls, js: str):
+        """Every string literal in `js`, template literals included.
+
+        Hand-lexed. A regex cannot do this: `a${x ? `b` : ""}c` holds three
+        literals and a regex pairs the wrong backticks, so everything after the
+        first nested one comes back as JavaScript wearing quotes. Both shortcuts
+        were tried -- a naive regex reported twenty pieces of code as English,
+        and a non-nesting one silently found nothing at all.
+        """
+        i, n = 0, len(js)
+        while i < n:
+            c = js[i]
+            if c == "/" and cls._starts_a_regex(js, i):
+                # A REGEX LITERAL, not a division. This one matters more than
+                # it sounds: formatBotText holds
+                #     /```(?:[a-zA-Z0-9_-]+)?\n?([\s\S]*?)```/g
+                # -- six backticks inside a regex. Read as template literals
+                # they desync the lexer for the entire rest of the file, and
+                # every span after that comes back as JavaScript wearing
+                # quotes. That is what the first three attempts at this
+                # scanner were actually reporting.
+                i = cls._skip_regex(js, i)
+            elif c in "'\"":
+                j = i + 1
+                while j < n:
+                    if js[j] == "\\":
+                        j += 2
+                    elif js[j] == c or js[j] == "\n":
+                        break
+                    else:
+                        j += 1
+                if j < n and js[j] == c:
+                    yield "quoted", js[i + 1 : j]
+                    i = j + 1
+                else:
+                    # Unterminated: an apostrophe inside a regex literal, say.
+                    # Stepping over one character is right; swallowing to the
+                    # next quote would report the code between them as copy.
+                    i += 1
+            elif c == "`":
+                i, text = cls._read_template(js, i)
+                yield "template", text
+            else:
+                i += 1
+
     def _literals(self):
         """String literals in the page's script that read like user copy."""
         js = CHAT[CHAT.index("\n<script>\n// The message catalogue"):]
         js = re.sub(r"/\*.*?\*/", " ", js, flags=re.S)
         js = re.sub(r"(?m)^\s*//.*$", " ", js)
         out = set()
-        for match in re.finditer(r"""(['"])((?:\\.|(?!\1)[^\\\n])*)\1""", js):
-            value = match.group(2).strip()
-            if len(value) < 8 or " " not in value:
+        # Template literals as well as quoted strings. Reading only quoted
+        # strings, this file passed 11/11 while fourteen pieces of English copy
+        # sat in backticks a few hundred lines apart -- the memory badge's
+        # "N turns of context", "Downloaded N rows as CSV.", "Open KPI in
+        # workspace", "Based on:", "Queries left ·", "Governed agent", the
+        # dashboard link, two artifact tabs beside a translated third, and both
+        # forecast captions. A scanner that cannot read the syntax the page
+        # actually uses reports its own blind spot as a clean bill of health.
+        for kind, raw in self._string_literals(js):
+            # HTML around the copy is markup, not copy -- and discarding a
+            # literal for CONTAINING markup, which the filter below used to do,
+            # is what hid the two artifact tabs.
+            value = re.sub(r"<[^<>]*>", " ", raw)
+            value = re.sub(r"\s+", " ", value).strip()
+            # A template literal is written for interpolation, so a short one
+            # with no space is still copy -- ">Data</button>" is four
+            # characters and was one of the two tabs sitting beside a
+            # translated third.
+            if kind == "quoted" and (len(value) < 8 or " " not in value):
+                continue
+            if kind == "template" and len(value) < 4:
                 continue
             if value.startswith((".", "#", "ui.", "answer.", "chip.", "stage.")):
                 continue
             if re.search(r"[{}<>]|var\(|px|:\s*\d|=|\bfunction\b|/", value):
                 continue
-            # A class list is lowercase words and hyphens and nothing else.
-            if re.fullmatch(r"[a-z0-9-]+(?: [a-z0-9-]+)*", value):
-                continue
-            # A CSS selector fragment ("thead th", "input[type=x]").
-            if re.fullmatch(r"[a-z]+(?: [a-z\[\]=\"'-]+)+", value):
-                continue
+            # The next two filters are about CSS, and CSS is never written as a
+            # template literal -- a class list needs no interpolation. Applied
+            # to one, "N turns of context" is all lowercase words and reads as
+            # a class list, which is how the memory badge survived a scanner
+            # written to find exactly it.
+            if kind == "quoted":
+                # A class list is lowercase words and hyphens and nothing else.
+                if re.fullmatch(r"[a-z0-9-]+(?: [a-z0-9-]+)*", value):
+                    continue
+                # A CSS selector fragment ("thead th", "input[type=x]").
+                if re.fullmatch(r"[a-z]+(?: [a-z\[\]=\"\'-]+)+", value):
+                    continue
             # An SVG path: digits, single letters and separators only.
             if re.fullmatch(r"[MmLlHhVvCcSsQqTtAaZz0-9.,\s-]+", value):
                 continue
@@ -109,9 +277,42 @@ class TestNothingObviousWasLeftBehind:
             # shown to a reader.
             "History load failed:", "Thread restore failed:",
             "Chart render failed",
-            # A CSS selector and an inline handler, neither of them copy.
+            # A CSS selector and two inline handlers, none of them copy.
             "button, textarea",
             "openHistoryThread(this.dataset.threadId, this)",
+            # ── Everything below is what the template-literal pass newly ──
+            # ── reaches. ──
+            # Each one is named rather than filtered by a pattern, because a
+            # pattern broad enough to hide these would hide the next real
+            # leak too -- which is the whole reason this file exists.
+            #
+            # A regex replacement template and two code-fence placeholders,
+            # with their ${idx} stripped.
+            "$1 $2 $3", "@@CODEBLOCK @@", "@@INLINECODE @@",
+            # The product's own name beside the timestamp separator.
+            "QueryBot •",
+            # Internal keys, DOM id prefixes and class names, with their
+            # ${...} stripped. None is copy; each would break a lookup or a
+            # selector if it were translated.
+            ": : :", "__abs_", "action- -", "-typing", "left", "rows",
+            "· · ·", "rc-bubble", "result-kpi rc-kpi",
+            "artifact-chart-", "assistant-chart-", "chat-chart-",
+            "clarification-", "querybot.activeSchema.",
+            "querybot.chatRailCollapsed:",
+            # The product's name beside a separator, and two message shells
+            # whose copy is now a catalogue id.
+            "QueryBot • Ask", "QueryBot • ⛶",
+            # localStorage key templates, with their ${account}/${thread}
+            # interpolations stripped. Not copy: renaming one would orphan
+            # every reader's cached thread.
+            "qb_chat_cache: : :", "querybot.activeThread: :",
+            "querybot.draft: : :", "querybot.history: :",
+            "querybot.history: : :",
+            # Inline CSS for the three-segment confidence meter.
+            "background:linear-gradient(90deg, 0%, 33%, 33%, 66%, 66%)",
+            # Two already-translated values joined by a separator; the static
+            # part is the separator.
+            "visual · ·",
         }
         leftover = sorted(self._literals() - allowed)
         assert not leftover, leftover

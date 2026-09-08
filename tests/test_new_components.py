@@ -701,7 +701,23 @@ class TestFollowupSuggestionsTemplate(unittest.TestCase):
         self.assertIn("follow-up-chip", _src(CHAT_TMPL))
 
     def test_follow_up_label_text(self):
-        self.assertIn("Based on this result", _src(CHAT_TMPL))
+        """The label above the follow-up chips.
+
+        Was assertIn("Based on this result", <the template source>), which
+        broke the moment the copy moved into the catalogue -- and would have
+        passed just as happily if the label had been deleted from the DOM and
+        left in a comment. Asserted on the resolved copy now, in both
+        languages, so it fails when the label goes missing rather than when it
+        gets translated.
+        """
+        from core import i18n
+
+        for lang in i18n.SUPPORTED_LANGUAGES:
+            with self.subTest(lang=lang):
+                label = i18n.lookup("ui.chat.suggestions.label", lang)
+                self.assertTrue(label.strip())
+                self.assertNotEqual(label, "ui.chat.suggestions.label")
+        self.assertIn("ui.chat.suggestions.label", _src(CHAT_TMPL))
 
     def test_chip_click_fires_sendSuggestion(self):
         src = _src(CHAT_TMPL)

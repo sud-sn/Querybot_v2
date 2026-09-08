@@ -607,10 +607,37 @@ class ChartClickToDrillTests(unittest.TestCase):
         self.assertIn("params.componentType !== 'series'", src)
 
     def test_click_phrasing_matches_refinement_classifier_pattern(self):
-        src = self._read()
-        # Literal substring the conversation_state refinement regex
-        # (\bbreak\s+(?:it|this|these|that)\s+down\b) matches on.
-        self.assertIn("Break this down for ${label}", src)
+        """Clicking a bar must refine the current result, not start a new one.
+
+        Was assertIn("Break this down for ${label}", <page source>) -- which
+        pinned one spelling in one language and could not tell whether the
+        classifier still matched it. It broke the moment the phrasing moved
+        into the catalogue, and it would have passed just as happily if the
+        classifier's regex had been changed to something the click never
+        produces.
+
+        Executed now, in every language the product ships, through the real
+        normaliser and the real classifier. That matters: French canonicalises
+        "ventile ceci" to "break down THIS", and the classifier only knew
+        "break THIS down" -- so a French reader clicking a bar was classified
+        as asking a fresh question and silently lost the result they were
+        drilling into.
+        """
+        from core import i18n
+        from core.conversation_state import _REFINEMENT_RE
+        from core.question_normalizer import canonical_question
+
+        for lang in i18n.SUPPORTED_LANGUAGES:
+            with self.subTest(lang=lang):
+                text = i18n.lookup("ui.chat.drill.break_down_for", lang)
+                self.assertIn("{label}", text, "the label placeholder is gone")
+                asked = canonical_question(text.replace("{label}", "Halifax"),
+                                           lang)
+                self.assertTrue(
+                    _REFINEMENT_RE.search(asked),
+                    f"{lang}: {asked!r} is not classified as a refinement")
+        # And the page really does send that id rather than a literal.
+        self.assertIn("ui.chat.drill.break_down_for", self._read())
 
     def test_render_chart_into_wires_click_once_on_the_rendered_chart(self):
         src = self._read()

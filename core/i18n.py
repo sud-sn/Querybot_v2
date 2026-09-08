@@ -2846,6 +2846,70 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.count": {"en": "Count", "fr": "Nombre"},
     "ui.chart.value": {"en": "Value", "fr": "Valeur"},
     "ui.chart.category": {"en": "Category", "fr": "Catégorie"},
+    "ui.chart.other_bucket": {
+        "en": "Other ({count})",
+        "fr": "Autres ({count})",
+    },
+    "ui.chart.histogram.count": {
+        "en": "Count: {count} ({pct})",
+        "fr": "Effectif : {count} ({pct})",
+    },
+    "ui.chart.percent_of_total": {
+        "en": "{pct} of total",
+        "fr": "{pct} du total",
+    },
+    "ui.chat.drill.break_down_for": {
+        "en": "Break this down for {label}",
+        "fr": "Ventile ceci pour {label}",
+    },
+    "ui.chat.system.running": {
+        "en": "Running {action}…",
+        "fr": "Exécution de {action}…",
+    },
+    "ui.chart.box.max": {
+        "en": "Max",
+        "fr": "Max",
+    },
+    "ui.chart.box.median": {
+        "en": "Med",
+        "fr": "Méd",
+    },
+    "ui.chart.box.min": {
+        "en": "Min",
+        "fr": "Min",
+    },
+    "ui.chart.box.mean": {
+        "en": "Mean",
+        "fr": "Moyenne",
+    },
+    "ui.chart.waterfall.variance": {
+        "en": "Variance",
+        "fr": "Écart",
+    },
+    "ui.chat.you": {
+        "en": "You",
+        "fr": "Vous",
+    },
+    "ui.chat.elapsed": {
+        "en": "{seconds}s elapsed",
+        "fr": "{seconds} s écoulées",
+    },
+    "ui.chat.source.live_db": {
+        "en": "Live DB",
+        "fr": "Base en direct",
+    },
+    "ui.chat.local_op.title": {
+        "en": "Local {operation}",
+        "fr": "{operation} local",
+    },
+    "ui.chat.local_op.rows": {
+        "en": "{count} rows in the derived result",
+        "fr": "{count} lignes dans le résultat dérivé",
+    },
+    "ui.chat.result_chat.hint": {
+        "en": "Ask any question about the data above — answers stay here, no new database query needed.",
+        "fr": "Posez n'importe quelle question sur les données ci-dessus — les réponses restent ici, sans nouvelle requête vers la base.",
+    },
     "ui.chart.share_of_total": {"en": "Share of total", "fr": "Part du total"},
     "ui.chart.retention": {"en": "Retention", "fr": "Rétention"},
     "ui.chart.users": {"en": "Users", "fr": "Utilisateurs"},
@@ -3103,6 +3167,78 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     # ── The last of the answer card ──────────────────────────────────────────
     "ui.chat.card.select": {"en": "Select", "fr": "Choisir"},
+    "ui.chat.usage.remaining": {
+        "en": "Queries left · {count}",
+        "fr": "Requêtes restantes · {count}",
+    },
+    "ui.chat.usage.tooltip": {
+        "en": "{used} / {limit} queries used this month",
+        "fr": "{used} / {limit} requêtes utilisées ce mois-ci",
+    },
+    "ui.chat.agent.governed": {
+        "en": "Governed agent",
+        "fr": "Agent gouverné",
+    },
+    "ui.chat.agent.tool_readonly": {
+        "en": "query_data &middot; read only",
+        "fr": "query_data &middot; lecture seule",
+    },
+    "ui.chat.suggestions.label": {
+        "en": "Based on this result, you might ask:",
+        "fr": "À partir de ce résultat, vous pourriez demander :",
+    },
+    "ui.chat.card.data": {
+        "en": "Data",
+        "fr": "Données",
+    },
+    "ui.chat.card.query": {
+        "en": "Query",
+        "fr": "Requête",
+    },
+    "ui.chat.memory.turns.one": {
+        "en": "{count} turn of context",
+        "fr": "{count} tour de contexte",
+    },
+    "ui.chat.memory.turns.other": {
+        "en": "{count} turns of context",
+        "fr": "{count} tours de contexte",
+    },
+    "ui.chat.dashboard.open": {
+        "en": "Open {name}",
+        "fr": "Ouvrir {name}",
+    },
+    "ui.chat.artifact.open_kpi": {
+        "en": "Open KPI in workspace",
+        "fr": "Ouvrir l'indicateur dans l'espace de travail",
+    },
+    "ui.chat.artifact.open_visual": {
+        "en": "Open visual in workspace",
+        "fr": "Ouvrir le visuel dans l'espace de travail",
+    },
+    "ui.chat.artifact.open_data": {
+        "en": "Open data in workspace",
+        "fr": "Ouvrir les données dans l'espace de travail",
+    },
+    "ui.chat.analysis.based_on": {
+        "en": "Based on: {scope}",
+        "fr": "D'après : {scope}",
+    },
+    "ui.chat.system.csv_downloaded.one": {
+        "en": "Downloaded {count} row as CSV.",
+        "fr": "{count} ligne téléchargée au format CSV.",
+    },
+    "ui.chat.system.csv_downloaded.other": {
+        "en": "Downloaded {count} rows as CSV.",
+        "fr": "{count} lignes téléchargées au format CSV.",
+    },
+    "ui.chart.forecast.trend": {
+        "en": "Trend: {slope}/period  R²={r2}",
+        "fr": "Tendance : {slope}/période  R²={r2}",
+    },
+    "ui.chart.forecast.no_trend": {
+        "en": "No clear trend (R²={r2}) — projecting near the recent average",
+        "fr": "Aucune tendance nette (R²={r2}) — projection proche de la moyenne récente",
+    },
     "ui.chat.card.visual": {"en": "Visual", "fr": "Visuel"},
     "ui.chat.card.analysis": {"en": "Analysis", "fr": "Analyse"},
 

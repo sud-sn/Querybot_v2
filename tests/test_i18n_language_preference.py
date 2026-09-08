@@ -212,6 +212,11 @@ class TestTheCatalogueIsWellFormed:
         "guide.schema_entry.other",
         "guide.table_line",
         "ui.chat.hist.duration",        # "ms" is the SI symbol in both
+        # A box plot's whiskers. French abbreviates maximum and minimum the
+        # same way; its median does not ("Méd") and its mean does not
+        # ("Moyenne"), which is why only these two are here.
+        "ui.chart.box.max",
+        "ui.chart.box.min",
     }
 
     def test_no_id_is_declared_twice(self):

@@ -1418,11 +1418,15 @@ function updateQueryLimitKpi(status, opts = {}){
   const previous = queryLimitLevel || 'normal';
   const level = status.level || 'normal';
   queryLimitLevel = level;
-  if (text) text.textContent = `Queries left · ${status.remaining_label || status.remaining || 0}`;
+  if (text) text.textContent = t('ui.chat.usage.remaining',
+    {count: status.remaining_label || status.remaining || 0});
   if (kpi) {
     kpi.classList.toggle('limit-warning', level === 'warning');
     kpi.classList.toggle('limit-blocked', level === 'blocked');
-    kpi.title = `${status.used_label || status.used || 0} / ${status.limit_label || status.limit || 0} queries used this month`;
+    kpi.title = t('ui.chat.usage.tooltip', {
+      used: status.used_label || status.used || 0,
+      limit: status.limit_label || status.limit || 0,
+    });
   }
   if (notice) {
     notice.classList.toggle('show', level === 'warning' || level === 'blocked');
@@ -1481,8 +1485,8 @@ function _showSkeletonBubble(){
     + escHtml(t('ui.chat.delivery.understanding_detail')) + '</span></span>'
     + '</div><span class="answer-progress-elapsed" id="answerProgressElapsed"></span></div>'
     + '<div class="agent-run-meta" id="agentRunMeta" hidden data-status="running">'
-    + '<span class="agent-run-governed" id="agentRunState">Governed agent</span>'
-    + '<span class="agent-run-tool" id="agentRunTool">query_data &middot; read only</span>'
+    + `<span class="agent-run-governed" id="agentRunState">${t('ui.chat.agent.governed')}</span>`
+    + `<span class="agent-run-tool" id="agentRunTool">${t('ui.chat.agent.tool_readonly')}</span>`
     + '<span class="agent-run-id" id="agentRunId"></span></div>'
     + '<div class="answer-progress-steps" id="answerProgressSteps" hidden></div>'
     + '</div></div>';
@@ -1556,7 +1560,7 @@ function setProcessing(active){
         const elapsed = Math.floor((Date.now() - processingStartedAt) / 1000);
         const elapsedNode = document.getElementById('answerProgressElapsed');
         if (elapsedNode && elapsed >= 8) {
-          elapsedNode.textContent = `${elapsed}s elapsed`;
+          elapsedNode.textContent = t('ui.chat.elapsed', {seconds: elapsed});
           elapsedNode.classList.add('visible');
         }
       }, 1000);
@@ -1833,7 +1837,7 @@ function appendUser(text, opts = {}){
   const timestamp = timeLabel(opts.timestamp);
   const div = document.createElement('div');
   div.className = 'msg msg-user';
-  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">You</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div><div class="user-message-footer"><span class="message-delivery" role="status"></span><span class="user-message-actions"><button type="button" class="message-action message-edit">${t('ui.chat.action.edit')}</button><button type="button" class="message-action message-retry">${t('ui.chat.action.retry')}</button></span></div></div>`;
+  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">${t('ui.chat.you')}</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div><div class="user-message-footer"><span class="message-delivery" role="status"></span><span class="user-message-actions"><button type="button" class="message-action message-edit">${t('ui.chat.action.edit')}</button><button type="button" class="message-action message-retry">${t('ui.chat.action.retry')}</button></span></div></div>`;
   div._querybotOutbound = {
     text,
     tableHint: opts.tableHint || '',
@@ -1959,7 +1963,7 @@ function _updateMemoryBadge() {
   if (!badge) return;
   const n = _localHistory.length;
   if (n > 0) {
-    badge.textContent = `${n} turn${n === 1 ? '' : 's'} of context`;
+    badge.textContent = plural('ui.chat.memory.turns', n, {count: window.qbNum(n)});
     badge.style.display = 'inline-flex';
     badge.title = _localHistory.map((t, i) => `${i + 1}. ${t.question}`).join('\n');
   } else {
@@ -2228,7 +2232,8 @@ function buildChartOption(payload) {
       if (type === 'pie' || type === 'donut') {
         const rest = ranked.slice(cap)
           .reduce((sum, r) => sum + (_chartNumber(r?.[yKey]) || 0), 0);
-        head.push({ [xKey]: `Other (${truncatedFrom - cap})`, [yKey]: rest });
+        head.push({ [xKey]: t('ui.chart.other_bucket',
+          {count: window.qbNum(truncatedFrom - cap)}), [yKey]: rest });
       }
       rows = head;
       labels = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
@@ -2476,7 +2481,7 @@ function buildChartOption(payload) {
           const sign = v > 0 ? '+' : '';
           const lbl  = String(r?.[xKey] ?? p.name ?? '');
           return `<strong>${escHtml(lbl)}</strong><br/>`
-            + `Variance: <strong style="color:${v>=0?posColor:negColor}">${sign}${valueFmt(v, varKey)}</strong>`;
+            + `${t('ui.chart.waterfall.variance')}: <strong style="color:${v>=0?posColor:negColor}">${sign}${valueFmt(v, varKey)}</strong>`;
         },
       },
       xAxis: {
@@ -2619,8 +2624,12 @@ function buildChartOption(payload) {
     // in words; the projection and its band are still drawn.
     const trendNote = (slope != null && r2 != null)
       ? (r2 >= 0.5
-          ? `Trend: ${slope >= 0 ? '+' : ''}${valueFmt(slope, metricKey, true)}/period  R²=${r2.toFixed(2)}`
-          : `No clear trend (R²=${r2.toFixed(2)}) — projecting near the recent average`)
+          ? t('ui.chart.forecast.trend', {
+              slope: (slope >= 0 ? '+' : '') + valueFmt(slope, metricKey, true),
+              r2: window.qbNum(r2, {min: 2, max: 2}),
+            })
+          : t('ui.chart.forecast.no_trend',
+              {r2: window.qbNum(r2, {min: 2, max: 2})}))
       : '';
 
     // 95% prediction interval, drawn as a stacked transparent baseline plus a
@@ -2778,7 +2787,10 @@ function buildChartOption(payload) {
           const r = rows[p.dataIndex] ?? {};
           const pct = total > 0 ? (p.value / total * 100).toFixed(1) : '?';
           return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>`
-            + `Count: <strong>${p.value}</strong> (${pct}%)`;
+            + t('ui.chart.histogram.count', {
+                count: `<strong>${p.value}</strong>`,
+                pct: window.qbPct(Number(pct), 1),
+              });
         },
       },
       xAxis: {
@@ -2834,12 +2846,12 @@ function buildChartOption(payload) {
           }
           const r = rows[p.dataIndex] ?? {};
           return `<strong>${escHtml(groups[p.dataIndex] ?? '')}</strong><br/>`
-            + `Max: ${valueFmt(r.bp_max, yKey)}<br/>`
+            + `${t('ui.chart.box.max')}: ${valueFmt(r.bp_max, yKey)}<br/>`
             + `Q3:  ${valueFmt(r.bp_q3,  yKey)}<br/>`
-            + `Med: <strong>${valueFmt(r.bp_median, yKey)}</strong><br/>`
+            + `${t('ui.chart.box.median')}: <strong>${valueFmt(r.bp_median, yKey)}</strong><br/>`
             + `Q1:  ${valueFmt(r.bp_q1,  yKey)}<br/>`
-            + `Min: ${valueFmt(r.bp_min, yKey)}<br/>`
-            + `Mean: ${valueFmt(r.bp_mean, yKey)}<br/>`
+            + `${t('ui.chart.box.min')}: ${valueFmt(r.bp_min, yKey)}<br/>`
+            + `${t('ui.chart.box.mean')}: ${valueFmt(r.bp_mean, yKey)}<br/>`
             + `<span style="opacity:.7">n=${r.bp_count}</span>`;
         },
       },
@@ -2891,7 +2903,8 @@ function buildChartOption(payload) {
           const pct = totalVal > 0 ? (p.value / totalVal * 100).toFixed(1) : '?';
           return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>`
             + `${escHtml(String(sizeKey || 'Value'))}: <strong>${valueFmt(p.value, sizeKey)}</strong><br/>`
-            + `<span style="opacity:.7">${pct}% of total</span>`;
+            + `<span style="opacity:.7">${t('ui.chart.percent_of_total',
+                {pct: window.qbPct(Number(pct), 1)})}</span>`;
         },
       },
       series: [{
@@ -3094,7 +3107,7 @@ function _wireChartDrillClick(chart, payload) {
     if (!params || params.componentType !== 'series') return;
     const label = String(params.name ?? '').trim();
     if (!label) return;
-    sendChartDrill(`Break this down for ${label}`);
+    sendChartDrill(t('ui.chat.drill.break_down_for', {label}));
   });
 }
 
@@ -3200,7 +3213,7 @@ function sendAnalysisAction(action, context, label, resultId){
     button.dataset.originalLabel = button.textContent;
     button.textContent = 'Working...';
   }
-  appendSystem(`Running ${label.toLowerCase()}…`);
+  appendSystem(t('ui.chat.system.running', {action: label.toLowerCase()}));
   setProcessing(true);
   updateProcessing('analysis', label, t('ui.chat.err.returned_only'));
   const timer = setTimeout(() => {
@@ -3721,7 +3734,7 @@ function _mountResultChat(cardEl, rcId) {
       if (msg.source === 'database') {
         const badge = document.createElement('div');
         badge.className = 'rc-source-badge';
-        badge.innerHTML = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="8" cy="4" rx="6" ry="2"/><path d="M2 4v4c0 1.1 2.7 2 6 2s6-.9 6-2V4"/><path d="M2 8v4c0 1.1 2.7 2 6 2s6-.9 6-2V8"/></svg> Live DB`;
+        badge.innerHTML = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="8" cy="4" rx="6" ry="2"/><path d="M2 4v4c0 1.1 2.7 2 6 2s6-.9 6-2V4"/><path d="M2 8v4c0 1.1 2.7 2 6 2s6-.9 6-2V8"/></svg> ${t('ui.chat.source.live_db')}`;
         thread.appendChild(badge);
       }
 
@@ -3736,7 +3749,7 @@ function _mountResultChat(cardEl, rcId) {
         const kpi = msg.kpi || {};
         const kpiEl = document.createElement('div');
         kpiEl.className = `result-kpi rc-kpi ${kpi.state === 'missing' ? 'missing' : ''}`;
-        kpiEl.innerHTML = `<div class="result-kpi-label">${escHtml(kpi.label || 'Value')}</div>`
+        kpiEl.innerHTML = `<div class="result-kpi-label">${escHtml(kpi.label || t('ui.chat.artifact.value'))}</div>`
           + `<div class="result-kpi-value">${escHtml(kpi.state === 'missing' ? 'N/A' : _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {}))}</div>`
           + `<div class="result-kpi-note">${escHtml(kpi.note || '')}</div>`;
         tableEl = kpiEl;
@@ -3856,15 +3869,15 @@ function renderArtifactPreview(msg){
   }
   if (hasData) {
     const active = !hasChart && !hasKpi;
-    tabs.push(`<button type="button" class="artifact-tab${active ? ' active' : ''}" data-artifact-tab="data">Data</button>`);
+    tabs.push(`<button type="button" class="artifact-tab${active ? ' active' : ''}" data-artifact-tab="data">${t('ui.chat.card.data')}</button>`);
     panels.push(`<div class="artifact-panel${active ? ' active' : ''}" data-artifact-panel="data">${renderDataTable(msg.data, { question: msg.question || '', trace_id: msg.trace_id || '' })}</div>`);
   }
   if (msg.trust?.sql) {
-    tabs.push('<button type="button" class="artifact-tab" data-artifact-tab="query">Query</button>');
+    tabs.push(`<button type="button" class="artifact-tab" data-artifact-tab="query">${t('ui.chat.card.query')}</button>`);
     panels.push(`<div class="artifact-panel" data-artifact-panel="query"><pre class="artifact-query">${escHtml(msg.trust.sql)}</pre></div>`);
   }
   const dashboardAction = dashboard
-    ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">Open ${escHtml(dashboard.name)}</a>`
+    ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">${escHtml(t('ui.chat.dashboard.open', {name: dashboard.name}))}</a>`
     : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">' + t('ui.chat.chart.pin') + '</button>');
   const root = document.getElementById('artifactBody');
   root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || t('ui.chat.artifact.governed_note'))}</p></div><div class="artifact-tabs">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
@@ -3967,7 +3980,7 @@ function appendAssistantResponse(msg, opts = {}){
   // artifact renders in the right workspace.
   let bodyHtml = '';
   if (msg.kpi || hasChart || hasData) {
-    bodyHtml = `<button type="button" class="msg-action artifact-open-btn" data-open-artifact>Open ${msg.kpi ? 'KPI' : (hasChart ? 'visual' : 'data')} in workspace <span aria-hidden="true">→</span></button>`;
+    bodyHtml = `<button type="button" class="msg-action artifact-open-btn" data-open-artifact>${t(msg.kpi ? 'ui.chat.artifact.open_kpi' : (hasChart ? 'ui.chat.artifact.open_visual' : 'ui.chat.artifact.open_data'))} <span aria-hidden="true">→</span></button>`;
   } else if (msg.question) {
     bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question)}</div>`;
   } else {
@@ -4073,7 +4086,7 @@ function appendAssistantResponse(msg, opts = {}){
   const followUpSugs = Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : [];
   const followUpHtml = followUpSugs.length
     ? `<div class="follow-up-wrap">
-        <div class="suggestions-label">Based on this result, you might ask:</div>
+        <div class="suggestions-label">${t('ui.chat.suggestions.label')}</div>
         <div class="suggestions follow-up-chips">
           ${followUpSugs.map(q => `<button class="suggestion-chip follow-up-chip" type="button"
             data-follow-up="${escHtml(q)}" title="${escHtml(q)}">
@@ -4120,7 +4133,7 @@ function appendAssistantResponse(msg, opts = {}){
     : t('ui.chat.trust.planner_none_detail');
   const localOperationProofHtml = (localOperation.operation || localOperation.excluded_count)
     ? `<div class="result-exclusion-proof">
-        <div><strong>Local ${escHtml(String(localOperation.operation || 'exclusion'))}</strong><span>${escHtml(String(localOperation.rows_after ?? ''))} rows in the derived result</span></div>
+        <div><strong>${escHtml(t('ui.chat.local_op.title', {operation: String(localOperation.operation || 'exclusion')}))}</strong><span>${escHtml(t('ui.chat.local_op.rows', {count: String(localOperation.rows_after ?? '')}))}</span></div>
         <div><strong>${plannerProofTitle}</strong><span>${plannerProofDetail}</span></div>
         <div><strong>${t('ui.chat.trust.no_db_query')}</strong><span>${t('ui.chat.card.duckdb')}</span></div>
       </div>`
@@ -4190,7 +4203,7 @@ function appendAssistantResponse(msg, opts = {}){
         </div>
       </div>
       <div class="rc-panel" id="${rcId}">
-        <div class="rc-hint">Ask any question about the data above — answers stay here, no new database query needed.</div>
+        <div class="rc-hint">${t('ui.chat.result_chat.hint')}</div>
         <div class="rc-thread" id="${rcId}-thread"></div>
         <div class="rc-input-row">
           <textarea class="rc-input" id="${rcId}-input" rows="1"
@@ -4362,7 +4375,7 @@ function appendAnalysisResponse(msg, opts = {}){
       + `</div>`;
   }).join('') : '';
   const resultScope = msg.result_scope || {};
-  const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` • ${escHtml(resultScope.note)}` : ''}</div>` : '';
+  const metaHtml = resultScope.badge ? `<div class="analysis-meta">${escHtml(t('ui.chat.analysis.based_on', {scope: resultScope.badge}))}${resultScope.note ? ` • ${escHtml(resultScope.note)}` : ''}</div>` : '';
   // Reconcile-style analysis cards (and any future analysis type) can offer
   // clickable next-step hypotheses -- reuses the exact same chip markup and
   // click-to-send wiring as the normal result follow-up chips.
@@ -5301,7 +5314,7 @@ function connect(){
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
-        appendSystem(`Downloaded ${msg.row_count ?? 0} row${msg.row_count === 1 ? '' : 's'} as CSV.`);
+        appendSystem(plural('ui.chat.system.csv_downloaded', msg.row_count ?? 0, {count: window.qbNum(msg.row_count ?? 0)}));
       } catch (_) {
         appendSystem(t('ui.chat.system.csv_no_download'));
       }

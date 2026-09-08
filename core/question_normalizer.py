@@ -338,6 +338,16 @@ _LEXICON: dict[str, str] = {
     "filtrer": "filter",
     "lister": "list",
     "ventiler": "break down",
+    # The imperative too. The chart's click-to-drill writes its question into
+    # the composer, so a French reader sends "Ventile ceci pour X" -- and the
+    # refinement classifier in core/conversation_state.py matches on
+    # "break this down". Without this line that click is classified as a fresh
+    # question and the reader silently loses the result they were drilling
+    # into. The English phrasing has always matched by construction; this is
+    # the same guarantee for French.
+    "ventile": "break down",
+    "ceci": "this",
+    "cela": "that",
     "afficher": "show",
     "montre": "show",
     "montre-moi": "show me",

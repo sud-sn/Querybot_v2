@@ -31,6 +31,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import json
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,12 +97,28 @@ def test_a_time_series_is_never_reordered_or_dropped(source):
     assert "dataZoom" in source, "long series lost their way to move through the data"
 
 
-def test_a_pie_keeps_its_total_when_capped(source):
+def test_a_pie_keeps_its_total_when_capped():
     """A pie is a part-to-whole claim. Dropping the tail would leave the slices
-    adding up to a different total than the answer states."""
-    block = source[source.index("const PIE_CAP"): source.index("const horizontal =")]
-    assert "Other (" in block, "the pie tail is dropped rather than grouped"
-    assert "reduce" in block, "the grouped slice is not summed from the tail"
+    adding up to a different total than the answer states.
+
+    Was two substring checks over a source window -- "Other (" and "reduce" --
+    which is the wrong instrument twice over: it passed if the words appeared
+    in a comment, and it FAILED when "Other (N)" moved into the message
+    catalogue, which changed nothing about whether the total survives. Executed
+    against the real builder now, so it fails when the arithmetic is wrong and
+    not when the wording changes.
+    """
+    dukpy = pytest.importorskip("dukpy")
+    from tests.test_chart_annotation_language import _build
+
+    rows = [{"CAT": f"c{i:02d}", "AMT": float(i + 1)} for i in range(30)]
+    payload = {"rows": rows, "x_key": "CAT", "y_keys": ["AMT"],
+               "chart_type": "pie"}
+    drawn = json.loads(_build("portal_chat.html", "en", payload,
+                              "JSON.stringify(opt.series[0].data)"))
+    assert len(drawn) < len(rows), "the pie was not capped at all"
+    assert sum(item["value"] for item in drawn) == sum(r["AMT"] for r in rows), (
+        "the capped pie no longer adds up to the answer's total")
 
 
 def test_series_are_capped_to_the_validated_palette_length(source):

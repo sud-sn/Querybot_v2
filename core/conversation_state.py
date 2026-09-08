@@ -514,7 +514,13 @@ _RESET_RE = re.compile(
 _GREETING_RE = re.compile(r"^\s*(?:hi|hello|hey|good\s+(?:morning|afternoon|evening))[\s!,.]*$", re.I)
 _REFINEMENT_RE = re.compile(
     r"\b(?:instead|only|also|exclude|include|remove|keep|filter|limit|"
-    r"sort|order\s+(?:it|these|those)|break\s+(?:it|this|these|that)\s+down|"
+    r"sort|order\s+(?:it|these|those)|"
+    # Both orders. "break this down" and "break down this" are the same
+    # request in English, and the second is what French canonicalises to --
+    # "ventile ceci" becomes "break down this", so a French reader clicking a
+    # chart bar was classified as asking a fresh question and silently lost
+    # the result they were drilling into.
+    r"break\s+(?:it|this|these|that)\s+down|break\s+down\s+(?:it|this|these|that)|"
     r"group\s+(?:it|this|these|that)\s+by|for\s+(?:jan(?:uary)?|feb(?:ruary)?|"
     r"mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
     r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?))\b",
