@@ -78,6 +78,17 @@ def _measure_class(column: str, field: dict[str, Any]) -> str:
     return "unknown"
 
 
+def measure_class_for_column(column: str) -> str:
+    """Additivity inferred from a column NAME alone.
+
+    For callers holding a result set and no field metadata -- the narrative
+    builder, which has to decide whether rows sharing a label may be summed
+    into one. Returns the same vocabulary as the metric classifier:
+    additive / semi_additive / non_additive / unknown.
+    """
+    return _measure_class(column, {})
+
+
 def measure_class_for_metric(metric: dict[str, Any]) -> str:
     """Classify a registry metric as additive / semi_additive / non_additive.
 

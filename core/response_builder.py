@@ -500,6 +500,65 @@ def _text_cols(rows: list[dict], numeric_cols: list[str]) -> list[str]:
     return [h for h in (rows[0].keys() if rows else []) if h not in numeric_cols]
 
 
+def _ranked_items(rows: list[dict], label_col: str, value_col: str,
+                  limit: int = 5) -> list[dict]:
+    """The leading labels by value, each appearing exactly once.
+
+    Ranking the raw rows is right when a label appears once. A result grouped
+    by two things carries a row per label PER PERIOD, and then the leader and
+    the runner-up came back as the same warehouse in two different months,
+    with its share divided by a total counted three times over.
+
+    Collapsing to one row per label means summing, and summing is only sound
+    when the measure adds up. A margin percentage summed across months is
+    arithmetic on nothing; so is a stock balance, which is semi-additive
+    precisely because it may not be summed across time. In those cases this
+    returns nothing rather than a plausible wrong leader, and the caller's
+    existing guards leave the comparison out of the answer.
+    """
+    totals: dict[str, float] = {}
+    for row in rows:
+        label = str(row.get(label_col, ""))
+        totals[label] = totals.get(label, 0.0) + _to_float_z(row.get(value_col))
+
+    if len(totals) != len(rows):
+        from core.analysis_contract import measure_class_for_column
+        if measure_class_for_column(value_col) != "additive":
+            log.info(
+                "No ranking computed: %r repeats across %d rows and %r does "
+                "not add up, so one row per label cannot be formed",
+                label_col, len(rows), value_col)
+            return []
+
+    ordered = sorted(totals.items(), key=lambda pair: pair[1], reverse=True)
+    return [{"label": label, "value": value} for label, value in ordered[:limit]]
+
+
+def _narrative_label_column(rows: list[dict], text_cols: list[str]) -> str:
+    """The text column the narrative should speak about.
+
+    The first one is right for a result grouped by a single thing. Grouped by
+    TWO -- "revenue by warehouse for the last three months" -- the calendar
+    repeats once per warehouse, and describing the result along that axis
+    builds a series out of unrelated rows: the live workspace reported a
+    +1,437.3% trend between two different warehouses a quarter apart, and
+    never mentioned a warehouse in the prose at all.
+
+    So a temporal column whose labels REPEAT is skipped in favour of one that
+    does not, because the dimension the reader asked about is the one that is
+    not the repeating calendar. A temporal column with distinct labels is a
+    real series and stays first.
+    """
+    if len(text_cols) < 2:
+        return text_cols[0]
+    for col in text_cols:
+        labels = [str(row.get(col, "")) for row in rows]
+        if _looks_temporal(labels) and len(set(labels)) != len(labels):
+            continue
+        return col
+    return text_cols[0]
+
+
 def _looks_temporal(values: list[str]) -> bool:
     sample = " ".join(v.lower() for v in values[:8] if v)
     # Full month names and long tokens — safe for substring match
@@ -1452,7 +1511,7 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
         return ctx
 
     if numeric_cols and text_cols:
-        label_col = text_cols[0]
+        label_col = _narrative_label_column(rows, text_cols)
         value_col = numeric_cols[0]
         # Formatted here, at the one place the series is read, so every
         # sentence written about it downstream inherits the same labels the
@@ -1470,12 +1529,12 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
             "median_value": median(values),
             "chartable": True,
         })
-        ordered = sorted(rows, key=lambda r: _to_float_z(r.get(value_col)), reverse=True)
-        ctx["top_items"] = [
-            {"label": str(r.get(label_col, "")), "value": _to_float_z(r.get(value_col))}
-            for r in ordered[:5]
-        ]
-        if _looks_temporal(labels):
+        ctx["top_items"] = _ranked_items(rows, label_col, value_col)
+        # A repeating label is not a series axis. The result is grouped by
+        # something else as well, so first and last are two different members
+        # of that other dimension -- which is how "+1,437.3% from 2026-03 to
+        # 2026-06" was computed between two different warehouses.
+        if _looks_temporal(labels) and len(set(labels)) == len(labels):
             first, last = values[0], values[-1]
             pct = _safe_pct_change(first, last)
             diffs = [values[i] - values[i - 1] for i in range(1, len(values))]
