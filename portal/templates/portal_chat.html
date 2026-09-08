@@ -2297,10 +2297,24 @@ function buildChartOption(payload) {
 
   // ── Pie / Donut ───────────────────────────────────────────────────────────
   if (type === 'pie' || type === 'donut') {
-    const pieData = rows.map(r => ({
-      name:  String((xKey && r?.[xKey]) ?? t('ui.chart.unspecified')),
-      value: _chartNumber(yKey ? r?.[yKey] : null),
-    }));
+    // One slice per category. Built with rows.map, a result grouped by two
+    // things -- a warehouse and a month -- drew the same category several
+    // times, and the legend's name-keyed Map then reported whichever row came
+    // last, so "Halifax" appeared twice at 30% each against a true share of
+    // 60%. A pie is a part-to-whole picture and a category named twice is not
+    // part of one whole.
+    //
+    // Summed unconditionally: whether the measure may be summed at all decides
+    // whether a PIE is the right chart, which is a choice made upstream in
+    // core/chart_spec.py. Drawing one category twice is wrong either way, and
+    // this is the renderer.
+    const pieAgg = new Map();
+    rows.forEach(r => {
+      const name = String((xKey && r?.[xKey]) ?? t('ui.chart.unspecified'));
+      pieAgg.set(name, (pieAgg.get(name) || 0)
+        + (_chartNumber(yKey ? r?.[yKey] : null) || 0));
+    });
+    const pieData = Array.from(pieAgg, ([name, value]) => ({ name, value }));
     const pieTotal = pieData.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
     const pieShare = value => pieTotal > 0 ? ((Number(value) || 0) / pieTotal * 100) : 0;
     const pieLegend = new Map(pieData.map(item => [item.name, pieShare(item.value)]));

@@ -372,25 +372,48 @@ def compute_data_brief(
 
     # ── Category breakdowns ──────────────────────────────────────────────────
     if text_cols and numeric_cols:
-        label_col = text_cols[0]
+        # This brief feeds the KEY INSIGHTS callouts, the chart annotations and
+        # the narration prompt, so the fixes made in response_builder never
+        # reached the live path. On "compare revenue by warehouse for the last
+        # 3 months" it called a set of perfectly flat warehouses "decreasing",
+        # and named a MONTH as the leading category with a 9.4% share.
+        from core.analysis_contract import collapse_rows_by_label
+        from core.response_builder import (
+            _narrative_label_column, narrative_period_labels,
+        )
+
+        label_col = _narrative_label_column(rows, text_cols)
         value_col = numeric_cols[0]
         # Same formatting the table and KPI apply, so a trend sentence does
         # not print 2026-01-01 beside a headline that says 2026-01.
-        from core.response_builder import narrative_period_labels
         labels = narrative_period_labels([r.get(label_col, "") for r in rows])
         values = [_to_float(r.get(value_col)) or 0.0 for r in rows]
-        paired = sorted(zip(labels, values), key=lambda x: x[1], reverse=True)
+
+        # One row per category before anything is ranked or shared. Rows the
+        # sum may not merge -- a margin percentage, a balance across months --
+        # leave the breakdown out rather than reporting a share of a total
+        # counted once per period.
+        # Keyed on the FORMATTED labels, so the breakdown groups by what the
+        # table and the KPI show; measure_name carries the real column so the
+        # additivity rule still has something to judge.
+        collapsed = collapse_rows_by_label(
+            [{"_l": l, "_v": v} for l, v in zip(labels, values)],
+            "_l", "_v", measure_name=value_col)
+        if collapsed is None:
+            paired = []
+        else:
+            paired = sorted(collapsed, key=lambda x: x[1], reverse=True)
 
         cat_breakdown = {
             "label_column": label_col,
             "value_column": value_col,
-            "category_count": len(set(labels)),
+            "category_count": len(paired) if paired else len(set(labels)),
             "top_5": [{"label": _display_label(l, label_col), "value": round(v, 2)} for l, v in paired[:5]],
             "bottom_3": [{"label": _display_label(l, label_col), "value": round(v, 2)} for l, v in paired[-3:]],
             "labels_redacted": _is_sensitive_field(label_col),
         }
 
-        total = sum(values)
+        total = sum(v for _, v in paired)
         if total > 0 and len(paired) >= 2:
             leader_pct = round(paired[0][1] / total * 100, 1)
             cat_breakdown["leader_share_pct"] = leader_pct
@@ -401,7 +424,10 @@ def compute_data_brief(
         brief["category_breakdown"] = cat_breakdown
 
         # ── Time series analysis ─────────────────────────────────────────────
-        if _looks_temporal(labels):
+        # A repeating label is not a series axis: the result is grouped by
+        # something else too, so the first and last values belong to different
+        # members of that other dimension.
+        if _looks_temporal(labels) and len(set(labels)) == len(labels):
             brief["mode"] = "time_series"
             ts = _compute_time_series_brief(labels, values)
             brief["time_series"] = ts

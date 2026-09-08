@@ -8,6 +8,7 @@ from datetime import date, datetime
 from statistics import mean, median, stdev
 from typing import Any
 
+from core.analysis_contract import collapse_rows_by_label
 from core.display_formats import normalize_display_format
 from core.i18n import (
     format_date as _format_date,
@@ -1418,12 +1419,21 @@ def build_answer(
                 "scope_note": scope.get("note", ""),
             }
 
-        label_col = text_cols[0]
+        # The headline card was left behind when summarize_result_context was
+        # taught about a second dimension, so it still read text_cols[0] and
+        # ranked raw rows. On "compare revenue by warehouse for the last 3
+        # months" it led with "2026-05 closed at 900,000" -- a month's name
+        # against one warehouse's row -- and its leader and runner-up were the
+        # same warehouse in two different periods, which is where the
+        # "5,416 above the next result" came from.
+        label_col = _narrative_label_column(rows, text_cols)
         value_col = numeric_cols[0]
         value_fmt = column_formats.get(value_col)
-        ordered = sorted(rows, key=lambda r: _to_float_z(r.get(value_col)), reverse=True)
+        collapsed = collapse_rows_by_label(rows, label_col, value_col)
+        ordered = sorted(collapsed or [], key=lambda pair: pair[1], reverse=True)
         labels = [str(r.get(label_col, "")) for r in rows]
-        if _looks_temporal(labels) and scope.get("kind") != "ranking":
+        if (_looks_temporal(labels) and len(set(labels)) == len(labels)
+                and scope.get("kind") != "ranking"):
             first = rows[0]
             last = rows[-1]
             first_val = _to_float_z(first.get(value_col))
@@ -1444,10 +1454,23 @@ def build_answer(
                 "scope_badge": scope.get("badge", ""),
                 "scope_note": scope.get("note", ""),
             }
-        best = ordered[0]
-        best_label = str(best.get(label_col, _t("answer.top_result")))
-        best_value = _to_float_z(best.get(value_col))
-        comparison = scope.get("badge") or _t_plural("answer.across_results", len(rows))
+        if not ordered:
+            # Repeats the sum may not merge -- a margin percentage, a balance.
+            # A leader among rows that cannot be added together is a made-up
+            # ranking, so this falls through to the plain row-count answer.
+            return {
+                "headline": _t_plural(
+                    "answer.returned_rows", len(rows),
+                    question=question.strip().rstrip("?") or _t("answer.this_query")),
+                "short_value": "",
+                "comparison": scope.get("badge", ""),
+                "scope_badge": scope.get("badge", ""),
+                "scope_note": scope.get("note", ""),
+            }
+        best_label, best_value = ordered[0]
+        best_label = str(best_label or _t("answer.top_result"))
+        comparison = scope.get("badge") or _t_plural(
+            "answer.across_results", len(ordered))
         if scope.get("is_top_n") and (scope.get("n") or 0) == 1:
             headline = _t("answer.top_ranked", label=best_label,
                           value=format_value(best_value, value_col))
@@ -1456,9 +1479,7 @@ def build_answer(
             headline = _t("answer.leads", label=best_label,
                           value=format_value(best_value, value_col))
         if len(ordered) > 1 and not scope.get("is_top_n"):
-            second = ordered[1]
-            second_value = _to_float_z(second.get(value_col))
-            delta = best_value - second_value
+            delta = best_value - ordered[1][1]
             comparison = _t("answer.above_next",
                             delta=format_value(delta, value_col))
         return {

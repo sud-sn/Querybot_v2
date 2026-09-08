@@ -494,11 +494,23 @@ def concentration_findings(
     rows: list[dict], value_col: str, label_col: str,
 ) -> list[Finding]:
     """How much of the total sits in how few rows."""
-    pairs = [
-        (str(row.get(label_col, "") or "")[:60], _to_float(row.get(value_col)))
-        for row in rows
-    ]
-    pairs = [(name, v) for name, v in pairs if v is not None and v > 0]
+    # One row per category first. A result grouped by two things carries a row
+    # per category PER PERIOD, and dividing one of those rows by a total summed
+    # over all of them understates every share by the period count -- enough to
+    # drop a genuine 37.5% leader under the threshold below and make the
+    # finding disappear rather than merely be wrong.
+    from core.analysis_contract import collapse_rows_by_label
+
+    collapsed = collapse_rows_by_label(rows, label_col, value_col)
+    if collapsed is None:
+        # Repeats the sum cannot merge: a margin percentage or a balance. A
+        # share of a total nobody can compute is not worth reporting.
+        log.info(
+            "No concentration computed: %r repeats and %r does not add up",
+            label_col, value_col)
+        return []
+    pairs = [(str(name or "")[:60], value) for name, value in collapsed
+             if value is not None and value > 0]
     if len(pairs) < 2:
         return []
     total = sum(v for _, v in pairs)

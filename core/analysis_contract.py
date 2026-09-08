@@ -78,6 +78,56 @@ def _measure_class(column: str, field: dict[str, Any]) -> str:
     return "unknown"
 
 
+def collapse_rows_by_label(
+    rows: list[dict], label_col: str, value_col: str,
+    *, measure_name: str = "",
+) -> list[tuple[str, float]] | None:
+    """One (label, value) pair per label, or None when they may not be merged.
+
+    A result grouped by two things carries a row per label PER PERIOD. Reading
+    those rows as though each label appeared once is what made a leader and a
+    runner-up the same warehouse in different months, divided a category's
+    share by a total counted once per period, and drew one slice of a pie
+    several times.
+
+    Merging means summing, and summing is only sound when the measure adds up.
+    A margin percentage summed across three months is arithmetic on nothing,
+    and so is a stock balance -- semi-additive means exactly "not across time",
+    which is the axis being collapsed here. Both return None: no answer beats a
+    plausible wrong one, and the caller decides what to say instead.
+
+    Returns the pairs unchanged, in first-seen order, when every label already
+    appears once -- so a one-dimensional result costs nothing and is never
+    subject to the additivity rule, because there is nothing to add.
+
+    ``measure_name`` names the column for the additivity decision when the rows
+    have been projected onto working keys and no longer carry it. A caller that
+    hands over {"_l": ..., "_v": ...} still has to say the measure was
+    GRS_MARG_PCT, or the rule reads a key it has no opinion about and defaults
+    to summing.
+    """
+    pairs: list[tuple[str, float]] = []
+    for row in rows or []:
+        raw = row.get(value_col)
+        try:
+            value = float(str(raw).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        if value != value:            # NaN
+            continue
+        pairs.append((str(row.get(label_col, "")), value))
+
+    if len({label for label, _ in pairs}) == len(pairs):
+        return pairs
+    if measure_class_for_column(measure_name or value_col) != "additive":
+        return None
+
+    totals: dict[str, float] = {}
+    for label, value in pairs:
+        totals[label] = totals.get(label, 0.0) + value
+    return list(totals.items())
+
+
 def measure_class_for_column(column: str) -> str:
     """Additivity inferred from a column NAME alone.
 
