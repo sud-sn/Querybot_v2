@@ -41,7 +41,12 @@ SEL_SEND = "#sendBtn"
 SEL_THREAD = "#thread"
 SEL_SKELETON = "#skeletonBubble"
 SEL_ELAPSED = "#answerProgressElapsed"
-SEL_BOT_BUBBLE = "#thread .msg-bubble[data-raw]"
+# A bot turn is `.msg.msg-bot` whichever shape it takes, and the skeleton wears
+# the same class with an id -- so the answer is "a bot turn that is not the
+# skeleton". Waiting on `.msg-bubble[data-raw]` instead matched ONLY the plain
+# text reply: an answer carrying data renders an `.assistant-card` and has no
+# such bubble, so a perfectly good answer timed the run out.
+SEL_ANSWER = "#thread .msg.msg-bot:not(#skeletonBubble)"
 # The send button is enabled only by ws.onopen, so "not disabled" IS the proof
 # that the websocket connected. A chat page whose socket never opens renders
 # perfectly and accepts nothing -- L0-1's false pass exactly.
@@ -198,7 +203,7 @@ def main() -> int:
             # ── the answer ───────────────────────────────────────────────
             answered = False
             try:
-                page.wait_for_selector(SEL_BOT_BUBBLE, timeout=args.wait * 1000)
+                page.wait_for_selector(SEL_ANSWER, timeout=args.wait * 1000)
                 answered = True
             except Exception:
                 pass
@@ -208,9 +213,26 @@ def main() -> int:
                  f"{took}s" if answered else f"nothing after {took}s")
             report["answer_shot"] = shot(page, "05-answer")
 
+            if not answered:
+                # Say where it got to rather than only that it did not arrive:
+                # the stage label is the pipeline's own account of itself, and
+                # the thread's markup distinguishes "nothing rendered" from
+                # "something rendered that this script did not recognise".
+                for sel, key in (("#answerStageLabel", "last_stage"),
+                                 ("#answerStageDetail", "last_stage_detail")):
+                    node = page.locator(sel)
+                    if node.count():
+                        report[key] = node.first.inner_text()[:200]
+                report["thread_html"] = page.inner_html(SEL_THREAD)[:6000]
+                if report.get("last_stage"):
+                    step("the pipeline reported a stage", True,
+                         f"stopped at: {report['last_stage']}")
+
             if answered:
-                bubble = page.locator(SEL_BOT_BUBBLE).last
-                text = bubble.inner_text()[:1500]
+                card = page.locator(SEL_ANSWER).last
+                inner = card.locator(".assistant-card, .msg-bubble").first
+                text = (inner.inner_text() if inner.count()
+                        else card.inner_text())[:1500]
                 report["answer_text"] = text
                 step("the answer has content", bool(text.strip()),
                      f"{len(text)} chars")
