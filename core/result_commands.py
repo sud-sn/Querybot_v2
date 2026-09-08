@@ -1503,7 +1503,21 @@ def _ranking_measure_columns(rows: list[dict]) -> list[str]:
 
 
 def _business_column_label(column: str) -> str:
-    return re.sub(r"[_\s]+", " ", str(column or "").strip()).title()
+    """The business name for a column, for the buttons and confirmations here.
+
+    Named for business vocabulary and implemented as a bare title-case, so the
+    measure-choice buttons a reader picks between read "Bal Val Amt" and "Sop
+    Cus Ivc Lin Amt", and the sentence confirming what was done said "Kept the
+    highest result by Bal Val Amt". The reader is being asked to CHOOSE here --
+    the one moment the label has to mean something to them.
+
+    Delegates to the same helper every other naming surface uses, and keeps its
+    own fallback so a vocabulary failure costs a label rather than the answer.
+    """
+    plain = re.sub(r"[_\s]+", " ", str(column or "").strip()).title()
+    if not plain:
+        return ""
+    return _column_display_label(column) or plain
 
 
 def _number(value: Any) -> float | None:

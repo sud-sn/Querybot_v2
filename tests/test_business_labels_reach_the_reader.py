@@ -550,6 +550,49 @@ class TestTheInvitationIsNotATrap(unittest.TestCase):
         self.assertIn("`BAL_VAL_AMT`", text)
 
 
+class TestTheMeasureChoiceButtons(unittest.TestCase):
+    """F12 · a helper named _business_column_label that was a title-case.
+
+    It labels the buttons a reader picks between when a "highest" or "lowest"
+    question has more than one candidate measure, and the sentence confirming
+    what was done. Named for business vocabulary and implemented as
+    re.sub(...).title(), so the choice offered was between "Bal Val Amt" and
+    "Sop Cus Ivc Lin Amt" -- at the one moment the label has to mean something,
+    because the reader is being asked to choose on the strength of it.
+    """
+
+    def test_the_button_says_what_the_measure_is(self):
+        from core.result_commands import _business_column_label
+
+        self.assertEqual(_business_column_label("BAL_VAL_AMT"),
+                         "Balance Value Amount")
+        self.assertEqual(_business_column_label("SOP_CUS_IVC_LIN_AMT"),
+                         "Sales Order Processing Customer Invoice Line Amount")
+
+    def test_it_agrees_with_every_other_surface(self):
+        from core.result_commands import _business_column_label
+        from core.schema_enrichment import display_label
+
+        for column in ("BAL_VAL_AMT", "WHS_NM", "count", "total_revenue"):
+            with self.subTest(column=column):
+                self.assertEqual(_business_column_label(column),
+                                 display_label(column))
+
+    def test_a_broken_vocabulary_costs_a_label_not_an_answer(self):
+        import core.schema_enrichment as se
+        from core.result_commands import _business_column_label
+
+        with patch.object(se, "enrich_columns", side_effect=RuntimeError("boom")):
+            self.assertEqual(_business_column_label("BAL_VAL_AMT"),
+                             "Bal Val Amt")
+
+    def test_nothing_in_nothing_out(self):
+        from core.result_commands import _business_column_label
+
+        self.assertEqual(_business_column_label(""), "")
+        self.assertEqual(_business_column_label(None), "")
+
+
 class TestTheResolverAnswersToBothSpellings(unittest.TestCase):
     """core/result_commands.py::_resolve_column — the other half of F14."""
 
