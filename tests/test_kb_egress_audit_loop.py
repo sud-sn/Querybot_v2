@@ -115,7 +115,38 @@ def test_a_legacy_bare_column_list_is_still_wrapped_not_skipped():
 
 def test_the_audit_failure_is_reported_at_error_level():
     """It is the record of what was sent to the LLM. A warning that the build
-    then reports as successful is how this went unnoticed."""
-    source = inspect.getsource(routes)
-    assert source.count("KB egress audit log") == 2
-    assert 'log.warning("KB egress log (' not in source
+    then reports as successful is how this went unnoticed.
+
+    Was two substring checks, and the negative one --
+    `'log.warning("KB egress log (' not in source` -- is written against a code
+    shape admin/routes.py has never had: the message says "audit log", not
+    "log". So it was vacuously true, and would have stayed true if both
+    handlers were downgraded to warnings tomorrow. It could not fail for the
+    reason it is named for.
+
+    Asserted on the parsed call now: find every handler that logs this failure
+    and check the LEVEL it logs at.
+    """
+    import ast
+
+    tree = ast.parse(inspect.getsource(routes))
+    levels = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute)
+                and getattr(func.value, "id", "") == "log"):
+            continue
+        first = node.args[0] if node.args else None
+        if (isinstance(first, ast.Constant)
+                and isinstance(first.value, str)
+                and "KB egress audit log" in first.value):
+            levels.append(func.attr)
+
+    assert len(levels) == 2, (
+        f"expected the discovery and kb_build handlers, found {levels}")
+    assert set(levels) == {"error"}, (
+        f"the audit-write failure is logged at {sorted(set(levels))}; a "
+        f"warning is how a lost egress record went unnoticed while the build "
+        f"reported success")

@@ -552,11 +552,111 @@ class ChartRendererTemplateTests(unittest.TestCase):
         self.assertGreaterEqual(dashboard.count("_chartEscHtml(xLabel)"), 4)
 
     def test_chart_type_controls_are_limited_by_renderable_types(self):
-        for path in [self.CHAT, self.DASH]:
+        """A reader may only press a type the data can honestly be drawn as.
+
+        Was three substring checks over the page source, one of which --
+        assertIn("filter", src) -- is true of any page containing the word and
+        can never fail. Neither of the other two could tell whether the lists
+        were USED, let alone how.
+
+        The rule is a named function on both pages now (_offeredChartTypes),
+        and this executes it. Offering a type the result cannot support ships a
+        button that draws an empty chart, which is what the invariant is for.
+        """
+        import json
+
+        import pytest
+
+        dukpy = pytest.importorskip("dukpy")
+        from tests.js_lift import function as lift
+
+        every = ["bar", "line", "area", "pie", "donut", "scatter"]
+        for path in (self.CHAT, self.DASH):
+            js = lift(self._read(path),
+                      "function _offeredChartTypes(payload, everyType)")
+
+            def offered(payload):
+                return json.loads(dukpy.evaljs(
+                    js + "\nJSON.stringify(_offeredChartTypes("
+                    f"{json.dumps(payload)}, {json.dumps(every)}))"))
+
+            with self.subTest(page=path.name, case="renderable wins"):
+                # The narrower list, even when a wider one is present.
+                self.assertEqual(
+                    offered({"renderable_types": ["bar"],
+                             "allowed_types": ["bar", "pie", "scatter"]}),
+                    ["bar"])
+
+            with self.subTest(page=path.name, case="a type the spec refused"):
+                self.assertNotIn(
+                    "scatter",
+                    offered({"renderable_types": ["bar", "line"]}))
+
+            with self.subTest(page=path.name, case="falls back to allowed"):
+                self.assertEqual(offered({"allowed_types": ["pie", "donut"]}),
+                                 ["pie", "donut"])
+
+            with self.subTest(page=path.name, case="an empty list is not a list"):
+                # renderable_types == [] means "nothing was computed", not
+                # "offer nothing" -- offering nothing would leave the reader
+                # with no controls at all.
+                self.assertEqual(
+                    offered({"renderable_types": [], "allowed_types": ["line"]}),
+                    ["line"])
+
+            with self.subTest(page=path.name, case="neither: offer everything"):
+                self.assertEqual(offered({}), every)
+
+            with self.subTest(page=path.name, case="a type the page cannot draw"):
+                # "table" is in renderable_types but is not a chart button.
+                self.assertEqual(
+                    offered({"renderable_types": ["bar", "table"]}), ["bar"])
+
+    def test_the_pages_actually_call_that_rule(self):
+        """A source check, deliberately, and narrow.
+
+        The rule itself is executed above; what cannot be executed here is the
+        function that BUILDS the controls, because it writes into the DOM and
+        reads from a live chart instance. Without this, bypassing
+        _offeredChartTypes at the call site passes every test in this file --
+        which is the "the helper is tested and the call site is not" gap, and
+        it survived the first mutation pass.
+
+        So it asserts a CALL, not the presence of a word: the count of call
+        sites per page, and that the inline shape the helper replaced is gone.
+        Both fail for the right reason -- someone routing around the rule --
+        rather than on a reformat.
+        """
+        for path, expected_calls in ((self.CHAT, 1), (self.DASH, 2)):
             src = self._read(path)
-            self.assertIn("renderable_types", src)
-            self.assertIn("allowed_types", src)
-            self.assertIn("filter", src)
+            with self.subTest(page=path.name):
+                self.assertEqual(src.count("_offeredChartTypes("),
+                                 expected_calls + 1,   # + the definition
+                                 f"{path.name} does not route through the rule")
+                # Once, inside the helper. A second occurrence is a call site
+                # deciding for itself again.
+                self.assertEqual(src.count("renderable_types.length"), 1,
+                                 f"{path.name} still decides this inline")
+
+    def test_both_pages_offer_the_same_types_for_one_payload(self):
+        """They are separate copies of this rule, and copies drift."""
+        import json
+
+        import pytest
+
+        dukpy = pytest.importorskip("dukpy")
+        from tests.js_lift import function as lift
+
+        every = ["bar", "line", "area", "pie", "donut", "scatter"]
+        payload = {"renderable_types": ["bar", "line", "table"]}
+        results = []
+        for path in (self.CHAT, self.DASH):
+            js = lift(self._read(path),
+                      "function _offeredChartTypes(payload, everyType)")
+            results.append(json.loads(dukpy.evaljs(
+                js + "\nJSON.stringify(_offeredChartTypes("
+                f"{json.dumps(payload)}, {json.dumps(every)}))")))
+        self.assertEqual(results[0], results[1])
 
     def test_chart_warnings_render_in_chat_and_dashboard(self):
         for path in [self.CHAT, self.DASH]:

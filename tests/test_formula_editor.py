@@ -207,13 +207,47 @@ class TestSqlSyntaxHighlighting(unittest.TestCase):
         # typed column name. All 4 SQL-writing textareas (2x
         # .formula-editor, 2x .metric-builder-row-expression) must disable
         # spellcheck/autocomplete/autocorrect/autocapitalize.
-        tmpl = _tmpl()
-        self.assertEqual(tmpl.count('class="formula-editor"'), 2)
-        self.assertEqual(tmpl.count('class="metric-builder-row-expression"'), 2)
-        # autocomplete="off" also appears on unrelated inputs elsewhere in
-        # this template (e.g. base-table-input) — scope the check to the
-        # combined attribute cluster these 4 fields actually carry.
-        self.assertEqual(tmpl.count('spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"'), 4)
+        #
+        # Asserted on the PARSED attributes, not on a substring. The previous
+        # version pinned
+        #     spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+        # as one exact run of characters, four times: reordering the
+        # attributes, wrapping the tag across lines, or switching to single
+        # quotes broke it while the browser behaviour was identical -- and a
+        # fifth SQL field added without any of them would not have been
+        # noticed, because the count would still be four.
+        from html.parser import HTMLParser
+
+        WANTED = {"spellcheck": "false", "autocomplete": "off",
+                  "autocorrect": "off", "autocapitalize": "off"}
+        SQL_FIELDS = {"formula-editor", "metric-builder-row-expression"}
+
+        class _Fields(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.found: list[tuple[str, dict]] = []
+
+            def handle_starttag(self, tag, attrs):
+                attributes = {k: (v or "") for k, v in attrs}
+                classes = set(str(attributes.get("class", "")).split())
+                hit = classes & SQL_FIELDS
+                if hit:
+                    self.found.append((sorted(hit)[0], attributes))
+
+        parser = _Fields()
+        parser.feed(_tmpl())
+
+        by_kind: dict[str, int] = {}
+        for kind, attributes in parser.found:
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            for name, value in WANTED.items():
+                with self.subTest(field=kind, attribute=name):
+                    self.assertEqual(
+                        str(attributes.get(name, "")).lower(), value,
+                        f"a {kind} field does not set {name}={value!r}")
+        self.assertEqual(by_kind, {"formula-editor": 2,
+                                   "metric-builder-row-expression": 2},
+                         parser.found)
 
     def test_token_color_classes_present(self):
         tmpl = _tmpl()

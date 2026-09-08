@@ -192,17 +192,152 @@ class NarrowerPhraseIsNotAVerificationTests(unittest.TestCase):
 
     def test_a_narrowed_value_is_still_a_database_value_for_compliance(self):
         """The refusal names the real value in the prompt, so it is egress and
-        has to pass the same regulated-tenant filter as a verified one."""
-        import inspect
+        has to pass the same regulated-tenant filter as a verified one.
 
+        Was two assertions about how the function is SPELLED -- that the tuple
+        ("verified", "in_lists") does not appear, and that a particular
+        assignment does. Neither runs the filter. A rewrite that kept the
+        spelling and dropped the behaviour passes; a rewrite that keeps the
+        behaviour and changes the spelling fails. For a regulated-tenant egress
+        invariant that is the wrong instrument entirely.
+
+        Executed now, on all three buckets, with only the compliance boundary
+        mocked.
+        """
+        from unittest.mock import patch
+
+        import core.compliance.policy_engine as policy_engine
         from core.value_resolver import filter_resolved_for_compliance
 
-        source = inspect.getsource(filter_resolved_for_compliance)
-        self.assertNotIn(
-            '("verified", "in_lists")', source,
-            "the narrowed bucket bypasses the compliance filter",
-        )
-        self.assertIn('blocked["narrowed"] = []', source)
+        resolved = {
+            "verified": [{"column": "CUST_NM", "value": "Acme SA"}],
+            "in_lists": [{"column": "CUST_NM", "value": "Acme Inc"}],
+            "narrowed": [{"column": "CUST_NM", "value": "A REAL PATIENT NAME"}],
+        }
+
+        with patch.object(policy_engine, "is_regulated", return_value=True), \
+             patch("store.get_compliance_profile",
+                   return_value={"policy_pack_key": ""}), \
+             patch("store.get_classification_map", return_value={}):
+            filtered, evidence = filter_resolved_for_compliance("acct", resolved)
+
+        self.assertEqual(filtered.get("narrowed"), [],
+                         "the narrowed bucket reached the prompt unfiltered")
+        # And the other two, so this cannot pass by the filter having been
+        # switched off wholesale.
+        self.assertEqual(filtered.get("verified"), [])
+        self.assertEqual(filtered.get("in_lists"), [])
+        self.assertEqual(evidence["dropped"], 3,
+                         "every bucket must be counted in the trace")
+        self.assertTrue(evidence["applied"])
+
+    def test_an_unregulated_tenant_keeps_all_three_buckets(self):
+        """Guards the guard: a filter that dropped everything would satisfy the
+        test above without doing anything the policy asks for."""
+        from unittest.mock import patch
+
+        import core.compliance.policy_engine as policy_engine
+        from core.value_resolver import filter_resolved_for_compliance
+
+        resolved = {
+            "verified": [{"column": "CUST_NM", "value": "Acme SA"}],
+            "in_lists": [{"column": "CUST_NM", "value": "Acme Inc"}],
+            "narrowed": [{"column": "CUST_NM", "value": "Acme Ltd"}],
+        }
+        with patch.object(policy_engine, "is_regulated", return_value=False):
+            filtered, evidence = filter_resolved_for_compliance("acct", resolved)
+
+        self.assertEqual(len(filtered["narrowed"]), 1)
+        self.assertEqual(len(filtered["verified"]), 1)
+        self.assertEqual(evidence["reason"], "tenant_not_regulated")
+        self.assertFalse(evidence["applied"])
+
+    # ── The per-column gate ──────────────────────────────────────────────
+    #
+    # The two tests above both take the no-policy-pack path, where every
+    # bucket is emptied wholesale. That leaves the branch that actually
+    # decides column by column unexercised -- and a mutation pass proved it:
+    # deleting "narrowed" from that loop, and disabling the empty-pack
+    # shortcut entirely, both survived. These four run the real pack.
+
+    _PACK = "healthcare_pharmacy_v1"          # sensitive_tags: PII, PHI, PRESCRIPTION
+    _RESOLVED = {
+        "verified": [{"column": "CUST_NM", "value": "Acme",
+                      "table_fqn": "D.S.CUST"}],
+        "in_lists": [],
+        "narrowed": [{"column": "PATIENT_NM", "value": "Jane Roe",
+                      "table_fqn": "D.S.PAT"}],
+    }
+
+    def _under_pack(self, classification_map):
+        from unittest.mock import patch
+
+        import core.compliance.policy_engine as policy_engine
+        from core.value_resolver import filter_resolved_for_compliance
+
+        with patch.object(policy_engine, "is_regulated", return_value=True), \
+             patch("store.get_compliance_profile",
+                   return_value={"policy_pack_key": self._PACK}), \
+             patch("store.get_classification_map",
+                   return_value=classification_map):
+            return filter_resolved_for_compliance("acct", self._RESOLVED)
+
+    def test_a_reviewed_non_sensitive_column_is_grounded(self):
+        """The permit half of the rule. Without it every test here passes on a
+        filter that drops everything, which is not the policy."""
+        filtered, evidence = self._under_pack({
+            "D.S.CUST.CUST_NM":  {"reviewed": True, "tags": ["OPERATIONAL"]},
+            "D.S.PAT.PATIENT_NM": {"reviewed": True, "tags": ["PHI"]},
+        })
+        self.assertEqual([i["value"] for i in filtered["verified"]], ["Acme"])
+        self.assertEqual(evidence["kept"], 1)
+
+    def test_a_reviewed_column_carrying_a_sensitive_tag_is_not(self):
+        filtered, evidence = self._under_pack({
+            "D.S.CUST.CUST_NM":  {"reviewed": True, "tags": ["OPERATIONAL"]},
+            "D.S.PAT.PATIENT_NM": {"reviewed": True, "tags": ["PHI"]},
+        })
+        self.assertEqual(filtered["narrowed"], [],
+                         "a PHI-tagged column's real values reached the prompt")
+        self.assertEqual(evidence["dropped_columns"], ["D.S.PAT.PATIENT_NM"])
+
+    def test_an_unreviewed_classification_is_not_a_clearance(self):
+        """An incomplete classification workflow degrades to suppression, not
+        to exposure -- the whole point of requiring `reviewed`."""
+        filtered, evidence = self._under_pack({
+            "D.S.CUST.CUST_NM": {"reviewed": False, "tags": ["OPERATIONAL"]},
+        })
+        self.assertEqual(filtered["verified"], [])
+        self.assertEqual(evidence["kept"], 0)
+        self.assertEqual(evidence["dropped"], 2)
+
+    def test_an_unclassified_column_is_not_a_clearance_either(self):
+        filtered, evidence = self._under_pack({})
+        self.assertEqual(filtered["verified"], [])
+        self.assertEqual(filtered["narrowed"], [])
+        self.assertEqual(evidence["kept"], 0)
+
+    def test_a_regulated_tenant_with_no_pack_grounds_nothing_at_all(self):
+        """An empty sensitive set must not read as "nothing is sensitive".
+        Without this, disabling the shortcut lets any REVIEWED column through
+        on a tenant whose compliance setup was never finished."""
+        from unittest.mock import patch
+
+        import core.compliance.policy_engine as policy_engine
+        from core.value_resolver import filter_resolved_for_compliance
+
+        with patch.object(policy_engine, "is_regulated", return_value=True), \
+             patch("store.get_compliance_profile",
+                   return_value={"policy_pack_key": ""}), \
+             patch("store.get_classification_map",
+                   return_value={"D.S.CUST.CUST_NM": {"reviewed": True,
+                                                      "tags": ["OPERATIONAL"]}}):
+            filtered, evidence = filter_resolved_for_compliance(
+                "acct", self._RESOLVED)
+
+        self.assertEqual(filtered["verified"], [])
+        self.assertEqual(filtered["narrowed"], [])
+        self.assertEqual(evidence["reason"], "no_policy_pack")
 
 
 class InjectionBlockTests(unittest.TestCase):

@@ -245,8 +245,26 @@ class TestHistorySQLSanitization(unittest.TestCase):
         self.assertIn("_sanitize_sql_for_history", src)
 
     def test_sanitize_is_static_method(self):
-        src = open(ADAPTER_PY, encoding="utf-8").read()
-        self.assertIn("@staticmethod", src)
+        """It must be callable without an adapter instance.
+
+        Was assertIn("@staticmethod", <the whole file>), which is true of any
+        file containing any static method anywhere and says nothing about this
+        one. It would have passed with the decorator on an unrelated helper and
+        this method taking self.
+
+        Why the property matters: the sanitiser is called from two places
+        inside the adapter and is meant to be usable — and testable — on its
+        own, without constructing an adapter and its store.
+        """
+        from gateway.web_adapter import WebAdapter
+
+        self.assertIsInstance(
+            WebAdapter.__dict__["_sanitize_sql_for_history"], staticmethod)
+        # Executed off the class, with no instance in sight.
+        cleaned = WebAdapter._sanitize_sql_for_history(
+            "SELECT * FROM t WHERE name = 'John Smith'")
+        self.assertIsInstance(cleaned, str)
+        self.assertNotIn("John Smith", cleaned)
 
     def test_question_is_not_sanitized(self):
         """User question text must NOT be modified — only the SQL."""

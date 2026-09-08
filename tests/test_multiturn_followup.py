@@ -27,7 +27,6 @@ db_mod.init_db()
 
 CHAT_TMPL        = os.path.join(os.path.dirname(__file__), "..", "portal",  "templates", "portal_chat.html")
 DASH_TMPL        = os.path.join(os.path.dirname(__file__), "..", "portal",  "templates", "portal_dashboard.html")
-INSIGHT_PY       = os.path.join(os.path.dirname(__file__), "..", "core",    "insight.py")
 LLM_PY           = os.path.join(os.path.dirname(__file__), "..", "core",    "llm.py")
 ADAPTER_PY       = os.path.join(os.path.dirname(__file__), "..", "gateway", "web_adapter.py")
 MAIN_PY          = os.path.join(os.path.dirname(__file__), "..", "main.py")
@@ -208,55 +207,198 @@ class TestMainWiring(unittest.TestCase):
 # ── 4  generate_followup_suggestions ─────────────────────────────────────────
 class TestGenerateFollowupSuggestions(unittest.TestCase):
 
-    def test_function_exists_in_insight(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn("async def generate_followup_suggestions", src)
+    # ── Executed, not grepped ────────────────────────────────────────────
+    #
+    # Nine tests here read core/insight.py as text and asserted that fragments
+    # appeared in it somewhere: "len(columns) < 2", "row_count == 0",
+    # "return []", "][:3]", "max_tokens=160", "llm_complete", "json.loads",
+    # 'component="followup_suggestions"'. The file is 1,800 lines, so every one
+    # of them passed on a substring that could have been in an unrelated
+    # function, a comment, or a docstring — and would have kept passing with
+    # the guard it names deleted.
+    #
+    # Two were worse than useless: assertIn("return []") and
+    # assertIn("except Exception") are true of most modules in this repo.
+    #
+    # Below, each guard is exercised through the real coroutine. Only the two
+    # boundaries are mocked: the LLM call and the compliance posture.
 
-    def test_function_returns_empty_on_single_column(self):
-        """Single-column results (scalar answers) get no suggestions."""
-        src = _read(INSIGHT_PY)
-        self.assertIn("len(columns) < 2", src)
+    BRIEF = {
+        "row_count": 6,
+        "columns": ["WHS_NM", "REVENUE_AMT"],
+        "category_breakdown": {
+            "label_column": "WHS_NM", "value_column": "REVENUE_AMT",
+            "top_5": [{"label": "Halifax", "value": 100.0}],
+            "category_count": 3,
+        },
+    }
 
-    def test_function_returns_empty_on_zero_rows(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn("row_count == 0", src)
+    _DEFAULT = object()
 
-    def test_audit_component_is_followup_suggestions(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn('component="followup_suggestions"', src)
+    def suggestions(self, brief=_DEFAULT, reply='["a", "b", "c", "d", "e"]',
+                    regulated=False, raises=None):
+        """Run the real coroutine, mocking only what sits outside it.
 
-    def test_pii_boundary_no_raw_rows(self):
-        """Suggestions must be generated from brief, not raw row values."""
-        src = _read(INSIGHT_PY)
-        # The function signature should have brief and result_scope, not rows
-        fn_start = src.find("async def generate_followup_suggestions")
-        fn_sig   = src[fn_start:fn_start+400]
-        self.assertIn("brief:", fn_sig)
-        self.assertIn("result_scope:", fn_sig)
-        self.assertNotIn("rows: list", fn_sig)
+        Three boundaries: the compliance posture, provider resolution (it
+        reads the encrypted credential store, and raises on a tenant with no
+        API key — which the function's own except-Exception would then swallow
+        into [], making every assertion below pass for the wrong reason), and
+        the model call itself.
 
-    def test_uses_llm_complete(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn("llm_complete", src)
+        The model mock records the audit scope in force while the call is in
+        flight, because that is where `component` actually lives — it is a
+        llm_audit_scope argument, not an llm_complete one.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock, patch
 
-    def test_max_tokens_is_small(self):
-        """Follow-up suggestions use a small token budget."""
-        src = _read(INSIGHT_PY)
-        self.assertIn("max_tokens=160", src)
+        import core.compliance.policy_engine as policy_engine
+        import core.llm as llm
+        from core.insight import generate_followup_suggestions
+        from core.llm_audit import _AUDIT_SCOPE
 
-    def test_failure_returns_empty_list(self):
-        src = _read(INSIGHT_PY)
-        # Exceptions must return [] not raise
-        self.assertIn("return []", src)
-        self.assertIn("except Exception", src)
+        self.audit_scope = {}
 
-    def test_suggestions_capped_at_3(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn("][:3]", src)
+        def _respond(*_args, **_kwargs):
+            self.audit_scope = dict(_AUDIT_SCOPE.get() or {})
+            if raises:
+                raise raises
+            return (reply, 1, 1)
 
-    def test_json_output_parsing(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn("json.loads", src.replace("_json.loads", "json.loads"))
+        call = AsyncMock(side_effect=_respond)
+        self.last_call = call
+        with patch.object(llm, "llm_complete", new=call), \
+             patch.object(llm, "resolve_provider",
+                          return_value=("openai", "gpt-4o-mini", "k", {})), \
+             patch.object(policy_engine, "is_regulated", return_value=regulated):
+            return asyncio.run(generate_followup_suggestions(
+                brief=self.BRIEF if brief is self._DEFAULT else brief,
+                question="revenue by warehouse", result_scope={}, db_cfg={},
+                account_id="acct"))
+
+    def prompt(self):
+        """The user message the function actually built."""
+        return self.last_call.await_args.args[1]
+
+    def test_it_suggests_something_for_an_ordinary_result(self):
+        # The control. Without it, every test below passes on a function that
+        # returns [] unconditionally.
+        self.assertEqual(self.suggestions(), ["a", "b", "c"])
+
+    def test_suggestions_are_capped_at_three(self):
+        self.assertEqual(
+            self.suggestions(reply='["a","b","c","d","e","f","g"]'),
+            ["a", "b", "c"])
+
+    def test_a_single_column_result_gets_none(self):
+        # A scalar answer has nothing to break down.
+        self.assertEqual(
+            self.suggestions({**self.BRIEF, "columns": ["REVENUE_AMT"]}), [])
+
+    def test_a_zero_row_result_gets_none(self):
+        self.assertEqual(self.suggestions({**self.BRIEF, "row_count": 0}), [])
+
+    def test_an_empty_brief_gets_none(self):
+        self.assertEqual(self.suggestions({}), [])
+
+    def test_a_missing_brief_gets_none_rather_than_raising(self):
+        # A caller with no brief at all passes None, and `brief.get` on it
+        # would raise from OUTSIDE the try -- so this one guard is the
+        # difference between no chips and no answer.
+        self.assertEqual(self.suggestions(None), [])
+
+    def test_a_repeated_suggestion_is_not_shown_twice(self):
+        self.assertEqual(
+            self.suggestions(reply='["same", "same", "other", "third"]'),
+            ["same", "other", "third"])
+
+    def test_an_overlong_suggestion_is_trimmed_not_dropped(self):
+        # These render as chips in a row; one that wraps to three lines breaks
+        # the layout, and dropping it silently leaves the row short.
+        got = self.suggestions(reply='["%s", "b", "c"]' % ("x" * 200))
+        self.assertEqual([len(s) for s in got], [80, 1, 1])
+
+    def test_the_model_is_not_even_called_for_those(self):
+        # The guards must short-circuit, not filter afterwards: reaching the
+        # LLM at all is the egress this function is careful about.
+        self.suggestions({**self.BRIEF, "row_count": 0})
+        self.last_call.assert_not_awaited()
+
+    def test_a_regulated_tenant_gets_none(self):
+        self.assertEqual(self.suggestions(regulated=True), [])
+
+    def test_and_the_model_is_not_called_for_a_regulated_tenant(self):
+        self.suggestions(regulated=True)
+        self.last_call.assert_not_awaited()
+
+    def test_a_failing_model_costs_the_suggestions_not_the_answer(self):
+        self.assertEqual(self.suggestions(raises=RuntimeError("boom")), [])
+
+    def test_a_reply_that_is_not_json_costs_the_suggestions_not_the_answer(self):
+        self.assertEqual(self.suggestions(reply="not json at all"), [])
+
+    def test_the_token_budget_stays_small(self):
+        # Asserted on the call the function actually makes.
+        self.suggestions()
+        self.assertEqual(self.last_call.await_args.kwargs.get("max_tokens"), 160)
+
+    def test_the_audit_names_this_component(self):
+        # Read off the scope that was actually in force during the call, not
+        # off the source text -- the egress row is filed under this name.
+        self.suggestions()
+        self.assertEqual(self.audit_scope.get("component"),
+                         "followup_suggestions")
+
+    def test_no_raw_row_value_can_reach_the_prompt(self):
+        """The PII boundary, asserted on the signature rather than on a slice
+        of source text 400 characters wide."""
+        import inspect
+
+        from core.insight import generate_followup_suggestions
+
+        parameters = inspect.signature(generate_followup_suggestions).parameters
+        self.assertIn("brief", parameters)
+        self.assertIn("result_scope", parameters)
+        self.assertNotIn("rows", parameters,
+                         "this function must never receive raw result rows")
+
+    # ── The PII boundary, on the prompt that was actually built ──────────
+    #
+    # Category labels DO reach the model -- that is the grounding the whole
+    # function exists for. What must not reach it is a label drawn from a
+    # sensitive column, or the redaction sentinel standing in for one. The
+    # three tests below fix all three halves of that rule, so weakening any
+    # one of them fails here rather than shipping.
+
+    def test_a_safe_category_label_does_reach_the_model(self):
+        # The control. Without it the two tests below pass on a prompt that
+        # carries no labels at all.
+        self.suggestions()
+        self.assertIn("Halifax", self.prompt())
+
+    def test_a_label_from_a_sensitive_column_does_not(self):
+        self.suggestions({
+            **self.BRIEF,
+            "columns": ["PATIENT_NAME", "REVENUE_AMT"],
+            "category_breakdown": {"label_column": "PATIENT_NAME",
+                                   "top_5": [{"label": "Jane Roe", "value": 1.0}]},
+        })
+        self.assertNotIn("Jane Roe", self.prompt())
+
+    def test_the_redaction_sentinel_never_reaches_the_model(self):
+        # Upstream masking replaces a value with this exact string; forwarding
+        # it would tell the model a segment exists and was hidden.
+        self.suggestions({
+            **self.BRIEF,
+            "category_breakdown": {
+                "label_column": "WHS_NM",
+                "top_5": [{"label": "redacted segment", "value": 1.0},
+                          {"label": "Halifax", "value": 2.0}],
+            },
+        })
+        prompt = self.prompt()
+        self.assertNotIn("redacted segment", prompt)
+        self.assertIn("Halifax", prompt)
 
 
 # ── 5  portal_chat.html follow-up rendering ───────────────────────────────────
@@ -374,13 +516,12 @@ class TestDashboardMaximize(unittest.TestCase):
 # ── 8  LLM audit component registration ──────────────────────────────────────
 class TestAuditComponent(unittest.TestCase):
 
-    def test_followup_component_in_insight(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn('"followup_suggestions"', src)
-
-    def test_followup_uses_llm_audit_scope(self):
-        src = _read(INSIGHT_PY)
-        self.assertIn("llm_audit_scope", src)
+    # The two greps that were here -- '"followup_suggestions"' in the module
+    # source, and "llm_audit_scope" in the module source -- are replaced by
+    # TestGenerateFollowupSuggestions.test_the_audit_names_this_component,
+    # which reads the scope actually in force while the model call is in
+    # flight. Either grep passed on a match anywhere in 1,800 lines, including
+    # in the docstring that names the component.
 
     def test_history_injection_uses_existing_sql_gen_scope(self):
         """History is injected into the existing sql_generation scope, not a new one."""

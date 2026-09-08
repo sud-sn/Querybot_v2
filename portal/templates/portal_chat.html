@@ -2133,6 +2133,22 @@ function _buildAnnotationMarkPoints(payload, labels, values) {
   return points;
 }
 
+function _offeredChartTypes(payload, everyType) {
+  // Which type buttons a reader may press. renderable_types is what the spec
+  // says this RESULT can honestly be drawn as; allowed_types is the older,
+  // wider list; and with neither we fall back to offering everything.
+  //
+  // Named rather than left inline because it is an invariant worth testing:
+  // offering a type the data cannot support ships a button that draws an empty
+  // chart. The test for it used to be assertIn("filter", <the page source>),
+  // which is true of any page containing the word.
+  const p = payload || {};
+  const allowed = Array.isArray(p.renderable_types) && p.renderable_types.length
+    ? p.renderable_types
+    : (Array.isArray(p.allowed_types) ? p.allowed_types : everyType);
+  return everyType.filter(kind => allowed.includes(kind));
+}
+
 function buildChartOption(payload) {
   let   rows        = Array.isArray(payload?.rows) ? payload.rows : [];
   const xKey        = payload?.x_key;
@@ -3153,12 +3169,10 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   // Type toggle
   const TYPES = ['bar', 'line', 'area', 'pie', 'donut', 'scatter']
     .map(k => ({k, label: enumLabel('charttype', k)}));
-  const allowed = Array.isArray(stored().renderable_types) && stored().renderable_types.length
-    ? stored().renderable_types
-    : (Array.isArray(stored().allowed_types) ? stored().allowed_types : TYPES.map(x => x.k));
   // `x`, not `t`: t is the translator in this scope, and shadowing it inside a
   // callback is how a lookup silently becomes whatever the callback iterates.
-  const visibleTypes = TYPES.filter(x => allowed.includes(x.k));
+  const _offered = _offeredChartTypes(stored(), TYPES.map(x => x.k));
+  const visibleTypes = TYPES.filter(x => _offered.includes(x.k));
   const typeHtml = visibleTypes.map(x =>
     `<button type="button" class="ctt-btn${ct===x.k?' ctt-active':''}" data-type="${x.k}">${escHtml(x.label)}</button>`
   ).join('');

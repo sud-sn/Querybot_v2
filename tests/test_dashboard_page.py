@@ -799,12 +799,49 @@ class TestTheTranslatorIsNotShadowedInTheScript:
     def test_the_chart_type_buttons_call_the_translator(self):
         """`DASH_TYPES.map(t => ...)` shadowed the page's own t() inside the
         template literal, so calling t('ui.enum...') there would have invoked
-        the loop variable -- a string -- as a function."""
+        the loop variable -- a string -- as a function.
+
+        Was pinned to one exact expression, `DASH_TYPES.filter(kind =>`, which
+        is a code shape rather than the invariant: extracting that filter into
+        a named helper broke this test while the shadowing it guards against
+        was no closer to happening. Asserted on the invariant now -- the
+        translator is called for both button rows, and the variable it is
+        called with is not named `t`.
+        """
+        import re
+
         source = TEMPLATE.read_text(encoding="utf-8")
         script = source[source.index("<script>"):]
-        assert "DASH_TYPES.filter(t =>" not in script
-        assert "DASH_TYPES.filter(kind =>" in script
-        assert script.count("t('ui.enum.charttype.' + kind)") == 2
+
+        calls = re.findall(r"\bt\('ui\.enum\.charttype\.' \+ (\w+)\)", script)
+        assert len(calls) == 2, (
+            f"expected the inline row and the modal row to label their "
+            f"buttons through the translator, found {calls}")
+        assert "t" not in calls, (
+            "the loop variable is named `t`, which shadows the page's "
+            "translator inside the template literal that calls it")
+
+    def test_nothing_on_this_page_binds_a_parameter_named_t(self):
+        """The general form of the bug above. `t` is a module-level function on
+        this page; any callback that takes a parameter of that name shadows it
+        for its whole body, and the failure is a TypeError at click time rather
+        than at load."""
+        import re
+
+        source = TEMPLATE.read_text(encoding="utf-8")
+        script = source[source.index("<script>"):]
+
+        offenders = []
+        for pattern in (r"(?<![\w.$])t\s*=>",            # t => ...
+                        r"\(\s*t\s*\)\s*=>",              # (t) => ...
+                        r"\(\s*t\s*,",                    # (t, x) => / function (t, x)
+                        r",\s*t\s*\)\s*(?:=>|\{)"):       # (x, t) => / function (x, t) {
+            for match in re.finditer(pattern, script):
+                line = script[:match.start()].count("\n") + 1
+                offenders.append((line, match.group(0).strip()))
+        assert not offenders, (
+            f"these bind a parameter named `t`, shadowing the translator: "
+            f"{offenders}")
 
     def test_the_page_has_an_html_escaper_now(self):
         """Every innerHTML on this page was built without one."""

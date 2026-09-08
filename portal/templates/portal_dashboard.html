@@ -466,6 +466,22 @@ function isTemporalLabel(v){
 }
 function truncateLabel(l, n=16){ const s=String(l??''); return s.length>n?s.slice(0,n-1)+'…':s; }
 
+function _offeredChartTypes(payload, everyType) {
+  // Which type buttons a reader may press. renderable_types is what the spec
+  // says this RESULT can honestly be drawn as; allowed_types is the older,
+  // wider list; and with neither we fall back to offering everything.
+  //
+  // Named rather than left inline because it is an invariant worth testing:
+  // offering a type the data cannot support ships a button that draws an empty
+  // chart. The test for it used to be assertIn("filter", <the page source>),
+  // which is true of any page containing the word.
+  const p = payload || {};
+  const allowed = Array.isArray(p.renderable_types) && p.renderable_types.length
+    ? p.renderable_types
+    : (Array.isArray(p.allowed_types) ? p.allowed_types : everyType);
+  return everyType.filter(kind => allowed.includes(kind));
+}
+
 function buildDashboardOption(payload){
   const rows     = payload.rows || [];
   const xKey     = payload.x_key;
@@ -750,10 +766,7 @@ function mountDashChartControls(ctrlRow) {
   if (!payload) return;
   const ct  = payload.chart_type || 'bar';
   const pal = payload.color_palette || 'default';
-  const allowed = Array.isArray(payload.renderable_types) && payload.renderable_types.length
-    ? payload.renderable_types
-    : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
-  const visibleTypes = DASH_TYPES.filter(kind => allowed.includes(kind));
+  const visibleTypes = _offeredChartTypes(payload, DASH_TYPES);
 
   // `kind`, not `t`: t is the translator on this page now, and an arrow
   // parameter named t would shadow it inside the template literal below.
@@ -870,10 +883,7 @@ function openChartModal(cardEl) {
   const ctrlEl = document.getElementById('chart-modal-ctrl');
   const ct  = payload.chart_type  || 'bar';
   const pal = payload.color_palette || 'default';
-  const modalAllowed = Array.isArray(payload.renderable_types) && payload.renderable_types.length
-    ? payload.renderable_types
-    : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
-  const modalTypes = DASH_TYPES.filter(kind => modalAllowed.includes(kind));
+  const modalTypes = _offeredChartTypes(payload, DASH_TYPES);
   ctrlEl.innerHTML = modalTypes.map(kind =>
     `<button class="dctt-btn${ct===kind?' dctt-active':''}" data-type="${kind}">${escHtmlDash(t('ui.enum.charttype.' + kind))}</button>`
   ).join('')

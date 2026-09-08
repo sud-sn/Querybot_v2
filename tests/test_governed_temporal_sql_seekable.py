@@ -501,20 +501,48 @@ class TestGapFillIsNotRepeated(unittest.TestCase):
         whether the seeding worked. What it should pin is that the ledger the
         preload fills is the ledger coverage reads.
         """
+        import ast
         import inspect
+
         import core.query_pipeline as query_pipeline
 
-        source = inspect.getsource(query_pipeline)
-        self.assertEqual(
-            source.count("guarantee_table_coverage("),
-            source.count("already_injected"),
-            "every coverage call site must share the request ledger",
-        )
-        self.assertIn(
-            "_injected_kb_tables: set[str] = set(_preloaded_tables)",
-            inspect.getsource(query_pipeline._handle_query_impl),
-            "the ledger must start holding what the preload already sent",
-        )
+        tree = ast.parse(inspect.getsource(query_pipeline))
+
+        # Every CALL, found by walking the syntax rather than counting words.
+        # The previous version compared source.count("guarantee_table_coverage(")
+        # against source.count("already_injected"), which is equal at 0 == 0 --
+        # so it passed if the feature were deleted outright -- and equal again
+        # if one call site dropped the ledger while an unrelated line gained
+        # the word.
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)
+                 and getattr(node.func, "id", "") == "guarantee_table_coverage"]
+        self.assertGreaterEqual(len(calls), 4,
+                                "the coverage call sites have disappeared")
+
+        ledgers = set()
+        for call in calls:
+            passed = {kw.arg for kw in call.keywords}
+            self.assertIn("already_injected", passed,
+                          f"a coverage call at line {call.lineno} does not "
+                          f"share the request ledger")
+            argument = next(kw.value for kw in call.keywords
+                            if kw.arg == "already_injected")
+            ledgers.add(ast.unparse(argument))
+        self.assertEqual(len(ledgers), 1,
+                         f"the call sites read different ledgers: {ledgers}")
+
+        # And the one ledger starts holding what the preload already sent.
+        impl = next(node for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "_handle_query_impl")
+        seeds = [ast.unparse(node.value) for node in ast.walk(impl)
+                 if isinstance(node, ast.AnnAssign)
+                 and getattr(node.target, "id", "") == "_injected_kb_tables"
+                 and node.value is not None]
+        self.assertEqual(len(seeds), 1, seeds)
+        self.assertIn("_preloaded_tables", seeds[0],
+                      "the ledger must start holding what the preload sent")
 
     def test_a_preloaded_table_is_never_gap_filled_on_top_of_itself(self):
         """A ledger seeded from the preload has to suppress the re-fetch.
