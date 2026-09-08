@@ -2977,8 +2977,12 @@ function buildChartOption(payload) {
   // ── Scatter ───────────────────────────────────────────────────────────────
   if (type === 'scatter') {
     const y2 = yKeys[1];
-    option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,yKey,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
-    option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,y2,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
+    // Named through _chartColumnLabel, like the tooltip on the line below it
+    // already was. Set straight from the payload's raw y_keys, these two axis
+    // titles printed "BAL_VAL_AMT" beside a tooltip that said "Balance Value
+    // Amount" -- the same two numbers, labelled two ways, on one chart.
+    option.xAxis = { type:'value', name: _chartColumnLabel(payload, yKey), nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,yKey,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
+    option.yAxis = { type:'value', name: _chartColumnLabel(payload, y2),  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,y2,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[_chartNumber(r?.[yKey]),_chartNumber(r?.[y2]),String(xKey ? (r?.[xKey]??'') : '')]), itemStyle:{color:colors[0], opacity:.8} }];
     option.tooltip.formatter = p => `<strong>${escHtml(xLabel)}: ${escHtml(String(p.value?.[2] ?? t('ui.chart.unspecified')))}</strong><br/>${escHtml(_chartColumnLabel(payload,yKey||'X'))}: <strong>${valueFmt(p.value?.[0], yKey)}</strong><br/>${escHtml(_chartColumnLabel(payload,y2||'Y'))}: <strong>${valueFmt(p.value?.[1], y2)}</strong>`;
     return option;
@@ -2988,7 +2992,11 @@ function buildChartOption(payload) {
   if (type === 'line' || type === 'area') {
     const isArea = type === 'area';
     option.legend = yKeys.length > 1
-      ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys, icon: 'roundRect' }
+      ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys, icon: 'roundRect',
+          // Drawn through _chartColumnLabel; the series NAME stays the raw
+          // key, because ECharts uses it as the series identity for colour,
+          // selection and tooltip lookup. Only what the reader sees changes.
+          formatter: name => _chartColumnLabel(payload, name) }
       : undefined;
     option.tooltip.trigger = 'axis';
     option.tooltip.formatter = yKeys.length > 1
@@ -3025,7 +3033,11 @@ function buildChartOption(payload) {
   // ── Bar (default) ─────────────────────────────────────────────────────────
   const isMulti = yKeys.length > 1;
   option.legend = isMulti
-    ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys, icon: 'roundRect' }
+    ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys, icon: 'roundRect',
+          // Drawn through _chartColumnLabel; the series NAME stays the raw
+          // key, because ECharts uses it as the series identity for colour,
+          // selection and tooltip lookup. Only what the reader sees changes.
+          formatter: name => _chartColumnLabel(payload, name) }
     : undefined;
   option.tooltip.trigger = isMulti ? 'axis' : 'item';
   if (isMulti) option.tooltip.formatter = multiTooltipFmt;
@@ -3357,8 +3369,13 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   const dtId = `dt-${++_dtIdCounter}`;
   const colFormats = _columnFormatMap(data);
 
+  // The header a reader reads, in business terms; the key stays raw because
+  // every cell lookup, the column-format map and the CSV export use it. The
+  // card printed "Warehouse Name" in its prose and "WHS_NM" in the header
+  // directly below it.
+  const headerLabels = data.header_labels || {};
   const headHtml = headers.map((h, i) =>
-    `<th data-col="${i}">${escHtml(h)}</th>`
+    `<th data-col="${i}">${escHtml(headerLabels[h] || h)}</th>`
   ).join('');
 
   const bodyHtml = data.rows.map((r, rowIndex) =>

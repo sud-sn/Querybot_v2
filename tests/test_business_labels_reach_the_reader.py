@@ -42,6 +42,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+import pytest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -589,6 +591,152 @@ class TestTheResolverAnswersToBothSpellings(unittest.TestCase):
         for column in ("WHS_NM", "BAL_VAL_AMT"):
             with self.subTest(column=column):
                 self.assertEqual(self.resolve(display_label(column))[0], column)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# F11 · the scatter's axes and the multi-series legend, F15 · the table header
+# ══════════════════════════════════════════════════════════════════════════════
+
+dukpy = pytest.importorskip(
+    "dukpy",
+    reason="a JavaScript engine is required to EXECUTE the chart and table "
+           "builders; what a header says is only knowable by building it",
+)
+from tests.test_chart_annotation_language import _build  # noqa: E402
+
+
+class TestTheChartsBrowserSideLabels:
+    """F11 · two axis titles and every multi-series legend, set from raw keys.
+
+    The scatter's axis names came straight off payload.y_keys, bypassing even
+    _chartColumnLabel -- which the tooltip on the very next line already used.
+    So one chart carried "BAL_VAL_AMT" on its axis and "Balance Value Amount"
+    in the tooltip for the same number.
+    """
+
+    ROWS = [{"WHS_NM": "Dallas", "BAL_VAL_AMT": 13_557_410.0, "ORD_QTY": 42},
+            {"WHS_NM": "Chennai", "BAL_VAL_AMT": 9_100_000.0, "ORD_QTY": 31}]
+
+    def option(self, chart_type, expression, question):
+        from core.chart import build_chart_payload
+
+        payload = build_chart_payload(self.ROWS, chart_type, question=question)
+        return json.loads(_build("portal_chat.html", "en", payload,
+                                 f"JSON.stringify({expression})"))
+
+    def test_the_scatter_names_both_axes_in_business_terms(self):
+        names = self.option("scatter", "[opt.xAxis.name, opt.yAxis.name]",
+                            "balance against order quantity by warehouse")
+        assert names == ["Order Quantity", "Balance Value Amount"], names
+
+    def test_the_scatter_axis_agrees_with_its_own_tooltip(self):
+        # The two were built from different sources on adjacent lines.
+        from core.chart import build_chart_payload
+
+        payload = build_chart_payload(
+            self.ROWS, "scatter",
+            question="balance against order quantity by warehouse")
+        drawn = _build("portal_chat.html", "en", payload,
+                       "opt.tooltip.formatter({value:[1,2,'Dallas']})")
+        assert json.loads(_build("portal_chat.html", "en", payload,
+                                 "JSON.stringify(opt.xAxis.name)")) in drawn
+
+    def test_the_legend_is_drawn_in_business_terms(self):
+        drawn = self.option(
+            "bar",
+            "(opt.legend && opt.legend.data || []).map(function (n) "
+            "{ return opt.legend.formatter(n) })",
+            "balance and quantity by warehouse")
+        assert drawn == ["Order Quantity", "Balance Value Amount"], drawn
+
+    def test_the_line_charts_legend_too(self):
+        # A separate legend object a few hundred lines up. The two are edited
+        # together and drift apart; asserting only the bar's would have let a
+        # half-applied fix through.
+        drawn = self.option(
+            "line",
+            "(opt.legend && opt.legend.data || []).map(function (n) "
+            "{ return opt.legend.formatter(n) })",
+            "balance and quantity by warehouse over time")
+        assert drawn == ["Order Quantity", "Balance Value Amount"], drawn
+
+    def test_but_the_series_keep_their_raw_identity(self):
+        # ECharts keys colour, selection and tooltip lookup on the series name.
+        # Translating it would break all three, so only what is DRAWN changes.
+        names = self.option("bar", "opt.series.map(function (s) { return s.name })",
+                            "balance and quantity by warehouse")
+        assert names == ["ORD_QTY", "BAL_VAL_AMT"], names
+
+
+# The DOM and formatting boundaries renderDataTable closes over. Stubbed to
+# the shapes the real ones return: none of them decides what a header SAYS,
+# which is the only thing these tests are about.
+_TABLE_STUBS = """
+var window = {qbNum: function (n) { return String(n); }};
+var document = {};
+function escHtml(s) { return String(s == null ? '' : s); }
+function _normaliseColumnKey(k) { return String(k || '').toLowerCase(); }
+function _columnFormatMap() { return new Map(); }
+function _displayFormatSpec() { return {}; }
+function _formatDisplayValue(v) { return String(v == null ? '' : v); }
+function _parseDisplayNumber(v) { return Number(v); }
+function t(id) { return id; }
+function plural(id, n, v) { return String(n); }
+var _dtIdCounter = 0;
+"""
+
+
+class TestTheAnswerTableHeader:
+    """F15 · "Warehouse Name" in the prose, "WHS_NM" in the header beneath it."""
+
+    def payload(self):
+        from core.response_builder import build_assistant_response
+
+        return build_assistant_response(
+            rows=[{"WHS_NM": "Dallas", "BAL_VAL_AMT": 13_557_410.0}],
+            question="balance by warehouse", sql="SELECT 1", duration_ms=1)
+
+    def test_the_payload_carries_a_label_for_every_header(self):
+        data = self.payload()["data"]
+        assert data["header_labels"] == {"WHS_NM": "Warehouse Name",
+                                         "BAL_VAL_AMT": "Balance Value Amount"}
+
+    def test_the_keys_themselves_are_untouched(self):
+        # headers is the key into every row dict, the column-format map and the
+        # CSV export. Renaming it would break the cells, not relabel them.
+        data = self.payload()["data"]
+        assert data["headers"] == ["WHS_NM", "BAL_VAL_AMT"]
+        assert set(data["rows"][0]) == {"WHS_NM", "BAL_VAL_AMT"}
+
+    def test_the_rendered_header_row_reads_in_business_terms(self):
+        # The real renderDataTable, executed.
+        from tests.js_lift import function as lift
+
+        page = (Path(__file__).resolve().parents[1] / "portal" / "templates"
+                / "portal_chat.html").read_text(encoding="utf-8")
+        data = self.payload()["data"]
+        html = dukpy.evaljs("\n".join([
+            _TABLE_STUBS,
+            lift(page, "function renderDataTable(data,"),
+            f"renderDataTable({json.dumps(data)})",
+        ]))
+        assert "<th data-col=\"0\">Warehouse Name</th>" in html, html[:400]
+        assert "WHS_NM" not in html.split("<tbody>")[0], html[:400]
+
+    def test_an_unlabelled_payload_still_renders_its_headers(self):
+        # An older tab, or any caller that predates header_labels.
+        from tests.js_lift import function as lift
+
+        page = (Path(__file__).resolve().parents[1] / "portal" / "templates"
+                / "portal_chat.html").read_text(encoding="utf-8")
+        data = {k: v for k, v in self.payload()["data"].items()
+                if k != "header_labels"}
+        html = dukpy.evaljs("\n".join([
+            _TABLE_STUBS,
+            lift(page, "function renderDataTable(data,"),
+            f"renderDataTable({json.dumps(data)})",
+        ]))
+        assert "WHS_NM" in html
 
 
 if __name__ == "__main__":

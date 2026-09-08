@@ -2656,6 +2656,15 @@ def build_assistant_response(
         "result_scope": ctx.get("result_scope", {}),
         "data": {
             "headers": headers,
+            # The same headers in the tenant's own words, for the <th> the
+            # reader looks at. The card said "Warehouse Name" in its prose and
+            # "WHS_NM" in the table header directly beneath it.
+            #
+            # A separate map rather than a replacement: "headers" is the KEY
+            # into every row dict, the column-format lookup and the CSV export.
+            # Renaming it would break the cells, not just relabel them.
+            "header_labels": {column: _display_label(column) or column
+                              for column in headers},
             "rows": display_rows,
             "total_rows": len(visible_rows),
             "truncated": len(visible_rows) > _PREVIEW_ROW_CAP,
