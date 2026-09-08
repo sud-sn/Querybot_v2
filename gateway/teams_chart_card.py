@@ -45,11 +45,18 @@ _HORIZONTAL_LABEL_LEN = 14
 
 
 def _display_label(column: str) -> str:
-    spaced = str(column or "").replace("_", " ").strip()
-    return " ".join(
-        part.capitalize() if not part.isupper() else part
-        for part in spaced.split()
-    )
+    """The business name for a column, for the card's axis titles and legend.
+
+    A third byte-identical copy of the same prettifier, and the only one that
+    genuinely sets axis titles: the Teams card printed "WHS NM" and "BAL VAL
+    AMT" on the axes while the portal's prose called them "Warehouse Name" and
+    "Balance Value Amount". Delegates to the one implementation, and keeps the
+    old transform as the fallback so a vocabulary failure costs a label rather
+    than the card.
+    """
+    from core.schema_enrichment import display_label
+
+    return display_label(column)
 
 
 def _to_number(value: Any) -> float | None:

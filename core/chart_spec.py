@@ -190,8 +190,32 @@ def _looks_identifier(rows: list[dict], col: str) -> bool:
 
 
 def _display_name(col: str) -> str:
-    spaced = re.sub(r"[_\s]+", " ", str(col or "")).strip()
-    return " ".join(part.capitalize() if not part.isupper() else part for part in spaced.split())
+    """The business name for a column, for the labels a chart carries.
+
+    This was a plain underscore-strip that left an all-caps column all-caps, so
+    the chart's axis title, legend and tooltip said "WHS NM" and "BAL VAL AMT"
+    beside prose that the L4 work had already taught to say "Warehouse Name"
+    and "Balance Value Amount". The same reader, the same answer card, two
+    spellings of the same column.
+
+    The label written here reaches the browser as payload["column_roles"][col]
+    ["label"], which both templates read before their own prettifier.
+
+    Imported lazily: this module's contract is that it does no I/O and imports
+    nothing heavy, and the expansion is only ever needed when a label is being
+    built. display_label carries its own fallback -- it returns the plain
+    title-cased spelling whenever the vocabulary has no opinion or raises -- so
+    there is nothing to catch here, and a second copy of that fallback would
+    only be a second thing to keep in step.
+
+    One deliberate difference from the transform this replaces: it title-cases,
+    so an all-caps token the vocabulary cannot expand now reads "Sku" rather
+    than "SKU". That is the price of the chart and the prose saying the same
+    thing, and the prose already said "Sku".
+    """
+    from core.schema_enrichment import display_label
+
+    return display_label(col)
 
 
 def _terms(text: str) -> list[str]:

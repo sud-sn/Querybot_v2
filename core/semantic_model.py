@@ -33,7 +33,7 @@ from core.naming_convention import match_audit_prefix, match_column_suffix, matc
 from core.vocab_packs import (
     is_dimension_key_column, strip_dimension_key_suffix,
 )
-from core.schema_enrichment import EnrichedColumn, enrich_columns
+from core.schema_enrichment import EnrichedColumn, display_label, enrich_columns
 from core.semantic_plan_utils import required_semantic_tables
 
 log = logging.getLogger(__name__)
@@ -3008,6 +3008,11 @@ def build_runtime_semantic_plan(
     # actual result columns to decide which "Break down by X" chips to show.
     available_dims: list[dict[str, Any]] = []
     _seen_avail: set[tuple[str, str]] = set()
+    # The chip's name is also its id, its find_drill_candidate lookup key and
+    # its drill-SQL alias. Two dimensions resolving to one name would give two
+    # chips one id, and the drill would silently answer with whichever
+    # dimension iterated first.
+    _seen_names: set[str] = set()
     for table in tables:
         src_t = str(table.get("qualified_name") or table.get("table") or "")
         for dim in table.get("dimensions", []) or []:
@@ -3021,8 +3026,35 @@ def build_runtime_semantic_plan(
             if key in _seen_avail:
                 continue
             _seen_avail.add(key)
-            role_label = _business_role_from_column(sk).replace("_", " ") if sk else ""
-            name = role_label.title() if role_label else str(dim.get("name") or dc)
+            # The chip a reader clicks, in the tenant's own words. This was a
+            # token split of the source key, so SUP_DMS_KEY offered "Break down
+            # by Sup" and VND_DMS_KEY "Break down by Vnd" -- WHS_DMS_KEY only
+            # read "Warehouse" because WHS happens to sit in the small entity
+            # prefix table. L4 (c7d0689) named this exact string as the bug and
+            # could not reach it: it fixed the narrative layer's helper, and
+            # this label is built at plan-build time in this module.
+            #
+            # _dimension_label is the in-module rule for declared-name-versus-
+            # role, and using it also revives a fallback that had gone dead --
+            # the loop above already skips a dimension with no source key, so
+            # an admin who curated "Customer Segment" had it overwritten by the
+            # role "Customer".
+            #
+            # The vocabulary is asked about the STRIPPED ROLE, never the source
+            # key: display_label("SUP_DMS_KEY") is "Supplier Dimension Key" and
+            # display_label("PFT_CTR_DMS_KEY") is "Profit Ctr Dimension Key",
+            # both worse than what they replace. And it is asked only when the
+            # name IS the bare role, so the admin's own words are never
+            # rewritten.
+            name, role_label = _dimension_label(sk, dim, dc)
+            if role_label and name == role_label.title():
+                name = display_label(role_label) or name
+            if name.strip().lower() in _seen_names:
+                log.debug(
+                    "Semantic plan: dropping duplicate dimension name %r "
+                    "(%s.%s)", name, dt, dc)
+                continue
+            _seen_names.add(name.strip().lower())
             available_dims.append({
                 "name":              name,
                 "display_table":     dt,

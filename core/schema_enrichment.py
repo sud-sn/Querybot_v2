@@ -11,6 +11,7 @@ keeps official metric approval in the semantic/metric layer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import re
 
 from core.date_roles import date_role_terms, detect_date_role
@@ -766,3 +767,46 @@ def format_column_reference_for_vocab(
         parts.append(f"{item.column} ({'; '.join(hint_bits)})")
 
     return f"  {table_name}: " + "; ".join(parts)
+
+
+log = logging.getLogger("querybot.schema_enrichment")
+
+
+def display_label(column: str) -> str:
+    """The business name for a column, for anything a reader sees.
+
+    This was replace("_", " ").title() in seven places, which turns WHS_NM into
+    "Whs Nm" and BAL_VAL_AMT into "Bal Val Amt": the warehouse's spelling,
+    printed at a reader who never chose it. On a live workspace the narrative
+    said "across 6 whs nm" and offered "Break down by Sup".
+
+    It lives HERE, not in the narrative layer where it was first written,
+    because it is not a narrative concern. enrich_columns is in this module,
+    and the producers that need a business name -- the semantic plan's
+    dimension chips, the chart's axis titles, the KPI caption, the measure
+    clarification buttons -- are spread across core/ and cannot each grow a
+    dependency on the presentation module to reach it. This module imports
+    nothing that imports them.
+
+    Falls back to the plain transform whenever the expansion adds nothing: a
+    column already spelled in words, an infrastructure field, or a vocabulary
+    that has no opinion. Never raises -- a label is not worth an answer.
+
+    Deliberately uncached. The expansion resolves against the tenant's ACTIVE
+    vocabulary, so a process-level cache would serve one tenant's terms to
+    another. About half a millisecond a column.
+    """
+    raw = str(column or "")
+    plain = re.sub(r"\s+", " ", raw.replace("_", " ")).strip().title()
+    if not plain:
+        return ""
+    try:
+        enriched = enrich_columns([raw])
+        expanded = enriched[0].expanded_name if enriched else ""
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Display label for %r fell back to its spelling: %s", raw, exc)
+        return plain
+    # "data platform field: AZ_UPD_TS" is the infra form, not a business name.
+    if not expanded or ":" in expanded:
+        return plain
+    return re.sub(r"\s+", " ", expanded).strip().title()

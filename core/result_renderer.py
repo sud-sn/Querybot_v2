@@ -40,7 +40,7 @@ from core.chart import detect_chart_type, build_chart_payload, build_chart_annot
 from core.response_builder import (
     build_assistant_response, build_column_formats,
     detect_null_metric_issue, detect_zero_match_result,
-    _format_display_value,
+    _display_label, _format_display_value,
 )
 from core.insight import generate_followup_suggestions, compute_data_brief
 from core.answer_confidence import build_answer_confidence
@@ -1049,6 +1049,18 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     )
     if len(rows) == 1 and len(rows[0]) == 1:
         col_name = list(rows[0].keys())[0]
+        # The portal's KPI card guards on this identical condition and labels
+        # the column through the vocabulary. This branch -- the one Slack,
+        # Teams and Zoom take, because none of those adapters defines
+        # send_assistant_response -- printed the raw name, and then printed it
+        # AGAIN underscore-stripped in the footer. One tenant, one question:
+        # the portal said "Balance Value Amount", Slack said "BAL_VAL_AMT"
+        # above "$13,557,410.00" and "BAL VAL AMT" below it.
+        #
+        # col_name itself is deliberately not rebound: it is the key
+        # _format_value uses to detect currency and units, and the
+        # column_formats lookup key. Relabelling it would change the NUMBER.
+        col_label = _display_label(col_name) or col_name
         value = _format_value(
             rows[0][col_name],
             col_name,
@@ -1059,11 +1071,14 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"{greeting}*{display_question}*\n\n"
             f"{coverage_line}"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"  {col_name}\n"
+            f"  {col_label}\n"
             f"  *{value}*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"{conf_text}"
-            f"_{dur_label} · {col_name.replace('_', ' ')}_"
+            # The name is on the caption two lines up. Repeating it in the
+            # footer said the same thing twice in two spellings; the multi-row
+            # branch below has always shown the duration alone.
+            f"_{dur_label}_"
         )
     else:
         greeting = f"*{portal_user.get('name', '')}*\n" if portal_user and portal_user.get('name') else ""

@@ -656,36 +656,19 @@ def _to_float_z(value: Any) -> float:
 def _display_label(column: str) -> str:
     """The business name for a column, for prose a reader sees.
 
-    This was replace("_", " ").title(), which turns WHS_NM into "Whs Nm" and
-    BAL_VAL_AMT into "Bal Val Amt": the warehouse's spelling, printed at a
-    reader who never chose it. On a live workspace the narrative said "across
-    6 whs nm" and offered "Break down by Sup".
+    The implementation moved to core.schema_enrichment.display_label, next to
+    the vocabulary it consults, because six other producers outside this module
+    need the same label and could not reach it here: the semantic plan's
+    dimension chips, the chart's axis titles, the KPI caption, the "what you
+    can ask" list, and the measure clarification buttons all printed the
+    warehouse's spelling because the only copy of this lived in the narrative
+    layer.
 
-    core.schema_enrichment resolves these against the tenant's active
-    vocabulary -- the same expansion that gives the semantic model its measure
-    names -- and nothing in the narrative layer was asking it. About half a
-    millisecond a column, and a narrative names a handful.
-
-    Falls back to the plain transform whenever the expansion adds nothing: a
-    column already spelled in words, an infrastructure field, or a vocabulary
-    that has no opinion. Never raises -- a label is not worth an answer.
+    Kept as a name because every call site in this module reads better for it.
     """
-    raw = str(column or "")
-    plain = re.sub(r"\s+", " ", raw.replace("_", " ")).strip().title()
-    if not plain:
-        return ""
-    try:
-        from core.schema_enrichment import enrich_columns
+    from core.schema_enrichment import display_label
 
-        enriched = enrich_columns([raw])
-        expanded = enriched[0].expanded_name if enriched else ""
-    except Exception as exc:  # noqa: BLE001
-        log.debug("Display label for %r fell back to its spelling: %s", raw, exc)
-        return plain
-    # "data platform field: AZ_UPD_TS" is the infra form, not a business name.
-    if not expanded or ":" in expanded:
-        return plain
-    return re.sub(r"\s+", " ", expanded).strip().title()
+    return display_label(column)
 
 
 def _find_header_by_norm(headers: list[str], norm: str) -> str:

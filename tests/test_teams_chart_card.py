@@ -92,9 +92,12 @@ class BuilderTypeMappingTests(unittest.TestCase):
         el = self._element(build_teams_chart_card(_payload("bar", y_keys=["REVENUE", "COST"])))
         self.assertEqual(el["type"], "Chart.VerticalBar.Grouped")
         self.assertEqual(len(el["data"]), 2)
-        self.assertEqual(el["data"][0]["legend"], "REVENUE")
+        # The legend is a business name now, not the column's spelling: the
+        # card printed "REVENUE"/"COST" on its axes and legend while the
+        # portal's prose for the same answer said "Revenue" and "Cost".
+        self.assertEqual(el["data"][0]["legend"], "Revenue")
         self.assertEqual(el["data"][0]["values"][0], {"x": "North", "y": 1000.5})
-        self.assertEqual(el["data"][1]["legend"], "COST")
+        self.assertEqual(el["data"][1]["legend"], "Cost")
 
     def test_many_labels_switch_to_horizontal_bar(self):
         rows = [{"WHS_NM": f"W{i}", "REVENUE": float(i)} for i in range(1, 12)]
@@ -113,7 +116,7 @@ class BuilderTypeMappingTests(unittest.TestCase):
         for t in ("line", "area", "forecast"):
             el = self._element(build_teams_chart_card(_payload(t)))
             self.assertEqual(el["type"], "Chart.Line", t)
-            self.assertEqual(el["data"][0]["legend"], "REVENUE")
+            self.assertEqual(el["data"][0]["legend"], "Revenue")
             self.assertEqual(el["data"][0]["values"][0], {"x": "North", "y": 1000.5})
 
     def test_pie_and_donut_data_shape(self):
@@ -204,8 +207,8 @@ class BuilderEdgeCaseTests(unittest.TestCase):
                 {
                     "type": "Chart.VerticalBar",
                     "title": "Revenue by warehouse",
-                    "xAxisTitle": "WHS NM",
-                    "yAxisTitle": "REVENUE",
+                    "xAxisTitle": "Warehouse Name",
+                    "yAxisTitle": "Revenue",
                     "colorSet": "categorical",
                     "data": [
                         {"x": "North", "y": 1000.5},

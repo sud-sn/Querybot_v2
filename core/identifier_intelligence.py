@@ -25,6 +25,18 @@ _GENERIC_WORDS: dict[str, str] = {
     "ACCOUNT": "account", "AMOUNT": "amount", "BOOKED": "booked",
     "CALENDAR": "calendar", "CANCELLED": "cancelled", "CODE": "code",
     "CONFIRMED": "confirmed", "COST": "cost", "CREATED": "created",
+    # The bare names SQL gives an unaliased aggregate. "COUNT" is the one that
+    # mattered: it is not in this list, so the compact-code segmenter was free
+    # to shred it into CO + UNT and expand it to "company unit". A tenant
+    # asking "how many orders?" got a KPI card headed Company Unit -- shipped,
+    # live, and produced by the very change that was meant to stop columns
+    # being printed in the warehouse's spelling.
+    #
+    # The rule this list encodes: a token that is already an ordinary word is
+    # never an abbreviation of something else. Its siblings are here beside it
+    # so the next one does not have to be found in production.
+    "COUNT": "count", "SUM": "sum", "AVERAGE": "average",
+    "MEDIAN": "median", "MINIMUM": "minimum", "MAXIMUM": "maximum",
     "CREATION": "creation", "CUSTOMER": "customer", "DATE": "date",
     "DELIVERY": "delivery", "DESCRIPTION": "description", "DISCOUNT": "discount",
     "DUE": "due", "EMPLOYEE": "employee", "ENTITY": "entity", "EXTERNAL": "external",

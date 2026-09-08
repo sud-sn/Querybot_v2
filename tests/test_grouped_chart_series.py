@@ -225,9 +225,15 @@ class TestThePivot(unittest.TestCase):
         # The registration above is keyed on group values. Applied when the
         # pivot did NOT run, it would overwrite a real column's display label
         # with its raw name -- L4, reintroduced through the fix for L5.
+        from core.schema_enrichment import display_label
+
         built = payload(flat(), "revenue by warehouse")
+        # Pinned to the shared rule rather than to a spelling: what matters is
+        # that the column keeps the label the rest of the product gives it.
         self.assertEqual(built["column_roles"]["REVENUE_AMT"]["label"],
-                         "REVENUE AMT")
+                         display_label("REVENUE_AMT"))
+        self.assertNotEqual(built["column_roles"]["REVENUE_AMT"]["label"],
+                            "REVENUE_AMT")
 
     def test_the_totals_survive_the_pivot(self):
         # The invariant: reshaping must not change what the chart adds up to.
@@ -281,7 +287,11 @@ class TestTheControlsStayHonest(unittest.TestCase):
                 for p in PERIODS for w, v in WAREHOUSES]
         spec = infer_chart_spec(
             rows, question="compare revenue and cost by warehouse over 3 months")
-        self.assertTrue(any("COST" in w for w in spec["warnings"]), spec["warnings"])
+        from core.schema_enrichment import display_label
+
+        self.assertTrue(
+            any(display_label("COST_AMT") in w for w in spec["warnings"]),
+            spec["warnings"])
 
     def test_a_scatter_on_a_one_dimensional_result_is_untouched(self):
         rows = [{"WHS_NM": w, "REVENUE_AMT": v, "COST_AMT": v * 0.6}
