@@ -1847,12 +1847,44 @@ def _find_value_matches(rows: list[dict], target: str) -> list[tuple[str, Any]]:
     return list(unique.values())
 
 
+def _column_display_label(column: str) -> str:
+    """The business name a reader was shown for this column, or its spelling.
+
+    Imported lazily and guarded: resolving a column must not depend on the
+    vocabulary being loadable, and a resolver is not worth an answer.
+    """
+    try:
+        from core.schema_enrichment import display_label
+
+        return display_label(column) or str(column or "")
+    except Exception:  # noqa: BLE001
+        return str(column or "")
+
+
 def _resolve_column(rows: list[dict], target: str) -> tuple[str, str]:
     columns = [str(column) for column in rows[0].keys()]
     wanted = _normalise_value(target)
     exact = [column for column in columns if _normalise_value(column) == wanted]
     if len(exact) == 1:
         return exact[0], ""
+
+    # The name the reader was SHOWN. Every surface that names a column now
+    # names it in business terms -- the KPI caption, the chart axis, the drill
+    # chip, the "here is what you can ask" list -- and this resolver understood
+    # only the warehouse's spelling: "balance value amount" came back as "That
+    # field is not present in the current result", for a result whose card had
+    # just called it exactly that.
+    #
+    # It has to be symmetric or the invitation is a trap: a reader shown one
+    # word and required to type another has been told something untrue by the
+    # product itself.
+    labelled = [column for column in columns
+                if _normalise_value(_column_display_label(column)) == wanted]
+    if len(labelled) == 1:
+        return labelled[0], ""
+    if len(labelled) > 1:
+        return "", "That field name is ambiguous. Use the exact result column name."
+
     partial = [
         column for column in columns
         if wanted and (wanted in _normalise_value(column) or _normalise_value(column) in wanted)

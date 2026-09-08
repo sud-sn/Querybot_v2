@@ -37,6 +37,7 @@ genuinely reads a schema from.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -481,6 +482,113 @@ class TestTheScalarReplyOnAChatSurface(unittest.IsolatedAsyncioTestCase):
         text = await self.reply([{"AZ_UPD_TS": "2026-01-01"}])
         self.assertIn("Az Upd Ts", text)
         self.assertNotIn("data platform field", text)
+
+
+class TestTheInvitationIsNotATrap(unittest.TestCase):
+    """F14 · "here is what you CAN ask", in the warehouse's spelling.
+
+    This message is shown to a reader whose question has ALREADY failed, and
+    its example questions exist to be typed straight back. It offered:
+
+        • 'what is the average bal val amt'
+        • 'filter by whs nm'
+
+    Two things had to change together, and either one alone would have been
+    worse than doing nothing. Printing the business name while
+    resolve_result_column still understood only "bal val amt" would hand
+    someone who has failed once a second failure in nicer words -- so the
+    resolver learns the label first, and the hint offers it second.
+
+    The backticked inventory of columns deliberately keeps the raw names: it
+    says what the result HOLDS, and a reader comparing it against a table
+    header or an exported CSV needs the spelling that is in them.
+    """
+
+    SCHEMA = [{"name": "WHS_NM", "type": "nvarchar"},
+              {"name": "BAL_VAL_AMT", "type": "decimal"}]
+    STATS = {"columns": [{"name": "WHS_NM", "sample_values": ["Dallas", "Chennai"]},
+                         {"name": "BAL_VAL_AMT", "min": 0, "max": 9_000_000}]}
+    ROWS = [{"WHS_NM": "Dallas", "BAL_VAL_AMT": 13_557_410.0}]
+
+    def hint(self):
+        from core.result_renderer import _build_cannot_generate_hint
+
+        return _build_cannot_generate_hint(self.SCHEMA, self.STATS)
+
+    def test_the_examples_are_in_business_terms(self):
+        text = self.hint()
+        self.assertIn("average balance value amount", text)
+        self.assertIn("filter by warehouse name", text)
+
+    def test_no_example_asks_for_bal_val_amt(self):
+        for example in re.findall(r"'([^']+)'", self.hint()):
+            with self.subTest(example=example):
+                self.assertNotIn("bal val amt", example)
+                self.assertNotIn("whs nm", example)
+
+    def test_every_example_it_offers_actually_resolves(self):
+        # The assertion that makes the change safe rather than merely prettier.
+        # Each example is fed back through the real resolver, exactly as it
+        # would be if the reader typed it.
+        from core.result_commands import resolve_result_column
+
+        offered = re.findall(r"'([^']+)'", self.hint())
+        self.assertTrue(offered, "the hint offered no examples at all")
+        for example in offered:
+            for phrase, expected in (("balance value amount", "BAL_VAL_AMT"),
+                                     ("warehouse name", "WHS_NM")):
+                if phrase in example:
+                    with self.subTest(example=example):
+                        column, error = resolve_result_column(self.ROWS, phrase)
+                        self.assertEqual(column, expected, error)
+
+    def test_the_column_inventory_keeps_the_real_names(self):
+        text = self.hint()
+        self.assertIn("`WHS_NM`", text)
+        self.assertIn("`BAL_VAL_AMT`", text)
+
+
+class TestTheResolverAnswersToBothSpellings(unittest.TestCase):
+    """core/result_commands.py::_resolve_column — the other half of F14."""
+
+    ROWS = [{"WHS_NM": "Dallas", "BAL_VAL_AMT": 13_557_410.0}]
+
+    def resolve(self, target):
+        from core.result_commands import resolve_result_column
+
+        return resolve_result_column(self.ROWS, target)
+
+    def test_the_business_name_resolves(self):
+        self.assertEqual(self.resolve("balance value amount"), ("BAL_VAL_AMT", ""))
+        self.assertEqual(self.resolve("warehouse name"), ("WHS_NM", ""))
+
+    def test_the_case_the_reader_sees_it_in_resolves_too(self):
+        self.assertEqual(self.resolve("Balance Value Amount"), ("BAL_VAL_AMT", ""))
+
+    def test_the_raw_spelling_still_resolves(self):
+        # The new tier adds a way to succeed; it must not take one away.
+        self.assertEqual(self.resolve("BAL_VAL_AMT"), ("BAL_VAL_AMT", ""))
+        self.assertEqual(self.resolve("bal val amt"), ("BAL_VAL_AMT", ""))
+        self.assertEqual(self.resolve("whs nm"), ("WHS_NM", ""))
+
+    def test_a_column_that_is_not_there_is_still_refused(self):
+        column, error = self.resolve("gross margin percent")
+        self.assertEqual(column, "")
+        self.assertTrue(error)
+
+    def test_a_broken_vocabulary_costs_the_new_tier_not_the_resolver(self):
+        import core.schema_enrichment as se
+
+        with patch.object(se, "enrich_columns", side_effect=RuntimeError("boom")):
+            self.assertEqual(self.resolve("BAL_VAL_AMT"), ("BAL_VAL_AMT", ""))
+
+    def test_the_resolver_and_the_reader_see_the_same_name(self):
+        # The invariant: whatever a surface shows a reader, they can type back.
+        from core.schema_enrichment import display_label
+
+        for column in ("WHS_NM", "BAL_VAL_AMT"):
+            with self.subTest(column=column):
+                self.assertEqual(self.resolve(display_label(column))[0], column)
 
 
 if __name__ == "__main__":

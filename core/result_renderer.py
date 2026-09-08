@@ -400,19 +400,33 @@ def _build_cannot_generate_hint(
     # The quotes are display, added here: a catalogue entry that carried them
     # would be read by the normaliser as a '...' value span and protected from
     # canonicalisation entirely, which is the one thing these must survive.
+    #
+    # In the tenant's own words, not the warehouse's. This told a reader who
+    # had already failed once to ask "what is the average bal val amt" -- the
+    # column's spelling, lower-cased, in a message whose whole purpose is to
+    # show them a question that works.
+    #
+    # Safe to offer only because resolve_result_column now accepts the business
+    # name too (core/result_commands.py::_resolve_column). Before that,
+    # "balance value amount" came back as "That field is not present in the
+    # current result", so printing it here would have handed someone a third
+    # failure in nicer words. The two changes belong together and neither is
+    # correct alone.
     suggestions = []
     if numeric_cols:
-        label = numeric_cols[0].lower().replace("_", " ")
+        label = _display_label(numeric_cols[0]).lower() or numeric_cols[0].lower()
         suggestions += [
             f"'{_t('hint.ask.average', column=label)}'",
             f"'{_t('hint.ask.above_average', column=label)}'",
             f"'{_t('hint.ask.rank', column=label)}'",
         ]
     if text_cols:
-        suggestions.append(
-            f"'{_t('hint.ask.filter', column=text_cols[0].lower().replace('_', ' '))}'"
-        )
+        text_label = _display_label(text_cols[0]).lower() or text_cols[0].lower()
+        suggestions.append(f"'{_t('hint.ask.filter', column=text_label)}'")
 
+    # The backticked list stays the RESULT's column names: it is the
+    # inventory of what the result actually holds, and a reader comparing it
+    # against a table header or a CSV needs the spelling that is in them.
     col_summary = ", ".join(f"`{c['name']}`" for c in schema)
 
     if not text_cols and numeric_cols:
