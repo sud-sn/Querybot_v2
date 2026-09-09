@@ -15,6 +15,7 @@ Covers:
 
 import json
 import tempfile
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -224,6 +225,62 @@ class EntityPropertyTermSyncTests(unittest.TestCase):
         self.assertIsInstance(term_id, int)
         terms = list_terms(account_id, active_only=True)
         self.assertTrue(any(t["term"] == "customer region" for t in terms))
+
+    def test_the_store_sibling_syncs_too(self):
+        """store.confirm_entity_property carries the SAME sync and was missed
+        when graph_api_prop_save was corrected.
+
+        It had the defect twice over: save_term was never imported into
+        config_store, so the call raised NameError before its wrong kwargs
+        could raise TypeError — and `except Exception: pass` swallowed both.
+        The documented "Sync to semantic layer: upsert business_term" had
+        therefore never once happened, on any workspace, and nothing said so.
+        """
+        import store
+
+        store.init_db()
+        # A fresh id per run: the suite shares a database, and asserting
+        # "no term yet" against a fixed id passes once and fails on every
+        # subsequent run.
+        account_id = f"acct-confirm-sync-{os.urandom(4).hex()}"
+        store.upsert_client(account_id, "portal")
+        store.save_entity_property(
+            account_id=account_id, entity_name="CUSTOMER",
+            column_name="CUST_NM", display_name="Customer Name",
+            status="suggested")
+
+        self.assertEqual(
+            [t for t in store.list_terms(account_id)
+             if t["term"] == "customer name"], [])
+
+        store.confirm_entity_property(account_id, "CUSTOMER", "CUST_NM")
+
+        terms = store.list_terms(account_id)
+        self.assertTrue(any(t["term"] == "customer name" for t in terms), terms)
+
+    def test_and_a_sync_failure_is_no_longer_silent(self):
+        """`except Exception: pass` is how this stayed invisible for as long as
+        it did. A fail-open handler in a governed path has to leave a trace."""
+        import logging
+        from unittest.mock import patch
+
+        import store
+        import store.config_store as config_store
+
+        store.init_db()
+        account_id = f"acct-confirm-loud-{os.urandom(4).hex()}"
+        store.upsert_client(account_id, "portal")
+        store.save_entity_property(
+            account_id=account_id, entity_name="CUSTOMER",
+            column_name="CUST_NM", display_name="Customer Name",
+            status="suggested")
+
+        with patch("store.semantic_store.save_term",
+                   side_effect=RuntimeError("boom")), \
+             self.assertLogs(config_store.log, level=logging.ERROR) as caught:
+            store.confirm_entity_property(account_id, "CUSTOMER", "CUST_NM")
+        self.assertTrue(any("Semantic-layer sync FAILED" in m
+                            for m in caught.output), caught.output)
 
     def test_entity_graph_is_not_a_legal_source_value(self):
         # Documents the CHECK constraint so a future change to the allowed

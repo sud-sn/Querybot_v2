@@ -2626,16 +2626,42 @@ def confirm_entity_property(
     # Sync to semantic layer: upsert business_term
     if prop.get("display_name"):
         try:
+            # Deferred import: semantic_store imports from this module, so a
+            # top-level import is a cycle. It was missing entirely, so this
+            # raised NameError on EVERY call and the bare except below swallowed
+            # it -- the documented sync never once happened, and nothing said
+            # so. That is the shape this codebase keeps producing: a fail-open
+            # handler with nothing in it to log.
+            from store.semantic_store import save_term
+
+            # The SAME correction admin/routes.py::graph_api_prop_save
+            # received, applied to the sibling that was missed. column_name,
+            # table_hint and is_active are not parameters of save_term, and
+            # "entity_graph" is not a legal business_term.source -- the CHECK
+            # constraint allows manual / kb_extracted / metric_registry only.
+            # So even with the import present this call raised TypeError, and
+            # would then have raised again on the source value.
+            entity = get_entity(account_id, entity_name)
+            schema_name = (entity or {}).get("schema_name") or ""
+            table_name = (entity or {}).get("table_name") or ""
+            table_fqn = (f"{schema_name}.{table_name}".strip(".")
+                         if table_name else entity_name)
             save_term(
-                account_id   = account_id,
-                term         = prop["display_name"].strip(),
-                column_name  = column_name,
-                table_hint   = entity_name,
-                is_active    = 1,
-                source       = "entity_graph",
+                account_id           = account_id,
+                term                 = prop["display_name"].strip(),
+                canonical_expression = column_name.strip(),
+                tables_involved      = table_fqn,
+                source               = "manual",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # Loud, because "always broken" and "working perfectly" were
+            # indistinguishable from outside for exactly as long as this was
+            # silent.
+            log.error(
+                "Semantic-layer sync FAILED for %s.%s on %s (%s) — the "
+                "confirmed field will not be searchable by its business name",
+                entity_name, column_name, account_id, exc, exc_info=True,
+            )
 
     # Write to semantic_field_feedback as admin-approved at 100%
     # This makes the field show as 100% confirmed in the user portal too
