@@ -264,16 +264,24 @@ class TestTheConcentrationDetector(unittest.TestCase):
 
 
 class TestThePieDrawsEachCategoryOnce(unittest.TestCase):
-    """portal_chat.html — the same defect, in the renderer.
+    """The same defect, in the renderer — on BOTH pages.
 
     Built with ``rows.map``, a grid gave the pie one slice per ROW, so Halifax
     was drawn once per month. ECharts happily draws four "Halifax" slices; the
     legend then keys its percentages by NAME, so the label read whichever row
     came last -- 30% beside a share that is really 60%.
 
-    The real ``buildChartOption`` is lifted out of the real template and
-    EXECUTED here. Nothing in this class reads the template as text.
+    This class was written for portal_chat.html alone, and portal_dashboard.html
+    carried the identical defect for another two sweeps because of it. Every
+    test here runs against both pages now: the dashboard is not a variant of
+    this renderer, it is a second copy of it, and a class that pins one copy is
+    the same missed-siblings pattern as the defect it is testing.
+
+    The real builders are lifted out of the real templates and EXECUTED.
+    Nothing in this class reads a template as text.
     """
+
+    PAGES = ("portal_chat.html", "portal_dashboard.html")
 
     @classmethod
     def setUpClass(cls):
@@ -294,43 +302,83 @@ class TestThePieDrawsEachCategoryOnce(unittest.TestCase):
                "x_key": "WHS_NM", "y_keys": ["REVENUE_AMT"],
                "chart_type": "pie"}
 
-    def slices(self, payload=None):
+    #: An UNEVEN grid, where the defect does more than understate a leader.
+    #: Halifax totals 900 and Calgary 800, so Halifax leads -- but the last row
+    #: of each is 600 and 100, and a name-keyed Map that keeps the last row
+    #: reports Calgary's share as the smaller of the two. The ranking inverts.
+    UNEVEN = {"rows": [{"WHS_NM": name, "REVENUE_AMT": value}
+                       for month, pair in zip(("Jan", "Feb", "Mar"),
+                                              ((100.0, 400.0), (200.0, 300.0),
+                                               (600.0, 100.0)))
+                       for name, value in zip(("Halifax", "Calgary"), pair)],
+              "x_key": "WHS_NM", "y_keys": ["REVENUE_AMT"],
+              "chart_type": "pie"}
+
+    def slices(self, page, payload=None):
         import json
 
         return json.loads(self._build(
-            "portal_chat.html", "en", payload or self.PAYLOAD,
+            page, "en", payload or self.PAYLOAD,
             "JSON.stringify(opt.series[0].data)"))
 
     def test_each_warehouse_gets_exactly_one_slice(self):
-        names = [item["name"] for item in self.slices()]
-        self.assertEqual(sorted(names), ["Calgary", "Halifax", "Vancouver"])
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                names = [item["name"] for item in self.slices(page)]
+                self.assertEqual(sorted(names),
+                                 ["Calgary", "Halifax", "Vancouver"])
 
     def test_the_slice_carries_the_warehouses_whole_total(self):
-        by_name = {item["name"]: item["value"] for item in self.slices()}
-        self.assertEqual(by_name["Halifax"], 4_800_000.0)
-        self.assertEqual(by_name["Vancouver"], 3_600_000.0)
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                by_name = {item["name"]: item["value"]
+                           for item in self.slices(page)}
+                self.assertEqual(by_name["Halifax"], 4_800_000.0)
+                self.assertEqual(by_name["Vancouver"], 3_600_000.0)
 
     def test_the_legend_reports_the_real_share(self):
         # The number the reader sees. 4.8M of 12.8M is 37.5%; drawn per row it
         # read 9.4%, the share of a single month.
-        drawn = self._build("portal_chat.html", "en", self.PAYLOAD,
-                            "opt.legend.formatter('Halifax')")
-        self.assertIn("37.5%", drawn)
-        self.assertNotIn("9.4%", drawn)
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                drawn = self._build(page, "en", self.PAYLOAD,
+                                    "opt.legend.formatter('Halifax')")
+                self.assertIn("37.5%", drawn)
+                self.assertNotIn("9.4%", drawn)
 
-    def test_the_slices_add_up_to_the_whole(self):
-        # A pie is a part-to-whole picture, so this is the invariant that
-        # matters more than any single slice.
-        self.assertEqual(sum(item["value"] for item in self.slices()),
-                         sum(value for _, value in WAREHOUSES) * len(PERIODS))
+    def test_an_uneven_grid_does_not_invert_the_ranking(self):
+        """The case that makes this worse than an understatement.
+
+        A flat grid understates every category by the same factor, so the
+        ORDER survives and only the percentages are wrong. An uneven one does
+        not: whichever category happens to have the largest final row wins the
+        legend regardless of its total.
+        """
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                by_name = {item["name"]: item["value"]
+                           for item in self.slices(page, self.UNEVEN)}
+                self.assertEqual(by_name, {"Halifax": 900.0, "Calgary": 800.0})
+                self.assertGreater(by_name["Halifax"], by_name["Calgary"],
+                                   "the pie names the wrong leader")
+
+    def test_the_total_is_conserved(self):
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                self.assertEqual(
+                    sum(item["value"] for item in self.slices(page)),
+                    sum(value for _, value in WAREHOUSES) * len(PERIODS))
 
     def test_a_result_that_was_already_one_row_per_category_is_unchanged(self):
         one_each = {**self.PAYLOAD,
                     "rows": [{"WHS_NM": name, "REVENUE_AMT": value}
                              for name, value in WAREHOUSES]}
-        self.assertEqual(
-            [(item["name"], item["value"]) for item in self.slices(one_each)],
-            [(name, value) for name, value in WAREHOUSES])
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                self.assertEqual(
+                    [(item["name"], item["value"])
+                     for item in self.slices(page, one_each)],
+                    [(name, value) for name, value in WAREHOUSES])
 
     def test_a_row_with_no_category_still_gets_its_own_slice(self):
         # Grouping must not swallow the unlabelled rows into a neighbour: they
@@ -339,9 +387,114 @@ class TestThePieDrawsEachCategoryOnce(unittest.TestCase):
                   "rows": [{"WHS_NM": "Halifax", "REVENUE_AMT": 10.0},
                            {"WHS_NM": None, "REVENUE_AMT": 30.0},
                            {"WHS_NM": None, "REVENUE_AMT": 20.0}]}
-        by_name = {item["name"]: item["value"] for item in self.slices(blanks)}
-        self.assertEqual(by_name["Unspecified"], 50.0)
-        self.assertEqual(by_name["Halifax"], 10.0)
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                by_name = {item["name"]: item["value"]
+                           for item in self.slices(page, blanks)}
+                self.assertEqual(by_name["Unspecified"], 50.0)
+                self.assertEqual(by_name["Halifax"], 10.0)
+
+
+class TestTheContributionShares(unittest.TestCase):
+    """core/contribution_analysis.compute_contribution — the ninth site.
+
+    It divided every ROW by the grand total, so on a result grouped by a
+    warehouse and a month each label's share was understated by the number of
+    periods and its real share appeared nowhere:
+
+        Apr Toronto 400 -> 23.53%      Halifax's real share is 52.94%
+        Apr Halifax 300 -> 17.65%      and it is on none of these rows
+        May Halifax 300 -> 17.65%
+        ...
+
+    Nothing above it caught this. core/validator._composition_shape_error
+    requires only that SOME Group and SOME AggFunc exist, so a two-key
+    composition passes the shape check.
+
+    The production caller in query_pipeline.py passes no label column at all --
+    `compute_contribution(rows, _val_col)` -- so a fix that only honoured an
+    explicit label_col would have changed nothing where it matters. The label
+    is inferred, and the period is excluded from that inference through the
+    same _looks_temporal the narrative layer uses, rather than a fifth
+    classifier.
+    """
+
+    def setUp(self):
+        from core.contribution_analysis import compute_contribution
+
+        self.compute = compute_contribution
+
+    GRID = [{"MONTH": month, "WHS_NM": name, "REVENUE_AMT": value}
+            for month, pairs in zip(("Apr", "May", "Jun"),
+                                    ((("Halifax", 300.0), ("Toronto", 400.0)),
+                                     (("Halifax", 300.0), ("Toronto", 200.0)),
+                                     (("Halifax", 300.0), ("Toronto", 200.0))))
+            for name, value in pairs]
+
+    def test_each_warehouse_appears_once_with_its_real_share(self):
+        shares = {r["WHS_NM"]: r["contribution_pct"]
+                  for r in self.compute(self.GRID, "REVENUE_AMT")}
+        self.assertEqual(shares, {"Halifax": 52.94, "Toronto": 47.06})
+
+    def test_the_shares_still_add_to_a_hundred(self):
+        total = sum(r["contribution_pct"]
+                    for r in self.compute(self.GRID, "REVENUE_AMT"))
+        self.assertAlmostEqual(total, 100.0, places=1)
+
+    def test_it_works_without_being_told_the_label_column(self):
+        """The production call site passes only the value column."""
+        rows = self.compute(self.GRID, "REVENUE_AMT")
+        self.assertEqual(len(rows), 2, rows)
+
+    def test_and_the_month_is_not_mistaken_for_the_label(self):
+        by_label = {r.get("WHS_NM") for r in self.compute(self.GRID, "REVENUE_AMT")}
+        self.assertEqual(by_label, {"Halifax", "Toronto"})
+
+    def test_a_one_dimensional_result_is_untouched(self):
+        flat = [{"WHS_NM": "Halifax", "REVENUE_AMT": 900.0},
+                {"WHS_NM": "Toronto", "REVENUE_AMT": 800.0}]
+        self.assertEqual(
+            [(r["WHS_NM"], r["contribution_pct"])
+             for r in self.compute(flat, "REVENUE_AMT")],
+            [("Halifax", 52.94), ("Toronto", 47.06)])
+
+    def test_a_measure_that_may_not_be_summed_gets_no_share_at_all(self):
+        """A margin percentage summed across three months is arithmetic on
+        nothing. No answer beats a plausible wrong one."""
+        margins = [{**row, "GRS_MARG_PCT": row["REVENUE_AMT"] / 10.0}
+                   for row in self.GRID]
+        for row in margins:
+            row.pop("REVENUE_AMT")
+        shares = [r["contribution_pct"]
+                  for r in self.compute(margins, "GRS_MARG_PCT")]
+        self.assertEqual(set(shares), {None})
+
+    def test_but_the_rows_survive_so_the_reader_still_sees_the_result(self):
+        margins = [{**row, "GRS_MARG_PCT": row["REVENUE_AMT"] / 10.0}
+                   for row in self.GRID]
+        for row in margins:
+            row.pop("REVENUE_AMT")
+        self.assertEqual(len(self.compute(margins, "GRS_MARG_PCT")), 6)
+
+    def test_two_plain_text_columns_are_left_alone_rather_than_guessed(self):
+        """Warehouse and salesperson are both labels and neither is a period.
+        Picking one would answer a question the reader did not ask."""
+        ambiguous = [{"WHS_NM": "Halifax", "REP_NM": "Ann", "REVENUE_AMT": 10.0},
+                     {"WHS_NM": "Halifax", "REP_NM": "Bob", "REVENUE_AMT": 30.0}]
+        rows = self.compute(ambiguous, "REVENUE_AMT")
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["REP_NM"] for r in rows}, {"Ann", "Bob"})
+
+    def test_the_rolled_up_bucket_is_named_in_the_readers_language(self):
+        from core import i18n
+
+        rows = [{"CAT": f"c{i}", "V": float(10 - i)} for i in range(6)]
+        token = i18n.activate_language("fr")
+        try:
+            labels = [r.get("CAT") for r in self.compute(rows, "V", "CAT", top_n=3)]
+        finally:
+            i18n.deactivate_language(token)
+        self.assertEqual(labels[-1], "Autres (3 éléments)")
 
 
 if __name__ == "__main__":
