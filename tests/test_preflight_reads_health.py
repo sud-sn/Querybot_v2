@@ -266,5 +266,153 @@ class TestThePreflightReadsTheCompliancePosture(unittest.TestCase):
                             for row in printed), printed)
 
 
+class TestThePreflightStaysReadOnly(unittest.TestCase):
+    """The tool's own docstring: "It reads and prints; it changes nothing."
+
+    The readiness block called core.compliance.readiness.assess(), which
+    INSERTs a row into compliance_assessment_run. So every time an operator ran
+    the preflight before a test session it wrote to the tenant's compliance
+    history, and an auditor reading that history could not tell a real
+    assessment from a preflight.
+    """
+
+    def _run(self, latest, users=()):
+        import importlib.util
+        from unittest.mock import patch
+
+        import store
+
+        spec = importlib.util.spec_from_file_location(
+            "_preflight_readonly", Path(__file__).resolve().parents[1]
+            / "deploy" / "preflight_live.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        printed: list[str] = []
+        module.line = lambda mark, label, detail="": printed.append(
+            f"{mark}|{label}|{detail}")
+
+        import core.compliance.readiness as readiness
+
+        def _must_not_run(*a, **kw):
+            raise AssertionError(
+                "the preflight ran a readiness assessment, which writes a row "
+                "to compliance_assessment_run")
+
+        with patch.object(store, "get_client",
+                          return_value={"client_name": "T", "state": "READY",
+                                        "chat_ui_enabled": 1}), \
+             patch.object(store, "get_client_state",
+                          return_value={"schema_dir": "/nonexistent"}), \
+             patch.object(store, "get_compliance_profile",
+                          return_value={"mode": "standard"}), \
+             patch.object(store, "get_latest_assessment", return_value=latest), \
+             patch.object(store, "list_users", return_value=list(users)), \
+             patch.object(readiness, "assess", _must_not_run), \
+             patch("core.compliance.policy_engine.is_regulated",
+                   return_value=False):
+            module.report("acct")
+        return printed, module
+
+    def test_it_does_not_start_an_assessment(self):
+        printed, _ = self._run(None)
+        self.assertTrue(printed)
+
+    def test_it_says_so_when_there_is_none_on_record(self):
+        printed, module = self._run(None)
+        row = next(r for r in printed if "readiness assessment" in r)
+        self.assertTrue(row.startswith(module.WARN), row)
+        self.assertIn("write to the audit history", row)
+
+    def test_a_failing_control_is_named(self):
+        """The block read (…).get("controls") with c.get("id"), and assess()
+        returns "results" keyed "control_key" — so `failing` was always empty
+        and this line could not print on any workspace. Reaching it, every
+        control would have been named "?"."""
+        printed, module = self._run({
+            "created_at": "2026-09-01",
+            "results": [{"control_key": "provider_agreement", "status": "fail"},
+                        {"control_key": "profile_selected", "status": "pass"}],
+        })
+        row = next(r for r in printed if "readiness control" in r)
+        self.assertTrue(row.startswith(module.WARN), row)
+        self.assertIn("provider_agreement", row)
+        self.assertNotIn("?", row.split("|", 2)[2])
+
+    def test_all_passing_says_when_it_was_assessed(self):
+        printed, module = self._run({
+            "created_at": "2026-09-01",
+            "results": [{"control_key": "profile_selected", "status": "pass"}],
+        })
+        row = next(r for r in printed if "readiness control" in r)
+        self.assertTrue(row.startswith(module.OK), row)
+        self.assertIn("2026-09-01", row)
+
+
+class TestThePreflightChecksTheUserPreconditionItNames(unittest.TestCase):
+    """The line said "L1-3 and L9-x need one RESTRICTED and one unrestricted"
+    and then counted rows. Two unrestricted analysts reported [ok]."""
+
+    def _users_row(self, users):
+        import importlib.util
+        from unittest.mock import patch
+
+        import store
+
+        spec = importlib.util.spec_from_file_location(
+            "_preflight_users", Path(__file__).resolve().parents[1]
+            / "deploy" / "preflight_live.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        printed: list[str] = []
+        module.line = lambda mark, label, detail="": printed.append(
+            f"{mark}|{label}|{detail}")
+        allowed = {u["id"]: u.pop("_allowed") for u in users}
+
+        with patch.object(store, "get_client",
+                          return_value={"client_name": "T", "state": "READY",
+                                        "chat_ui_enabled": 1}), \
+             patch.object(store, "get_client_state",
+                          return_value={"schema_dir": "/nonexistent"}), \
+             patch.object(store, "get_compliance_profile", return_value={}), \
+             patch.object(store, "get_latest_assessment", return_value=None), \
+             patch.object(store, "list_users", return_value=users), \
+             patch.object(store, "get_allowed_tables",
+                          side_effect=lambda u: allowed[u["id"]]), \
+             patch("core.compliance.policy_engine.is_regulated",
+                   return_value=False):
+            module.report("acct")
+        return next(r for r in printed if "portal users" in r), module
+
+    UNRESTRICTED = {"id": 1, "role": "admin", "_allowed": None}
+    RESTRICTED = {"id": 2, "role": "analyst", "_allowed": {"DB.S.SALES"}}
+
+    def test_two_unrestricted_users_are_not_enough(self):
+        row, module = self._users_row([dict(self.UNRESTRICTED),
+                                       dict(self.UNRESTRICTED, id=3)])
+        self.assertTrue(row.startswith(module.WARN), row)
+        self.assertIn("RESTRICTED", row)
+
+    def test_two_restricted_users_are_not_enough_either(self):
+        row, module = self._users_row([dict(self.RESTRICTED),
+                                       dict(self.RESTRICTED, id=4)])
+        self.assertTrue(row.startswith(module.WARN), row)
+        self.assertIn("unrestricted", row)
+
+    def test_one_of_each_is(self):
+        row, module = self._users_row([dict(self.UNRESTRICTED),
+                                       dict(self.RESTRICTED)])
+        self.assertTrue(row.startswith(module.OK), row)
+        self.assertIn("1 restricted", row)
+
+    def test_and_the_cases_that_need_it_are_named(self):
+        row, _ = self._users_row([dict(self.UNRESTRICTED),
+                                  dict(self.UNRESTRICTED, id=3)])
+        for case in ("L1-3", "L9-3", "L8-14"):
+            with self.subTest(case=case):
+                self.assertIn(case, row)
+
+
 if __name__ == "__main__":
     unittest.main()

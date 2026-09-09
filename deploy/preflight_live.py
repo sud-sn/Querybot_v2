@@ -216,9 +216,30 @@ def report(account_id: str) -> int:
         users = store.list_users(account_id)
     except Exception:
         users = []
-    line(OK if len(users) >= 2 else WARN, "portal users", f"{len(users)}"
-         + ("" if len(users) >= 2
-            else " — L1-3 and L9-x need one RESTRICTED and one unrestricted"))
+    # Counting users cannot establish the precondition this line NAMES. Two
+    # unrestricted analysts reported "[ok] portal users 2" while L1-3, L9-3 and
+    # L8-14 — every case about a reader seeing less than the whole warehouse —
+    # had nothing to exercise. store.get_allowed_tables returns None for an
+    # unrestricted user and a set for a scoped one, so the posture is readable;
+    # the line just never read it.
+    restricted, unrestricted = [], []
+    for user in users:
+        try:
+            allowed = store.get_allowed_tables(user)
+        except Exception:            # noqa: BLE001 — one bad row is not a verdict
+            continue
+        (unrestricted if allowed is None else restricted).append(user)
+
+    if restricted and unrestricted:
+        line(OK, "portal users",
+             f"{len(users)} — {len(restricted)} restricted, "
+             f"{len(unrestricted)} unrestricted")
+    else:
+        missing = ("a RESTRICTED user" if not restricted
+                   else "an unrestricted user")
+        line(WARN, "portal users",
+             f"{len(users)}, but no {missing} — L1-3, L9-3 and L8-14 compare "
+             f"what two readers can see, so they cannot run here")
 
     # ── 4b · compliance posture ──────────────────────────────────────────
     # Four cases in the plan — L3-1, L3-2, L3-3 and L8-10, the whole Phase-C
@@ -271,15 +292,38 @@ def report(account_id: str) -> int:
                  "the follow-up-suggestion half of L11-31 returns nothing by "
                  "design here — record it as not-run rather than a failure")
 
+        # Reads the last STORED assessment; it does not run a new one.
+        #
+        # Two defects here, and the second is the one that matters. The block
+        # called core.compliance.readiness.assess(), which INSERTs a row into
+        # compliance_assessment_run — so this tool, whose docstring says "It
+        # reads and prints; it changes nothing", wrote to the tenant's
+        # compliance history every time an operator ran it, and an auditor
+        # reading that history could not tell a real assessment from a
+        # preflight.
+        #
+        # And it read (…).get("controls", []) with c.get("id") / c.get("name").
+        # assess() returns {run_id, state, critical_failed, production_failed,
+        # results} and each entry is keyed "control_key", so `failing` was
+        # always empty and the warning below could not print on any workspace.
+        # Even reaching it, every control would have been named "?".
         try:
-            from core.compliance.readiness import assess
-
-            failing = [c for c in (assess(account_id) or {}).get("controls", [])
-                       if str(c.get("status")) not in {"pass", "ok", "n/a"}]
-            if failing:
-                line(WARN, f"{len(failing)} readiness control(s) not passing",
-                     ", ".join(str(c.get("id") or c.get("name") or "?")
-                               for c in failing[:5]))
+            latest = store.get_latest_assessment(account_id)
+            if not latest:
+                line(WARN, "no readiness assessment on record",
+                     "run one from Admin → Compliance; this preflight will not "
+                     "start one, because that would write to the audit history")
+            else:
+                failing = [item for item in (latest.get("results") or [])
+                           if str(item.get("status")) not in {"pass", "ok", "n/a"}]
+                if failing:
+                    line(WARN, f"{len(failing)} readiness control(s) not passing",
+                         ", ".join(str(item.get("control_key") or "?")
+                                   for item in failing[:5])
+                         + f" (assessed {latest.get('created_at', 'unknown')})")
+                else:
+                    line(OK, "readiness controls",
+                         f"all passing as of {latest.get('created_at', 'unknown')}")
         except Exception as exc:      # noqa: BLE001
             line(WARN, "readiness assessment unavailable", type(exc).__name__)
     except Exception as exc:          # noqa: BLE001
