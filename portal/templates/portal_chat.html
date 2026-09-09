@@ -1998,18 +1998,37 @@ function _fmtNum(v) {
   // formatted as "InfinityB".
   if (!Number.isFinite(n)) return String(v ?? '');
   const abs = Math.abs(n);
-  const trim = x => x.toFixed(1).replace(/\.0$/, '');
   // A trillion tier: without it a currency total of 1.2e12 rendered "1200B",
   // which reads as a mistake on an axis.
-  if (abs >= 1e12) return trim(n / 1e12) + 'T';
-  if (abs >= 1e9)  return trim(n / 1e9)  + 'B';
-  if (abs >= 1e6)  return trim(n / 1e6)  + 'M';
-  if (abs >= 1e3)  return trim(n / 1e3)  + 'K';
+  // Was `x.toFixed(1)` plus a hardcoded 'T'/'B'/'M'/'K', which bypassed
+  // window.qbNum entirely and carried two defects on a French page.
+  //
+  // The decimal mark: toFixed writes 1.2 where French writes 1,2.
+  //
+  // The suffix, and this one is not cosmetic: 'B' is a billion in English and
+  // a THOUSAND TIMES more than that in the French long scale, where the
+  // abbreviation is 'Md'. core/i18n.py has carried ui.num.compact.* with that
+  // exact comment since the server's _compact_number was fixed; this copy, and
+  // the identical one on the other page, never asked for it. A French reader
+  // saw "1.2B" for 1.2 billion, which reads as 1.2 x 10^12.
+  const tier = (unit, id) => window.qbNum(n / unit, {max: 1}) + t('ui.num.compact.' + id);
+  if (abs >= 1e12) return tier(1e12, 'trillion');
+  if (abs >= 1e9)  return tier(1e9,  'billion');
+  if (abs >= 1e6)  return tier(1e6,  'million');
+  if (abs >= 1e3)  return tier(1e3,  'thousand');
   if (n === 0) return '0';
   // Below 0.01 a fixed two-decimal format collapses everything to "0", so a
   // chart of rates or conversion fractions drew an axis of zeros. Significant
   // digits keep the magnitude visible instead.
-  if (abs < 0.01) return Number(n.toPrecision(2)).toString();
+  // toString() writes an English decimal point whatever the page's language,
+  // so a French axis of conversion rates read "0.004" beside a "1,2 M" from
+  // the tier above it. The digits are chosen by toPrecision, then written by
+  // qbNum, which knows the locale.
+  if (abs < 0.01) {
+    const kept = Number(n.toPrecision(2));
+    const places = (String(kept).split('.')[1] || '').length;
+    return window.qbNum(kept, {min: places, max: places, grouping: false});
+  }
   return window.qbNum(n, {max: 2});
 }
 function _chartNormKey(v) {

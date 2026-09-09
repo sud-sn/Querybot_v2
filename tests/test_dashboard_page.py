@@ -410,6 +410,50 @@ class TestTheNumberFormatterMatchesTheChatPage:
     def test_infinity_is_not_a_magnitude(self):
         assert self._fmt(TEMPLATE, ["x"]) == ["x"]
 
+    # ── The reader's language ────────────────────────────────────────────
+    #
+    # This class compared the two pages to each other and never to a reader.
+    # Both agreed, and both were wrong in French: `x.toFixed(1)` plus a
+    # hardcoded 'T'/'B'/'M'/'K' bypassed window.qbNum entirely, so the decimal
+    # mark was a dot where French writes a comma, and 'B' was printed for a
+    # billion -- which in the French long scale is a thousand times larger.
+    # core/i18n.py has carried ui.num.compact.* with that exact warning since
+    # the SERVER's _compact_number was fixed; neither browser copy asked for it.
+
+    def test_a_french_reader_gets_french_magnitude_suffixes(self):
+        for template in (TEMPLATE, self.CHAT):
+            got = self._fmt(template, [1_500_000_000, 2_500_000, 3_500], "fr")
+            assert got == ["1,5Md", "2,5M", "3,5k"], (template.name, got)
+
+    def test_and_an_english_reader_is_unchanged(self):
+        for template in (TEMPLATE, self.CHAT):
+            got = self._fmt(template, [1_500_000_000, 2_500_000, 3_500], "en")
+            assert got == ["1.5B", "2.5M", "3.5K"], (template.name, got)
+
+    def test_the_billion_suffix_is_not_the_english_one(self):
+        """The defect that is not cosmetic. "1,5B" on a French page reads as
+        1.5 x 10^12 -- a thousand times the number the query returned."""
+        for template in (TEMPLATE, self.CHAT):
+            assert "B" not in self._fmt(template, [1_500_000_000], "fr")[0]
+
+    def test_the_decimal_mark_is_the_readers(self):
+        for template in (TEMPLATE, self.CHAT):
+            assert self._fmt(template, [2_500_000], "fr") == ["2,5M"]
+            assert self._fmt(template, [2_500_000], "en") == ["2.5M"]
+
+    def test_a_value_below_a_hundredth_is_pointed_the_readers_way_too(self):
+        """The other branch of the same function, which returned
+        Number(...).toString() -- an English decimal point whatever the page's
+        language, drawn on the same axis as the tiers above it."""
+        for template in (TEMPLATE, self.CHAT):
+            assert self._fmt(template, [0.004], "fr") == ["0,004"]
+            assert self._fmt(template, [0.004], "en") == ["0.004"]
+
+    def test_the_two_pages_agree_in_french_as_well(self):
+        cases = self.CASES + [1_500_000_000, 0.00012]
+        assert (self._fmt(TEMPLATE, cases, "fr")
+                == self._fmt(self.CHAT, cases, "fr"))
+
 
 class TestSortingUsesTheRawValue:
 

@@ -983,6 +983,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.num.compact.thousand": {"en": "K", "fr": "k"},
     "ui.num.compact.million": {"en": "M", "fr": "M"},
     "ui.num.compact.billion": {"en": "B", "fr": "Md"},
+    # The browser's _fmtNum has a trillion tier and the server's
+    # _compact_number does not, so this id exists for the browser alone. "T"
+    # is a trillion in English; French writes "Bn" for the long-scale billion,
+    # which is 10^12 -- the same magnitude, a different word.
+    "ui.num.compact.trillion": {"en": "T", "fr": "Bn"},
 
     # ── Proactive messages: digests and alerts ───────────────────────────────
     # These reach a reader who did not ask for them, so they are the LEAST
