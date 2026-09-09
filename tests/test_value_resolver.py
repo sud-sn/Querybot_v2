@@ -643,14 +643,133 @@ class StatusValueGroundingTests(unittest.TestCase):
 
 
 class PipelineWiringGuards(unittest.TestCase):
-    def test_query_pipeline_resolves_before_prompt_build(self):
-        src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("resolve_literals", src)
-        self.assertIn("build_verified_values_injection", src)
-        self.assertIn("build_known_terms", src)
-        self.assertLess(src.index("resolve_literals"), src.index("build_sql_system_prompt("))
-        self.assertIn("verified_values_hint", src)
-        self.assertIn('"source": "value_resolver"', src)
+    """That the resolved values actually reach the model.
+
+    test_query_pipeline_resolves_before_prompt_build was six substring scans
+    over a 7,500-line file plus an index comparison between two of them. None
+    of that can see whether the hint is WIRED. Measured, not assumed: deleting
+    `verified_values_hint` from the context_parts list — which is the entire
+    difference between grounding the model in real cell values and not — left
+    the whole suite green, this guard included. The one thing the resolver
+    exists to do could be disconnected in a one-line diff.
+
+    Two tests replace it, because the invariant has two halves and only one of
+    them can be executed.
+    """
+
+    def test_a_resolved_value_reaches_the_system_prompt(self):
+        """Write site to read site, executed, with nothing handed in between.
+
+        Starts at resolve_literals with only an account and a question, ends at
+        the real build_sql_system_prompt, and asserts the database's own
+        spelling of the value is in the prompt text the model would receive.
+        """
+        import tempfile
+
+        from core.llm import build_sql_system_prompt
+        from core.value_resolver import (
+            build_verified_values_injection, resolve_literals,
+        )
+
+        base = tempfile.mkdtemp()
+        _make_index(base)
+
+        resolved = resolve_literals("acct", "sales for Acme Industries",
+                                    base_dir=base)
+        hint = build_verified_values_injection(resolved)
+        self.assertTrue(hint, "the resolver produced no injection to wire")
+
+        prompt = build_sql_system_prompt(
+            "azure_sql",
+            "\n\n".join(part for part in ("TABLES: SALES", hint) if part),
+            question="sales for Acme Industries",
+        )
+        self.assertIn("Acme Industries", prompt)
+        self.assertIn("VERIFIED FILTER VALUES", prompt)
+
+    def test_and_the_pipeline_puts_that_hint_in_the_prompt_it_builds(self):
+        """The half that cannot be executed, parsed rather than grepped.
+
+        _handle_query_impl is 6,484 lines and reaching this assembly means
+        standing up a warehouse, so the wiring is checked structurally: is
+        `verified_values_hint` one of the ELEMENTS of the list that becomes
+        `context_with_terms`, and is `context_with_terms` what is handed to
+        build_sql_system_prompt?
+
+        A substring scan cannot answer either question — the name appears in
+        the file whether or not it is wired, which is exactly how the deletion
+        above went unnoticed. This fails when someone removes it from the list,
+        and survives the list being reordered or reformatted.
+        """
+        import ast
+        import inspect
+
+        import core.query_pipeline as query_pipeline
+
+        tree = ast.parse(inspect.getsource(query_pipeline))
+
+        assemblies = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(getattr(t, "id", "") == "context_parts" for t in node.targets)
+        ]
+        self.assertEqual(len(assemblies), 1,
+                         "context_parts is assembled in more than one place")
+
+        names = {node.id for node in ast.walk(assemblies[0])
+                 if isinstance(node, ast.Name)}
+        self.assertIn("verified_values_hint", names,
+                      "the resolved values are not among the parts of the "
+                      "prompt context — the model is not grounded in them")
+
+        # And that list is what reaches the prompt builder.
+        joined = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(getattr(t, "id", "") == "context_with_terms" for t in node.targets)
+            and "context_parts" in ast.unparse(node.value)
+        ]
+        self.assertTrue(joined, "context_parts is built and never used")
+
+        prompt_calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "build_sql_system_prompt"
+        ]
+        self.assertTrue(prompt_calls, "nothing builds the SQL system prompt")
+        # EVERY call site, not any of them. The first draft of this used any(),
+        # and a mutation proved the gap: the primary generation call at the top
+        # of the function could be given "" while the two repair-ladder calls
+        # kept the context, and the test stayed green. The repair calls are the
+        # ones that matter least — losing the grounding on the FIRST attempt is
+        # losing it.
+        for call in prompt_calls:
+            with self.subTest(line=call.lineno):
+                self.assertIn("context_with_terms", ast.unparse(call),
+                              "this prompt is built without the assembled "
+                              "context, so the resolved values never reach it")
+
+    def test_the_resolver_runs_before_the_prompt_is_built(self):
+        """Order, on the parsed tree rather than on character offsets.
+
+        The original compared src.index() of two substrings, which is the
+        position of the first MENTION of each — a docstring or an import would
+        satisfy it.
+        """
+        import ast
+        import inspect
+
+        import core.query_pipeline as query_pipeline
+
+        tree = ast.parse(inspect.getsource(query_pipeline))
+        resolve_lines = [node.lineno for node in ast.walk(tree)
+                         if isinstance(node, ast.Call)
+                         and getattr(node.func, "id", "") == "resolve_literals"]
+        prompt_lines = [node.lineno for node in ast.walk(tree)
+                        if isinstance(node, ast.Call)
+                        and getattr(node.func, "id", "") == "build_sql_system_prompt"]
+        self.assertTrue(resolve_lines and prompt_lines)
+        self.assertLess(min(resolve_lines), min(prompt_lines))
 
     def test_discovery_builds_value_index(self):
         src = (ROOT / "admin" / "routes.py").read_text(encoding="utf-8")

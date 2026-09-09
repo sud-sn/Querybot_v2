@@ -206,7 +206,29 @@ class WiringTests(unittest.TestCase):
         webhooks = (root / "gateway" / "webhooks.py").read_text(encoding="utf-8")
         self.assertIn("format_examples_for_prompt(examples, account_id)", pipeline)
         self.assertIn("format_examples_for_prompt(_fb_examples, account_id)", webhooks)
-        self.assertIn("filter_resolved_for_compliance", pipeline)
+        # `assertIn("filter_resolved_for_compliance", pipeline)` was here, and
+        # it is the same defect as the guard it was written beside: the name
+        # appears in a 7,500-line file whether or not the filter is wired to
+        # anything. It passed with verified_values_hint deleted from the
+        # prompt's context_parts -- the entire difference between grounding the
+        # model in real cell values and not.
+        #
+        # tests/test_value_resolver.py::PipelineWiringGuards now checks that
+        # wiring: one test runs resolve_literals through to the real
+        # build_sql_system_prompt and finds the value in the prompt text, and
+        # one parses the assembly rather than searching it for a word.
+        # Asserted here on the CALL, so a filter that stops being applied fails
+        # rather than a file that stops containing a string.
+        import ast
+
+        calls = [node for node in ast.walk(ast.parse(pipeline))
+                 if isinstance(node, ast.Call)
+                 and getattr(node.func, "id", "") == "filter_resolved_for_compliance"]
+        self.assertTrue(calls, "resolved values reach the prompt unfiltered")
+        for call in calls:
+            with self.subTest(line=call.lineno):
+                self.assertIn("account_id", ast.unparse(call),
+                              "the compliance filter cannot know the tenant")
 
 
 if __name__ == "__main__":
