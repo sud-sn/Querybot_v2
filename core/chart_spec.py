@@ -11,6 +11,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.i18n import enum_label, t as _t
+from core.schema_enrichment import display_label
+
 
 _ID_SUFFIX_RE = re.compile(
     r"(?i)(^|_)(id|key|code|num|no|nbr|nr|ref|pk|fk|seq|idx|index|rank|number)$"
@@ -299,14 +302,14 @@ def _composition_measures(measures: list[str]) -> list[str]:
 def _pie_incompatibility(rows: list[dict], measure: str | None) -> str:
     """Return why a pie is misleading, or an empty string when it is safe."""
     if not measure:
-        return "A pie chart needs one numeric measure."
+        return _t("ui.chart.warn.pie_needs_measure")
     values = _numeric_values(rows, measure)
     if not values:
-        return "A pie chart needs numeric values."
+        return _t("ui.chart.warn.pie_needs_values")
     if any(value < 0 for value in values):
-        return "Pie charts cannot represent negative values reliably; using a bar chart instead."
+        return _t("ui.chart.warn.pie_negative")
     if sum(values) <= 0:
-        return "Pie charts need a positive total; using a bar chart instead."
+        return _t("ui.chart.warn.pie_nonpositive_total")
     return ""
 
 
@@ -590,7 +593,7 @@ def infer_chart_spec(
     series_col: str | None = None
 
     if not measures:
-        warnings.append("No numeric measure column was found, so a table is safer than a chart.")
+        warnings.append(_t("ui.chart.warn.no_measure"))
     elif len(rows) == 1:
         intent = "kpi"
         recommended = "kpi"
@@ -677,16 +680,14 @@ def infer_chart_spec(
                 y_cols = measures[:2]
                 allowed = ["scatter"] + [t for t in allowed if t != "scatter"]
             else:
-                warnings.append(
-                    "A scatter chart needs at least two numeric measures; showing the closest match instead."
-                )
+                warnings.append(_t("ui.chart.warn.scatter_needs_two"))
         elif requested_type in {"bar", "line", "area"} and x_col:
             recommended = requested_type
             allowed = [requested_type] + [t for t in allowed if t != requested_type]
         else:
-            warnings.append(
-                f"A {requested_type} chart isn't a good fit for this data; showing {recommended} instead."
-            )
+            warnings.append(_t("ui.chart.warn.poor_fit",
+                                requested=enum_label("charttype", requested_type),
+                                recommended=enum_label("charttype", recommended)))
         if "table" not in allowed:
             allowed.append("table")
 
@@ -705,17 +706,18 @@ def infer_chart_spec(
             # The series slot now belongs to the group, so only one measure can
             # be drawn: two dimensions of variation cannot share it.
             if len(y_cols) == 2:
-                warnings.append(
-                    f"Grouped by {roles[series_col]['label']}, so only "
-                    f"{roles[y_cols[0]]['label']} is drawn; "
-                    f"{roles[y_cols[1]]['label']} stays in the table."
-                )
+                warnings.append(_t(
+                    "ui.chart.warn.grouped_two_measures",
+                    series=roles[series_col]["label"],
+                    drawn=roles[y_cols[0]]["label"],
+                    other=roles[y_cols[1]]["label"],
+                ))
             elif len(y_cols) > 2:
-                warnings.append(
-                    f"Grouped by {roles[series_col]['label']}, so only "
-                    f"{roles[y_cols[0]]['label']} is drawn; the other "
-                    f"measures stay in the table."
-                )
+                warnings.append(_t(
+                    "ui.chart.warn.grouped_many_measures",
+                    series=roles[series_col]["label"],
+                    drawn=roles[y_cols[0]]["label"],
+                ))
             y_cols = y_cols[:1]
             # A scatter needs two measures. Leaving it offered after the
             # truncation ships a button that draws an empty chart.
@@ -735,22 +737,20 @@ def infer_chart_spec(
                 recommended = "bar"
                 allowed = ["bar"] + [t for t in allowed
                                      if t not in {"pie", "donut", "bar"}]
-                warnings.append(
-                    f"{roles[y_cols[0]]['label']} cannot be totalled across "
-                    f"the repeated categories, so a share of the whole would "
-                    f"be misleading; showing a bar chart instead."
-                )
+                warnings.append(_t(
+                    "ui.chart.warn.not_totallable",
+                    measure=roles[y_cols[0]]["label"],
+                ))
                 if "table" not in allowed:
                     allowed.append("table")
 
     if x_col and roles.get(x_col, {}).get("is_technical_id"):
-        warnings.append(
-            f"{x_col} looks like a technical identifier; prefer a semantic display column when available."
-        )
+        warnings.append(_t("ui.chart.warn.technical_identifier",
+                            column=display_label(x_col)))
     if recommended in {"pie", "donut"} and len(rows) > 6:
-        warnings.append("Too many categories for a readable pie/donut chart; use bar or table.")
+        warnings.append(_t("ui.chart.warn.too_many_slices"))
     if len(rows) > 50 and recommended == "bar":
-        warnings.append("Large categorical result; a top-N filter or table view may be more readable.")
+        warnings.append(_t("ui.chart.warn.large_result"))
 
     renderable_types = [t for t in allowed if t not in {"table", "kpi"}]
     confidence = 0.92

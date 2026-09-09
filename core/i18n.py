@@ -980,6 +980,103 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Compact KPI magnitudes. French abbreviates a billion as "Md", not "B" --
     # "B" reads as "billion" in the French long scale, which is a thousand
     # times larger.
+    # ── Chart caption warnings (core/chart_spec.py) ─────────────────────────
+    #
+    # These render in the caption slot directly beneath a chart whose tab
+    # labels, axis titles, annotations and headline prose are all translated.
+    # ── The outliers card (core/result_transforms.filter_outliers) ──────────
+    #
+    # These `detail` strings SHADOW a translated id: webhooks sends
+    # `_ol_stats.get("detail") or _t("reply.outliers.none")`, so the French
+    # fallback is only reached when the transform supplies no detail — and it
+    # supplies one for the ordinary "nothing was unusual" outcome.
+    # The KPI card's caption — the most common single-number answer.
+    "ui.kpi.note.null_metric": {
+        "en": "Matching records were found, but this metric has no non-null values.",
+        "fr": "Des enregistrements correspondants ont été trouvés, mais cet indicateur n'a aucune valeur renseignée.",
+    },
+    "ui.kpi.note.no_data": {
+        "en": "No data was returned for the requested period or filters.",
+        "fr": "Aucune donnée n'a été renvoyée pour la période ou les filtres demandés.",
+    },
+    "ui.kpi.note.single_value": {
+        "en": "Single-value result",
+        "fr": "Résultat à valeur unique",
+    },
+    # A clarification option's LABEL. Its value and resolved_question stay
+    # English on purpose -- they are re-planned downstream.
+    "reply.rc.row_option": {
+        "en": "Row {index} in {column}",
+        "fr": "Ligne {index} dans {column}",
+    },
+    "reply.value.which_one": {
+        "en": "Which result value did you mean?",
+        "fr": "De quelle valeur du résultat s'agit-il ?",
+    },
+    "ui.outliers.too_few_rows": {
+        "en": "Outlier detection needs at least 3 rows.",
+        "fr": "La détection de valeurs aberrantes nécessite au moins 3 lignes.",
+    },
+    "ui.outliers.zero_variance": {
+        "en": "All values are equal — no outliers exist.",
+        "fr": "Toutes les valeurs sont identiques — il n'y a aucune valeur aberrante.",
+    },
+    "ui.outliers.none": {
+        "en": "No rows exceed {column} > {mean} + {threshold}×{std} = {cutoff}. The values are relatively evenly distributed.",
+        "fr": "Aucune ligne ne dépasse {column} > {mean} + {threshold}×{std} = {cutoff}. Les valeurs sont réparties de façon relativement homogène.",
+    },
+    "ui.chart.warn.no_measure": {
+        "en": "No numeric measure column was found, so a table is safer than a chart.",
+        "fr": "Aucune colonne de mesure numérique n'a été trouvée : un tableau est plus sûr qu'un graphique.",
+    },
+    "ui.chart.warn.pie_needs_measure": {
+        "en": "A pie chart needs one numeric measure.",
+        "fr": "Un graphique en secteurs nécessite une mesure numérique.",
+    },
+    "ui.chart.warn.pie_needs_values": {
+        "en": "A pie chart needs numeric values.",
+        "fr": "Un graphique en secteurs nécessite des valeurs numériques.",
+    },
+    "ui.chart.warn.pie_negative": {
+        "en": "Pie charts cannot represent negative values reliably; using a bar chart instead.",
+        "fr": "Un graphique en secteurs ne peut pas représenter fidèlement des valeurs négatives : un graphique à barres est utilisé à la place.",
+    },
+    "ui.chart.warn.pie_nonpositive_total": {
+        "en": "Pie charts need a positive total; using a bar chart instead.",
+        "fr": "Un graphique en secteurs nécessite un total positif : un graphique à barres est utilisé à la place.",
+    },
+    "ui.chart.warn.scatter_needs_two": {
+        "en": "A scatter chart needs at least two numeric measures; showing the closest match instead.",
+        "fr": "Un nuage de points nécessite au moins deux mesures numériques : le graphique le plus proche est affiché à la place.",
+    },
+    "ui.chart.warn.poor_fit": {
+        "en": "A {requested} chart isn't a good fit for this data; showing {recommended} instead.",
+        "fr": "Un graphique de type {requested} ne convient pas à ces données : {recommended} est affiché à la place.",
+    },
+    "ui.chart.warn.grouped_two_measures": {
+        "en": "Grouped by {series}, so only {drawn} is drawn; {other} stays in the table.",
+        "fr": "Regroupé par {series} : seul {drawn} est tracé ; {other} reste dans le tableau.",
+    },
+    "ui.chart.warn.grouped_many_measures": {
+        "en": "Grouped by {series}, so only {drawn} is drawn; the other measures stay in the table.",
+        "fr": "Regroupé par {series} : seul {drawn} est tracé ; les autres mesures restent dans le tableau.",
+    },
+    "ui.chart.warn.not_totallable": {
+        "en": "{measure} cannot be totalled across the repeated categories, so a share of the whole would be misleading; showing a bar chart instead.",
+        "fr": "{measure} ne peut pas être totalisé sur les catégories répétées : une part du total serait trompeuse. Un graphique à barres est affiché à la place.",
+    },
+    "ui.chart.warn.technical_identifier": {
+        "en": "{column} looks like a technical identifier; prefer a semantic display column when available.",
+        "fr": "{column} ressemble à un identifiant technique : préférez une colonne d'affichage métier lorsqu'elle existe.",
+    },
+    "ui.chart.warn.too_many_slices": {
+        "en": "Too many categories for a readable pie/donut chart; use bar or table.",
+        "fr": "Trop de catégories pour un graphique en secteurs lisible : utilisez des barres ou un tableau.",
+    },
+    "ui.chart.warn.large_result": {
+        "en": "Large categorical result; a top-N filter or table view may be more readable.",
+        "fr": "Résultat catégoriel volumineux : un filtre top-N ou une vue tableau serait plus lisible.",
+    },
     "ui.num.compact.thousand": {"en": "K", "fr": "k"},
     "ui.num.compact.million": {"en": "M", "fr": "M"},
     "ui.num.compact.billion": {"en": "B", "fr": "Md"},

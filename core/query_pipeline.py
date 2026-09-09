@@ -1752,7 +1752,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             _clarification_prompt = (
                 _clarification_outcome.clarification_prompt
-                or "Which result value did you mean?"
+                or _t("reply.value.which_one")
             )
             if event.user_id:
                 _save_pending_clarification(

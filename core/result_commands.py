@@ -1740,11 +1740,21 @@ def _build_reference_clarification(
                 continue
             seen.add(year_month)
             year, month = year_month
-            label = f"{month_name[month]} {year}"
+            # calendar.month_name is English whatever the reader's language.
+            # The label takes the catalogue's month; the value and the
+            # resolved question keep the English one, because they are
+            # re-planned rather than read.
+            english = f"{month_name[month]} {year}"
+            # Joined in code rather than through a catalogue id, because the
+            # id would be "{month} {year}" in both languages -- a template with
+            # no words of its own, which the "French must differ" guards would
+            # then need allowlisting in two places. Only the month is copy, and
+            # it comes from the catalogue.
+            label = f"{_t(f'date.month.long.{month}')} {year}"
             options.append({
                 "label": label,
-                "value": label,
-                "resolved_question": f"{action} {label}",
+                "value": english,
+                "resolved_question": f"{action} {english}",
             })
         if len(options) > 1:
             options.sort(key=lambda option: option["label"])
@@ -1758,7 +1768,10 @@ def _build_reference_clarification(
             if index in seen_rows or row.get(column) != value:
                 continue
             seen_rows.add(index)
-            label = f"Row {index + 1} in {column}"
+            # The label is the reader's; the value and resolved_question below
+            # stay English because the dispatcher re-plans them.
+            label = _t("reply.rc.row_option", index=index + 1,
+                       column=_column_display_label(column))
             row_options.append({
                 "label": label,
                 "value": f"row {index + 1}",

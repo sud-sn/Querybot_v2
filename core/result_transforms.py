@@ -32,6 +32,9 @@ from __future__ import annotations
 from statistics import mean, stdev
 from typing import Any
 
+from core.i18n import format_decimal, t as _t
+from core.schema_enrichment import display_label
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -153,7 +156,7 @@ def filter_outliers(
         return [], {"ok": False, "reason": "no_metric_col"}
     if len(rows) < 3:
         return [], {"ok": False, "reason": "too_few_rows",
-                    "detail": "Outlier detection needs at least 3 rows."}
+                    "detail": _t("ui.outliers.too_few_rows")}
 
     values = [_to_float(r.get(metric_col)) for r in rows]
     numeric_pairs = [(r, v) for r, v in zip(rows, values) if v is not None]
@@ -170,7 +173,7 @@ def filter_outliers(
         # All values are identical — nothing is an outlier
         return [], {
             "ok": False, "reason": "zero_variance",
-            "detail": "All values are equal — no outliers exist.",
+            "detail": _t("ui.outliers.zero_variance"),
             "mean": round(avg, 2), "std_dev": 0.0,
         }
 
@@ -180,10 +183,17 @@ def filter_outliers(
     if not filtered:
         return [], {
             "ok": False, "reason": "no_outliers",
-            "detail": (
-                f"No rows exceed {metric_col} > "
-                f"{avg:.0f} + {threshold}×{std:.0f} = {cutoff:.0f}. "
-                "The values are relatively evenly distributed."
+            # This string is what the reader sees on the ordinary outcome of
+            # pressing "outliers", so it carries the business name of the
+            # column and the reader's own number format -- not METRIC_COL and
+            # an English decimal point.
+            "detail": _t(
+                "ui.outliers.none",
+                column=display_label(metric_col),
+                mean=format_decimal(avg, 0),
+                threshold=format_decimal(threshold, 1),
+                std=format_decimal(std, 0),
+                cutoff=format_decimal(cutoff, 0),
             ),
             "mean": round(avg, 2),
             "std_dev": round(std, 2),

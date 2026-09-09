@@ -796,11 +796,11 @@ def _build_kpi_payload(
         "display_format": dict(display_formats.get(column) or {}),
         "state": "missing" if (null_issue or scalar_missing) else "ready",
         "note": (
-            "Matching records were found, but this metric has no non-null values."
+            _t("ui.kpi.note.null_metric")
             if null_issue
-            else "No data was returned for the requested period or filters."
+            else _t("ui.kpi.note.no_data")
             if scalar_missing
-            else "Single-value result"
+            else _t("ui.kpi.note.single_value")
         ),
     }
 
