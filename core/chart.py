@@ -143,6 +143,20 @@ def _category_axis(rows: list[dict], text_cols: list[str],
     return text_cols[0]
 
 
+def _axis_label(column: str) -> str:
+    """The business name for an axis title on the PNG chart.
+
+    This is the chart QueryBot posts into Teams, so the axis title is the only
+    thing naming the measure -- there is no <th> beside it and no tooltip to
+    hover. It printed BAL_VAL_AMT. The browser charts have asked
+    display_label since the L4 work; this renderer was missed because it is
+    matplotlib rather than ECharts and shares no code with them.
+    """
+    from core.schema_enrichment import display_label
+
+    return display_label(column)
+
+
 def _to_float(value) -> float | None:
     try:
         raw = str(value).strip().replace("$", "").replace(",", "").replace("%", "")
@@ -329,8 +343,8 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
         x_vals = [_to_float(r.get(x_col)) or 0.0 for r in rows]
         y_vals = [_to_float(r.get(y_col)) or 0.0 for r in rows]
         ax.scatter(x_vals, y_vals, color=blue, alpha=0.76, s=55, edgecolors="none", zorder=2)
-        ax.set_xlabel(x_col, fontsize=10, color=gray)
-        ax.set_ylabel(y_col, fontsize=10, color=gray)
+        ax.set_xlabel(_axis_label(x_col), fontsize=10, color=gray)
+        ax.set_ylabel(_axis_label(y_col), fontsize=10, color=gray)
     elif chart_type == "waterfall":
         # Floating bars from a running cumulative baseline: green for an
         # increase, red for a decrease -- the actual waterfall shape,
@@ -351,7 +365,7 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
         ax.bar(range(len(labels)), heights, bottom=bottoms, color=bar_colors, width=0.6, zorder=2)
         ax.set_xticks(range(len(labels)))
         ax.set_xticklabels(labels, rotation=30 if len(labels) > 6 else 0, ha="right", fontsize=9, color=gray)
-        ax.set_ylabel(y_col, fontsize=10, color=gray)
+        ax.set_ylabel(_axis_label(y_col), fontsize=10, color=gray)
     elif chart_type == "funnel":
         # Horizontal bars, top-of-funnel first, length proportional to
         # stage count -- reads as a narrowing funnel top-to-bottom, unlike
@@ -362,7 +376,7 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
         ax.set_yticks(range(n))
         ax.set_yticklabels(labels, fontsize=9, color=gray)
         ax.invert_yaxis()
-        ax.set_xlabel(y_col, fontsize=10, color=gray)
+        ax.set_xlabel(_axis_label(y_col), fontsize=10, color=gray)
     elif chart_type == "histogram":
         # Touching bars (width=1.0, no gaps) is the one thing that visually
         # distinguishes a histogram from a bar chart of the same counts --
@@ -376,7 +390,7 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
             [labels[i] if i % step == 0 else "" for i in range(len(labels))],
             rotation=30, ha="right", fontsize=9, color=gray,
         )
-        ax.set_ylabel(y_col, fontsize=10, color=gray)
+        ax.set_ylabel(_axis_label(y_col), fontsize=10, color=gray)
     elif chart_type in {"line", "area"}:
         labels = [str(r.get(text_cols[0], i))[:22] for i, r in enumerate(rows)] if text_cols else list(range(len(rows)))
         xs = range(len(rows))
@@ -392,7 +406,7 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
             fontsize=9,
             color=gray,
         )
-        ax.set_ylabel(y_col, fontsize=10, color=gray)
+        ax.set_ylabel(_axis_label(y_col), fontsize=10, color=gray)
     else:
         labels = [str(r.get(text_cols[0], i))[:22] for i, r in enumerate(rows)] if text_cols else [str(i) for i in range(len(rows))]
         bars = ax.bar(range(len(labels)), y_values, color=blue, width=0.6, zorder=2)
@@ -410,7 +424,7 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
                     fontsize=8,
                     color=text,
                 )
-        ax.set_ylabel(y_col, fontsize=10, color=gray)
+        ax.set_ylabel(_axis_label(y_col), fontsize=10, color=gray)
 
     ax.set_title(title, fontsize=12, fontweight="bold", pad=14, color=text)
     ax.tick_params(colors=gray, labelsize=9)

@@ -1221,6 +1221,7 @@ def _refresh_chart(
     result["row_count"] = 0
     result["kpi"] = None
     result["table_columns"] = []
+    result["table_column_labels"] = {}
     result["table_rows"] = []
     result["table_column_formats"] = {}
     result["table_truncated"] = False
@@ -1342,6 +1343,17 @@ def _refresh_chart(
                     rows, explicit_formats=display_config.get("column_formats") or {},
                 )
                 result["table_columns"] = list(rows[0].keys())
+                # The <th> of a pinned table tile printed the warehouse's own
+                # spelling -- WHS_NM -- beside a chart tile on the same
+                # dashboard whose axis says "Warehouse Name". The column key
+                # stays raw because the template also uses it to look the cell
+                # up in each row; the LABEL is carried alongside it.
+                from core.schema_enrichment import display_label
+
+                result["table_column_labels"] = {
+                    column: display_label(column)
+                    for column in result["table_columns"]
+                }
                 result["table_column_formats"] = _column_formats
                 # Each cell carries BOTH the display string and the raw value.
                 # The sort used to parse the number back out of the rendered

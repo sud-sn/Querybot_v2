@@ -194,7 +194,7 @@
       {% elif chart.table_rows %}
       <div style="width:100%;height:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
         <table style="width:100%;border-collapse:collapse;font-size:var(--font-sm);white-space:nowrap">
-          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0 }})">{{ col }} ↕</button>{% else %}{{ col }}{% endif %}</th>{% endfor %}</tr></thead>
+          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0 }})">{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }} ↕</button>{% else %}{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }}{% endif %}</th>{% endfor %}</tr></thead>
           <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}{% set cell = row[col] %}<td data-sort="{{ cell.v if cell.v is not none else '' }}" style="padding:.5rem .65rem;border-bottom:1px solid var(--border)">{{ cell.d }}</td>{% endfor %}</tr>{% endfor %}</tbody>
         </table>
       </div>

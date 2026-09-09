@@ -1113,9 +1113,11 @@ def _execute_format_command(
         return _format_clarification(
             source_id, before, _t("reply.rc.which_format"), [
                 (_t("reply.rc.fmt.month_year"), "format this result as MMM-YY"),
-                ("Currency", "format this result as USD currency"),
-                ("Percentage", "format this result as percentage, values are already 0 to 100"),
-                ("Number", "format this result as a number with 2 decimal places"),
+                (_t("reply.rc.fmt.currency"), "format this result as USD currency"),
+                (_t("reply.rc.fmt.percentage"),
+                 "format this result as percentage, values are already 0 to 100"),
+                (_t("reply.rc.fmt.number"),
+                 "format this result as a number with 2 decimal places"),
             ],
         )
 
@@ -1163,7 +1165,13 @@ def _execute_format_command(
             source_id,
             before,
             _t("reply.rc.which_column_format", format=kind),
-            [(candidate, f"format {candidate} as {suffix}") for candidate in candidates[:8]],
+            # F12 fixed the measure-choice buttons and the kept-extreme
+            # confirmation in this file and missed this one: the reader was
+            # asked to choose between BAL_VAL_AMT and NET_AMT. The label is the
+            # business name; the question keeps the real column, because it is
+            # re-planned rather than read.
+            [(_column_display_label(candidate), f"format {candidate} as {suffix}")
+             for candidate in candidates[:8]],
         )
     else:
         return _command_error(
@@ -1185,7 +1193,11 @@ def _execute_format_command(
         return _format_clarification(
             source_id, before, _t("reply.rc.which_date_format", column=column), [
                 ("Jan-26", f"format {column} as MMM-YY"),
-                ("January 2026", f"format {column} as full month and year"),
+                # A sample of what the output will LOOK like, so it has to be
+                # what this reader would actually see -- "janvier 2026", not
+                # the English rendering of the same format.
+                (_t("reply.rc.fmt.full_month_year"),
+                 f"format {column} as full month and year"),
                 ("2026-01", f"format {column} as YYYY-MM"),
                 ("31-Jan-2026", f"format {column} as DD-MMM-YYYY"),
             ],
@@ -1215,7 +1227,8 @@ def _execute_format_command(
         else:
             return _format_clarification(
                 source_id, before, _t("reply.rc.how_percent_stored", column=column), [
-                    ("Fractions (0.25 = 25%)", f"format {column} as percentage, values are fractions 0 to 1"),
+                    (_t("reply.rc.fmt.percent_fraction"),
+                     f"format {column} as percentage, values are fractions 0 to 1"),
                     (_t("reply.rc.fmt.percent_100"), f"format {column} as percentage, values are already 0 to 100"),
                 ],
             )

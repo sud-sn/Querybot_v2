@@ -991,6 +991,19 @@ MESSAGES: dict[str, dict[str, str]] = {
     # fallback is only reached when the transform supplies no detail — and it
     # supplies one for the ordinary "nothing was unusual" outcome.
     # The KPI card's caption — the most common single-number answer.
+    # Format-clarification option LABELS. The value beside each is the
+    # re-plannable English question and stays English.
+    "reply.rc.fmt.currency": {"en": "Currency", "fr": "Devise"},
+    "reply.rc.fmt.percentage": {"en": "Percentage", "fr": "Pourcentage"},
+    "reply.rc.fmt.number": {"en": "Number", "fr": "Nombre"},
+    "reply.rc.fmt.percent_fraction": {
+        "en": "Fractions (0.25 = 25%)",
+        "fr": "Fractions (0,25 = 25 %)",
+    },
+    "reply.rc.fmt.full_month_year": {
+        "en": "January 2026",
+        "fr": "janvier 2026",
+    },
     "ui.kpi.note.null_metric": {
         "en": "Matching records were found, but this metric has no non-null values.",
         "fr": "Des enregistrements correspondants ont été trouvés, mais cet indicateur n'a aucune valeur renseignée.",

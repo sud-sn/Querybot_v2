@@ -190,13 +190,28 @@ def build_teams_chart_card(chart_payload: dict) -> dict | None:
 
 
 def _pie_element(chart_type: str, rows: list[dict], x_key: str, y_key: str, title: str) -> dict | None:
-    data = []
+    # One slice per CATEGORY, not per row. Built with a plain loop over rows, a
+    # result grouped by two things -- a warehouse and a month -- gave a Teams
+    # reader one slice per warehouse per month, and Adaptive Cards draws every
+    # one of them: the same name appears three times and no slice is that
+    # category's share of anything.
+    #
+    # Same defect and same rule as the browser pies (portal_chat.html and
+    # portal_dashboard.html); this is the third copy of the renderer, and the
+    # one nobody looked at because it emits JSON instead of drawing.
+    totals: dict[str, float] = {}
+    order: list[str] = []
     for r in rows:
         value = _to_number(r.get(y_key))
         legend = str(r.get(x_key) or "").strip()
         # Pie/Donut slices must be positive to render meaningfully.
-        if legend and value is not None and value > 0:
-            data.append({"legend": legend, "value": value})
+        if not legend or value is None:
+            continue
+        if legend not in totals:
+            order.append(legend)
+        totals[legend] = totals.get(legend, 0.0) + value
+    data = [{"legend": legend, "value": totals[legend]}
+            for legend in order if totals[legend] > 0]
     if not data:
         return None
     return {
