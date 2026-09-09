@@ -210,6 +210,19 @@ _VALUE_BEARING_MARKERS: tuple[tuple[str, str], ...] = (
     # repair path was left intact in Phase 0; the manifest still reports them
     # so the record stays honest about what the prompt contained.
     ("The following SQL failed with this error", "echoed_sql"),
+    # core/examples.py::format_examples_for_prompt. The tenant's own past SQL,
+    # reproduced verbatim as few-shot context — WHERE literals and all. This is
+    # the LARGEST carrier of real warehouse values into a prompt and it was not
+    # on this list, so a workspace in standard mode sent 'Yorkshire Dales',
+    # 'IND-PHARM' and 'SETTLED' to the model on an ordinary question while the
+    # egress record said values_sent: False.
+    #
+    # The marker is the UNMASKED heading specifically. A regulated tenant's
+    # literals go through scrub_example_sql_literals, and that block is headed
+    # "VERIFIED EXAMPLES (literals masked)" — which does not match this
+    # marker, so the manifest does not claim egress that did not happen.
+    # Detection stays exact in both directions, which is the whole design.
+    ("VERIFIED EXAMPLES —", "past_sql_examples"),
 )
 
 _CONTENT_MARKERS: tuple[tuple[str, str], ...] = (

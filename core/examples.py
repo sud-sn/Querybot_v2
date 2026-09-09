@@ -726,6 +726,7 @@ def format_examples_for_prompt(examples: list[dict], account_id: str = "") -> st
     if not examples:
         return ""
 
+    literals_masked = False
     if account_id:
         try:
             from core.compliance.policy_engine import is_regulated
@@ -735,6 +736,7 @@ def format_examples_for_prompt(examples: list[dict], account_id: str = "") -> st
                     {**ex, "sql": scrub_example_sql_literals(ex.get("sql", ""))}
                     for ex in examples
                 ]
+                literals_masked = True
         except Exception as exc:  # noqa: BLE001 — fail closed
             log.warning(
                 "Example literal scrub failed for %s (%s) — masking literals "
@@ -744,9 +746,20 @@ def format_examples_for_prompt(examples: list[dict], account_id: str = "") -> st
                 {**ex, "sql": scrub_example_sql_literals(ex.get("sql", ""))}
                 for ex in examples
             ]
+            literals_masked = True
 
+    # The header says whether the literals below survived, because
+    # core/llm_audit.py detects value-bearing prompt sections by their exact
+    # header and this is the largest carrier of real warehouse values into a
+    # prompt: the tenant's own past SQL, verbatim, WHERE literals and all.
+    # Dates are always scrubbed and a regulated tenant's literals are masked,
+    # but on a workspace in standard mode nothing else is. One header for both
+    # cases would force the manifest to either miss every unmasked block or
+    # claim egress on every masked one.
+    heading = ("VERIFIED EXAMPLES (literals masked)" if literals_masked
+               else "VERIFIED EXAMPLES")
     lines = [
-        "VERIFIED EXAMPLES — These question→SQL pairs ran successfully against "
+        f"{heading} — These question→SQL pairs ran successfully against "
         "this database at some point in the past. Use them as a guide for SQL "
         "syntax and patterns ONLY.\n"
         "CRITICAL: Examples show SQL structure only. The GROUP BY dimension, SELECT columns, "

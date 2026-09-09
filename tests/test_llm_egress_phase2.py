@@ -186,5 +186,84 @@ class SchemaAndStoreTests(unittest.TestCase):
         self.assertIn('"value_sources"', src)
 
 
+class PastSQLExamplesAreValueBearing(unittest.TestCase):
+    """The largest carrier of real warehouse values into a prompt, which was
+    not on the value-bearing list.
+
+    core/examples.format_examples_for_prompt puts the tenant's own past SQL
+    into the SQL-generation prompt verbatim — WHERE literals and all. Dates are
+    always scrubbed, and a REGULATED tenant's literals go through
+    scrub_example_sql_literals. On a workspace in standard mode nothing else
+    does, so an ordinary question sent 'Yorkshire Dales', 'IND-PHARM' and
+    'SETTLED' to the model while the egress record said values_sent: False.
+
+    The manifest detects sections by their exact header, deliberately — that is
+    what makes values_sent computed evidence rather than a claim. So the header
+    now says whether the literals survived, and only the unmasked one is a
+    marker. One header for both cases would force this to either miss every
+    unmasked block or claim egress on every masked one.
+    """
+
+    EXAMPLES = [{
+        "question": "revenue by region",
+        "sql": ("SELECT SUM(AMT) FROM SALES WHERE REGION='Yorkshire Dales' "
+                "AND SEG='IND-PHARM' AND STATUS='SETTLED'"),
+    }]
+
+    def _block(self, regulated):
+        from unittest.mock import patch
+
+        import core.compliance.policy_engine as policy_engine
+        from core.examples import format_examples_for_prompt
+
+        with patch.object(policy_engine, "is_regulated", return_value=regulated):
+            return format_examples_for_prompt(self.EXAMPLES, "acct")
+
+    def _sql_line(self, block):
+        return next(line for line in block.splitlines() if line.startswith("SQL:"))
+
+    def test_a_standard_tenants_examples_carry_real_literals(self):
+        """The premise. If this ever fails the finding is moot and the marker
+        below is over-reporting."""
+        sql = self._sql_line(self._block(False))
+        for literal in ("Yorkshire Dales", "IND-PHARM", "SETTLED"):
+            with self.subTest(literal=literal):
+                self.assertIn(literal, sql)
+
+    def test_and_the_manifest_now_records_that(self):
+        manifest = build_egress_manifest(system="You write SQL.",
+                                         user=self._block(False))
+        self.assertTrue(manifest["values_sent"])
+        self.assertIn("past_sql_examples", manifest["value_sources"])
+
+    def test_a_regulated_tenants_literals_are_masked(self):
+        sql = self._sql_line(self._block(True))
+        for literal in ("Yorkshire Dales", "IND-PHARM", "SETTLED"):
+            with self.subTest(literal=literal):
+                self.assertNotIn(literal, sql)
+        self.assertIn("<value>", sql)
+
+    def test_and_the_manifest_does_not_claim_egress_that_did_not_happen(self):
+        """The other direction, and the reason the heading carries the state.
+        An egress record that cries wolf on every regulated workspace is as
+        useless as one that misses every standard workspace."""
+        manifest = build_egress_manifest(system="You write SQL.",
+                                         user=self._block(True))
+        self.assertFalse(manifest["values_sent"])
+        self.assertNotIn("past_sql_examples", manifest["value_sources"])
+
+    def test_the_two_headings_are_distinguishable(self):
+        self.assertIn("VERIFIED EXAMPLES —", self._block(False))
+        self.assertIn("VERIFIED EXAMPLES (literals masked)", self._block(True))
+        self.assertNotIn("VERIFIED EXAMPLES —", self._block(True))
+
+    def test_an_empty_example_set_produces_no_block_and_no_claim(self):
+        from core.examples import format_examples_for_prompt
+
+        self.assertEqual(format_examples_for_prompt([], "acct"), "")
+        manifest = build_egress_manifest(system="s", user="")
+        self.assertFalse(manifest["values_sent"])
+
+
 if __name__ == "__main__":
     unittest.main()
