@@ -217,6 +217,11 @@ class TestTheCatalogueIsWellFormed:
         # ("Moyenne"), which is why only these two are here.
         "ui.chart.box.max",
         "ui.chart.box.min",
+        # "vs {period}", the prior-period card's title. French business writing
+        # uses "vs" too, and the product already does: chip.compare_prior is
+        # "vs période précédente". Inventing a longer French form here would
+        # make the card's title disagree with the chip that opens it.
+        "reply.prior.vs_label",
     }
 
     def test_no_id_is_declared_twice(self):

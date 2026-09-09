@@ -30,6 +30,8 @@ import logging
 import re
 from typing import Any
 
+from core.i18n import format_decimal, t as _t
+
 log = logging.getLogger("querybot.period_comparison")
 
 
@@ -386,15 +388,11 @@ async def generate_period_comparison(
         return {
             "type": "assistant_analysis",
             "action": "compare_prior",
-            "title": "Prior period comparison",
-            "headline": "Could not fetch prior period data.",
+            "title": _t("reply.prior.title"),
+            "headline": _t("reply.prior.fetch_failed"),
             "body": reason,
             "bullets": [suggestion] if suggestion else [],
-            "next_step": (
-                suggestion or
-                "Try asking directly: "
-                "\"Show [metric] for [period A] vs [period B]\""
-            ),
+            "next_step": suggestion or _t("reply.prior.ask_directly"),
             "data_brief": data_brief,
             "source_question": question,
             "mode": data_brief.get("mode", "table"),
@@ -406,12 +404,7 @@ async def generate_period_comparison(
             "compare_prior",
             "compare_prior blocked — regulated tenant, LLM never received result rows.",
         )
-        return _fallback(
-            "This workspace is configured for a regulated industry. To keep "
-            "protected data from ever reaching the AI model, the assistant "
-            "only writes SQL queries here — it doesn't generate follow-up "
-            "comparisons from results.",
-        )
+        return _fallback(_t("reply.prior.regulated"))
 
     # ── Step 1: Extract period info from existing brief ──────────────────────
     ts = data_brief.get("time_series") or {}
@@ -420,24 +413,23 @@ async def generate_period_comparison(
 
     if not first_label or not last_label:
         return _fallback(
-            "Prior period comparison requires a time-series result with period labels.",
-            "Try a query that groups by month, quarter, or year first.",
+            _t("reply.prior.need_time_series"),
+            _t("reply.prior.need_time_series_hint"),
         )
 
     # ── Step 2: Detect grain ─────────────────────────────────────────────────
     grain = detect_period_grain([first_label, last_label])
     if grain == GRAIN_UNKNOWN:
         return _fallback(
-            f"Could not recognise the period format in labels "
-            f"'{first_label}' → '{last_label}'.",
-            "This works best with YYYY-MM, Q1/Q2, or yearly labels.",
+            _t("reply.prior.unknown_grain", first=first_label, last=last_label),
+            _t("reply.prior.unknown_grain_hint"),
         )
 
     # ── Step 3: Compute prior-period boundaries ──────────────────────────────
     prior_first, prior_last = compute_prior_period(first_label, last_label, grain)
     if not prior_first or not prior_last:
         return _fallback(
-            f"Could not compute the prior period for '{first_label}' → '{last_label}'."
+            _t("reply.prior.no_boundaries", first=first_label, last=last_label)
         )
 
     log.info(
@@ -463,16 +455,15 @@ async def generate_period_comparison(
     except Exception as exc:
         log.warning("compare_prior: LLM rewrite call failed: %s", exc)
         return _fallback(
-            "The SQL rewriter encountered an error.",
-            f"Try asking: \"Show the same metric for {prior_first} to {prior_last}\".",
+            _t("reply.prior.rewriter_error"),
+            _t("reply.prior.ask_same_metric", first=prior_first, last=prior_last),
         )
 
     prior_sql = _clean_sql_response(raw_sql)
     if not prior_sql or "CANNOT_REWRITE" in prior_sql.upper():
         return _fallback(
-            "The original query uses a date filter that could not be automatically "
-            "shifted to the prior period.",
-            f"Try asking: \"Show [metric] for {prior_first} to {prior_last}\".",
+            _t("reply.prior.not_shiftable"),
+            _t("reply.prior.ask_metric", first=prior_first, last=prior_last),
         )
 
     # ── Step 5: Validate the rewritten SQL ──────────────────────────────────
@@ -485,12 +476,12 @@ async def generate_period_comparison(
         if not ok:
             log.warning("compare_prior: rewritten SQL failed validation: %s", reason)
             return _fallback(
-                "The rewritten SQL for the prior period did not pass validation.",
-                f"Try asking: \"Show [metric] for {prior_first} to {prior_last}\".",
+                _t("reply.prior.validation_failed"),
+                _t("reply.prior.ask_metric", first=prior_first, last=prior_last),
             )
     except Exception as exc:
         log.warning("compare_prior: validation error: %s", exc)
-        return _fallback("SQL validation error while preparing the prior period query.")
+        return _fallback(_t("reply.prior.validation_error"))
 
     # ── Step 6: Execute against the live DB ─────────────────────────────────
     try:
@@ -507,15 +498,13 @@ async def generate_period_comparison(
     except Exception as exc:
         log.warning("compare_prior: DB execution failed: %s", exc)
         return _fallback(
-            f"The prior period query executed but encountered a database error: "
-            f"{str(exc)[:120]}",
+            _t("reply.prior.db_error", detail=str(exc)[:120]),
         )
 
     if not prior_rows:
         return _fallback(
-            f"No data found for the prior period ({prior_first} to {prior_last}). "
-            "This period may not have records in the database.",
-            f"Try asking: \"Show [metric] for {prior_first} to {prior_last}\" to verify.",
+            _t("reply.prior.no_rows", first=prior_first, last=prior_last),
+            _t("reply.prior.no_rows_hint", first=prior_first, last=prior_last),
         )
 
     # ── Step 7: Compute prior-period brief ───────────────────────────────────
@@ -552,12 +541,13 @@ async def generate_period_comparison(
     return {
         "type": "assistant_analysis",
         "action": "compare_prior",
-        "title": f"vs {prior_label_str}",
+        "title": _t("reply.prior.vs_label", period=prior_label_str),
         "headline":  parsed["headline"],
         "body":      parsed["body"],
         "bullets":   parsed["bullets"],
         "next_step": parsed["next_step"],
-        "secondary": f"Prior period: {prior_label_str}  ·  Current: {current_label_str}",
+        "secondary": _t("reply.prior.secondary", prior=prior_label_str,
+                        current=current_label_str),
         "data_brief": data_brief,
         "prior_brief": prior_brief,
         "source_question": question,
@@ -602,9 +592,8 @@ def _parse_narrative(
             current_brief, prior_brief, current_label, prior_label
         )
     if not result["body"]:
-        result["body"] = (
-            f"Comparing {current_label} with the prior period ({prior_label})."
-        )
+        result["body"] = _t("reply.prior.body_comparing",
+                            current=current_label, prior=prior_label)
     if not result["bullets"]:
         result["bullets"] = _deterministic_bullets(current_brief, prior_brief)
 
@@ -624,24 +613,29 @@ def _deterministic_headline(
     p_val = p_ts.get("last_value") or _first_numeric_total(prior)
     if c_val is not None and p_val is not None and p_val != 0:
         pct = round((c_val - p_val) / abs(p_val) * 100, 1)
-        direction = "up" if pct > 0 else "down"
-        sign = "+" if pct > 0 else ""
-        return (
-            f"Result is {direction} {abs(pct):.1f}% ({sign}{pct:.1f}%) "
-            f"compared to {prior_label}."
+        return _t(
+            "reply.prior.headline_moved",
+            direction=_t("reply.prior.direction.up" if pct > 0
+                         else "reply.prior.direction.down"),
+            pct=format_decimal(abs(pct), 1),
+            prior=prior_label,
         )
-    return f"Comparing {current_label} vs {prior_label}."
+    return _t("reply.prior.headline_plain",
+              current=current_label, prior=prior_label)
 
 
 def _deterministic_bullets(current: dict, prior: dict) -> list[str]:
     bullets = []
-    for brief, label in ((current, "Current"), (prior, "Prior")):
+    for brief, label_id in ((current, "reply.prior.period.current"),
+                            (prior, "reply.prior.period.prior")):
         ts = brief.get("time_series") or {}
         total = _first_numeric_total(brief)
         if total is not None:
-            bullets.append(f"{label} period total: {total:,.2f}")
+            bullets.append(_t("reply.prior.bullet_total", period=_t(label_id),
+                              value=format_decimal(total, 2)))
         elif ts.get("last_value") is not None:
-            bullets.append(f"{label} period last value: {ts['last_value']:,.2f}")
+            bullets.append(_t("reply.prior.bullet_last", period=_t(label_id),
+                              value=format_decimal(ts["last_value"], 2)))
     return bullets[:3]
 
 

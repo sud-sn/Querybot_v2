@@ -4862,6 +4862,114 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "An unexpected error occurred while preparing the prior period. Try asking the comparison directly in your question.",
         "fr": "Une erreur inattendue s'est produite lors de la préparation de la période précédente. Essayez de demander la comparaison directement dans votre question.",
     },
+    # ── The prior-period card, from core/period_comparison.py ───────────────
+    #
+    # That module imported core.i18n zero times, so every reader-facing string
+    # it produced was English -- while the chip that OPENS it
+    # (chip.compare_prior) and the error card the socket falls back to
+    # (reply.prior.failed_* above) were both translated. Same card, same frame
+    # type: French when the call threw, English when it worked.
+    "reply.prior.vs_label": {
+        "en": "vs {period}",
+        "fr": "vs {period}",
+    },
+    "reply.prior.secondary": {
+        "en": "Prior period: {prior}  ·  Current: {current}",
+        "fr": "Période précédente : {prior}  ·  Période actuelle : {current}",
+    },
+    "reply.prior.fetch_failed": {
+        "en": "Could not fetch prior period data.",
+        "fr": "Les données de la période précédente n'ont pas pu être récupérées.",
+    },
+    "reply.prior.need_time_series": {
+        "en": "Prior period comparison requires a time-series result with period labels.",
+        "fr": "La comparaison avec la période précédente exige un résultat chronologique avec des libellés de période.",
+    },
+    "reply.prior.need_time_series_hint": {
+        "en": "Try a query that groups by month, quarter, or year first.",
+        "fr": "Essayez d'abord une requête regroupée par mois, trimestre ou année.",
+    },
+    "reply.prior.unknown_grain": {
+        "en": "Could not recognise the period format in labels '{first}' → '{last}'.",
+        "fr": "Le format de période des libellés « {first} » → « {last} » n'a pas été reconnu.",
+    },
+    "reply.prior.unknown_grain_hint": {
+        "en": "This works best with YYYY-MM, Q1/Q2, or yearly labels.",
+        "fr": "Cela fonctionne mieux avec des libellés AAAA-MM, T1/T2 ou annuels.",
+    },
+    "reply.prior.no_boundaries": {
+        "en": "Could not compute the prior period for '{first}' → '{last}'.",
+        "fr": "La période précédente n'a pas pu être calculée pour « {first} » → « {last} ».",
+    },
+    "reply.prior.rewriter_error": {
+        "en": "The SQL rewriter encountered an error.",
+        "fr": "Le réécriveur SQL a rencontré une erreur.",
+    },
+    "reply.prior.not_shiftable": {
+        "en": "The original query uses a date filter that could not be automatically shifted to the prior period.",
+        "fr": "La requête d'origine utilise un filtre de date qui n'a pas pu être décalé automatiquement vers la période précédente.",
+    },
+    "reply.prior.validation_failed": {
+        "en": "The rewritten SQL for the prior period did not pass validation.",
+        "fr": "Le SQL réécrit pour la période précédente n'a pas passé la validation.",
+    },
+    "reply.prior.validation_error": {
+        "en": "SQL validation error while preparing the prior period query.",
+        "fr": "Erreur de validation SQL lors de la préparation de la requête de période précédente.",
+    },
+    "reply.prior.db_error": {
+        "en": "The prior period query executed but encountered a database error: {detail}",
+        "fr": "La requête de période précédente s'est exécutée mais a rencontré une erreur de base de données : {detail}",
+    },
+    "reply.prior.no_rows": {
+        "en": "No data found for the prior period ({first} to {last}). This period may not have records in the database.",
+        "fr": "Aucune donnée trouvée pour la période précédente ({first} à {last}). Cette période n'a peut-être aucun enregistrement dans la base.",
+    },
+    "reply.prior.no_rows_hint": {
+        "en": "Try asking: \"Show [metric] for {first} to {last}\" to verify.",
+        "fr": "Essayez de demander : « Affiche [indicateur] pour {first} à {last} » pour vérifier.",
+    },
+    "reply.prior.ask_same_metric": {
+        "en": "Try asking: \"Show the same metric for {first} to {last}\".",
+        "fr": "Essayez de demander : « Affiche le même indicateur pour {first} à {last} ».",
+    },
+    "reply.prior.ask_metric": {
+        "en": "Try asking: \"Show [metric] for {first} to {last}\".",
+        "fr": "Essayez de demander : « Affiche [indicateur] pour {first} à {last} ».",
+    },
+    "reply.prior.ask_directly": {
+        "en": "Try asking directly: \"Show [metric] for [period A] vs [period B]\"",
+        "fr": "Essayez de demander directement : « Affiche [indicateur] pour [période A] par rapport à [période B] »",
+    },
+    "reply.prior.regulated": {
+        "en": "This workspace is configured for a regulated industry. To keep protected data from ever reaching the AI model, the assistant only writes SQL queries here — it doesn't generate follow-up narrative from your results.",
+        "fr": "Cet espace de travail est configuré pour un secteur réglementé. Pour éviter que des données protégées n'atteignent le modèle d'IA, l'assistant se limite ici à écrire des requêtes SQL — il ne rédige pas de commentaire à partir de vos résultats.",
+    },
+    # The deterministic narrative, used when the model returns nothing usable.
+    "reply.prior.body_comparing": {
+        "en": "Comparing {current} with the prior period ({prior}).",
+        "fr": "Comparaison de {current} avec la période précédente ({prior}).",
+    },
+    "reply.prior.headline_moved": {
+        "en": "Result is {direction} {pct}% compared to {prior}.",
+        "fr": "Le résultat est {direction} de {pct} % par rapport à {prior}.",
+    },
+    "reply.prior.direction.up": {"en": "up", "fr": "en hausse"},
+    "reply.prior.direction.down": {"en": "down", "fr": "en baisse"},
+    "reply.prior.headline_plain": {
+        "en": "Comparing {current} vs {prior}.",
+        "fr": "Comparaison de {current} par rapport à {prior}.",
+    },
+    "reply.prior.bullet_total": {
+        "en": "{period} period total: {value}",
+        "fr": "Total de la période {period} : {value}",
+    },
+    "reply.prior.bullet_last": {
+        "en": "{period} period last value: {value}",
+        "fr": "Dernière valeur de la période {period} : {value}",
+    },
+    "reply.prior.period.current": {"en": "Current", "fr": "actuelle"},
+    "reply.prior.period.prior": {"en": "Prior", "fr": "précédente"},
     "reply.prior.next_step": {
         "en": "Ask: \"Show [metric] for [period A] vs [period B]\"",
         "fr": "Demandez : « Affiche [indicateur] pour [période A] par rapport à [période B] »",
