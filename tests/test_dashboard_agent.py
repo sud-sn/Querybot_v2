@@ -194,8 +194,140 @@ def test_portal_has_ana_style_split_workspace_contract():
     assert "sortDashboardTable" in dashboard
 
 
-def test_dashboard_store_is_owner_and_tenant_scoped():
-    source = (ROOT / "store/dashboard_store.py").read_text(encoding="utf-8")
-    assert "WHERE id=? AND user_id=? AND account_id=?" in source
-    assert "WHERE dashboard_id=? AND user_id=?" in source
-    assert "result rows" in source.lower()
+# ── The tenant boundary, executed ────────────────────────────────────────────
+#
+# This was three greps over store/dashboard_store.py. None of them could detect
+# the loss of the scope they were named for:
+#
+#   assert "result rows" in source.lower()
+#       matches the module docstring. Behaviourally it can never fail.
+#   assert "WHERE id=? AND user_id=? AND account_id=?" in source
+#   assert "WHERE dashboard_id=? AND user_id=?" in source
+#       those fragments occur 20 and 11 times. Any ONE query can drop
+#       `account_id` and the assertion still matches the other 19.
+#
+# Proven, not assumed: deleting `AND account_id=?` from get_dashboard_for_view
+# -- the only tenant boundary behind GET /portal/dashboard?dashboard_id=N --
+# left all 75 tests in this file and test_dashboard_page.py passing.
+#
+# So: build two real tenants and ask each reader for the other's data.
+
+
+def _two_tenants():
+    """Two clients, two users, one published team dashboard owned by alpha.
+
+    Uses the convention already in tests/test_dashboard_page.py -- a temp DB
+    via setdefault plus random account ids -- rather than reloading `store`,
+    which rebinds sys.modules and breaks unrelated tests in the same run.
+    """
+    import os
+    import tempfile
+
+    os.environ.setdefault("QUERYBOT_DB_PATH",
+                          os.path.join(tempfile.mkdtemp(), "dash.db"))
+    import store
+    store.init_db()
+
+    alpha = f"acct{os.urandom(4).hex()}"
+    beta = f"acct{os.urandom(4).hex()}"
+    store.upsert_client(alpha, "T")
+    store.upsert_client(beta, "T")
+    alpha_user, _ = store.create_user(alpha, "Ann", f"{os.urandom(4).hex()}@x.com")
+    beta_user, _ = store.create_user(beta, "Bob", f"{os.urandom(4).hex()}@x.com")
+
+    board = store.create_dashboard(alpha, alpha_user, "th", "Alpha board",
+                                   visibility="team")
+    store.publish_dashboard(int(board["id"]), alpha_user, alpha)
+    config_id = store.save_db_config(
+        "azure_sql", "cfg", {"server": "s", "user": "u", "password": "p"})
+    source = store.create_data_source(
+        int(board["id"]), alpha_user, alpha, name="src", question="q",
+        sql_query="SELECT 1", db_config_id=config_id)
+    return store, alpha, alpha_user, beta, beta_user, int(board["id"]), int(source["id"])
+
+
+def _cross_tenant_readers(store, board_id, source_id, alpha_user, beta):
+    """Every reader that takes an account_id, asked for alpha's data as beta.
+
+    Alpha's OWN user id is passed with beta's account id deliberately: the
+    tenant scope has to hold even when the caller knows the right user, which
+    is the case a stolen or guessed id produces.
+    """
+    return {
+        "get_dashboard":
+            lambda: store.get_dashboard(board_id, alpha_user, beta),
+        "get_dashboard_for_view":
+            lambda: store.get_dashboard_for_view(board_id, alpha_user, beta),
+        "latest_dashboard_for_thread":
+            lambda: store.latest_dashboard_for_thread(beta, alpha_user, "th"),
+        "list_dashboards":
+            lambda: store.list_dashboards(beta, alpha_user),
+        "list_editable_dashboards":
+            lambda: store.list_editable_dashboards(beta, alpha_user),
+        "list_data_sources":
+            lambda: store.list_data_sources(board_id, alpha_user, beta),
+        "list_data_sources_for_view":
+            lambda: store.list_data_sources_for_view(board_id, alpha_user, beta),
+        "get_data_source":
+            lambda: store.get_data_source(source_id, alpha_user, beta),
+        "list_dashboard_versions":
+            lambda: store.list_dashboard_versions(board_id, alpha_user, beta),
+        "publish_dashboard":
+            lambda: store.publish_dashboard(board_id, alpha_user, beta),
+        "rename_dashboard":
+            lambda: store.rename_dashboard(board_id, alpha_user, beta, "pwned"),
+        "mark_dashboard_draft":
+            lambda: store.mark_dashboard_draft(board_id, alpha_user, beta),
+    }
+
+
+def test_no_dashboard_reader_crosses_the_tenant_boundary():
+    store, alpha, alpha_user, beta, beta_user, board_id, source_id = _two_tenants()
+
+    leaked = []
+    for name, call in _cross_tenant_readers(
+            store, board_id, source_id, alpha_user, beta).items():
+        got = call()
+        if got:
+            leaked.append(f"{name} returned {got!r}")
+    assert not leaked, (
+        "these read across the tenant boundary:\n  " + "\n  ".join(leaked))
+
+
+def test_and_the_owning_tenant_can_still_read_all_of_it():
+    """The control.
+
+    Without it, every assertion above is satisfied by a store that returns
+    nothing to anybody -- which is exactly what a botched scoping fix looks
+    like, and it would ship as a green suite.
+    """
+    store, alpha, alpha_user, beta, beta_user, board_id, source_id = _two_tenants()
+
+    assert store.get_dashboard(board_id, alpha_user, alpha)
+    assert store.get_dashboard_for_view(board_id, alpha_user, alpha)
+    assert store.latest_dashboard_for_thread(alpha, alpha_user, "th")
+    assert store.list_dashboards(alpha, alpha_user)
+    assert store.list_editable_dashboards(alpha, alpha_user)
+    assert store.list_data_sources(board_id, alpha_user, alpha)
+    assert store.list_data_sources_for_view(board_id, alpha_user, alpha)
+    assert store.get_data_source(source_id, alpha_user, alpha)
+    assert store.list_dashboard_versions(board_id, alpha_user, alpha)
+
+
+def test_a_published_team_dashboard_is_shared_inside_its_tenant_only():
+    """get_dashboard_for_view is the one reader that deliberately serves a
+    NON-owner -- that is what publishing to a team means -- so it is the one
+    whose account_id clause is doing all the work. A second user inside alpha
+    sees the board; beta's user does not, with the same arguments otherwise.
+    """
+    import os
+
+    store, alpha, alpha_user, beta, beta_user, board_id, _ = _two_tenants()
+    colleague, _ = store.create_user(alpha, "Cy", f"{os.urandom(4).hex()}@x.com")
+
+    seen = store.get_dashboard_for_view(board_id, colleague, alpha)
+    assert seen, "a published team dashboard must be visible to the team"
+    assert seen["can_edit"] == 0, "a viewer is not an editor"
+
+    assert store.get_dashboard_for_view(board_id, beta_user, beta) is None
+    assert store.get_dashboard_for_view(board_id, colleague, beta) is None
