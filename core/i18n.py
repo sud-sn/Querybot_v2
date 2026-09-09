@@ -2946,6 +2946,25 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "{question}, excluding internal or administrative records",
         "fr": "{question}, en excluant les enregistrements internes ou administratifs",
     },
+    # The plain-text table Teams and /api/ask receive. plural() injects
+    # {count} itself, so the stem carries .one / .other.
+    # The rolled-up bucket in a composition result.
+    "ui.contribution.other.one": {
+        "en": "Other ({count} item)",
+        "fr": "Autres ({count} élément)",
+    },
+    "ui.contribution.other.other": {
+        "en": "Other ({count} items)",
+        "fr": "Autres ({count} éléments)",
+    },
+    "ui.table.projected_note.one": {
+        "en": "(the last row is projected, not measured)",
+        "fr": "(la dernière ligne est projetée, non mesurée)",
+    },
+    "ui.table.projected_note.other": {
+        "en": "(the last {count} rows are projected, not measured)",
+        "fr": "(les {count} dernières lignes sont projetées, non mesurées)",
+    },
     "ui.chat.reconcile.last_month": {
         "en": "{question}, using last calendar month instead",
         "fr": "{question}, en utilisant plutôt le mois calendaire précédent",

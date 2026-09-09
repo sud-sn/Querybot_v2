@@ -35,13 +35,14 @@ import store
 # NOTE: this module deliberately imports no LLM entry point. Result narration
 # runs through core.governed_result_followup (metadata only). See the removal
 # note under "LLM narration" below.
-from core.i18n import format_count as _fmt_count, t as _t
+from core.i18n import format_count as _fmt_count, plural as _plural, t as _t
 from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.response_builder import (
     build_assistant_response, build_column_formats,
     detect_null_metric_issue, detect_zero_match_result,
     _display_label, _format_display_value,
 )
+from core.schema_enrichment import display_label
 from core.insight import generate_followup_suggestions, compute_data_brief
 from core.answer_confidence import build_answer_confidence
 from core.answer_formatter import format_success_confidence_text
@@ -256,6 +257,13 @@ def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
     if not headers:                      # a result of nothing but markers
         headers = list(rows[0].keys())
     column_formats = column_formats or {}
+    # The <th> of the browser table has said "Warehouse Name" since the L4
+    # work; this table said WHS_NM. It is not the same function as the one
+    # that was fixed then -- the else branch at the bottom of _send_results
+    # only interpolates table_text, which is computed here, 330 lines earlier.
+    # Teams and /api/ask get this table and no chart at all, so it is the
+    # whole answer for those readers.
+    labels = {h: display_label(h) for h in headers}
     formatted = [
         {
             h: _format_value(r.get(h), h, column_formats.get(h, ""))
@@ -264,10 +272,10 @@ def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
         for r in rows
     ]
     widths = {
-        h: max(len(str(h)), max(len(f[h]) for f in formatted))
+        h: max(len(labels[h]), max(len(f[h]) for f in formatted))
         for h in headers
     }
-    head = " | ".join(str(h).ljust(widths[h]) for h in headers)
+    head = " | ".join(labels[h].ljust(widths[h]) for h in headers)
     sep  = "-+-".join("-" * widths[h] for h in headers)
     body = "\n".join(
         " | ".join(f[h].ljust(widths[h]) for h in headers)
@@ -276,11 +284,9 @@ def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
     table = f"{head}\n{sep}\n{body}"
     # Hiding the marker columns removes the only thing that distinguished a
     # projected row from a measured one in a text channel, so say it in words.
-    # Teams and /api/ask receive this table and no chart at all.
     projected = sum(1 for r in rows if r.get("is_forecast"))
     if projected:
-        plural = "s are" if projected != 1 else " is"
-        table += f"\n\n(the last {projected} row{plural} projected, not measured)"
+        table += "\n\n" + _plural("ui.table.projected_note", projected)
     return table
 
 
