@@ -5475,9 +5475,17 @@ function toggleHistoryPanel(forceOpen) {
     if (opening && !_historyLoaded) loadHistory();
     return;
   }
-  panel.classList.add('open');
-  btn && btn.classList.add('active');
-  btn && btn.setAttribute('aria-expanded', 'true');
+  // forceOpen is honoured on a wide viewport too. It was read only inside the
+  // compact branch above, so on anything wider than 1100px the function fell
+  // straight through to "open" whatever it was passed -- and the panel's own
+  // close button calls toggleHistoryPanel(false). A × that opened the panel it
+  // is drawn on.
+  const opening = typeof forceOpen === 'boolean' ? forceOpen
+                                                 : !panel.classList.contains('open');
+  panel.classList.toggle('open', opening);
+  btn && btn.classList.toggle('active', opening);
+  btn && btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+  if (!opening) return;
   document.getElementById('historySearch')?.focus();
   if (!_historyLoaded) loadHistory();
 }
