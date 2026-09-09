@@ -430,10 +430,32 @@ class TestRegrainAgainstRealRows(unittest.TestCase):
             "the daily series must sum back to the total the user is looking at",
         )
         # Chronological, and confined to the parent's own window.
-        dates = [row[0] for row in rows]
+        #
+        # Compared as DATES, not as DuckDB's repr of them. DATE_TRUNC('day', …)
+        # returns a date on some DuckDB builds and a timestamp on others, so
+        # str(dates[0]) is "2026-03-04" or "2026-03-04 00:00:00" depending on
+        # the wheel that happens to be installed -- and this test was red for
+        # that reason alone, on a window that is correct. The invariant it is
+        # named for is which DAY the series starts and ends on.
+        import datetime as _dt
+
+        def _day(value):
+            if isinstance(value, _dt.datetime):
+                return value.date()
+            if isinstance(value, _dt.date):
+                return value
+            return _dt.date.fromisoformat(str(value)[:10])
+
+        dates = [_day(row[0]) for row in rows]
         self.assertEqual(dates, sorted(dates))
-        self.assertEqual(str(dates[0]), "2026-03-04")
-        self.assertEqual(str(dates[-1]), "2026-03-08")
+        self.assertEqual(dates[0], _dt.date(2026, 3, 4))
+        self.assertEqual(dates[-1], _dt.date(2026, 3, 8))
+        # And no time-of-day component slipped into the grouping, which would
+        # split one day into several rows.
+        for value in (row[0] for row in rows):
+            with self.subTest(value=value):
+                if isinstance(value, _dt.datetime):
+                    self.assertEqual(value.time(), _dt.time(0, 0))
 
     def test_the_trend_never_moves_to_another_date_role(self):
         """The audit-date key exists on the fact and must stay unused."""
