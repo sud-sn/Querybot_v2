@@ -420,6 +420,21 @@ def compute_data_brief(
             cat_breakdown["leader_vs_runner_up_gap"] = round(
                 paired[0][1] - paired[1][1], 2
             )
+        # Over the COLLAPSED categories, and over the same denominator as
+        # leader_share_pct above.
+        #
+        # The payload used to take this from
+        # numeric_summaries[value_col]["top_3_concentration_pct"], which is the
+        # top three ROWS of the raw result. On a two-dimensional result those
+        # are usually three months of the same warehouse, so the two numbers
+        # sitting side by side in distribution_stats contradicted each other:
+        # five warehouses over three months reported leader_share_pct 25.0 and
+        # top_3_share_pct 25.0 — the top three accounting for exactly as much
+        # as the leader alone, which cannot happen. The truth was 67.5.
+        if total > 0 and len(paired) >= 3:
+            cat_breakdown["top_3_share_pct"] = round(
+                sum(value for _, value in paired[:3]) / total * 100, 1
+            )
 
         brief["category_breakdown"] = cat_breakdown
 
@@ -612,7 +627,10 @@ def _build_safe_llm_payload(
         runner_up = top_5[1] if len(top_5) > 1 else {}
         payload["distribution_stats"] = {
             "category_count": category.get("category_count"),
-            "top_3_share_pct": (data_brief.get("numeric_summaries", {}).get(category.get("value_column", ""), {}) or {}).get("top_3_concentration_pct"),
+            # From the collapsed breakdown, like every other figure in this
+            # dict -- not from the raw-row numeric summary, which counts three
+            # months of one warehouse as three categories.
+            "top_3_share_pct": category.get("top_3_share_pct"),
             "leader_share_pct": category.get("leader_share_pct"),
             "leader_vs_runner_up_gap": category.get("leader_vs_runner_up_gap"),
             "labels_redacted": category.get("labels_redacted", False),

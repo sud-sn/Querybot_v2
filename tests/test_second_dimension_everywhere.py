@@ -497,5 +497,65 @@ class TestTheContributionShares(unittest.TestCase):
         self.assertEqual(labels[-1], "Autres (3 éléments)")
 
 
+class TestTheLlmPayloadsConcentrationFigure(unittest.TestCase):
+    """core/insight._build_safe_llm_payload — the tenth site.
+
+    distribution_stats took category_count and leader_share_pct from the
+    COLLAPSED category_breakdown (the C1 fix) and top_3_share_pct from
+    numeric_summaries[value_col]["top_3_concentration_pct"], which is the top
+    three ROWS of the raw result. On a two-dimensional result those are three
+    months of the same warehouse.
+
+    The two numbers sit side by side in one dict handed to the model, and they
+    contradicted each other arithmetically: five warehouses over three months
+    reported leader_share_pct 25.0 AND top_3_share_pct 25.0 — the top three
+    accounting for exactly as much as the leader alone, which cannot happen
+    when three distinct categories all have positive values. The truth is 67.5.
+    """
+
+    WAREHOUSES = (("Halifax", 100.0), ("Toronto", 90.0), ("Calgary", 80.0),
+                  ("Regina", 70.0), ("Ottawa", 60.0))
+
+    def _stats(self, rows):
+        from core.insight import _build_safe_llm_payload, compute_data_brief
+
+        brief = compute_data_brief(rows, "revenue by warehouse")
+        return _build_safe_llm_payload(
+            "explain", "revenue by warehouse", brief)["distribution_stats"]
+
+    def _grid(self, periods=3):
+        return [{"WHS_NM": name, "REVENUE_AMT": value}
+                for _ in range(periods) for name, value in self.WAREHOUSES]
+
+    def _flat(self, periods=3):
+        return [{"WHS_NM": name, "REVENUE_AMT": value * periods}
+                for name, value in self.WAREHOUSES]
+
+    def test_the_share_is_of_the_top_three_CATEGORIES(self):
+        self.assertEqual(self._stats(self._grid())["top_3_share_pct"], 67.5)
+
+    def test_a_grid_and_its_collapsed_equivalent_agree(self):
+        """The strongest form: the same underlying totals, expressed one way
+        per period and one way per warehouse, must produce one answer."""
+        self.assertEqual(self._stats(self._grid()), self._stats(self._flat()))
+
+    def test_the_figures_in_the_dict_are_not_self_contradictory(self):
+        """The top three cannot account for the same share as the leader
+        alone, and a payload that says so teaches the model a false shape of
+        the data whatever else it gets right."""
+        stats = self._stats(self._grid())
+        self.assertGreater(stats["top_3_share_pct"], stats["leader_share_pct"])
+
+    def test_it_is_absent_rather_than_wrong_with_fewer_than_three(self):
+        rows = [{"WHS_NM": "Halifax", "REVENUE_AMT": 10.0},
+                {"WHS_NM": "Toronto", "REVENUE_AMT": 5.0}]
+        self.assertIsNone(self._stats(rows).get("top_3_share_pct"))
+
+    def test_the_period_count_does_not_change_the_answer(self):
+        """The defect scaled with it: more months, smaller reported share."""
+        self.assertEqual(self._stats(self._grid(2))["top_3_share_pct"],
+                         self._stats(self._grid(7))["top_3_share_pct"])
+
+
 if __name__ == "__main__":
     unittest.main()
