@@ -1757,7 +1757,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             if event.user_id:
                 _save_pending_clarification(
                     question,
-                    context,
+                    # No prompt context exists yet at this point in the
+                    # function -- `context` is not bound until line ~2311, so
+                    # reading it here raised UnboundLocalError on every
+                    # cached-result clarification. The sibling call for the
+                    # same parameter earlier in this function passes "" for
+                    # exactly this reason.
+                    "",
                     {
                         "source": "governed_result_cache",
                         "question": _clarification_prompt,

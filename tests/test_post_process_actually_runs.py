@@ -21,10 +21,12 @@ bytecode, the other executes the block.
 
 from __future__ import annotations
 
+import ast
 import builtins
 import dis
 import logging
 import types
+from pathlib import Path
 
 import pytest
 
@@ -235,89 +237,175 @@ class TestTheForecastBlockExecutes:
         assert env["rows"] == before
 
 
-class TestTheBlockOnlyReadsNamesThatExist:
-    """The generalisation of two bugs of the same shape.
+class TestNoLocalIsReadBeforeItCanBeBound:
+    """The generalisation of three bugs of the same shape.
 
     First `chart_type`, an undefined global. Fixed, and replaced with
     `db_type_hint`, a local assigned only under `if table_hint_str:` -- so the
     forecast died on every typed question instead of every question. The
-    bytecode check added for the first one looks at globals and could not see
-    the second.
+    bytecode check added for the first one looked at globals and could not see
+    the second. Then `context`, passed to _save_pending_clarification 551 lines
+    before its first binding, so every cached-result clarification raised
+    UnboundLocalError.
 
-    This pins the block's external reads to a reviewed list. Adding a new name
-    fails the test, which is the point: each one has to be shown to be bound on
-    the path that reaches here.
+    The check that was here could not have caught the third. Two reasons, and
+    both are the reason it is being replaced rather than extended:
+
+      * It was scoped to the forecast block -- lines between two greps for
+        `_post_intents.get(...)`. The third bug is 900 lines above that block.
+        A guard that covers one site of a defect class this codebase has now
+        produced three times is the same missed-siblings pattern the defects
+        themselves are.
+      * It read `dis.Instruction.line_number` and `LOAD_FAST_CHECK`, which are
+        CPython 3.12+. On 3.11 the attribute does not exist and the opcode is
+        never emitted, so it ERRORED on every run here rather than checking
+        anything -- a guard that is not merely silent but broken.
+
+    So: a definite-assignment analysis over the parsed source, portable across
+    versions, run over EVERY function in the repository.
+
+    Why parsed rather than executed -- the one case where that is the right
+    instrument. The invariant is "no local is read on a path where it cannot
+    yet be bound", over a function of 6,484 lines. Establishing that by
+    execution means reaching every branch of it. The compiler's own analysis is
+    the honest tool, and the failure mode being guarded against (UnboundLocalError
+    at runtime) is exactly what it computes. This is not a substring scan: it
+    resolves scopes, parameters, global/nonlocal declarations, and every binding
+    form the language has.
     """
 
-    # Verified bound wherever the forecast block runs:
-    #   parameters                     account_id, event, question, portal_user
-    #   unconditional at function top  _rows_truncated, db_cfg (a cell var)
-    #   guarded by `if rows and _post_intents`   rows, _post_intents
-    #   assigned before every use below          sql, _confidence_context
-    ALLOWED = {
-        "rows", "sql", "_post_intents", "_confidence_context", "_rows_truncated",
-        "question", "account_id", "portal_user", "event", "db_cfg", "log",
-    }
+    # Nested defs, lambdas, classes and comprehensions each have their own
+    # scope -- descending into them would report their locals as the outer
+    # function's.
+    _OWN_SCOPE_BREAKS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                         ast.ClassDef, ast.ListComp, ast.SetComp,
+                         ast.DictComp, ast.GeneratorExp)
 
-    def _block_lines(self):
-        from pathlib import Path
+    @classmethod
+    def _events(cls, node):
+        """(kind, name, line) for everything in this function's OWN frame."""
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, cls._OWN_SCOPE_BREAKS):
+                # A nested def or class still binds its own name out here.
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.ClassDef)):
+                    yield ("bind", child.name, child.lineno)
+                continue
+            if isinstance(child, ast.Name):
+                yield (("bind" if isinstance(child.ctx, (ast.Store, ast.Del))
+                        else "read"), child.id, child.lineno)
+            elif isinstance(child, ast.ExceptHandler) and child.name:
+                yield ("bind", child.name, child.lineno)      # a plain str, not a Name
+            elif isinstance(child, ast.alias):
+                yield ("bind", child.asname or child.name.split(".")[0], child.lineno)
+            elif isinstance(child, (ast.Global, ast.Nonlocal)):
+                for declared in child.names:
+                    yield ("declared", declared, child.lineno)
+            yield from cls._events(child)
 
-        src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(
-            encoding="utf-8",
-        ).splitlines()
-        lo = next(i for i, l in enumerate(src, 1) if '_post_intents.get("forecast")' in l)
-        hi = next(i for i, l in enumerate(src, 1) if '_post_intents.get("histogram")' in l)
-        return lo, hi
+    @classmethod
+    def _unbound_reads(cls, fn):
+        """Locals this function reads at a line before ANY binding of them."""
+        params = {a.arg for a in (fn.args.posonlyargs + fn.args.args
+                                  + fn.args.kwonlyargs)}
+        for extra in (fn.args.vararg, fn.args.kwarg):
+            if extra:
+                params.add(extra.arg)
 
-    def test_no_conditionally_bound_local_is_read_in_the_forecast_block(self):
-        import dis
+        binds, reads, declared = {}, {}, set()
+        for kind, name, line in cls._events(fn):
+            if kind == "declared":
+                declared.add(name)
+            elif kind == "bind":
+                binds[name] = min(line, binds.get(name, line))
+            else:
+                reads[name] = min(line, reads.get(name, line))
 
-        import core.query_pipeline as qp
-
-        lo, hi = self._block_lines()
-        code = qp._handle_query_impl.__code__
-        # Names the block assigns itself are fine; it is the ones it inherits
-        # from the enclosing function that have to be proven bound.
-        assigned = {
-            i.argval for i in dis.get_instructions(code)
-            if i.opname in {"STORE_FAST", "STORE_DEREF"}
-            and i.line_number and lo <= i.line_number < hi
-        }
-        # LOAD_FAST_CHECK is CPython's own verdict that a local may be unbound
-        # at this point -- the compiler already did this analysis.
-        risky = {
-            i.argval for i in dis.get_instructions(code)
-            if i.opname == "LOAD_FAST_CHECK"
-            and i.line_number and lo <= i.line_number < hi
-        } - assigned
-        unreviewed = risky - self.ALLOWED
-        assert not unreviewed, (
-            f"the forecast block reads {sorted(unreviewed)}, which CPython says "
-            f"may be unbound here and which nobody has shown otherwise"
+        return sorted(
+            (name, read_line, binds[name])
+            for name, read_line in reads.items()
+            # not a parameter, not a global/nonlocal, and genuinely a local here
+            if name not in params and name not in declared and name in binds
+            and read_line < binds[name]
         )
 
-    def test_db_type_hint_specifically_is_not_read_here(self):
-        """The name that actually broke it, pinned by name.
+    @staticmethod
+    def _python_files():
+        root = Path(__file__).resolve().parents[1]
+        skip = {"__pycache__", "venv", ".git", "node_modules", ".venv"}
+        return [p for p in root.rglob("*.py")
+                if not (skip & set(p.relative_to(root).parts))]
 
-        It is assigned only inside `if table_hint_str:`, which is true only for
-        a suggested-question click, so reading it made forecasting work for
-        clicks and raise UnboundLocalError for anything typed.
+    def test_no_function_in_the_repository_reads_an_unbound_local(self):
+        root = Path(__file__).resolve().parents[1]
+        offenders = []
+        scanned = 0
+        for path in self._python_files():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue                      # not ours to compile
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                scanned += 1
+                for name, read_line, bind_line in self._unbound_reads(node):
+                    offenders.append(
+                        f"{path.relative_to(root)}:{read_line} {node.name}() reads "
+                        f"{name!r}, first bound at line {bind_line}")
 
-        Checked against the bytecode, not the source text -- the first version
-        of this test grepped the block and failed on the COMMENT explaining the
-        fix, which is a neat demonstration of why a string scan is not a test.
+        assert scanned > 5000, f"the scan only reached {scanned} functions"
+        assert not offenders, (
+            "these read a local before it can be bound, which is "
+            "UnboundLocalError at runtime:\n  " + "\n  ".join(sorted(offenders)))
+
+    def test_the_detector_finds_the_bug_it_was_written_for(self):
+        """Guards the guard.
+
+        A scan that silently stopped matching would pass the test above
+        forever. This rebuilds the defect -- `context` read at the call site
+        where it was, 551 lines before its binding -- and requires the analysis
+        to name it.
         """
-        import dis
+        source = (
+            "def f(a):\n"
+            "    if a:\n"
+            "        g(question, context, {})\n"      # the read
+            "    for row in a:\n"
+            "        pass\n"
+            "    context = resolve(a)\n"              # the binding, later
+            "    return context\n"
+        )
+        fn = ast.parse(source).body[0]
+        assert self._unbound_reads(fn) == [("context", 3, 6)]
 
-        import core.query_pipeline as qp
-
-        lo, hi = self._block_lines()
-        read_here = {
-            i.argval for i in dis.get_instructions(qp._handle_query_impl.__code__)
-            if i.opname in {"LOAD_FAST", "LOAD_FAST_CHECK"}
-            and i.line_number and lo <= i.line_number < hi
-        }
-        assert "db_type_hint" not in read_here
+    def test_it_does_not_flag_the_shapes_that_are_fine(self):
+        """The false-positive half. A detector that flagged these would have
+        been switched off within a day, which is how the last one died."""
+        source = (
+            "def f(a, *rest, **kw):\n"
+            "    global CACHE\n"
+            "    CACHE = a\n"
+            "    print(CACHE, rest, kw)\n"
+            "    try:\n"
+            "        import json as _j\n"
+            "    except ImportError as exc:\n"
+            "        print(exc)\n"
+            "        _j = None\n"
+            "    print(_j)\n"
+            "    total = 0\n"
+            "    for row in a:\n"
+            "        total += row\n"
+            "    squares = [n * n for n in a]\n"       # n is comprehension-local
+            "    with open('x') as fh:\n"
+            "        print(fh, squares, total)\n"
+            "    def inner():\n"
+            "        return helper\n"
+            "    helper = inner\n"                     # a closure read, bound later
+            "    return helper()\n"
+        )
+        fn = ast.parse(source).body[0]
+        assert self._unbound_reads(fn) == []
 
 
 class TestAFailedAnalyticIsLoud:
