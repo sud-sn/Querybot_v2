@@ -28,9 +28,14 @@ Entry points
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from core.i18n import plural as _plural
+
+log = logging.getLogger("querybot.contribution")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -151,6 +156,39 @@ def infer_numeric_col(rows: list[dict]) -> str:
 # Post-processing: compute share from in-memory rows
 # ══════════════════════════════════════════════════════════════════════════════
 
+def infer_label_col(rows: list[dict], value_col: str = "") -> str:
+    """The column whose share is being asked about.
+
+    A composition result grouped by two things -- a warehouse and a month --
+    has two non-numeric columns, and only one of them is the thing whose share
+    the reader wants. The period is not: "what share does each warehouse
+    account for" is a question about warehouses, and the months are the axis
+    being collapsed.
+
+    Returns "" when it cannot tell, which leaves the caller's behaviour
+    unchanged rather than guessing a dimension.
+    """
+    if not rows:
+        return ""
+    from core.response_builder import _looks_temporal
+
+    candidates = []
+    for col in rows[0].keys():
+        if col == value_col or str(col).startswith("_"):
+            continue
+        sample = [r.get(col) for r in rows[:20]]
+        numeric = sum(1 for v in sample if _to_float(v) is not None)
+        if numeric >= max(1, len(sample)) * 0.75:
+            continue                     # a measure, or a numeric key
+        if _looks_temporal([str(v) for v in sample if v is not None]):
+            continue                     # the axis being collapsed, not the label
+        candidates.append(col)
+    # Exactly one non-numeric, non-temporal column is a label we can trust.
+    # Two of them is a genuinely ambiguous request, and guessing which one the
+    # reader meant is worse than leaving the rows alone.
+    return candidates[0] if len(candidates) == 1 else ""
+
+
 def _to_float(v: Any) -> float | None:
     try:
         return float(str(v).replace(",", ""))
@@ -175,6 +213,38 @@ def compute_contribution(
 
     Returns the enriched row list, sorted descending by value_col by default.
     """
+    # A result grouped by two things carries a row per label PER PERIOD, and
+    # dividing each of those rows by the grand total understates every label by
+    # the period count while its real share appears nowhere. Asked "what share
+    # of revenue does each warehouse account for", a three-month grid reported
+    # Halifax at 17.65% three times against a true 52.94%.
+    #
+    # Collapse to one row per label first, through the shared rule -- which
+    # returns None when the measure may not be summed across the axis being
+    # removed (a margin percentage, a period-end balance). There is no honest
+    # share in that case, so no share is offered: the same answer this function
+    # already gives for a zero total.
+    label_col = label_col or infer_label_col(rows, value_col)
+    if label_col and rows:
+        from core.analysis_contract import collapse_rows_by_label
+
+        collapsed = collapse_rows_by_label(rows, label_col, value_col)
+        if collapsed is None:
+            log.info(
+                "Contribution shares withheld for %s by %s — the measure may "
+                "not be summed across the second dimension",
+                value_col, label_col,
+            )
+            return [{**row, "contribution_pct": None} for row in rows]
+        if len(collapsed) != len(rows):
+            log.info(
+                "Contribution collapsed %d rows to %d %s before computing "
+                "shares — the result carried a second dimension",
+                len(rows), len(collapsed), label_col,
+            )
+            rows = [{label_col: label, value_col: value}
+                    for label, value in collapsed]
+
     # Compute total (exclude None/NaN values)
     vals = [(i, _to_float(row.get(value_col))) for i, row in enumerate(rows)]
     total = sum(v for _, v in vals if v is not None)
@@ -203,7 +273,9 @@ def compute_contribution(
         other_pct = round((other_val / total) * 100, 2) if total else None
         other_lbl = label_col or (list(rows[0].keys())[0] if rows else "category")
         top.append({
-            other_lbl: f"Other ({len(others)} items)",
+            # Was an English literal with a hard-coded plural, in the label
+            # of a slice the reader sees beside their own categories.
+            other_lbl: _plural("ui.contribution.other", len(others)),
             value_col: round(other_val, 4),
             "contribution_pct": other_pct,
         })
