@@ -213,15 +213,46 @@ class EverySqlPromptInTheRequestCarriesTheKnowledgeBase(unittest.TestCase):
     """
 
     def test_no_sql_prompt_is_built_without_the_preloaded_block(self):
+        """Was source.count(a) == source.count(b), which is equal at 0 == 0.
+
+        That is the same defect the F25/F26 rewrites fixed elsewhere: it passes
+        if the feature is deleted outright, and it passes again if one call
+        site drops stable_context while an unrelated line gains the string.
+        Walked as syntax now: EVERY build_sql_system_prompt call is found and
+        each one is checked for the argument, so a missing one is named.
+        """
+        import ast
         import inspect
+
         import core.query_pipeline as query_pipeline
 
-        source = inspect.getsource(query_pipeline._handle_query_impl)
-        self.assertEqual(
-            source.count("build_sql_system_prompt("),
-            source.count("stable_context=_preloaded_kb"),
-            "every SQL prompt in the request must carry the same knowledge base",
-        )
+        tree = ast.parse(inspect.getsource(query_pipeline))
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)
+                 and getattr(node.func, "id", "") == "build_sql_system_prompt"]
+        self.assertGreaterEqual(
+            len(calls), 3,
+            "the walk stopped finding the prompt builders — there is the "
+            "initial generation call and two repair-ladder calls")
+
+        missing = []
+        for call in calls:
+            passed = {keyword.arg for keyword in call.keywords}
+            if "stable_context" not in passed:
+                missing.append(call.lineno)
+        self.assertFalse(
+            missing,
+            f"the SQL prompt at line(s) {missing} is built without the "
+            f"preloaded knowledge base, while the repair message tells the "
+            f"model to use only tables that appear in it")
+
+        # And they all carry the SAME one, not three different expressions.
+        sources = {
+            ast.unparse(keyword.value)
+            for call in calls for keyword in call.keywords
+            if keyword.arg == "stable_context"
+        }
+        self.assertEqual(len(sources), 1, f"prompts carry different KBs: {sources}")
 
 
 class RuleGatesStillSeeTheKnowledgeBase(unittest.TestCase):

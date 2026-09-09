@@ -161,14 +161,68 @@ class FailOpenRemovalTests(unittest.TestCase):
         )
         self.assertNotIn('profile.get("enforcement_mode") == "enforce"', src)
 
-    def test_export_guard_no_longer_requires_enforce_mode(self):
-        from pathlib import Path
+    def _export(self, regulated):
+        """The real /portal/api/export-csv route, with export-policy evaluation
+        broken the way a real failure breaks it."""
+        import json
+        import os
+        import tempfile
+        from unittest.mock import patch
 
-        src = (Path(__file__).resolve().parents[1] / "portal" / "routes.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn('profile.get("enforcement_mode") == "enforce"', src)
-        self.assertIn('is_regulated(user["account_id"])', src)
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+
+        os.environ.setdefault("QUERYBOT_DB_PATH",
+                              os.path.join(tempfile.mkdtemp(), "export.db"))
+        import core.compliance.policy_engine as policy_engine
+        import portal.routes as routes
+        import store
+
+        store.init_db()
+        app = FastAPI()
+        app.include_router(routes.router)
+        client = TestClient(app)
+
+        account_id = f"acct{os.urandom(4).hex()}"
+        store.upsert_client(account_id, "T")
+        user_id, _ = store.create_user(account_id, "Ada",
+                                       f"{os.urandom(4).hex()}@x.com")
+        trace_id = store.create_answer_trace(
+            account_id=account_id, question_id="q1", question_text="q",
+            portal_user_id=user_id)
+        with store.get_db() as conn:
+            conn.execute("UPDATE answer_trace SET result_rows=? WHERE id=?",
+                         (json.dumps([{"A": 1}]), trace_id))
+        client.cookies.set(routes._COOKIE, routes._sign_session_value(user_id))
+
+        with patch.object(policy_engine, "resolve_context",
+                          side_effect=RuntimeError("boom")), \
+             patch.object(policy_engine, "is_regulated", return_value=regulated):
+            return client.get(f"/portal/api/export-csv?trace_id={trace_id}")
+
+    def test_export_guard_no_longer_requires_enforce_mode(self):
+        """The un-rewritten twin of the test above, now executed.
+
+        It was two source scans over portal/routes.py: a NEGATIVE one, which
+        passes whether or not the shape it forbids ever existed there, and an
+        assertIn of a substring in an 8,000-line file. Neither runs the guard,
+        and neither can tell whether a regulated tenant is actually stopped.
+
+        The behaviour is the same as the chart guard's: when export-policy
+        evaluation itself raises, a regulated tenant fails CLOSED. The old
+        `enforcement_mode == "enforce"` conjunct meant a regulated tenant in
+        shadow mode could export freely on exactly that failure.
+        """
+        response = self._export(regulated=True)
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertIn("could not be verified", response.text)
+
+    def test_and_an_ordinary_tenant_still_exports(self):
+        """The control. Without it a route that 403s everybody satisfies the
+        test above, and that is what a botched fail-closed change looks like."""
+        response = self._export(regulated=False)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("A", response.text)
 
 
 class DataBriefDocstringTests(unittest.TestCase):

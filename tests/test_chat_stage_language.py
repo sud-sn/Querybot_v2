@@ -47,8 +47,21 @@ def _stage_pushes():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
+    # Every module, not the two that happened to have call sites when this was
+    # written. The test is named for EVERY call site, and a third module
+    # growing one -- gateway/webhooks.py pushes plenty of other status -- would
+    # have been invisible to a hard-coded pair. core/pipeline_helpers.py
+    # defines the function and calls it nowhere, which is why the pair was
+    # complete and stayed complete by luck.
+    skip = {"__pycache__", "venv", ".venv", ".git", "node_modules", "tests"}
+    modules = sorted(
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if not (skip & set(path.relative_to(root).parts))
+        and "_send_live_stage" in path.read_text(encoding="utf-8")
+    )
     pushes = []
-    for module in ("core/query_pipeline.py", "core/result_renderer.py"):
+    for module in modules:
         tree = ast.parse((root / module).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -66,6 +79,27 @@ class TestEveryStagePushGoesThroughTheCatalogue:
         """Guards the walk itself: a rename would otherwise make every
         assertion below pass over an empty list."""
         assert len(_stage_pushes()) >= 15
+
+    def test_the_walk_reaches_every_module_that_pushes_a_stage(self):
+        """The other half of guarding the walk. Its module list used to be two
+        hard-coded paths, so a call site anywhere else was unchecked -- the
+        same "fixed one site, missed the siblings" shape this whole sweep is
+        about, in the test rather than the code."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        skip = {"__pycache__", "venv", ".venv", ".git", "node_modules", "tests"}
+        carriers = {
+            str(path.relative_to(root))
+            for path in root.rglob("*.py")
+            if not (skip & set(path.relative_to(root).parts))
+            and "_send_live_stage(" in path.read_text(encoding="utf-8")
+        }
+        scanned = {module for module, _, _ in _stage_pushes()}
+        # pipeline_helpers DEFINES the function and calls it nowhere, so it
+        # carries the name without contributing a push.
+        unscanned = carriers - scanned - {"core/pipeline_helpers.py"}
+        assert not unscanned, f"these push stages and are never checked: {unscanned}"
 
     def test_no_call_site_passes_an_english_literal(self):
         """One missed call site is one stage that stays English mid-answer, in
