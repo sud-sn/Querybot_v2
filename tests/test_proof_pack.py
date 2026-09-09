@@ -249,10 +249,10 @@ class TestTheIntegritySection(ProofPackCase):
         self.assertEqual(section["records"], 0)
         self.assertEqual(section["reason"], "no_decisions_recorded")
 
-    def test_a_tampered_record_breaks_the_chain_and_is_located(self):
-        # The chain is only evidence if something recomputes it. Rewriting a
-        # decision's reason without recomputing its hash is exactly the edit
-        # a hash chain exists to catch.
+    def test_a_rewritten_hash_is_caught_at_the_record_it_was_written_on(self):
+        """An overwritten record_hash no longer describes its own record, and
+        that is now what is reported -- at the edited record, rather than at
+        the one after it whose previous_hash stopped matching."""
         import store
         self._decision()
         target = self._decision()
@@ -264,11 +264,117 @@ class TestTheIntegritySection(ProofPackCase):
             )
         section = integrity_section(self.account_id)
         self.assertFalse(section["verified"])
-        self.assertEqual(section["reason"], "chain_broken")
-        # The break is reported at the record AFTER the edited one, because
-        # that is the first record whose previous_hash no longer matches.
-        self.assertTrue(section["first_broken_record"])
-        self.assertNotEqual(section["first_broken_record"], target)
+        self.assertEqual(section["reason"], "record_altered")
+        self.assertEqual(section["first_broken_record"], target)
+
+    def test_rewriting_a_decisions_CONTENT_is_caught(self):
+        """The case this section's docstring promised and the code did not
+        make.
+
+        integrity_section said "Recomputed here rather than trusted: the chain
+        is only evidence if somebody checks it" and then selected only
+        id/previous_hash/record_hash -- none of the columns the hash is taken
+        over. So it verified that each row's stored previous_hash equalled the
+        previous row's stored record_hash, which links the chain without ever
+        checking that a link still describes its record.
+
+        Executed against the real store: a DENIED PII export rewritten into an
+        allowed one with an empty resource list, leaving both hashes untouched.
+        Before this change the pack answered "The decision log's N records form
+        an unbroken hash chain."
+        """
+        import store
+        self._decision()
+        target = store.log_policy_decision(
+            account_id=self.account_id, user_id="u1", action="export",
+            purpose_id="p1", channel="portal", allowed=False,
+            reason_code="denied_pii_egress", resources=["PATIENTS.SSN"],
+            obligations={}, policy_version=1,
+        )
+        self._decision()
+
+        self.assertTrue(integrity_section(self.account_id)["verified"],
+                        "the fixture is broken before the edit")
+
+        with store.get_db() as conn:
+            conn.execute(
+                "UPDATE policy_decision_log SET allowed=1, reason_code='ok', "
+                "resource_json='[]' WHERE id=?", (target,),
+            )
+
+        section = integrity_section(self.account_id)
+        self.assertFalse(section["verified"], section)
+        self.assertEqual(section["reason"], "record_altered")
+        self.assertEqual(section["first_broken_record"], target)
+        self.assertIn("altered", section["statement"])
+
+    def test_every_field_the_hash_covers_is_actually_covered(self):
+        """One edit per field, so a field quietly dropped from the canonical
+        form fails here rather than becoming silently un-attested."""
+        import store
+
+        edits = {
+            "action": "UPDATE policy_decision_log SET action='query' WHERE id=?",
+            "allowed": "UPDATE policy_decision_log SET allowed=0 WHERE id=?",
+            "reason_code": "UPDATE policy_decision_log SET reason_code='x' WHERE id=?",
+            "resources": "UPDATE policy_decision_log SET resource_json='[\"X\"]' WHERE id=?",
+            "obligations": "UPDATE policy_decision_log SET obligation_json='{\"m\":1}' WHERE id=?",
+            "purpose_id": "UPDATE policy_decision_log SET purpose_id='other' WHERE id=?",
+            "channel": "UPDATE policy_decision_log SET channel='teams' WHERE id=?",
+            "user_id": "UPDATE policy_decision_log SET user_id='u2' WHERE id=?",
+            "policy_version": "UPDATE policy_decision_log SET policy_version=9 WHERE id=?",
+        }
+        for field, sql in edits.items():
+            with self.subTest(field=field):
+                with store.get_db() as conn:
+                    conn.execute("DELETE FROM policy_decision_log WHERE account_id=?",
+                                 (self.account_id,))
+                target = self._decision()
+                self.assertTrue(integrity_section(self.account_id)["verified"])
+                with store.get_db() as conn:
+                    conn.execute(sql, (target,))
+                section = integrity_section(self.account_id)
+                self.assertFalse(section["verified"],
+                                 f"editing {field} is not detected")
+                self.assertEqual(section["reason"], "record_altered")
+
+    def test_the_writer_and_the_verifier_share_one_canonical_form(self):
+        """Two copies of this rule would drift the first time a field was
+        added, and the failure mode of that drift -- every record reporting as
+        tampered -- is as useless as no check at all."""
+        import store
+
+        target = self._decision()
+        with store.get_db() as conn:
+            row = dict(conn.execute(
+                "SELECT * FROM policy_decision_log WHERE id=?", (target,)).fetchone())
+
+        import json as _json
+        self.assertEqual(
+            store.policy_decision_hash(
+                audit_id=row["id"], account_id=row["account_id"],
+                user_id=row["user_id"], action=row["action"],
+                purpose_id=row["purpose_id"], channel=row["channel"],
+                allowed=row["allowed"], reason_code=row["reason_code"],
+                resources=_json.loads(row["resource_json"]),
+                obligations=_json.loads(row["obligation_json"]),
+                policy_version=row["policy_version"],
+                previous_hash=row["previous_hash"]),
+            row["record_hash"])
+
+    def test_a_record_written_with_a_non_string_user_id_still_verifies(self):
+        """SQLite type affinity: user_id is TEXT, so an int written to it reads
+        back as a str. Hashing the value as given made an untouched record
+        recompute to a different hash -- an integrity check that cries wolf is
+        worse than none, because it is switched off."""
+        import store
+
+        store.log_policy_decision(
+            account_id=self.account_id, user_id=7, action="export",
+            purpose_id="p1", channel="portal", allowed=True, reason_code="ok",
+            resources=["SALES.ORDERS"], obligations={}, policy_version="1",
+        )
+        self.assertTrue(integrity_section(self.account_id)["verified"])
 
     def test_deleting_a_record_from_the_middle_breaks_the_chain(self):
         import store

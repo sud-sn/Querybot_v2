@@ -540,6 +540,67 @@ def list_user_attestations(account_id: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def policy_decision_hash(
+    *,
+    audit_id: str,
+    account_id: str,
+    user_id,
+    action: str,
+    purpose_id: str,
+    channel: str,
+    allowed,
+    reason_code: str,
+    resources,
+    obligations,
+    policy_version,
+    previous_hash: str,
+) -> str:
+    """The canonical hash of one decision record.
+
+    Written and VERIFIED through this one function, deliberately. The proof
+    pack's integrity check used to select only the hash columns and compare
+    each row's stored previous_hash against the previous row's stored
+    record_hash -- which links the chain without ever recomputing a link, so
+    editing a record's CONTENT left both hashes untouched and the pack still
+    reported an unbroken chain. A verifier with its own copy of this canonical
+    form would drift from the writer's the first time a field was added, and
+    the failure mode of that drift is "everything looks tampered", which is
+    just as useless.
+    """
+    # Coerced to the form the COLUMN will hold, because this hash is verified
+    # against a row read back out of it. user_id is TEXT and policy_version is
+    # INTEGER, and SQLite applies type affinity on the way in: an int written
+    # to user_id reads back as a str, and a numeric string written to
+    # policy_version reads back as an int. Hash the value as given and the
+    # verifier recomputes a different one for a record nobody touched, which
+    # is the "everything looks tampered" failure that makes an integrity check
+    # worse than none. Every production caller already passes str(...) for
+    # user_id, so no existing record's hash changes.
+    user_id = "" if user_id is None else str(user_id)
+    if isinstance(policy_version, str) and policy_version.strip().lstrip("-").isdigit():
+        policy_version = int(policy_version)
+
+    canonical = json.dumps(
+        {
+            "id": audit_id,
+            "account_id": account_id,
+            "user_id": user_id,
+            "action": action,
+            "purpose_id": purpose_id,
+            "channel": channel,
+            "allowed": bool(allowed),
+            "reason_code": reason_code,
+            "resources": resources,
+            "obligations": obligations,
+            "policy_version": policy_version,
+            "previous_hash": previous_hash,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def log_policy_decision(
     *,
     account_id: str,
@@ -572,25 +633,13 @@ def log_policy_decision(
             "SELECT COALESCE(MAX(seq), 0) AS m FROM policy_decision_log "
             "WHERE account_id=?", (account_id,),
         ).fetchone()["m"] or 0) + 1
-        canonical = json.dumps(
-            {
-                "id": audit_id,
-                "account_id": account_id,
-                "user_id": user_id,
-                "action": action,
-                "purpose_id": purpose_id,
-                "channel": channel,
-                "allowed": bool(allowed),
-                "reason_code": reason_code,
-                "resources": resources,
-                "obligations": obligations,
-                "policy_version": policy_version,
-                "previous_hash": previous_hash,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
+        record_hash = policy_decision_hash(
+            audit_id=audit_id, account_id=account_id, user_id=user_id,
+            action=action, purpose_id=purpose_id, channel=channel,
+            allowed=allowed, reason_code=reason_code, resources=resources,
+            obligations=obligations, policy_version=policy_version,
+            previous_hash=previous_hash,
         )
-        record_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         conn.execute(
             """
             INSERT INTO policy_decision_log (

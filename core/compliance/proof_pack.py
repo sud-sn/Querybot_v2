@@ -286,6 +286,16 @@ def grounding_section(account_id: str) -> dict:
     }
 
 
+def _json_field(raw, fallback):
+    """A stored JSON column, back as the object the hash was taken over."""
+    if raw in (None, ""):
+        return fallback
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def integrity_section(account_id: str) -> dict:
     """Does the hash-chained decision log still verify?
 
@@ -298,9 +308,13 @@ def integrity_section(account_id: str) -> dict:
 
     try:
         with store.get_db() as conn:
+            # SELECT *, not the hash columns alone. The check below RECOMPUTES
+            # each record's hash from its content, and it cannot do that
+            # without the content: selecting only id/previous_hash/record_hash
+            # is what made this section verify the links of the chain while
+            # never verifying that any link still describes its record.
             rows = [dict(r) for r in conn.execute(
-                "SELECT id, previous_hash, record_hash, created_at, seq "
-                "FROM policy_decision_log WHERE account_id=? "
+                "SELECT * FROM policy_decision_log WHERE account_id=? "
                 "ORDER BY seq ASC, created_at ASC, id ASC",
                 (account_id,),
             ).fetchall()]
@@ -350,6 +364,44 @@ def integrity_section(account_id: str) -> dict:
                     f"{row['id']} does not follow the record before it."
                 ),
             }
+
+        # The link holds. Does the hash still DESCRIBE the record?
+        #
+        # This is the check the docstring above promised and the code did not
+        # make. Editing a record's content -- flipping a denied PII export to
+        # allowed, emptying its resource list -- leaves previous_hash and
+        # record_hash untouched, so the chain still links perfectly and the
+        # pack reported "an unbroken hash chain" over a rewritten log.
+        # Recomputed through store.policy_decision_hash, the same function the
+        # writer uses, so the two cannot drift into disagreeing.
+        recomputed = store.policy_decision_hash(
+            audit_id=row.get("id") or "",
+            account_id=row.get("account_id") or "",
+            user_id=row.get("user_id"),
+            action=row.get("action") or "",
+            purpose_id=row.get("purpose_id") or "",
+            channel=row.get("channel") or "",
+            allowed=row.get("allowed"),
+            reason_code=row.get("reason_code") or "",
+            resources=_json_field(row.get("resource_json"), []),
+            obligations=_json_field(row.get("obligation_json"), {}),
+            policy_version=row.get("policy_version"),
+            previous_hash=previous,
+        )
+        if recomputed != (row.get("record_hash") or ""):
+            return {
+                "records": len(rows),
+                "verified": False,
+                "reason": "record_altered",
+                "first_broken_record": row["id"],
+                "first_broken_at": row.get("created_at", ""),
+                "statement": (
+                    f"The decision log's record {row['id']} no longer matches "
+                    "its own hash: its content has been altered since it was "
+                    "written."
+                ),
+            }
+
         seen_predecessors[previous] = row["id"]
         expected = row.get("record_hash") or ""
 
