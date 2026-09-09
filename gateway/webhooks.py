@@ -2211,11 +2211,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         sql = str(snapshot.get("sql") or "")
         rows = snapshot.get("rows") or []
 
-        bullets = [f"Question asked: {question}", f"Rows returned: {len(rows)}"]
+        bullets = [_t("ui.chat.reconcile.question_asked", question=question),
+                   _t("ui.chat.reconcile.rows_returned", count=len(rows))]
         if len(rows) == 1 and len(rows[0]) == 1:
             from core.response_builder import _safe_cell
             value = next(iter(rows[0].values()))
-            bullets.insert(0, f"My value: {_safe_cell(value)}")
+            bullets.insert(0, _t("ui.chat.reconcile.my_value",
+                                 value=_safe_cell(value)))
 
         await websocket.send_json({
             "type": "assistant_analysis",
@@ -2226,9 +2228,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             ),
             "bullets": bullets,
             "secondary": sql,
+            # {question, label}: the label is the reader's language, the
+            # question is English and is what the planner re-reads when the
+            # chip is clicked. These two sat beside _t("reply.explain.title")
+            # in this same frame and were the only English left in the card.
             "follow_up_suggestions": [
-                f"{question}, excluding internal or administrative records",
-                f"{question}, using last calendar month instead",
+                {"question": _t("ui.chat.reconcile.exclude_admin", lang="en",
+                                question=question),
+                 "label": _t("ui.chat.reconcile.exclude_admin",
+                             question=question)},
+                {"question": _t("ui.chat.reconcile.last_month", lang="en",
+                                question=question),
+                 "label": _t("ui.chat.reconcile.last_month",
+                             question=question)},
             ],
         })
         await websocket.send_json({"type": "typing", "active": False})

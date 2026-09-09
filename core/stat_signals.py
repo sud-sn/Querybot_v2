@@ -377,18 +377,48 @@ def compute_signals(rows: list[dict]) -> list[dict]:
 # Template-based suggestions (zero LLM)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def template_suggestions(
+def _suggestion_pairs(
     signals: list[dict],
     col_names: list[str],
-) -> list[str]:
-    """
-    Map detected signals to natural-language follow-up questions.
+    col_types: dict[str, str] | None = None,
+) -> list[dict]:
+    """Up to 3 follow-ups, each as {"question", "label"}.
 
-    Returns up to 3 questions.  Order is chosen for maximum analytical value:
-    the most striking pattern comes first.
+    `question` is English and is what the planner re-reads when the chip is
+    clicked -- the same label/wire split the drill chips use, and the reason
+    the French copy below can read naturally instead of having to survive
+    question_normalizer.canonicalise word by word.
+
+    `label` is what the reader sees, in the reader's language, with every
+    column named the way the business names it.
+
+    Both halves were wrong before. The twelve templates here were English
+    f-strings with no access to the catalogue, and this is Tier 1: insight.py
+    short-circuits before the LLM as soon as three of them fire, which a plain
+    ranking of six rows does. So the commonest result in the product produced
+    three English chips carrying raw warehouse codes, under a fully translated
+    heading. Live output was:
+
+        What makes the top 1 ORDER_CNT account for 80% of REVENUE_AMT?
+
+    -- English, raw codes, and a COUNT column named as the entity being
+    ranked, because the name heuristic below has no "_cnt" suffix. That last
+    part is why col_types is threaded through: compute_data_brief already
+    knows ORDER_CNT is numeric because it looked at the values, and a real
+    type beats any spelling rule.
     """
-    text_cols  = [c for c in col_names if not _looks_numeric_col(c)]
-    num_cols   = [c for c in col_names if _looks_numeric_col(c)]
+    from core.i18n import t
+    from core.schema_enrichment import display_label
+
+    def _numeric(col: str) -> bool:
+        declared = str((col_types or {}).get(col) or "").strip().lower()
+        if declared:
+            return declared in {"numeric", "number", "int", "integer",
+                                "float", "decimal", "real", "money"}
+        return _looks_numeric_col(col)
+
+    text_cols = [c for c in col_names if not _numeric(c)]
+    num_cols  = [c for c in col_names if _numeric(c)]
 
     # Index signals by type for quick lookup
     by_type: dict[str, dict] = {}
@@ -396,92 +426,121 @@ def template_suggestions(
         if s["type"] not in by_type:
             by_type[s["type"]] = s
 
-    suggestions: list[str] = []
+    pairs: list[dict] = []
 
-    def _add(q: str) -> None:
-        if q and len(suggestions) < 3 and q not in suggestions:
-            suggestions.append(q)
+    def _add(msg_id: str, **kw) -> None:
+        """One chip, rendered twice: English for the wire, the reader's for the eye."""
+        if len(pairs) >= 3:
+            return
+        question = t(msg_id, lang="en", **kw)
+        if not question or any(p["question"] == question for p in pairs):
+            return
+        pairs.append({"question": question, "label": t(msg_id, **kw)})
+
+    def _entity(default_id: str = "ui.followup.entity.rows") -> dict:
+        """The thing being counted, as a label pair for the {entity} slot."""
+        if text_cols:
+            name = display_label(text_cols[0])
+            return {"en": name, "loc": name}
+        return {"en": t(default_id, lang="en"), "loc": t(default_id)}
+
+    def _col(name: str) -> str:
+        return display_label(name)
 
     # Priority order: most analytically interesting first
 
     # 1 — Outliers (very specific, high user interest)
     if "outlier_present" in by_type:
         s = by_type["outlier_present"]
-        _add(f"Show only the outliers in {s['col']} — values significantly above normal")
+        _add("ui.followup.outliers", column=_col(s["col"]))
 
     # 2 — Pareto / concentration
     if "pareto" in by_type:
         s = by_type["pareto"]
-        entity = text_cols[0] if text_cols else "rows"
-        _add(f"What makes the top {s['n_top']} {entity} account for {s['value']:.0f}% of {s['col']}?")
+        entity = _entity()
+        _add("ui.followup.pareto", n=s["n_top"], entity=entity["loc"],
+             pct=f"{s['value']:.0f}", column=_col(s["col"]))
 
     # 3 — Right-skewed (high outliers driving the mean)
     if "skewed_right" in by_type:
         s = by_type["skewed_right"]
-        entity = text_cols[0] if text_cols else "rows"
-        _add(f"Which {entity} are driving the high {s['col']} values?")
+        _add("ui.followup.skew_right", entity=_entity()["loc"],
+             column=_col(s["col"]))
 
     # 4 — Group imbalance
     if "group_imbalance" in by_type:
         s = by_type["group_imbalance"]
         num_col = num_cols[0] if num_cols else s["col"]
-        _add(f"Why does '{s['leader']}' have a {s['value']:.0f}% share in {num_col}?")
+        _add("ui.followup.group_imbalance", leader=s["leader"],
+             pct=f"{s['value']:.0f}", column=_col(num_col))
 
     # 5 — High variance (without outliers already shown)
     if "high_variance" in by_type and "outlier_present" not in by_type:
         s = by_type["high_variance"]
-        entity = text_cols[0] if text_cols else "rows"
-        _add(f"Who is significantly above and below average in {s['col']}?")
+        _add("ui.followup.high_variance", column=_col(s["col"]))
 
     # 6 — Below-average gap
     if "below_avg_gap" in by_type:
         s = by_type["below_avg_gap"]
-        entity = text_cols[0] if text_cols else "rows"
-        _add(f"Which {entity} are significantly below average in {s['col']}?")
+        _add("ui.followup.below_avg", entity=_entity()["loc"],
+             column=_col(s["col"]))
 
     # 7 — Cross-column positive association
     if "cross_col_positive" in by_type:
         s = by_type["cross_col_positive"]
         parts = s["col"].split("+")
         if len(parts) == 2:
-            _add(f"Show {parts[0]} vs {parts[1]} — do they move together?")
+            _add("ui.followup.cross_col", first=_col(parts[0]),
+                 second=_col(parts[1]))
 
     # 8 — Two metrics scatter (if cross_col not already added)
     if "two_metrics" in by_type and "cross_col_positive" not in by_type:
         s = by_type["two_metrics"]
         parts = s["col"].split("+")
         if len(parts) == 2:
-            _add(f"Show {parts[0]} vs {parts[1]} as a scatter chart")
+            _add("ui.followup.two_metrics", first=_col(parts[0]),
+                 second=_col(parts[1]))
 
     # 9 — Temporal trend
     if "temporal" in by_type:
         s = by_type["temporal"]
-        num_col = num_cols[0] if num_cols else "the metric"
-        direction = s.get("direction", "changing")
-        _add(f"The trend in {num_col} is {direction} — what period drove the biggest change?")
+        num_col = _col(num_cols[0]) if num_cols else t("ui.followup.metric")
+        direction_id = f"ui.followup.direction.{s.get('direction') or 'changing'}"
+        _add("ui.followup.trend", column=num_col, direction=t(direction_id))
     elif "flat_trend" in by_type:
-        num_col = num_cols[0] if num_cols else "the metric"
-        _add(f"{num_col} barely moved across the period — which periods are hiding offsetting swings?")
+        num_col = _col(num_cols[0]) if num_cols else t("ui.followup.metric")
+        _add("ui.followup.flat_trend", column=num_col)
 
     # 10 — Low variance (curiosity)
     if "low_variance" in by_type:
         s = by_type["low_variance"]
-        _add(f"Why are {s['col']} values so uniform across all rows?")
+        _add("ui.followup.low_variance", column=_col(s["col"]))
 
     # 11 — Large result — suggest segmentation by a column NOT already in the result
     if "large_result" in by_type:
         cat = by_type["large_result"]["col"]
-        # Only suggest breakdown if there are OTHER text columns not already the grouping dim
+        # Only suggest breakdown if there are OTHER text columns not already
+        # the grouping dim
         other_text = [c for c in text_cols if c != cat]
         if other_text:
-            _add(f"Break this down by {other_text[0]} to find the main patterns")
+            _add("ui.followup.segment", column=_col(other_text[0]))
 
     # 12 — Small result — suggest drilling deeper
     if "small_result" in by_type and num_cols:
-        entity = text_cols[0] if text_cols else "these"
-        _add(f"Show more detail about each {entity}")
+        _add("ui.followup.more_detail",
+             entity=_entity("ui.followup.entity.these")["loc"])
 
-    return suggestions[:3]
+    return pairs[:3]
+
+
+def template_suggestions(
+    signals: list[dict],
+    col_names: list[str],
+    col_types: dict[str, str] | None = None,
+) -> list[str]:
+    """The English questions only -- the form the planner and the LLM's
+    "already suggested, do not repeat" list both need."""
+    return [p["question"] for p in _suggestion_pairs(signals, col_names, col_types)]
 
 
 def _looks_numeric_col(col: str) -> bool:

@@ -479,22 +479,116 @@ class TestFollowUpChipsAreActuallyGrounded:
         assert _result_signals([]) == []
         assert _result_signals(None) == []
 
-    def test_the_generator_accepts_and_uses_them(self):
-        import inspect
+    # The two tests here were `"template_suggestions" in <the function source>`
+    # and `"signals=_result_signals(rows)," in <the file>`. Neither runs
+    # anything: the first passed on the word appearing in a comment, and it
+    # broke the moment the call moved to the pair-returning entry point while
+    # the grounding it is named for was untouched. Both are executions now.
 
+    def _generated(self, signals, rows=None):
+        """The real coroutine, with only its boundaries mocked."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        import core.compliance.policy_engine as policy_engine
         import core.insight as insight
+        import core.llm as llm
 
-        assert "signals" in inspect.signature(
-            insight.generate_followup_suggestions
-        ).parameters
-        source = inspect.getsource(insight.generate_followup_suggestions)
-        assert "template_suggestions" in source
+        rows = rows or [
+            {"REGION": "North", "REVENUE": 100.0},
+            {"REGION": "South", "REVENUE": 105.0},
+            {"REGION": "West", "REVENUE": 4200.0},
+        ]
+        brief = insight.compute_data_brief(rows, "revenue by region")
+        model = AsyncMock(return_value=('["from the model"]', 1, 1))
+        with patch.object(llm, "llm_complete", new=model), \
+             patch.object(llm, "resolve_provider",
+                          return_value=("openai", "m", "k", {})), \
+             patch.object(policy_engine, "is_regulated", return_value=False):
+            chips = asyncio.run(insight.generate_followup_suggestions(
+                brief=brief, question="revenue by region", result_scope={},
+                db_cfg={}, account_id="acct", signals=signals))
+        return chips, model
 
-    def test_they_are_passed_from_the_renderer(self):
-        from pathlib import Path
+    def test_signals_ground_the_chips_without_asking_the_model(self):
+        """The whole point of the statistical tier: three grounded chips and
+        no LLM call. Asserted on the call, not on the word appearing in the
+        source of the function that makes it."""
+        from core.result_renderer import _result_signals
 
-        source = Path("core/result_renderer.py").read_text(encoding="utf-8")
-        assert "signals=_result_signals(rows)," in source
+        rows = [
+            {"REGION": "North", "REVENUE": 100.0},
+            {"REGION": "South", "REVENUE": 105.0},
+            {"REGION": "West", "REVENUE": 4200.0},
+        ]
+        chips, model = self._generated(_result_signals(rows), rows)
+
+        assert len(chips) == 3
+        assert all(c["question"] for c in chips)
+        assert all("from the model" != c["question"] for c in chips)
+        model.assert_not_awaited()
+
+    def test_and_without_signals_it_falls_through_to_the_model(self):
+        """The control. Without it the test above passes on a generator that
+        ignores `signals` and returns three canned strings."""
+        chips, model = self._generated([])
+
+        assert [c["question"] for c in chips] == ["from the model"]
+        model.assert_awaited()
+
+    def test_the_renderer_really_passes_the_rows_signals(self):
+        """Starts at _send_results and ends at the generator, with the rows the
+        only thing this test hands in -- the write-site-to-read-site check the
+        source grep could not make.
+
+        The first draft of this test patched generate_followup_suggestions and
+        then CALLED it directly, which asserts on the mock and would pass with
+        the renderer deleted. It is driven from the real entry point now.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        import core.result_renderer as rr
+
+        seen = {}
+
+        async def _spy(**kwargs):
+            seen.update(kwargs)
+            return []
+
+        rows = [
+            {"REGION": "North", "REVENUE": 100.0},
+            {"REGION": "South", "REVENUE": 105.0},
+            {"REGION": "West", "REVENUE": 4200.0},
+        ]
+
+        class _Event:
+            user_id = 7
+            platform = "portal"
+            channel_id = "c"
+
+        adapter = AsyncMock()
+        adapter.send_assistant_response = AsyncMock()
+        adapter.send_message = AsyncMock()
+        # Production passes a SYNC callable here; an AsyncMock would be called
+        # without await and leave an un-awaited coroutine behind.
+        adapter.cache_result = lambda *a, **kw: None
+
+        with patch.object(rr, "generate_followup_suggestions", new=_spy):
+            asyncio.run(rr._send_results(
+                event=_Event(), adapter=adapter, question="revenue by region",
+                rows=rows, sql="SELECT 1", duration_ms=1,
+                portal_user={"id": 7, "lang": "en"}, account_id="acct",
+                db_cfg={"id": 1, "db_type": "azure_sql", "credentials": {}},
+                rag_context="", question_id="q1",
+                confidence_context=None,
+            ))
+
+        assert seen.get("signals"), (
+            "_send_results reached the chip generator without signals, so the "
+            "statistical tier cannot run and every chip comes from the model")
+        assert [s["type"] for s in seen["signals"]] == \
+            [s["type"] for s in rr._result_signals(rows)]
 
 
 # ── Replayed rows ────────────────────────────────────────────────────────────

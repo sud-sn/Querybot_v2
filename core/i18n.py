@@ -2862,6 +2862,94 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Break this down for {label}",
         "fr": "Ventile ceci pour {label}",
     },
+
+    # ── Statistical follow-up chips (core/stat_signals.template_suggestions) ──
+    #
+    # These are LABELS. The English question travels separately as the chip's
+    # data-question and is what the planner re-reads, so the French here is
+    # free to read naturally instead of having to survive
+    # question_normalizer.canonicalise word by word.
+    "ui.followup.outliers": {
+        "en": "Show only the outliers in {column} — values significantly above normal",
+        "fr": "Afficher uniquement les valeurs aberrantes de {column} — nettement supérieures à la normale",
+    },
+    "ui.followup.pareto": {
+        "en": "What makes the top {n} {entity} account for {pct}% of {column}?",
+        "fr": "Pourquoi les {n} premiers {entity} représentent-ils {pct} % de {column} ?",
+    },
+    "ui.followup.skew_right": {
+        "en": "Which {entity} are driving the high {column} values?",
+        "fr": "Quels {entity} tirent vers le haut les valeurs de {column} ?",
+    },
+    "ui.followup.group_imbalance": {
+        "en": "Why does '{leader}' have a {pct}% share in {column}?",
+        "fr": "Pourquoi « {leader} » représente-t-il {pct} % de {column} ?",
+    },
+    "ui.followup.high_variance": {
+        "en": "Who is significantly above and below average in {column}?",
+        "fr": "Qui se situe nettement au-dessus et au-dessous de la moyenne de {column} ?",
+    },
+    "ui.followup.below_avg": {
+        "en": "Which {entity} are significantly below average in {column}?",
+        "fr": "Quels {entity} sont nettement en dessous de la moyenne de {column} ?",
+    },
+    "ui.followup.cross_col": {
+        "en": "Show {first} vs {second} — do they move together?",
+        "fr": "Afficher {first} et {second} — évoluent-ils ensemble ?",
+    },
+    "ui.followup.two_metrics": {
+        "en": "Show {first} vs {second} as a scatter chart",
+        "fr": "Afficher {first} et {second} en nuage de points",
+    },
+    "ui.followup.trend": {
+        "en": "The trend in {column} is {direction} — what period drove the biggest change?",
+        "fr": "La tendance de {column} est {direction} — quelle période explique la plus forte variation ?",
+    },
+    "ui.followup.flat_trend": {
+        "en": "{column} barely moved across the period — which periods are hiding offsetting swings?",
+        "fr": "{column} a très peu varié sur la période — quelles périodes masquent des variations qui se compensent ?",
+    },
+    "ui.followup.low_variance": {
+        "en": "Why are {column} values so uniform across all rows?",
+        "fr": "Pourquoi les valeurs de {column} sont-elles si uniformes sur toutes les lignes ?",
+    },
+    "ui.followup.segment": {
+        "en": "Break this down by {column} to find the main patterns",
+        "fr": "Ventiler ceci par {column} pour dégager les principales tendances",
+    },
+    "ui.followup.more_detail": {
+        "en": "Show more detail about each {entity}",
+        "fr": "Afficher plus de détails sur chaque {entity}",
+    },
+    # The words the templates fall back to when no column fits the slot.
+    "ui.followup.entity.rows": {"en": "rows", "fr": "lignes"},
+    "ui.followup.entity.these": {"en": "these", "fr": "ces éléments"},
+    "ui.followup.metric": {"en": "the metric", "fr": "la mesure"},
+    "ui.followup.direction.upward": {"en": "upward", "fr": "à la hausse"},
+    "ui.followup.direction.downward": {"en": "downward", "fr": "à la baisse"},
+    "ui.followup.direction.changing": {"en": "changing", "fr": "en évolution"},
+
+    # ── The reconcile card (gateway/webhooks._run_reconcile_chat) ────────────
+    "ui.chat.reconcile.my_value": {
+        "en": "My value: {value}",
+        "fr": "Ma valeur : {value}",
+    },
+    "ui.chat.reconcile.question_asked": {
+        "en": "Question asked: {question}",
+        "fr": "Question posée : {question}",
+    },
+    "ui.chat.reconcile.rows_returned": {
+        "en": "Rows returned: {count}",
+        "fr": "Lignes renvoyées : {count}",
+    },
+    "ui.chat.reconcile.exclude_admin": {
+        "en": "{question}, excluding internal or administrative records",
+        "fr": "{question}, en excluant les enregistrements internes ou administratifs",
+    },
+    "ui.chat.reconcile.last_month": {
+        "en": "{question}, using last calendar month instead",
+        "fr": "{question}, en utilisant plutôt le mois calendaire précédent",
+    },
     "ui.chat.system.running": {
         "en": "Running {action}…",
         "fr": "Exécution de {action}…",

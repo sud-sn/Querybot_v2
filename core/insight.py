@@ -1640,9 +1640,14 @@ async def generate_followup_suggestions(
     audit_enabled: bool = False,
     audit_request_id: str = "",
     signals: list[dict] | None = None,
-) -> list[str]:
+) -> list[dict]:
     """
     Generate 3 result-aware follow-up questions from brief metadata.
+
+    Returns [{"question": <English>, "label": <the reader's language>}, ...].
+    The split is the same one the drill chips use: the label is what the chip
+    shows, the question is what the planner re-reads when it is clicked, so
+    the French copy never has to survive question_normalizer.canonicalise.
     Reads category_breakdown and numeric_summaries from brief — raw rows never
     reach this function (PII boundary).
     Returns [] on any failure — follow-ups are a UX enhancement, not critical.
@@ -1700,11 +1705,22 @@ async def generate_followup_suggestions(
     # function. Signals carry no raw values by construction, so the caller
     # computes them where the rows are and passes them in.
     signals = list(signals or [])
-    suggestions: list[str] = []
+    # Each entry is {"question": <English, what the planner re-reads>,
+    #                "label":    <the reader's language, what the chip shows>}.
+    # The chips used to be plain strings, which made the label and the wire
+    # value the same object and forced them both to stay English -- so Tier 1,
+    # which short-circuits below as soon as three fire, put English prose
+    # carrying raw column codes under a fully translated heading.
+    suggestions: list[dict] = []
     if signals:
         try:
-            from core.stat_signals import template_suggestions
-            suggestions = [q for q in template_suggestions(signals, col_names) if q]
+            from core.stat_signals import _suggestion_pairs
+            # col_types comes from compute_data_brief, which decided "numeric"
+            # by looking at the values. Passing it stops the name heuristic in
+            # stat_signals from calling ORDER_CNT a text column and naming it
+            # as the entity being ranked.
+            suggestions = [p for p in _suggestion_pairs(signals, col_names, col_types)
+                           if p.get("question")]
         except Exception as exc:
             log.warning(
                 "Statistical follow-up templates unavailable (%s) — falling back "
@@ -1712,7 +1728,7 @@ async def generate_followup_suggestions(
             )
 
     if len(suggestions) >= 3:
-        return [s for s in suggestions if s][:3]
+        return suggestions[:3]
 
     # ── Tier 2: LLM gap-fill with signal context only (no raw rows) ──────────
     needed = 3 - len(suggestions)
@@ -1734,8 +1750,9 @@ async def generate_followup_suggestions(
             + ("\n".join(num_lines) if num_lines else "")
         )
 
+    _already = [p["question"] for p in suggestions]
     existing_str = (
-        f"\nAlready suggested (do NOT repeat): {suggestions}\n" if suggestions else ""
+        f"\nAlready suggested (do NOT repeat): {_already}\n" if suggestions else ""
     )
 
     # Columns already present in the result — LLM must not suggest grouping by these
@@ -1800,13 +1817,16 @@ async def generate_followup_suggestions(
 
         for s in llm_suggestions:
             s = str(s).strip()[:80]
-            if s and s not in suggestions:
-                suggestions.append(s)
+            # The model writes in English and there is no second call to
+            # translate it, so label == question here. Tier 1 is what carries
+            # the reader's language, and it is what runs on the common case.
+            if s and all(p["question"] != s for p in suggestions):
+                suggestions.append({"question": s, "label": s})
             if len(suggestions) >= 3:
                 break
 
-        # Normalise: strings only, stripped, max 80 chars, max 3
-        result = [s for s in suggestions if s][:3]
+        # Normalise: max 3, each with a question the planner can re-read
+        result = [p for p in suggestions if p.get("question")][:3]
         log.debug("Follow-up suggestions (template+LLM): %s", result)
         return result
 

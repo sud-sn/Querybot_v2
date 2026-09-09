@@ -280,14 +280,24 @@ class TestGenerateFollowupSuggestions(unittest.TestCase):
         """The user message the function actually built."""
         return self.last_call.await_args.args[1]
 
+    def questions(self, **kw):
+        """The English half of each chip -- what the planner re-reads.
+
+        The chips became {"question", "label"} pairs so a French reader can be
+        shown French copy while the text that gets re-planned stays English.
+        These tests are about the question half; the label half has its own
+        tests in tests/test_followup_chip_language.py.
+        """
+        return [p["question"] for p in self.suggestions(**kw)]
+
     def test_it_suggests_something_for_an_ordinary_result(self):
         # The control. Without it, every test below passes on a function that
         # returns [] unconditionally.
-        self.assertEqual(self.suggestions(), ["a", "b", "c"])
+        self.assertEqual(self.questions(), ["a", "b", "c"])
 
     def test_suggestions_are_capped_at_three(self):
         self.assertEqual(
-            self.suggestions(reply='["a","b","c","d","e","f","g"]'),
+            self.questions(reply='["a","b","c","d","e","f","g"]'),
             ["a", "b", "c"])
 
     def test_a_single_column_result_gets_none(self):
@@ -309,13 +319,13 @@ class TestGenerateFollowupSuggestions(unittest.TestCase):
 
     def test_a_repeated_suggestion_is_not_shown_twice(self):
         self.assertEqual(
-            self.suggestions(reply='["same", "same", "other", "third"]'),
+            self.questions(reply='["same", "same", "other", "third"]'),
             ["same", "other", "third"])
 
     def test_an_overlong_suggestion_is_trimmed_not_dropped(self):
         # These render as chips in a row; one that wraps to three lines breaks
         # the layout, and dropping it silently leaves the row short.
-        got = self.suggestions(reply='["%s", "b", "c"]' % ("x" * 200))
+        got = self.questions(reply='["%s", "b", "c"]' % ("x" * 200))
         self.assertEqual([len(s) for s in got], [80, 1, 1])
 
     def test_the_model_is_not_even_called_for_those(self):

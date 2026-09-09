@@ -4102,9 +4102,10 @@ function appendAssistantResponse(msg, opts = {}){
     ? `<div class="follow-up-wrap">
         <div class="suggestions-label">${t('ui.chat.suggestions.label')}</div>
         <div class="suggestions follow-up-chips">
-          ${followUpSugs.map(q => `<button class="suggestion-chip follow-up-chip" type="button"
-            data-follow-up="${escHtml(q)}" title="${escHtml(q)}">
-            <span class="suggestion-card-copy"><small>${t('ui.chat.card.follow_up')}</small><strong>${escHtml(q)}</strong></span>
+          ${followUpSugs.map(_followUpChip).map(c => `<button class="suggestion-chip follow-up-chip" type="button"
+            data-question="${escHtml(c.question)}"
+            data-follow-up="${escHtml(c.label)}" title="${escHtml(c.label)}">
+            <span class="suggestion-card-copy"><small>${t('ui.chat.card.follow_up')}</small><strong>${escHtml(c.label)}</strong></span>
           </button>`).join('')}
         </div>
       </div>`
@@ -4396,7 +4397,7 @@ function appendAnalysisResponse(msg, opts = {}){
   const analysisFollowUps = Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : [];
   const followUpHtml = analysisFollowUps.length
     ? `<div class="suggestions follow-up-chips" style="margin-top:.6rem">
-        ${analysisFollowUps.map(q => `<button class="suggestion-chip follow-up-chip" type="button">${escHtml(q)}</button>`).join('')}
+        ${analysisFollowUps.map(_followUpChip).map(c => `<button class="suggestion-chip follow-up-chip" type="button" data-question="${escHtml(c.question)}">${escHtml(c.label)}</button>`).join('')}
       </div>`
     : '';
   div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || t('ui.chat.card.analysis'))}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">${t('ui.chat.card.next_step_label')}</span>${escHtml(msg.next_step)}</div>` : ''}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">${t('ui.chat.card.copy_analysis')}</button></div></div></div>`;
@@ -4777,6 +4778,22 @@ function sendMessage(tableHint){
                    t('ui.chat.delivery.starting_detail'));
   const sug = document.getElementById('suggestionsWrap'); if (sug) sug.style.display = 'none';
 }
+// A follow-up chip is {question, label}: the label is what the reader sees,
+// in their language; the question is English and is what the planner re-reads
+// when the chip is clicked. sendSuggestion already prefers data-question over
+// textContent, so the split costs nothing at the click end.
+//
+// Plain strings are still accepted -- older payloads and the LLM tier send
+// them, and for those the label and the question are the same text.
+function _followUpChip(entry) {
+  if (entry && typeof entry === 'object') {
+    const question = String(entry.question || entry.label || '');
+    return {question, label: String(entry.label || question)};
+  }
+  const text = String(entry == null ? '' : entry);
+  return {question: text, label: text};
+}
+
 function sendSuggestion(btn){
   const q   = (btn.dataset.question || btn.textContent).trim();
   const fqn = btn.dataset.fqn || '';
