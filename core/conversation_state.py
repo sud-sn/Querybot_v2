@@ -551,13 +551,43 @@ _ELLIPTICAL_OPENER_RE = re.compile(
 )
 _ELLIPTICAL_MAX_WORDS = 8
 
+# What has to be LEFT once the opener is removed.
+#
+# The opener alone is not enough, and assuming it was let "and thanks!", "and
+# who are you?", "now goodbye", "and?" and "same to you" through as governed
+# result refinements -- so a courtesy skipped the conversational analyst and
+# went to the SQL pipeline. A real elliptical data follow-up names a new SLICE:
+# a dimension to group by, or a period to move to. A courtesy names neither.
+_ELLIPTICAL_TARGET_RE = re.compile(
+    r"\b(?:by|per|for|in|during|vs|versus|against|instead\s+of)\s+\w"
+    r"|\b(?:last|this|previous|next|prior)\s+"
+    r"(?:week|month|quarter|year|fortnight|\d+\s+\w+)"
+    r"|\b(?:ytd|mtd|qtd|q[1-4]|fy\s?\d{2,4})\b"
+    r"|\b(?:19|20)\d{2}\b"
+    r"|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?"
+    r"|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?"
+    r"|dec(?:ember)?)\b"
+    r"|\b(?:yesterday|today|tomorrow)\b",
+    re.IGNORECASE,
+)
+
 
 def looks_elliptical(question: str) -> bool:
-    """True when a turn only makes sense as a continuation of the previous one."""
-    words = str(question or "").split()
+    """True when a turn only makes sense as a continuation of the previous one.
+
+    Three conditions, and all three are load-bearing: an opener at the START
+    (so "sales and margin by region" is untouched), a short turn (an opener
+    followed by a whole question is a whole question), and a refinement target
+    in what remains (so a courtesy is not mistaken for a query).
+    """
+    text = str(question or "")
+    words = text.split()
     if not words or len(words) > _ELLIPTICAL_MAX_WORDS:
         return False
-    return bool(_ELLIPTICAL_OPENER_RE.match(question))
+    opener = _ELLIPTICAL_OPENER_RE.match(text)
+    if not opener:
+        return False
+    return bool(_ELLIPTICAL_TARGET_RE.search(text[opener.end():]))
 
 
 _ANALYSIS_RE = re.compile(

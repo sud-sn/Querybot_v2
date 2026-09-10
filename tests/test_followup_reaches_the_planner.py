@@ -135,6 +135,31 @@ STANDALONE = [
     "show me the total revenue for every warehouse last year",
 ]
 
+# A courtesy also opens with "and" or "now", and the first version of this
+# change let every one of them through as a governed result refinement -- so
+# saying thank you skipped the conversational analyst and went to the SQL
+# pipeline. An opener is not the signal on its own; what is LEFT after it has
+# to name a slice.
+COURTESIES = [
+    "and thanks!",
+    "and who are you?",
+    "now goodbye",
+    "and?",
+    "next!",
+    "same to you",
+    "and you?",
+    "ok and what can you do?",
+]
+
+# Short, opener-led, and genuinely a NEW question rather than a refinement.
+# These are allowed to reach a fresh query; what matters is that they are not
+# silently answered from the previous result.
+NEW_QUESTIONS_THAT_LOOK_ELLIPTICAL = [
+    "also unpaid invoices?",
+    "and margin?",
+    "now show me customers",
+]
+
 
 class TestAFragmentIsRecognisedAsAContinuation:
 
@@ -153,6 +178,25 @@ class TestAFragmentIsRecognisedAsAContinuation:
 
     def test_a_conjunction_inside_a_sentence_is_not_an_opener(self):
         assert looks_elliptical("sales and margin by region") is False
+
+    @pytest.mark.parametrize("typed", COURTESIES)
+    def test_a_courtesy_is_not_a_refinement(self, typed):
+        """An opener with nothing after it that names a slice."""
+        assert looks_elliptical(typed) is False
+
+    @pytest.mark.parametrize("typed", NEW_QUESTIONS_THAT_LOOK_ELLIPTICAL)
+    def test_a_new_measure_or_entity_is_not_a_refinement(self, typed):
+        """"and margin?" asks for a different measure, which needs a fresh
+        query. Treating it as a refinement of the result on screen would
+        transform rows that do not contain it."""
+        assert looks_elliptical(typed) is False
+
+    def test_the_target_has_to_be_in_what_follows_the_opener(self):
+        """The remainder is what is searched, not the whole turn -- otherwise
+        an opener that IS a target word ("next!") would qualify."""
+        assert looks_elliptical("next!") is False
+        assert looks_elliptical("next month please") is False
+        assert looks_elliptical("and for next month") is True
 
 
 class TestTheGateOpensForItAndStaysShutForTheRest:
@@ -214,6 +258,25 @@ class TestTheTurnIsClassifiedAsARefinement:
         assert bypass_analyst_gate(classify_turn(
             typed, state=_state(), has_cached_result=True, looks_like_data=True
         )) is True
+
+
+class TestACourtesyStillReachesTheAnalyst:
+    """The regression this predicate had to avoid: saying thank you must not
+    become a query."""
+
+    @pytest.mark.parametrize("typed", COURTESIES)
+    def test_it_does_not_bypass_the_analyst_gate(self, typed):
+        from core.conversation_state import bypass_analyst_gate
+
+        decision = classify_turn(
+            typed, state=_state(), has_cached_result=True, looks_like_data=False)
+        assert bypass_analyst_gate(decision) is False, decision
+
+    @pytest.mark.parametrize("typed", COURTESIES)
+    def test_it_does_not_cost_a_planner_call(self, typed):
+        assert should_attempt_cache_followup(
+            typed, True,
+            cached_col_names=CACHED_COLUMNS, cached_rows=CACHED_ROWS) is False
 
 
 class TestTheMergedQuestionCarriesBothTurns:
