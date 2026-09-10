@@ -42,6 +42,7 @@ import store
 from store.db import get_db as _get_db
 from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
 from store.config_store import get_db_config
+from core.pipeline_context import save_state
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.log_export import (
     DEFAULT_EXPORT_TIME,
@@ -9044,7 +9045,6 @@ async def admin_accept_kb_validation(
         )
 
     async def _finish_override_activation():
-        from core.pipeline_context import save_state
         from core.dispatcher import _run_log_harvest
 
         accepted_at = datetime.now(timezone.utc).isoformat()
@@ -9939,7 +9939,6 @@ async def admin_delete_kb_only(request: Request, account_id: str):
 
     # 5. Roll state back to SCHEMA_READY so the KB step shows as pending
     try:
-        from core.pipeline_context import save_state
         next_state = dict(state_data)
         next_state.pop("kb_progress", None)
         save_state(account_id, "SCHEMA_READY", next_state)
@@ -9982,7 +9981,6 @@ async def admin_stop_kb_build(request: Request, account_id: str):
     if client:
         state_data = json.loads(client.get("state_data") or "{}")
         if client.get("state") == "KB_BUILDING":
-            from core.pipeline_context import save_state
             fallback_state = dict(state_data)
             fallback_state.pop("kb_progress", None)
             save_state(account_id, "SCHEMA_READY", fallback_state)
@@ -10034,7 +10032,6 @@ async def admin_discover_schema(
     async def _do_discover():
         try:
             from core.schema import discover_and_write
-            from core.pipeline_context import save_state
             # ── Snapshot old schema for drift detection ───────────────────────
             _old_schema: dict = {}
             _old_schema_path = Path(schema_dir) / "_schema.json"
@@ -10396,7 +10393,6 @@ async def admin_build_kb(
 
     async def _do_build():
         try:
-            from core.pipeline_context import save_state
             from core.dispatcher import _run_example_validation, _run_log_harvest
             from core.knowledge import build_kb
             from core.llm import resolve_provider

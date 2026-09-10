@@ -408,6 +408,272 @@ class TestNoLocalIsReadBeforeItCanBeBound:
         assert self._unbound_reads(fn) == []
 
 
+class TestALocalImportReachesEveryBranchThatReadsIt:
+    """The half the class above cannot see, and the bug that proved it.
+
+    `TestNoLocalIsReadBeforeItCanBeBound` compares a read's line against the
+    FIRST binding anywhere in the function. That catches "read before any
+    binding" and, by construction, nothing else. `build_assistant_response`
+    was the other shape: gateway/webhooks.ws_chat imported it inside three
+    branches (the row-lasso handler at 2704, two chip handlers at 4118 and
+    4169) and read it from two others (the result_chat governed-cache reply at
+    2966, the DB-fallback reply at 3474). The first binding is at 2704, above
+    both reads, so the line comparison was satisfied -- and every in-card
+    conversation still died on
+
+        UnboundLocalError: cannot access local variable
+        'build_assistant_response' where it is not associated with a value
+
+    because assigning a name anywhere in a function makes it local to the
+    WHOLE function, and none of those three branches runs when result_chat
+    does. The `except Exception` around the branch turned it into "Something
+    went wrong", so the feature was dead for its entire life with a green
+    suite.
+
+    This walks the statement tree instead of the line numbers, tracking which
+    imports have definitely run at each point: an `if` contributes only what
+    both arms import, a `try` only what survives every handler that falls
+    through, a loop body contributes nothing (it may run zero times). It is
+    scoped to names the function binds ONLY by importing them, which is what
+    makes it cheap and quiet -- a full definite-assignment pass over every
+    local would drown in the legitimate `x = None` / `if: x = ...` idiom.
+    """
+
+    _NESTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    _TERMINAL = (ast.Return, ast.Raise, ast.Continue, ast.Break)
+
+    @classmethod
+    def _import_only_names(cls, fn):
+        """Names this function binds by a local import and by nothing else."""
+        imported, otherwise = set(), set()
+
+        def walk(node):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, cls._NESTED):
+                    name = getattr(child, "name", "")
+                    if name:
+                        otherwise.add(name)     # a def shadows the import
+                    continue
+                if isinstance(child, (ast.Import, ast.ImportFrom)):
+                    for alias in child.names:
+                        imported.add(alias.asname or alias.name.split(".")[0])
+                elif isinstance(child, ast.Name) and isinstance(
+                        child.ctx, (ast.Store, ast.Del)):
+                    otherwise.add(child.id)
+                elif isinstance(child, ast.ExceptHandler) and child.name:
+                    otherwise.add(child.name)
+                elif isinstance(child, (ast.Global, ast.Nonlocal)):
+                    otherwise.update(child.names)
+                walk(child)
+
+        walk(fn)
+        params = {a.arg for a in fn.args.posonlyargs + fn.args.args
+                  + fn.args.kwonlyargs}
+        for extra in (fn.args.vararg, fn.args.kwarg):
+            if extra:
+                params.add(extra.arg)
+        return (imported - otherwise) - params
+
+    @classmethod
+    def _reads(cls, node, watch):
+        """(name, line) loaded by `node` in this function's own frame."""
+        out = []
+
+        def walk(n):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
+                    and n.id in watch:
+                out.append((n.id, n.lineno))
+            for child in ast.iter_child_nodes(n):
+                if isinstance(child, cls._NESTED):
+                    continue          # a closure reads the cell, not the frame
+                walk(child)
+
+        walk(node)
+        return out
+
+    @classmethod
+    def _run_block(cls, stmts, bound, watch, found):
+        """Walk one statement list. Returns (imports_bound_after, terminates)."""
+        bound = set(bound)
+        for st in stmts:
+            # Whatever a compound statement evaluates before entering its own
+            # blocks -- the `if` test, the `for` iterable, the `with` subject.
+            if isinstance(st, (ast.If, ast.While)):
+                header = [st.test]
+            elif isinstance(st, (ast.For, ast.AsyncFor)):
+                header = [st.iter]
+            elif isinstance(st, (ast.With, ast.AsyncWith)):
+                header = [item.context_expr for item in st.items]
+            elif isinstance(st, (ast.Try, ast.Match)):
+                header = [st.subject] if isinstance(st, ast.Match) else []
+            elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                header = list(st.decorator_list)
+            else:
+                header = [st]
+            for part in header:
+                for name, line in cls._reads(part, watch):
+                    if name not in bound:
+                        found.append((name, line))
+
+            if isinstance(st, (ast.Import, ast.ImportFrom)):
+                for alias in st.names:
+                    bound.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(st, ast.If):
+                taken, t_ends = cls._run_block(st.body, bound, watch, found)
+                other, o_ends = cls._run_block(st.orelse, bound, watch, found)
+                if t_ends and o_ends:
+                    return bound, True
+                bound = other if t_ends else taken if o_ends else taken & other
+            elif isinstance(st, ast.Try):
+                tried, body_ends = cls._run_block(st.body, bound, watch, found)
+                survivors = []
+                for handler in st.handlers:
+                    caught, ends = cls._run_block(
+                        handler.body, bound, watch, found)
+                    if not ends:
+                        survivors.append(caught)
+                after = set(tried)
+                if survivors:
+                    for caught in survivors:
+                        after &= caught
+                elif not body_ends:
+                    after, _ = cls._run_block(st.orelse, tried, watch, found)
+                finally_bound, finally_ends = cls._run_block(
+                    st.finalbody, bound, watch, found)
+                bound = after | finally_bound
+                if finally_ends:
+                    return bound, True
+            elif isinstance(st, (ast.For, ast.AsyncFor, ast.While)):
+                # Zero iterations is a real path, so the body binds nothing
+                # out here -- but its reads still count.
+                cls._run_block(st.body, bound, watch, found)
+                cls._run_block(st.orelse, bound, watch, found)
+            elif isinstance(st, (ast.With, ast.AsyncWith)):
+                bound, ends = cls._run_block(st.body, bound, watch, found)
+                if ends:
+                    return bound, True
+            elif isinstance(st, ast.Match):
+                arms = [cls._run_block(case.body, bound, watch, found)
+                        for case in st.cases]
+                live = [b for b, ends in arms if not ends]
+                exhaustive = any(
+                    isinstance(case.pattern, ast.MatchAs)
+                    and case.pattern.pattern is None and case.guard is None
+                    for case in st.cases)
+                if live and exhaustive:
+                    matched = set(live[0])
+                    for arm in live[1:]:
+                        matched &= arm
+                    bound = matched
+            elif isinstance(st, cls._TERMINAL):
+                return bound, True
+            elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                bound.add(st.name)
+        return bound, False
+
+    @classmethod
+    def _unreachable_imports(cls, fn):
+        """(name, line) read on a path where no import of it has run."""
+        watch = cls._import_only_names(fn)
+        if not watch:
+            return []
+        found = []
+        cls._run_block(fn.body, set(), watch, found)
+        return sorted(set(found))
+
+    def test_no_function_reads_a_local_import_it_may_not_have_made(self):
+        root = Path(__file__).resolve().parents[1]
+        skip = {"__pycache__", "venv", ".git", "node_modules", ".venv"}
+        offenders = []
+        scanned = 0
+        for path in root.rglob("*.py"):
+            if skip & set(path.relative_to(root).parts):
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                scanned += 1
+                for name, line in self._unreachable_imports(node):
+                    offenders.append(
+                        f"{path.relative_to(root)}:{line} {node.name}() reads "
+                        f"{name!r} on a path that never imported it")
+
+        assert scanned > 5000, f"the scan only reached {scanned} functions"
+        assert not offenders, (
+            "a function-local import must run on every path that reads the "
+            "name; these are UnboundLocalError at runtime:\n  "
+            + "\n  ".join(sorted(offenders)))
+
+    def test_the_detector_finds_the_bug_it_was_written_for(self):
+        """The exact shape from ws_chat: imported in one branch, read in another."""
+        source = (
+            "def ws_chat(a):\n"
+            "    if a == 'lasso':\n"
+            "        from core.response_builder import build_assistant_response\n"
+            "        return build_assistant_response(a)\n"
+            "    if a == 'result_chat':\n"
+            "        return build_assistant_response(a)\n"      # dead on arrival
+        )
+        fn = ast.parse(source).body[0]
+        assert self._unreachable_imports(fn) == [
+            ("build_assistant_response", 6)]
+
+    def test_it_finds_a_handler_that_depends_on_the_body_it_guards(self):
+        """The admin/routes.py shape: report the failure with an import that
+        may be what failed."""
+        source = (
+            "def build():\n"
+            "    try:\n"
+            "        from core.pipeline_context import save_state\n"
+            "        work()\n"
+            "    except Exception:\n"
+            "        save_state('failed')\n"
+        )
+        fn = ast.parse(source).body[0]
+        assert self._unreachable_imports(fn) == [("save_state", 6)]
+
+    def test_it_does_not_flag_the_shapes_that_are_fine(self):
+        """The false-positive half. Every one of these is correct code and a
+        detector that objected to them would be switched off inside a day."""
+        source = (
+            "def f(a):\n"
+            "    import json\n"
+            "    print(json)\n"                       # plainly before the read
+            "    try:\n"
+            "        import sqlglot\n"
+            "    except ImportError:\n"
+            "        return None\n"                   # handler leaves
+            "    print(sqlglot)\n"
+            "    try:\n"
+            "        import duckdb\n"
+            "    except ImportError:\n"
+            "        duckdb = None\n"                 # handler binds it
+            "    print(duckdb)\n"
+            "    if a:\n"
+            "        import yaml\n"
+            "    else:\n"
+            "        import yaml\n"                   # both arms
+            "    print(yaml)\n"
+            "    with open('x'):\n"
+            "        import csv\n"
+            "    print(csv)\n"                        # a with-body always runs
+            "    if a:\n"
+            "        import threading\n"
+            "        print(threading)\n"              # same branch, after
+            "    def later():\n"
+            "        return threading\n"              # a closure, not this frame
+            "    return later\n"
+        )
+        fn = ast.parse(source).body[0]
+        assert self._unreachable_imports(fn) == []
+
+
 class TestAFailedAnalyticIsLoud:
     """The NameError was survivable. Its being logged at debug level is what
     made it invisible for a release."""

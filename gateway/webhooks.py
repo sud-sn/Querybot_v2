@@ -36,6 +36,7 @@ from core.result_renderer import (
     _build_cannot_generate_hint,
     _inject_distinct_if_needed,
 )
+from core.response_builder import build_assistant_response
 from core.result_cache import result_cache
 from core.result_commands import (
     compile_confirmed_result_presentation,
@@ -1229,7 +1230,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             except Exception as chart_exc:
                 log.debug("Local result chart generation skipped: %s", chart_exc)
 
-            from core.response_builder import build_assistant_response
 
             response = build_assistant_response(
                 question=render_question,
@@ -2265,7 +2265,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             plan_analysis_operations, run_governed_python_analysis,
             run_isolated_analysis, validate_python_analysis,
         )
-        from core.response_builder import build_assistant_response
 
         user_code = extract_user_python(text)
         custom_python = bool(user_code or _CUSTOM_PYTHON_INTENT_RE.search(text))
@@ -2701,7 +2700,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     except Exception as chart_exc:
                         log.debug("Filtered result chart generation skipped: %s", chart_exc)
 
-                    from core.response_builder import build_assistant_response
 
                     response = build_assistant_response(
                         question=(excluded.get("question") or "Result") + " (selected rows excluded)",
@@ -4115,7 +4113,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             from core.result_transforms import (
                                 add_contribution_pct, describe_contribution_sql,
                             )
-                            from core.response_builder import build_assistant_response
                             _ct_rows  = cached["rows"]
                             _ct_ctx   = cached.get("analysis_context") or {}
                             _ct_mcol  = _ct_ctx.get("value_col") or (
@@ -4166,7 +4163,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             from core.result_transforms import (
                                 filter_outliers, describe_outlier_sql,
                             )
-                            from core.response_builder import build_assistant_response
                             _ol_rows = cached["rows"]
                             _ol_ctx  = cached.get("analysis_context") or {}
                             _ol_mcol = _ol_ctx.get("value_col") or (
