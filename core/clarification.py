@@ -44,7 +44,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from core.i18n import t as _t
+from core.i18n import prompt_language_rule, t as _t
 # Accent folding, shared with core/question_normalizer.py rather than
 # reimplemented.
 from core.question_normalizer import _fold as _fold_accents
@@ -1176,7 +1176,7 @@ async def check_ambiguity_glossary_first(
             implicit_opts = validated_options(implicit_opts)
             if len(implicit_opts) >= 2:
                 clarifying_q = (
-                    "I see a few ways to interpret this. Which did you mean:\n"
+                    _t("reply.clarify.several_readings") + "\n"
                     + "\n".join(f"  • {o['label']}" for o in implicit_opts)
                 )
                 return True, clarifying_q, {
@@ -1427,6 +1427,10 @@ async def _llm_ambiguity_check_constrained(
         "8. If the question uses comparison framing (compare, vs, versus, difference, contrast)\n"
         "   AND explicitly names two or more distinct menu entries by their label, return CLEAR —\n"
         "   the user wants all of them together, they are NOT asking which one to use.\n"
+        # The "question" value is shown to the reader as the clarification
+        # card's question. The JSON shape, the status values and the menu ids
+        # are a parser contract and stay English.
+        + prompt_language_rule(shape="json")
     )
 
     user_msg = (
@@ -1455,7 +1459,7 @@ async def _llm_ambiguity_check_constrained(
     if status != "AMBIGUOUS":
         return False, "", []
 
-    q = str(parsed.get("question", "")).strip() or "Which did you mean?"
+    q = str(parsed.get("question", "")).strip() or _t("reply.clarify.which_one")
     chosen_ids = [
         i for i in (parsed.get("option_ids") or [])
         if isinstance(i, str) and i in id_to_term
@@ -1515,6 +1519,10 @@ async def _llm_ambiguity_check(
         "7. Exact schema-backed categorical values in the question are authoritative, even if they look oddly spelled -> CLEAR.\n"
         "7. Typos that map to known column values are NOT ambiguous → CLEAR.\n"
         "8. Missing JOIN paths are NOT ambiguous → CLEAR.\n"
+        # Same as the constrained classifier above: the "question" value is
+        # read by a person, the shape and the status values are read by a
+        # parser.
+        + prompt_language_rule(shape="json")
     )
 
     user_msg = (
@@ -1542,7 +1550,8 @@ async def _llm_ambiguity_check(
 
     # Legacy text-shape fallback: "AMBIGUOUS: <question>"
     if (raw or "").strip().upper().startswith("AMBIGUOUS:"):
-        q = raw.split(":", 1)[1].strip() or "I need a bit more context to answer that."
+        q = (raw.split(":", 1)[1].strip()
+             or _t("reply.clarify.need_more_context"))
         return True, q, []
 
     return False, "", []

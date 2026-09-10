@@ -229,14 +229,27 @@ class TestTheCatalogueIsWellFormed:
         second wins and the first disappears. Two different sentences under one
         id is exactly how "Working" became "Working on your answer…" for a
         delivery pill that had room for one word."""
+        import ast
         import collections
-        import re
         from pathlib import Path
 
+        # The MESSAGES literal ONLY, located by parsing rather than by slicing
+        # from its name to the end of the file. The slice version counted every
+        # 4-space-indented dict below it too, so adding an unrelated dict to
+        # this module -- the prompt language rules did exactly this -- made the
+        # count mismatch and the duplicate check fail for a reason that has
+        # nothing to do with duplicates.
         source = (Path(i18n.__file__)).read_text(encoding="utf-8")
-        body = source[source.index("MESSAGES: dict[str, dict[str, str]] = {"):]
-        keys = re.findall(r'^\s{4}"([a-z][a-zA-Z0-9_.]+)":', body, flags=re.M)
-        assert len(keys) == len(i18n.MESSAGES), (
+        tree = ast.parse(source)
+        literal = next(
+            node.value for node in tree.body
+            if isinstance(node, ast.AnnAssign)
+            and getattr(node.target, "id", "") == "MESSAGES"
+        )
+        keys = [key.value for key in literal.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)]
+        assert len(keys) == len(literal.keys), "a non-literal key in MESSAGES"
+        assert len(keys) >= len(i18n.MESSAGES), (
             "the scan missed entries; it is the only thing that can see a "
             "duplicate, so it has to see all of them"
         )

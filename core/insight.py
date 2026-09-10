@@ -872,47 +872,22 @@ def _format_grounding_for_prompt(grounding: dict) -> str:
     )
 
 
-# The narration model writes the sentences the reader actually reads, so the
-# reader's language is a prompt rule, not a post-processing step -- translating
-# a generated English paragraph afterwards would need a second model call and
-# would still be a translation of an analysis rather than an analysis.
+# The output-language rule moved to core/i18n.py, next to the rest of the
+# language machinery. Three more prompts needed it -- the conversational reply
+# in core/dispatcher.py, the ambiguity classifier in core/clarification.py and
+# the follow-up gap-fill below -- and none of them should have to import this
+# module, which pulls in the whole insight engine, to ask what language to
+# answer in. core/i18n.py imports nothing from core, so every prompt can reach
+# it.
 #
-# Three things are pinned deliberately:
-#   * The structural labels stay English. parse_insight_response matches
-#     "HEADLINE:", "BODY:", "DETAIL:", "SECTION:" and "NEXT:" literally, so a
-#     translated label is a response that parses as unlabelled prose.
-#   * Column names and category values are the customer's schema and data.
-#     Translating "Marge brute" into "Gross margin" makes the answer stop
-#     matching the table under it.
-#   * Numbers keep the formatting they arrive with. They are formatted upstream
-#     against the column's format spec, and a model re-punctuating them is a
-#     model changing values.
-_LANGUAGE_RULES: dict[str, str] = {
-    "fr": (
-        "LANGUE :\n"
-        "Rédigez toute votre réponse en français, dans un français professionnel "
-        "et naturel -- pas une traduction mot à mot de l'anglais.\n"
-        "Exceptions, à laisser exactement telles quelles :\n"
-        "- Les étiquettes de structure HEADLINE:, SECTION:, BODY:, DETAIL: et "
-        "NEXT: restent en anglais, en majuscules, suivies de deux-points.\n"
-        "- Les noms de colonnes et les valeurs de catégories proviennent de la "
-        "base du client : citez-les tels quels, ne les traduisez pas.\n"
-        "- Les nombres, dates et devises sont déjà mis en forme : reprenez-les "
-        "caractère pour caractère.\n\n"
-    ),
-}
-
-
+# The wrapper stays so this module's two call sites read as they did, and
+# because "narrative" is the shape they need: their responses are parsed on
+# literal HEADLINE:/BODY:/DETAIL:/NEXT: labels.
 def _language_rule(lang: str | None = None) -> str:
-    """The output-language rule for the active reader, or "" for English.
+    """The narrative output-language rule for the active reader."""
+    from core.i18n import prompt_language_rule
 
-    English is the empty string on purpose: every existing prompt is written in
-    English, so adding "answer in English" to it would be a change to a prompt
-    that has been tuned, for no behavioural gain.
-    """
-    from core.i18n import get_active_language, normalise_language
-    tag = normalise_language(lang if lang is not None else get_active_language())
-    return _LANGUAGE_RULES.get(tag, "")
+    return prompt_language_rule(lang, shape="narrative")
 
 
 def build_insight_prompt_from_contract(
@@ -1797,11 +1772,43 @@ async def generate_followup_suggestions(
         f'"Show bottom 5 by prescription count", "Which items are above average?"]'
     )
 
+    # Tier 1's chips carry a French label and an English question because one
+    # catalogue id renders twice. The model's chips cannot do that, so it is
+    # asked for both halves explicitly -- and only when the reader is not
+    # reading English, so the English prompt stays exactly as tuned.
+    #
+    # The question half MUST stay English: it is what the chip sends back when
+    # it is clicked, and question_normalizer.canonicalise is a word-by-word
+    # lexicon, not a reverse lookup of anything. A French question reaching the
+    # planner depends on every word of it happening to be in that lexicon.
+    from core.i18n import (
+        LANGUAGE_NAMES_IN_ENGLISH, get_active_language, normalise_language,
+    )
+
+    _reader_lang = normalise_language(get_active_language())
+    _bilingual = ""
+    # Every prompt in this file is written in English, so English is the
+    # "no extra instruction" case rather than a language to ask for.
+    if _reader_lang != "en":
+        _language_name = LANGUAGE_NAMES_IN_ENGLISH.get(_reader_lang, _reader_lang)
+        _bilingual = (
+            f"\n\nThe person reading these questions reads {_language_name}. "
+            f"Return an array of OBJECTS instead of strings, each shaped "
+            f'{{"question": "...", "label": "..."}}:\n'
+            f'  - "question" is the English question, exactly as you would have '
+            f"written it. It is re-planned as SQL and must stay English.\n"
+            f'  - "label" is the same question written in natural '
+            f"{_language_name}, for the button the person sees. Column names, "
+            f"category values and numbers are copied across unchanged.\n"
+            f"Return {needed} object(s). Still no markdown, still no explanation."
+        )
+
     system_msg = (
         "You generate statistically-grounded follow-up questions for a SQL analytics chatbot. "
         "You ONLY phrase questions from the detected statistical patterns provided — you never "
         "invent new patterns. Questions must be SQL-answerable. "
         "Return a JSON array only. No markdown fences. No explanation."
+        + _bilingual
     )
 
     try:
@@ -1833,13 +1840,20 @@ async def generate_followup_suggestions(
         if not isinstance(llm_suggestions, list):
             llm_suggestions = []
 
-        for s in llm_suggestions:
-            s = str(s).strip()[:80]
-            # The model writes in English and there is no second call to
-            # translate it, so label == question here. Tier 1 is what carries
-            # the reader's language, and it is what runs on the common case.
-            if s and all(p["question"] != s for p in suggestions):
-                suggestions.append({"question": s, "label": s})
+        for entry in llm_suggestions:
+            # Both shapes are accepted whatever was asked for: a model that
+            # returns bare strings to a French reader gives English chips,
+            # which is the old behaviour and better than none, and a model that
+            # returns objects to an English reader costs nothing. Parsing
+            # strictly here would turn a wording drift into an empty chip row.
+            if isinstance(entry, dict):
+                question = str(entry.get("question") or entry.get("label") or "").strip()[:80]
+                label = str(entry.get("label") or question).strip()[:80]
+            else:
+                question = str(entry).strip()[:80]
+                label = question
+            if question and all(p["question"] != question for p in suggestions):
+                suggestions.append({"question": question, "label": label})
             if len(suggestions) >= 3:
                 break
 

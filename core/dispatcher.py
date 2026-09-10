@@ -384,14 +384,25 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
         context = _build_analyst_context(account_id, client_row)
         context_block = f"\n\nWorkspace context:\n{context}" if context else ""
 
+        # This reply is shown to the reader verbatim -- it is the answer to
+        # "what can you do?" and to anything off-topic -- so it follows the
+        # reader's language like the rest of the product. The rule goes BEFORE
+        # the sentinel instruction, and the sentinel is then restated as an
+        # explicit exception, because a French reply that translated
+        # PROCEED_TO_QUERY would stop matching the check at line 418 and route
+        # a real data question into the conversational path instead.
+        from core.i18n import prompt_language_rule
+
         system = (
             "You are QueryBot's conversational analyst. You answer questions about "
             "QueryBot's capabilities and what data this workspace can provide — using "
             "ONLY the workspace context supplied below. Never invent tables, metrics, or "
             "data values. Never claim to show real numbers.\n"
+            + prompt_language_rule(shape="prose") +
             "If the message is clearly a specific data retrieval request (asking for "
             "actual figures, records, trends, or comparisons from the database), "
-            f"reply with exactly: {_PROCEED_TO_QUERY}\n"
+            f"reply with exactly: {_PROCEED_TO_QUERY} — that exact token, in "
+            "English, whatever language the rest of your reply would be in.\n"
             "Otherwise reply in 2-4 sentences: what QueryBot can help with in this "
             "workspace, referencing the real metrics and schemas listed below."
             f"{context_block}"

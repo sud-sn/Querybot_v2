@@ -74,6 +74,109 @@ SUPPORTED_LANGUAGES = ("en", "fr")
 # "Français" on an English page too. Translating these would defeat the control.
 LANGUAGE_NAMES: dict[str, str] = {"en": "English", "fr": "Français"}
 
+# The same languages named in ENGLISH, for use inside prompts. Every prompt in
+# this product is written in English and the model parses it as English, so
+# "the person reads French" is clearer to it than the endonym "Français" --
+# which is the right label for the switcher a reader looks at, and the wrong
+# one for an instruction a model reads.
+LANGUAGE_NAMES_IN_ENGLISH: dict[str, str] = {"en": "English", "fr": "French"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Output-language rules for LLM prompts
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# The narration model writes the sentences the reader actually reads, so the
+# reader's language is a prompt rule, not a post-processing step -- translating
+# a generated English paragraph afterwards would need a second model call and
+# would still be a translation of an analysis rather than an analysis.
+#
+# Three things are pinned deliberately, in every shape below:
+#   * Column names and category values are the customer's schema and data.
+#     Translating "Marge brute" into "Gross margin" makes the answer stop
+#     matching the table under it.
+#   * Numbers keep the formatting they arrive with. They are formatted upstream
+#     against the column's format spec, and a model re-punctuating them is a
+#     model changing values.
+#   * Whatever the caller parses -- structural labels, JSON keys -- stays
+#     exactly as specified, because a translated label is a response that
+#     parses as unlabelled prose.
+#
+# This lived in core/insight.py, reachable only by importing that module. Three
+# more prompts needed it (the conversational reply, the ambiguity classifier and
+# the follow-up gap-fill), and none of them should have to import the insight
+# engine to ask what language to answer in. core/i18n.py imports nothing from
+# core, so it is the one place all of them can reach.
+#
+# NARRATIVE is byte-identical to what insight.py carried. The two prompts using
+# it are tuned, and this move must not change them.
+_LANGUAGE_RULE_NARRATIVE: dict[str, str] = {
+    "fr": (
+        "LANGUE :\n"
+        "Rédigez toute votre réponse en français, dans un français professionnel "
+        "et naturel -- pas une traduction mot à mot de l'anglais.\n"
+        "Exceptions, à laisser exactement telles quelles :\n"
+        "- Les étiquettes de structure HEADLINE:, SECTION:, BODY:, DETAIL: et "
+        "NEXT: restent en anglais, en majuscules, suivies de deux-points.\n"
+        "- Les noms de colonnes et les valeurs de catégories proviennent de la "
+        "base du client : citez-les tels quels, ne les traduisez pas.\n"
+        "- Les nombres, dates et devises sont déjà mis en forme : reprenez-les "
+        "caractère pour caractère.\n\n"
+    ),
+}
+
+# For a prompt whose whole output is prose the reader sees -- no labels to
+# preserve, nothing parsed out of it.
+_LANGUAGE_RULE_PROSE: dict[str, str] = {
+    "fr": (
+        "LANGUE :\n"
+        "Rédigez toute votre réponse en français, dans un français professionnel "
+        "et naturel -- pas une traduction mot à mot de l'anglais.\n"
+        "Exceptions, à laisser exactement telles quelles : les noms de tables, "
+        "de colonnes et d'indicateurs proviennent de la base du client ; citez-les "
+        "tels quels, ne les traduisez pas.\n\n"
+    ),
+}
+
+# For a prompt that returns JSON. The keys and the shape are a contract with a
+# parser; only the values a human reads are translated.
+_LANGUAGE_RULE_JSON: dict[str, str] = {
+    "fr": (
+        "LANGUE :\n"
+        "La structure JSON demandée ci-dessus ne change pas : les noms de clés, "
+        "les valeurs de statut et la forme générale restent exactement tels que "
+        "spécifiés, en anglais.\n"
+        "En revanche, tout texte destiné à être LU par la personne est rédigé en "
+        "français professionnel et naturel.\n"
+        "Les noms de colonnes, les valeurs de catégories et les nombres déjà mis "
+        "en forme sont repris caractère pour caractère.\n\n"
+    ),
+}
+
+_LANGUAGE_RULE_SHAPES: dict[str, dict[str, str]] = {
+    "narrative": _LANGUAGE_RULE_NARRATIVE,
+    "prose": _LANGUAGE_RULE_PROSE,
+    "json": _LANGUAGE_RULE_JSON,
+}
+
+
+def prompt_language_rule(lang: str | None = None, *, shape: str = "narrative") -> str:
+    """The output-language rule for the active reader, or "" for English.
+
+    English is the empty string on purpose: every existing prompt is written in
+    English, so adding "answer in English" to it would be a change to a prompt
+    that has been tuned, for no behavioural gain.
+
+    ``shape`` picks what the caller parses back out, because that is the part
+    the model must not translate:
+      narrative -- HEADLINE:/BODY:/DETAIL:/NEXT: labels are matched literally
+      prose     -- the whole reply is shown as-is
+      json      -- keys and status values are a parser contract
+    """
+    rules = _LANGUAGE_RULE_SHAPES.get(shape, _LANGUAGE_RULE_NARRATIVE)
+    return rules.get(normalise_language(lang if lang is not None
+                                        else get_active_language()), "")
+
 # Strings that must never appear as a catalogue value in ANY language, because
 # something compares them by equality:
 #   "redacted segment"  core/insight.py::_display_label, compared at
@@ -4910,6 +5013,21 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # ── Clarifications ──────────────────────────────────────────────────────
+    # The clarification question the product writes itself, when the glossary
+    # already shows several readings and no model call is needed.
+    "reply.clarify.several_readings": {
+        "en": "I see a few ways to interpret this. Which did you mean:",
+        "fr": "Cette question peut se lire de plusieurs façons. Laquelle vouliez-vous dire :",
+    },
+    # And the fallback when the model returns AMBIGUOUS with no question text.
+    "reply.clarify.need_more_context": {
+        "en": "I need a bit more context to answer that.",
+        "fr": "Il me faut un peu plus de contexte pour répondre.",
+    },
+    "reply.clarify.which_one": {
+        "en": "Which did you mean?",
+        "fr": "Lequel vouliez-vous dire ?",
+    },
     "reply.clarify.expired": {
         "en": "That clarification is no longer active. Please ask the question again.",
         "fr": "Cette demande de précision n'est plus active. Veuillez reposer la question.",
