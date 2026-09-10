@@ -403,7 +403,23 @@ class WebAdapter(PlatformAdapter):
         except Exception as exc:
             log.debug("Agent answer summary audit failed: %s", exc)
 
-    def _prepare_assistant_response_payload(self, payload: dict) -> dict:
+    def prepare_assistant_response_payload(self, payload: dict) -> dict:
+        """Stamp the result id an answer card needs to be talked to again.
+
+        `trust.result_id` and `data.result_id` are what the browser gates a
+        card's own chips on:
+
+            const actionResultId = trust.result_id || msg.data?.result_id || '';
+            const nextActions = actionResultId && Array.isArray(msg.next_actions)
+                              ? msg.next_actions : [];
+
+        so a card that reaches the browser without them has its chips computed
+        by the server and then thrown away on arrival. Public because the chip
+        handlers in gateway/webhooks.py send their cards straight down the
+        socket rather than through send_assistant_response, and every one of
+        them was landing unaddressable -- which is why the guided conversation
+        ended after exactly one press.
+        """
         if payload.get("type") != "assistant_response":
             return payload
         data = payload.get("data")
@@ -424,7 +440,7 @@ class WebAdapter(PlatformAdapter):
 
     async def send_assistant_response(self, event: PlatformEvent, payload: dict) -> None:
         try:
-            payload = self._prepare_assistant_response_payload(payload)
+            payload = self.prepare_assistant_response_payload(payload)
             self._record_agent_answer_summary(payload)
             async with self.send_lock:
                 await self.ws.send_json(payload)

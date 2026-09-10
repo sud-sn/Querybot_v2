@@ -1421,8 +1421,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
     async def _run_metadata_result_planner(
         text: str, table_hint: str = "", schema_hint: str = "",
+        *, is_clarification: bool = False,
     ) -> None:
-        """Plan a cached-result transform from metadata, then execute locally."""
+        """Plan a cached-result transform from metadata, then execute locally.
+
+        `is_clarification` says the reader has just confirmed this exact
+        reading, so run_governed_result_followup skips the confidence gate
+        rather than asking the same question again -- a near-deterministic
+        re-plan of identical text scores the same confidence, so without it
+        "Yes, that is what I meant" produced the identical card, forever.
+        """
         session_id = getattr(adapter, "session_id", "") or ""
         source_result_id = getattr(adapter, "last_result_id", None)
         snapshot = result_cache.get_snapshot(session_id, source_result_id)
@@ -1463,6 +1471,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 session_id,
                 complete=_complete_metadata_plan,
                 source_result_id=source_result_id,
+                is_clarification=is_clarification,
             )
 
         if followup.executed and followup.command is not None:
@@ -1508,6 +1517,30 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                           or _t("reply.result.which_value"))
             if _cf_options:
                 _cf_event = adapter.make_event(text)
+                # Remember what was asked, BEFORE asking it.
+                #
+                # This card is sent with no pending row behind it, so the
+                # answer to it was met with "that clarification is no longer
+                # active" -- not sometimes, not after a timeout: on the first
+                # click, every time. web_adapter fills the card's own
+                # pending_id from get_pending, so the frame even carried
+                # `"pending_id": ""` on the way out. The sibling below,
+                # _run_local_result_command, has always done this correctly.
+                save_pending(
+                    account_id,
+                    zoom_user_id,
+                    text,
+                    clarification_meta=prepare_clarification_meta(
+                        _cf_event,
+                        {
+                            "source": "metadata_result_planner",
+                            "question": _cf_prompt,
+                            "options": _cf_options,
+                        },
+                        source="metadata_result_planner",
+                    ),
+                    session_id=adapter.session_id,
+                )
                 await adapter.send_clarification_prompt(_cf_event, _cf_prompt, _cf_options)
             else:
                 async with adapter.send_lock:
@@ -3840,6 +3873,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 # fresh source-SQL question.
                 if cmeta.get("source") in {
                     "result_reference_confirmation", "local_result_command",
+                    "metadata_result_planner",
                 }:
                     opts = cmeta.get("options") or []
                     selected_id = str(data.get("option_id") or "").strip()
@@ -3885,6 +3919,21 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             or selected.get("label")
                             or ""
                         ).strip()
+                        if cmeta.get("source") == "metadata_result_planner":
+                            # These options are not commands. "result 2" names
+                            # WHICH cached result, and "confirm" restates the
+                            # reader's own question -- neither parses, and
+                            # sending either into the pipeline as literal text
+                            # asked the warehouse about a phrase the reader
+                            # never typed. Re-plan the resolved question with
+                            # the confidence gate already satisfied.
+                            await websocket.send_json(
+                                {"type": "typing", "active": True})
+                            await _run_metadata_result_planner(
+                                resolved_text or pending["original_q"],
+                                is_clarification=True,
+                            )
+                            continue
                         resolved_command = parse_result_command(resolved_text)
 
                     if resolved_command is None:
@@ -4045,11 +4094,72 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         data.get("action_id"), "action_id", "id", "value"
                     )
                     def _bound_action_payload(payload: dict) -> dict:
-                        """Correlate every terminal action frame to its click/card."""
+                        """Correlate an action frame to its click, and make the
+                        card it produces answerable in its own right.
+
+                        Two ids, and they are not the same one. The top-level
+                        `result_id` says WHICH CARD WAS PRESSED, so the browser
+                        can put the reply under it. `trust.result_id` says what
+                        the NEW card is, and it is the id the browser gates
+                        that card's own chips on:
+
+                            const actionResultId =
+                                trust.result_id || msg.data?.result_id || '';
+                            const nextActions = actionResultId && ...
+
+                        Only the first was ever set. So the server computed a
+                        set of next actions for every chip card, sent them, and
+                        the browser dropped them on arrival for want of an id:
+                        drill down by Region and the new table offered no CSV,
+                        no contribution, no drill of its own. The guided
+                        conversation was exactly one press deep.
+
+                        The rows behind that card were not addressable either.
+                        contribution and outliers never cached their derived
+                        result at all, and drill_dim cached its own AFTER
+                        sending the frame -- so the id stamped on it would have
+                        been the parent's. Caching here, before the stamp,
+                        fixes all three at once and is why this returns the
+                        payload rather than just decorating it.
+                        """
                         resolved = dict(payload or {})
                         resolved.setdefault("action", action)
                         resolved.setdefault("action_id", action_id)
                         resolved.setdefault("result_id", requested_result_id)
+                        if resolved.get("type") != "assistant_response":
+                            # An analysis card, an export, an error. Nothing to
+                            # cache and no chips to gate.
+                            return resolved
+
+                        _bp_data = resolved.get("data") or {}
+                        _bp_rows = list(_bp_data.get("rows") or [])
+                        _bp_cache = getattr(adapter, "cache_result", None)
+                        if _bp_rows and callable(_bp_cache):
+                            try:
+                                _bp_cache(
+                                    _bp_rows,
+                                    resolved.get("question")
+                                    or (cached or {}).get("question", ""),
+                                    (resolved.get("trust") or {}).get("sql", ""),
+                                    (cached or {}).get("db_cfg"),
+                                    (cached or {}).get("rag_context", ""),
+                                    column_formats=_bp_data.get("column_formats") or {},
+                                    data_brief=resolved.get("data_brief") or {},
+                                    semantic_plan=(cached or {}).get("semantic_plan"),
+                                )
+                            except Exception as _bp_err:
+                                # The card still renders; it just cannot be
+                                # pressed again. Loud, because a silent one
+                                # here is indistinguishable from the bug this
+                                # replaces.
+                                log.warning(
+                                    "Could not cache the result of action %s: %s",
+                                    action, _bp_err,
+                                )
+                        _bp_prepare = getattr(
+                            adapter, "prepare_assistant_response_payload", None)
+                        if callable(_bp_prepare):
+                            resolved = _bp_prepare(resolved)
                         return resolved
 
                     await websocket.send_json({
@@ -4159,20 +4269,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     query_executor=_ws_execute_governed,
                                     **az_kwargs,
                                 )
+                            # The cache write moved into
+                            # _bound_action_payload, which runs BEFORE the
+                            # frame is sent -- it has to, or the id stamped on
+                            # the card is the parent's. Every chip card is
+                            # cached there now, not just this one.
                             await websocket.send_json(_bound_action_payload(_dd_result))
-                            # Cache the drill result so subsequent actions apply to it
-                            if _dd_result.get("type") == "assistant_response":
-                                _dd_cache_fn = getattr(adapter, "cache_result", None)
-                                if callable(_dd_cache_fn):
-                                    _dd_cache_fn(
-                                        _dd_result.get("data", {}).get("rows") or [],
-                                        _dd_result.get("question", ""),
-                                        (_dd_result.get("trust") or {}).get("sql", ""),
-                                        cached.get("db_cfg"),
-                                        cached.get("rag_context", ""),
-                                        semantic_plan=_dd_plan,
-                                        data_brief=_dd_result.get("data_brief") or {},
-                                    )
                         except Exception as _dd_err:
                             log.warning("drill_dim failed: %s", _dd_err)
                             await websocket.send_json({
@@ -4266,6 +4368,17 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "content": _t("reply.contribution.failed"),
                                     "detail": _ct_stats.get("reason", ""),
                                 })
+                                # The refusal is the whole reply. Without this
+                                # the next line read `_ct_resp`, which the
+                                # `else` never reached to bind, so a reader who
+                                # pressed % contribution on a result with no
+                                # summable measure got their refusal AND a
+                                # second bubble saying something went wrong.
+                                # (The sibling handler below already does this
+                                # by keeping its send inside the `else`.)
+                                await websocket.send_json(
+                                    {"type": "typing", "active": False})
+                                continue
                             else:
                                 _ct_sql = describe_contribution_sql(
                                     _ct_mcol, _ct_stats["total"]
