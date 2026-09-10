@@ -26,6 +26,9 @@ log = logging.getLogger("querybot.web_adapter")
 # Max turns of conversation context injected into SQL prompts.
 # 3 turns balances context quality vs prompt size.
 _HISTORY_MAXLEN = 3
+# Longer than the data-turn buffer on purpose: a conversation wanders back
+# further than a query does, and these entries are two short strings each.
+_ANALYST_HISTORY_MAXLEN = 6
 
 
 def _public_clarification_options(options: list[dict] | None) -> list[dict]:
@@ -99,6 +102,14 @@ class WebAdapter(PlatformAdapter):
         # Only populated for web portal sessions — webhook channels are
         # stateless and use separate per-user DB-backed history.
         self._history: deque = deque(maxlen=_HISTORY_MAXLEN)
+        # What was SAID, as opposed to what was queried. The buffer above
+        # records data turns for the SQL prompt: question, sanitised SQL,
+        # columns, row count. It has no idea what the bot replied, so the
+        # conversational analyst could not answer "why did you say that?",
+        # "what did you just tell me?", or anything else that refers to its
+        # own previous sentence -- it was called with one argument, the current
+        # message, and answered every turn from nothing.
+        self._analyst_history: deque = deque(maxlen=_ANALYST_HISTORY_MAXLEN)
 
     # ── Conversation history API ─────────────────────────────────────────
 
@@ -156,9 +167,28 @@ class WebAdapter(PlatformAdapter):
         turn (which hasn't been returned to the user yet)."""
         return list(self._history)
 
+    def add_analyst_turn(self, message: str, reply: str) -> None:
+        """Record one non-data exchange: what the reader said, what was said back.
+
+        Prose on both sides and nothing else -- no rows, no SQL, no column
+        names. The analyst's own prompt is metadata-only by contract, and its
+        replies are written from that metadata, so carrying them forward adds
+        no new egress.
+        """
+        message = " ".join(str(message or "").split())
+        reply = " ".join(str(reply or "").split())
+        if not message or not reply:
+            return
+        self._analyst_history.append({"message": message, "reply": reply})
+
+    def get_analyst_history(self) -> list[dict]:
+        """The recent non-data exchanges, oldest first."""
+        return list(self._analyst_history)
+
     def clear_history(self) -> None:
         """Clear session history — called on WebSocket close."""
         self._history.clear()
+        self._analyst_history.clear()
 
     def load_history(self, history: list[dict]) -> None:
         """

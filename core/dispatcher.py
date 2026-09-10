@@ -361,7 +361,29 @@ def _build_analyst_context(account_id: str, client_row: dict) -> str:
 _PROCEED_TO_QUERY = "PROCEED_TO_QUERY"
 
 
-async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) -> str | None:
+def _remember_analyst_turn(adapter, message: str, reply: str) -> None:
+    """Record one conversational exchange on the adapter, if it keeps them.
+
+    A module-level function rather than three lines inline, because inline it
+    was a `if callable(...)` guard that no test could distinguish from a call
+    that never happened -- and a buffer nothing writes is exactly the failure
+    this whole change is about. Never raises: a lost turn costs the NEXT reply
+    some context, and must not cost the reader THIS one, which has already been
+    sent by the time this runs.
+    """
+    record = getattr(adapter, "add_analyst_turn", None)
+    if not callable(record):
+        return                       # Slack, Teams and the REST API keep none
+    try:
+        record(message, reply)
+    except Exception as exc:
+        log.warning("Could not record a conversational turn: %s", exc)
+
+
+async def _generate_analyst_reply(
+    text: str, account_id: str, client_row: dict,
+    *, history: list[dict] | None = None,
+) -> str | None:
     """
     Dynamic conversational analyst — replaces the static _ABOUT / _OFF_TOPIC_REPLY blocks.
 
@@ -369,10 +391,19 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
       None          — message is a genuine data request; fall through to SQL pipeline.
       reply string  — a capability/meta/off-topic answer; send this directly.
 
+    `history` is the recent non-data exchanges -- what the reader said and what
+    was said back, prose on both sides. Without it this function was called
+    with one argument, the current message, so turn 2 never saw turn 1: "why
+    did you say that?" and "what did you just tell me?" were answered from
+    nothing, and the reader could not have a conversation, only a series of
+    unrelated first messages.
+
     Fails open (returns None) on any error so a misconfigured LLM never blocks queries.
     Wraps the LLM call in llm_audit_scope so audit rows are written (previously missing).
     Only reasons over metadata (business_desc, industry, table/metric names) — never over
-    real data rows, so it is safe for regulated tenants.
+    real data rows, so it is safe for regulated tenants. The history it now
+    carries is prose the analyst itself wrote from that same metadata, so that
+    remains true.
     """
     # Fast-path: obvious data requests skip the LLM call entirely
     if _looks_like_data_request(text, account_id):
@@ -383,6 +414,20 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
         provider, model, api_key, extra = resolve_provider(client_row, purpose="query")
         context = _build_analyst_context(account_id, client_row)
         context_block = f"\n\nWorkspace context:\n{context}" if context else ""
+
+        # What has already been said, so a follow-up has something to follow.
+        history_lines = []
+        for turn in list(history or [])[-4:]:
+            if not isinstance(turn, dict):
+                continue
+            said = str(turn.get("message") or "").strip()
+            replied = str(turn.get("reply") or "").strip()
+            if said and replied:
+                history_lines.append(f"Reader: {said}\nYou: {replied}")
+        history_block = (
+            "\n\nConversation so far (oldest first):\n" + "\n\n".join(history_lines)
+            if history_lines else ""
+        )
 
         # This reply is shown to the reader verbatim -- it is the answer to
         # "what can you do?" and to anything off-topic -- so it follows the
@@ -403,8 +448,26 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
             "actual figures, records, trends, or comparisons from the database), "
             f"reply with exactly: {_PROCEED_TO_QUERY} — that exact token, in "
             "English, whatever language the rest of your reply would be in.\n"
-            "Otherwise reply in 2-4 sentences: what QueryBot can help with in this "
-            "workspace, referencing the real metrics and schemas listed below."
+            # One behaviour was all this prompt allowed: "say what QueryBot can
+            # do here". So "who built you?", "tell me a joke", "why did you say
+            # that?" and "what did you just tell me?" each got a capability
+            # blurb, which is not an answer to any of them. The capability
+            # answer is now ONE case among several rather than the only one.
+            "Otherwise, answer the message that was actually sent:\n"
+            "- Asked what you can do, or what data is here: 2-4 sentences on "
+            "what you can help with in this workspace, naming the real metrics "
+            "and schemas listed below.\n"
+            "- Asked about something you just said: answer from the "
+            "conversation above. If it is not there, say you do not have it "
+            "rather than inventing it.\n"
+            "- Asked about yourself, or told something conversational: reply "
+            "briefly and plainly, then say what you could look up. Do not "
+            "recite your capabilities at someone who did not ask.\n"
+            "- Asked for something you cannot do: say so in one sentence and "
+            "name the nearest thing you can do.\n"
+            "Never invent a table, a metric, a number, or a fact about this "
+            "workspace that is not in the context below."
+            f"{history_block}"
             f"{context_block}"
         )
         with llm_audit_scope(
@@ -601,7 +664,13 @@ async def _run_query_with_guard_locked(
     # fresh questions. Governed result follow-ups bypass it and are handled by
     # the result/query pipeline instead.
     if not bypass_analyst_gate(_decision):
-        _analyst_reply = await _generate_analyst_reply(text, account_id, client_row)
+        _analyst_history_fn = getattr(adapter, "get_analyst_history", None)
+        _analyst_history = (
+            _analyst_history_fn() if callable(_analyst_history_fn) else []
+        )
+        _analyst_reply = await _generate_analyst_reply(
+            text, account_id, client_row, history=_analyst_history,
+        )
         if _analyst_reply is not None:
             if _analyst_reply_offers_query(_analyst_reply) and event.user_id:
                 # Persist the offered request before rendering it. A later
@@ -634,6 +703,8 @@ async def _run_query_with_guard_locked(
                     )
                 return
             await adapter.send_message(event, _analyst_reply)
+            # Remember it, or the next turn is another first turn.
+            _remember_analyst_turn(adapter, text, _analyst_reply)
             return
 
     _previous_result_id = str(_cached_snapshot.get("result_id") or "")

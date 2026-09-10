@@ -472,11 +472,18 @@ class QuestionScrubWiringTests(unittest.TestCase):
         seen = {}
 
         # _generate_analyst_reply replaces _classify_is_data_question as the
-        # analyst gate in _run_query_with_guard. It takes (text, account_id,
-        # client_row) and returns None to let the query fall through to the
-        # pipeline. The PII scrub must happen before this gate sees the text.
-        async def _fake_analyst(text, account_id, client_row):
+        # analyst gate in _run_query_with_guard. It returns None to let the
+        # query fall through to the pipeline. The PII scrub must happen before
+        # this gate sees the text.
+        #
+        # `history` is keyword-only and the gate always passes it -- the recent
+        # non-data exchanges, so the analyst can answer a follow-up about its
+        # own previous reply. Spelled out rather than swallowed by **kwargs: a
+        # double that accepts anything cannot tell you when it has drifted from
+        # what production actually calls.
+        async def _fake_analyst(text, account_id, client_row, *, history=None):
             seen["classifier_text"] = text
+            seen["history"] = history
             return None  # None = let through to pipeline (same as old True)
 
         async def _fake_hq(account_id, event, adapter, text, portal_user, is_clarification=False):
