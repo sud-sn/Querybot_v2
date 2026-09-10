@@ -939,6 +939,47 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     log.info("WebSocket chat connected: user=%d account=%s", user_id, account_id)
     # History is restored from this user's server-side thread traces above.
 
+    async def _guarded_turn(work) -> None:
+        """Never end a turn with the composer still locked.
+
+        The browser re-enables the composer on exactly one signal --
+        `{"type": "typing", "active": false}` (portal/templates/portal_chat.html:
+        `else if (agentRunState === 'running') setProcessing(false);`) -- and
+        every background turn below is fire-and-forget: there is no
+        add_done_callback anywhere in this file. So an exception raised before
+        a coroutine's own handler could run, or inside one of the coroutines
+        that has no handler at all, ended the turn with typing:true on the wire
+        and nothing after it. The reader could not type, and Stop could not
+        rescue them: it acts only on a task that is NOT done, and a crashed
+        task is done. Only a page reload cleared it.
+
+        The commonest cause is the least exotic: resolve_provider raising
+        because the workspace has no API key yet. That is a tenant in an
+        ordinary state, and it silenced every follow-up about the result on
+        screen.
+
+        CancelledError is re-raised so Stop still means stop.
+        """
+        try:
+            await work
+        except asyncio.CancelledError:
+            raise
+        except Exception as turn_exc:
+            log.exception(
+                "Chat turn failed before it could report itself: %s", turn_exc)
+            try:
+                async with adapter.send_lock:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "content": _t("reply.error.generic"),
+                    })
+                    await websocket.send_json(
+                        {"type": "typing", "active": False})
+            except Exception:
+                # The socket is gone; there is nobody left to tell.
+                log.debug("Could not report a failed chat turn",
+                          exc_info=True)
+
     async def _run_main_question(text: str, table_hint: str, schema_hint: str) -> None:
         """Answers one question. Runs as a background task (see the send
         loop below) so the receive loop stays free to see a "cancel"
@@ -2606,14 +2647,20 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # running server-side to completion in the background, but no
             # result is ever sent since nothing is listening anymore.
             if msg_type == "cancel":
-                if current_query_task and not current_query_task.done():
-                    current_query_task.cancel()
-                    try:
-                        await current_query_task
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as e:
-                        log.debug("cancel: task raised during shutdown: %s", e)
+                if current_query_task:
+                    if not current_query_task.done():
+                        current_query_task.cancel()
+                        try:
+                            await current_query_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            log.debug("cancel: task raised during shutdown: %s", e)
+                    # Also when the task is ALREADY done. Stop is the only
+                    # control the browser leaves enabled once the composer is
+                    # locked, and it used to do nothing at all for a task that
+                    # had died without clearing the spinner -- the one case in
+                    # which the reader actually needs it.
                     async with adapter.send_lock:
                         # "system" (not assistant_error) — the frontend
                         # prefixes assistant_error with a warning triangle,
@@ -4616,9 +4663,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 )
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(
+                current_query_task = asyncio.create_task(_guarded_turn(
                     _run_main_question(_pp_question, table_hint, schema_hint)
-                )
+                ))
                 continue
 
             _pp_match = _PLAN_PREVIEW_INTENT_RE.match(text)
@@ -4663,7 +4710,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             ):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(_run_dashboard_chat(text))
+                current_query_task = asyncio.create_task(
+                    _guarded_turn(_run_dashboard_chat(text)))
                 continue
 
             # Conversational report/playbook building -- available to every
@@ -4673,7 +4721,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if _REPORT_BUILDER_INTENT_RE.search(text):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(_run_report_builder_chat(text))
+                current_query_task = asyncio.create_task(
+                    _guarded_turn(_run_report_builder_chat(text)))
                 continue
 
             # Metric authoring. After the report gate (a report is the more
@@ -4684,9 +4733,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if _METRIC_AUTHOR_INTENT_RE.search(text):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(
+                current_query_task = asyncio.create_task(_guarded_turn(
                     _run_metric_authoring_chat(text, table_hint, schema_hint)
-                )
+                ))
                 continue
 
             # Deep analysis is explicit and operates only on the most recent
@@ -4696,7 +4745,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if _ANALYSIS_WORK_INTENT_RE.search(text) or _CUSTOM_PYTHON_INTENT_RE.search(text):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(_run_analysis_work(text))
+                current_query_task = asyncio.create_task(
+                    _guarded_turn(_run_analysis_work(text)))
                 continue
 
             # Conversational result operations run before every insight/LLM
@@ -4706,11 +4756,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if result_command is not None:
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(
+                current_query_task = asyncio.create_task(_guarded_turn(
                     _run_local_result_command(
                         text, result_command, table_hint, schema_hint,
                     )
-                )
+                ))
                 continue
 
             # Natural-language analytics over the cached result use a model
@@ -4770,7 +4820,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if _RECONCILE_INTENT_RE.search(text) and _cache_snapshot and _cache_snapshot.get("sql"):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(_run_reconcile_chat(_cache_snapshot))
+                current_query_task = asyncio.create_task(
+                    _guarded_turn(_run_reconcile_chat(_cache_snapshot)))
                 continue
 
             if is_metadata_result_question(text):
@@ -4784,9 +4835,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if _route_cached_analysis:
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
-                current_query_task = asyncio.create_task(
+                current_query_task = asyncio.create_task(_guarded_turn(
                     _run_metadata_result_planner(text, table_hint, schema_hint)
-                )
+                ))
                 continue
 
             # Detect "why" follow-up questions about the last result
@@ -4833,9 +4884,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # new question implicitly supersedes an unfinished one.
             if current_query_task and not current_query_task.done():
                 current_query_task.cancel()
-            current_query_task = asyncio.create_task(
+            current_query_task = asyncio.create_task(_guarded_turn(
                 _run_main_question(text, table_hint, schema_hint)
-            )
+            ))
 
     except WebSocketDisconnect:
         log.info("WebSocket chat disconnected: user=%d account=%s", user_id, account_id)
