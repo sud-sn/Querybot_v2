@@ -251,16 +251,57 @@ class TestThePipelineReadsTheCanonicalTextAndKeepsTheReadersOwn:
         return (Path(__file__).resolve().parents[1]
                 / "core" / "query_pipeline.py").read_text(encoding="utf-8")
 
-    def test_every_detector_seam_reads_the_canonical_question(self):
-        src = self._source()
-        for call in (
-            "is_causal_question(_analysis_question)",
-            "build_generic_query_hints(_analysis_question)",
-            "analyze_query_intent(_analysis_question)",
-            "detect_top_n_intent(_analysis_question)",
-            "detect_analytical_intents(_analysis_question)",
-        ):
-            assert call in src, call
+    def _first_arg_of(self, call_name):
+        """What core/query_pipeline.py passes as the first argument to
+        `call_name`, wherever it calls it.
+
+        Read as source because these seams sit inside a 6,500-line function
+        that needs a warehouse to execute -- but read as a SYNTAX TREE, not as
+        text. The literal-substring version of this test pinned
+        `is_causal_question(_analysis_question)` character for character, so
+        it broke the moment the gate was refactored while never once checking
+        the thing it is named for. This asks the parser which name the
+        argument actually is, and survives being reformatted, renamed around,
+        or wrapped over two lines.
+        """
+        import ast
+
+        tree = ast.parse(self._source())
+        seen = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            func = node.func
+            name = (func.id if isinstance(func, ast.Name)
+                    else func.attr if isinstance(func, ast.Attribute) else "")
+            if name != call_name:
+                continue
+            first = node.args[0]
+            seen.append(first.id if isinstance(first, ast.Name) else "<expr>")
+        return seen
+
+    @pytest.mark.parametrize("detector", [
+        "analysis_action_for",
+        "build_generic_query_hints",
+        "analyze_query_intent",
+        "detect_top_n_intent",
+        "detect_analytical_intents",
+    ])
+    def test_every_detector_seam_reads_the_canonical_question(self, detector):
+        passed = self._first_arg_of(detector)
+        assert passed, f"{detector} is not called by the pipeline at all"
+        assert set(passed) == {"_analysis_question"}, (detector, passed)
+
+    def test_the_causal_gate_reads_french_because_of_it(self):
+        """The behaviour the seam above exists for. "Pourquoi les ventes
+        ont-elles baissé ?" carries no "why" for the detector to find, so a
+        French reader reached no analysis route at all."""
+        from core.insight import analysis_action_for
+        from core.question_normalizer import canonical_question
+
+        french = "Pourquoi les ventes ont-elles baissé ?"
+        assert analysis_action_for(french) == ""
+        assert analysis_action_for(canonical_question(french, "fr")) == "why"
 
     def test_retrieval_reads_it_too(self):
         """BM25 strips every non-[A-Za-z0-9_] character and the embedder is

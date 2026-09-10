@@ -56,9 +56,15 @@ _WHY_PATTERNS = [
     r"\bwhat\s+happened\b",
     r"\bwhat\s+changed\b",
     r"\bbreak\s*down\b.*\bwhy\b",
-    r"\banalyze\b",
-    r"\banalysis\b",
+    # Both spellings and every inflection: "analyse", "analysing", "analysed",
+    # "analyzes", "analysis", "analyses". The list carried the US stem only,
+    # so a reader who typed the British spelling -- the default for most of
+    # this product's users, and the one the French UI sits next to -- asked
+    # for analysis in a word the analyst gate could not read.
+    r"\banaly[sz](?:e|es|ed|ing|is)\b",
     r"\binsight\b",
+    r"\binterpret\b",
+    r"\bwhat\s+stands\s+out\b",
 ]
 
 
@@ -89,6 +95,40 @@ def is_causal_question(question: str) -> bool:
     "what drove Y") — the ones a plain data table cannot answer by itself."""
     q = question.lower()
     return any(re.search(p, q) for p in _CAUSAL_STRICT_PATTERNS)
+
+
+def analysis_action_for(question: str, *, is_clarification: bool = False) -> str:
+    """Which model-written analysis a fresh question has earned, if any.
+
+    Returns "why", "analyze", or "" — and "" is the common case on purpose.
+
+        "why did revenue drop"       -> "why"      causal treatment, drill-down
+                                                   queries against the warehouse
+        "analyse revenue by region"  -> "analyze"  one call, no further SQL,
+                                                   written from the result on
+                                                   screen
+        "revenue by region"          -> ""         the deterministic summary
+                                                   the answer card already has
+
+    Only the first row existed. The pipeline gated its one narrative on
+    is_causal_question, a strict subset of is_insight_question, so a reader who
+    asked in as many words to be told what a result MEANS -- "analyse this",
+    "what stands out", "interpret the revenue split" -- was answered with a
+    table and no analyst. The narrow gate was right about cost: a round trip on
+    every "revenue by region" buys nothing the deterministic summary does not
+    already say. It was wrong that an explicit request for analysis is the same
+    thing as a request to be shown some rows.
+
+    A clarification reply earns nothing: the reader is answering the bot's own
+    question, not asking a new one.
+    """
+    if is_clarification or not question:
+        return ""
+    if is_causal_question(question):
+        return "why"
+    if is_insight_question(question):
+        return "analyze"
+    return ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -751,6 +791,33 @@ def build_action_contract(
         contract["time_series_stats"]  = payload.get("time_series_stats", {})
         contract["safe_next_steps"]    = semantics.get("safe_next_steps", [])
 
+    # Every statistic this result actually has, whatever the action asked for.
+    #
+    # The branches above name the stat blocks they expect by hand, and the
+    # blocks _build_safe_llm_payload produces depend on the result's MODE.
+    # Action and mode are chosen independently, so any pair whose names do not
+    # line up sent the model a contract with no numbers in it at all:
+    #
+    #   explain   on a ranking     -> one number (the leader), and the
+    #                                 distribution and comparison stats
+    #                                 computed three lines earlier discarded
+    #   why       on a time series -> comparison_stats and distribution_stats,
+    #                                 neither of which a time series has: ZERO
+    #   predict   on a ranking     -> time_series_stats, which a ranking does
+    #                                 not have: ZERO
+    #   compare   on a single value-> ZERO
+    #
+    # The narrative for a "why" on a trend is the only LLM prose an ordinary
+    # question can reach, and it was being written from the question wording.
+    # Withholding a number that has already been computed cannot make the
+    # answer safer -- rule 1 of the prompt already forbids inventing values,
+    # and a narrator with no values has nothing to obey it with. So the
+    # action decides the TASK; the result decides the NUMBERS.
+    for block in ("distribution_stats", "comparison_stats",
+                  "time_series_stats", "single_value_stats"):
+        if payload.get(block) and not contract.get(block):
+            contract[block] = payload[block]
+
     if follow_up:
         contract["follow_up"] = follow_up
     return contract
@@ -1224,8 +1291,21 @@ def _format_brief_for_prompt(brief: dict) -> str:
         if semantics:
             lines.append(f"Business meaning: {semantics.get('business_meaning', '')}")
             lines.append(f"Why it matters: {semantics.get('why_it_matters', '')}")
+        # Set on every contract by build_action_contract, with a comment
+        # saying every action wants it -- and then never rendered, so no
+        # answer could say "across 3 categories" or "over 57 rows".
+        shape = brief.get("result_shape") or {}
+        if shape.get("row_count") is not None:
+            lines.append(
+                f"Result shape: {shape.get('row_count')} rows, "
+                f"{shape.get('column_count')} columns"
+            )
+            if shape.get("columns"):
+                lines.append(f"Columns: {shape['columns']}")
         if brief.get("top_item") is not None:
             lines.append(f"Top item: {brief.get('top_item')} = {brief.get('headline_number')}")
+        if brief.get("single_value_stats"):
+            lines.append(f"Single value: {brief.get('single_value_stats')}")
         if brief.get("distribution_stats"):
             lines.append(f"Distribution stats: {brief.get('distribution_stats')}")
         if brief.get("comparison_stats"):

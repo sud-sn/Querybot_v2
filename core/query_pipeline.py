@@ -564,6 +564,7 @@ def _format_insight_markdown(insight: dict) -> str:
 
 async def _send_why_insight(
     adapter, event, *,
+    action: str = "why",
     question: str,
     rows: list,
     sql: str,
@@ -576,7 +577,13 @@ async def _send_why_insight(
     question_id: str = "",
     grounding: dict | None = None,
 ) -> None:
-    """Generate and send a causal analysis of `rows` after the factual answer.
+    """Generate and send a model-written analysis of `rows` after the answer.
+
+    `action` decides how much work that is. "why" is the causal treatment and
+    runs drill-down queries against the warehouse; "analyze" is a single call
+    that interprets the result already on screen and issues no further SQL,
+    which is what an explicit "analyse this" asks for and all it should cost.
+
     Best-effort: the factual answer is already on the wire, so any failure
     here is logged and swallowed — never surfaced as a user-facing error."""
     from core.compliance.policy_engine import result_llm_features_allowed
@@ -587,7 +594,7 @@ async def _send_why_insight(
         # for, not an action button click that deserves a visible reply.
         with llm_audit_scope(
             account_id=account_id,
-            question=f"why: {question}"[:500],
+            question=f"{action}: {question}"[:500],
             enabled=bool(client.get("enable_llm_audit")),
             request_id=make_llm_audit_request_id(),
             question_id=question_id,
@@ -596,7 +603,8 @@ async def _send_why_insight(
             from core.llm_audit import record_llm_blocked
             record_llm_blocked(
                 "analysis",
-                "why-insight blocked — regulated tenant, LLM never received result rows.",
+                f"{action}-insight blocked — regulated tenant, LLM never "
+                "received result rows.",
             )
         return
     try:
@@ -604,14 +612,14 @@ async def _send_why_insight(
         provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
         with llm_audit_scope(
             account_id=account_id,
-            question=f"why: {question}"[:500],
+            question=f"{action}: {question}"[:500],
             enabled=bool(client.get("enable_llm_audit")),
             request_id=make_llm_audit_request_id(),
             question_id=question_id,
             component="analysis",
         ):
             insight = await generate_analysis_response(
-                action="why",
+                action=action,
                 rows=rows,
                 question=question,
                 provider=provider,
@@ -635,7 +643,8 @@ async def _send_why_insight(
         if text:
             await adapter.send_message(event, text)
     except Exception as exc:
-        log.warning("Why-insight after factual answer failed (answer already sent): %s", exc)
+        log.warning("%s-insight after factual answer failed (answer already sent): %s",
+                    action, exc)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1118,8 +1127,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             account_id, question[:120], _analysis_question[:120],
         )
 
-    from core.insight import is_causal_question
-    _why_mode = bool(not is_clarification and is_causal_question(_analysis_question))
+    # "why" (causal, drills down), "analyze" (one call, no further SQL)
+    # or "" (the deterministic summary the card already carries). See
+    # core.insight.analysis_action_for for why the middle row exists.
+    from core.insight import analysis_action_for
+    _analysis_action = analysis_action_for(
+        _analysis_question, is_clarification=is_clarification)
+    _why_mode = bool(_analysis_action)
 
     # Identity passed through every query-log row for audit + billing.
     pu_id  = portal_user.get("id") if portal_user else None
@@ -2259,6 +2273,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             if _why_mode and rows:
                 await _send_why_insight(
                     adapter, event,
+                    action=_analysis_action,
                     question=question, rows=rows, sql=sql_from_metric,
                     client=client, account_id=account_id, db_cfg=db_cfg,
                     known_tables=all_known,
@@ -7513,6 +7528,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _answer_grounding = {}
         await _send_why_insight(
             adapter, event,
+            action=_analysis_action,
             grounding=_answer_grounding,
             question=question, rows=rows, sql=sql,
             client=client, account_id=account_id, db_cfg=db_cfg,
