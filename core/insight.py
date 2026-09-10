@@ -992,6 +992,38 @@ def _language_rule(lang: str | None = None) -> str:
     return prompt_language_rule(lang, shape="narrative")
 
 
+# Why a "why" answer has no breakdowns behind it. Two renderings of the same
+# code: one for the model, in the prompt's own language, and one for the
+# reader, from the catalogue. `analysis.drilldown.<code>` carries the reader's.
+_DRILLDOWN_GAP_REASONS = {
+    "no_context": (
+        "this result's source context is not available in this session, so no "
+        "breakdown could be planned"
+    ),
+    "declined": "the planner found no safe way to break this result down",
+    "planner_failed": "the breakdown could not be planned",
+    "rejected": (
+        "the breakdown the planner proposed was refused by the SQL validator"
+    ),
+    "query_failed": (
+        "the breakdown query could not be completed against the warehouse"
+    ),
+    "empty": "every breakdown that ran returned no rows",
+}
+
+
+def drilldown_gap_for_prompt(code: str) -> str:
+    """What to tell the MODEL about a missing breakdown. "" for an unknown code."""
+    return _DRILLDOWN_GAP_REASONS.get(str(code or ""), "")
+
+
+def drilldown_gap_for_reader(code: str) -> str:
+    """What to tell the READER, in their language. "" for an unknown code."""
+    if str(code or "") not in _DRILLDOWN_GAP_REASONS:
+        return ""
+    return _t(f"analysis.drilldown.{code}")
+
+
 def _converse_user_message(
     action_contract: dict,
     *,
@@ -1045,6 +1077,7 @@ def build_insight_prompt_from_contract(
     drilldown_briefs: list[dict] | None = None,
     business_context: str = "",
     history: list[dict] | None = None,
+    drilldown_gap: str = "",
 ) -> tuple[str, str]:
     """
     Build per-action LLM prompts with precise output structure.
@@ -1294,6 +1327,25 @@ def build_insight_prompt_from_contract(
         user_parts.append("\nDrill-down breakdowns:")
         for i, db in enumerate(drilldown_briefs, 1):
             user_parts.append(f"\nBreakdown {i}:\n{_format_brief_for_prompt(db)}")
+    elif drilldown_gap:
+        # The absence of breakdowns, stated.
+        #
+        # Six different failures -- the validator rejecting the drill SQL, the
+        # warehouse raising, a breakdown returning no rows, the model replying
+        # NO_DRILLDOWN, the planner call itself raising, and a governance block
+        # -- all produced the same thing: `drilldown_briefs=None`, this block
+        # omitted, and a prompt byte-for-byte identical to a "why" with no
+        # drill-down pipeline behind it at all. So a narrative written from the
+        # top-line figures alone was indistinguishable from one written over
+        # three real breakdowns, and the model had no way to know which it was
+        # doing.
+        user_parts.append(
+            "\nNo supporting breakdowns were available for this answer: "
+            f"{drilldown_gap}\n"
+            "Say what the figures above show and no more. Do not name a cause, "
+            "a segment or a driver that is not in them, and do not imply that a "
+            "deeper analysis was carried out."
+        )
     return system, "\n".join(user_parts)
 
 
@@ -1610,6 +1662,7 @@ async def generate_insight(
     business_context: str = "",
     original_sql: str = "",
     grounding: dict | None = None,
+    drilldown_gap: str = "",
     **extra_kwargs,
 ) -> dict:
     """
@@ -1657,6 +1710,7 @@ async def generate_insight(
         follow_up=follow_up,
         drilldown_briefs=drilldown_briefs,
         business_context=business_context,
+        drilldown_gap=drilldown_gap_for_prompt(drilldown_gap),
     )
 
     try:
@@ -1702,6 +1756,11 @@ async def generate_insight(
         "result_scope": brief.get("result_scope", {}),
         "source_question": question,
         "mode": brief.get("mode", "table"),
+        # One sentence, in the reader's language, when there was no breakdown
+        # behind this answer. Empty on every card that had one -- and on every
+        # action that never drills -- so a renderer that ignores it loses
+        # nothing.
+        "grounding_caveat": drilldown_gap_for_reader(drilldown_gap),
     }
 
 
@@ -1746,6 +1805,24 @@ async def generate_drilldown_insight(
         context=context_summary,
     )
     drilldown_briefs = []
+    # Which failure produced an empty `drilldown_briefs`, if one did.
+    #
+    # There are six ways to get here with nothing, and they used to be
+    # indistinguishable: the validator rejecting the drill SQL, the warehouse
+    # raising, a breakdown returning no rows, the model replying NO_DRILLDOWN,
+    # the planner call itself raising, and a governance block. Every one of
+    # them produced `drilldown_briefs=None`, a prompt byte-for-byte identical
+    # to a "why" with no pipeline behind it at all, and a card the reader could
+    # not tell apart from one written over three real breakdowns.
+    #
+    # First failure wins: when three candidate queries fail three different
+    # ways, the first is the one that explains the shape of the problem.
+    gap_code = ""
+
+    def _note_gap(code: str) -> None:
+        nonlocal gap_code
+        if not gap_code:
+            gap_code = code
 
     # Step 1: Ask LLM for drill-down queries
     dd_system, dd_user = build_drilldown_prompt(
@@ -1760,7 +1837,9 @@ async def generate_drilldown_insight(
                 max_tokens=800, temperature=0.2, **extra_kwargs,
             )
 
-        if "NO_DRILLDOWN" not in dd_response.upper():
+        if "NO_DRILLDOWN" in dd_response.upper():
+            _note_gap("declined")
+        else:
             # Parse drill-down SQL queries
             dd_sqls = [
                 s.strip() for s in dd_response.split("---")
@@ -1778,29 +1857,43 @@ async def generate_drilldown_insight(
             # Step 2: Validate and execute each drill-down
             _known = known_tables or set()
 
+            if not dd_sqls:
+                _note_gap("declined")
             for sql in dd_sqls:
                 try:
                     ok, reason, code = validate_sql(
                         sql, _known, db_cfg["db_type"]
                     )
-                    if ok:
-                        if query_executor:
-                            governed = query_executor(db_cfg, sql)
-                            dd_rows = governed.rows
-                            sql = governed.sql
-                        else:
-                            dd_rows = run_query(
-                                db_cfg["credentials"], db_cfg["db_type"], sql
-                            )
-                        if dd_rows:
-                            dd_brief = compute_data_brief(dd_rows, follow_up)
-                            dd_brief["drilldown_sql_intent"] = sql[:100]
-                            drilldown_briefs.append(dd_brief)
+                    if not ok:
+                        log.info(
+                            "Drill-down SQL rejected by the validator (%s): %s",
+                            code, reason,
+                        )
+                        _note_gap("rejected")
+                        continue
+                    if query_executor:
+                        governed = query_executor(db_cfg, sql)
+                        dd_rows = governed.rows
+                        sql = governed.sql
+                    else:
+                        dd_rows = run_query(
+                            db_cfg["credentials"], db_cfg["db_type"], sql
+                        )
+                    if dd_rows:
+                        dd_brief = compute_data_brief(dd_rows, follow_up)
+                        dd_brief["drilldown_sql_intent"] = sql[:100]
+                        drilldown_briefs.append(dd_brief)
+                    else:
+                        _note_gap("empty")
                 except Exception as e:
-                    log.debug("Drill-down query failed: %s", str(e)[:80])
+                    # Was debug. A drill-down that fails on every question is
+                    # a dead feature that looks exactly like a working one.
+                    log.warning("Drill-down query failed: %s", str(e)[:200])
+                    _note_gap("query_failed")
 
     except Exception as e:
         log.warning("Drill-down generation failed: %s", e)
+        _note_gap("planner_failed")
 
     # Step 3: Generate insight with all briefs
     # Use the RAG context as business context for the final insight —
@@ -1817,6 +1910,7 @@ async def generate_drilldown_insight(
         drilldown_briefs=drilldown_briefs if drilldown_briefs else None,
         business_context=_biz_ctx,
         original_sql=original_sql,
+        drilldown_gap="" if drilldown_briefs else (gap_code or "declined"),
         **extra_kwargs,
     )
 

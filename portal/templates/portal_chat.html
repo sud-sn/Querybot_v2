@@ -323,7 +323,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .rc-kpi .result-kpi-value{font-size:30px}
 .rc-scope-strip{display:flex;gap:.45rem;flex-wrap:wrap;padding:.6rem .9rem .15rem;background:color-mix(in srgb,var(--surface-2) 40%,transparent);border-top:1px solid var(--border)}
 .rc-scope-chip{display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;font-weight:800;color:var(--text-soft)}
-.action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:var(--font-base);line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:var(--font-sm);line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:var(--font-sm);line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:var(--font-xs);color:var(--text-muted)}.analysis-section{margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border)}.analysis-section-title{font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:.35rem}.analysis-next{margin-top:.8rem;padding:.7rem .85rem;border-radius:var(--radius);background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-left:3px solid var(--primary);font-size:12.5px;line-height:1.6;color:var(--text)}.analysis-next-label{display:block;font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--primary);margin-bottom:.2rem}
+.action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:var(--font-base);line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:var(--font-sm);line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:var(--font-sm);line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:var(--font-xs);color:var(--text-muted)}.analysis-caveat{margin-top:.7rem;padding:.55rem .75rem;border-radius:var(--radius);background:var(--surface-2);border-left:3px solid var(--text-muted);font-size:var(--font-xs);line-height:1.6;color:var(--text-soft)}.analysis-section{margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border)}.analysis-section-title{font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:.35rem}.analysis-next{margin-top:.8rem;padding:.7rem .85rem;border-radius:var(--radius);background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-left:3px solid var(--primary);font-size:12.5px;line-height:1.6;color:var(--text)}.analysis-next-label{display:block;font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--primary);margin-bottom:.2rem}
 /* ── The answer ───────────────────────────────────────────────────────────
    The value the question asked for, at the size that says so. It used to be an
    11px chip in the top-right corner — the same size as the word "Result" above
@@ -4431,6 +4431,14 @@ function appendAnalysisResponse(msg, opts = {}){
   }).join('') : '';
   const resultScope = msg.result_scope || {};
   const metaHtml = resultScope.badge ? `<div class="analysis-meta">${escHtml(t('ui.chat.analysis.based_on', {scope: resultScope.badge}))}${resultScope.note ? ` • ${escHtml(resultScope.note)}` : ''}</div>` : '';
+  // When the answer had no breakdown behind it, the card says so. Six
+  // different failures used to produce a card indistinguishable from one
+  // written over three real breakdowns -- there was nowhere on it for a
+  // caveat to appear even if the payload had carried one. Server-side text,
+  // already in the reader's language.
+  const caveatHtml = msg.grounding_caveat
+    ? `<div class="analysis-caveat">${escHtml(msg.grounding_caveat)}</div>`
+    : '';
   // Reconcile-style analysis cards (and any future analysis type) can offer
   // clickable next-step hypotheses -- reuses the exact same chip markup and
   // click-to-send wiring as the normal result follow-up chips.
@@ -4440,7 +4448,7 @@ function appendAnalysisResponse(msg, opts = {}){
         ${analysisFollowUps.map(_followUpChip).map(c => `<button class="suggestion-chip follow-up-chip" type="button" data-question="${escHtml(c.question)}">${escHtml(c.label)}</button>`).join('')}
       </div>`
     : '';
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || t('ui.chat.card.analysis'))}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">${t('ui.chat.card.next_step_label')}</span>${escHtml(msg.next_step)}</div>` : ''}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">${t('ui.chat.card.copy_analysis')}</button></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || t('ui.chat.card.analysis'))}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">${t('ui.chat.card.next_step_label')}</span>${escHtml(msg.next_step)}</div>` : ''}${caveatHtml}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">${t('ui.chat.card.copy_analysis')}</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
     div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
@@ -4448,7 +4456,7 @@ function appendAnalysisResponse(msg, opts = {}){
   div.querySelector('[data-copy="analysis"]')?.addEventListener('click', async (e) => {
     // Sections belong in the copy too, or copying a two-part answer takes half of it.
     const sectionText = (msg.sections || []).flatMap(s => [s.title || '', s.body || '', ...(s.bullets || [])]);
-    const payload = [msg.title || '', msg.body || '', ...sectionText, msg.secondary || '', ...(msg.bullets || []), msg.next_step ? (t('ui.chat.card.next_step') + msg.next_step) : ''].filter(Boolean).join('\n');
+    const payload = [msg.title || '', msg.body || '', ...sectionText, msg.secondary || '', ...(msg.bullets || []), msg.next_step ? (t('ui.chat.card.next_step') + msg.next_step) : '', msg.grounding_caveat || ''].filter(Boolean).join('\n');
     const ok = await copyText(payload);
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = t(ok ? 'ui.chat.card.copied' : 'ui.chat.toast.copy_failed');

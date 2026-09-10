@@ -2717,6 +2717,37 @@ MESSAGES: dict[str, dict[str, str]] = {
     "analysis.title.why": {"en": "Why this pattern?", "fr": "Pourquoi ce schéma ?"},
     "analysis.title.decide": {"en": "Recommended next step", "fr": "Prochaine étape recommandée"},
     "analysis.title.default": {"en": "Analysis", "fr": "Analyse"},
+
+    # ── When the "why" answer had no breakdown behind it ────────────────────
+    # Six different failures used to produce a card identical to one written
+    # over three real breakdowns. One complete sentence per reason rather than
+    # a template with a substituted fragment: a caveat assembled from parts
+    # reads like machine output in English and does not survive translation
+    # into French at all.
+    "analysis.drilldown.no_context": {
+        "en": "No supporting breakdown was run: this result's source context is not available in this session, so the figures above are read as they stand.",
+        "fr": "Aucune ventilation complémentaire n'a été exécutée : le contexte source de ce résultat n'est pas disponible dans cette session, les chiffres ci-dessus sont donc interprétés tels quels.",
+    },
+    "analysis.drilldown.declined": {
+        "en": "No supporting breakdown was run: there was no safe way to break this result down further, so the figures above are read as they stand.",
+        "fr": "Aucune ventilation complémentaire n'a été exécutée : il n'existait aucun moyen fiable de détailler davantage ce résultat, les chiffres ci-dessus sont donc interprétés tels quels.",
+    },
+    "analysis.drilldown.planner_failed": {
+        "en": "No supporting breakdown was run: the breakdown could not be planned, so the figures above are read as they stand.",
+        "fr": "Aucune ventilation complémentaire n'a été exécutée : la ventilation n'a pas pu être planifiée, les chiffres ci-dessus sont donc interprétés tels quels.",
+    },
+    "analysis.drilldown.rejected": {
+        "en": "No supporting breakdown was run: the proposed breakdown was refused by the SQL validator, so the figures above are read as they stand.",
+        "fr": "Aucune ventilation complémentaire n'a été exécutée : la ventilation proposée a été refusée par le validateur SQL, les chiffres ci-dessus sont donc interprétés tels quels.",
+    },
+    "analysis.drilldown.query_failed": {
+        "en": "No supporting breakdown was run: the breakdown query could not be completed, so the figures above are read as they stand.",
+        "fr": "Aucune ventilation complémentaire n'a été exécutée : la requête de ventilation n'a pas pu aboutir, les chiffres ci-dessus sont donc interprétés tels quels.",
+    },
+    "analysis.drilldown.empty": {
+        "en": "No supporting breakdown was run: every breakdown that ran returned no rows, so the figures above are read as they stand.",
+        "fr": "Aucune ventilation complémentaire n'a été exécutée : toutes les ventilations exécutées n'ont renvoyé aucune ligne, les chiffres ci-dessus sont donc interprétés tels quels.",
+    },
     "analysis.failed_headline": {
         "en": "Analysis could not be completed.",
         "fr": "L'analyse n'a pas pu être menée à son terme.",

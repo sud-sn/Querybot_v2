@@ -2521,6 +2521,20 @@ async def generate_analysis_response(
     )
 
     try:
+        # A "why" that cannot drill has to say so.
+        #
+        # The gate below needs all three of db_cfg, original_sql and context,
+        # and `context` is the tenant's KB text -- which the adapter blanks
+        # whenever a result is restored from a snapshot rather than answered
+        # fresh (gateway/web_adapter.py::adopt_cached_snapshot, correctly: the
+        # previous answer's context is not this result's). So after a page
+        # reload, "why did this happen?" ran ZERO warehouse queries and still
+        # returned a card titled "Why this pattern?" that read exactly like one
+        # written over three real breakdowns.
+        _why_gap = ""
+        if action == "why" and not (db_cfg and original_sql and context):
+            _why_gap = "no_context"
+
         # "why" questions with drill-down capability
         if action == "why" and db_cfg and original_sql and context:
             return await generate_drilldown_insight(
@@ -2539,7 +2553,8 @@ async def generate_analysis_response(
                 **extra_kwargs,
             )
 
-        # Standard action buttons (explain, analyze, compare, predict)
+        # Standard action buttons (explain, analyze, compare, predict) -- and a
+        # "why" that had nothing to drill with.
         return await generate_insight(
             rows=rows,
             question=question,
@@ -2551,6 +2566,7 @@ async def generate_analysis_response(
             business_context=context,
             original_sql=original_sql,
             grounding=grounding,
+            drilldown_gap=_why_gap,
             **extra_kwargs,
         )
 
