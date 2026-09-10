@@ -45,6 +45,7 @@ from core.result_commands import (
     parse_result_command,
 )
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
+from core.result_conversation import converse_about_result
 from core.result_planner import (
     is_metadata_result_question,
     strip_result_context,
@@ -3506,9 +3507,96 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 rc_question[:60], len(_fb_rows),
                             )
                         else:
+                            # Neither the governed cache engine nor a real
+                            # query could answer this. Before the deterministic
+                            # hint, one more reading of the question: the
+                            # reader may not have been issuing a command at
+                            # all.
+                            #
+                            # "what is the total?", "why is that?", "what does
+                            # this column mean?", "thanks" -- the card
+                            # understood none of them and answered all of them
+                            # with the same "I could not answer that", which is
+                            # not a conversation, it is a command line with a
+                            # chat window drawn around it. Three of those four
+                            # are answerable from the result already on the
+                            # reader's screen and need no query at all.
+                            #
+                            # LAST, deliberately. A question a query can
+                            # answer is still answered with data; this never
+                            # competes with the warehouse, it only speaks when
+                            # the warehouse has nothing to say.
+                            _rc_conv_rows = _sanitize_rows(
+                                list((_cached_result or {}).get("rows") or []))
+                            # Column meanings and the business names for them,
+                            # built here rather than borrowed from the SQL
+                            # fallback's `_drill_ctx`: that one is assigned
+                            # four levels in and is not bound on every path
+                            # that reaches this line, which is the defect this
+                            # file has already shipped once.
+                            _rc_conv_ctx = _build_metadata_followup_context(
+                                original_question=(
+                                    (_cached_result or {}).get("question", "")),
+                                follow_up_question=rc_question,
+                                schema=_rc_schema,
+                            ) or ""
+                            _rc_conv_reply = await converse_about_result(
+                                rc_question,
+                                rows=_rc_conv_rows,
+                                result_question=(
+                                    (_cached_result or {}).get("question") or ""),
+                                sql=(_cached_result or {}).get("sql") or "",
+                                account_id=account_id,
+                                provider=_rc_provider,
+                                model=_rc_model,
+                                api_key=_rc_key,
+                                history=_rc_history,
+                                business_context=_rc_conv_ctx,
+                                **_rc_az,
+                            )
+                            if _rc_conv_reply:
+                                _rc_history.append({"question": rc_question})
+                                _result_chat_histories[rc_result_id] = _rc_history[-5:]
+                                await websocket.send_json({
+                                    "type":        "result_chat_message",
+                                    "result_id":   rc_result_id,
+                                    "question":    rc_question,
+                                    "content":     _rc_conv_reply,
+                                    "source_note": _t(
+                                        "reply.result_chat.conversation_note"),
+                                })
+                                _trace_finish(
+                                    _rc_trace_id,
+                                    status="success",
+                                    answer_type="result_conversation",
+                                    duration_ms=int(time.time() * 1000) - _rc_start_ms,
+                                    final_answer_summary=(
+                                        "Answered conversationally from the "
+                                        "result already on screen"
+                                    ),
+                                )
+                                continue
+
                             # Both DuckDB and DB fallback failed — give a column-aware hint
                             # with a rephrasing tip that includes the actual values
                             _prev_rows_hint = (_cached_result.get("rows") or []) if _cached_result else []
+                            # Which columns are numeric, which are text, and
+                            # what values they hold -- the suggestions are
+                            # built from exactly this and it was never
+                            # computed, so the one message whose whole purpose
+                            # is to show a reader a question that works
+                            # printed "Questions you can ask:" and then
+                            # nothing at all.
+                            #
+                            # Read HERE, not where _rc_stats is declared. This
+                            # returns real sample values, and the governed
+                            # cache section above tells the reader that no
+                            # result values were sent to the model; the guard
+                            # in tests/test_unified_result_cache.py keeps that
+                            # claim true by refusing the call inside it. This
+                            # hint is rendered locally and no model sees it.
+                            _rc_stats = result_cache.get_stats(
+                                _sid, result_id=_rc_source_id) or {}
                             _hint = _build_cannot_generate_hint(
                                 _rc_schema, _rc_stats,
                                 prev_rows=_prev_rows_hint,

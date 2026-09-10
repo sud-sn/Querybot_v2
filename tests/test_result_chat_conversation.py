@@ -49,6 +49,14 @@ ROWS = [
 ]
 
 
+_REPLY_TYPES = {
+    "result_chat_response",
+    "result_chat_error",
+    "result_chat_clarification",
+    "result_chat_message",
+}
+
+
 def _client_app():
     from fastapi import FastAPI
     from starlette.testclient import TestClient
@@ -101,11 +109,7 @@ def _ask_the_card(typed, *, rows=None):
             for _ in range(12):
                 frame = ws.receive_json()
                 frames.append(frame)
-                if frame.get("type") in {
-                    "result_chat_response",
-                    "result_chat_error",
-                    "result_chat_clarification",
-                }:
+                if frame.get("type") in _REPLY_TYPES:
                     break
     finally:
         wh.resolve_provider = original_provider
@@ -115,11 +119,7 @@ def _ask_the_card(typed, *, rows=None):
 
 def _reply(frames):
     for frame in frames:
-        if frame.get("type") in {
-            "result_chat_response",
-            "result_chat_error",
-            "result_chat_clarification",
-        }:
+        if frame.get("type") in _REPLY_TYPES:
             return frame
     return {}
 

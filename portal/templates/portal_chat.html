@@ -3801,6 +3801,27 @@ function _mountResultChat(cardEl, rcId) {
         thread.scrollTop = thread.scrollHeight;
       }
     },
+    onMessage(msg) {
+      // A prose answer about the result on screen -- no rows to render, so
+      // this cannot ride on onResponse, which ends an empty result with
+      // "no rows matched" and would put that under every conversational
+      // reply.
+      const divider = document.createElement('hr');
+      divider.className = 'rc-turn-divider';
+      thread.appendChild(divider);
+      const div = document.createElement('div');
+      div.className = 'rc-bubble bot';
+      div.style.whiteSpace = 'pre-line';
+      div.textContent = msg.content || '';
+      thread.appendChild(div);
+      if (msg.source_note) {
+        const note = document.createElement('div');
+        note.className = 'rc-narration';
+        note.textContent = msg.source_note;
+        thread.appendChild(note);
+      }
+      thread.scrollTop = thread.scrollHeight;
+    },
     onError(msg) {
       const content = msg.content || t('ui.chat.err.generic');
       // Render newlines as line-breaks (hint messages contain \n)
@@ -5398,6 +5419,9 @@ function connect(){
     } else if (msg.type === 'result_chat_response') {
       _rcPanels[msg.result_id]?.onTyping(false);
       _rcPanels[msg.result_id]?.onResponse(msg);
+    } else if (msg.type === 'result_chat_message') {
+      _rcPanels[msg.result_id]?.onTyping(false);
+      _rcPanels[msg.result_id]?.onMessage(msg);
     } else if (msg.type === 'result_chat_clarification') {
       _rcPanels[msg.result_id]?.onTyping(false);
       _rcPanels[msg.result_id]?.onClarification(msg);

@@ -417,7 +417,9 @@ def compute_data_brief(
         # reached the live path. On "compare revenue by warehouse for the last
         # 3 months" it called a set of perfectly flat warehouses "decreasing",
         # and named a MONTH as the leading category with a 9.4% share.
-        from core.analysis_contract import collapse_rows_by_label
+        from core.analysis_contract import (
+            collapse_rows_by_label, measure_class_for_column,
+        )
         from core.response_builder import (
             _narrative_label_column, narrative_period_labels,
         )
@@ -453,7 +455,27 @@ def compute_data_brief(
             "labels_redacted": _is_sensitive_field(label_col),
         }
 
-        total = sum(v for _, v in paired)
+        # Whether this measure may be added up at all.
+        #
+        # collapse_rows_by_label consults the same rule, but only when it has
+        # rows to MERGE: a result whose labels are already distinct is returned
+        # untouched, "because there is nothing to add". Summing ACROSS those
+        # distinct labels is a different sum, and it is subject to the rule
+        # again -- a margin percentage totalled over three regions is
+        # arithmetic on nothing, and so is a stock balance.
+        #
+        # This governs the total and the two shares alike. All three divide by
+        # or report the same figure, so a measure that cannot be summed cannot
+        # have a leader share either: "North holds 63.9% of the total margin
+        # percentage" is a sentence with no meaning, stated with numbers.
+        _summable = measure_class_for_column(value_col) == "additive"
+        total = sum(v for _, v in paired) if _summable else 0.0
+        # The most ordinary question anyone asks about a ranking -- "what is
+        # the total?" -- and the brief computed the answer here to divide by
+        # it and then never carried it, so the one number a reader asks for by
+        # name was the one number the model was never shown.
+        if paired and _summable:
+            cat_breakdown["total"] = round(total, 2)
         if total > 0 and len(paired) >= 2:
             leader_pct = round(paired[0][1] / total * 100, 1)
             cat_breakdown["leader_share_pct"] = leader_pct
@@ -667,6 +689,7 @@ def _build_safe_llm_payload(
         runner_up = top_5[1] if len(top_5) > 1 else {}
         payload["distribution_stats"] = {
             "category_count": category.get("category_count"),
+            "total": category.get("total"),
             # From the collapsed breakdown, like every other figure in this
             # dict -- not from the raw-row numeric summary, which counts three
             # months of one warehouse as three categories.
@@ -776,6 +799,18 @@ def build_action_contract(
         contract["comparison_stats"] = payload.get("comparison_stats", {})
         contract["distribution_stats"] = payload.get("distribution_stats", {})
         contract["safe_next_steps"] = semantics.get("safe_next_steps", [])
+    elif action == "converse":
+        # The reader typed a sentence at a result already on their screen.
+        # Every other action is a button: the product chose the task and the
+        # reader chose nothing. This one is the reader's own words, so the
+        # task is to answer THEM -- from the statistics of the result in front
+        # of them, and from nothing else.
+        contract["task"] = (
+            "Answer the reader's own follow-up about the result they are "
+            "looking at, using only the figures in this brief. If the brief "
+            "does not contain what they asked for, say so plainly and name "
+            "what the result does contain."
+        )
     elif action == "predict":
         contract["task"] = "Project the next returned period from the observed series only."
         contract["time_series_stats"] = payload.get("time_series_stats", {})
@@ -957,12 +992,59 @@ def _language_rule(lang: str | None = None) -> str:
     return prompt_language_rule(lang, shape="narrative")
 
 
+def _converse_user_message(
+    action_contract: dict,
+    *,
+    follow_up: str,
+    mode: str,
+    scope_badge: str,
+    history: list[dict] | None = None,
+) -> str:
+    """The user half of a conversational reply.
+
+    Ordered the way the reader experiences it: the question that produced the
+    result, then what has been said about it so far, then the statistics, then
+    what they have just typed -- which comes last so it is the thing the model
+    is answering rather than one line of context among many.
+
+    `history` entries are the turn records the socket already keeps
+    (`question`, and whichever of `row_count` / `operation` / `sql` that turn
+    produced). Only the reader's own wording and the shape of what came back
+    are passed on: a turn's rows are never re-sent.
+    """
+    parts = [
+        f"The result on screen answers: {action_contract.get('question', '')}",
+        f"Mode: {mode}",
+        f"Scope: {scope_badge}",
+    ]
+    for turn in (history or [])[-3:]:
+        if not isinstance(turn, dict):
+            continue
+        asked = str(turn.get("question") or "").strip()
+        if not asked:
+            continue
+        shape = ""
+        if turn.get("operation"):
+            shape = f" (ran: {turn['operation']})"
+        elif turn.get("row_count") is not None:
+            shape = f" (returned {turn['row_count']} rows)"
+        parts.append(f"Earlier in this conversation they asked: {asked}{shape}")
+    parts.append(f"\nData brief:\n{_format_brief_for_prompt(action_contract)}")
+    grounding_block = _format_grounding_for_prompt(
+        action_contract.get("grounding") or {})
+    if grounding_block:
+        parts.append(grounding_block)
+    parts.append(f"\nThey have just typed: {follow_up or action_contract.get('question', '')}")
+    return "\n".join(parts)
+
+
 def build_insight_prompt_from_contract(
     action_contract: dict,
     *,
     follow_up: str = "",
     drilldown_briefs: list[dict] | None = None,
     business_context: str = "",
+    history: list[dict] | None = None,
 ) -> tuple[str, str]:
     """
     Build per-action LLM prompts with precise output structure.
@@ -1124,6 +1206,27 @@ def build_insight_prompt_from_contract(
             "Frame everything as a recommendation to investigate — never as a directive.\n"
         )
 
+    elif action == "converse":
+        system = base_rules + (
+            "\nTASK — ANSWER THE READER:\n"
+            "The reader is looking at a result and has typed a question or a "
+            "remark about it. Reply the way an analyst sitting next to them "
+            "would: in prose, in the second person, as long as the answer "
+            "needs and no longer.\n\n"
+            "- Answer what they actually asked. If they asked for a number "
+            "that is in the brief, lead with it.\n"
+            "- If the brief does not contain the answer, say so in one "
+            "sentence and name what the result DOES hold. Never estimate, "
+            "never extrapolate, and never describe a column the brief does "
+            "not list.\n"
+            "- If they asked something the result cannot settle (a cause, a "
+            "comparison with data that is not here), say what the result "
+            "does show and what question would settle it.\n"
+            "- If they were being polite rather than asking anything, be "
+            "brief and human back. Do not restate the result at them.\n"
+            "- No headings, no bullet scaffolding, no sign-off.\n"
+        )
+
     else:
         system = base_rules + "\nTASK: Provide a concise, grounded interpretation of this result.\n"
 
@@ -1138,6 +1241,24 @@ def build_insight_prompt_from_contract(
         "- Say what it means, not only what it is. The number is already on "
         "screen in the table above your answer.\n"
         "- No preamble. Start with the finding.\n"
+    )
+
+    # A conversational reply is one the reader asked for in their own words,
+    # and it is rendered as a sentence in a chat thread rather than as a card.
+    # Handing it the card's HEADLINE / DETAIL / NEXT scaffolding would answer
+    # "thank you" with a three-bullet analysis.
+    if action == "converse":
+        system += (
+            "\nRESPONSE FORMAT (required):\n"
+            "Plain prose. No HEADLINE, no BODY, no DETAIL, no NEXT, no "
+            "bullets, no markdown headings — just the answer, as you would "
+            "say it.\n"
+        )
+        return system, _converse_user_message(
+            action_contract, follow_up=follow_up, mode=mode,
+            scope_badge=scope_badge, history=history)
+
+    system += (
         "\nRESPONSE FORMAT (required):\n"
         "HEADLINE: ...\n"
         "BODY: ...\n"

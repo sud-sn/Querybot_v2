@@ -133,6 +133,114 @@ class TestTheActionStillDecidesTheTask:
         assert offered == {"why", "decide"}
 
 
+class TestTheTotalIsCarriedAndOnlyWhenItMeansSomething:
+    """"What is the total?" is the most ordinary question there is about a
+    ranking. compute_data_brief worked the total out in order to divide by it
+    -- leader_share_pct and top_3_share_pct are both quotients of it -- and
+    then dropped it, so the one figure a reader asks for by name was the one
+    figure the model was never shown."""
+
+    def test_a_ranking_carries_its_total(self):
+        brief = compute_data_brief(RANKING, "revenue by region")
+        assert brief["category_breakdown"]["total"] == 1000.0
+        contract = build_action_contract("converse", "revenue by region", brief)
+        assert contract["distribution_stats"]["total"] == 1000.0
+
+    def test_the_total_reaches_the_text_the_model_reads(self):
+        _contract, user = _prompt(RANKING, "what is the total?", "converse")
+        assert "1000" in user, user
+
+    @pytest.mark.parametrize("column,label", [
+        ("MARGIN_PCT", "a percentage"),
+        ("STOCK_BALANCE", "a semi-additive balance"),
+    ])
+    def test_a_measure_that_may_not_be_summed_gets_no_total(self, column, label):
+        """collapse_rows_by_label consults this rule, but only when it has rows
+        to MERGE -- a result whose labels are already distinct is returned
+        untouched "because there is nothing to add". Summing ACROSS those
+        distinct labels is a different sum and is subject to the rule again.
+        Three regions' margin percentages added together is arithmetic on
+        nothing, stated with a number."""
+        rows = [{"REGION": "North", column: 12.0},
+                {"REGION": "South", column: 9.0},
+                {"REGION": "East", column: 7.0}]
+        breakdown = compute_data_brief(rows, f"{label} by region")["category_breakdown"]
+        assert breakdown.get("total") is None, breakdown
+
+    @pytest.mark.parametrize("column", ["MARGIN_PCT", "STOCK_BALANCE"])
+    def test_it_gets_no_shares_either(self, column):
+        """The shares are quotients of that same total. "North holds 42.8% of
+        the total margin percentage" is a sentence with no meaning, and it was
+        being stated with two decimal places."""
+        rows = [{"REGION": "North", column: 12.0},
+                {"REGION": "South", column: 9.0},
+                {"REGION": "East", column: 7.0}]
+        breakdown = compute_data_brief(rows, "by region")["category_breakdown"]
+        assert breakdown.get("leader_share_pct") is None, breakdown
+        assert breakdown.get("top_3_share_pct") is None, breakdown
+
+    def test_the_leader_and_the_ranking_survive(self):
+        """Withholding the total must not withhold the ranking: which region
+        has the highest margin percentage is a real, answerable question."""
+        rows = [{"REGION": "North", "MARGIN_PCT": 12.0},
+                {"REGION": "South", "MARGIN_PCT": 9.0},
+                {"REGION": "East", "MARGIN_PCT": 7.0}]
+        breakdown = compute_data_brief(rows, "margin pct by region")["category_breakdown"]
+        assert breakdown["top_5"][0] == {"label": "North", "value": 12.0}
+        assert breakdown["category_count"] == 3
+
+
+class TestTheConversationalContract:
+    """The reader typed a sentence at a result. Every other action is a button
+    the product chose; this one is the reader's own words."""
+
+    def test_it_states_the_readers_question_as_the_task(self):
+        brief = compute_data_brief(RANKING, "revenue by region")
+        contract = build_action_contract(
+            "converse", "revenue by region", brief, follow_up="what is the total?")
+        assert "follow-up" in contract["task"].lower()
+        assert contract["follow_up"] == "what is the total?"
+
+    def test_the_typed_words_come_last_so_they_are_what_gets_answered(self):
+        brief = compute_data_brief(RANKING, "revenue by region")
+        contract = build_action_contract(
+            "converse", "revenue by region", brief, follow_up="what is the total?")
+        _system, user = build_insight_prompt_from_contract(
+            contract, follow_up="what is the total?")
+        assert user.rstrip().endswith("They have just typed: what is the total?")
+
+    def test_it_is_not_given_the_cards_scaffolding(self):
+        """A three-bullet analysis is the wrong answer to "thank you"."""
+        brief = compute_data_brief(RANKING, "revenue by region")
+        contract = build_action_contract(
+            "converse", "revenue by region", brief, follow_up="thanks")
+        system, _user = build_insight_prompt_from_contract(
+            contract, follow_up="thanks")
+        assert "HEADLINE: ...".lower() not in system.lower()
+        assert "Plain prose" in system
+
+    def test_the_earlier_turns_are_in_the_prompt(self):
+        """A conversation is turns, not a sequence of unrelated questions."""
+        brief = compute_data_brief(RANKING, "revenue by region")
+        contract = build_action_contract(
+            "converse", "revenue by region", brief, follow_up="and the second?")
+        _system, user = build_insight_prompt_from_contract(
+            contract, follow_up="and the second?",
+            history=[{"question": "which is highest?", "row_count": 1},
+                     {"question": "keep the top 2", "operation": "limit"}])
+        assert "which is highest?" in user
+        assert "keep the top 2" in user
+
+    def test_a_turns_rows_are_never_replayed_into_the_prompt(self):
+        brief = compute_data_brief(RANKING, "revenue by region")
+        contract = build_action_contract("converse", "revenue by region", brief)
+        _system, user = build_insight_prompt_from_contract(
+            contract,
+            history=[{"question": "which is highest?",
+                      "rows": [{"REGION": "SECRETVALUE"}]}])
+        assert "SECRETVALUE" not in user, user
+
+
 class TestTheShapeOfTheResultReachesThePrompt:
     """build_action_contract set result_shape on every contract, with a comment
     saying every action wants it, and the formatter never rendered it -- so no

@@ -4991,6 +4991,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Computed locally from the cached result. No result values were sent to the model.",
         "fr": "Calculé localement à partir du résultat en cache. Aucune valeur du résultat n'a été envoyée au modèle.",
     },
+    "reply.result_chat.conversation_note": {
+        "en": "Answered from the result on screen. The model was sent a statistical summary of it, not the rows.",
+        "fr": "Réponse fondée sur le résultat affiché. Le modèle a reçu un résumé statistique de celui-ci, et non les lignes.",
+    },
     "reply.result_chat.blocked_detail": {
         "en": "The request was stopped locally. No cached rows, sample values, source SQL, or bound literals were sent to the model.",
         "fr": "La demande a été arrêtée localement. Aucune ligne en cache, valeur d'exemple, requête SQL source ou littéral lié n'a été envoyé au modèle.",
