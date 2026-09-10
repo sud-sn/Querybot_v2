@@ -4613,6 +4613,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I could not safely apply that operation to the cached result. Use an exact result column name or a row number.",
         "fr": "Je n'ai pas pu appliquer cette opération au résultat en cache en toute sécurité. Utilisez un nom de colonne exact du résultat ou un numéro de ligne.",
     },
+    "reply.result.last_answer_empty": {
+        "en": "The last question found no matching records, so there is nothing to narrow. Try broadening the filter, or ask a fresh question.",
+        "fr": "La dernière question n'a trouvé aucun enregistrement correspondant : il n'y a donc rien à affiner. Élargissez le filtre ou posez une nouvelle question.",
+    },
     "reply.result.none_cached": {
         "en": "No cached result found. Please run a query first.",
         "fr": "Aucun résultat en cache. Veuillez d'abord exécuter une requête.",

@@ -116,6 +116,17 @@ def _restore_durable_thread_result(
     if not session_id:
         return {}
     requested_result_id = str(result_id or "").strip()
+    # An implicit restore, after an answer that returned nothing, must not go
+    # looking for an older one.
+    #
+    # The loop below walks this thread's traces newest-first and SKIPS any with
+    # no rows -- reasonably, since it cannot restore what has none. The effect
+    # was that a zero-row answer was stepped over and the answer before it was
+    # restored as the session's current result, which is the same staleness the
+    # in-process marker exists to prevent, arriving by the other door. A card
+    # asked for BY ID still restores: the reader can see it.
+    if not requested_result_id and result_cache.has_no_result(session_id):
+        return {}
     cached = result_cache.get_snapshot(
         session_id,
         requested_result_id or getattr(adapter, "last_result_id", None),
@@ -1202,7 +1213,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({
                         "type": "assistant_error",
                         "role": "assistant",
-                        "content": outcome.message,
+                        # execute_result_command cannot tell "expired" from
+                        # "the last answer had no rows" -- it only sees an
+                        # absent snapshot -- so its "that result is no longer
+                        # available" would tell a reader something broke when
+                        # nothing did.
+                        "content": (
+                            _t("reply.result.last_answer_empty")
+                            if result_cache.has_no_result(session_id)
+                            else outcome.message
+                        ),
                         "detail": _t("reply.result.no_llm_used"),
                     })
                     await websocket.send_json({"type": "typing", "active": False})
@@ -2939,12 +2959,32 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             adapter,
                             result_id=rc_result_id or None,
                         )
-                    if not _sid or not result_cache.has_result(_sid):
-                        _trace_finish(_rc_trace_id, status="error", answer_type="error", error_message="No cached result found")
+                    # Does the card the reader ADDRESSED exist -- not "does
+                    # this session have anything". The restore above already
+                    # resolves by id; this guard did not, so a reader typing
+                    # into a card that is still on screen was refused whenever
+                    # the session's newest answer had returned nothing, even
+                    # though their card was in the cache the whole time.
+                    if not _sid or not result_cache.has_result(
+                            _sid, result_id=rc_result_id or None):
+                        # WHY there is nothing, not just that there is nothing.
+                        # "No cached result found. Please run a query first."
+                        # is the expiry story, and it is the wrong one to read
+                        # straight after "I could not find matching records" --
+                        # nothing expired and a query did run.
+                        _rc_empty = bool(
+                            _sid and result_cache.has_no_result(_sid))
+                        _trace_finish(
+                            _rc_trace_id, status="error", answer_type="error",
+                            error_message=("Last answer returned no rows"
+                                           if _rc_empty
+                                           else "No cached result found"))
                         await websocket.send_json({
                             "type": "result_chat_error",
                             "result_id": rc_result_id,
-                            "content": _t("reply.result.none_cached"),
+                            "content": _t(
+                                "reply.result.last_answer_empty" if _rc_empty
+                                else "reply.result.none_cached"),
                         })
                         continue
 

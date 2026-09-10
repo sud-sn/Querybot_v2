@@ -6822,6 +6822,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         except Exception:
             log.debug("Zero-match literal check skipped", exc_info=True)
 
+    # Nothing came back, so nothing is current.
+    #
+    # Every exit below this line sends a diagnostic rather than an answer card,
+    # and none of them writes to the result cache -- result_cache.store refuses
+    # an empty row set. So the PREVIOUS answer stayed the session's current
+    # result, and a reader told "I could not find matching records" who then
+    # typed "just the top 3" got the top 3 of the answer before that one:
+    # computed correctly, labelled with the older question, flagged nowhere.
+    #
+    # Placed before the branch, not inside it, because the branch has several
+    # exits (the RCA card, a clarification, and falling through to _send_results
+    # when the reader cannot be asked) and the fact is the same at all of them.
+    # A later successful answer clears it, so a clarification reply that does
+    # return rows restores a current result on its own.
+    if len(rows) == 0 or _zero_match_diagnostic:
+        _forget_result = getattr(adapter, "forget_current_result", None)
+        if callable(_forget_result):
+            _forget_result()
+
     if (len(rows) == 0 or _zero_match_diagnostic) and event.user_id and can_request_clarification(event):
         _zr_matches = store.match_terms_in_question(account_id, question, query_scope_tables)
         _zr_has_required = any(

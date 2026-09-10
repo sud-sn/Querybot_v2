@@ -389,6 +389,16 @@ class ResultCache:
         self._store: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._snapshots: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._session_snapshots: dict[str, list[str]] = {}
+        # Sessions whose newest answer returned nothing.
+        #
+        # store() refuses rows=[] and every consumer reads entry.rows, so "the
+        # current result is nothing" had no representation in this cache at
+        # all. The consequence was not a missing feature but a wrong answer: a
+        # question that returned no rows left the PREVIOUS answer as the
+        # session's current result, so "just the top 3" typed after it
+        # silently transformed rows from the answer before -- computed
+        # correctly, labelled with the older question, and never flagged.
+        self._no_result: set[str] = set()
         self._max   = max_sessions
         self._max_snapshots = max_sessions * 8
         # RLock so the same thread can re-acquire (e.g. store→_evict_expired→_get)
@@ -418,6 +428,8 @@ class ResultCache:
         if not session_id or not rows:
             return ""
         with self._lock:
+            # A real result supersedes "nothing".
+            self._no_result.discard(session_id)
             self._evict_expired()
             snapshot_id = str(result_id or uuid.uuid4().hex).strip() or uuid.uuid4().hex
             existing = self._snapshots.get(snapshot_id)
@@ -851,6 +863,34 @@ class ResultCache:
             entry = self._get(session_id, result_id)
         return entry is not None
 
+    def mark_no_result(self, session_id: str) -> None:
+        """Record that the newest answer in this session returned no rows.
+
+        Until the next successful store, this session has no CURRENT result:
+        get_snapshot(session_id), has_result(session_id) and every other
+        implicit lookup answer as though the cache were empty. A snapshot
+        addressed by its own result_id is untouched, because the reader can
+        still see that card and press its chips.
+
+        Idempotent, and a no-op for a session that has never held anything.
+        """
+        if not session_id:
+            return
+        with self._lock:
+            self._no_result.add(session_id)
+
+    def has_no_result(self, session_id: str) -> bool:
+        """True when the newest answer in this session returned no rows.
+
+        For a caller that needs to say WHY there is nothing to work from --
+        "the last question found no matching records" reads very differently
+        from "that result has expired".
+        """
+        if not session_id:
+            return False
+        with self._lock:
+            return session_id in self._no_result
+
     def clear(self, session_id: str) -> None:
         with self._lock:
             self._clear_session(session_id)
@@ -868,6 +908,12 @@ class ResultCache:
         self, session_id: str, result_id: str | None = None,
     ) -> "_CacheEntry | None":
         """Must be called with self._lock held."""
+        if not result_id and session_id in self._no_result:
+            # An IMPLICIT lookup -- "the current result of this session" --
+            # after an answer that had none. Only this shape is refused: a card
+            # the reader can still see is addressed by its own result_id, so
+            # its chips, its inline chat and its CSV all keep working.
+            return None
         entry = (
             self._snapshots.get(str(result_id))
             if result_id
@@ -933,6 +979,7 @@ class ResultCache:
             self._snapshots.pop(result_id, None)
         self._session_snapshots.pop(session_id, None)
         self._store.pop(session_id, None)
+        self._no_result.discard(session_id)
 
     @staticmethod
     def _snapshot_payload(entry: _CacheEntry) -> dict:

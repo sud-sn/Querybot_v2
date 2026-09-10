@@ -296,6 +296,33 @@ class WebAdapter(PlatformAdapter):
         except Exception as _ce:
             log.debug("Result cache store failed (non-critical): %s", _ce)
 
+    def forget_current_result(self) -> None:
+        """The answer just given produced no rows, so there is nothing current.
+
+        Two pointers and one marker, and all three are needed. last_result and
+        last_result_id are what a follow-up with no explicit result_id acts on;
+        result_cache.mark_no_result is what stops the cache handing back the
+        PREVIOUS answer for the same implicit lookup. Leave any of them and a
+        reader who is told "I could not find matching records" and then types
+        "just the top 3" gets the top 3 of the answer before that one --
+        correctly computed, labelled with the older question, and flagged
+        nowhere.
+
+        Snapshots keyed by their own result_id are deliberately left alone: the
+        reader can still see those cards, and their chips still work.
+        """
+        self.last_result = {}
+        self.last_result_id = None
+        try:
+            from core.result_cache import result_cache
+
+            result_cache.mark_no_result(self.session_id)
+        except Exception as exc:
+            # Never the reason an answer fails: the answer is already built by
+            # the time this runs. Loud, because a stale current result is a
+            # wrong answer rather than a missing one.
+            log.warning("Could not clear the current result: %s", exc)
+
     def adopt_cached_snapshot(
         self,
         snapshot: dict,
