@@ -81,12 +81,18 @@ class TheModelIsToldHowMuchItIsLookingAt(unittest.TestCase):
 
 class ProvenanceReachesTheAnswer(unittest.TestCase):
 
+    # Production-shaped. The earlier version of this fixture carried
+    # "2026-08-31 (newest date in CUS_ORD_IVC_FCT)" and a `tables` list of raw
+    # warehouse names, which described a shape build_answer_grounding does not
+    # produce -- its labels are business names -- and a key it no longer emits
+    # at all, because the model is told to STATE this block and a reader has no
+    # use for the physical name of a fact.
     GROUNDING = {
-        "business_date": "2026-08-31 (newest date in CUS_ORD_IVC_FCT)",
+        "business_date": "Invoice Date — this measure's approved default date",
+        "date_context": ["Delivery Date", "Payment Date"],
         "period_label": "YTD 2026",
         "scope": "Booked/Order status, business days",
         "completeness": "full read, not truncated",
-        "tables": ["EMDW_DMART.CUS_ORD_IVC_FCT"],
     }
 
     def _prompt(self, **kw):
@@ -94,8 +100,8 @@ class ProvenanceReachesTheAnswer(unittest.TestCase):
 
     def test_the_business_date_is_stated(self):
         user = self._prompt(grounding=self.GROUNDING)
-        self.assertIn("2026-08-31", user)
-        self.assertIn("newest date in CUS_ORD_IVC_FCT", user)
+        self.assertIn("Invoice Date", user)
+        self.assertIn("approved default date", user)
 
     def test_scope_and_completeness_are_stated(self):
         user = self._prompt(grounding=self.GROUNDING)
@@ -103,8 +109,29 @@ class ProvenanceReachesTheAnswer(unittest.TestCase):
         self.assertIn("not truncated", user)
 
     def test_a_list_renders_readably_rather_than_as_a_repr(self):
-        self.assertIn("EMDW_DMART.CUS_ORD_IVC_FCT", self._prompt(grounding=self.GROUNDING))
-        self.assertNotIn("['EMDW", self._prompt(grounding=self.GROUNDING))
+        """date_context is the list-valued key; it used to be `tables`."""
+        user = self._prompt(grounding=self.GROUNDING)
+        self.assertIn("Delivery Date, Payment Date", user)
+        self.assertNotIn("['Delivery", user)
+
+    def test_no_warehouse_identifier_can_be_stated_from_a_built_grounding(self):
+        """The renderer is deliberately dumb -- it states whatever it is given
+        -- so the guarantee has to hold at the BUILDER. See
+        tests/test_answer_provenance_is_business_readable.py for the rest."""
+        from core.insight import build_answer_grounding
+
+        built = build_answer_grounding(
+            semantic_plan={"date_disclosures": [{
+                "label": "Invoice Date",
+                "table": "EMDW_DMART.CUS_ORD_IVC_FCT",
+                "column": "IVC_DT_KEY",
+                "resolution_source": "metric_default",
+            }]},
+            row_count=1,
+            tables={"EMDW_DMART.CUS_ORD_IVC_FCT", "EMDW_DMART.DIM_DATE"},
+        )
+        self.assertNotIn("CUS_ORD_IVC_FCT", str(built))
+        self.assertNotIn("DIM_DATE", str(built))
 
     def test_the_model_is_told_not_to_invent_the_missing_parts(self):
         self.assertIn("never invent one that is absent",
@@ -140,16 +167,33 @@ class TheWritingContract(unittest.TestCase):
 class TheGroundingIsActuallyBuilt(unittest.TestCase):
     """The seam spans three files; a prompt slot nothing fills is dead."""
 
-    def test_date_disclosures_become_a_stated_date_context(self):
+    def test_date_disclosures_become_a_stated_date(self):
+        """The invariant is that the disclosure's business label REACHES the
+        model, not which key it arrives under. It used to be `date_context`
+        unconditionally; a single labelled disclosure now becomes the
+        `business_date` line, so this asserts on the rendered prompt.
+        """
+        from core.insight import _format_grounding_for_prompt, build_answer_grounding
+
+        g = build_answer_grounding(semantic_plan={"date_disclosures": [
+            {"label": "Invoice Date",
+             "table": "EMDW_DMART.CUS_ORD_IVC_FCT",
+             "resolution_source": "metric_default"},
+        ]})
+        rendered = _format_grounding_for_prompt(g)
+        self.assertIn("Invoice Date", rendered)
+        self.assertIn("approved default", rendered)
+
+    def test_a_second_disclosure_is_carried_as_well(self):
         from core.insight import build_answer_grounding
 
         g = build_answer_grounding(semantic_plan={"date_disclosures": [
-            {"label": "year to date, to the newest date in CUS_ORD_IVC_FCT",
-             "table": "EMDW_DMART.CUS_ORD_IVC_FCT",
-             "resolution_source": "newest date present"},
+            {"label": "Invoice Date", "table": "F1",
+             "resolution_source": "user_confirmed_date_role"},
+            {"label": "Delivery Date", "table": "F2"},
         ]})
-        self.assertIn("year to date", g["date_context"][0])
-        self.assertIn("newest date present", g["business_date"])
+        self.assertIn("Invoice Date", g["business_date"])
+        self.assertEqual(["Delivery Date"], g["date_context"])
 
     def test_truncation_is_stated_and_completeness_otherwise_stays_quiet(self):
         """Saying "full read" every time trains the reader to skip the line."""

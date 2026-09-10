@@ -898,18 +898,46 @@ def build_answer_grounding(
         # ("year to date, to the newest date present in CUS_ORD_IVC_FCT").
         labels = [str(d.get("label") or "").strip() for d in disclosures]
         labels = [label for label in labels if label]
-        if labels:
-            grounding["date_context"] = labels[:3]
         anchored = next(
             (d for d in disclosures if d.get("resolution_source") or d.get("inference_source")),
             None,
         )
         if anchored:
-            source = anchored.get("resolution_source") or anchored.get("inference_source")
-            table = anchored.get("table") or ""
-            grounding["business_date"] = (
-                f"{source} on {table}" if table else str(source)
+            # WHICH business date, and HOW it was chosen -- both in the
+            # reader's words.
+            #
+            # This was f"{source} on {table}": a machine token and the fact's
+            # raw warehouse table, in a block the prompt tells the model to
+            # state in its answer. So a reader could be told their revenue was
+            # measured on "metric_default on CUS_ORD_IVC_FCT". The table adds
+            # nothing they can act on -- the trust box already carries the SQL
+            # and the tables for anyone who wants them -- while the token hid
+            # the one distinction that matters: an approved default is a
+            # governed choice, and a discovered or inferred role is a guess.
+            from core.date_roles import provenance_phrase
+
+            role_label = str(anchored.get("label") or "").strip()
+            phrase = provenance_phrase(
+                str(anchored.get("resolution_source")
+                    or anchored.get("inference_source") or "")
             )
+            if role_label and phrase:
+                grounding["business_date"] = f"{role_label} — {phrase}"
+            elif role_label:
+                grounding["business_date"] = role_label
+            elif phrase:
+                grounding["business_date"] = phrase
+
+        # Any OTHER dates the plan bound, for a question that spans more than
+        # one. Only the ones business_date has not already named: the two lines
+        # sat side by side saying "Invoice Date" twice, which reads like the
+        # answer is unsure.
+        named = str(grounding.get("business_date") or "")
+        others = [label for label in labels if label and label not in named]
+        if others:
+            grounding["date_context"] = others[:3]
+        elif labels and not grounding.get("business_date"):
+            grounding["date_context"] = labels[:3]
     except Exception:  # noqa: BLE001 — decoration, never a failure path
         pass
 
@@ -934,12 +962,18 @@ def build_answer_grounding(
             "and averages below cover that subset, not the whole result"
         )
 
-    try:
-        names = sorted({str(t).strip() for t in (tables or []) if str(t).strip()})
-        if names and len(names) <= 6:
-            grounding["tables"] = names
-    except Exception:  # noqa: BLE001
-        pass
+    # `tables` is deliberately NOT collected.
+    #
+    # It was a list of raw warehouse table names -- DBO.CUS_ORD_IVC_FCT,
+    # DBO.DIM_DATE -- rendered into a block whose prompt says "state the
+    # relevant parts in your answer". There is no business name for a table in
+    # this product (display_label names columns), so there was nothing to
+    # translate them into, and a reader has no use for the physical name of a
+    # fact. The answer card's trust box already shows the SQL and the tables it
+    # read, to anyone who opens it.
+    #
+    # The `tables` parameter is kept: every caller passes it, and it is what
+    # the row-count and completeness reasoning above is scoped by.
 
     return grounding
 
@@ -965,7 +999,6 @@ def _format_grounding_for_prompt(grounding: dict) -> str:
         ("scope", "Scope applied"),
         ("completeness", "Completeness"),
         ("metric_source", "Metric definition"),
-        ("tables", "Tables read"),
     )
     lines = []
     for key, label in labels:

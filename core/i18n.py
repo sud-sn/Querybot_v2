@@ -2135,6 +2135,58 @@ MESSAGES: dict[str, dict[str, str]] = {
     # shown "Confirmed Delivery Date" inside an otherwise French card. Keyed
     # on the role KEY, so a workspace whose warehouse spells the column
     # differently still lands on the same translation.
+    # ── How a business date came to be the one used ─────────────────────────
+    # The answer's provenance block is rendered into a prompt that tells the
+    # model to "state the relevant parts in your answer", so whatever is in it
+    # can reach the reader verbatim. It carried the resolution_source token and
+    # the fact's raw warehouse table: "metric_default on CUS_ORD_IVC_FCT". One
+    # sentence per source, so the reader is told how the date was chosen in
+    # words they can act on -- and can tell an approved default apart from a
+    # guess, which is the whole point of saying it at all.
+    "date_provenance.user_confirmed_date_role": {
+        "en": "the date you chose",
+        "fr": "la date que vous avez choisie",
+    },
+    "date_provenance.thread_date_preference": {
+        "en": "the date you chose earlier in this conversation",
+        "fr": "la date que vous avez choisie plus tôt dans cette conversation",
+    },
+    "date_provenance.explicit_date_role": {
+        "en": "the date named in your question",
+        "fr": "la date nommée dans votre question",
+    },
+    "date_provenance.metric_default": {
+        "en": "this measure's approved default date",
+        "fr": "la date par défaut approuvée de cet indicateur",
+    },
+    "date_provenance.metric_default_time_column": {
+        "en": "this measure's approved default date",
+        "fr": "la date par défaut approuvée de cet indicateur",
+    },
+    "date_provenance.approved_metric_date_context": {
+        "en": "this measure's approved default date",
+        "fr": "la date par défaut approuvée de cet indicateur",
+    },
+    "date_provenance.single_metric_context": {
+        "en": "the only date configured for this measure",
+        "fr": "la seule date configurée pour cet indicateur",
+    },
+    "date_provenance.fact_default_date_role": {
+        "en": "the approved default date for this data",
+        "fr": "la date par défaut approuvée pour ces données",
+    },
+    "date_provenance.single_approved_date_role": {
+        "en": "the only approved date for this data",
+        "fr": "la seule date approuvée pour ces données",
+    },
+    "date_provenance.discovered_date_role": {
+        "en": "a business date found on this data, not an approved default",
+        "fr": "une date métier trouvée dans ces données, et non une date par défaut approuvée",
+    },
+    "date_provenance.inferred_encoded_fact_date": {
+        "en": "inferred from this data's own date field — not an approved default",
+        "fr": "déduite du champ de date de ces données — ce n'est pas une date par défaut approuvée",
+    },
     "date_role.booked_date": {"en": "Booked Date", "fr": "Date d'enregistrement de commande"},
     "date_role.invoice_date": {"en": "Invoice Date", "fr": "Date de facture"},
     "date_role.order_date": {"en": "Order Date", "fr": "Date de commande"},

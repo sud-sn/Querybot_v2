@@ -492,6 +492,35 @@ def generated_date_role_synonyms(role: DateRole, column_name: str = "", vocab=No
     return tuple(result)
 
 
+def provenance_phrase(resolution_source: str, *, lang: str | None = None) -> str:
+    """How a business date came to be the one used, in the reader's words.
+
+    resolution_source is a machine token -- "metric_default",
+    "inferred_encoded_fact_date", "user_confirmed_date_role" -- and it was
+    being put in front of readers, alongside the fact's raw warehouse table
+    name, in a provenance block whose prompt says to state it in the answer:
+
+        Business date the query resolved to: metric_default on CUS_ORD_IVC_FCT
+
+    The distinction the phrase has to preserve is the one a reader would act
+    on: an APPROVED default is a governed choice, and a discovered or inferred
+    role is the product's own guess. Both are legitimate; telling them apart is
+    what makes the number defensible.
+
+    Returns "" for a token with no phrase, so the caller omits the clause
+    rather than falling back to the token.
+    """
+    key = str(resolution_source or "").strip().lower()
+    if not key:
+        return ""
+    from core.i18n import lookup
+
+    phrase = lookup(f"date_provenance.{key}", lang)
+    if not phrase or phrase == f"date_provenance.{key}":
+        return ""
+    return phrase
+
+
 def translated_label(role_key: str, fallback: str = "", *,
                      lang: str | None = None) -> str:
     """A role's label in the reader's language.
