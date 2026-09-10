@@ -559,7 +559,16 @@ _ELLIPTICAL_MAX_WORDS = 8
 # went to the SQL pipeline. A real elliptical data follow-up names a new SLICE:
 # a dimension to group by, or a period to move to. A courtesy names neither.
 _ELLIPTICAL_TARGET_RE = re.compile(
-    r"\b(?:by|per|for|in|during|vs|versus|against|instead\s+of)\s+\w"
+    # A DIMENSION ("by product", "per warehouse") or a comparison. Not a bare
+    # "for", "in" or "during": those matched the ordinary preposition in
+    # "and thanks FOR THE help" and "but thanks IN advance", so a courtesy was
+    # a refinement again. Every phrase that needs "for" -- "and for last
+    # month?", "same for Q3", "do the same for March" -- is carried by the
+    # period alternatives below instead, which is what it was actually naming.
+    # The negative lookahead is for "and by the way", where "by" introduces an
+    # idiom rather than a dimension.
+    r"\b(?:by|per)\s+(?!the\b|a\b|an\b|way\b)\w"
+    r"|\b(?:vs|versus|against|instead\s+of)\s+\w"
     r"|\b(?:last|this|previous|next|prior)\s+"
     r"(?:week|month|quarter|year|fortnight|\d+\s+\w+)"
     r"|\b(?:ytd|mtd|qtd|q[1-4]|fy\s?\d{2,4})\b"

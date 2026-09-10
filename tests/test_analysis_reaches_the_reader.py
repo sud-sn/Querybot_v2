@@ -94,8 +94,14 @@ ROWS = [
 ]
 
 
-def _run(action, monkeypatch, *, rows=None):
-    """Execute the real _send_why_insight; report what the model was asked."""
+def _run(action, monkeypatch, *, rows=None, provider_fails=False):
+    """Execute the real _send_why_insight; report what the model was asked.
+
+    `provider_fails` makes the model raise. It is a parameter rather than
+    something the caller patches beforehand, because this function installs
+    its own llm_complete -- a stub set up outside it was simply overwritten,
+    so the failure test ran the HAPPY path and passed for the wrong reason.
+    """
     import core.llm
     import core.query_pipeline as qp
 
@@ -114,6 +120,8 @@ def _run(action, monkeypatch, *, rows=None):
 
     async def _fake_complete(system="", user="", *args, **kwargs):
         seen["prompts"].append(f"{system}\n{user}")
+        if provider_fails:
+            raise RuntimeError("provider down")
         # The drill-down planner is the one prompt that asks for SQL; it is
         # the only one that mentions its own refusal token. Everything else
         # wants the narrative. llm_complete returns
@@ -198,17 +206,20 @@ class TestTheAnalystActuallyWrites:
         """The factual answer is already on the wire when this runs, so the
         reader must never see a stack trace or an error bubble for it. What
         they get instead is the locally-computed analysis."""
-        import core.llm
-
-        async def _boom(*a, **k):
-            raise RuntimeError("provider down")
-
-        adapter, _ = _run("analyze", monkeypatch)
-        monkeypatch.setattr(core.llm, "llm_complete", _boom)
-        adapter, _ = _run("analyze", monkeypatch)
+        adapter, seen = _run("analyze", monkeypatch, provider_fails=True)
+        assert seen["prompts"], "the model was never called, so nothing failed"
         assert adapter.messages == [], adapter.messages
         assert len(adapter.analyses) == 1
         assert adapter.analyses[0]["action"] == "analyze"
+
+    def test_the_fallback_card_says_the_analysis_did_not_complete(
+            self, monkeypatch):
+        """A locally-computed stand-in that reads like a real narrative would
+        be worse than the failure it replaces."""
+        adapter, _seen = _run("analyze", monkeypatch, provider_fails=True)
+        card = adapter.analyses[0]
+        assert card.get("headline") or card.get("body"), card
+        assert "could not" in f"{card.get('headline')} {card.get('body')}".lower()
 
 
 class TestARegulatedTenantIsStillRefused:

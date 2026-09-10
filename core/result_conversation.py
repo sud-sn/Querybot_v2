@@ -67,6 +67,11 @@ async def converse_about_result(
     from core.compliance.policy_engine import result_llm_features_allowed
 
     if not result_llm_features_allowed(account_id):
+        # The refusal is only evidence if it is written down. record_llm_blocked
+        # reads the ambient audit scope and returns silently when there is
+        # none, so calling it outside one records nothing at all and the proof
+        # pack reports zero refusals for a tenant that did refuse. The caller
+        # opens the scope; this asserts nothing about it beyond needing one.
         from core.llm_audit import record_llm_blocked
         record_llm_blocked(
             "result_conversation",
@@ -110,6 +115,16 @@ async def converse_about_result(
                 # worth more than the "I could not answer that" it replaces,
                 # and nothing downstream parses it for a governed decision.
                 allow_truncated=True,
+                # WHERE the model is, for the providers that need telling.
+                # resolve_provider returns these as its fourth value and the
+                # caller forwards them; declaring **extra_kwargs and then not
+                # passing them on left azure_endpoint empty, so llm_complete
+                # raised "Azure OpenAI endpoint not configured" -- swallowed by
+                # the handler below into the very "I could not answer that"
+                # hint this function exists to replace. Every Azure and every
+                # local-model workspace had the feature dead on arrival, and it
+                # looked exactly like the behaviour it was meant to fix.
+                **extra_kwargs,
             )
     except Exception as exc:
         # The reader gets the deterministic hint, which is what they would

@@ -3606,8 +3606,24 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             # answer is still answered with data; this never
                             # competes with the warehouse, it only speaks when
                             # the warehouse has nothing to say.
+                            # The card the reader ASKED ABOUT, which is not
+                            # necessarily the newest one.
+                            #
+                            # `_cached_result` is adapter.last_result -- the
+                            # most recent answer in the thread. Every reply in
+                            # this branch resolves the addressed card instead
+                            # (`_rc_source_id`, and `_rc_snapshot` from it),
+                            # because a reader can type into the chat panel of
+                            # an older card that is still on screen. Reading
+                            # last_result here would have summarised a
+                            # different result's values to the model and then
+                            # told the reader the answer came from the result
+                            # in front of them -- a wrong answer and a false
+                            # provenance note in one frame.
                             _rc_conv_rows = _sanitize_rows(
-                                list((_cached_result or {}).get("rows") or []))
+                                list(_rc_snapshot.get("rows") or []))
+                            _rc_conv_question = str(
+                                _rc_snapshot.get("question") or "")
                             # Column meanings and the business names for them,
                             # built here rather than borrowed from the SQL
                             # fallback's `_drill_ctx`: that one is assigned
@@ -3615,25 +3631,38 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             # that reaches this line, which is the defect this
                             # file has already shipped once.
                             _rc_conv_ctx = _build_metadata_followup_context(
-                                original_question=(
-                                    (_cached_result or {}).get("question", "")),
+                                original_question=_rc_conv_question,
                                 follow_up_question=rc_question,
                                 schema=_rc_schema,
                             ) or ""
-                            _rc_conv_reply = await converse_about_result(
-                                rc_question,
-                                rows=_rc_conv_rows,
-                                result_question=(
-                                    (_cached_result or {}).get("question") or ""),
-                                sql=(_cached_result or {}).get("sql") or "",
+                            # A scope, or nothing is written down.
+                            # llm_audit_component NARROWS an ambient scope and
+                            # no-ops without one, and record_llm_blocked
+                            # returns silently without one -- so outside a
+                            # scope this path produced neither an egress row
+                            # for what it sent nor a refusal row for what it
+                            # declined to send.
+                            with llm_audit_scope(
                                 account_id=account_id,
-                                provider=_rc_provider,
-                                model=_rc_model,
-                                api_key=_rc_key,
-                                history=_rc_history,
-                                business_context=_rc_conv_ctx,
-                                **_rc_az,
-                            )
+                                question=rc_question,
+                                enabled=bool(client.get("enable_llm_audit")),
+                                request_id=make_llm_audit_request_id(),
+                                question_id=_rc_question_id,
+                                component="result_conversation",
+                            ):
+                                _rc_conv_reply = await converse_about_result(
+                                    rc_question,
+                                    rows=_rc_conv_rows,
+                                    result_question=_rc_conv_question,
+                                    sql=str(_rc_snapshot.get("sql") or ""),
+                                    account_id=account_id,
+                                    provider=_rc_provider,
+                                    model=_rc_model,
+                                    api_key=_rc_key,
+                                    history=_rc_history,
+                                    business_context=_rc_conv_ctx,
+                                    **_rc_az,
+                                )
                             if _rc_conv_reply:
                                 _rc_history.append({"question": rc_question})
                                 _result_chat_histories[rc_result_id] = _rc_history[-5:]
@@ -4156,10 +4185,17 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     "Could not cache the result of action %s: %s",
                                     action, _bp_err,
                                 )
-                        _bp_prepare = getattr(
-                            adapter, "prepare_assistant_response_payload", None)
-                        if callable(_bp_prepare):
-                            resolved = _bp_prepare(resolved)
+                        # The ID ONLY. The full preparer also overwrites
+                        # last_response_payload -- which is what "add this to
+                        # my dashboard" pins, so a chip press made it pin the
+                        # chip's card instead of the answer -- and consumes
+                        # pending_dashboard, materialising a queued dashboard
+                        # from a chip card and raising out of this handler if
+                        # that failed, losing the chip's answer and the widget
+                        # together.
+                        _bp_stamp = getattr(adapter, "stamp_result_id", None)
+                        if callable(_bp_stamp):
+                            resolved = _bp_stamp(resolved)
                         return resolved
 
                     await websocket.send_json({

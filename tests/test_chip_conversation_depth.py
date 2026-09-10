@@ -276,3 +276,86 @@ class TestARefusalIsOneReplyNotTwo:
         errors = [f for f in self._press_on(rows)
                   if f.get("type") == "assistant_error"]
         assert errors and errors[0].get("detail"), errors
+
+
+class TestPressingAChipLeavesTheAnswerAlone:
+    """_bound_action_payload used the adapter's FULL response preparer, which
+    does two things beyond stamping the id: it overwrites last_response_payload
+    (what "add this to my dashboard" pins) and it consumes pending_dashboard
+    (materialising a queued widget from whatever card happens to pass through,
+    and raising out of the chip handler if that fails)."""
+
+    def _adapter(self):
+        from unittest.mock import AsyncMock
+
+        from gateway.web_adapter import WebAdapter
+
+        return WebAdapter(AsyncMock(), "acct", "7", thread_id="t1")
+
+    def _card(self):
+        return {
+            "type": "assistant_response",
+            "question": "revenue by region (% contribution)",
+            "data": {"rows": [{"REGION": "North", "PCT": 90.0}]},
+            "trust": {"sql": "SELECT 1"},
+        }
+
+    def test_the_answer_stays_the_thing_a_dashboard_would_pin(self):
+        adapter = self._adapter()
+        answer = {"type": "assistant_response", "question": "revenue by region",
+                  "data": {"rows": []}, "trust": {}}
+        adapter.prepare_assistant_response_payload(answer)
+        assert adapter.last_response_payload is answer
+
+        adapter.stamp_result_id(self._card())
+        assert adapter.last_response_payload is answer, (
+            "a chip press replaced the answer that a dashboard pin refers to")
+
+    def test_a_queued_dashboard_survives_a_chip_press(self):
+        adapter = self._adapter()
+        adapter.pending_dashboard = {"name": "Q3 review"}
+        adapter.stamp_result_id(self._card())
+        assert adapter.pending_dashboard == {"name": "Q3 review"}, (
+            "the chip consumed the queued dashboard")
+
+    def test_a_failing_dashboard_cannot_take_the_chip_down_with_it(self):
+        """materialize_dashboard raising inside the chip handler cost the
+        reader both the chip's answer and the queued widget."""
+        adapter = self._adapter()
+        adapter.pending_dashboard = {"name": "Q3 review"}
+
+        def _explode(*_a, **_k):
+            raise RuntimeError("dashboard service down")
+
+        adapter.materialize_dashboard = _explode
+        stamped = adapter.stamp_result_id(self._card())      # must not raise
+        assert stamped["trust"]["result_id"] == ""
+
+    def test_the_stamp_still_does_its_one_job(self):
+        adapter = self._adapter()
+        adapter.last_result_id = "derived-123"
+        stamped = adapter.stamp_result_id(self._card())
+        assert stamped["trust"]["result_id"] == "derived-123"
+        assert stamped["data"]["result_id"] == "derived-123"
+
+    def test_a_non_card_payload_is_returned_untouched(self):
+        adapter = self._adapter()
+        adapter.last_result_id = "derived-123"
+        export = {"type": "assistant_export", "filename": "x.csv"}
+        assert adapter.stamp_result_id(export) is export
+        assert "trust" not in export
+
+    def test_the_full_preparer_still_does_both(self):
+        """The other caller, send_assistant_response, still needs the
+        bookkeeping -- splitting the stamp out must not have taken it away."""
+        adapter = self._adapter()
+        adapter.last_result_id = "answer-1"
+        adapter.pending_dashboard = {"name": "Q3 review"}
+        adapter.materialize_dashboard = lambda payload, **_k: {"id": "dash-1"}
+        answer = {"type": "assistant_response", "question": "revenue",
+                  "data": {"rows": []}, "trust": {}}
+        prepared = adapter.prepare_assistant_response_payload(answer)
+        assert prepared["trust"]["result_id"] == "answer-1"
+        assert prepared["dashboard_artifact"] == {"id": "dash-1"}
+        assert adapter.pending_dashboard is None
+        assert adapter.last_response_payload is prepared

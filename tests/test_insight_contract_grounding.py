@@ -150,6 +150,32 @@ class TestTheTotalIsCarriedAndOnlyWhenItMeansSomething:
         _contract, user = _prompt(RANKING, "what is the total?", "converse")
         assert "1000" in user, user
 
+    @pytest.mark.parametrize("column", [
+        "NET_AMOUNT",      # the classifier knows this one
+        "GROSS_MARGIN",    # it does not
+        "ORDERS",          # nor this
+        "ARPU",            # nor this
+        "WIDGETS_SHIPPED", # nor any column a tenant invented
+    ])
+    def test_a_measure_the_classifier_has_no_opinion_about_still_totals(
+            self, column):
+        """"unknown" is not a refusal.
+
+        measure_class_for_column returns "unknown" for every column name its
+        lexicon has never seen -- which is most of them, GROSS_MARGIN, ORDERS
+        and ARPU included. Gating on `== "additive"` treated all of those as
+        unsummable and silently dropped the total AND both shares from
+        ordinary revenue results: a safeguard that fires on the common case is
+        a regression.
+        """
+        rows = [{"REGION": "North", column: 620.0},
+                {"REGION": "South", column: 240.0},
+                {"REGION": "East", column: 110.0}]
+        breakdown = compute_data_brief(rows, "by region")["category_breakdown"]
+        assert breakdown.get("total") == 970.0, breakdown
+        assert breakdown.get("leader_share_pct") == 63.9, breakdown
+        assert breakdown.get("top_3_share_pct") == 100.0, breakdown
+
     @pytest.mark.parametrize("column,label", [
         ("MARGIN_PCT", "a percentage"),
         ("STOCK_BALANCE", "a semi-additive balance"),
@@ -188,6 +214,25 @@ class TestTheTotalIsCarriedAndOnlyWhenItMeansSomething:
         breakdown = compute_data_brief(rows, "margin pct by region")["category_breakdown"]
         assert breakdown["top_5"][0] == {"label": "North", "value": 12.0}
         assert breakdown["category_count"] == 3
+
+    @pytest.mark.parametrize("column", ["MARGIN_PCT", "STOCK_BALANCE"])
+    def test_the_gap_survives_too_because_a_difference_needs_no_total(
+            self, column):
+        """"North's margin is 3 points above South's" is true whatever the
+        measure -- it subtracts two of the result's own values and divides by
+        nothing. The gap was computed inside the `total > 0` branch, so gating
+        the total on additivity took the gap down with it."""
+        rows = [{"REGION": "North", column: 12.0},
+                {"REGION": "South", column: 9.0},
+                {"REGION": "East", column: 7.0}]
+        breakdown = compute_data_brief(rows, "by region")["category_breakdown"]
+        assert breakdown.get("leader_vs_runner_up_gap") == 3.0, breakdown
+
+    def test_the_gap_is_still_there_for_an_additive_measure(self):
+        rows = [{"REGION": "North", "NET_AMOUNT": 620.0},
+                {"REGION": "South", "NET_AMOUNT": 240.0}]
+        breakdown = compute_data_brief(rows, "by region")["category_breakdown"]
+        assert breakdown.get("leader_vs_runner_up_gap") == 380.0
 
 
 class TestTheConversationalContract:

@@ -124,6 +124,14 @@ ELLIPTICAL = [
     "and by product",
     "now by warehouse",
     "also by region",
+    # Every one of these needs a PERIOD or a DIMENSION to qualify, which is
+    # what makes them refinements rather than pleasantries.
+    "and for Q3",
+    "what about 2024?",
+    "and yesterday?",
+    "same for March",
+    "and per region",
+    "what about vs budget?",
 ]
 
 STANDALONE = [
@@ -149,6 +157,15 @@ COURTESIES = [
     "same to you",
     "and you?",
     "ok and what can you do?",
+    # The second round of these. The first fix required "a refinement target"
+    # in the remainder and accepted a bare preposition as one, so the ordinary
+    # "for" in "thanks FOR THE help" and the "in" in "thanks IN advance" both
+    # qualified -- and a courtesy was a governed result refinement again.
+    "and thanks for the help",
+    "now thanks for your help",
+    "but thanks in advance",
+    "and by the way",
+    "and by the way thanks",
 ]
 
 # Short, opener-led, and genuinely a NEW question rather than a refinement.
@@ -190,6 +207,19 @@ class TestAFragmentIsRecognisedAsAContinuation:
         query. Treating it as a refinement of the result on screen would
         transform rows that do not contain it."""
         assert looks_elliptical(typed) is False
+
+    @pytest.mark.parametrize("typed,carried_by", [
+        ("and for last month?", "the period, not the word for"),
+        ("same for Q3", "the quarter"),
+        ("do the same for March", "the month name"),
+        ("what about 2024?", "the year"),
+    ])
+    def test_a_for_phrase_qualifies_on_its_period_not_its_preposition(
+            self, typed, carried_by):
+        """"for" is not a target. Every phrase that reads as one is carried by
+        what follows it, which is the thing the reader is actually naming --
+        and that is why "thanks for the help" is not one."""
+        assert looks_elliptical(typed) is True, carried_by
 
     def test_the_target_has_to_be_in_what_follows_the_opener(self):
         """The remainder is what is searched, not the whole turn -- otherwise

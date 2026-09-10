@@ -433,6 +433,26 @@ class WebAdapter(PlatformAdapter):
         except Exception as exc:
             log.debug("Agent answer summary audit failed: %s", exc)
 
+    def stamp_result_id(self, payload: dict) -> dict:
+        """Stamp the result id an answer card needs to be talked to again.
+
+        Nothing else. A caller that is sending a card straight down the socket
+        -- the chip handlers in gateway/webhooks.py -- wants the id and none of
+        the session bookkeeping that goes with a full assistant response:
+        overwriting last_response_payload made "add this to my dashboard" pin
+        the chip's card instead of the answer, and consuming pending_dashboard
+        meant a chip pressed while a dashboard was queued materialised it, and
+        raised out of the chip handler if that failed -- losing the chip's own
+        answer and the queued widget together.
+        """
+        if payload.get("type") != "assistant_response":
+            return payload
+        data = payload.get("data")
+        if isinstance(data, dict) and self.last_result_id:
+            data["result_id"] = self.last_result_id
+        payload.setdefault("trust", {})["result_id"] = self.last_result_id or ""
+        return payload
+
     def prepare_assistant_response_payload(self, payload: dict) -> dict:
         """Stamp the result id an answer card needs to be talked to again.
 
@@ -452,10 +472,7 @@ class WebAdapter(PlatformAdapter):
         """
         if payload.get("type") != "assistant_response":
             return payload
-        data = payload.get("data")
-        if isinstance(data, dict) and self.last_result_id:
-            data["result_id"] = self.last_result_id
-        payload.setdefault("trust", {})["result_id"] = self.last_result_id or ""
+        payload = self.stamp_result_id(payload)
         self.last_response_payload = payload
         if self.pending_dashboard:
             try:

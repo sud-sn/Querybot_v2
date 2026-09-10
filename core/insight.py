@@ -464,11 +464,16 @@ def compute_data_brief(
         # again -- a margin percentage totalled over three regions is
         # arithmetic on nothing, and so is a stock balance.
         #
-        # This governs the total and the two shares alike. All three divide by
-        # or report the same figure, so a measure that cannot be summed cannot
-        # have a leader share either: "North holds 63.9% of the total margin
-        # percentage" is a sentence with no meaning, stated with numbers.
-        _summable = measure_class_for_column(value_col) == "additive"
+        # Withheld only where the classifier positively says DO NOT: an
+        # explicit percentage, ratio or average, and a semi-additive balance.
+        # "unknown" is not a refusal -- it means the classifier has no opinion
+        # about the name, which is the answer for ORDERS, GROSS_MARGIN, ARPU
+        # and every column whose name the lexicon has never seen. Testing for
+        # == "additive" treated all of those as unsummable and silently
+        # dropped the total and both shares from ordinary revenue results,
+        # which is a regression rather than a safeguard.
+        _measure_class = measure_class_for_column(value_col)
+        _summable = _measure_class not in {"non_additive", "semi_additive"}
         total = sum(v for _, v in paired) if _summable else 0.0
         # The most ordinary question anyone asks about a ranking -- "what is
         # the total?" -- and the brief computed the answer here to divide by
@@ -476,12 +481,18 @@ def compute_data_brief(
         # name was the one number the model was never shown.
         if paired and _summable:
             cat_breakdown["total"] = round(total, 2)
-        if total > 0 and len(paired) >= 2:
-            leader_pct = round(paired[0][1] / total * 100, 1)
-            cat_breakdown["leader_share_pct"] = leader_pct
+        # A DIFFERENCE needs no additivity. "North's margin is 3.2 points
+        # above South's" is true whatever the measure, and the gap only ever
+        # subtracts two of the result's own values -- but it was computed
+        # inside the `total > 0` branch, so gating the total on additivity
+        # took the gap down with it.
+        if len(paired) >= 2:
             cat_breakdown["leader_vs_runner_up_gap"] = round(
                 paired[0][1] - paired[1][1], 2
             )
+        if total > 0 and len(paired) >= 2:
+            cat_breakdown["leader_share_pct"] = round(
+                paired[0][1] / total * 100, 1)
         # Over the COLLAPSED categories, and over the same denominator as
         # leader_share_pct above.
         #
