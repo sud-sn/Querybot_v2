@@ -91,6 +91,7 @@ from core.contextual_dates import (
     build_contextual_date_plan,
     build_contextual_date_plan_many,
     detect_temporal_window,
+    describe_date_role_evidence,
     enrich_date_binding_calendar_attributes,
     find_explicit_date_roles,
     question_has_snapshot_intent,
@@ -4113,6 +4114,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         # both read this, and the base name alone cannot say
                         # which of two same-named roles the user picked.
                         "value": label,
+                        # What is already KNOWN about this candidate, so the
+                        # choice is made on evidence rather than on a name.
+                        # A reader asking about March, offered "Invoice Date /
+                        # Order Date / Delivery Date", has no way to tell which
+                        # of them has March in it -- and picking wrong produces
+                        # a confident answer over the wrong slice with nothing
+                        # on the card to notice it by. Read from the durable
+                        # anchor store only: no warehouse query, no probe.
+                        "detail": describe_date_role_evidence(
+                            account_id, item),
                         "allow_free_text": bool(
                             _date_context_resolution.get("allow_free_text")
                         ),

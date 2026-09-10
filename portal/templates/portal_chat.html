@@ -417,7 +417,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .metric-draft-meta{font-size:.78rem;color:var(--text-muted,#666)}
 .clarification-question{line-height:1.6;color:var(--text)}
 .clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
-.clarification-option{font-size:var(--font-sm);font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
+.clarification-option{font-size:var(--font-sm);font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}.clarification-option-detailed{border-radius:var(--radius);text-align:left;display:flex;flex-direction:column;gap:2px;padding:9px 13px}.clarification-option-name{font-weight:800}.clarification-option-detail{font-size:var(--font-2xs);font-weight:600;color:var(--text-muted);letter-spacing:.01em}
 .clarification-option:hover{border-color:var(--primary);color:var(--primary)}
 .clarification-option:disabled{opacity:.55;cursor:not-allowed}
 @media (max-width: 900px){.answer-sections{grid-template-columns:1fr}}
@@ -577,7 +577,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .metric-draft-meta{font-size:.78rem;color:var(--text-muted,#666)}
 .clarification-question{line-height:1.6;color:var(--text)}
 .clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
-.clarification-option{font-size:var(--font-sm);font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
+.clarification-option{font-size:var(--font-sm);font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}.clarification-option-detailed{border-radius:var(--radius);text-align:left;display:flex;flex-direction:column;gap:2px;padding:9px 13px}.clarification-option-name{font-weight:800}.clarification-option-detail{font-size:var(--font-2xs);font-weight:600;color:var(--text-muted);letter-spacing:.01em}
 .clarification-option:hover{border-color:var(--primary);color:var(--primary)}
 .clarification-option:disabled{opacity:.55;cursor:not-allowed}
 @media (max-width: 900px){.chat-hero{flex-direction:column}.msg-content{max-width:calc(100% - 52px)}.chart-canvas{height:280px}}
@@ -4561,10 +4561,28 @@ function renderClarificationPrompt(data, opts = {}){
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'clarification-option';
-    btn.textContent = opt.label || opt.value || 'Choose';
+    const chosenText = opt.label || opt.value || t('ui.chat.card.select');
+    // The evidence the server attached, when it has any: "approved default ·
+    // data through 17 Apr 2025". Rendered as its own element rather than
+    // appended to the label, and the SUBMITTED value is the label alone --
+    // this used to read btn.textContent, which would have sent the whole
+    // decorated string back as the reader's answer.
+    if (opt.detail) {
+      btn.classList.add('clarification-option-detailed');
+      const name = document.createElement('span');
+      name.className = 'clarification-option-name';
+      name.textContent = chosenText;
+      const detail = document.createElement('span');
+      detail.className = 'clarification-option-detail';
+      detail.textContent = opt.detail;
+      btn.appendChild(name);
+      btn.appendChild(detail);
+    } else {
+      btn.textContent = chosenText;
+    }
     btn.addEventListener('click', () => {
       if (btn.disabled) return;
-      _submitClarification(data, btn.textContent, opt.id, card);
+      _submitClarification(data, chosenText, opt.id, card);
     });
     wrap.appendChild(btn);
   });

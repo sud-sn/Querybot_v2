@@ -2143,6 +2143,21 @@ MESSAGES: dict[str, dict[str, str]] = {
     # sentence per source, so the reader is told how the date was chosen in
     # words they can act on -- and can tell an approved default apart from a
     # guess, which is the whole point of saying it at all.
+    # ── Evidence under a date choice ────────────────────────────────────────
+    # The clarification offered a list of names and nothing else, so a reader
+    # asking about March could not tell which date actually has March in it.
+    "clar.date.detail.through": {
+        "en": "data through {date}",
+        "fr": "données jusqu'au {date}",
+    },
+    "clar.date.detail.approved_default": {
+        "en": "approved default",
+        "fr": "valeur par défaut approuvée",
+    },
+    "clar.date.detail.approved": {
+        "en": "approved",
+        "fr": "approuvée",
+    },
     "date_provenance.user_confirmed_date_role": {
         "en": "the date you chose",
         "fr": "la date que vous avez choisie",

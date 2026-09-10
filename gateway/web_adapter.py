@@ -42,6 +42,10 @@ def _public_clarification_options(options: list[dict] | None) -> list[dict]:
             for key in (
                 "id", "label", "value", "allow_free_text",
                 "business_suggestions",
+                # Server-composed, already translated, and business-facing:
+                # "approved default · data through 17 Apr 2025". Never a
+                # column, a table, or a value from the warehouse.
+                "detail",
             )
             if key in option
         })

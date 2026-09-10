@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from core.i18n import t as _t
 from core.date_roles import (
     date_key_temporal_grain,
     normalize_date_key_type,
@@ -1241,6 +1242,76 @@ _EXPLICIT_DATE_PATTERNS = (
     rf"\b(?:{_AMBIGUOUS_MONTHS})\s+\d{{1,4}}\b",
     rf"\b\d{{1,4}}\s+(?:{_AMBIGUOUS_MONTHS})\b",
 )
+
+
+def describe_date_role_evidence(
+    account_id: str, binding: dict | None, *, lang: str | None = None,
+) -> str:
+    """One line of evidence about a candidate date, for the reader to choose on.
+
+    The date-role clarification offers a list of NAMES -- "Invoice Date",
+    "Order Date", "Delivery Date" -- and nothing else, so a reader asking about
+    March has no way to tell which of them actually has March in it. Picking
+    the wrong one produces a confident answer over the wrong slice of the
+    warehouse, and the card gives them nothing to notice that with.
+
+    The one fact that settles it is how far each date's data runs, and the
+    product already knows it: core/date_anchor.py probes exactly that per
+    (tenant, fact, key) and persists it, so every date this tenant has ever
+    filtered on has a stored answer. This reads that store and NOTHING ELSE --
+    no warehouse query, no probe, no LLM. A candidate with nothing stored
+    simply says less; a clarification is already a moment the reader is
+    waiting through, and probing four facts to decorate it could take minutes.
+
+    Returns "" when there is nothing worth saying.
+    """
+    parts: list[str] = []
+    role = dict(binding or {})
+
+    if int(role.get("is_default") or 0):
+        parts.append(_t("clar.date.detail.approved_default", lang=lang))
+    elif str(role.get("governance_status") or "").casefold() == "approved":
+        parts.append(_t("clar.date.detail.approved", lang=lang))
+
+    fact = str(role.get("fact_table") or "")
+    column = str(role.get("fact_column") or "")
+    if account_id and fact and column:
+        try:
+            import store
+
+            stored = store.load_business_date_anchor(account_id, fact, column) or {}
+        except Exception as exc:  # noqa: BLE001 — decoration, never a failure
+            log.debug("Date-role evidence unavailable for %s: %s", account_id, exc)
+            stored = {}
+        latest = _as_display_date(stored.get("value"), lang=lang)
+        if latest:
+            parts.append(_t("clar.date.detail.through", lang=lang, date=latest))
+
+    return " · ".join(part for part in parts if part)
+
+
+def _as_display_date(value: Any, *, lang: str | None = None) -> str:
+    """An anchor value as a date a person reads, or "" if it is not one.
+
+    The month NAME follows the reader; the day-month-year ORDER does not,
+    because swapping it by language silently changes which number is the day.
+    """
+    from datetime import date as _date, datetime as _datetime
+
+    from core.i18n import format_date
+
+    if value in (None, ""):
+        return ""
+    if isinstance(value, _datetime):
+        value = value.date()
+    if isinstance(value, _date):
+        return format_date(value, "day_month_short_year", lang=lang)
+    text = str(value).strip()[:10]
+    try:
+        parsed = _datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    return format_date(parsed, "day_month_short_year", lang=lang)
 
 
 def question_has_explicit_date_filter(question: str) -> bool:
