@@ -2226,6 +2226,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "No business date is bound to this metric, so it cannot answer questions about a period. Add a date role.",
         "fr": "Aucune date métier n'est associée à cette métrique : elle ne peut pas répondre aux questions portant sur une période. Ajoutez un rôle de date.",
     },
+    "coverage.gap.no_default_date_role": {
+        "en": "Several business dates are bound to this measure and none is the default, so every question about a period is answered with a question. Mark one as the default.",
+        "fr": "Plusieurs dates métier sont liées à cet indicateur et aucune n'est la date par défaut : chaque question portant sur une période reçoit donc une question en retour. Désignez-en une comme date par défaut.",
+    },
     "coverage.gap.no_grain": {
         "en": "This metric declares no time grain, so period breakdowns cannot be checked. Set the grain it is reported at.",
         "fr": "Cette métrique ne déclare aucune granularité temporelle : les ventilations par période ne peuvent pas être vérifiées. Définissez la granularité de restitution.",

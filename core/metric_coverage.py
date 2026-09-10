@@ -238,6 +238,24 @@ def variations_for(metric: dict, *, lang: str = "en") -> list[Variation]:
 # Resolving a variation
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _dates_are_ambiguous(date_roles: list[dict] | None) -> bool:
+    """Several bound business dates, none of them the default.
+
+    The state core.contextual_dates.resolve_contextual_date_binding calls
+    "ambiguous": it cannot choose, so it asks. Coverage used to treat "has date
+    roles" as covered, which made a metric that interrupts every single
+    temporal question look finished.
+
+    One default is not ambiguous however many roles exist; more than one is,
+    because the resolver cannot choose between them either.
+    """
+    roles = [role for role in (date_roles or []) if isinstance(role, dict)]
+    if len(roles) < 2:
+        return False
+    defaults = [role for role in roles if int(role.get("is_default") or 0)]
+    return len(defaults) != 1
+
+
 def check_variation(
     variation: Variation,
     metric: dict,
@@ -258,6 +276,16 @@ def check_variation(
         if not date_roles:
             return Gap(variation, "coverage.gap.no_date_role",
                        t("coverage.gap.no_date_role", lang=lang), "date_role")
+        if _dates_are_ambiguous(date_roles):
+            # Several bound dates and none marked as the default. The metric
+            # LOOKS covered -- it has date roles -- and every temporal question
+            # against it is answered with a question instead of a number:
+            # core.contextual_dates.resolve_contextual_date_binding returns
+            # "ambiguous" for exactly this state, so the reader is asked which
+            # business date to use, every time, for ever. One default ends it.
+            return Gap(variation, "coverage.gap.no_default_date_role",
+                       t("coverage.gap.no_default_date_role", lang=lang),
+                       "date_role")
         if not declared_grain(metric):
             return Gap(variation, "coverage.gap.no_grain",
                        t("coverage.gap.no_grain", lang=lang), "grain")
@@ -278,6 +306,10 @@ def check_variation(
         if variation.grain and not date_roles:
             return Gap(variation, "coverage.gap.no_date_role",
                        t("coverage.gap.no_date_role", lang=lang), "date_role")
+        if variation.grain and _dates_are_ambiguous(date_roles):
+            return Gap(variation, "coverage.gap.no_default_date_role",
+                       t("coverage.gap.no_default_date_role", lang=lang),
+                       "date_role")
 
     if kind == "example" and not question_finds_metric(variation.question, metric):
         # Only for phrasings we did not write. Every generated shape

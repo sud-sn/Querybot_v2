@@ -5163,7 +5163,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             if isinstance(policy, dict)
             and str(policy.get("anchor_policy") or "") == "latest_available"
         ]
-        if len(_anchor_policies) == 1:
+        if False and len(_anchor_policies) == 1:
             _resolved_anchor = resolve_business_anchor(
                 account_id,
                 _anchor_policies[0],
