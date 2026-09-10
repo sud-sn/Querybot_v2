@@ -188,24 +188,103 @@ class TestEveryResolutionSourceThePipelineCanProduceHasAPhrase:
 
     @staticmethod
     def _sources_in_the_resolver():
-        import re
+        """Every resolution_source core/contextual_dates.py can attach.
+
+        Read as a SYNTAX TREE, not by regex. The first version of this scan
+        matched `source="..."` on one line and an allowlist of names without
+        "date" in them -- and missed both of the sources it was written to
+        catch: `explicit_generated_date_role`, which is written as a
+        multi-line conditional inside `source=(...)`, and `business_context`,
+        whose name says nothing about dates. So the guard against a source
+        arriving with no reader-facing phrase passed while two had.
+
+        Every `source=` argument is resolved through the positions that can
+        actually PRODUCE its value -- a conditional's two branches, an `or`
+        chain's operands, a local's assignments -- not by collecting every
+        string in the subtree. Walking the whole subtree swept up
+        `"_selection_status"` and `"approved"` from the branch condition and
+        reported them as resolution sources. A spelling this cannot resolve
+        is reported rather than skipped, so the scan cannot go quietly blind
+        again.
+
+        Scoped to the resolver, which is the one function that decides this.
+        """
+        import ast
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1]
+        source = (root / "core" / "contextual_dates.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        resolver = next(
+            (node for node in ast.walk(tree)
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and node.name == "resolve_contextual_date_binding"),
+            None,
+        )
+        assert resolver is not None, "the resolver has been renamed"
+
+        # Locals the resolver assigns, so `source=explicit_source` resolves to
+        # the strings that variable can hold.
+        assigned: dict[str, list[ast.expr]] = {}
+        for node in ast.walk(resolver):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assigned.setdefault(target.id, []).append(node.value)
+
+        unresolved: set[str] = set()
+
+        def values_of(expr, seen=()):
+            """The strings `expr` can evaluate to."""
+            if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+                return {expr.value}
+            if isinstance(expr, ast.IfExp):
+                return values_of(expr.body, seen) | values_of(expr.orelse, seen)
+            if isinstance(expr, ast.BoolOp):
+                out = set()
+                for operand in expr.values:
+                    out |= values_of(operand, seen)
+                return out
+            if isinstance(expr, ast.Name):
+                if expr.id in seen:          # a loop; nothing more to learn
+                    return set()
+                bound = assigned.get(expr.id)
+                if not bound:
+                    unresolved.add(expr.id)
+                    return set()
+                out = set()
+                for value in bound:
+                    out |= values_of(value, seen + (expr.id,))
+                return out
+            unresolved.add(ast.dump(expr)[:80])
+            return set()
+
         found = set()
-        for name in ("core/contextual_dates.py", "core/query_pipeline.py"):
-            text = (root / name).read_text(encoding="utf-8")
-            found.update(re.findall(r'source="([a-z_]+)"', text))
-            found.update(re.findall(r'"resolution_source"\]\s*=\s*"([a-z_]+)"', text))
-            found.update(re.findall(r'"resolution_source":\s*"([a-z_]+)"', text))
-        # Only the ones that name a DATE role resolution.
-        return {s for s in found
-                if "date" in s or s in {"metric_default", "single_metric_context",
-                                        "thread_date_preference"}}
+        for node in ast.walk(resolver):
+            # `_role_as_binding(role, source=...)`, however the value is spelled.
+            if isinstance(node, ast.Call):
+                for keyword in node.keywords:
+                    if keyword.arg == "source":
+                        found |= values_of(keyword.value)
+            # `binding["resolution_source"] = ...`
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (isinstance(target, ast.Subscript)
+                            and isinstance(target.slice, ast.Constant)
+                            and target.slice.value == "resolution_source"):
+                        found |= values_of(node.value)
+
+        assert not unresolved, (
+            "this scan cannot tell what these `source=` expressions evaluate "
+            f"to, so it is not checking them: {sorted(unresolved)}")
+        return {value for value in found if value}
 
     def test_the_scan_found_the_sources(self):
         sources = self._sources_in_the_resolver()
-        assert len(sources) >= 8, sources
+        assert len(sources) >= 10, sources
+        # The two the regex version could not see.
+        assert "explicit_generated_date_role" in sources, sources
+        assert "business_context" in sources, sources
 
     def test_every_one_of_them_has_a_reader_facing_phrase(self):
         missing = sorted(s for s in self._sources_in_the_resolver()

@@ -2166,6 +2166,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "the date you chose earlier in this conversation",
         "fr": "la date que vous avez choisie plus tôt dans cette conversation",
     },
+    "date_provenance.explicit_generated_date_role": {
+        "en": "the date named in your question — found on this data, not an approved default",
+        "fr": "la date nommée dans votre question — trouvée dans ces données, et non une date par défaut approuvée",
+    },
+    "date_provenance.business_context": {
+        "en": "matched to a business date this workspace has defined",
+        "fr": "associée à une date métier définie dans cet espace de travail",
+    },
     "date_provenance.explicit_date_role": {
         "en": "the date named in your question",
         "fr": "la date nommée dans votre question",
