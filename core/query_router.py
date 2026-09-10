@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 
+from core.conversation_state import looks_elliptical
 from core.pipeline_helpers import _looks_like_new_query
 
 # ── Pattern matching ──────────────────────────────────────────────────────────
@@ -296,6 +297,11 @@ def should_attempt_cache_followup(
         return True
     if not has_cached_result:
         return False
+    # Before _looks_like_new_query, deliberately. "what about last month?"
+    # trips that heuristic on the word "what" -- it is looking for question
+    # words, and an elliptical follow-up is allowed to have one.
+    if looks_elliptical(question):
+        return True
     if _looks_like_new_query(question):
         return False
     if _DEICTIC_RE.search(question):

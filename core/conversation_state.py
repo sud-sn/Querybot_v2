@@ -526,6 +526,40 @@ _REFINEMENT_RE = re.compile(
     r"sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?))\b",
     re.I,
 )
+# A turn that is GRAMMATICALLY dependent on the one before it.
+#
+# The gate below rejects a short question unless it names something already on
+# screen -- a deictic word, a cached column, or a cached value -- and that
+# reasoning is right: word count cannot tell "Revenue yesterday?" from "drill
+# into North". But it misses the one signal these turns do carry. Nobody opens
+# a conversation with "and for last month?", "what about by product?" or "same
+# for last quarter". Those openers are not short questions; they are sentence
+# fragments that only mean anything after something else, which is exactly the
+# positive content signal the gate asks for.
+#
+# Anchored at the start, so "sales and margin by region" is untouched, and it
+# still has to be short: an opener followed by a full question is a full
+# question.
+_ELLIPTICAL_OPENER_RE = re.compile(
+    r"^\s*(?:"
+    r"and|but|also|now|then|next|"
+    r"what\s+about|how\s+about|"
+    r"same(?:\s+(?:thing|one|again))?|do\s+(?:the\s+)?same|"
+    r"ok(?:ay)?\s*(?:,)?\s*(?:and|now|then)"
+    r")\b",
+    re.IGNORECASE,
+)
+_ELLIPTICAL_MAX_WORDS = 8
+
+
+def looks_elliptical(question: str) -> bool:
+    """True when a turn only makes sense as a continuation of the previous one."""
+    words = str(question or "").split()
+    if not words or len(words) > _ELLIPTICAL_MAX_WORDS:
+        return False
+    return bool(_ELLIPTICAL_OPENER_RE.match(question))
+
+
 _ANALYSIS_RE = re.compile(
     r"\b(?:why|explain|analy[sz]e|what\s+(?:changed|drove|caused)|"
     r"compare|summari[sz]e|insight|contribution|variance|trend)\b",
@@ -585,6 +619,17 @@ def classify_turn(
             TurnIntent.QUERY_REFINEMENT,
             0.95,
             "refinement language with an active governed result",
+        )
+    # "and for last month?" carries no refinement VERB -- it is a fragment, and
+    # a fragment can only be a continuation. Classified as a fresh
+    # business-data request, it lost the result it was continuing from and
+    # reached the analytical compiler with no source fact and no measure,
+    # because both were in the previous turn.
+    if has_prior and looks_elliptical(value):
+        return decision(
+            TurnIntent.QUERY_REFINEMENT,
+            0.9,
+            "elliptical follow-up with an active governed result",
         )
     if (
         has_prior

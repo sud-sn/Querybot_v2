@@ -34,8 +34,25 @@ _EXCLUDE_RE = re.compile(
     r"(?:result|results|list|rows?))?\s*[.!]?\s*$",
     re.IGNORECASE,
 )
+# How a person actually narrows a result they are looking at.
+#
+# The verb list was `keep|show`, which are the two words nobody types. "just
+# the top 3", "only the top 3", "give me the top 3" and "limit to the top 3"
+# all failed to parse, so they were never routed to the cached result at all
+# -- they reached the fresh-query path as brand-new questions, where the
+# analytical compiler could find no source fact and no measure (both were in
+# the PREVIOUS turn) and refused with "I cannot compile a trusted query until
+# the semantic layer resolves the business event dataset to analyse".
+#
+# A bare "top 3" is deliberately NOT here. It is the one phrasing that is
+# equally plausible as a first question, and answering it from a cache the
+# reader has not built yet would be worse than the refusal this replaces.
+_REFINE_VERB = (
+    r"(?:keep|show(?:\s+me)?|give\s+me|leave|just|only"
+    r"|narrow\s+(?:it\s+)?to|limit\s+(?:it\s+)?to|filter\s+(?:it\s+)?to)"
+)
 _KEEP_TOP_RE = re.compile(
-    r"^\s*(?:keep|show)\s+(?:only\s+)?(?:the\s+)?top\s+(\d{1,4})"
+    r"^\s*" + _REFINE_VERB + r"\s+(?:only\s+)?(?:the\s+)?top\s+(\d{1,4})"
     r"(?:\s+(?:rows?|results?|records?))?\s*[.!]?\s*$",
     re.IGNORECASE,
 )
@@ -58,12 +75,12 @@ _PRESENTATION_RE = re.compile(
     re.IGNORECASE,
 )
 _KEEP_TOP_ONE_RE = re.compile(
-    r"^\s*(?:keep|show)\s+(?:only\s+)?(?:the\s+)?top\s+one"
+    r"^\s*" + _REFINE_VERB + r"\s+(?:only\s+)?(?:the\s+)?top\s+one"
     r"(?:\s+(?:row|result|record))?\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 _POSITIONAL_RE = re.compile(
-    r"^\s*(keep|show|exclude|remove|omit|drop)\s+"
+    r"^\s*(keep|show|exclude|remove|omit|drop|just|only)\s+"
     r"(?:only\s+)?(?:the\s+)?(first|last|top)\s+"
     r"(one|\d{1,4})(?:\s+(?:rows?|results?|records?))?\s*[.!]?\s*$",
     re.IGNORECASE,
