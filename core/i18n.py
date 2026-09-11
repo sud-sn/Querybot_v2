@@ -2194,6 +2194,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "the only date configured for this measure",
         "fr": "la seule date configurée pour cet indicateur",
     },
+    "date_provenance.connected_dimension_default": {
+        "en": "the approved default date for the one data source this question reaches",
+        "fr": "la date par défaut approuvée de la seule source de données concernée par cette question",
+    },
     "date_provenance.fact_default_date_role": {
         "en": "the approved default date for this data",
         "fr": "la date par défaut approuvée pour ces données",

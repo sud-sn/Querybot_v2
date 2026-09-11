@@ -334,3 +334,76 @@ class TestEveryResolutionSourceThePipelineCanProduceHasAPhrase:
     def test_every_phrase_exists_in_french_too(self):
         for source in sorted(self._sources_in_the_resolver()):
             assert provenance_phrase(source, lang="fr"), source
+
+
+SHIPPED_PACKAGES = ("core", "gateway", "store", "admin")
+
+
+class TestASourceWrittenOutsideTheResolverHasAPhraseToo:
+    """The scan above reads core/contextual_dates.py, and that is where the
+    resolver decides provenance -- but it is not the only place a
+    resolution_source is ASSIGNED.
+
+    core/query_pipeline.py rewrites one: when it has inferred which fact the
+    question reaches, it relabels the binding "connected_dimension_default".
+    That token was written in exactly one place and read as a known provenance
+    in none -- it was never added to the catalogue, so provenance_phrase
+    returned "" and the clause was dropped from the answer card. Invisible to
+    the resolver-scoped scan by construction.
+
+    So this one sweeps every shipped module for a resolution_source assigned to
+    a literal, wherever it lives.
+    """
+
+    @staticmethod
+    def _assigned_sources():
+        import ast
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        found: dict[str, str] = {}
+        for package in SHIPPED_PACKAGES:
+            directory = root / package
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.rglob("*.py")):
+                if "__pycache__" in path.parts:
+                    continue
+                try:
+                    tree = ast.parse(path.read_text(encoding="utf-8"))
+                except SyntaxError:                          # pragma: no cover
+                    continue
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Assign):
+                        continue
+                    names = set()
+                    for target in node.targets:
+                        if isinstance(target, ast.Subscript) and isinstance(
+                                target.slice, ast.Constant):
+                            names.add(target.slice.value)
+                    if "resolution_source" not in names:
+                        continue
+                    for inner in ast.walk(node.value):
+                        if isinstance(inner, ast.Constant) and isinstance(
+                                inner.value, str) and inner.value:
+                            found[inner.value] = (
+                                f"{path.relative_to(root)}:{node.lineno}")
+        return found
+
+    def test_the_sweep_found_the_one_the_resolver_scan_cannot_see(self):
+        sources = self._assigned_sources()
+        assert "connected_dimension_default" in sources, sources
+
+    def test_every_one_of_them_has_a_phrase(self):
+        missing = {
+            source: where for source, where in self._assigned_sources().items()
+            if not provenance_phrase(source)
+        }
+        assert not missing, (
+            "these resolution sources are written to a binding and have no "
+            "reader-facing phrase, so the answer card silently drops its "
+            f"provenance clause: {missing}")
+
+    def test_every_one_of_them_speaks_french(self):
+        for source in sorted(self._assigned_sources()):
+            assert provenance_phrase(source, lang="fr"), source

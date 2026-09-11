@@ -4119,6 +4119,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     duration_ms=int(time.time() * 1000) - start_ms,
                 )
                 return
+            # Recording HOW the fact was chosen must not overwrite how the
+            # DATE was chosen. This relabelled every provenance except
+            # inferred_encoded_fact_date, so a reader who had picked a date
+            # from the clarification card, or named one in their question, was
+            # told the answer used "the default date of the uniquely connected
+            # fact" -- and in fact told nothing at all, because
+            # connected_dimension_default has no reader-facing phrase, so the
+            # provenance clause was dropped from the card entirely.
+            #
+            # The relabel is a genuine refinement in exactly one case: the
+            # resolver used the FACT's default date, and the fact inference
+            # says which fact that was. Anything stronger -- the reader's own
+            # choice, the thread's memory, a date named in the question, the
+            # metric's own configuration -- outranks it and keeps its own
+            # provenance.
             if (
                 _date_fact_inference.get("status") == "selected"
                 and _date_context_resolution.get("status") == "selected"
@@ -4126,7 +4141,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     (_date_context_resolution.get("binding") or {}).get(
                         "resolution_source"
                     ) or ""
-                ) != "inferred_encoded_fact_date"
+                ) == "fact_default_date_role"
             ):
                 _date_context_resolution["binding"]["resolution_source"] = (
                     "connected_dimension_default"
