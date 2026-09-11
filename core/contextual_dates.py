@@ -1346,7 +1346,33 @@ def question_has_explicit_date_filter(question: str) -> bool:
 
 
 def detect_temporal_window(question: str) -> dict:
-    """Detect relative calendar wording that must use a data-relative anchor."""
+    """Detect relative calendar wording that must use a data-relative anchor.
+
+    This one function is the gate on the whole data-relative regime. A question
+    it does not recognise carries no window, so the fail-closed check for "a
+    period was asked for and this fact has no governed business date" never
+    fires, no temporal policy reaches the compiler, and generation falls through
+    to the dialect's own date recipes -- which use the SERVER CLOCK, the exact
+    thing the anchor exists to avoid. It fails silently and in the safe-looking
+    direction: a confident answer over a window nobody governed.
+
+    So the vocabulary has to cover how people actually write it. It did not:
+    "revenue ytd", "revenue mtd", "last week" and "trailing 30 days" all
+    returned {} while "last 7 days" and "this month" worked, and
+    question_has_temporal_intent already listed "ytd" and "mtd" as temporal
+    terms -- the product recognised the words and then dropped them here.
+
+    Every spelling below maps onto a kind that already existed. A to-date
+    window IS the current period anchored on the data ("ytd" against an anchor
+    of 17 Apr is 1 Jan to 17 Apr, which is this_year), so nothing downstream
+    needs a new case: not the compiler's _COMPILABLE_WINDOW_KINDS, not
+    BUSINESS_DATE_WINDOW_KINDS, not the banner. The one new kind is
+    previous_week, which is not compilable for the same documented reason
+    this_week is not -- SQL Server, Snowflake and Oracle do not agree on where
+    a week starts, so the boundary has to be governed rather than guessed. It
+    still earns its place: a detected window is governed, disclosed and gated
+    even when the SQL itself falls back.
+    """
     q = normalize_date_role_text(question)
     observed = re.search(
         r"\b(?:last|latest|most\s+recent)\s+(\d+)\s+"
@@ -1363,13 +1389,23 @@ def detect_temporal_window(question: str) -> dict:
     patterns = (
         (r"\btoday\b", "today", 0, "day"),
         (r"\byesterday\b", "yesterday", 1, "day"),
+        # To-date wording first: "year to date" contains neither "this" nor
+        # "last", so nothing below would have caught it. Normalisation folds
+        # punctuation to spaces, so "year-to-date" arrives as "year to date".
+        (r"\bytd\b|\byear\s+to\s+date\b", "this_year", 0, "year"),
+        (r"\bqtd\b|\bquarter\s+to\s+date\b", "this_quarter", 0, "quarter"),
+        (r"\bmtd\b|\bmonth\s+to\s+date\b", "this_month", 0, "month"),
+        (r"\bwtd\b|\bweek\s+to\s+date\b", "this_week", 0, "week"),
         (r"\b(?:this|current)\s+week\b", "this_week", 0, "week"),
         (r"\b(?:this|current)\s+month\b", "this_month", 0, "month"),
         (r"\b(?:this|current)\s+quarter\b", "this_quarter", 0, "quarter"),
         (r"\b(?:this|current)\s+year\b", "this_year", 0, "year"),
-        (r"\b(?:previous|prior|last)\s+month\b", "previous_month", 1, "month"),
-        (r"\b(?:previous|prior|last)\s+quarter\b", "previous_quarter", 1, "quarter"),
-        (r"\b(?:previous|prior|last)\s+year\b", "previous_year", 1, "year"),
+        # "past" joins previous/prior/last: "past month" is as common as
+        # "last month" and was going to free-form generation.
+        (r"\b(?:previous|prior|last|past)\s+week\b", "previous_week", 1, "week"),
+        (r"\b(?:previous|prior|last|past)\s+month\b", "previous_month", 1, "month"),
+        (r"\b(?:previous|prior|last|past)\s+quarter\b", "previous_quarter", 1, "quarter"),
+        (r"\b(?:previous|prior|last|past)\s+year\b", "previous_year", 1, "year"),
     )
     for pattern, kind, amount, unit in patterns:
         if re.search(pattern, q):
@@ -1380,7 +1416,9 @@ def detect_temporal_window(question: str) -> dict:
                 "anchor_policy": "latest_available",
             }
     rolling = re.search(
-        r"\b(?:last|past|previous|latest)\s+(\d+)\s+(day|week|month|quarter|year)s?\b",
+        # "trailing" and "rolling" are how finance writes exactly this window.
+        r"\b(?:last|past|previous|latest|trailing|rolling)\s+"
+        r"(\d+)\s+(day|week|month|quarter|year)s?\b",
         q,
     )
     if rolling:
