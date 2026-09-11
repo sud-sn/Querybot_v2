@@ -157,9 +157,27 @@ def infer_encoded_date_key(column_name: str, data_type: str = "") -> dict:
 def physical_date_key_type(data_type: str) -> str:
     """Return the governed type for a physical calendar column, if any.
 
-    SQL Server's bare ``timestamp`` type is a rowversion binary value, not a
-    date, so it is deliberately excluded. PostgreSQL timestamp spellings and
-    the SQL Server datetime family are treated as temporal values.
+    This decides whether a column is a business date at all. A spelling it does
+    not know is not a date, so no date role is discovered for it, and a fact
+    whose only date is such a column has no governed date at all -- the reader
+    gets a refusal or an ungoverned guess.
+
+    It knew the SQL Server family and PostgreSQL's two long forms, and nothing
+    else. Executed against the spellings the catalogues actually return:
+
+        Snowflake   TIMESTAMP_NTZ, TIMESTAMP_LTZ, TIMESTAMP_TZ   -> not a date
+        Oracle      TIMESTAMP(6), TIMESTAMP(6) WITH TIME ZONE    -> not a date
+
+    Those are THE standard timestamp types on those warehouses, so a Snowflake
+    fact keyed on ORDER_TS TIMESTAMP_NTZ had no discoverable business date.
+
+    No dialect argument is needed, because the spellings discriminate on their
+    own: TIMESTAMP_NTZ/_LTZ/_TZ exist only on Snowflake, and a PRECISION --
+    TIMESTAMP(6) -- only on Oracle and PostgreSQL. SQL Server's ``timestamp``
+    is a rowversion binary value rather than a date, and is always spelled
+    bare, never with a precision and never with a time-zone clause. So bare
+    ``timestamp`` stays excluded and every qualified form is admitted; the
+    deliberate SQL Server exclusion is preserved rather than traded away.
     """
     raw = " ".join(str(data_type or "").strip().lower().split())
     if not raw:
@@ -167,10 +185,18 @@ def physical_date_key_type(data_type: str) -> str:
     base = re.split(r"[\s(]", raw, maxsplit=1)[0]
     if base == "date":
         return "native_date"
-    if base in {"datetime", "datetime2", "smalldatetime", "datetimeoffset", "timestamptz"}:
+    if base in {"datetime", "datetime2", "smalldatetime", "datetimeoffset"}:
         return "timestamp"
-    if raw in {"timestamp with time zone", "timestamp without time zone"}:
+    # Snowflake's three, with or without a precision.
+    if base in {"timestamp_ntz", "timestamp_ltz", "timestamp_tz", "timestamptz"}:
         return "timestamp"
+    if base == "timestamp":
+        # Oracle and PostgreSQL: a precision, or a time-zone clause, or both.
+        # SQL Server's rowversion has neither.
+        if re.match(r"timestamp\s*\(\s*\d+\s*\)", raw):
+            return "timestamp"
+        if "time zone" in raw:
+            return "timestamp"
     return ""
 
 

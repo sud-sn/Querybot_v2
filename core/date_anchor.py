@@ -147,6 +147,22 @@ def _quote_column(name: str, db_type: str) -> str:
     return clean
 
 
+def _table_alias(sql: str, alias: str, db_type: str) -> str:
+    """``FROM tab AS a`` everywhere except Oracle, which rejects the AS.
+
+    Oracle accepts AS for a COLUMN alias and refuses it before a TABLE or
+    derived-table alias -- `FROM "M"."T" AS t` is ORA-00933, "SQL command not
+    properly ended". Every anchor probe carries a table alias, so on Oracle
+    every probe failed: the exception was caught, logged as a probe failure,
+    the negative cache suppressed retries, and the answer silently fell back to
+    the in-query anchor. A whole dialect with the fast path permanently off and
+    nothing saying so.
+    """
+    if str(db_type or "").strip().lower() == "oracle":
+        return f"{sql} {alias}"
+    return f"{sql} AS {alias}"
+
+
 def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> str:
     """The cheapest correct query for "latest governed date present in the fact".
 
@@ -170,9 +186,9 @@ def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> s
         return (
             f"SELECT MAX(anchor_date.{_quote_column(date_column, db_type)}) "
             f"AS max_business_date\n"
-            f"FROM {_quote_table(dimension, db_type)} AS anchor_date\n"
+            f"FROM {_table_alias(_quote_table(dimension, db_type), 'anchor_date', db_type)}\n"
             f"WHERE EXISTS (\n"
-            f"    SELECT 1 FROM {fact_sql} AS anchor_fact\n"
+            f"    SELECT 1 FROM {_table_alias(fact_sql, 'anchor_fact', db_type)}\n"
             f"    WHERE anchor_fact.{_quote_column(fact_key, db_type)} = "
             f"anchor_date.{_quote_column(dimension_key, db_type)}\n"
             f")"
@@ -180,7 +196,7 @@ def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> s
     return (
         f"SELECT MAX(anchor_fact.{_quote_column(date_column, db_type)}) "
         f"AS max_business_date\n"
-        f"FROM {fact_sql} AS anchor_fact"
+        f"FROM {_table_alias(fact_sql, 'anchor_fact', db_type)}"
     )
 
 
@@ -224,7 +240,7 @@ def build_key_order_check_sql(policy: dict | None, db_type: str = "azure_sql") -
         f"    SELECT {date_sql} AS d,",
         f"           LAG({date_sql}) OVER (ORDER BY {key_sql}) AS prev_d",
         f"    FROM {_quote_table(dimension, db_type)}",
-        ") AS ordered",
+        _table_alias(")", "ordered", db_type),
         "WHERE d IS NULL OR d < prev_d",
     ])
 
@@ -247,10 +263,10 @@ def build_cheap_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql"
         return ""
     return "\n".join([
         f"SELECT MAX(anchor_date.{_quote_column(date_column, db_type)}) AS max_business_date",
-        f"FROM {_quote_table(dimension, db_type)} AS anchor_date",
+        f"FROM {_table_alias(_quote_table(dimension, db_type), 'anchor_date', db_type)}",
         f"WHERE anchor_date.{_quote_column(dimension_key, db_type)} = (",
         f"    SELECT MAX(anchor_fact.{_quote_column(fact_key, db_type)})",
-        f"    FROM {_quote_table(fact, db_type)} AS anchor_fact",
+        f"    FROM {_table_alias(_quote_table(fact, db_type), 'anchor_fact', db_type)}",
         ")",
     ])
 
