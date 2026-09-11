@@ -317,7 +317,81 @@ def apply_property_proposal(account_id: str, proposal: dict) -> tuple[bool, str]
         reason=str(proposal.get("reason") or ""),
     )
     warning = publish_column_terms(account_id, entity, column, merged["synonyms"])
+    if merged["role"] == "date":
+        date_warning = publish_date_role(
+            account_id, entity, column, merged["display_name"],
+            merged["synonyms"])
+        warning = " ".join(part for part in (warning, date_warning) if part)
     return True, f"{entity}.{column} updated." + (f" {warning}" if warning else "")
+
+
+def publish_date_role(account_id: str, entity: str, column: str,
+                      display_name: str, synonyms: str) -> str:
+    """Put an accepted date role where the RESOLVER reads it.
+
+    Same shape as publish_column_terms, and the same reason. Accepting a
+    date-role draft wrote entity_properties with role='date' and stopped there.
+    core.contextual_dates.resolve_contextual_date_binding does not read
+    entity_properties: it reads model.date_roles[].status == 'approved' out of
+    _semantic_model.json, which is what the Date Roles admin screen patches.
+
+    So the two surfaces disagreed. An admin who approved the role on the Date
+    Roles screen got a governed default; an admin who accepted the identical
+    proposal out of the drafts queue got a confirmed column property, no
+    approved Date Role, and a measure that carried on asking "which date should
+    I use?" on every period question. The queue said the work was done.
+
+    Returns "" on success, or a sentence for the caller to show. It is not
+    silent on failure: a draft accepted into nothing is worse than one that was
+    never offered, because the admin has no reason to look again.
+    """
+    import store
+
+    from core.semantic_model import patch_date_role
+
+    try:
+        state = store.get_client_state(account_id) or {}
+        kb_dir = str(state.get("kb_dir") or "")
+        if not kb_dir:
+            return ("The date role was not approved in the semantic model: "
+                    "this workspace has no KB directory configured.")
+
+        # entity_properties is keyed on the ENTITY name; date roles are keyed on
+        # the fact table. Resolve one to the other rather than assuming they
+        # are spelled the same, because on most workspaces they are not.
+        fact_table = ""
+        for row in store.list_entities(account_id):
+            if str(row.get("entity_name") or "").upper() != entity.upper():
+                continue
+            schema = str(row.get("schema_name") or "").strip()
+            table = str(row.get("table_name") or "").strip()
+            fact_table = f"{schema}.{table}" if schema else table
+            break
+        if not fact_table:
+            return (f"The date role was not approved: {entity} does not map to "
+                    "a table in the graph.")
+
+        patched = patch_date_role(
+            kb_dir=kb_dir,
+            fact_table=fact_table,
+            fact_column=column,
+            name=display_name,
+            synonyms=[value.strip() for value in str(synonyms or "").split(",")
+                      if value.strip()],
+            status="approved",
+        )
+        if not patched:
+            return (f"The date role was not approved: {fact_table}.{column} is "
+                    "not in the semantic model. Rebuild the knowledge base, "
+                    "then approve it on the Date Roles screen.")
+        return ""
+    except Exception as exc:  # noqa: BLE001 — report it, never block the accept
+        log.warning(
+            "draft_review: date role for %s.%s accepted but not approved in the "
+            "semantic model for %s: %s", entity, column, account_id, exc,
+        )
+        return ("The date role was accepted but could not be approved in the "
+                "semantic model. Approve it on the Date Roles screen.")
 
 
 def publish_column_terms(account_id: str, entity: str, column: str,
