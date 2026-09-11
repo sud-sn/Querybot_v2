@@ -22,5 +22,51 @@
     "DCT",
     "MMCU"
   ],
-  "join_notes": "JD Edwards prefixes physical columns with a two-character table code (F4211.SDDOCO, F4311.PDDOCO), so these bare names match a normalised mart extract, not a raw F-file extract. Against raw files they are inert until the prefix stripping in record_prefixes covers this ERP."
+  "join_notes": "JD Edwards prefixes physical columns with a two-character table code (F4211.SDDOCO, F4311.PDDOCO), so these bare names match a normalised mart extract, not a raw F-file extract. Against raw files they are inert until the prefix stripping in record_prefixes covers this ERP.",
+  "date_role_patterns": [
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?TRDJ$",
+      "role": "order_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?DRQJ$",
+      "role": "requested_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?PDDJ$",
+      "role": "planned_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?ADDJ$",
+      "role": "delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?IVD$",
+      "role": "invoice_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?DIVJ$",
+      "role": "invoice_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?DGJ$",
+      "role": "accounting_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?DGL$",
+      "role": "accounting_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?DDJ$",
+      "role": "due_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?UPMJ$",
+      "role": "modified_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:[A-Z]{2})?CRTJ$",
+      "role": "creation_date"
+    }
+  ]
 }

@@ -32,6 +32,14 @@ DATE_ROLES: tuple[DateRole, ...] = (
     DateRole("planned_delivery_date", "Planned Delivery Date", ("planned delivery date", "planned ship date", "planned delivery month"), 86),
     DateRole("valid_delivery_date", "Valid Delivery Date", ("valid delivery date", "validated delivery date", "valid ship date", "valid delivery month"), 84),
     DateRole("delivery_date", "Delivery Date", ("delivery date", "ship date", "shipped date", "fulfillment date", "delivery month", "delivery year"), 82),
+    # SAP BLDAT, Dynamics DOCUMENTDATE and NAV/BC "Document Date" all name
+    # this, and it is NOT the posting date: a document dated the 28th can post
+    # in the following period, which is the whole reason finance keeps both.
+    DateRole("document_date", "Document Date", ("document date", "doc date", "document month"), 79),
+    # Oracle EBS TRX_DATE/TRANSACTION_DATE, NetSuite TRANDATE, Dynamics
+    # TRANSDATE. A general ledger or AR question says "transaction date" and
+    # means this one, not the order or the invoice.
+    DateRole("transaction_date", "Transaction Date", ("transaction date", "trx date", "tran date", "transaction month"), 77),
     DateRole("due_date", "Due Date", ("due date", "payment due date", "invoice due date", "due month"), 78),
     DateRole("payment_date", "Payment Date", ("payment date", "paid date", "collection date", "cash date", "payment month"), 76),
     DateRole("receipt_date", "Receipt Date", ("receipt date", "received date", "purchase receipt date", "receipt month"), 75),
@@ -52,6 +60,14 @@ _ROLE_BY_KEY = {role.key: role for role in DATE_ROLES}
 # the role never reached the semantic model, a governed filter on it read as an
 # identity/category lookup rather than a time filter, and role substitution went
 # unchecked.
+# `created_at`, `shipped_at`, `invoiced_at` -- the dominant convention in
+# anything built with dbt, Rails or a Postgres-shaped mart, and not one pattern
+# below recognised it, because every one of them requires a DT or DATE token.
+# Canonicalising the suffix to _DT here means each role keeps ONE spelling rule
+# rather than every role growing a second alternation, which is how the
+# specific-before-general ordering stays intact.
+_AT_SUFFIX_RE = re.compile(r"(^|_)([A-Z0-9]+)_AT$")
+
 _DATE_KEY_SUFFIX = r"(?:_(?:DMS_)?(?:KEY|ID|SK|FK))"
 _GENERIC_DATE_KEY_RE = re.compile(
     rf"(?:^|_)(?:DATE|DT){_DATE_KEY_SUFFIX}$"
@@ -70,16 +86,22 @@ _PLAIN_DATE_KEY_RE = re.compile(
 # below already guarantees as long as each pattern only claims its own word.
 _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:^|_)BOOK(?:ED|ING)?_DT(?:_|$)|(?:^|_)BKD_DT(?:_|$)"), "booked_date"),
-    (re.compile(r"(?:^|_)CUS_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)SLR_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)(?:IVC|INVOICE|BILLING|BILLED)_DT(?:_|$)|^IVDT$"), "invoice_date"),
+    (re.compile(r"(?:^|_)CUS_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)SLR_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)(?:IVC|INVOICE|INVOICED|BILLING|BILLED)_DT(?:_|$)|^IVDT$"), "invoice_date"),
     (re.compile(r"(?:^|_)CCL_.*(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)CANCEL(?:LED|ED)?_.*(?:ORD|ORDER)_DT(?:_|$)"), "cancelled_order_date"),
-    (re.compile(r"(?:^|_)CUS_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)PCH_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)(?:ORD|ORDER)_DT(?:_|$)|^ORDT$"), "order_date"),
-    (re.compile(r"(?:^|_)RQD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)REQ(?:UESTED)?_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_REQ(?:UESTED)?(?:_|$)|^DWDT$"), "requested_delivery_date"),
+    (re.compile(r"(?:^|_)CUS_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)PCH_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)(?:ORD|ORDER|ORDERED)_DT(?:_|$)|^ORDT$"), "order_date"),
+    (re.compile(r"(?:^|_)RQD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)REQ(?:UESTED)?_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_REQ(?:UESTED)?(?:_|$)|(?:^|_)REQUEST_DT(?:_|$)|^DWDT$"), "requested_delivery_date"),
     (re.compile(r"(?:^|_)CFM_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)CONF(?:IRMED)?_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_CONF(?:IRMED)?(?:_|$)|^CODT$"), "confirmed_delivery_date"),
-    (re.compile(r"(?:^|_)PLD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)PLANN?ED_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_PLANN?ED(?:_|$)|^PLDT$"), "planned_delivery_date"),
+    (re.compile(r"(?:^|_)PLD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)PLANN?ED_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_PLANN?ED(?:_|$)|(?:^|_)PROMISED?_DT(?:_|$)|(?:^|_)SCHEDULE[D]?_SHIP_DT(?:_|$)|^PLDT$"), "planned_delivery_date"),
     (re.compile(r"(?:^|_)VLD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)VALID_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_VALID(?:ATED)?(?:_|$)"), "valid_delivery_date"),
     (re.compile(r"(?:^|_)(?:DLV|DELIVERY|DELIVERED)_DT(?:_|$)|(?:^|_)(?:SHIP|SHIPPED|SHIPMENT|SHIPPING)_DT(?:_|$)|^DLDT$|^DSDT$"), "delivery_date"),
     (re.compile(r"(?:^|_)DUE_DT(?:_|$)|^DUDT$"), "due_date"),
-    (re.compile(r"(?:^|_)PAY(?:MENT)?_DT(?:_|$)|(?:^|_)PYM?T_DT(?:_|$)"), "payment_date"),
+    (re.compile(r"(?:^|_)(?:DOC|DOCUMENT)_DT(?:_|$)"), "document_date"),
+    # TRX and TRANSACTION only. Bare TRANS is ambiguous -- transaction,
+    # transfer, translation -- so it stays with the pack that knows which
+    # one its ERP means: Dynamics maps ^TRANSDATE$ itself. The builtin set
+    # claims unambiguous English and nothing else.
+    (re.compile(r"(?:^|_)(?:TRX|TRANSACTION)_DT(?:_|$)"), "transaction_date"),
+    (re.compile(r"(?:^|_)PAY(?:MENT)?_DT(?:_|$)|(?:^|_)PAID_DT(?:_|$)|(?:^|_)PYM?T_DT(?:_|$)"), "payment_date"),
     (re.compile(r"(?:^|_)(?:RCT|RECEIPT|RCV|RECEIVED)_DT(?:_|$)|^RVDT$"), "receipt_date"),
     (re.compile(r"(?:^|_)ACCT?_DT(?:_|$)|(?:^|_)(?:ACCOUNTING|POSTING|POSTED|LEDGER|GL)_DT(?:_|$)|^ACDT$"), "accounting_date"),
     (re.compile(r"(?:^|_)CUR_.*CST_DT(?:_|$)|(?:^|_)CURRENT_.*COST_DT(?:_|$)"), "current_cost_date"),
@@ -373,7 +395,14 @@ def detect_date_role(column_name: str, vocab=None) -> DateRole | None:
     from core.identifier_intelligence import canonical_identifier
     segmented = canonical_identifier(column_name, vocab=vocab) or col
     canonical = re.sub(r"(^|_)DATE(?=_|$)", r"\1DT", segmented)
-    candidates = tuple(dict.fromkeys((col, segmented, canonical)))
+    # created_at -> CREATED_DT, shipped_at -> SHIPPED_DT. One rule, applied to
+    # the same candidate list every pattern already reads, so the `_at`
+    # convention costs no role a second alternation.
+    at_form = tuple(
+        _AT_SUFFIX_RE.sub(r"\1\2_DT", candidate)
+        for candidate in (col, segmented, canonical)
+    )
+    candidates = tuple(dict.fromkeys((col, segmented, canonical) + at_form))
     for pattern, role_key in getattr(vocab, "date_role_patterns", ()):
         if any(pattern.search(candidate) for candidate in candidates) and role_key in _ROLE_BY_KEY:
             return _ROLE_BY_KEY[role_key]

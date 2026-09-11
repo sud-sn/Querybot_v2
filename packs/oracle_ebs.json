@@ -58,5 +58,51 @@
     "APPLICATION_ID",
     "BOOK_TYPE_CODE"
   ],
-  "join_notes": "The multi-org and ledger partition columns (ORG_ID, ORGANIZATION_ID, SET_OF_BOOKS_ID, LEDGER_ID) are qualifiers: they belong in the ON clause and sit on nearly every _ALL table, so as keys they would make the whole schema adjacent. Bare LINE_ID is a qualifier for the same reason; the module-specific PO_LINE_ID and CUSTOMER_TRX_LINE_ID are keys."
+  "join_notes": "The multi-org and ledger partition columns (ORG_ID, ORGANIZATION_ID, SET_OF_BOOKS_ID, LEDGER_ID) are qualifiers: they belong in the ON clause and sit on nearly every _ALL table, so as keys they would make the whole schema adjacent. Bare LINE_ID is a qualifier for the same reason; the module-specific PO_LINE_ID and CUSTOMER_TRX_LINE_ID are keys.",
+  "date_role_patterns": [
+    {
+      "pattern": "(?:^|_)ORDERED_DT(?:_|$)",
+      "role": "order_date"
+    },
+    {
+      "pattern": "(?:^|_)REQUEST_DT(?:_|$)",
+      "role": "requested_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)PROMISE_DT(?:_|$)",
+      "role": "planned_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)SCHEDULE_SHIP_DT(?:_|$)",
+      "role": "planned_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)SCHEDULE_ARRIVAL_DT(?:_|$)",
+      "role": "planned_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)ACTUAL_SHIPMENT_DT(?:_|$)",
+      "role": "delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)TRX_DT(?:_|$)",
+      "role": "transaction_date"
+    },
+    {
+      "pattern": "(?:^|_)TRANSACTION_DT(?:_|$)",
+      "role": "transaction_date"
+    },
+    {
+      "pattern": "(?:^|_)APPLY_DT(?:_|$)",
+      "role": "payment_date"
+    },
+    {
+      "pattern": "(?:^|_)RECEIPT_DT(?:_|$)",
+      "role": "receipt_date"
+    },
+    {
+      "pattern": "(?:^|_)EXPECTED_RECEIPT_DT(?:_|$)",
+      "role": "planned_delivery_date"
+    }
+  ]
 }

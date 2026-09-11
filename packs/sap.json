@@ -38,5 +38,63 @@
     "GJAHR",
     "MJAHR"
   ],
-  "join_notes": "VBELN and BELNR are each reused across document families (order/delivery/billing; FI/logistics/PO history), so they also make VBAK<->LIKP<->VBRK and BSEG<->RSEG adjacent on numbers drawn from different ranges. They stay keys because header-to-item is otherwise unreachable; the accurate cross-document links (LIPS.VGBEL, VBRP.AUBEL, VBFA.VBELV) need join_synonyms. MATNR, KUNNR and LIFNR are qualifiers, not keys: each sits on hundreds of tables, so as keys they would join two fact tables on a shared dimension and inflate sums."
+  "join_notes": "VBELN and BELNR are each reused across document families (order/delivery/billing; FI/logistics/PO history), so they also make VBAK<->LIKP<->VBRK and BSEG<->RSEG adjacent on numbers drawn from different ranges. They stay keys because header-to-item is otherwise unreachable; the accurate cross-document links (LIPS.VGBEL, VBRP.AUBEL, VBFA.VBELV) need join_synonyms. MATNR, KUNNR and LIFNR are qualifiers, not keys: each sits on hundreds of tables, so as keys they would join two fact tables on a shared dimension and inflate sums.",
+  "date_role_patterns": [
+    {
+      "pattern": "(?:^|_)AUDAT$",
+      "role": "order_date"
+    },
+    {
+      "pattern": "(?:^|_)VDATU$",
+      "role": "requested_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)LFDAT$",
+      "role": "delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)WADAT_IST$",
+      "role": "delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)WADAT$",
+      "role": "planned_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)FKDAT$",
+      "role": "invoice_date"
+    },
+    {
+      "pattern": "(?:^|_)BUDAT$",
+      "role": "accounting_date"
+    },
+    {
+      "pattern": "(?:^|_)BLDAT$",
+      "role": "document_date"
+    },
+    {
+      "pattern": "(?:^|_)NETDT$",
+      "role": "due_date"
+    },
+    {
+      "pattern": "(?:^|_)ERDAT$",
+      "role": "creation_date"
+    },
+    {
+      "pattern": "(?:^|_)AEDAT$",
+      "role": "modified_date"
+    },
+    {
+      "pattern": "(?:^|_)BILLING_DOCUMENT_DT(?:_|$)",
+      "role": "invoice_date"
+    },
+    {
+      "pattern": "(?:^|_)SALES_ORDER_DT(?:_|$)",
+      "role": "order_date"
+    },
+    {
+      "pattern": "(?:^|_)POSTING_DT(?:_|$)",
+      "role": "accounting_date"
+    }
+  ]
 }

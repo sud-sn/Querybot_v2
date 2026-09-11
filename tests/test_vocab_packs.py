@@ -227,7 +227,17 @@ class DynamicsPackTests(unittest.TestCase):
         v = self._vocab()
         self.assertEqual(detect_date_role("InvoiceDate", vocab=v).key, "invoice_date")
         self.assertEqual(detect_date_role("DueDate", vocab=v).key, "due_date")
-        self.assertEqual(detect_date_role("TransDate", vocab=v).key, "accounting_date")
+        # TransDate is the transaction date, not the posting date. This pack
+        # used to map TRANSDATE, DOCUMENTDATE and ACCOUNTINGDATE all to
+        # accounting_date -- three different business dates arriving as three
+        # roles under ONE key, which the resolver then picks between on an
+        # alphabetical tie-break. They are separate roles now.
+        self.assertEqual(detect_date_role("TransDate", vocab=v).key, "transaction_date")
+        self.assertEqual(detect_date_role("DocumentDate", vocab=v).key, "document_date")
+        self.assertEqual(detect_date_role("AccountingDate", vocab=v).key, "accounting_date")
+        self.assertEqual(
+            len({detect_date_role(c, vocab=v).key
+                 for c in ("TransDate", "DocumentDate", "AccountingDate")}), 3)
         self.assertEqual(detect_date_role("ShippingDateRequested", vocab=v).key, "requested_delivery_date")
         # The point of this line is that a pack maps names the builtins do not
         # reach. InvoiceDate used to be such a name and no longer is: the

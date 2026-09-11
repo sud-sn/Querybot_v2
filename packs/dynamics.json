@@ -630,7 +630,7 @@
     },
     {
       "pattern": "^TRANSDATE$",
-      "role": "accounting_date"
+      "role": "transaction_date"
     },
     {
       "pattern": "^ACCOUNTINGDATE$",
@@ -638,7 +638,7 @@
     },
     {
       "pattern": "^DOCUMENTDATE$",
-      "role": "accounting_date"
+      "role": "document_date"
     },
     {
       "pattern": "^CREATEDDATETIME$",
@@ -647,6 +647,10 @@
     {
       "pattern": "^MODIFIEDDATETIME$",
       "role": "modified_date"
+    },
+    {
+      "pattern": "^SALESDATE$",
+      "role": "order_date"
     }
   ],
   "join_key_codes": [

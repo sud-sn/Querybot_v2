@@ -2295,6 +2295,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "date_role.planned_delivery_date": {"en": "Planned Delivery Date", "fr": "Date de livraison planifiée"},
     "date_role.valid_delivery_date": {"en": "Valid Delivery Date", "fr": "Date de livraison valide"},
     "date_role.delivery_date": {"en": "Delivery Date", "fr": "Date de livraison"},
+    "date_role.document_date": {"en": "Document Date", "fr": "Date du document"},
+    "date_role.transaction_date": {"en": "Transaction Date", "fr": "Date de transaction"},
     "date_role.due_date": {"en": "Due Date", "fr": "Date d'échéance"},
     "date_role.payment_date": {"en": "Payment Date", "fr": "Date de paiement"},
     "date_role.receipt_date": {"en": "Receipt Date", "fr": "Date de réception"},
