@@ -2314,6 +2314,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "déduite du champ de date de ces données — ce n'est pas une date par défaut approuvée",
     },
     "date_role.booked_date": {"en": "Booked Date", "fr": "Date d'enregistrement de commande"},
+    "date_role.business_date": {"en": "Business Date", "fr": "Date métier"},
+    "date_role.snapshot_date": {"en": "Snapshot Date", "fr": "Date de situation"},
     "date_role.invoice_date": {"en": "Invoice Date", "fr": "Date de facture"},
     "date_role.order_date": {"en": "Order Date", "fr": "Date de commande"},
     "date_role.cancelled_order_date": {"en": "Cancelled Order Date", "fr": "Date d'annulation de commande"},

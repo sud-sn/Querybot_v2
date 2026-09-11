@@ -24,6 +24,17 @@ class DateRole:
 
 DATE_ROLES: tuple[DateRole, ...] = (
     DateRole("booked_date", "Booked Date", ("booked date", "booking date", "booked month", "booked year"), 97),
+    # A column named BUSINESS_DATE is the strongest declaration a modeller can
+    # make: it cannot mean anything else. It resolved to no role at all, so the
+    # explicit case was the one the product could not read -- and now that an
+    # aggregating fact with no settled date is REFUSED rather than answered,
+    # that gap turns a curated mart into a wall of clarifications.
+    DateRole("business_date", "Business Date", ("business date", "business day", "biz date", "business month", "business year"), 96),
+    # The governed date of a balance or inventory snapshot. The product already
+    # reasons about snapshots -- semi-additive measures, latest_snapshot windows,
+    # question_has_snapshot_intent -- and the column that carries the snapshot's
+    # own date was the one piece of it with no name.
+    DateRole("snapshot_date", "Snapshot Date", ("snapshot date", "as of date", "as-of date", "snapshot month", "snapshot year"), 94),
     DateRole("invoice_date", "Invoice Date", ("invoice date", "invoiced date", "billing date", "billed date", "invoice month", "invoice year"), 95),
     DateRole("order_date", "Order Date", ("order date", "ordered date", "sales order date", "order month", "order year"), 92),
     DateRole("cancelled_order_date", "Cancelled Order Date", ("cancelled order date", "canceled order date", "order cancellation date", "cancelled order month"), 90),
@@ -88,7 +99,10 @@ _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:^|_)BOOK(?:ED|ING)?_DT(?:_|$)|(?:^|_)BKD_DT(?:_|$)"), "booked_date"),
     (re.compile(r"(?:^|_)CUS_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)SLR_(?:IVC|INVOICE)_DT(?:_|$)|(?:^|_)(?:IVC|INVOICE|INVOICED|BILLING|BILLED)_DT(?:_|$)|^IVDT$"), "invoice_date"),
     (re.compile(r"(?:^|_)CCL_.*(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)CANCEL(?:LED|ED)?_.*(?:ORD|ORDER)_DT(?:_|$)"), "cancelled_order_date"),
-    (re.compile(r"(?:^|_)CUS_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)PCH_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)(?:ORD|ORDER|ORDERED)_DT(?:_|$)|^ORDT$"), "order_date"),
+    # SALE/SALES/SLS join the order alternation rather than becoming a role of
+    # their own: in a sales mart the sale IS the order, which is the mapping the
+    # Dynamics pack (SALESDATE) and the SAP pack (SALES_ORDER_DT) already use.
+    (re.compile(r"(?:^|_)CUS_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)PCH_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)(?:ORD|ORDER|ORDERED)_DT(?:_|$)|(?:^|_)(?:SALE|SALES|SLS)_DT(?:_|$)|^ORDT$"), "order_date"),
     (re.compile(r"(?:^|_)RQD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)REQ(?:UESTED)?_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_REQ(?:UESTED)?(?:_|$)|(?:^|_)REQUEST_DT(?:_|$)|^DWDT$"), "requested_delivery_date"),
     (re.compile(r"(?:^|_)CFM_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)CONF(?:IRMED)?_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_CONF(?:IRMED)?(?:_|$)|^CODT$"), "confirmed_delivery_date"),
     (re.compile(r"(?:^|_)PLD_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:^|_)PLANN?ED_.*(?:DLV|DELIVERY|SHIP)_DT(?:_|$)|(?:DLV|DELIVERY|SHIP|SHIPPING)_DT_PLANN?ED(?:_|$)|(?:^|_)PROMISED?_DT(?:_|$)|(?:^|_)SCHEDULE[D]?_SHIP_DT(?:_|$)|^PLDT$"), "planned_delivery_date"),
@@ -100,16 +114,35 @@ _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # transfer, translation -- so it stays with the pack that knows which
     # one its ERP means: Dynamics maps ^TRANSDATE$ itself. The builtin set
     # claims unambiguous English and nothing else.
-    (re.compile(r"(?:^|_)(?:TRX|TRANSACTION)_DT(?:_|$)"), "transaction_date"),
-    (re.compile(r"(?:^|_)PAY(?:MENT)?_DT(?:_|$)|(?:^|_)PAID_DT(?:_|$)|(?:^|_)PYM?T_DT(?:_|$)"), "payment_date"),
+    # TXN joins TRX and TRANSACTION: it is the one abbreviation that only ever
+    # means transaction. TRAN and TRANS still stay out for the reason above.
+    (re.compile(r"(?:^|_)(?:TRX|TXN|TRANSACTION)_DT(?:_|$)"), "transaction_date"),
+    (re.compile(r"(?:^|_)PAY(?:MENT)?_DT(?:_|$)|(?:^|_)PAID_DT(?:_|$)|(?:^|_)PYM?T_DT(?:_|$)|(?:^|_)SETTLE(?:MENT)?_DT(?:_|$)"), "payment_date"),
     (re.compile(r"(?:^|_)(?:RCT|RECEIPT|RCV|RECEIVED)_DT(?:_|$)|^RVDT$"), "receipt_date"),
-    (re.compile(r"(?:^|_)ACCT?_DT(?:_|$)|(?:^|_)(?:ACCOUNTING|POSTING|POSTED|LEDGER|GL)_DT(?:_|$)|^ACDT$"), "accounting_date"),
+    # POST is the spelling half the world uses for POSTING, and JOURNAL/JRNL is
+    # the same date under the ledger's own word. Each is anchored directly
+    # against _DT, so POST_SHIP_DT still reaches delivery_date rather than being
+    # read as a posting date.
+    (re.compile(r"(?:^|_)ACCT?_DT(?:_|$)|(?:^|_)(?:ACCOUNTING|POSTING|POSTED|POST|LEDGER|GL|JOURNAL|JRNL)_DT(?:_|$)|^ACDT$"), "accounting_date"),
     (re.compile(r"(?:^|_)CUR_.*CST_DT(?:_|$)|(?:^|_)CURRENT_.*COST_DT(?:_|$)"), "current_cost_date"),
     (re.compile(r"(?:^|_)PRE_.*CST_DT(?:_|$)|(?:^|_)PREV(?:IOUS)?_.*COST_DT(?:_|$)|(?:^|_)PRIOR_.*COST_DT(?:_|$)"), "previous_cost_date"),
     (re.compile(r"(?:^|_)PCH_ORD_LIN_CRN_DT(?:_|$)|(?:^|_)ORD_LIN_CRN_DT(?:_|$)|(?:^|_)LINE_CRN_DT(?:_|$)|(?:^|_)LINE_CREATED?_DT(?:_|$)"), "order_line_creation_date"),
     (re.compile(r"(?:^|_)CRN_DT(?:_|$)|(?:^|_)CREATION_DT(?:_|$)|(?:^|_)CREATED_DT(?:_|$)"), "creation_date"),
     (re.compile(r"(?:^|_)RGDT(?:_|$)|(?:^|_)REG(?:ISTRATION)?_DT(?:_|$)|(?:^|_)CRN_DT(?:_|$)|^RGDT$"), "registration_date"),
-    (re.compile(r"(?:^|_)LMDT(?:_|$)|(?:^|_)LST_UPD(?:_|$)|(?:^|_)UPDATED?_DT(?:_|$)|^LMDT$"), "modified_date"),
+    # The role is called modified_date and labelled "Last Modified Date", and
+    # MODIFIED_DATE itself reached no role at all -- only the abbreviations and
+    # the UPDATED spelling did. MODIFIED_DT also covers LAST_MODIFIED_DT.
+    (re.compile(r"(?:^|_)LMDT(?:_|$)|(?:^|_)LST_UPD(?:_|$)|(?:^|_)UPDATED?_DT(?:_|$)|(?:^|_)MODIFI(?:ED|CATION)_DT(?:_|$)|^LMDT$"), "modified_date"),
+    # Last for readability -- most general at the bottom -- and NOT for
+    # precedence. Every alternation in this tuple anchors its word directly
+    # against _DT, so only the token immediately before the date can match, and
+    # two patterns can collide only if both claim that same token. BUSINESS, BIZ
+    # and SNAPSHOT are claimed nowhere else, so moving these two lines to the top
+    # changes no column's role. What decides a compound is the trailing token:
+    # BUSINESS_INVOICE_DT is an invoice date and INVOICE_BUSINESS_DT is a
+    # business date, whichever order these patterns sit in.
+    (re.compile(r"(?:^|_)(?:BUSINESS|BIZ)_DT(?:_|$)"), "business_date"),
+    (re.compile(r"(?:^|_)SNAPSHOT_DT(?:_|$)|(?:^|_)AS_?OF_DT(?:_|$)"), "snapshot_date"),
 )
 
 DATE_DIMENSION_TABLE_HINTS = (
@@ -384,8 +417,10 @@ def detect_date_role(column_name: str, vocab=None) -> DateRole | None:
     if not col:
         return None
     # Terminology-pack patterns run FIRST so a pack can specialize a column
-    # the builtin regexes would miss (e.g. SAP AUDAT → order_date). The 18
-    # builtin role keys stay fixed; packs only map new column names to them.
+    # the builtin regexes would miss (e.g. SAP AUDAT → order_date). The builtin
+    # role KEYS are the fixed vocabulary -- packs only map new column names onto
+    # them, and a pattern naming a key that does not exist is skipped with a
+    # warning rather than inventing a role.
     if vocab is None:
         from core.vocab_packs import get_active_vocab
         vocab = get_active_vocab()

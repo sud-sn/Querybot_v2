@@ -91,7 +91,7 @@
     },
     {
       "pattern": "^(TRANSACTION|TXN|TRANS)_DATE(_KEY|_ID)?$",
-      "role": "accounting_date"
+      "role": "transaction_date"
     }
   ],
   "join_qualifier_codes": [
