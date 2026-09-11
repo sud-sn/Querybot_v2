@@ -1082,6 +1082,40 @@ def business_date_banner(
     return drift_days, ""
 
 
+def anchor_row_scope(context: Any, policy: dict | None) -> str:
+    """Fingerprint of the row restrictions a reader probes this fact under.
+
+    "" for an unrestricted reader, which is most of them, and keeps the business
+    date anchor cached once per workspace per fact exactly as it was. A
+    restricted reader gets their own bucket, because the anchor is
+    MAX(governed date) read THROUGH those restrictions -- the newest date that
+    reader can see, not the newest date in the fact.
+
+    Fails CLOSED. A fingerprint that cannot be computed returns a value that
+    matches nothing, so the reader probes for themselves rather than being
+    served, or becoming, a shared anchor: a wrong shared business date is a
+    wrong number on every relative question in the workspace, and the cost of
+    being wrong here is one indexed MAX.
+    """
+    try:
+        from core.compliance.sql_guard import row_policy_scope
+
+        policy = policy or {}
+        tables = [
+            policy.get("fact_table") or policy.get("anchor_table"),
+            policy.get("anchor_table"),
+            policy.get("date_table"),
+        ]
+        return row_policy_scope(context, [name for name in tables if name])
+    except Exception as exc:
+        log.warning(
+            "Row-policy scope for the business-date anchor could not be "
+            "computed: %s — scoping the anchor to this reader alone so no other "
+            "reader is served it", exc,
+        )
+        return f"unscoped:{getattr(context, 'user_id', '') or 'unknown'}"
+
+
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
     # Set from every governed execution below. Row-level statistics (quartiles,
@@ -4122,8 +4156,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         # a confident answer over the wrong slice with nothing
                         # on the card to notice it by. Read from the durable
                         # anchor store only: no warehouse query, no probe.
+                        # Scoped to THIS reader: the stored anchor is the
+                        # newest date a particular reader could see, so an
+                        # unscoped read would quote a "data through" date drawn
+                        # from rows this reader has no access to.
                         "detail": describe_date_role_evidence(
-                            account_id, item),
+                            account_id, item,
+                            scope=anchor_row_scope(compliance_context, item)),
                         "allow_free_text": bool(
                             _date_context_resolution.get("allow_free_text")
                         ),
@@ -5164,11 +5203,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             and str(policy.get("anchor_policy") or "") == "latest_available"
         ]
         if len(_anchor_policies) == 1:
+            # The probe runs through _execute_with_policy, so row policies are
+            # injected into it and MAX(governed date) returns the newest date
+            # THIS READER can see. The cache therefore has to be keyed by the
+            # restrictions that were applied, or the first reader of the hour
+            # decides the business date for the whole workspace -- a reader
+            # whose region loads a day late gets a window past the end of their
+            # own data, and an empty answer, with no disclosure.
             _resolved_anchor = resolve_business_anchor(
                 account_id,
                 _anchor_policies[0],
                 db_cfg.get("db_type", "azure_sql"),
                 lambda probe_sql: _execute_with_policy(probe_sql).rows,
+                anchor_row_scope(compliance_context, _anchor_policies[0]),
             )
             if _resolved_anchor.get("value"):
                 _generation_semantic_context["resolved_date_anchor"] = _resolved_anchor

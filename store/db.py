@@ -1367,6 +1367,7 @@ def _run_migrations() -> None:
         _ensure_domain_tables(conn)
         _ensure_client_source_tables(conn)
         _ensure_compliance_tables(conn)
+        _ensure_business_date_anchor_scope(conn)
         _ensure_semantic_compiler_tables(conn)
         for table, column, col_def in migrations:
             try:
@@ -1439,12 +1440,19 @@ def _ensure_semantic_compiler_tables(conn: sqlite3.Connection) -> None:
             account_id     TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
             fact_table     TEXT NOT NULL,
             fact_column    TEXT NOT NULL,
+            -- Fingerprint of the row restrictions the anchor was read under
+            -- (core.compliance.sql_guard.row_policy_scope). '' means the
+            -- reader was unrestricted, which is the ordinary case. It is part
+            -- of the key because the anchor is MAX(governed date) read THROUGH
+            -- those restrictions: without it, the first reader of the hour set
+            -- the business date for every other reader in the workspace.
+            scope          TEXT NOT NULL DEFAULT '',
             anchor_value   TEXT NOT NULL DEFAULT '',
             date_column    TEXT NOT NULL DEFAULT '',
             source         TEXT NOT NULL DEFAULT '',
             probe_ms       INTEGER NOT NULL DEFAULT 0,
             resolved_at    TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (account_id, fact_table, fact_column)
+            PRIMARY KEY (account_id, fact_table, fact_column, scope)
         );
 
         CREATE TABLE IF NOT EXISTS semantic_compiler_state (
@@ -1524,6 +1532,56 @@ def _ensure_semantic_compiler_tables(conn: sqlite3.Connection) -> None:
             ON semantic_conflict(account_id, status, severity, created_at DESC);
         """
     )
+
+
+def _ensure_business_date_anchor_scope(conn: sqlite3.Connection) -> None:
+    """Add `scope` to the anchor cache, rebuilding because it joins the key.
+
+    A column migration cannot widen a PRIMARY KEY, and this one has to widen:
+    two readers under different row policies see different newest dates and
+    must not collide on one row.
+
+    The existing rows are DROPPED rather than backfilled, and that is the point
+    of the migration rather than a shortcut. Every stored anchor was written
+    under whichever reader happened to ask first, and there is no record of who
+    that was -- so none of them can be attributed to a scope, and each one is
+    the wrong-answer this change exists to stop. Re-probing costs one indexed
+    MAX per fact per workspace; keeping them costs correctness.
+    """
+    try:
+        existing = get_table_columns(conn, "business_date_anchor")
+    except Exception:
+        return
+    if not existing or "scope" in existing:
+        return
+    try:
+        conn.execute("SAVEPOINT sp_anchor_scope")
+        conn.execute("DROP TABLE IF EXISTS business_date_anchor")
+        conn.execute("""
+            CREATE TABLE business_date_anchor (
+                account_id     TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+                fact_table     TEXT NOT NULL,
+                fact_column    TEXT NOT NULL,
+                scope          TEXT NOT NULL DEFAULT '',
+                anchor_value   TEXT NOT NULL DEFAULT '',
+                date_column    TEXT NOT NULL DEFAULT '',
+                source         TEXT NOT NULL DEFAULT '',
+                probe_ms       INTEGER NOT NULL DEFAULT 0,
+                resolved_at    TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (account_id, fact_table, fact_column, scope)
+            )
+        """)
+        conn.execute("RELEASE SAVEPOINT sp_anchor_scope")
+        log.info(
+            "Migration: rebuilt business_date_anchor with a row-policy scope in "
+            "the key; cached anchors dropped and will be re-probed once per fact"
+        )
+    except Exception as exc:
+        try:
+            conn.execute("ROLLBACK TO SAVEPOINT sp_anchor_scope")
+        except Exception:
+            pass
+        log.warning("Anchor scope migration skipped: %s", exc)
 
 
 def _ensure_compliance_tables(conn: sqlite3.Connection) -> None:

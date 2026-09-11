@@ -1246,6 +1246,7 @@ _EXPLICIT_DATE_PATTERNS = (
 
 def describe_date_role_evidence(
     account_id: str, binding: dict | None, *, lang: str | None = None,
+    scope: str | None = None,
 ) -> str:
     """One line of evidence about a candidate date, for the reader to choose on.
 
@@ -1263,6 +1264,14 @@ def describe_date_role_evidence(
     simply says less; a clarification is already a moment the reader is
     waiting through, and probing four facts to decorate it could take minutes.
 
+    ``scope`` is the reader's row-policy fingerprint
+    (core.compliance.sql_guard.row_policy_scope) -- "" for an unrestricted
+    reader. It is REQUIRED to show a "data through" date and there is no
+    default: the stored anchor is the newest date a particular reader could
+    see, so passing None omits the clause rather than quoting a figure drawn
+    from rows this reader has no access to. A caller that does not know the
+    reader shows the governance status and stops there.
+
     Returns "" when there is nothing worth saying.
     """
     parts: list[str] = []
@@ -1275,11 +1284,12 @@ def describe_date_role_evidence(
 
     fact = str(role.get("fact_table") or "")
     column = str(role.get("fact_column") or "")
-    if account_id and fact and column:
+    if account_id and fact and column and scope is not None:
         try:
             import store
 
-            stored = store.load_business_date_anchor(account_id, fact, column) or {}
+            stored = store.load_business_date_anchor(
+                account_id, fact, column, scope) or {}
         except Exception as exc:  # noqa: BLE001 — decoration, never a failure
             log.debug("Date-role evidence unavailable for %s: %s", account_id, exc)
             stored = {}

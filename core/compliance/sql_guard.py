@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -181,6 +182,83 @@ def _condition_expression(condition: dict, alias: str, context: PolicyContext) -
     return cls(this=column, expression=_literal(value))
 
 
+def _policy_subject_matches(policy: dict, context: PolicyContext) -> bool:
+    """Does this row policy bind the subject making the request?"""
+    subject_type = policy.get("subject_type")
+    if subject_type == "role":
+        return policy.get("subject_id") == context.role
+    if subject_type == "user":
+        return str(policy.get("subject_id")) == context.user_id
+    if subject_type == "group":
+        return str(policy.get("subject_id")) in context.groups
+    return True
+
+
+def _policy_covers_table(policy: dict, table_name: str) -> bool:
+    """Does this row policy govern the table the query names?"""
+    configured = str(policy.get("table_fqn") or "").upper()
+    if not configured:
+        return False
+    return (table_name == configured
+            or table_name.endswith("." + configured)
+            or configured.endswith("." + table_name))
+
+
+def row_policy_scope(context: PolicyContext, tables: Any) -> str:
+    """A fingerprint of the row restrictions this subject reads `tables` under.
+
+    Empty when nothing restricts them -- so an unrestricted workspace keeps
+    exactly the caching it had.
+
+    This exists because a value READ OUT OF row-filtered data must not be
+    cached under a subject-independent key. The business-date anchor was: the
+    probe runs through execute_governed_query, so `MAX(invoice_date)` returns
+    the newest date THIS READER can see, and the cache key was
+    (account, fact, column). One reader's slice was then served to the whole
+    workspace, including readers whose own data ends days earlier.
+
+    The rendered condition is part of the fingerprint, not just the policy id,
+    because a condition may interpolate the reader's own attributes -- two
+    readers under one policy can still be looking at different rows.
+    """
+    try:
+        policies = store.list_row_policies(
+            context.account_id, context.policy_version or None)
+    except Exception:                                          # pragma: no cover
+        # Fail CLOSED: a scope we cannot compute must not collide with the
+        # unrestricted one, or an unreadable policy table silently restores the
+        # bug this function exists to prevent.
+        return "unknown"
+    if not policies:
+        return ""
+
+    names = sorted({
+        str(name or "").strip().strip('[]"`').upper()
+        for name in (tables or [])
+        if str(name or "").strip()
+    })
+    parts: list[str] = []
+    for table_name in names:
+        for policy in policies:
+            if not _policy_subject_matches(policy, context):
+                continue
+            if not _policy_covers_table(policy, table_name):
+                continue
+            try:
+                rendered = _condition_expression(
+                    policy.get("condition") or {}, "t", context).sql()
+            except Exception:
+                # An unsupported operator would have raised inside the
+                # injection too. Keep it in the fingerprint rather than
+                # treating the reader as unrestricted.
+                rendered = repr(policy.get("condition") or {})
+            parts.append(f"{table_name}|{policy.get('id')}|{rendered}")
+    if not parts:
+        return ""
+    digest = hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
+    return f"v{int(context.policy_version or 0)}:{digest[:16]}"
+
+
 def inject_row_policies(
     sql: str,
     db_type: str,
@@ -204,14 +282,12 @@ def inject_row_policies(
         table_name = _table_name(table)
         alias = table.alias_or_name or table.name
         for policy in policies:
-            if policy.get("subject_type") == "role" and policy.get("subject_id") != context.role:
+            # Shared with row_policy_scope: if these two ever disagree about
+            # which policies bind this reader, the anchor cache goes back to
+            # serving one reader's slice to the workspace.
+            if not _policy_subject_matches(policy, context):
                 continue
-            if policy.get("subject_type") == "user" and str(policy.get("subject_id")) != context.user_id:
-                continue
-            if policy.get("subject_type") == "group" and str(policy.get("subject_id")) not in context.groups:
-                continue
-            configured = str(policy.get("table_fqn") or "").upper()
-            if not (table_name == configured or table_name.endswith("." + configured) or configured.endswith("." + table_name)):
+            if not _policy_covers_table(policy, table_name):
                 continue
             predicate = _condition_expression(policy.get("condition") or {}, alias, context)
             select = table.find_ancestor(exp.Select)

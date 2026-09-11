@@ -75,8 +75,8 @@ _DEFAULT_FAILURE_TTL_SECONDS = 300
 _DEFAULT_MAX_AGE_SECONDS = 3600
 
 _lock = threading.Lock()
-_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
-_failures: dict[tuple[str, str, str], float] = {}
+_cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+_failures: dict[tuple[str, str, str, str], float] = {}
 
 
 def _ttl_seconds() -> int:
@@ -96,13 +96,30 @@ def _identity(value: Any) -> str:
     return ".".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else "")
 
 
-def anchor_key(account_id: str, policy: dict | None) -> tuple[str, str, str]:
-    """Cache identity: one anchor per account, fact table and governed date key."""
+def anchor_key(
+    account_id: str, policy: dict | None, scope: str = "",
+) -> tuple[str, str, str, str]:
+    """Cache identity: account, fact table, governed date key, and row scope.
+
+    ``scope`` is a fingerprint of the row restrictions the reader saw the data
+    under -- core.compliance.sql_guard.row_policy_scope. It is the empty string
+    when nothing restricts them, which is the ordinary case and keeps exactly
+    the caching this had before: one anchor per account per fact.
+
+    It has to be in the key. The anchor is MAX(governed date) read through
+    execute_governed_query, so row policies are injected into the probe and the
+    value is "the newest date this reader can see". Keyed without the scope,
+    the first reader of the hour decided the business date for everyone: a
+    reader whose region loads a day late got a window past the end of their own
+    data and an empty answer, and a reader with wider access got a window that
+    stopped early, with no disclosure either way.
+    """
     policy = policy or {}
     return (
         str(account_id or ""),
         _identity(policy.get("fact_table") or policy.get("anchor_table")),
         str(policy.get("fact_column") or "").strip().strip('[]"`').upper(),
+        str(scope or ""),
     )
 
 
@@ -257,12 +274,14 @@ def _coerce_anchor(value: Any) -> str:
     return ""
 
 
-def cached_anchor(account_id: str, policy: dict | None) -> dict[str, Any]:
-    """Return a live cached anchor for this fact+key, or {} when there is none."""
+def cached_anchor(
+    account_id: str, policy: dict | None, scope: str = "",
+) -> dict[str, Any]:
+    """Return a live cached anchor for this fact+key+scope, or {}."""
     ttl = _ttl_seconds()
     if not ttl:
         return {}
-    key = anchor_key(account_id, policy)
+    key = anchor_key(account_id, policy, scope)
     if not key[1] or not key[2]:
         return {}
     with _lock:
@@ -275,11 +294,13 @@ def cached_anchor(account_id: str, policy: dict | None) -> dict[str, Any]:
         return dict(entry["anchor"])
 
 
-def remember_anchor(account_id: str, policy: dict | None, anchor: dict) -> None:
+def remember_anchor(
+    account_id: str, policy: dict | None, anchor: dict, scope: str = "",
+) -> None:
     ttl = _ttl_seconds()
     if not ttl or not (anchor or {}).get("value"):
         return
-    key = anchor_key(account_id, policy)
+    key = anchor_key(account_id, policy, scope)
     if not key[1] or not key[2]:
         return
     # The in-memory entry may not outlive the persisted max-age bound. Raising
@@ -308,7 +329,7 @@ def _failure_ttl_seconds() -> int:
         return _DEFAULT_FAILURE_TTL_SECONDS
 
 
-def _remember_failure(key: tuple[str, str, str]) -> None:
+def _remember_failure(key: tuple[str, str, str, str]) -> None:
     ttl = _failure_ttl_seconds()
     if not ttl:
         return
@@ -375,7 +396,9 @@ def _anchor_age_seconds(resolved_at: Any) -> float | None:
     return None
 
 
-def _stored_anchor(account_id: str, policy: dict | None) -> dict[str, Any]:
+def _stored_anchor(
+    account_id: str, policy: dict | None, scope: str = "",
+) -> dict[str, Any]:
     """Read a previously resolved anchor from the durable store.
 
     The in-memory cache dies with the process. On a slow warehouse that meant
@@ -389,7 +412,8 @@ def _stored_anchor(account_id: str, policy: dict | None) -> dict[str, Any]:
         return {}
     try:
         import store
-        stored = store.load_business_date_anchor(account_id, fact, column) or {}
+        stored = store.load_business_date_anchor(
+            account_id, fact, column, scope) or {}
     except Exception as exc:
         log.debug("Stored anchor unavailable for %s: %s", account_id, exc)
         return {}
@@ -419,14 +443,17 @@ def _stored_anchor(account_id: str, policy: dict | None) -> dict[str, Any]:
     return stored
 
 
-def _persist_anchor(account_id: str, policy: dict | None, anchor: dict) -> None:
+def _persist_anchor(
+    account_id: str, policy: dict | None, anchor: dict, scope: str = "",
+) -> None:
     fact = str((policy or {}).get("fact_table") or (policy or {}).get("anchor_table") or "")
     column = str((policy or {}).get("fact_column") or "")
     if not account_id or not fact or not column:
         return
     try:
         import store
-        store.save_business_date_anchor(account_id, fact, column, anchor)
+        store.save_business_date_anchor(
+            account_id, fact, column, anchor, scope)
     except Exception as exc:
         log.warning(
             "Business-date anchor could not be persisted for %s (%s.%s): %s — it "
@@ -501,6 +528,7 @@ def resolve_business_anchor(
     policy: dict | None,
     db_type: str,
     run_probe: Callable[[str], Any],
+    scope: str = "",
 ) -> dict[str, Any]:
     """Resolve the governed anchor for one temporal policy.
 
@@ -516,15 +544,15 @@ def resolve_business_anchor(
     if str(policy.get("anchor_policy") or "") != "latest_available":
         return {}
 
-    hit = cached_anchor(account_id, policy)
+    hit = cached_anchor(account_id, policy, scope)
     if hit:
         return {**hit, "cached": True}
 
     # Durable store next: a restart must not repeat the probe.
-    stored = _stored_anchor(account_id, policy)
+    stored = _stored_anchor(account_id, policy, scope)
     if stored.get("value"):
         stored.setdefault("business_role", str(policy.get("business_role") or ""))
-        remember_anchor(account_id, policy, stored)
+        remember_anchor(account_id, policy, stored, scope)
         log.info(
             "Business-date anchor restored from store for %s: %s = %s (resolved %s) "
             "— no probe needed",
@@ -533,7 +561,7 @@ def resolve_business_anchor(
         )
         return {**stored, "cached": True}
 
-    key = anchor_key(account_id, policy)
+    key = anchor_key(account_id, policy, scope)
     with _lock:
         failed_until = _failures.get(key, 0.0)
     if failed_until > time.time():
@@ -598,8 +626,8 @@ def resolve_business_anchor(
         "ttl_seconds": _ttl_seconds(),
         "cached": False,
     }
-    remember_anchor(account_id, policy, anchor)
-    _persist_anchor(account_id, policy, anchor)
+    remember_anchor(account_id, policy, anchor, scope)
+    _persist_anchor(account_id, policy, anchor, scope)
     log.info(
         "Business-date anchor resolved for %s: %s = %s (probe %d ms, cached %d s)",
         account_id, anchor["fact_table"], value, anchor["probe_ms"],

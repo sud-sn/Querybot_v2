@@ -133,11 +133,22 @@ def _refresh_relative_window(alert: dict, db_cfg: dict) -> tuple[str, str]:
         )
 
     try:
+        # scope="" deliberately. This probe runs through core.schema.run_query,
+        # not execute_governed_query, so no row policy is injected and it reads
+        # the whole fact -- which is exactly what an unrestricted reader's probe
+        # sees, and "" is that bucket. It must NOT be left to default silently:
+        # any other value would fork the cache for no reason, and any narrower
+        # one would let this unfiltered value be served to a restricted reader.
+        #
+        # That this scheduled path reads the whole fact regardless of the alert
+        # owner's own access is a separate governance question, and a real one.
+        # It is not made better or worse by the cache key.
         resolved = resolve_business_anchor(
             str(alert.get("account_id") or ""),
             policy,
             db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
             _probe,
+            "",
         )
     except Exception as exc:
         log.warning(

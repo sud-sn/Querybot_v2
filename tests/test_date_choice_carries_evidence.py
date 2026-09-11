@@ -70,7 +70,7 @@ class TestTheChoiceSaysHowFarEachDatesDataRuns:
     def test_a_probed_date_shows_where_its_data_ends(self, tenant):
         _remember(tenant, "IVC_DT_KEY", "2025-04-17")
         detail = describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"})
+            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"}, scope="")
         assert "17 Apr 2025" in detail, detail
 
     def test_two_candidates_can_be_told_apart(self, tenant):
@@ -78,21 +78,21 @@ class TestTheChoiceSaysHowFarEachDatesDataRuns:
         _remember(tenant, "IVC_DT_KEY", "2025-04-17")
         _remember(tenant, "DLV_DT_KEY", "2023-12-31")
         invoice = describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"})
+            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"}, scope="")
         delivery = describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "DLV_DT_KEY"})
+            tenant, {"fact_table": FACT, "fact_column": "DLV_DT_KEY"}, scope="")
         assert "2025" in invoice and "2023" in delivery
         assert invoice != delivery
 
     def test_a_candidate_with_nothing_stored_says_nothing_rather_than_guessing(
             self, tenant):
         assert describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "NEVER_PROBED"}) == ""
+            tenant, {"fact_table": FACT, "fact_column": "NEVER_PROBED"}, scope="") == ""
 
     def test_the_approved_default_is_marked(self, tenant):
         detail = describe_date_role_evidence(
             tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY",
-                     "is_default": 1})
+                     "is_default": 1}, scope="")
         assert "approved default" in detail
 
     def test_an_approved_role_that_is_not_the_default_says_only_approved(
@@ -106,7 +106,7 @@ class TestTheChoiceSaysHowFarEachDatesDataRuns:
         _remember(tenant, "IVC_DT_KEY", "2025-04-17")
         detail = describe_date_role_evidence(
             tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY",
-                     "is_default": 1})
+                     "is_default": 1}, scope="")
         assert "approved default" in detail and "17 Apr 2025" in detail
 
 
@@ -123,7 +123,7 @@ class TestItCostsNothingAtTheWarehouse:
                             lambda *a, **k: calls.append(a) or [])
         _remember(tenant, "IVC_DT_KEY", "2025-04-17")
         describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"})
+            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"}, scope="")
         assert calls == []
 
     def test_it_does_not_probe_for_a_missing_anchor_either(self, tenant, monkeypatch):
@@ -133,7 +133,7 @@ class TestItCostsNothingAtTheWarehouse:
         monkeypatch.setattr(anchor, "resolve_business_anchor",
                             lambda *a, **k: probed.append(a) or {})
         describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "NEVER_PROBED"})
+            tenant, {"fact_table": FACT, "fact_column": "NEVER_PROBED"}, scope="")
         assert probed == []
 
 
@@ -148,13 +148,13 @@ class TestItNeverBecomesTheReasonAQuestionFails:
             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db gone")))
         detail = describe_date_role_evidence(
             tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY",
-                     "is_default": 1})
+                     "is_default": 1}, scope="")
         assert detail == "approved default", detail
 
     def test_an_unparseable_anchor_is_dropped(self, tenant):
         _remember(tenant, "JUNK_KEY", "not-a-date")
         assert describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "JUNK_KEY"}) == ""
+            tenant, {"fact_table": FACT, "fact_column": "JUNK_KEY"}, scope="") == ""
 
     @pytest.mark.parametrize("value", [None, "", "2025-13-45", "yesterday", 20250417])
     def test_a_junk_value_is_not_shown(self, value):
@@ -162,10 +162,10 @@ class TestItNeverBecomesTheReasonAQuestionFails:
 
     def test_no_account_no_lookup(self):
         assert describe_date_role_evidence(
-            "", {"fact_table": FACT, "fact_column": "IVC_DT_KEY"}) == ""
+            "", {"fact_table": FACT, "fact_column": "IVC_DT_KEY"}, scope="") == ""
 
     def test_no_binding_at_all_is_fine(self, tenant):
-        assert describe_date_role_evidence(tenant, None) == ""
+        assert describe_date_role_evidence(tenant, None, scope="") == ""
 
 
 class TestItIsInTheReadersLanguage:
@@ -174,14 +174,14 @@ class TestItIsInTheReadersLanguage:
         _remember(tenant, "IVC_DT_KEY", "2025-04-17")
         detail = describe_date_role_evidence(
             tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY",
-                     "is_default": 1}, lang="fr")
+                     "is_default": 1}, lang="fr", scope="")
         assert "valeur par défaut approuvée" in detail
         assert "données jusqu'au" in detail
 
     def test_the_month_name_follows_the_reader(self, tenant):
         _remember(tenant, "IVC_DT_KEY", "2025-04-17")
         assert "avr." in describe_date_role_evidence(
-            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"}, lang="fr")
+            tenant, {"fact_table": FACT, "fact_column": "IVC_DT_KEY"}, lang="fr", scope="")
 
     def test_the_day_month_year_ORDER_does_not(self):
         """Swapping the order by language silently changes which number is the
