@@ -381,9 +381,38 @@ class TheDateGateOpensForNamedComparisons(unittest.TestCase):
         self.assertEqual(resolved["binding"].get("fact_column"), "DATE_KEY")
 
     def test_the_widening_is_narrow(self):
+        """A bare list of numbers and a question with no period at all still
+        bind nothing.
+
+        "revenue in 2024 by region" used to be in this list, and is not any
+        more: a SINGLE absolute period is now admitted deliberately. See the
+        reversal recorded at the resolver's intent gate in
+        core/contextual_dates.py -- binding no role there meant that on a fact
+        with an invoice date and a delivery date, the model chose which date
+        2024 meant, undisclosed. Its own case is below.
+        """
         for question in ("list SKUs 2001 2002 2003",
                          "total revenue by warehouse",
-                         "revenue in 2024 by region"):
+                         "how many SKUs are there"):
+            with self.subTest(question=question):
+                self.assertEqual(self._resolve(question).get("status"), "none")
+
+    def test_a_single_absolute_period_now_binds_the_governed_date(self):
+        """The reversal, asserted rather than merely removed from the list
+        above -- so the change is visible if anyone puts it back."""
+        resolved = self._resolve("revenue in 2024 by region")
+        self.assertEqual(resolved.get("status"), "selected")
+        self.assertEqual(resolved["binding"].get("fact_column"), "DATE_KEY")
+        self.assertEqual(resolved["binding"].get("resolution_source"),
+                         "fact_default_date_role")
+
+    def test_a_number_that_is_not_a_period_is_still_not_one(self):
+        """The reason a second, narrower predicate exists rather than reusing
+        question_has_explicit_date_filter: these must not become date
+        questions."""
+        for question in ("orders over 2000 dollars",
+                         "top 2000 customers by revenue",
+                         "customers with more than 2020 orders"):
             with self.subTest(question=question):
                 self.assertEqual(self._resolve(question).get("status"), "none")
 

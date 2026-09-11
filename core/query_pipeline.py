@@ -96,6 +96,7 @@ from core.contextual_dates import (
     find_explicit_date_roles,
     question_has_snapshot_intent,
     requested_temporal_grain,
+    question_names_a_calendar_period,
     resolve_contextual_date_binding,
 )
 from core.metric_scope import metric_source_tables, resolve_metric_scope
@@ -3843,12 +3844,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         matched_metrics=_matched_metrics,
         measure_fields=_snapshot_measure_fields,
     )
+    # An ABSOLUTE period is a period. question_has_temporal_intent looks for
+    # words like day/week/month/quarter/year, and "March 2026", "Q1 2026" and
+    # "2026-03-15" contain none of them -- so "revenue in March 2026" skipped
+    # date resolution entirely, no governed date column reached the compiler,
+    # nothing was disclosed, and on a fact carrying both an invoice date and a
+    # delivery date the model decided which one March meant. Same question, two
+    # different numbers, nothing on the card to tell them apart.
+    _absolute_period = question_names_a_calendar_period(_semantic_plan_question)
     log.info(
-        "Date-context gate for %r: temporal_intent=%s snapshot_intent=%s -> %s",
+        "Date-context gate for %r: temporal_intent=%s snapshot_intent=%s "
+        "absolute_period=%s -> %s",
         (_semantic_plan_question or "")[:80], _temporal_intent, _snapshot_intent,
-        "entering date resolution" if (_temporal_intent or _snapshot_intent) else "SKIPPED",
+        _absolute_period,
+        "entering date resolution"
+        if (_temporal_intent or _snapshot_intent or _absolute_period)
+        else "SKIPPED",
     )
-    if _temporal_intent or _snapshot_intent:
+    if _temporal_intent or _snapshot_intent or _absolute_period:
         try:
             _metric_ids = [
                 int(metric.get("id") or 0) for metric in _matched_metrics

@@ -921,18 +921,42 @@ def resolve_contextual_date_binding(
     # with no governed join. That is the root cause of a two-period question
     # coming back with one period of data.
     #
-    # Deliberately narrow. This admits only questions that name two or more
-    # comparable periods AND ask for a comparison. Single-period absolute
-    # questions ("revenue in 2024") bind no role today and are left exactly as
-    # they are: widening those changes behaviour for every tenant and can turn
-    # working answers into date-role clarification prompts, which is a much
-    # larger bet than the defect being fixed here.
+    # A SINGLE absolute period is temporal intent too, and this now admits it.
+    #
+    # That reverses a deliberate decision recorded here, so the reasoning
+    # matters. The earlier note said single-period absolute questions were left
+    # alone because widening them "can turn working answers into date-role
+    # clarification prompts, which is a much larger bet than the defect being
+    # fixed here". The risk was real and correctly stated. But the answers it
+    # protected were not working: on a fact carrying both an invoice date and a
+    # delivery date, "revenue in March 2026" bound no role, so the model chose
+    # which date March meant, undisclosed. Two different numbers for one
+    # question, with nothing on the card to tell them apart.
+    #
+    # Two things since that note shrink the bet it was avoiding:
+    #
+    #   * a fact with ONE date no longer asks at all -- _single_candidate_verdict
+    #     binds it outright when the warehouse types it as a date or the join to
+    #     the date dimension is declared, which is the common shape; and
+    #   * where several dates do exist, the clarification chips now carry
+    #     evidence -- each date's governance status and how far its data runs --
+    #     so the question is answerable rather than a list of names.
+    #
+    # What remains is the case the reader should see: several business dates,
+    # none of them settled, and a question whose answer depends on which one is
+    # used. Asking is the right outcome there, and it was not happening at all.
+    #
+    # question_names_a_calendar_period is deliberately narrower than
+    # question_has_explicit_date_filter, which matches any four-digit 19xx/20xx
+    # number: gating on that one would make "orders over 2000 dollars" a date
+    # question.
     if (
         not question_has_temporal_intent(question)
         and not question_has_snapshot_intent(
             question, matched_metrics=matched_metrics
         )
         and not _question_names_comparable_periods(question)
+        and not question_names_a_calendar_period(question)
         and not explicit
     ):
         return {"status": "none", "reason": "no temporal intent"}
@@ -1301,6 +1325,67 @@ _EXPLICIT_DATE_PATTERNS = (
     # Ambiguous ones do, on either side: "march 2", "2 march".
     rf"\b(?:{_AMBIGUOUS_MONTHS})\s+\d{{1,4}}\b",
     rf"\b\d{{1,4}}\s+(?:{_AMBIGUOUS_MONTHS})\b",
+)
+
+
+def question_names_a_calendar_period(question: str) -> bool:
+    """Does the question name an ABSOLUTE period -- a month, quarter or year?
+
+    "Revenue in March 2026" is a question about a period, and the pipeline's
+    date gate did not think so. That gate is `_temporal_intent or
+    _snapshot_intent`, and question_has_temporal_intent looks for words like
+    day/week/month/quarter/year -- none of which appear in "March 2026", "Q1
+    2026" or "2026-03-15". So the entire date-role resolution was SKIPPED: no
+    governed date column reached the compiler, nothing was disclosed, and on a
+    fact carrying both an invoice date and a delivery date the model chose
+    which one March meant. Two different numbers, same question, nothing on the
+    card to tell them apart.
+
+    This is deliberately NARROWER than question_has_explicit_date_filter, which
+    matches any four-digit 19xx/20xx number. That is right for its own job --
+    stopping a "latest available" window from overriding a stated date -- but
+    widening the date gate with it would make "orders over 2000 dollars" a date
+    question, and on a fact with several dates and no default that means
+    interrupting the reader with "which date should I use?" about a question
+    that has nothing to do with dates.
+
+    So a bare year counts only after a word that makes it a period ("in 2026",
+    "for 2026", "during 2026"). "Revenue 2026" is therefore missed, and that is
+    the intended trade: a missed absolute period behaves exactly as it did
+    before this function existed, while a false positive interrupts somebody
+    for nothing.
+    """
+    q = normalize_date_role_text(question)
+    if not q:
+        return False
+    return any(re.search(pattern, q) for pattern in _CALENDAR_PERIOD_PATTERNS)
+
+
+_DATE_PREPOSITIONS = r"in|for|during|of|since|until|till|through|thru|between|by"
+
+_CALENDAR_PERIOD_PATTERNS = (
+    # A month name. The ambiguous ones ("march", "may") still need a numeric
+    # neighbour, exactly as _EXPLICIT_DATE_PATTERNS requires.
+    rf"\b(?:{_UNAMBIGUOUS_MONTHS})\b",
+    rf"\b(?:{_AMBIGUOUS_MONTHS})\s+\d{{1,4}}\b",
+    rf"\b\d{{1,4}}\s+(?:{_AMBIGUOUS_MONTHS})\b",
+    # A quarter, either way round: "q1 2026", "2026 q1".
+    r"\bq[1-4]\s+(?:19|20)\d{2}\b",
+    r"\b(?:19|20)\d{2}\s+q[1-4]\b",
+    # A fiscal year: "fy26", "fy 2026".
+    r"\bfy\s?\d{2,4}\b",
+    # An ISO or slashed date -- normalisation has reduced every separator to a
+    # space, so 2026-03-15 and 15/03/2026 both arrive as three numbers.
+    r"\b(?:19|20)\d{2}\s+\d{1,2}\s+\d{1,2}\b",
+    r"\b\d{1,2}\s+\d{1,2}\s+(?:19|20)\d{2}\b",
+    # An encoded period typed directly: 202603, 20260315.
+    r"\b(?:19|20)\d{4}(?:\d{2})?\b",
+    # A bare year, but only where a word has made it a period.
+    rf"\b(?:{_DATE_PREPOSITIONS})\s+(?:the\s+)?(?:19|20)\d{{2}}\b",
+    # "in 2026 and 2027" -- the second year is governed by the same
+    # preposition and would otherwise be invisible.
+    rf"\b(?:{_DATE_PREPOSITIONS})\s+(?:the\s+)?(?:19|20)\d{{2}}\s+"
+    rf"(?:and|to|vs|versus)\s+(?:19|20)\d{{2}}\b",
 )
 
 
