@@ -2150,6 +2150,33 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Five of these were English literals sent straight to send_message, on a
     # path whose whole purpose is telling a business reader which business date
     # their number came from. One of them printed a raw warehouse table.column.
+    # A question spanning several measures where one of them has no governed
+    # business date. Answering would leave that measure's rows unfiltered --
+    # six months of one number against all time of another -- so it refuses.
+    # It names the MEASURE, not the warehouse table: the reader asked for
+    # "Returns" and cannot act on EMDW_DMART.CUS_RTN_FCT. The table goes to the
+    # answer trace, where an admin is looking.
+    "clar.date.measure_has_no_business_date": {
+        "en": ("I can’t put **{measures}** on the same period as the rest of "
+               "this question: no approved business date is bound to it, so its "
+               "figures would cover all time while the others cover "
+               "{window}. Ask an administrator to set a default business date "
+               "for it, or ask about the other measures on their own."),
+        "fr": ("Je ne peux pas placer **{measures}** sur la même période que le "
+               "reste de cette question : aucune date métier approuvée n’y est "
+               "associée, ses chiffres porteraient donc sur tout l’historique "
+               "alors que les autres portent sur {window}. Demandez à un "
+               "administrateur de définir une date métier par défaut, ou "
+               "interrogez les autres indicateurs séparément."),
+    },
+    "clar.date.these_measures": {
+        "en": "one of these measures",
+        "fr": "l’un de ces indicateurs",
+    },
+    "clar.date.the_requested_period": {
+        "en": "the period you asked for",
+        "fr": "la période demandée",
+    },
     "clar.date.grain_unsupported": {
         "en": ("I can’t return a trustworthy **{requested}-level** result from "
                "this source. **{date}** is available only at **{available} "

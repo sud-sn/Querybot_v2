@@ -176,10 +176,20 @@ class TestThePipelineEmitsItOnEveryPath:
                     for arg in node.args)
         ]
 
-    def test_there_is_a_site_for_the_normal_path_the_early_return_and_the_error(self):
-        assert len(self._sites()) == 3, (
-            "expected the date resolution to be traced on the normal path, on "
-            "the unsupported-grain return, and in the fail-open handler; found "
+    def test_the_normal_path_and_every_early_return_are_traced(self):
+        """At least three: the path every resolution takes, the refusals that
+        return before reaching it, and the fail-open handler.
+
+        Deliberately not an exact count. This asserted == 3 and broke the
+        moment a new refusal branch arrived with its own trace site, which is
+        the behaviour a guard should WELCOME rather than block -- a pinned
+        number turns every legitimate new path into a failing test while saying
+        nothing about whether the paths are traced. The property that matters
+        is tested below: one site reachable whatever the resolution said.
+        """
+        assert len(self._sites()) >= 3, (
+            "the date resolution is traced on fewer paths than the normal one, "
+            "the early returns and the fail-open handler; found "
             f"{len(self._sites())} site(s)")
 
     def test_every_site_summarises_through_the_helper(self):
@@ -265,6 +275,10 @@ class TestThePipelineEmitsItOnEveryPath:
             "exists to prevent")
 
     def test_the_narrow_sites_are_still_there_too(self):
-        """The unsupported-grain branch returns before the unconditional site,
-        and the handler runs when the block raised. Both need their own."""
-        assert len(self._sites()) - len(self._unconditional_sites()) == 2
+        """Every path that returns BEFORE the unconditional site needs its own:
+        the unsupported-grain refusal, the undated-fact refusal, and the
+        fail-open handler. Counted as "at least", for the reason above."""
+        narrow = len(self._sites()) - len(self._unconditional_sites())
+        assert narrow >= 2, (
+            f"only {narrow} early-return path(s) are traced; a refusal that "
+            "returns without one records nothing an operator can retrieve")

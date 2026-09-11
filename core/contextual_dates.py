@@ -260,6 +260,18 @@ def _same_table(left: Any, right: Any) -> bool:
     return bool(left_full and right_full and (left_full == right_full or left_bare == right_bare))
 
 
+def same_date_fact(left: Any, right: Any) -> bool:
+    """Do these two table references name the same fact?
+
+    Exported so a caller acting on `undated_facts` uses the SAME comparison the
+    resolver used to build that list. The pipeline has to map an undated fact
+    back to the measure that reads it, and a second, slightly different
+    comparison there would name the wrong measure -- or none -- while the
+    resolver was certain.
+    """
+    return _same_table(left, right)
+
+
 def _calendar_column_name(
     columns: dict[str, Any],
     candidates: tuple[str, ...],
@@ -1176,23 +1188,101 @@ def resolve_contextual_date_binding(
             role for role in approved_roles
             if any(_same_table(role.get("fact_table"), table) for table in fact_scope)
         ]
-    if len(approved_roles) == 1:
+    # ONE DATE PER FACT, not one date per question.
+    #
+    # A question can read several facts -- "revenue and returns last 6 months"
+    # -- and each of them has its own business date. This used to return a
+    # single binding either way, and both outcomes were wrong:
+    #
+    #   * several facts each with a settled default -> "ambiguous", offering
+    #     [Invoice Date] [Return Date] as if they were alternatives. They are
+    #     not: each is the right date for its own fact, the chips do not say
+    #     which fact they belong to, and whichever the reader picks, the OTHER
+    #     fact is left with no date policy at all. Six months of revenue
+    #     compared against returns over all time.
+    #   * only one fact settled -> "selected", quietly, no question asked, the
+    #     other fact unfiltered. Same wrong number with nothing to notice it by,
+    #     and this is the commoner shape on a partly curated model.
+    #
+    # Everything downstream is already multi-capable: selected_many,
+    # build_contextual_date_plan_many, the pipeline's own branch for it, and
+    # the validator's approved set, which unions every policy's fact_column
+    # precisely so a second governed role is not read as a substitution. The
+    # resolver was the only single-valued link in the chain.
+    roles_by_fact: dict[str, list[dict]] = {}
+    for role in approved_roles:
+        identity = _table_identity(role.get("fact_table"))[0]
+        if identity:
+            roles_by_fact.setdefault(identity, []).append(role)
+
+    contested = {fact: found for fact, found in roles_by_fact.items()
+                 if len(found) > 1}
+    if contested:
+        # One fact carrying two defaults is a real choice, and the only one
+        # here a reader can actually make. Ask about that fact alone.
+        fact, found = sorted(contested.items())[0]
+        return {
+            "status": "ambiguous",
+            "reason": f"{fact} has more than one default date role",
+            "options": [
+                _role_as_binding(role, source="fact_default_date_role")
+                for role in found
+            ],
+        }
+
+    settled = {fact: found[0] for fact, found in roles_by_fact.items()}
+
+    # A fact whose rows go INTO the aggregate and that has no settled date is
+    # the finding. Answering anyway leaves it unfiltered, which is the silent
+    # wrong number above.
+    #
+    # Scoped to metric_tables, not to fact_scope. fact_scope is "tables this
+    # question might touch" -- it carries dimensions and whatever the graph
+    # anchored on, and a date policy on those is meaningless. A measure's own
+    # base_table is the thing that actually contributes rows to the sum, so
+    # that is the set that has to be dated. Using fact_scope here fired on
+    # ordinary single-fact questions whose graph had pulled in a neighbour.
+    #
+    # No matched metric means no knowable set, so nothing is claimed: an ad-hoc
+    # question binds the roles it found and says nothing about the rest.
+    if settled and metric_tables:
+        undated = sorted(
+            fact
+            for fact in metric_tables
+            if not any(_same_table(fact, known) for known in settled)
+        )
+        if undated:
+            return {
+                "status": "undated_fact_in_scope",
+                "reason": (
+                    "these data sources have no approved default business date: "
+                    + ", ".join(undated)
+                ),
+                "undated_facts": undated,
+                "dated_facts": sorted(settled),
+                "options": [
+                    _role_as_binding(role, source="fact_default_date_role")
+                    for role in settled.values()
+                ],
+            }
+
+    if len(settled) == 1:
         return {
             "status": "selected",
             "binding": _role_as_binding(
-                approved_roles[0], source="fact_default_date_role"
+                next(iter(settled.values())), source="fact_default_date_role"
             ),
             "reason": "default date role for resolved fact",
         }
 
-    if len(approved_roles) > 1:
+    if len(settled) > 1:
         return {
-            "status": "ambiguous",
-            "reason": "multiple resolved facts have default date roles",
-            "options": [
-                _role_as_binding(role, source="fact_default_date_role")
-                for role in approved_roles
+            "status": "selected_many",
+            "bindings": [
+                _role_as_binding(settled[fact], source="fact_default_date_role")
+                for fact in sorted(settled)
             ],
+            "reason": "each resolved fact filtered on its own default date",
         }
 
     if len(candidates) > 1:

@@ -97,6 +97,7 @@ from core.contextual_dates import (
     question_has_snapshot_intent,
     requested_temporal_grain,
     date_resolution_trace,
+    same_date_fact,
     question_names_a_calendar_period,
     resolve_contextual_date_binding,
 )
@@ -1038,6 +1039,28 @@ BUSINESS_DATE_WINDOW_KINDS = frozenset({
 })
 
 
+def business_date_window_kind(policies) -> str:
+    """Which requested window kind earns the freshness note, across all policies.
+
+    A question resolving one governed date per fact carries one temporal policy
+    PER FACT, and they all describe the same requested window. Reading
+    ``policies[0]`` therefore made the disclosure depend on which fact happened
+    to sort first: ask for "this month's revenue and returns" and whether the
+    reader was told the data only runs to the 8th came down to alphabetical
+    order of table names.
+
+    Any policy naming a data-relative window earns the note. Falls back to the
+    first policy's kind so a non-disclosing window still reads the same as
+    before.
+    """
+    policies = [policy for policy in (policies or []) if isinstance(policy, dict)]
+    kinds = [str(policy.get("kind") or "") for policy in policies]
+    return next(
+        (kind for kind in kinds if kind in BUSINESS_DATE_WINDOW_KINDS),
+        kinds[0] if kinds else "",
+    )
+
+
 def business_date_banner(
     window_kind: str,
     anchor: dict | None,
@@ -1116,6 +1139,83 @@ def anchor_row_scope(context: Any, policy: dict | None) -> str:
             "reader is served it", exc,
         )
         return f"unscoped:{getattr(context, 'user_id', '') or 'unknown'}"
+
+
+def resolve_common_business_anchor(policies, *, resolve_one) -> dict:
+    """The date through which EVERY fact in this question has data.
+
+    A question can resolve one governed date per fact -- "revenue and returns
+    last 6 months" -- and those facts do not load together. Anchoring each on
+    its OWN newest date makes revenue cover Mar-Aug while returns cover Feb-Jul,
+    and then the two numbers beside each other are not a comparison. So the
+    common anchor is the EARLIEST of the per-fact maxima: the last date on which
+    every fact in the answer has data. Conservative in the only safe direction
+    -- it never claims a period a fact cannot cover.
+
+    Before this, the pipeline resolved an anchor only when there was exactly one
+    policy, so a two-fact question got none at all and fell back to the in-query
+    anchor CTE, which anchors each fact on its own maximum. Correct SQL,
+    incomparable periods.
+
+    `resolve_one(policy) -> anchor dict` is injected, so this is testable
+    without a warehouse.
+
+    Fails open. If ANY fact's anchor cannot be established, this returns {} and
+    the caller keeps the in-query anchor rather than pinning the answer to a
+    window derived from the facts that happened to answer.
+    """
+    policies = [policy for policy in (policies or []) if isinstance(policy, dict)]
+    if not policies:
+        return {}
+
+    resolved: list[tuple[str, dict]] = []
+    for policy in policies:
+        anchor = resolve_one(policy) or {}
+        value = str(anchor.get("value") or "")
+        if not value:
+            return {}
+        resolved.append((value, anchor))
+
+    # ISO dates sort lexicographically, which _coerce_anchor guarantees.
+    resolved.sort(key=lambda pair: pair[0])
+    earliest_value, earliest = resolved[0]
+    common = dict(earliest)
+    if len(resolved) > 1:
+        common["common_across_facts"] = True
+        common["limited_by_fact"] = str(earliest.get("fact_table") or "")
+        common["per_fact"] = [
+            {"fact_table": str(item.get("fact_table") or ""), "value": value}
+            for value, item in resolved
+        ]
+        common["cached"] = all(item.get("cached") for _, item in resolved)
+    return common
+
+
+def measures_without_a_business_date(matched_metrics, undated_facts) -> list[str]:
+    """The MEASURE names a reader asked for that read an undated fact.
+
+    The reader asked for "Returns"; the resolver reports EMDW_DMART.CUS_RTN_FCT.
+    Telling them the table is telling them nothing they can act on, so the
+    refusal names the measure and the table goes to the trace.
+
+    The comparison is `same_date_fact`, the resolver's own -- not `==`. The
+    resolver builds `undated_facts` out of CANONICALIZED identities
+    (`_table_identity`: brackets and quotes stripped, upper-cased, trimmed to
+    SCHEMA.TABLE), while the measure still carries whatever an admin typed into
+    base_table. `[EMDW_DMART].[CUS_RTN_FCT]` and `EMDW_DMART.CUS_RTN_FCT` are the
+    same fact and are not the same string, so equality here names no measure at
+    all and the refusal degrades to "these measures" while the resolver knew
+    exactly which one.
+    """
+    undated = [str(table) for table in (undated_facts or []) if table]
+    if not undated:
+        return []
+    return sorted({
+        str(metric.get("name") or "")
+        for metric in (matched_metrics or [])
+        if isinstance(metric, dict) and metric.get("name")
+        and any(same_date_fact(metric.get("base_table"), table) for table in undated)
+    })
 
 
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
@@ -4091,6 +4191,58 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 len(_date_bindings),
                 len(_date_roles),
             )
+            if _date_context_resolution.get("status") == "undated_fact_in_scope":
+                # One of the measures in this question aggregates from a fact
+                # with no approved default business date. Binding only the
+                # dated ones and answering anyway is what this used to do, and
+                # it left the undated measure covering ALL TIME beside measures
+                # covering six months -- a confident comparison of two
+                # different periods, with nothing on the card to notice it by.
+                # Fail closed, and name the measure rather than the table: the
+                # reader asked for "Returns" and can do nothing with
+                # EMDW_DMART.CUS_RTN_FCT. The table goes to the trace, where an
+                # admin is looking.
+                _undated = [
+                    str(table) for table in
+                    (_date_context_resolution.get("undated_facts") or [])
+                ]
+                _undated_measures = measures_without_a_business_date(
+                    _matched_metrics, _undated
+                )
+                _reader_lang = (portal_user or {}).get("lang") or "en"
+                await adapter.send_message(
+                    event,
+                    _t("clar.date.measure_has_no_business_date",
+                       lang=_reader_lang,
+                       measures=", ".join(_undated_measures)
+                       or _t("clar.date.these_measures", lang=_reader_lang),
+                       window=_t("clar.date.the_requested_period",
+                                 lang=_reader_lang)),
+                )
+                _trace_step(
+                    trace_id,
+                    "date_context_resolution",
+                    output_summary=date_resolution_trace(
+                        _date_context_resolution,
+                        fact_scope=_date_fact_scope,
+                        metric_names=[
+                            m.get("name") for m in _matched_metrics if m.get("name")
+                        ],
+                        date_binding_count=len(_date_bindings),
+                        date_role_count=len(_date_roles),
+                    ),
+                )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="clarification",
+                    final_answer_summary=(
+                        "Refused a multi-measure period question: no business "
+                        "date on " + ", ".join(_undated)
+                    ),
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                return
             if _date_context_resolution.get("status") == "unsupported_grain":
                 _requested = str(
                     _date_context_resolution.get("requested_grain") or "requested"
@@ -5256,7 +5408,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             if isinstance(policy, dict)
             and str(policy.get("anchor_policy") or "") == "latest_available"
         ]
-        if len(_anchor_policies) == 1:
+        if _anchor_policies:
             # The probe runs through _execute_with_policy, so row policies are
             # injected into it and MAX(governed date) returns the newest date
             # THIS READER can see. The cache therefore has to be keyed by the
@@ -5264,12 +5416,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             # decides the business date for the whole workspace -- a reader
             # whose region loads a day late gets a window past the end of their
             # own data, and an empty answer, with no disclosure.
-            _resolved_anchor = resolve_business_anchor(
-                account_id,
-                _anchor_policies[0],
-                db_cfg.get("db_type", "azure_sql"),
-                lambda probe_sql: _execute_with_policy(probe_sql).rows,
-                anchor_row_scope(compliance_context, _anchor_policies[0]),
+            #
+            # One anchor PER FACT, reduced to the earliest. This used to run only
+            # when there was exactly one policy, so a question spanning two
+            # facts resolved no anchor at all and each fact anchored on its own
+            # maximum in the compiled SQL -- valid SQL over two different
+            # periods, presented as one comparison.
+            _resolved_anchor = resolve_common_business_anchor(
+                _anchor_policies,
+                resolve_one=lambda policy: resolve_business_anchor(
+                    account_id,
+                    policy,
+                    db_cfg.get("db_type", "azure_sql"),
+                    lambda probe_sql: _execute_with_policy(probe_sql).rows,
+                    anchor_row_scope(compliance_context, policy),
+                ),
             )
             if _resolved_anchor.get("value"):
                 _generation_semantic_context["resolved_date_anchor"] = _resolved_anchor
@@ -5312,9 +5473,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Without a probed date we cannot name the day, but we can still say the
     # answer is data-relative rather than calendar-relative.
     try:
-        _window_kind = str(
-            (_anchor_policies[0] if _anchor_policies else {}).get("kind") or ""
-        )
+        _window_kind = business_date_window_kind(_anchor_policies)
         if _window_kind in BUSINESS_DATE_WINDOW_KINDS:
             _anchor_meta = (
                 _generation_semantic_context.get("resolved_date_anchor") or {}
