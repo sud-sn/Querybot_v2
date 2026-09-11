@@ -96,6 +96,7 @@ from core.contextual_dates import (
     find_explicit_date_roles,
     question_has_snapshot_intent,
     requested_temporal_grain,
+    date_resolution_trace,
     question_names_a_calendar_period,
     resolve_contextual_date_binding,
 )
@@ -4111,6 +4112,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     f"Ask for a {_available}-level result, or configure/connect a "
                     f"source with {_requested}-level history.",
                 )
+                _trace_step(
+                    trace_id,
+                    "date_context_resolution",
+                    output_summary=date_resolution_trace(
+                        _date_context_resolution,
+                        fact_scope=_date_fact_scope,
+                        metric_names=[
+                            m.get("name") for m in _matched_metrics if m.get("name")
+                        ],
+                        date_binding_count=len(_date_bindings),
+                        date_role_count=len(_date_roles),
+                    ),
+                )
                 _trace_finish(
                     trace_id,
                     status="success",
@@ -4149,6 +4163,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _date_context_resolution["reason"] = (
                     "default date of the uniquely connected fact"
                 )
+            # Every outcome, not just a resolved one. "none", "ambiguous" and
+            # the fail-open exception below are the three a dispute is actually
+            # about, and each used to leave nothing an operator could retrieve.
+            _trace_step(
+                trace_id,
+                "date_context_resolution",
+                output_summary=date_resolution_trace(
+                    _date_context_resolution,
+                    fact_scope=_date_fact_scope,
+                    metric_names=[
+                        m.get("name") for m in _matched_metrics if m.get("name")
+                    ],
+                    date_binding_count=len(_date_bindings),
+                    date_role_count=len(_date_roles),
+                ),
+            )
             if (
                 _date_context_resolution.get("status") == "ambiguous"
                 and can_request_clarification(event, "metric_date_context")
@@ -4506,17 +4536,6 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             )
                     except Exception as _date_cov_exc:
                         log.debug("Contextual date table coverage skipped: %s", _date_cov_exc)
-                    _trace_step(
-                        trace_id,
-                        "date_context_resolution",
-                        output_summary={
-                            "metric": _binding.get("metric_name") or "",
-                            "context": _binding.get("context_name") or "",
-                            "date_role": _binding.get("date_role") or "",
-                            "fact_column": _binding.get("fact_column") or "",
-                            "source": _binding.get("resolution_source") or "",
-                        },
-                    )
                     log.info(
                         "Date context resolved for %s: metric=%s context=%s role=%s column=%s",
                         account_id,
@@ -4527,6 +4546,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     )
         except Exception as _date_ctx_exc:
             log.warning("Contextual date resolution skipped for %s: %s", account_id, _date_ctx_exc)
+            # A date that failed to resolve for a reason nobody has seen looked
+            # identical, in the trace, to a question with no dates in it.
+            _trace_step(
+                trace_id,
+                "date_context_resolution",
+                output_summary=date_resolution_trace(
+                    {"status": "error", "reason": str(_date_ctx_exc)[:200]}),
+            )
 
     # Fetch KB docs for every table referenced by the selected metric formulas.
     # This is deliberately after metric scoping; otherwise a generic metric from

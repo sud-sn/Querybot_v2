@@ -1389,6 +1389,85 @@ _CALENDAR_PERIOD_PATTERNS = (
 )
 
 
+def date_resolution_trace(
+    resolution: dict | None,
+    *,
+    fact_scope: set | None = None,
+    metric_names: list | None = None,
+    date_binding_count: int = 0,
+    date_role_count: int = 0,
+) -> dict:
+    """The operator-retrievable record of how one question's date was decided.
+
+    The answer trace recorded a date step only where a date was successfully
+    bound, and it sat inside the selected branch. So the three outcomes a
+    dispute is actually about left nothing behind:
+
+      * "none" -- no governed date, the question answered by free-form SQL with
+        whatever column the model chose. Indistinguishable in the trace from a
+        question that was never about a date at all.
+      * "ambiguous" -- the reader was asked. Which dates were offered, and why
+        none could be chosen, was nowhere retrievable.
+      * an exception -- the whole block is wrapped in a fail-open handler, so a
+        date that failed to resolve for a reason nobody has seen looks exactly
+        like a question with no dates in it.
+
+    That is the wrong way round: a resolved date is the case needing least
+    explanation. Every status returns a summary now, the inputs that drove it
+    included, so "why did this answer use that date" can be answered from the
+    trace instead of by re-deriving the resolution by hand.
+    """
+    resolution = resolution or {}
+    status = str(resolution.get("status") or "none")
+    binding = resolution.get("binding") or {}
+    if not binding:
+        bindings = resolution.get("bindings") or []
+        binding = bindings[0] if bindings and isinstance(bindings[0], dict) else {}
+
+    summary = {
+        "status": status,
+        "reason": str(resolution.get("reason") or ""),
+        # The inputs. A "none" outcome is almost always one of these being
+        # empty, and which one says whose afternoon it is: an empty fact scope
+        # is a retrieval problem, no date roles is a modelling problem.
+        "fact_scope": sorted(str(table) for table in (fact_scope or []) if table),
+        "matched_metrics": [str(name) for name in (metric_names or []) if name],
+        "date_bindings_considered": int(date_binding_count or 0),
+        "date_roles_considered": int(date_role_count or 0),
+    }
+    if binding:
+        summary.update({
+            "metric": str(binding.get("metric_name") or ""),
+            "context": str(binding.get("context_name") or ""),
+            "date_role": str(binding.get("date_role") or ""),
+            "fact_table": str(binding.get("fact_table") or ""),
+            "fact_column": str(binding.get("fact_column") or ""),
+            "source": str(binding.get("resolution_source") or ""),
+        })
+    options = [
+        option for option in (resolution.get("options") or [])
+        if isinstance(option, dict)
+    ]
+    if options:
+        # Which dates the reader was actually offered. Without this a
+        # clarification is a dead end in the trace: an operator can see that
+        # one happened and not what it said.
+        summary["offered"] = [
+            {
+                "context": str(option.get("context_name") or ""),
+                "fact_table": str(option.get("fact_table") or ""),
+                "fact_column": str(option.get("fact_column") or ""),
+                "source": str(option.get("resolution_source") or ""),
+            }
+            for option in options[:8]
+        ]
+        summary["offered_count"] = len(options)
+    for key in ("requested_grain", "available_grain"):
+        if resolution.get(key):
+            summary[key] = str(resolution[key])
+    return summary
+
+
 def describe_date_role_evidence(
     account_id: str, binding: dict | None, *, lang: str | None = None,
     scope: str | None = None,
