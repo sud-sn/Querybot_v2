@@ -2720,7 +2720,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 await adapter.send_message(
                     event,
                     f"❓ {clarifying_q}\n\n{option_lines}\n\n"
-                    "_Reply with one of the options above._",
+                    + _t("clar.date.reply_with_option",
+                         lang=(portal_user or {}).get("lang") or "en"),
                 )
             _trace_finish(
                 trace_id,
@@ -3735,7 +3736,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             await adapter.send_message(
                 event,
                 f"❓ {clarifying_q}\n\n{option_lines}\n\n"
-                "_Reply with one of the options above._",
+                + _t("clar.date.reply_with_option",
+                     lang=(portal_user or {}).get("lang") or "en"),
             )
         _trace_finish(
             trace_id,
@@ -4106,11 +4108,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
                 await adapter.send_message(
                     event,
-                    f"I can’t return a trustworthy **{_requested}-level** result from "
-                    f"this source. **{_available_label}** is available only at "
-                    f"**{_available} grain**, so using it would invent finer dates. "
-                    f"Ask for a {_available}-level result, or configure/connect a "
-                    f"source with {_requested}-level history.",
+                    _t("clar.date.grain_unsupported",
+                       lang=(portal_user or {}).get("lang") or "en",
+                       requested=_requested, date=_available_label,
+                       available=_available),
                 )
                 _trace_step(
                     trace_id,
@@ -4316,7 +4317,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     await adapter.send_message(
                         event,
                         f"{_date_question}\n\n{option_lines}\n\n"
-                        "_Reply with one of the options above._",
+                        + _t("clar.date.reply_with_option",
+                             lang=(portal_user or {}).get("lang") or "en"),
                     )
                 _trace_finish(
                     trace_id,
@@ -4373,10 +4375,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     )
                     await adapter.send_message(
                         event,
-                        "I retained your requested time period, but could not "
-                        "safely apply it to the selected business date. No "
-                        "unbounded query was run. Please choose another date "
-                        "context or ask your administrator to review this Date Role.",
+                        _t("clar.date.window_not_applied",
+                           lang=(portal_user or {}).get("lang") or "en"),
                     )
                     _trace_finish(
                         trace_id,
@@ -4410,9 +4410,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         )
                         await adapter.send_message(
                             event,
-                            f"Using **{_thread_date_label}** for this metric in "
-                            "the current thread. Name a different business date "
-                            "at any time to change it.",
+                            _t("clar.date.using_thread_choice",
+                               lang=(portal_user or {}).get("lang") or "en",
+                               date=_thread_date_label),
                         )
                     _inferred_binding = next(
                         (
@@ -4429,22 +4429,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             or _inferred_binding.get("date_role")
                             or "Business date"
                         )
-                        _inferred_table = str(
-                            _inferred_binding.get("fact_table") or ""
-                        ).split(".")[-1]
-                        _inferred_column = str(
-                            _inferred_binding.get("fact_column") or ""
-                        )
+                        # The raw `TABLE.COLUMN` this used to print is gone.
+                        # A business reader cannot check
+                        # `CUS_ORD_IVC_FCT.IVC_DT_DMS_KEY` against anything they
+                        # know, and the label beside it already names the date in
+                        # their own words. Same decision as the answer card's
+                        # provenance block, which stopped naming warehouse
+                        # identifiers for the same reason.
                         _inferred_grain = str(
                             _inferred_binding.get("temporal_grain") or "calendar"
                         )
                         await adapter.send_message(
                             event,
-                            f"Using inferred **{_inferred_label}** from "
-                            f"`{_inferred_table}.{_inferred_column}` at "
-                            f"**{_inferred_grain} grain**. It is a deterministic "
-                            "encoded date on the resolved fact, but it is not an "
-                            "admin-approved Date Role or metric date.",
+                            _t("clar.date.using_inferred",
+                               lang=(portal_user or {}).get("lang") or "en",
+                               date=_inferred_label, grain=_inferred_grain),
                         )
                     _date_graph = _graph_with_exact_date_edges(
                         _full_graph,
@@ -5693,7 +5692,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _save_pending_clarification(question, context, cmeta)
                     send_prompt = getattr(adapter, "send_clarification_prompt", None)
                     if callable(send_prompt):
-                        await send_prompt(event, clarifying_q or "I need a bit more context to answer that.", opts)
+                        await send_prompt(event, clarifying_q or _t(
+                        "clar.need_more_context", lang=(portal_user or {}).get("lang") or "en"), opts)
                     else:
                         # Plain-text fallback: list the options so the user can
                         # reply with one of them. Without this, they see only
@@ -5705,17 +5705,20 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                                 option_lines.append(f"  • {lbl}")
                         options_text = "\n".join(option_lines)
                         await adapter.send_message(event,
-                            f"❓ I need a bit more context to answer that.\n\n"
-                            f"{clarifying_q}\n\n"
-                            f"{options_text}\n\n"
-                            f"_Reply with one of the options above (or type your own)._"
+                            "❓ " + _t("clar.need_more_context",
+                                      lang=(portal_user or {}).get("lang") or "en")
+                            + f"\n\n{clarifying_q}\n\n{options_text}\n\n"
+                            + _t("clar.reply_with_option_or_own",
+                                 lang=(portal_user or {}).get("lang") or "en")
                         )
                 else:
                     _save_pending_clarification(question, context, cmeta)
                     await adapter.send_message(event,
-                        f"❓ I need a bit more context to answer that.\n\n"
-                        f"{clarifying_q}\n\n"
-                        f"_Reply in plain language and I'll continue with your original question._"
+                        "❓ " + _t("clar.need_more_context",
+                                  lang=(portal_user or {}).get("lang") or "en")
+                        + f"\n\n{clarifying_q}\n\n"
+                        + _t("clar.reply_in_plain_language",
+                             lang=(portal_user or {}).get("lang") or "en")
                     )
                 _trace_finish(
                     trace_id,
@@ -7006,19 +7009,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _save_pending_clarification(question, context, cmeta)
                 send_prompt = getattr(adapter, "send_clarification_prompt", None)
                 if callable(send_prompt):
-                    await send_prompt(event, clarifying_q or "I need a bit more context to answer that.", opts)
+                    await send_prompt(event, clarifying_q or _t(
+                        "clar.need_more_context", lang=(portal_user or {}).get("lang") or "en"), opts)
                 else:
                     await adapter.send_message(event,
-                        f"The query ran successfully but returned *no results*.\n\n"
-                        f"❓ {clarifying_q}\n\n"
-                        f"_Reply with one of the listed clarification options and I'll rerun the query._"
+                        _t("clar.no_results_then_question",
+                           lang=(portal_user or {}).get("lang") or "en")
+                        + f"\n\n❓ {clarifying_q}\n\n"
+                        + _t("clar.reply_to_rerun",
+                             lang=(portal_user or {}).get("lang") or "en")
                     )
             else:
                 _save_pending_clarification(question, context, cmeta)
                 await adapter.send_message(event,
-                    f"The query ran successfully but returned *no results*.\n\n"
-                    f"❓ {clarifying_q}\n\n"
-                    f"_Reply in plain language and I'll continue with your original question._"
+                    _t("clar.no_results_then_question",
+                       lang=(portal_user or {}).get("lang") or "en")
+                    + f"\n\n❓ {clarifying_q}\n\n"
+                    + _t("clar.reply_in_plain_language",
+                         lang=(portal_user or {}).get("lang") or "en")
                 )
             _trace_finish(
                 trace_id,

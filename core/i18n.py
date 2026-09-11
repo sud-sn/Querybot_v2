@@ -2146,6 +2146,78 @@ MESSAGES: dict[str, dict[str, str]] = {
     # ── Evidence under a date choice ────────────────────────────────────────
     # The clarification offered a list of names and nothing else, so a reader
     # asking about March could not tell which date actually has March in it.
+    # ── The date path's own messages to the reader ──────────────────────────
+    # Five of these were English literals sent straight to send_message, on a
+    # path whose whole purpose is telling a business reader which business date
+    # their number came from. One of them printed a raw warehouse table.column.
+    "clar.date.grain_unsupported": {
+        "en": ("I can’t return a trustworthy **{requested}-level** result from "
+               "this source. **{date}** is available only at **{available} "
+               "grain**, so using it would invent finer dates. Ask for a "
+               "{available}-level result, or connect a source with "
+               "{requested}-level history."),
+        "fr": ("Je ne peux pas fournir de résultat fiable au niveau "
+               "**{requested}** à partir de cette source. **{date}** n’est "
+               "disponible qu’au niveau **{available}**, et l’utiliser "
+               "inventerait des dates plus fines. Demandez un résultat au "
+               "niveau {available}, ou connectez une source disposant d’un "
+               "historique au niveau {requested}."),
+    },
+    "clar.reply_in_plain_language": {
+        "en": ("_Reply in plain language and I’ll continue with your original "
+               "question._"),
+        "fr": ("_Répondez en langage courant et je poursuivrai votre question "
+               "initiale._"),
+    },
+    "clar.no_results_then_question": {
+        "en": "The query ran successfully but returned *no results*.",
+        "fr": "La requête a abouti mais n’a renvoyé *aucun résultat*.",
+    },
+    "clar.reply_to_rerun": {
+        "en": ("_Reply with one of the listed options and I’ll run the query "
+               "again._"),
+        "fr": ("_Répondez en indiquant l’une des options proposées et "
+               "j’exécuterai à nouveau la requête._"),
+    },
+    "clar.reply_with_option_or_own": {
+        "en": "_Reply with one of the options above, or type your own._",
+        "fr": ("_Répondez en indiquant l’une des options ci-dessus, ou saisissez "
+               "la vôtre._"),
+    },
+    "clar.need_more_context": {
+        "en": "I need a bit more context to answer that.",
+        "fr": "J’ai besoin d’un peu plus de contexte pour répondre.",
+    },
+    "clar.date.reply_with_option": {
+        "en": "_Reply with one of the options above._",
+        "fr": "_Répondez en indiquant l’une des options ci-dessus._",
+    },
+    "clar.date.window_not_applied": {
+        "en": ("I kept the period you asked for, but could not safely apply it "
+               "to the selected business date, so no unbounded query was run. "
+               "Choose another business date, or ask an administrator to review "
+               "this one."),
+        "fr": ("J’ai conservé la période demandée, mais je n’ai pas pu "
+               "l’appliquer de façon sûre à la date métier sélectionnée ; "
+               "aucune requête non bornée n’a été exécutée. Choisissez une "
+               "autre date métier, ou demandez à un administrateur de vérifier "
+               "celle-ci."),
+    },
+    "clar.date.using_thread_choice": {
+        "en": ("Using **{date}** for this measure in this conversation. Name a "
+               "different business date at any time to change it."),
+        "fr": ("J’utilise **{date}** pour cet indicateur dans cette "
+               "conversation. Indiquez une autre date métier à tout moment "
+               "pour la changer."),
+    },
+    "clar.date.using_inferred": {
+        "en": ("Using **{date}** at **{grain}** level. It was read from this "
+               "data rather than approved by an administrator, so it is not a "
+               "governed default."),
+        "fr": ("J’utilise **{date}** au niveau **{grain}**. Elle a été déduite "
+               "de ces données plutôt qu’approuvée par un administrateur : ce "
+               "n’est donc pas une date par défaut gouvernée."),
+    },
     "clar.date.detail.through": {
         "en": "data through {date}",
         "fr": "données jusqu'au {date}",
