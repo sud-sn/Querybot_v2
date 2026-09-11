@@ -823,6 +823,73 @@ def _question_names_comparable_periods(question: str) -> bool:
         return False
 
 
+def _single_candidate_verdict(role: dict) -> tuple[str, str]:
+    """One unapproved date on the fact: can it be used, and as what?
+
+    Returns (resolution_source, reason), or ("", "") to ask the reader.
+
+    This used to admit exactly one shape -- a high-confidence integer encoding
+    -- and the trust ordering that produced was upside down. Executed against
+    the resolver:
+
+        one native DATE column, confidence 98        -> ambiguous, ONE option
+        one TIMESTAMP column, confidence 98          -> ambiguous, ONE option
+        one surrogate FK with a declared join, 99    -> ambiguous, ONE option
+        one integer YYYYMMDD guessed from its NAME   -> selected, silently
+
+    So INVOICE_DT holding 20260315, whose date-ness was inferred from the
+    column's name, was used without asking, while a column the warehouse
+    itself types as DATE interrupted the reader -- with a card that offers a
+    single chip and asks "which date should I use?", which is not a choice.
+
+    The ordering is by how the date-ness is KNOWN:
+
+      * native_date / timestamp -- the warehouse declares the type. That is
+        not an inference at all, so no confidence threshold applies to it.
+      * surrogate_fk with the whole join declared -- the date VALUE is read
+        from a real date column in the dimension; the key is only how it is
+        reached.
+      * an encoded integer -- the weakest, because "this integer is a date"
+        was read off the column's name. It keeps the bar it already had:
+        generated, confidence >= 95, and an inference_source to point at.
+
+    None of these is an approval, and each is disclosed: the first two carry
+    the discovered_date_role provenance ("a business date found on this data,
+    not an approved default") and the third keeps inferred_fallback, which
+    drives its own note to the reader.
+
+    Anything weaker still asks, because then there genuinely is a question:
+    not "which of these dates" but "is this a date at all".
+    """
+    role = role or {}
+    key_type = normalize_date_key_type(role.get("date_key_type"))
+
+    if key_type in {"native_date", "timestamp"}:
+        return ("discovered_date_role",
+                "the only business date on the resolved fact, typed as a date "
+                "by the warehouse")
+
+    if key_type == "surrogate_fk" and all((
+        role.get("dimension_table"),
+        role.get("dimension_key"),
+        role.get("date_value_column"),
+    )):
+        return ("discovered_date_role",
+                "the only business date on the resolved fact, reached by a "
+                "declared join to a date dimension")
+
+    if (
+        str(role.get("status") or "").casefold() == "generated"
+        and int(role.get("confidence") or 0) >= 95
+        and key_type in {"yyyymmdd_integer", "yyyymm_integer"}
+        and role.get("inference_source")
+    ):
+        return ("inferred_encoded_fact_date",
+                "only deterministic encoded date on the resolved fact")
+
+    return ("", "")
+
+
 def resolve_contextual_date_binding(
     question: str,
     *,
@@ -1182,25 +1249,18 @@ def resolve_contextual_date_binding(
                 ),
                 "reason": "only approved date role for the resolved fact",
             }
-        # Deterministic direct integer encodings are safe scoped fallbacks:
-        # the resolved fact owns the field, the physical representation is
-        # known, and there is only one compatible candidate. This is not an
-        # approval and is disclosed as inference in the returned provenance.
+        # One candidate, not approved. Whether it can be used is a question
+        # about EVIDENCE, not about which physical encoding it happens to use.
         if len(discovered) == 1:
-            only = discovered[0]
-            key_type = normalize_date_key_type(only.get("date_key_type"))
-            if (
-                str(only.get("status") or "").casefold() == "generated"
-                and int(only.get("confidence") or 0) >= 95
-                and key_type in {"yyyymmdd_integer", "yyyymm_integer"}
-                and only.get("inference_source")
-            ):
-                binding = _role_as_binding(only, source="inferred_encoded_fact_date")
-                binding["inferred_fallback"] = True
+            source, reason = _single_candidate_verdict(discovered[0])
+            if source:
+                binding = _role_as_binding(discovered[0], source=source)
+                if source == "inferred_encoded_fact_date":
+                    binding["inferred_fallback"] = True
                 return {
                     "status": "selected",
                     "binding": binding,
-                    "reason": "only deterministic encoded date on the resolved fact",
+                    "reason": reason,
                 }
         all_options = [
             _role_as_binding(role, source="discovered_date_role")

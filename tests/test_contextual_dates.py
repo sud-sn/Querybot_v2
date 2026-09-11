@@ -572,8 +572,18 @@ class ContextualDateResolutionTests(unittest.TestCase):
             required_fact_tables={"INVENTORY.FACT_STOCK"},
             remembered_date_role=remembered,
         )
-        self.assertEqual(result["status"], "ambiguous")
-        self.assertEqual(result["options"][0]["fact_column"], "STOCK_DATE_KEY")
+        # The guarantee this test is named for is that the date remembered for
+        # ANOTHER fact is not applied to this one -- so assert that, on
+        # whichever way the resolver settles the Inventory fact's own date.
+        # It used to assert status == "ambiguous", which was incidental: a
+        # single surrogate-key role with its whole join declared is now
+        # selected outright instead of being offered as a list of one, and the
+        # cross-fact guarantee is untouched by that.
+        chosen = result.get("binding") or (result.get("options") or [{}])[0]
+        self.assertEqual(chosen.get("fact_column"), "STOCK_DATE_KEY")
+        self.assertEqual(chosen.get("fact_table"), "INVENTORY.FACT_STOCK")
+        self.assertNotEqual(chosen.get("fact_column"), "ACCOUNTING_DATE_KEY")
+        self.assertNotIn("Accounting", str(chosen.get("context_name") or ""))
 
     def test_explicit_approved_role_overrides_default(self):
         roles = [{

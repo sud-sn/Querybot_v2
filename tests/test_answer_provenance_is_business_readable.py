@@ -223,14 +223,52 @@ class TestEveryResolutionSourceThePipelineCanProduceHasAPhrase:
         )
         assert resolver is not None, "the resolver has been renamed"
 
+        # Every function in the module, so a source decided by a helper and
+        # handed back can be followed into it.
+        functions = {
+            node.name: node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+        def returns_of(name, index=None):
+            """What `name` can return -- element `index` when it returns a
+            tuple. `_single_candidate_verdict` hands the resolver a
+            (source, reason) pair, so without this the scan sees only the
+            local it was unpacked into and reports that it is blind."""
+            function = functions.get(name)
+            if function is None:
+                return []
+            out = []
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Return) or node.value is None:
+                    continue
+                value = node.value
+                if index is not None:
+                    if isinstance(value, (ast.Tuple, ast.List)):
+                        if index < len(value.elts):
+                            out.append(value.elts[index])
+                    continue
+                out.append(value)
+            return out
+
         # Locals the resolver assigns, so `source=explicit_source` resolves to
-        # the strings that variable can hold.
+        # the strings that variable can hold. Plain assignments and tuple
+        # unpacking both, because the source now arrives either way.
         assigned: dict[str, list[ast.expr]] = {}
         for node in ast.walk(resolver):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        assigned.setdefault(target.id, []).append(node.value)
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assigned.setdefault(target.id, []).append(node.value)
+                elif isinstance(target, (ast.Tuple, ast.List)) and \
+                        isinstance(node.value, ast.Call) and \
+                        isinstance(node.value.func, ast.Name):
+                    for position, element in enumerate(target.elts):
+                        if not isinstance(element, ast.Name):
+                            continue
+                        assigned.setdefault(element.id, []).extend(
+                            returns_of(node.value.func.id, position))
 
         unresolved: set[str] = set()
 

@@ -539,9 +539,33 @@ class TestTheBacklogReadsTheFactsOwnDateRoles(ReadinessCase):
         self._metric(base_table=self.FACT)
         self.assertEqual(len(self._date_items()), 1)
 
-    def test_a_generated_role_is_not_an_approved_default(self):
-        """The resolver requires status == approved. A guess does not count."""
-        self._write_model([self._role(status="generated")])
+    def test_a_generated_role_the_runtime_can_use_is_not_a_coverage_gap(self):
+        """One generated role on a column the warehouse types as DATE resolves
+        cleanly (discovered_date_role), so the reader is never interrupted and
+        there is nothing for a coverage backlog to unblock.
+
+        Approving it is still worth doing -- the answer carries "a business
+        date found on this data, not an approved default" -- but that is
+        curation advice, not "this measure cannot answer questions about a
+        period", and the two must not be reported as the same item.
+
+        This test asserted the opposite until the resolver stopped preferring
+        a date guessed from a column NAME over one the warehouse declares.
+        Because the backlog now asks the resolver rather than restating its
+        rule, it followed that change on its own -- which is the property the
+        readiness work was for."""
+        self._write_model([self._role(status="generated",
+                                      date_key_type="native_date")])
+        self._metric(base_table=self.FACT)
+        self.assertEqual(self._date_items(), [])
+
+    def test_a_generated_role_the_runtime_cannot_use_still_is_one(self):
+        """A weak guess -- an integer whose date-ness was read off the column
+        name, below the confidence bar -- still interrupts every period
+        question, so it is still a backlog item."""
+        self._write_model([self._role(status="generated",
+                                      date_key_type="yyyymmdd_integer",
+                                      confidence=40, inference_source="name")])
         self._metric(base_table=self.FACT)
         self.assertEqual(len(self._date_items()), 1)
 
