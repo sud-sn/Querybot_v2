@@ -42,7 +42,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, NamedTuple
 
 log = logging.getLogger("querybot.alert_engine")
 
@@ -98,6 +98,109 @@ def _question_is_relative(question: str) -> bool:
         return False
 
 
+class _OwnerExecution(NamedTuple):
+    """One governed reader, shared by the probe and the alert's own query."""
+    run: Callable          # sql -> GovernedQueryResult
+    scope: str             # row-policy fingerprint the reads ran under
+    context: object        # PolicyContext, for the alert-action check
+    user: dict
+
+
+def _is_access_refusal(exc: Exception) -> bool:
+    """Did the governed executor refuse this read, rather than fail at it?
+
+    execute_governed_query raises PolicyDeniedError for a policy decision and
+    ValueError("<code>: <reason>") when validation rejects the statement --
+    access_denied among those codes. Both mean "this reader may not", which is
+    a different thing from a warehouse that timed out, and deserves a different
+    message and no negative-cache retry story.
+    """
+    try:
+        from core.compliance.governed_query import PolicyDeniedError
+        if isinstance(exc, PolicyDeniedError):
+            return True
+    except Exception:                                          # pragma: no cover
+        pass
+    text = str(exc).lower()
+    return any(code in text for code in
+               ("access_denied", "policy_denied", "unknown_table",
+                "don't have access", "not allowed"))
+
+
+def _owner_execution(alert: dict, db_cfg: dict):
+    """How the alert's OWNER reads the warehouse, or (None, "", None, None).
+
+    An alert belongs to a person. check_alert_now already runs its main query as
+    that person -- execute_governed_query under resolve_context(account, user,
+    channel="alert") with their allowed tables -- so "whose access does a
+    scheduled job use" is a question this product already answered.
+
+    The business-date anchor probe did not use the answer. It went through
+    core.schema.run_query, which injects no row policy, so on a workspace that
+    restricts rows the probe read the WHOLE fact and the alert's own query then
+    read one slice of it. An owner restricted to REGION_CD = 'EAST' had their
+    window re-anchored on the newest date in every region; when EAST loads
+    later than the rest, that window ends past the end of the data they can see,
+    and the check compares against a period that is empty for them.
+
+    ``scope`` is the row-policy fingerprint the probe ran under, and it has to
+    travel with the value: core/date_anchor.py keys its cache and its durable
+    row on it, so returning an owner-filtered anchor under the empty scope would
+    hand one reader's date to the whole workspace -- the defect the scope was
+    added to prevent, reintroduced from the scheduler.
+
+    Returns (None, "") for an alert with no owner recorded. Those predate owner
+    tracking, and check_alert_now runs their main query ungoverned too; the
+    probe matching it is what keeps the window and the query consistent.
+    """
+    account_id = str(alert.get("account_id") or "")
+    user_id = alert.get("user_id")
+    if not account_id or not user_id:
+        return _OwnerExecution(None, "", None, None)
+
+    import store
+
+    from core.compliance.governed_query import execute_governed_query
+    from core.compliance.policy_engine import resolve_context
+    from core.compliance.sql_guard import row_policy_scope
+    from core.schema import load_known_tables, load_schema_columns
+
+    user = store.get_user(int(user_id))
+    if not user:
+        # The owner is gone. Do NOT quietly fall back to an ungoverned read:
+        # that is precisely the case where nobody's access applies.
+        raise PermissionError("alert_user_missing")
+
+    state = store.get_client_state(account_id) or {}
+    context = resolve_context(
+        account_id, user, action="query_execution", channel="alert",
+        purpose_id=alert.get("purpose_id", ""),
+    )
+    credentials = db_cfg.get("credentials") or db_cfg
+    db_type = db_cfg.get("db_type", alert.get("db_type", "azure_sql"))
+    known_tables = load_known_tables(state.get("schema_dir", ""))
+    table_columns = load_schema_columns(state.get("schema_dir", ""))
+    allowed_tables = store.get_allowed_tables(user)
+
+    def run(sql: str):
+        return execute_governed_query(
+            credentials, db_type, sql,
+            context=context,
+            known_tables=known_tables,
+            table_columns=table_columns,
+            allowed_tables=allowed_tables,
+        )
+
+    policy = alert.get("anchor_policy") or {}
+    tables = [
+        policy.get("fact_table") or policy.get("anchor_table"),
+        policy.get("anchor_table"),
+        policy.get("date_table"),
+    ]
+    scope = row_policy_scope(context, [name for name in tables if name])
+    return _OwnerExecution(run, scope, context, user)
+
+
 def _refresh_relative_window(alert: dict, db_cfg: dict) -> tuple[str, str]:
     """Re-anchor the alert's SQL to the newest business date before it runs.
 
@@ -125,30 +228,50 @@ def _refresh_relative_window(alert: dict, db_cfg: dict) -> tuple[str, str]:
     from core.date_anchor import resolve_business_anchor
     from core.schema import run_query
 
-    def _probe(probe_sql: str):
-        return run_query(
-            db_cfg.get("credentials") or db_cfg,
-            db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
-            probe_sql,
+    try:
+        _owner = _owner_execution(alert, db_cfg or {})
+    except PermissionError:
+        log.warning(
+            "alert_engine: alert %s names a user who no longer exists — not "
+            "re-anchoring it, and not reading the fact without an owner",
+            alert.get("id"),
         )
+        return sql, "alert_user_missing"
+
+    if _owner.run is None:
+        # No owner recorded. check_alert_now runs this alert's main query
+        # ungoverned too, so the probe matches it -- an unfiltered read, which
+        # is the empty scope. Not left to default: any narrower value here would
+        # file an unfiltered date under a restricted reader's key.
+        def _probe(probe_sql: str):
+            return run_query(
+                db_cfg.get("credentials") or db_cfg,
+                db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
+                probe_sql,
+            )
+    else:
+        # A policy refusal is not a flaky probe. If the owner may not read the
+        # fact, say that: the generic "anchor_unavailable" sent an admin looking
+        # at the warehouse and the date dimension for a problem that is a table
+        # grant. (Their main query is refused by the same rules a moment later,
+        # so no working alert is stopped by noticing it here.)
+        _denied: list[str] = []
+
+        def _probe(probe_sql: str):
+            try:
+                return _owner.run(probe_sql).rows
+            except Exception as exc:
+                if _is_access_refusal(exc):
+                    _denied.append(str(exc)[:160])
+                raise
 
     try:
-        # scope="" deliberately. This probe runs through core.schema.run_query,
-        # not execute_governed_query, so no row policy is injected and it reads
-        # the whole fact -- which is exactly what an unrestricted reader's probe
-        # sees, and "" is that bucket. It must NOT be left to default silently:
-        # any other value would fork the cache for no reason, and any narrower
-        # one would let this unfiltered value be served to a restricted reader.
-        #
-        # That this scheduled path reads the whole fact regardless of the alert
-        # owner's own access is a separate governance question, and a real one.
-        # It is not made better or worse by the cache key.
         resolved = resolve_business_anchor(
             str(alert.get("account_id") or ""),
             policy,
             db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
             _probe,
-            "",
+            _owner.scope,
         )
     except Exception as exc:
         log.warning(
@@ -156,6 +279,14 @@ def _refresh_relative_window(alert: dict, db_cfg: dict) -> tuple[str, str]:
             "against a window frozen on %s", alert.get("id"), exc, stored_value,
         )
         return sql, "anchor_probe_failed"
+
+    if _owner.run is not None and _denied:
+        log.warning(
+            "alert_engine: alert %s could not re-anchor because its owner may "
+            "not read %s — %s", alert.get("id"),
+            policy.get("fact_table") or policy.get("anchor_table"), _denied[0],
+        )
+        return sql, "alert_owner_lacks_access"
 
     current = str((resolved or {}).get("value") or "")
     if not current:
@@ -336,32 +467,22 @@ def check_alert_now(alert_id: str, db_cfg: dict, lang: str | None = None) -> dic
 
     # ── Execute SQL ───────────────────────────────────────────────────────────
     try:
-        if alert.get("account_id") and alert.get("user_id"):
-            import store
-            from core.compliance.governed_query import execute_governed_query
-            from core.compliance.policy_engine import evaluate, resolve_context
-            from core.schema import load_known_tables, load_schema_columns
+        # The SAME construction the anchor probe used a moment ago. They were
+        # built separately and drifted: this one was governed and the probe was
+        # not, so the window was anchored on data the owner cannot see and then
+        # queried under their row policy.
+        try:
+            owner = _owner_execution(alert, db_cfg or {})
+        except PermissionError:
+            return {"ok": False, "reason": "alert_user_missing", "alert_id": alert_id}
 
-            user = store.get_user(int(alert["user_id"]))
-            if not user:
-                return {"ok": False, "reason": "alert_user_missing", "alert_id": alert_id}
-            state = store.get_client_state(alert["account_id"])
-            context = resolve_context(
-                alert["account_id"], user, action="query_execution",
-                channel="alert", purpose_id=alert.get("purpose_id", ""),
-            )
-            governed = execute_governed_query(
-                db_cfg.get("credentials") or db_cfg,
-                db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
-                sql_to_run,
-                context=context,
-                known_tables=load_known_tables(state.get("schema_dir", "")),
-                table_columns=load_schema_columns(state.get("schema_dir", "")),
-                allowed_tables=store.get_allowed_tables(user),
-            )
+        if owner.run is not None:
+            from core.compliance.policy_engine import evaluate, resolve_context
+
+            governed = owner.run(sql_to_run)
             alert_context = resolve_context(
-                alert["account_id"], user, action="alert", channel="alert",
-                purpose_id=context.purpose_id,
+                alert["account_id"], owner.user, action="alert", channel="alert",
+                purpose_id=owner.context.purpose_id,
             )
             alert_decision = evaluate(alert_context, governed.analysis.resources)
             if not alert_decision.effective_allowed:
