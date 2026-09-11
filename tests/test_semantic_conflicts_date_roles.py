@@ -42,6 +42,22 @@ _MODEL_TWO_DATES = {
     }],
     "date_roles": [],
 }
+# The same two dates, with one settled as the approved default. A fact in that
+# state is genuinely finished: the resolver binds it without asking, and
+# fact_date_roles_without_default correctly says nothing.
+_MODEL_TWO_DATES_SETTLED = {
+    "tables": [{
+        "fqn": "ERP.FACT_SALES", "qualified_name": "ERP.FACT_SALES",
+        "fields": [],
+        "date_roles": [
+            {"fact_table": "ERP.FACT_SALES", "fact_column": "ORDER_DT_DMS_KEY",
+             "name": "Order Date", "status": "approved", "is_default": 1},
+            {"fact_table": "ERP.FACT_SALES", "fact_column": "SHIP_DT_DMS_KEY",
+             "name": "Ship Date", "status": "approved"},
+        ],
+    }],
+    "date_roles": [],
+}
 _MODEL_ONE_DATE = {
     "tables": [{
         "fqn": "ERP.FACT_SALES", "qualified_name": "ERP.FACT_SALES",
@@ -64,6 +80,22 @@ def _compile(*, model=None, metrics=None, date_contexts=None, account_id="acct-d
         return compile_contract(account_id, "C:/tmp/dr-unit-kb")
 
 
+def _binding_conflicts(contract):
+    """Only the findings these tests are about.
+
+    detect_ambiguous_date_roles reports several codes. _MODEL_TWO_DATES is a
+    fact with two candidate dates and no default, which legitimately also trips
+    fact_date_roles_without_default -- a table-level finding with its own
+    remedy, covered by tests/test_model_health_sees_the_undecided_date.py.
+    These assertions used to pin the WHOLE list, so every legitimate addition
+    to the detector broke them while saying nothing about the metric-binding
+    logic they are named for.
+    """
+    return [c for c in detect_ambiguous_date_roles(contract)
+            if c["code"] in {"missing_date_role_binding",
+                             "multiple_default_date_roles"}]
+
+
 class MultipleDefaultsDetectorTests(unittest.TestCase):
     def test_two_defaults_is_an_error(self):
         contract = _compile(
@@ -74,7 +106,7 @@ class MultipleDefaultsDetectorTests(unittest.TestCase):
                 {"metric_id": 1, "context_name": "B", "is_default": 1, "metric_name": "Revenue"},
             ],
         )
-        conflicts = detect_ambiguous_date_roles(contract)
+        conflicts = _binding_conflicts(contract)
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["code"], "multiple_default_date_roles")
         self.assertEqual(conflicts[0]["severity"], "ERROR")
@@ -89,7 +121,7 @@ class MultipleDefaultsDetectorTests(unittest.TestCase):
                 {"metric_id": 1, "context_name": "B", "is_default": 0, "metric_name": "Revenue"},
             ],
         )
-        self.assertEqual(detect_ambiguous_date_roles(contract), [])
+        self.assertEqual(_binding_conflicts(contract), [])
 
     def test_conflict_key_order_independent_across_compiles(self):
         c1 = _compile(
@@ -119,7 +151,7 @@ class MissingBindingDetectorTests(unittest.TestCase):
             model=_MODEL_TWO_DATES,
             metrics=[{"id": 2, "name": "Shipped Qty", "base_table": "ERP.FACT_SALES"}],
         )
-        conflicts = detect_ambiguous_date_roles(contract)
+        conflicts = _binding_conflicts(contract)
         self.assertEqual(len(conflicts), 1)
         self.assertEqual(conflicts[0]["code"], "missing_date_role_binding")
         self.assertEqual(conflicts[0]["severity"], "WARNING")
@@ -131,14 +163,14 @@ class MissingBindingDetectorTests(unittest.TestCase):
             model=_MODEL_TWO_DATES,
             metrics=[{"id": 2, "name": "Shipped Qty", "base_table": "FACT_SALES"}],
         )
-        self.assertEqual(len(detect_ambiguous_date_roles(contract)), 1)
+        self.assertEqual(len(_binding_conflicts(contract)), 1)
 
     def test_single_candidate_date_is_not_ambiguous(self):
         contract = _compile(
             model=_MODEL_ONE_DATE,
             metrics=[{"id": 2, "name": "Shipped Qty", "base_table": "ERP.FACT_SALES"}],
         )
-        self.assertEqual(detect_ambiguous_date_roles(contract), [])
+        self.assertEqual(_binding_conflicts(contract), [])
 
     def test_metric_with_a_binding_is_not_flagged_even_if_unbound_defaults_check_would_pass(self):
         contract = _compile(
@@ -148,18 +180,18 @@ class MissingBindingDetectorTests(unittest.TestCase):
                 {"metric_id": 2, "context_name": "Only", "is_default": 1, "metric_name": "Shipped Qty"},
             ],
         )
-        self.assertEqual(detect_ambiguous_date_roles(contract), [])
+        self.assertEqual(_binding_conflicts(contract), [])
 
     def test_metric_with_no_base_table_is_skipped_not_guessed(self):
         contract = _compile(model=_MODEL_TWO_DATES, metrics=[{"id": 2, "name": "No table"}])
-        self.assertEqual(detect_ambiguous_date_roles(contract), [])
+        self.assertEqual(_binding_conflicts(contract), [])
 
     def test_base_table_that_matches_nothing_is_skipped(self):
         contract = _compile(
             model=_MODEL_TWO_DATES,
             metrics=[{"id": 2, "name": "X", "base_table": "SOME_OTHER_SCHEMA.UNRELATED_TABLE"}],
         )
-        self.assertEqual(detect_ambiguous_date_roles(contract), [])
+        self.assertEqual(_binding_conflicts(contract), [])
 
 
 class DetectorIsolationTests(unittest.TestCase):
@@ -174,8 +206,9 @@ class DetectorIsolationTests(unittest.TestCase):
             )
             # Must not raise, and the surviving detector's finding must still land.
             conflicts = run_all_detectors(contract)
-        self.assertEqual(len(conflicts), 1)
-        self.assertEqual(conflicts[0]["code"], "missing_date_role_binding")
+        binding = [c for c in conflicts if c["code"] == "missing_date_role_binding"]
+        self.assertEqual(len(binding), 1)
+        self.assertEqual(binding[0]["severity"], "WARNING")
 
 
 class GovernedCompileEndToEndTests(unittest.TestCase):
@@ -215,10 +248,11 @@ class GovernedCompileEndToEndTests(unittest.TestCase):
         store.update_client_state(account_id, "READY", {"kb_dir": str(kb_dir)})
         return account_id, kb_dir
 
-    def _governed_compile(self, account_id, *, metrics, date_contexts=None):
+    def _governed_compile(self, account_id, *, metrics, date_contexts=None,
+                          model=_MODEL_TWO_DATES):
         from core.semantic_contract import governed_recompile_contract
 
-        with patch("core.semantic_model.load_semantic_model", return_value=_MODEL_TWO_DATES), \
+        with patch("core.semantic_model.load_semantic_model", return_value=model), \
              patch("store.list_metrics", return_value=metrics), \
              patch("store.list_metric_date_contexts", return_value=date_contexts or []), \
              patch("store.get_full_graph", return_value={}), \
@@ -264,9 +298,20 @@ class GovernedCompileEndToEndTests(unittest.TestCase):
         self.assertGreaterEqual(summary["counts"]["errors"], 1)
 
     def test_clean_metric_compiles_with_no_new_conflicts(self):
+        """Clean now means clean on both levels.
+
+        This used to run against _MODEL_TWO_DATES -- a fact with two candidate
+        dates and NEITHER marked as the default. The metric was clean; the fact
+        it sat on was the state that makes the resolver ask every reader, every
+        time. Nothing reported that, which is why the fixture read as clean, and
+        fact_date_roles_without_default now does. Settling the fixture keeps
+        this assertion at "no conflicts at all" rather than weakening it to
+        "none of the conflicts I happen to be thinking about".
+        """
         account_id, _ = self._account("clean")
         result = self._governed_compile(
             account_id,
+            model=_MODEL_TWO_DATES_SETTLED,
             metrics=[{"id": 1, "name": "Revenue", "base_table": "ERP.FACT_SALES"}],
             date_contexts=[
                 {"metric_id": 1, "context_name": "Only", "is_default": 1, "metric_name": "Revenue"},
@@ -274,6 +319,21 @@ class GovernedCompileEndToEndTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "published")
         self.assertEqual(result["conflicts"], [])
+
+    def test_the_unsettled_fact_is_what_used_to_read_as_clean(self):
+        """The same compile on the unsettled model, so the difference between
+        the two fixtures is asserted rather than assumed."""
+        account_id, _ = self._account("unsettled")
+        result = self._governed_compile(
+            account_id,
+            metrics=[{"id": 1, "name": "Revenue", "base_table": "ERP.FACT_SALES"}],
+            date_contexts=[
+                {"metric_id": 1, "context_name": "Only", "is_default": 1, "metric_name": "Revenue"},
+            ],
+        )
+        self.assertEqual(
+            [c["code"] for c in result["conflicts"]],
+            ["fact_date_roles_without_default"])
 
 
 if __name__ == "__main__":

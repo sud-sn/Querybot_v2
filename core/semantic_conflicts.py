@@ -194,6 +194,143 @@ def detect_ambiguous_date_roles(contract: dict[str, Any]) -> list[dict[str, Any]
             ],
         })
 
+    # ── Check 3: the metric's Default time column does nothing ──────────
+    # core.contextual_dates._metric_default_time_role_bindings turns the
+    # setting into a physical binding ONLY when an APPROVED, complete Date Role
+    # exists on that same column, and that strictness is right: a column name
+    # matching an unreviewed discovery candidate must not become governed
+    # merely because somebody picked it on a metric form.
+    #
+    # But nothing told the admin. They set "Default time column = INVOICE_DT",
+    # saved, saw a success message, and the setting had no effect whatsoever --
+    # silently, with no way to tell it apart from a setting that worked.
+    for mid, metric in metrics_by_id.items():
+        column = str(metric.get("default_time_column") or "").strip().strip("[]`")
+        if not column:
+            continue
+        column = column.upper().split(".")[-1]
+        metric_cid = metric_ids.get(mid)
+        base_table = str(metric.get("base_table") or "").strip()
+        if not metric_cid or not base_table:
+            continue
+        table = None
+        for variant in _table_fqn_variants(base_table):
+            if variant in table_lookup:
+                table = table_lookup[variant]
+                break
+        if table is None:
+            continue
+        on_column = [
+            role for role in (table.get("date_roles") or [])
+            if isinstance(role, dict)
+            and str(role.get("fact_column") or "").strip().upper().split(".")[-1]
+            == column
+        ]
+        approved = [
+            role for role in on_column
+            if str(role.get("status") or "").casefold() == "approved"
+        ]
+        if approved:
+            continue
+        metric_name = str(metric.get("name") or mid)
+        conflicts.append({
+            "conflict_key": conflict_key(
+                "metric_default_time_column_not_approved", metric_cid, column),
+            "code": "metric_default_time_column_not_approved",
+            "severity": "WARNING",
+            "object_type": "metric",
+            "object_id": metric_cid,
+            "schema_name": "",
+            "table_name": str(table.get("qualified_name")
+                              or table.get("fqn") or base_table),
+            "origin": "date_governance",
+            "message": (
+                f'Metric "{metric_name}" names {column} as its default time '
+                "column, but that column has no approved Date Role — so the "
+                "setting has no effect and questions about a period are "
+                + ("steered by a date role nobody approved."
+                   if on_column else
+                   "answered with no governed date at all.")
+            ),
+            "evidence": {
+                "metric_id": mid, "default_time_column": column,
+                "candidate_statuses": sorted({
+                    str(role.get("status") or "") for role in on_column
+                }),
+            },
+            "suggestions": [
+                f"Approve the Date Role for {column} on the Date Roles page — "
+                "that is what makes the metric setting take effect.",
+            ],
+        })
+
+    # ── Check 4: a fact carries business dates and none is the default ──
+    # The state resolve_contextual_date_binding calls "ambiguous": it cannot
+    # choose, so it asks the reader -- every reader, every time, because the
+    # answer is remembered for the thread and not for the model.
+    #
+    # Reported nowhere. core.semantic_model._date_role_coverage returns
+    # coverage_pct 100 for a fact with four approved roles and no default, which
+    # is what the Date Roles page prints, and core.kb_quality has an item only
+    # for ABSENCE. Presence without a decision is a different afternoon with a
+    # different remedy -- one click, on a page that currently says it is done.
+    for table in (contract.get("model") or {}).get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        date_roles = [
+            role for role in (table.get("date_roles") or [])
+            if isinstance(role, dict)
+        ]
+        if len(date_roles) < 2:
+            continue  # nothing to choose between; a single role is settled
+        settled = [
+            role for role in date_roles
+            if str(role.get("status") or "").casefold() == "approved"
+            and role.get("is_default")
+        ]
+        if len(settled) == 1:
+            continue
+        table_fqn = str(table.get("qualified_name") or table.get("fqn") or "")
+        table_cid = str(table.get("canonical_id") or "") or table_fqn
+        if not table_fqn:
+            continue
+        labels = [
+            str(role.get("name") or role.get("business_role")
+                or role.get("fact_column") or "")
+            for role in date_roles
+        ]
+        many = len(settled) > 1
+        conflicts.append({
+            "conflict_key": conflict_key("fact_date_roles_without_default", table_cid),
+            "code": "fact_date_roles_without_default",
+            "severity": "WARNING",
+            "object_type": "table",
+            "object_id": table_cid,
+            "schema_name": str(table.get("schema_name") or ""),
+            "table_name": table_fqn,
+            "origin": "date_governance",
+            "message": (
+                f"{table_fqn} has {len(date_roles)} candidate business dates "
+                f"({', '.join(label for label in labels if label)}) and "
+                + (f"{len(settled)} of them are marked default"
+                   if many else "none is marked as the default")
+                + " — every question about a period is answered with a question "
+                  "instead of a number."
+            ),
+            "evidence": {
+                "candidate_date_roles": [
+                    role.get("canonical_id") for role in date_roles
+                ],
+                "default_count": len(settled),
+            },
+            "suggestions": [
+                ("Leave exactly one of these marked as the default on the Date "
+                 "Roles page." if many else
+                 "Mark one of these as the default on the Date Roles page — one "
+                 "click clears every period question on this table at once."),
+            ],
+        })
+
     return conflicts
 
 
