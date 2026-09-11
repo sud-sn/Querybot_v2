@@ -2336,6 +2336,15 @@ MESSAGES: dict[str, dict[str, str]] = {
     "date_role.creation_date": {"en": "Creation Date", "fr": "Date de création"},
     "date_role.registration_date": {"en": "Registration Date", "fr": "Date d'enregistrement"},
     "date_role.modified_date": {"en": "Last Modified Date", "fr": "Date de dernière modification"},
+    # Healthcare, claims and pharmacy. French uses the terms a Québec payer or
+    # pharmacy writes: délivrance is dispensing, sortie is discharge from
+    # hospital, réclamation is the claim.
+    "date_role.service_date": {"en": "Service Date", "fr": "Date de service"},
+    "date_role.dispense_date": {"en": "Dispense Date", "fr": "Date de délivrance"},
+    "date_role.admission_date": {"en": "Admission Date", "fr": "Date d'admission"},
+    "date_role.discharge_date": {"en": "Discharge Date", "fr": "Date de sortie"},
+    "date_role.claim_date": {"en": "Claim Date", "fr": "Date de réclamation"},
+    "date_role.prescription_date": {"en": "Prescription Date", "fr": "Date de prescription"},
 
     "coverage.gap.no_date_role": {
         "en": "No business date is bound to this metric, so it cannot answer questions about a period. Add a date role.",

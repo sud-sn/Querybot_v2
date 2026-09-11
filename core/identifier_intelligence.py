@@ -427,15 +427,31 @@ def detect_naming_profile(column_names: Iterable[str], table_names: Iterable[str
     recommendations.sort(key=lambda item: (-item["score"], item["pack_id"]))
     recommendations = [item for item in recommendations if item["score"] > 0]
 
+    # Auto-apply is decided among the packs that COULD be auto-applied, not by
+    # taking the top of the whole list and then testing whether it qualifies.
+    #
+    # unique_evidence counts column_dict, table_dict and record_prefix hits --
+    # evidence about how this warehouse SPELLS things. An industry pack carries
+    # none of that on purpose (nothing in a column name says the company runs
+    # hospitals), so its unique_evidence is 0 and it can never be applied
+    # automatically. But it can still SCORE, through date_role_patterns, and the
+    # old shape read recommendations[0] first: an industry pack that out-scored
+    # the ERP pack became `top`, failed the unique_evidence gate, and left the
+    # warehouse with NO pack applied at all. The ERP pack it displaced was never
+    # even considered. That was invisible only because the two industry packs
+    # shipped so far score exactly zero on every warehouse; healthcare's date
+    # patterns are the first industry signal that scores.
+    #
+    # The margin is still a margin between genuine alternatives. A pack that
+    # cannot be applied is not an alternative reading of the same evidence, so it
+    # does not narrow the gap -- two ERP packs disagreeing about the same columns
+    # still fall through to no decision, which is the case the margin is for.
+    eligible = [item for item in recommendations if item["unique_evidence"] >= 4]
     auto_applied: list[str] = []
-    if recommendations:
-        top = recommendations[0]
-        runner_up = recommendations[1]["confidence"] if len(recommendations) > 1 else 0.0
-        if (
-            top["confidence"] >= 82.0
-            and top["unique_evidence"] >= 4
-            and top["confidence"] - runner_up >= 10.0
-        ):
+    if eligible:
+        top = eligible[0]
+        runner_up = eligible[1]["confidence"] if len(eligible) > 1 else 0.0
+        if top["confidence"] >= 82.0 and top["confidence"] - runner_up >= 10.0:
             auto_applied.append(top["pack_id"])
 
     from core.vocab_packs import _clone_builtin, _merge_pack

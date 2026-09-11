@@ -96,6 +96,27 @@ class TestThePacksExist(unittest.TestCase):
             self.assertNotIn("record_prefixes", pack, pack_id)
             self.assertNotIn("date_role_patterns", pack, pack_id)
 
+    def test_the_healthcare_pack_is_the_documented_exception(self):
+        """These two packs teach only spellings, so they score nothing at all.
+        packs/healthcare.json carries date_role_patterns -- it has to, because
+        SERVICE_DATE and DISCHARGE_DATE are the whole reason it exists -- and
+        those DO add to a pack's detection score.
+
+        What must hold is not "an industry pack scores zero" but the property
+        that rule was protecting: an industry pack can never be auto-applied,
+        and must never stop an ERP pack from being. The second half of that was
+        NOT true when this file was written -- the auto-apply decision read the
+        top of the ranking before testing eligibility -- and is tested in
+        tests/test_the_healthcare_pack_reads_clinical_dates.py, which owns that
+        seam now.
+        """
+        pack = load_pack("healthcare")
+        self.assertTrue(pack["date_role_patterns"])
+        self.assertNotIn("column_dict", pack)
+        self.assertNotIn("table_dict", pack)
+        profile = detect_naming_profile(M3_COLUMNS, M3_TABLES)
+        self.assertEqual(profile.get("auto_applied_packs"), ["infor_m3"])
+
 
 class TestTheyNeverCompeteWithTheErpPack(unittest.TestCase):
     """The load-bearing property, checked by running the detector rather than

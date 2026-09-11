@@ -32,7 +32,8 @@ _ERP_PACK_IDS = {
     "infor_m3", "generic_star_schema", "sap", "oracle_ebs",
     "dynamics", "netsuite", "jde",
 }
-_INDUSTRY_PACK_IDS = {"wholesale_distribution", "construction_products"}
+_INDUSTRY_PACK_IDS = {"wholesale_distribution", "construction_products",
+                      "healthcare"}
 _ALL_PACK_IDS = _ERP_PACK_IDS | _INDUSTRY_PACK_IDS
 
 

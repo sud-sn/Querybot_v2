@@ -61,6 +61,35 @@ DATE_ROLES: tuple[DateRole, ...] = (
     DateRole("creation_date", "Creation Date", ("creation date", "created date", "line creation date", "created month"), 68),
     DateRole("registration_date", "Registration Date", ("registration date", "created date", "entry date", "created month"), 65),
     DateRole("modified_date", "Last Modified Date", ("last modified date", "updated date", "last updated date"), 55),
+
+    # ── Healthcare, claims and pharmacy ───────────────────────────────────
+    # Grouped at the end rather than interleaved by priority, because they share
+    # one property none of the roles above has: NO builtin _COLUMN_PATTERNS
+    # entry. The spellings live only in packs/healthcare.json.
+    #
+    # That is the point of them, not an omission. SERVICE_DATE is a field-service
+    # visit in distribution; DISCHARGE_DATE is effluent in utilities and a
+    # mortgage discharge in lending; ADMISSION_DATE is a university or a turnstile
+    # as readily as a hospital. Reading any of those as a governed clinical date
+    # by default would produce exactly what the builtin set exists to avoid -- a
+    # filter that is confident, disclosed, and about the wrong event. A pack is
+    # how a tenant says "we are a hospital"; a column name is not consent.
+    #
+    # The KEYS have to live here even so, because vocab_packs validates every
+    # pack pattern against this tuple and skips any role it cannot find. These
+    # six are the business dates a claims, encounter or pharmacy question can
+    # actually mean, and each is one a revenue-cycle answer turns on: a claim for
+    # a 1 Jan service can be submitted on the 15th and paid in February, and
+    # "January revenue" is a different number under each of the three.
+    #
+    # The tuple's order affects nothing -- only _COLUMN_PATTERNS is ordered, and
+    # every other consumer reads DATE_ROLES as a mapping or a set.
+    DateRole("service_date", "Service Date", ("service date", "date of service", "encounter date", "visit date", "treatment date"), 93),
+    DateRole("dispense_date", "Dispense Date", ("dispense date", "fill date", "date dispensed", "date filled", "prescription fill date"), 91),
+    DateRole("admission_date", "Admission Date", ("admission date", "admit date", "date admitted"), 89),
+    DateRole("discharge_date", "Discharge Date", ("discharge date", "date discharged", "discharged date"), 85),
+    DateRole("claim_date", "Claim Date", ("claim date", "claim submission date", "claim received date", "date submitted"), 83),
+    DateRole("prescription_date", "Prescription Date", ("prescription date", "prescribed date", "date written", "written date"), 81),
 )
 
 _ROLE_BY_KEY = {role.key: role for role in DATE_ROLES}
@@ -557,6 +586,12 @@ _EVENT_DATE_VARIANTS: dict[str, tuple[str, ...]] = {
     "creation_date": ("created date", "date created", "when created"),
     "registration_date": ("registered date", "when registered"),
     "modified_date": ("updated date", "last updated date", "when updated"),
+    "service_date": ("date of service", "when seen", "when treated", "serviced date"),
+    "dispense_date": ("date dispensed", "date filled", "when dispensed", "when filled"),
+    "admission_date": ("date admitted", "when admitted", "admitted date"),
+    "discharge_date": ("date discharged", "when discharged"),
+    "claim_date": ("date claimed", "when submitted", "claimed date"),
+    "prescription_date": ("date prescribed", "when prescribed", "prescribed date"),
 }
 
 

@@ -1,0 +1,191 @@
+{
+  "pack_id": "healthcare",
+  "erp_name": "Healthcare, Claims and Pharmacy",
+  "pack_kind": "industry",
+  "version": 1,
+  "status": "complete",
+  "description": "Clinical, claims and pharmacy vocabulary for providers, payers and PBMs. Teaches the warehouse's SPELLINGS (DOS, SVC, ADM, DSCH, RX, NDC, DRG, LOS, IP/OP) and the six business dates a revenue-cycle question turns on — service, dispense, admission, discharge, claim and prescription — none of which the builtin English vocabulary reads, because SERVICE_DATE is a field-service visit in distribution and DISCHARGE_DATE is effluent in utilities. Carries no table or column dictionary, so it never competes with the ERP pack your database's naming detects — select it alongside that pack. Never maps a patient attribute: date of birth, death and enrolment stay unclassified so a period filter cannot land on one.",
+  "date_role_patterns": [
+    {
+      "pattern": "^(SERVICE|SVC|SRVC|DOS|SERVICE_FROM|SVC_FROM|FROM_SERVICE|BEGIN_SERVICE|ENCOUNTER|ENCTR|VISIT|TREATMENT|PROCEDURE|PROC|SURGERY)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "service_date"
+    },
+    {
+      "pattern": "^(SERVICE|SVC|SRVC|ENCOUNTER|ENCTR|VISIT|PROCEDURE|PROC)_DT(_KEY|_ID|_SK|_FK)?$",
+      "role": "service_date"
+    },
+    {
+      "pattern": "^(DOS|SVC_DT|SVC_DATE)$",
+      "role": "service_date"
+    },
+    {
+      "pattern": "^DATE_OF_(SERVICE|SVC|ENCOUNTER|VISIT|TREATMENT|PROCEDURE)(_KEY|_ID|_SK|_FK)?$",
+      "role": "service_date"
+    },
+    {
+      "pattern": "^DATE_OF_(ADMISSION|ADMIT)(_KEY|_ID|_SK|_FK)?$",
+      "role": "admission_date"
+    },
+    {
+      "pattern": "^DATE_OF_(DISCHARGE|DISCH)(_KEY|_ID|_SK|_FK)?$",
+      "role": "discharge_date"
+    },
+    {
+      "pattern": "^(DISPENSE|DISPENSED|DISPENSING|FILL|FILLED|RX_FILL)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "dispense_date"
+    },
+    {
+      "pattern": "^(DISPENSE|DISPENSED|FILL|FILLED|RX_FILL)_DT(_KEY|_ID|_SK|_FK)?$",
+      "role": "dispense_date"
+    },
+    {
+      "pattern": "^(ADMIT|ADMISSION|ADMITTED|ADM|IP_ADMIT|INPATIENT_ADMIT)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "admission_date"
+    },
+    {
+      "pattern": "^(ADMIT|ADMISSION|ADM)_DT(_KEY|_ID|_SK|_FK)?$",
+      "role": "admission_date"
+    },
+    {
+      "pattern": "^(DISCHARGE|DISCHARGED|DSCH|DISCH)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "discharge_date"
+    },
+    {
+      "pattern": "^(DISCHARGE|DSCH|DISCH)_DT(_KEY|_ID|_SK|_FK)?$",
+      "role": "discharge_date"
+    },
+    {
+      "pattern": "^(CLAIM|CLM|CLAIM_SUBMISSION|CLAIM_SUBMIT|SUBMISSION|CLAIM_RECEIVED|CLAIM_RECEIPT|CLAIM_ENTRY)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "claim_date"
+    },
+    {
+      "pattern": "^(CLAIM|CLM)_DT(_KEY|_ID|_SK|_FK)?$",
+      "role": "claim_date"
+    },
+    {
+      "pattern": "^(PRESCRIPTION|PRESCRIBED|PRESCRIBE|WRITTEN|RX_WRITTEN|RX_ORDER|ORDER_WRITTEN)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "prescription_date"
+    },
+    {
+      "pattern": "^(PRESCRIPTION|PRESCRIBED|WRITTEN|RX)_DT(_KEY|_ID|_SK|_FK)?$",
+      "role": "prescription_date"
+    },
+    {
+      "pattern": "^(PAID|ADJUDICATION|ADJUDICATED|REMIT|REMITTANCE|CHECK|EOB)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "payment_date"
+    },
+    {
+      "pattern": "^(STATEMENT|BILL|BILLED|BILLING|INVOICE_SENT)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "invoice_date"
+    },
+    {
+      "pattern": "^(POSTED|POSTING|GL_POST|ACCOUNTING_PERIOD)_DATE(_KEY|_ID|_SK|_FK)?$",
+      "role": "accounting_date"
+    }
+  ],
+  "abbreviations": {
+    "ADJ": "adjudication",
+    "ADM": "admission",
+    "ALOS": "average length of stay",
+    "AMB": "ambulatory",
+    "APC": "ambulatory payment classification",
+    "AUTH": "authorization",
+    "AVGRX": "average prescription",
+    "BENE": "beneficiary",
+    "BILL": "billing",
+    "CAP": "capitation",
+    "CHG": "charge",
+    "CLM": "claim",
+    "CLMLN": "claim line",
+    "COB": "coordination of benefits",
+    "COINS": "coinsurance",
+    "COPAY": "copayment",
+    "CPT": "procedure code",
+    "DED": "deductible",
+    "DENL": "denial",
+    "DISCH": "discharge",
+    "DME": "durable medical equipment",
+    "DOS": "date of service",
+    "DRG": "diagnosis related group",
+    "DSCH": "discharge",
+    "DSP": "dispense",
+    "DX": "diagnosis",
+    "ED": "emergency department",
+    "ENCTR": "encounter",
+    "EOB": "explanation of benefits",
+    "ER": "emergency room",
+    "FAC": "facility",
+    "FFS": "fee for service",
+    "GRP": "group",
+    "HCPCS": "procedure code",
+    "HOSP": "hospital",
+    "ICU": "intensive care unit",
+    "IP": "inpatient",
+    "LOS": "length of stay",
+    "MBR": "member",
+    "MCO": "managed care organization",
+    "NDC": "drug code",
+    "NPI": "provider identifier",
+    "OON": "out of network",
+    "OP": "outpatient",
+    "PA": "prior authorization",
+    "PAT": "patient",
+    "PAYR": "payer",
+    "PBM": "pharmacy benefit manager",
+    "PCP": "primary care provider",
+    "PLN": "plan",
+    "PMPM": "per member per month",
+    "POS": "place of service",
+    "PROC": "procedure",
+    "PROV": "provider",
+    "PT": "patient",
+    "PX": "procedure",
+    "RDMT": "readmission",
+    "REV": "revenue code",
+    "RVU": "relative value unit",
+    "RX": "prescription",
+    "SPCL": "specialty",
+    "SPLTY": "specialty",
+    "SRVC": "service",
+    "SUBSCR": "subscriber",
+    "SVC": "service",
+    "TOB": "type of bill",
+    "UTIL": "utilization",
+    "VST": "visit"
+  },
+  "direct_aliases": {
+    "MBR_ID": ["member", "member id", "patient"],
+    "MEMBER_ID": ["member", "member id", "patient"],
+    "PAT_ID": ["patient", "patient id", "member"],
+    "PATIENT_ID": ["patient", "patient id", "member"],
+    "SUBSCR_ID": ["subscriber", "subscriber id", "policy holder"],
+    "PROV_ID": ["provider", "provider id", "physician"],
+    "PROVIDER_ID": ["provider", "provider id", "physician"],
+    "NPI": ["provider", "provider identifier", "physician"],
+    "PAYR_CD": ["payer", "insurer", "plan"],
+    "PAYER_ID": ["payer", "insurer", "plan"],
+    "PLN_CD": ["plan", "benefit plan", "product"],
+    "PLAN_ID": ["plan", "benefit plan", "product"],
+    "CLM_ID": ["claim", "claim number", "claim id"],
+    "CLAIM_ID": ["claim", "claim number", "claim id"],
+    "CLM_NUM": ["claim", "claim number", "claim id"],
+    "DRG_CD": ["drg", "diagnosis related group", "case mix group"],
+    "DX_CD": ["diagnosis", "diagnosis code", "condition"],
+    "PROC_CD": ["procedure", "procedure code", "service code"],
+    "CPT_CD": ["procedure", "procedure code", "cpt"],
+    "HCPCS_CD": ["procedure", "procedure code", "hcpcs"],
+    "REV_CD": ["revenue code", "revenue centre", "department code"],
+    "NDC_CD": ["drug", "drug code", "ndc"],
+    "POS_CD": ["place of service", "service location", "setting"],
+    "TOB_CD": ["type of bill", "bill type", "claim type"],
+    "LOS_DAYS": ["length of stay", "days stayed", "inpatient days"],
+    "PAID_AMT": ["paid amount", "payer paid", "reimbursement"],
+    "ALLOW_AMT": ["allowed amount", "contracted amount", "fee schedule amount"],
+    "CHG_AMT": ["charge amount", "gross charges", "billed amount"],
+    "COPAY_AMT": ["copay", "copayment", "patient copay"],
+    "DED_AMT": ["deductible", "deductible amount", "patient deductible"],
+    "COINS_AMT": ["coinsurance", "coinsurance amount", "patient coinsurance"],
+    "RX_CNT": ["prescriptions", "scripts", "fills"],
+    "DAYS_SUPPLY": ["days supply", "supply days", "script length"]
+  }
+}
