@@ -92,7 +92,7 @@ def metric_backlog(account_id: str, *, lang: str = "en") -> list[BacklogItem]:
     """
     import store
 
-    from core.metric_coverage import coverage_report
+    from core.metric_coverage import coverage_report, fact_date_roles_for
 
     try:
         metrics = store.list_metrics(account_id)
@@ -109,6 +109,10 @@ def metric_backlog(account_id: str, *, lang: str = "en") -> list[BacklogItem]:
     roles_by_metric: dict[int, list[dict]] = {}
     for row in contexts:
         roles_by_metric.setdefault(int(row.get("metric_id") or 0), []).append(row)
+    # The fact's own approved Date Roles. Most workspaces govern dates here and
+    # never create a metric date context at all; without these, every metric in
+    # such a workspace is reported as having no business date.
+    fact_roles = fact_date_roles_for(account_id)
 
     items: list[BacklogItem] = []
     for metric in metrics:
@@ -117,7 +121,9 @@ def metric_backlog(account_id: str, *, lang: str = "en") -> list[BacklogItem]:
             continue
         report = coverage_report(
             metric,
-            date_roles=roles_by_metric.get(int(metric.get("id") or 0), []),
+            metric_date_contexts=roles_by_metric.get(
+                int(metric.get("id") or 0), []),
+            fact_date_roles=fact_roles,
             lang=lang,
         )
         # One item per REMEDY, not per failing question: an admin binds one
@@ -205,17 +211,21 @@ def build_report(account_id: str, *, lang: str = "en") -> ReadinessReport:
     try:
         import store
 
-        from core.metric_coverage import coverage_report
+        from core.metric_coverage import coverage_report, fact_date_roles_for
         metrics = store.list_metrics(account_id)
         contexts = store.list_metric_date_contexts(account_id)
         roles: dict[int, list[dict]] = {}
         for row in contexts:
             roles.setdefault(int(row.get("metric_id") or 0), []).append(row)
+        fact_roles = fact_date_roles_for(account_id)
         total_metrics = len(metrics)
         complete = sum(
             1 for m in metrics
-            if coverage_report(m, date_roles=roles.get(int(m.get("id") or 0), []),
-                               lang=lang).complete
+            if coverage_report(
+                m,
+                metric_date_contexts=roles.get(int(m.get("id") or 0), []),
+                fact_date_roles=fact_roles,
+                lang=lang).complete
         )
     except Exception as exc:
         log.warning("Metric coverage unavailable for %s: %s", account_id, exc)

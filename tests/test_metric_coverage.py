@@ -101,7 +101,7 @@ class TestDeclarations(unittest.TestCase):
 class TestVariations(unittest.TestCase):
 
     def test_the_shapes_a_metric_has_to_survive_are_generated(self):
-        report = coverage_report(COMPLETE, date_roles=DATE_ROLE)
+        report = coverage_report(COMPLETE, metric_date_contexts=DATE_ROLE)
         self.assertGreaterEqual(report.total, 20)
         self.assertEqual(
             _kinds(report),
@@ -115,8 +115,8 @@ class TestVariations(unittest.TestCase):
 
     def test_a_metric_with_more_dimensions_is_checked_on_more_shapes(self):
         one = coverage_report({**COMPLETE, "allowed_dimensions": "Region"},
-                              date_roles=DATE_ROLE)
-        two = coverage_report(COMPLETE, date_roles=DATE_ROLE)
+                              metric_date_contexts=DATE_ROLE)
+        two = coverage_report(COMPLETE, metric_date_contexts=DATE_ROLE)
         self.assertGreater(two.total, one.total)
 
     def test_the_dimension_count_is_bounded(self):
@@ -131,7 +131,7 @@ class TestVariations(unittest.TestCase):
     def test_a_metrics_own_examples_are_checked_too(self):
         report = coverage_report(
             {**COMPLETE, "example_questions": "how much did we bill last month"},
-            date_roles=DATE_ROLE)
+            metric_date_contexts=DATE_ROLE)
         self.assertIn("example", _kinds(report))
         self.assertIn("how much did we bill last month",
                       [v.question for v in report.variations])
@@ -148,14 +148,14 @@ class TestTheScoreIsHonest(unittest.TestCase):
         # cannot answer shrinks its denominator, so the least-curated metric
         # scores best. "2 of 7" for a bare metric beside "25 of 25" for a
         # complete one is a report that rewards doing nothing.
-        report = coverage_report({**BARE, "grain": "month"}, date_roles=DATE_ROLE)
+        report = coverage_report({**BARE, "grain": "month"}, metric_date_contexts=DATE_ROLE)
         self.assertIn("dimension", _kinds(report))
         self.assertIn("ranking", _kinds(report))
         self.assertGreater(len(report.gaps), 0)
 
     def test_a_more_complete_metric_scores_a_higher_proportion(self):
         def ratio(metric, date_roles):
-            report = coverage_report(metric, date_roles=date_roles)
+            report = coverage_report(metric, metric_date_contexts=date_roles)
             return report.resolvable / max(report.total, 1)
 
         bare = ratio(BARE, [])
@@ -166,7 +166,7 @@ class TestTheScoreIsHonest(unittest.TestCase):
         self.assertEqual(complete, 1.0)
 
     def test_a_complete_metric_reports_no_gaps(self):
-        report = coverage_report(COMPLETE, date_roles=DATE_ROLE)
+        report = coverage_report(COMPLETE, metric_date_contexts=DATE_ROLE)
         self.assertTrue(report.complete)
         self.assertEqual(report.gaps, ())
         self.assertEqual(report.resolvable, report.total)
@@ -174,7 +174,7 @@ class TestTheScoreIsHonest(unittest.TestCase):
     def test_resolvable_and_gaps_always_add_up(self):
         for metric, roles in ((COMPLETE, DATE_ROLE), (BARE, []),
                               ({**BARE, "grain": "month"}, DATE_ROLE)):
-            report = coverage_report(metric, date_roles=roles)
+            report = coverage_report(metric, metric_date_contexts=roles)
             self.assertEqual(report.resolvable + len(report.gaps), report.total)
 
 
@@ -185,7 +185,7 @@ class TestTheScoreIsHonest(unittest.TestCase):
 class TestGaps(unittest.TestCase):
 
     def test_a_metric_with_no_date_role_is_told_to_add_one(self):
-        report = coverage_report({**COMPLETE, "grain": "month"}, date_roles=[])
+        report = coverage_report({**COMPLETE, "grain": "month"}, metric_date_contexts=[])
         reasons = report.gaps_by_reason()
         self.assertIn("coverage.gap.no_date_role", reasons)
         gap = next(g for g in report.gaps
@@ -194,14 +194,14 @@ class TestGaps(unittest.TestCase):
         self.assertIn("date role", gap.reason.lower())
 
     def test_a_metric_with_no_grain_is_told_to_set_one(self):
-        report = coverage_report({**COMPLETE, "grain": ""}, date_roles=DATE_ROLE)
+        report = coverage_report({**COMPLETE, "grain": ""}, metric_date_contexts=DATE_ROLE)
         self.assertIn("coverage.gap.no_grain", report.gaps_by_reason())
 
     def test_the_most_fundamental_missing_thing_is_reported_first(self):
         # A metric missing both a date role and a grain should be told about
         # the date role: fixing one gap must not immediately reveal a second
         # on the same question.
-        report = coverage_report({**COMPLETE, "grain": ""}, date_roles=[])
+        report = coverage_report({**COMPLETE, "grain": ""}, metric_date_contexts=[])
         reasons = report.gaps_by_reason()
         self.assertIn("coverage.gap.no_date_role", reasons)
         self.assertNotIn("coverage.gap.no_grain", reasons)
@@ -211,7 +211,7 @@ class TestGaps(unittest.TestCase):
         gap = check_variation(
             Variation(kind="dimension", message_id="", question="x",
                       dimension="Salesperson"),
-            COMPLETE, date_roles=DATE_ROLE)
+            COMPLETE, metric_date_contexts=DATE_ROLE)
         self.assertIsNotNone(gap)
         self.assertEqual(gap.missing, "Salesperson")
         self.assertIn("Salesperson", gap.reason)
@@ -221,7 +221,7 @@ class TestGaps(unittest.TestCase):
         # business talks, and the metric is called something else.
         report = coverage_report(
             {**COMPLETE, "example_questions": "what did we bill in Q2"},
-            date_roles=DATE_ROLE)
+            metric_date_contexts=DATE_ROLE)
         self.assertIn("coverage.gap.name_not_found", report.gaps_by_reason())
         gap = next(g for g in report.gaps
                    if g.reason_id == "coverage.gap.name_not_found")
@@ -230,7 +230,7 @@ class TestGaps(unittest.TestCase):
     def test_an_example_that_uses_a_synonym_is_not_a_gap(self):
         report = coverage_report(
             {**COMPLETE, "example_questions": "how much net sales last month"},
-            date_roles=DATE_ROLE)
+            metric_date_contexts=DATE_ROLE)
         self.assertNotIn("coverage.gap.name_not_found", report.gaps_by_reason())
 
     def test_the_name_check_is_not_applied_to_generated_questions(self):
@@ -245,17 +245,17 @@ class TestGaps(unittest.TestCase):
                             question="how has it changed over the last year",
                             grain="month")
         self.assertIsNone(
-            check_variation(pronoun, COMPLETE, date_roles=DATE_ROLE))
+            check_variation(pronoun, COMPLETE, metric_date_contexts=DATE_ROLE))
 
         # The same phrasing as an example -- a human's words -- IS flagged,
         # because there the metric genuinely cannot be found by name.
         as_example = Variation(kind="example", message_id="",
                                question="how has it changed over the last year")
-        gap = check_variation(as_example, COMPLETE, date_roles=DATE_ROLE)
+        gap = check_variation(as_example, COMPLETE, metric_date_contexts=DATE_ROLE)
         self.assertIsNotNone(gap)
         self.assertEqual(gap.missing, "synonym")
 
-        report = coverage_report(COMPLETE, date_roles=DATE_ROLE)
+        report = coverage_report(COMPLETE, metric_date_contexts=DATE_ROLE)
         self.assertTrue(report.complete)
 
 
@@ -293,14 +293,14 @@ class TestBothLanguages(unittest.TestCase):
         self.assertFalse(untranslated, untranslated)
 
     def test_every_gap_reason_reads_in_both_languages(self):
-        en = coverage_report(BARE, date_roles=[], lang="en")
-        fr = coverage_report(BARE, date_roles=[], lang="fr")
+        en = coverage_report(BARE, metric_date_contexts=[], lang="en")
+        fr = coverage_report(BARE, metric_date_contexts=[], lang="fr")
         self.assertEqual(len(en.gaps), len(fr.gaps))
         self.assertFalse({g.reason for g in en.gaps} & {g.reason for g in fr.gaps})
 
     def test_the_summary_reads_in_both_languages(self):
-        en = coverage_report(BARE, date_roles=[], lang="en")
-        fr = coverage_report(BARE, date_roles=[], lang="fr")
+        en = coverage_report(BARE, metric_date_contexts=[], lang="en")
+        fr = coverage_report(BARE, metric_date_contexts=[], lang="fr")
         self.assertTrue(en.summary and fr.summary)
         self.assertNotEqual(en.summary, fr.summary)
 
@@ -451,17 +451,47 @@ class TestTheChatDraftCarriesIt(unittest.TestCase):
     answer, not discover it later from a failed query."""
 
     def test_the_draft_payload_includes_the_coverage(self):
+        """ws_chat needs a live websocket, so its wiring is read from the tree.
+
+        As a SYNTAX TREE, not as text. The first version of this test matched
+        the substring "from core.metric_coverage import coverage_report", and
+        broke the moment that import gained a second name and wrapped onto two
+        lines -- objecting to a change that did not touch the invariant it is
+        named for. What matters is that the report is computed, and that the
+        payload carries it, and that the first happens before the second.
+        """
+        import ast
         import inspect
 
         import gateway.webhooks as wh
 
-        source = inspect.getsource(wh.ws_chat)
-        self.assertIn("from core.metric_coverage import coverage_report", source)
-        self.assertIn('"coverage": _coverage,', source)
+        tree = ast.parse(inspect.getsource(wh.ws_chat).lstrip())
+        computed_at = [
+            node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "coverage_report"
+        ]
+        self.assertTrue(computed_at, "ws_chat never computes a coverage report")
+
+        # The dict literal that IS the draft payload: the one that declares
+        # its own type. Whatever else it says, it must also carry "coverage".
+        payloads = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Dict)
+            and any(isinstance(key, ast.Constant) and key.value == "type"
+                    for key in node.keys)
+            and any(isinstance(value, ast.Constant)
+                    and value.value == "assistant_metric_draft"
+                    for value in node.values)
+        ]
+        self.assertEqual(len(payloads), 1, "the draft payload moved or split")
+        keys = {key.value for key in payloads[0].keys
+                if isinstance(key, ast.Constant)}
+        self.assertIn("coverage", keys,
+                      "the draft payload no longer carries the coverage report")
         # Computed before the payload is sent, or it reaches nothing.
-        computed_at = source.index("_report = coverage_report(draft.as_metric()")
-        sent_at = source.index('"type": "assistant_metric_draft"')
-        self.assertLess(computed_at, sent_at)
+        self.assertLess(min(computed_at), payloads[0].lineno)
 
     def test_the_coverage_shape_the_payload_promises_is_what_the_engine_returns(self):
         # The payload claims total/resolvable/summary/gaps with question,
@@ -469,7 +499,7 @@ class TestTheChatDraftCarriesIt(unittest.TestCase):
         # undefined and shows nothing, silently.
         report = coverage_report(
             {"name": "Net Revenue", "allowed_dimensions": "Region", "grain": "month"},
-            date_roles=[])
+            metric_date_contexts=[])
         self.assertIsInstance(report.total, int)
         self.assertIsInstance(report.resolvable, int)
         self.assertIsInstance(report.summary, str)

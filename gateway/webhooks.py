@@ -1742,14 +1742,22 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
             # Which real questions this metric will and will not answer, said
             # at the moment it is defined rather than discovered later by a
-            # user getting "I could not generate a query for that". A session
-            # draft has no bound business date yet, so the period shapes are
-            # reported as gaps -- which is true, and is the next thing to do.
+            # user getting "I could not generate a query for that". The draft
+            # has no metric date context of its own yet, but the fact it sits on
+            # usually already has an approved default Date Role -- and then the
+            # period shapes DO work. Reporting them as gaps regardless told the
+            # author to go and do something that was already done.
             _coverage: dict = {}
             try:
-                from core.metric_coverage import coverage_report
+                from core.metric_coverage import (
+                    coverage_report, fact_date_roles_for,
+                )
 
-                _report = coverage_report(draft.as_metric(), date_roles=[])
+                _report = coverage_report(
+                    draft.as_metric(),
+                    metric_date_contexts=[],
+                    fact_date_roles=fact_date_roles_for(account_id),
+                )
                 if _report.total:
                     _coverage = {
                         "total": _report.total,

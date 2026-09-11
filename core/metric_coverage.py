@@ -238,29 +238,127 @@ def variations_for(metric: dict, *, lang: str = "en") -> list[Variation]:
 # Resolving a variation
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _dates_are_ambiguous(date_roles: list[dict] | None) -> bool:
-    """Several bound business dates, none of them the default.
+def fact_date_roles_for(account_id: str) -> list[dict]:
+    """The tenant's fact-level Date Roles, as the resolver reads them.
 
-    The state core.contextual_dates.resolve_contextual_date_binding calls
-    "ambiguous": it cannot choose, so it asks. Coverage used to treat "has date
-    roles" as covered, which made a metric that interrupts every single
-    temporal question look finished.
+    Coverage has to know these. The date the runtime actually uses for a
+    period question is usually NOT a metric date context -- it is an approved
+    default Date Role on the fact, which
+    core.contextual_dates.resolve_contextual_date_binding prefers over
+    everything except an explicit mention, a reader's own choice and the
+    metric's default time column. Readiness used to load only the contexts, so
+    a workspace that governs its dates the ordinary way had every metric
+    reported as having no date role at all.
 
-    One default is not ambiguous however many roles exist; more than one is,
-    because the resolver cannot choose between them either.
+    Never raises: a coverage report is advice, and advice that can break the
+    readiness page is worse than no advice.
     """
-    roles = [role for role in (date_roles or []) if isinstance(role, dict)]
-    if len(roles) < 2:
-        return False
-    defaults = [role for role in roles if int(role.get("is_default") or 0)]
-    return len(defaults) != 1
+    try:
+        from core.pipeline_context import client_dir, get_state
+        from core.semantic_model import load_semantic_model
+
+        state = get_state(account_id) or {}
+        kb_dir = str(state.get("kb_dir") or (client_dir(account_id) / "kb"))
+        model = load_semantic_model(kb_dir) or {}
+        roles = [role for role in (model.get("date_roles") or [])
+                 if isinstance(role, dict)]
+        if roles:
+            return roles
+        # Older models keep the roles on each table rather than at the top.
+        out: list[dict] = []
+        for table in (model.get("tables") or []):
+            if not isinstance(table, dict):
+                continue
+            for role in (table.get("date_roles") or []):
+                if isinstance(role, dict):
+                    out.append(role)
+        return out
+    except Exception as exc:
+        log.warning("Fact date roles unavailable for %s: %s", account_id, exc)
+        return []
+
+
+def _resolver_verdict(
+    metric: dict,
+    question: str,
+    *,
+    metric_date_contexts: list[dict] | None,
+    fact_date_roles: list[dict] | None,
+) -> str:
+    """What the runtime would do with this question's business date.
+
+    This ASKS THE RESOLVER rather than restating its rule. The previous
+    version restated it -- "two or more bound dates and not exactly one
+    default is ambiguous" -- over the metric's date contexts alone, and the
+    two drifted apart immediately, in both directions:
+
+      * A metric with two non-default contexts on a fact that has one
+        approved default role resolves cleanly (fact_default_date_role), and
+        the admin was handed a backlog item for a metric that never
+        interrupts anybody.
+      * A metric with NO contexts at all, on that same fact, resolves just as
+        cleanly, and every temporal shape was reported as missing a date role.
+
+    Restating a precedence chain that lives in another module is how a
+    readiness report comes to disagree with the product it reports on. There
+    is one rule and it is over there, so this calls it. Returns the resolver's
+    own status: "selected", "ambiguous", "none", "unsupported_grain".
+    """
+    from core.contextual_dates import resolve_contextual_date_binding
+
+    metric = dict(metric or {})
+    table = str(metric.get("base_table") or "").strip()
+    return str(resolve_contextual_date_binding(
+        question,
+        matched_metrics=[metric],
+        bindings=[dict(row) for row in (metric_date_contexts or [])
+                  if isinstance(row, dict)],
+        date_roles=[dict(role) for role in (fact_date_roles or [])
+                    if isinstance(role, dict)],
+        required_fact_tables={table} if table else None,
+    ).get("status") or "")
+
+
+def _date_gap(
+    variation: "Variation",
+    metric: dict,
+    *,
+    metric_date_contexts: list[dict] | None,
+    fact_date_roles: list[dict] | None,
+    lang: str,
+) -> "Gap | None":
+    """The date gap for one shape, or None when the runtime can answer it.
+
+    Two different remedies, so two different items: "bind a business date to
+    this measure" and "you have several, pick which one is the default" are
+    different afternoons, and telling an admin the wrong one wastes the trip.
+    """
+    verdict = _resolver_verdict(
+        metric, variation.question,
+        metric_date_contexts=metric_date_contexts,
+        fact_date_roles=fact_date_roles,
+    )
+    if verdict == "none":
+        return Gap(variation, "coverage.gap.no_date_role",
+                   t("coverage.gap.no_date_role", lang=lang), "date_role")
+    if verdict == "ambiguous":
+        # Several bound dates and none of them settled. The metric LOOKS
+        # covered -- it has dates -- and every temporal question against it is
+        # answered with a question instead of a number, for every reader, for
+        # ever, because the answer is remembered for the thread and not for
+        # the model. One default ends it.
+        return Gap(variation, "coverage.gap.no_default_date_role",
+                   t("coverage.gap.no_default_date_role", lang=lang),
+                   "date_role")
+    return None
 
 
 def check_variation(
     variation: Variation,
     metric: dict,
     *,
-    date_roles: list[dict] | None = None,
+    metric_date_contexts: list[dict] | None = None,
+    fact_date_roles: list[dict] | None = None,
     lang: str = "en",
 ) -> Gap | None:
     """Can this metric answer this shape? ``None`` when it can.
@@ -273,19 +371,11 @@ def check_variation(
     kind = variation.kind
 
     if kind in {"grain", "comparison", "trend"}:
-        if not date_roles:
-            return Gap(variation, "coverage.gap.no_date_role",
-                       t("coverage.gap.no_date_role", lang=lang), "date_role")
-        if _dates_are_ambiguous(date_roles):
-            # Several bound dates and none marked as the default. The metric
-            # LOOKS covered -- it has date roles -- and every temporal question
-            # against it is answered with a question instead of a number:
-            # core.contextual_dates.resolve_contextual_date_binding returns
-            # "ambiguous" for exactly this state, so the reader is asked which
-            # business date to use, every time, for ever. One default ends it.
-            return Gap(variation, "coverage.gap.no_default_date_role",
-                       t("coverage.gap.no_default_date_role", lang=lang),
-                       "date_role")
+        gap = _date_gap(variation, metric,
+                        metric_date_contexts=metric_date_contexts,
+                        fact_date_roles=fact_date_roles, lang=lang)
+        if gap is not None:
+            return gap
         if not declared_grain(metric):
             return Gap(variation, "coverage.gap.no_grain",
                        t("coverage.gap.no_grain", lang=lang), "grain")
@@ -303,13 +393,12 @@ def check_variation(
                 variation.dimension,
             )
         # A dimension question that also names a period needs both.
-        if variation.grain and not date_roles:
-            return Gap(variation, "coverage.gap.no_date_role",
-                       t("coverage.gap.no_date_role", lang=lang), "date_role")
-        if variation.grain and _dates_are_ambiguous(date_roles):
-            return Gap(variation, "coverage.gap.no_default_date_role",
-                       t("coverage.gap.no_default_date_role", lang=lang),
-                       "date_role")
+        if variation.grain:
+            gap = _date_gap(variation, metric,
+                            metric_date_contexts=metric_date_contexts,
+                            fact_date_roles=fact_date_roles, lang=lang)
+            if gap is not None:
+                return gap
 
     if kind == "example" and not question_finds_metric(variation.question, metric):
         # Only for phrasings we did not write. Every generated shape
@@ -343,7 +432,8 @@ def question_finds_metric(question: str, metric: dict) -> bool:
 def coverage_report(
     metric: dict,
     *,
-    date_roles: list[dict] | None = None,
+    metric_date_contexts: list[dict] | None = None,
+    fact_date_roles: list[dict] | None = None,
     lang: str = "en",
 ) -> CoverageReport:
     """Which question shapes this metric answers, and what the rest need.
@@ -361,7 +451,10 @@ def coverage_report(
     gaps: list[Gap] = []
     for variation in variations:
         try:
-            gap = check_variation(variation, metric, date_roles=date_roles, lang=lang)
+            gap = check_variation(
+                variation, metric,
+                metric_date_contexts=metric_date_contexts,
+                fact_date_roles=fact_date_roles, lang=lang)
         except Exception as exc:
             log.warning("Coverage check failed for %r: %s", variation.question, exc)
             continue
@@ -400,9 +493,14 @@ def report_for_metric_id(
         return CoverageReport()
 
     try:
-        date_roles = store.list_metric_date_contexts(
+        contexts = store.list_metric_date_contexts(
             account_id, metric_ids=[int(metric_id)])
     except Exception as exc:
         log.warning("Date contexts unavailable for metric %s: %s", metric_id, exc)
-        date_roles = []
-    return coverage_report(metric, date_roles=date_roles, lang=lang)
+        contexts = []
+    return coverage_report(
+        metric,
+        metric_date_contexts=contexts,
+        fact_date_roles=fact_date_roles_for(account_id),
+        lang=lang,
+    )

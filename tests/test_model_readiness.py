@@ -444,3 +444,112 @@ class TestThePipelineStampsIt(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheBacklogReadsTheFactsOwnDateRoles(ReadinessCase):
+    """The half that was missing, and the half a unit test cannot reach.
+
+    A workspace usually governs its business dates as approved Date Roles on
+    the fact, and never creates a metric date context at all --
+    core.contextual_dates.resolve_contextual_date_binding prefers the fact's
+    approved default over the metric's contexts. metric_backlog loaded only the
+    contexts, so every metric in such a workspace was reported as having no
+    business date, and the admin was sent to bind one that already existed.
+
+    These drive metric_backlog itself, against a real store and a real
+    _semantic_model.json on disk. That matters more than it looks: the loader
+    is fail-open by design (advice that breaks the readiness page is worse than
+    no advice), so when its imports were wrong it returned [] on every call and
+    every unit test still passed. Only a test that starts at the entry point
+    and ends at the reported backlog can tell "loaded nothing" from "there was
+    nothing to load".
+    """
+
+    FACT = "DBO.F_SALES"
+
+    def _write_model(self, date_roles):
+        import json
+
+        from core.semantic_model import MODEL_JSON
+        kb_dir = Path(self._dir) / "kb"
+        kb_dir.mkdir(parents=True, exist_ok=True)
+        (kb_dir / MODEL_JSON).write_text(json.dumps({
+            "tables": [{"table": self.FACT, "date_roles": date_roles}],
+            "date_roles": date_roles,
+        }), encoding="utf-8")
+        from core.pipeline_context import save_state
+        save_state(self.account_id, "READY", {"kb_dir": str(kb_dir)})
+        return kb_dir
+
+    def _role(self, **kw):
+        role = {
+            "fact_table": self.FACT, "fact_column": "INVOICE_DT",
+            "role_key": "invoice_date", "label": "Invoice Date",
+            "status": "approved", "is_default": 1,
+            "date_key_type": "native_date",
+        }
+        role.update(kw)
+        return role
+
+    def _date_items(self):
+        return [i for i in metric_backlog(self.account_id)
+                if i.kind == "date_role"]
+
+    def test_the_loader_returns_what_is_on_disk(self):
+        """Executed against a real file, because a fail-open loader that
+        returns [] for the wrong reason is indistinguishable from an empty
+        workspace."""
+        from core.metric_coverage import fact_date_roles_for
+        self._write_model([self._role()])
+        roles = fact_date_roles_for(self.account_id)
+        self.assertTrue(roles, "the loader read nothing back")
+        self.assertEqual(roles[0]["fact_column"], "INVOICE_DT")
+        self.assertEqual(roles[0]["status"], "approved")
+
+    def test_an_approved_default_on_the_fact_leaves_no_date_backlog(self):
+        self._write_model([self._role()])
+        self._metric(base_table=self.FACT)
+        self.assertEqual(self._date_items(), [])
+
+    def test_without_it_the_item_comes_back(self):
+        """The same workspace, the same metric, the role withdrawn. If this
+        passes while the one above fails, the backlog is simply silent."""
+        self._write_model([])
+        self._metric(base_table=self.FACT)
+        self.assertEqual(len(self._date_items()), 1)
+
+    def test_several_approved_roles_and_no_default_is_reported_as_undecided(self):
+        """Presence without a decision -- the runtime asks the reader every
+        time, so this is a real item, with a different remedy."""
+        self._write_model([
+            self._role(is_default=0),
+            self._role(fact_column="SHIP_DT", role_key="ship_date",
+                       label="Ship Date", is_default=0),
+        ])
+        self._metric(base_table=self.FACT)
+        items = self._date_items()
+        self.assertEqual(len(items), 1)
+        absent = "Several" in items[0].remedy or "none" in items[0].remedy
+        self.assertTrue(absent, items[0].remedy)
+
+    def test_a_role_on_another_fact_does_not_settle_this_one(self):
+        """Scoped the way the resolver scopes it. A default on Inventory must
+        not make a Sales metric look finished."""
+        self._write_model([self._role(fact_table="DBO.F_INVENTORY")])
+        self._metric(base_table=self.FACT)
+        self.assertEqual(len(self._date_items()), 1)
+
+    def test_a_generated_role_is_not_an_approved_default(self):
+        """The resolver requires status == approved. A guess does not count."""
+        self._write_model([self._role(status="generated")])
+        self._metric(base_table=self.FACT)
+        self.assertEqual(len(self._date_items()), 1)
+
+    def test_the_readiness_summary_counts_the_metric_as_complete(self):
+        """build_report's second, separate call site -- it had its own copy of
+        the same omission."""
+        self._write_model([self._role()])
+        self._metric(base_table=self.FACT)
+        report = build_report(self.account_id)
+        self.assertEqual(report.metrics_total, 1)
+        self.assertEqual(report.metrics_complete, 1)

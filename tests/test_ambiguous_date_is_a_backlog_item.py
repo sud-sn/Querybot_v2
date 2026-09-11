@@ -1,27 +1,33 @@
 """
 tests/test_ambiguous_date_is_a_backlog_item.py
 
-A measure that interrupts every temporal question looked finished.
+Whether a measure can answer a question about a period is decided by
+core.contextual_dates.resolve_contextual_date_binding, and by nothing else.
+The readiness backlog has to report the answer that function gives.
 
-core.contextual_dates.resolve_contextual_date_binding returns "ambiguous" when
-a measure has several bound business dates and none of them is the default: it
-cannot choose, so it asks the reader which date to use. Correct behaviour --
-guessing between invoice date and delivery date is how a number comes back
-wrong.
+The first version of this file restated the rule instead. It had a private
+`_dates_are_ambiguous` that said "two or more bound dates and not exactly one
+default means the resolver will ask", applied to the measure's own date
+contexts -- and it was wrong in both directions, because the resolver prefers
+the FACT's approved default Date Role over the measure's contexts:
 
-But it asks EVERY TIME. There is no learning step: the answer is remembered for
-the thread, not for the model, so the next reader and the next conversation are
-asked again. A measure in that state is not a working measure with a small
-rough edge; it is a measure that cannot answer a question about a period
-without a round trip through a human.
+  * A measure with two non-default contexts, on a fact with one approved
+    default role, resolves cleanly (fact_default_date_role). The admin was
+    handed fifteen backlog items for a measure that never interrupts anybody.
+  * A measure with NO contexts at all, on that same fact, resolves just as
+    cleanly -- and every temporal shape was reported as missing a date role.
+    That is the ordinary way to govern dates, so this was most workspaces.
 
-core.metric_coverage treated "has date roles" as covered, so that measure
-appeared complete in readiness while producing a clarification for every
-period question anyone asked of it. The admin was never told, and the remedy is
-one click: mark one of the roles as the default.
+The agreement test could not catch either, because it passed `date_roles=[]`
+to the resolver: precisely the input that makes the fact-default branch
+unreachable. A fixture that omits what production always sets does not test
+agreement, it tests two functions on inputs production never sends.
 
-Absence was already reported (coverage.gap.no_date_role). This is the other
-half -- presence without a decision.
+So there is no restated rule any more. `_date_gap` asks the resolver and maps
+its status to a remedy, and the matrix below drives BOTH sources of dates
+through both halves at once. Absence and ambiguity stay separate items,
+because "bind a business date" and "pick which of these is the default" are
+different afternoons.
 """
 
 from __future__ import annotations
@@ -29,8 +35,10 @@ from __future__ import annotations
 import pytest
 
 from core import i18n
+from core.contextual_dates import resolve_contextual_date_binding
 from core.metric_coverage import (
-    _dates_are_ambiguous, check_variation, coverage_report, variations_for,
+    _date_gap, _resolver_verdict, check_variation, coverage_report,
+    variations_for,
 )
 
 METRIC = {
@@ -41,153 +49,229 @@ METRIC = {
     "grain": "day",
 }
 
-ONE_DEFAULT = [
-    {"id": 1, "context_name": "Invoice Date", "is_default": 1},
-    {"id": 2, "context_name": "Order Date", "is_default": 0},
+# ── the measure's own date contexts ──────────────────────────────────────────
+NO_CONTEXT: list[dict] = []
+ONE_DEFAULT_CONTEXT = [
+    {"id": 1, "metric_id": 7, "context_name": "Invoice Date", "is_default": 1},
+    {"id": 2, "metric_id": 7, "context_name": "Order Date", "is_default": 0},
 ]
-NO_DEFAULT = [
-    {"id": 1, "context_name": "Invoice Date", "is_default": 0},
-    {"id": 2, "context_name": "Order Date", "is_default": 0},
+NO_DEFAULT_CONTEXT = [
+    {"id": 1, "metric_id": 7, "context_name": "Invoice Date", "is_default": 0},
+    {"id": 2, "metric_id": 7, "context_name": "Order Date", "is_default": 0},
 ]
-TWO_DEFAULTS = [
-    {"id": 1, "context_name": "Invoice Date", "is_default": 1},
-    {"id": 2, "context_name": "Order Date", "is_default": 1},
+TWO_DEFAULT_CONTEXTS = [
+    {"id": 1, "metric_id": 7, "context_name": "Invoice Date", "is_default": 1},
+    {"id": 2, "metric_id": 7, "context_name": "Order Date", "is_default": 1},
 ]
 
 
-class TestWhichShapesCountAsAmbiguous:
-    """The same rule the resolver applies, so the backlog and the runtime
-    cannot disagree about whether a measure is finished."""
-
-    def test_no_dates_at_all_is_absence_not_ambiguity(self):
-        assert _dates_are_ambiguous([]) is False
-        assert _dates_are_ambiguous(None) is False
-
-    def test_one_date_is_never_ambiguous(self):
-        """However it is marked. There is nothing to choose between."""
-        assert _dates_are_ambiguous([{"id": 1}]) is False
-        assert _dates_are_ambiguous([{"id": 1, "is_default": 1}]) is False
-
-    def test_several_with_one_default_is_settled(self):
-        assert _dates_are_ambiguous(ONE_DEFAULT) is False
-
-    def test_several_with_none_default_is_ambiguous(self):
-        assert _dates_are_ambiguous(NO_DEFAULT) is True
-
-    def test_several_defaults_is_ambiguous_too(self):
-        """The resolver cannot choose between two defaults either -- it returns
-        "multiple metric defaults"."""
-        assert _dates_are_ambiguous(TWO_DEFAULTS) is True
-
-    def test_junk_in_the_list_does_not_make_it_ambiguous(self):
-        assert _dates_are_ambiguous([{"id": 1, "is_default": 1}, None, "x"]) is False
+# ── the fact's Date Roles, which the resolver prefers ────────────────────────
+def _role(column, key, label, **kw):
+    role = {
+        "fact_table": "DBO.F_SALES", "fact_column": column,
+        "role_key": key, "label": label,
+        "status": "approved", "is_default": 0,
+        "date_key_type": "native_date",
+    }
+    role.update(kw)
+    return role
 
 
-class TestTheRuntimeAndTheBacklogAgree:
-    """If these two ever diverge, an admin is told a measure is finished while
-    readers are being asked about it."""
+NO_FACT_ROLE: list[dict] = []
+ONE_APPROVED_DEFAULT = [_role("INVOICE_DT", "invoice_date", "Invoice Date",
+                              is_default=1)]
+TWO_APPROVED_NO_DEFAULT = [
+    _role("INVOICE_DT", "invoice_date", "Invoice Date"),
+    _role("SHIP_DT", "ship_date", "Ship Date"),
+]
+TWO_APPROVED_TWO_DEFAULTS = [
+    _role("INVOICE_DT", "invoice_date", "Invoice Date", is_default=1),
+    _role("SHIP_DT", "ship_date", "Ship Date", is_default=1),
+]
+# Generated, never approved. The resolver does not treat these as a default.
+ONE_UNAPPROVED_DEFAULT = [_role("INVOICE_DT", "invoice_date", "Invoice Date",
+                                is_default=1, status="generated")]
 
-    def _resolver_says(self, contexts):
-        from core.contextual_dates import resolve_contextual_date_binding
+QUESTION = "Net Revenue by month"
 
-        return resolve_contextual_date_binding(
-            "net revenue by month",
-            matched_metrics=[dict(METRIC)],
-            bindings=[dict(c, metric_id=7) for c in contexts],
-            date_roles=[],
-        )["status"]
-
-    @pytest.mark.parametrize("contexts,ambiguous", [
-        (NO_DEFAULT, True),
-        (TWO_DEFAULTS, True),
-        (ONE_DEFAULT, False),
-    ])
-    def test_the_backlog_flags_exactly_what_the_resolver_asks_about(
-            self, contexts, ambiguous):
-        assert _dates_are_ambiguous(contexts) is ambiguous
-        status = self._resolver_says(contexts)
-        assert (status == "ambiguous") is ambiguous, (contexts, status)
-
-
-class TestTheGapIsReported:
-
-    def _gap_for(self, kind, contexts, lang="en"):
-        variations = [v for v in variations_for(dict(METRIC), lang=lang)
-                      if v.kind == kind]
-        assert variations, kind
-        return check_variation(variations[0], dict(METRIC),
-                               date_roles=contexts, lang=lang)
-
-    @pytest.mark.parametrize("kind", ["grain", "comparison", "trend"])
-    def test_a_period_question_reports_it(self, kind):
-        gap = self._gap_for(kind, NO_DEFAULT)
-        assert gap is not None, kind
-        assert gap.missing == "date_role", gap
-        assert "none is the default" in gap.reason, gap.reason
-
-    @pytest.mark.parametrize("kind", ["grain", "comparison", "trend"])
-    def test_a_settled_measure_reports_nothing(self, kind):
-        assert self._gap_for(kind, ONE_DEFAULT) is None, kind
-
-    def test_absence_is_still_reported_as_absence(self):
-        """The two gaps are different remedies -- add a role, or pick one --
-        and must not collapse into each other."""
-        gap = self._gap_for("grain", [])
-        assert gap is not None
-        assert "No business date is bound" in gap.reason, gap.reason
-
-    def test_the_remedy_is_the_one_click_that_ends_it(self):
-        gap = self._gap_for("grain", NO_DEFAULT)
-        assert "Mark one as the default" in gap.reason, gap.reason
+# (label, contexts, fact roles). Every combination the two halves can disagree
+# on, including the two that shipped wrong.
+STATES = [
+    ("nothing bound anywhere", NO_CONTEXT, NO_FACT_ROLE),
+    ("no context, fact has one approved default",
+     NO_CONTEXT, ONE_APPROVED_DEFAULT),
+    ("no context, fact has two approved and no default",
+     NO_CONTEXT, TWO_APPROVED_NO_DEFAULT),
+    ("no context, fact has two defaults", NO_CONTEXT, TWO_APPROVED_TWO_DEFAULTS),
+    ("no context, fact default is only generated",
+     NO_CONTEXT, ONE_UNAPPROVED_DEFAULT),
+    ("two non-default contexts, no fact role",
+     NO_DEFAULT_CONTEXT, NO_FACT_ROLE),
+    ("two non-default contexts, fact has one approved default",
+     NO_DEFAULT_CONTEXT, ONE_APPROVED_DEFAULT),
+    ("two non-default contexts, fact has two and no default",
+     NO_DEFAULT_CONTEXT, TWO_APPROVED_NO_DEFAULT),
+    ("one default context, no fact role", ONE_DEFAULT_CONTEXT, NO_FACT_ROLE),
+    ("one default context, fact disagrees",
+     ONE_DEFAULT_CONTEXT, TWO_APPROVED_NO_DEFAULT),
+    ("two default contexts, no fact role", TWO_DEFAULT_CONTEXTS, NO_FACT_ROLE),
+    ("two default contexts, fact has one approved default",
+     TWO_DEFAULT_CONTEXTS, ONE_APPROVED_DEFAULT),
+]
 
 
-class TestItReachesTheAdminsBacklog:
-
-    def test_the_report_carries_the_gap(self):
-        report = coverage_report(dict(METRIC), date_roles=NO_DEFAULT)
-        reasons = {gap.reason for gap in report.gaps}
-        assert any("none is the default" in reason for reason in reasons), reasons
-
-    def test_a_settled_measure_has_no_date_gap(self):
-        report = coverage_report(dict(METRIC), date_roles=ONE_DEFAULT)
-        assert not any("date" in gap.missing for gap in report.gaps), \
-            [(g.missing, g.reason) for g in report.gaps]
-
-    def test_it_is_one_backlog_item_not_one_per_question(self):
-        """An admin who marks one default unblocks every period shape at once.
-        Listing them separately makes a one-click fix look like a week."""
-        from core.model_readiness import _kind_for
-
-        report = coverage_report(dict(METRIC), date_roles=NO_DEFAULT)
-        date_gaps = [g for g in report.gaps if g.missing == "date_role"]
-        assert len(date_gaps) >= 2, "expected several shapes to be blocked"
-        by_remedy = {(g.missing, g.reason) for g in date_gaps}
-        assert len(by_remedy) == 1, by_remedy
-        assert _kind_for("date_role") == "date_role"
-
-    def test_it_carries_the_weight_of_a_date_gap(self):
-        """date_role is the heaviest kind in the backlog: it blocks more
-        question shapes than anything else."""
-        from core.model_readiness import BacklogItem
-
-        assert BacklogItem("date_role", "Net Revenue", "x").weight == 5
+def _resolver_status(contexts, fact_roles, question=QUESTION):
+    """The runtime's own answer, called the way the pipeline calls it."""
+    return resolve_contextual_date_binding(
+        question,
+        matched_metrics=[dict(METRIC)],
+        bindings=[dict(row) for row in contexts],
+        date_roles=[dict(role) for role in fact_roles],
+        required_fact_tables={"DBO.F_SALES"},
+    )["status"]
 
 
-class TestItIsInTheAdminsLanguage:
+class TestTheBacklogAsksTheResolver:
+    """Not a copy of its rule -- the function itself."""
 
-    def test_the_gap_reads_in_french(self):
-        variation = next(v for v in variations_for(dict(METRIC), lang="fr")
+    @pytest.mark.parametrize("label,contexts,fact_roles", STATES,
+                             ids=[s[0] for s in STATES])
+    def test_the_verdict_is_the_resolvers_own(self, label, contexts, fact_roles):
+        assert _resolver_verdict(
+            METRIC, QUESTION,
+            metric_date_contexts=contexts,
+            fact_date_roles=fact_roles,
+        ) == _resolver_status(contexts, fact_roles), label
+
+
+class TestWhichStatusEarnsWhichRemedy:
+    """A status the reader feels, mapped to the one thing that ends it."""
+
+    @staticmethod
+    def _period_variation():
+        variation = next(v for v in variations_for(dict(METRIC))
                          if v.kind == "grain")
-        gap = check_variation(variation, dict(METRIC),
-                              date_roles=NO_DEFAULT, lang="fr")
-        assert gap is not None
-        assert "aucune n'est la date par défaut" in gap.reason, gap.reason
+        return variation
 
-    def test_both_date_gaps_exist_in_both_languages(self):
-        for key in ("coverage.gap.no_date_role",
-                    "coverage.gap.no_default_date_role"):
+    @pytest.mark.parametrize("label,contexts,fact_roles", STATES,
+                             ids=[s[0] for s in STATES])
+    def test_the_remedy_matches_what_the_runtime_does(
+            self, label, contexts, fact_roles):
+        variation = self._period_variation()
+        gap = _date_gap(variation, dict(METRIC),
+                        metric_date_contexts=contexts,
+                        fact_date_roles=fact_roles, lang="en")
+        status = _resolver_status(contexts, fact_roles, variation.question)
+        if status == "none":
+            assert gap is not None and gap.reason_id == "coverage.gap.no_date_role", label
+        elif status == "ambiguous":
+            assert gap is not None, label
+            assert gap.reason_id == "coverage.gap.no_default_date_role", label
+        else:
+            assert gap is None, (label, status)
+
+    def test_absence_and_ambiguity_are_different_items(self):
+        """One says bind a date; the other says pick between the ones you
+        have. An admin sent to the wrong screen loses the afternoon."""
+        variation = self._period_variation()
+        absent = _date_gap(variation, dict(METRIC),
+                           metric_date_contexts=NO_CONTEXT,
+                           fact_date_roles=NO_FACT_ROLE, lang="en")
+        undecided = _date_gap(variation, dict(METRIC),
+                              metric_date_contexts=NO_DEFAULT_CONTEXT,
+                              fact_date_roles=NO_FACT_ROLE, lang="en")
+        assert absent.reason_id != undecided.reason_id
+        assert absent.reason != undecided.reason
+        assert absent.missing == undecided.missing == "date_role"
+
+
+class TestTheWholeReportAgrees:
+    """check_variation and coverage_report must PASS BOTH sources through.
+
+    The defect was not only in the rule: production readiness loaded the
+    measure's contexts and never the fact's roles, so the fact half was
+    always empty however good the rule was.
+    """
+
+    @pytest.mark.parametrize("label,contexts,fact_roles", STATES,
+                             ids=[s[0] for s in STATES])
+    def test_the_report_reports_exactly_what_the_runtime_does(
+            self, label, contexts, fact_roles):
+        report = coverage_report(dict(METRIC),
+                                 metric_date_contexts=contexts,
+                                 fact_date_roles=fact_roles)
+        date_reasons = {gap.reason_id for gap in report.gaps
+                        if gap.missing == "date_role"}
+        blocked = _resolver_status(contexts, fact_roles) in {"none", "ambiguous"}
+        assert bool(date_reasons) is blocked, (label, date_reasons)
+
+    def test_the_fact_role_alone_makes_a_measure_complete(self):
+        """The state that was reported as fifteen gaps. It is zero."""
+        report = coverage_report(dict(METRIC),
+                                 metric_date_contexts=NO_CONTEXT,
+                                 fact_date_roles=ONE_APPROVED_DEFAULT)
+        assert [g.reason_id for g in report.gaps if g.missing == "date_role"] == []
+        assert _resolver_status(NO_CONTEXT, ONE_APPROVED_DEFAULT) == "selected"
+
+    def test_dropping_the_fact_roles_brings_the_false_gaps_back(self):
+        """Proves the fact half is actually read, rather than accepted and
+        discarded -- the shape of every swallowed-argument bug on this repo."""
+        without = coverage_report(dict(METRIC),
+                                  metric_date_contexts=NO_CONTEXT,
+                                  fact_date_roles=[])
+        assert [g.reason_id for g in without.gaps if g.missing == "date_role"]
+
+    def test_a_dimension_question_naming_a_period_needs_the_date_too(self):
+        """The second date branch, which had its own copy of the rule."""
+        variation = next(v for v in variations_for(dict(METRIC))
+                         if v.kind == "dimension" and v.grain)
+        settled = check_variation(variation, dict(METRIC),
+                                  metric_date_contexts=NO_CONTEXT,
+                                  fact_date_roles=ONE_APPROVED_DEFAULT)
+        assert settled is None
+        undecided = check_variation(variation, dict(METRIC),
+                                    metric_date_contexts=NO_DEFAULT_CONTEXT,
+                                    fact_date_roles=NO_FACT_ROLE)
+        assert undecided is not None
+        assert undecided.reason_id == "coverage.gap.no_default_date_role"
+
+
+class TestTheRemedyIsReadableInBothLanguages:
+
+    def test_both_reasons_are_in_the_catalogue(self):
+        for message_id in ("coverage.gap.no_date_role",
+                           "coverage.gap.no_default_date_role"):
             for lang in ("en", "fr"):
-                text = i18n.t(key, lang=lang)
-                assert text and text != key, (key, lang)
-        assert i18n.t("coverage.gap.no_default_date_role", lang="en") != \
-            i18n.t("coverage.gap.no_default_date_role", lang="fr")
+                assert i18n.t(message_id, lang=lang).strip(), (message_id, lang)
+
+    def test_the_french_report_says_it_in_french(self):
+        english = coverage_report(dict(METRIC),
+                                  metric_date_contexts=NO_DEFAULT_CONTEXT,
+                                  fact_date_roles=NO_FACT_ROLE, lang="en")
+        french = coverage_report(dict(METRIC),
+                                 metric_date_contexts=NO_DEFAULT_CONTEXT,
+                                 fact_date_roles=NO_FACT_ROLE, lang="fr")
+        assert english.gaps and french.gaps
+        assert english.gaps[0].reason != french.gaps[0].reason
+
+
+class TestNeverRaises:
+    """Coverage is advice. Advice that breaks the readiness page is worse
+    than none, and the resolver is now inside the call."""
+
+    @pytest.mark.parametrize("junk", [
+        None, [], [None], ["not a dict"], [{"id": 1}, None],
+    ])
+    def test_junk_in_either_list_is_survived(self, junk):
+        report = coverage_report(dict(METRIC),
+                                 metric_date_contexts=junk,
+                                 fact_date_roles=junk)
+        assert report.total > 0
+
+    def test_a_metric_with_no_table_still_reports(self):
+        """`required_fact_tables` is derived from base_table, which a draft
+        defined in chat may not have yet."""
+        report = coverage_report({**METRIC, "base_table": ""},
+                                 metric_date_contexts=NO_CONTEXT,
+                                 fact_date_roles=ONE_APPROVED_DEFAULT)
+        assert report.total > 0
