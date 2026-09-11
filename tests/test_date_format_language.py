@@ -349,17 +349,59 @@ class TestTheFreshnessBanner:
         assert "date métier la plus récente" in message
 
     def test_every_window_the_pipeline_gates_on_has_a_name(self):
-        """The pipeline decides which kinds get a banner. A seventh added
-        later without a catalogue entry would render as
-        "date.window.last_month" in the message."""
-        from core.query_pipeline import BUSINESS_DATE_WINDOW_KINDS
+        """The pipeline decides which kinds get a banner. One added later with
+        no name renders as "date.window.previous_month" in the message.
+
+        Asserted through spoken_window_phrase rather than through a catalogue
+        lookup, because not every kind is one fixed entry: last_n is built from
+        an amount and a unit, and a lookup of the bare id would demand an entry
+        that must not exist while never checking the branch that actually
+        speaks it."""
+        from core.query_pipeline import (
+            BUSINESS_DATE_WINDOW_KINDS, spoken_window_phrase,
+        )
 
         kinds = sorted(BUSINESS_DATE_WINDOW_KINDS)
         assert len(kinds) >= 6, kinds
         for kind in kinds:
             for lang in i18n.SUPPORTED_LANGUAGES:
-                msg_id = f"date.window.{kind}"
-                assert i18n.lookup(msg_id, lang=lang) != msg_id, f"{msg_id} [{lang}]"
+                with _InLanguage(lang):
+                    spoken = spoken_window_phrase(
+                        kind, {"amount": 4, "unit": "day"})
+                assert spoken, f"{kind} [{lang}] has no name at all"
+                assert "date.window" not in spoken, f"{kind} [{lang}]: {spoken}"
+                assert "{" not in spoken, f"{kind} [{lang}]: {spoken}"
+
+    def test_a_rolling_window_is_named_with_its_own_length(self):
+        """"last_n" is not a phrase. The banner is about WHICH window was
+        answered as of the data's date, so it has to say how long it was."""
+        from core.query_pipeline import spoken_window_phrase
+
+        for lang in i18n.SUPPORTED_LANGUAGES:
+            with _InLanguage(lang):
+                four_days = spoken_window_phrase(
+                    "last_n", {"amount": 4, "unit": "day"})
+                six_months = spoken_window_phrase(
+                    "last_n", {"amount": 6, "unit": "month"})
+                one_day = spoken_window_phrase(
+                    "last_n", {"amount": 1, "unit": "day"})
+            assert "4" in four_days and "6" in six_months
+            assert four_days != six_months
+            assert one_day != four_days, "singular and plural render the same"
+
+    def test_a_rolling_window_missing_its_length_says_nothing_specific(self):
+        """Better a generic phrase than "the last 0 days" beside a real date --
+        a wrong count discredits the date the banner exists to give."""
+        from core.query_pipeline import spoken_window_phrase
+
+        for lang in i18n.SUPPORTED_LANGUAGES:
+            for broken in ({}, None, {"amount": 0, "unit": "day"},
+                           {"amount": 4}, {"unit": "day"},
+                           {"amount": "many", "unit": "day"}):
+                with _InLanguage(lang):
+                    spoken = spoken_window_phrase("last_n", broken)
+                assert spoken and "{" not in spoken and "last_n" not in spoken
+                assert "0" not in spoken, spoken
 
 
 # ══════════════════════════════════════════════════════════════════════════════

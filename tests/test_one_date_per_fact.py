@@ -494,13 +494,18 @@ class TestOneAnchorPerFactReducedToTheEarliest:
 class TestTheFreshnessNoteReadsEveryFactsWindow:
     """On a warehouse loaded to the 8th, "this month's revenue and returns"
     must still say so. The kind was read off policies[0], so whether the reader
-    was told came down to which fact's table name sorted first."""
+    was told came down to which fact's table name sorted first.
+
+    latest_n_observed is the foil throughout: it is the one detected window that
+    is NOT anchored on the data's maximum date -- it selects the N most recent
+    days that actually have rows -- so it earns no freshness note and never did.
+    """
 
     def test_a_data_relative_kind_anywhere_in_the_list_earns_the_note(self):
         from core.query_pipeline import BUSINESS_DATE_WINDOW_KINDS
 
         kind = business_date_window_kind([
-            {"fact_table": INVOICE_FACT, "kind": "last_n"},
+            {"fact_table": INVOICE_FACT, "kind": "latest_n_observed"},
             {"fact_table": RETURN_FACT, "kind": "this_month"},
         ])
         assert kind == "this_month"
@@ -511,23 +516,24 @@ class TestTheFreshnessNoteReadsEveryFactsWindow:
     def test_it_does_not_depend_on_the_order_the_facts_arrive_in(self):
         forward = business_date_window_kind([
             {"fact_table": INVOICE_FACT, "kind": "this_month"},
-            {"fact_table": RETURN_FACT, "kind": "last_n"},
+            {"fact_table": RETURN_FACT, "kind": "latest_n_observed"},
         ])
         backward = business_date_window_kind([
-            {"fact_table": RETURN_FACT, "kind": "last_n"},
+            {"fact_table": RETURN_FACT, "kind": "latest_n_observed"},
             {"fact_table": INVOICE_FACT, "kind": "this_month"},
         ])
         assert forward == backward == "this_month"
 
     def test_a_single_policy_is_unchanged(self):
         assert business_date_window_kind([{"kind": "today"}]) == "today"
-        assert business_date_window_kind([{"kind": "last_n"}]) == "last_n"
+        assert business_date_window_kind(
+            [{"kind": "latest_n_observed"}]) == "latest_n_observed"
 
     def test_no_data_relative_kind_earns_no_note(self):
         from core.query_pipeline import BUSINESS_DATE_WINDOW_KINDS
 
         kind = business_date_window_kind([
-            {"kind": "last_n"}, {"kind": "previous_month"},
+            {"kind": "latest_n_observed"}, {"kind": "latest_snapshot"},
         ])
         assert kind not in BUSINESS_DATE_WINDOW_KINDS
 
@@ -536,6 +542,18 @@ class TestTheFreshnessNoteReadsEveryFactsWindow:
 
         for empty in ([], None, [{}], ["not a policy"]):
             assert business_date_window_kind(empty) not in BUSINESS_DATE_WINDOW_KINDS
+
+    def test_the_whole_policy_comes_back_so_the_note_can_name_the_window(self):
+        """last_n is "the last 4 days", not "last_n", and the amount and unit
+        that say which live on the policy -- so the kind alone is not enough."""
+        from core.query_pipeline import business_date_window
+
+        policy = business_date_window([
+            {"fact_table": INVOICE_FACT, "kind": "latest_n_observed", "amount": 3},
+            {"fact_table": RETURN_FACT, "kind": "last_n",
+             "amount": 4, "unit": "day"},
+        ])
+        assert (policy.get("amount"), policy.get("unit")) == (4, "day")
 
     def test_the_pipeline_asks_this_function_rather_than_indexing(self):
         """The banner block needs a websocket to execute, so the wiring is read
@@ -546,8 +564,9 @@ class TestTheFreshnessNoteReadsEveryFactsWindow:
         import core.query_pipeline as qp
 
         tree = ast.parse(inspect.getsource(qp._handle_query_impl).lstrip())
-        assert any(
-            isinstance(node, ast.Call)
-            and getattr(node.func, "id", "") == "business_date_window_kind"
-            for node in ast.walk(tree)
-        ), "the freshness disclosure no longer reduces the kind across facts"
+        called = {
+            getattr(node.func, "id", "") for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+        }
+        assert called & {"business_date_window", "business_date_window_kind"}, (
+            "the freshness disclosure no longer reduces the kind across facts")

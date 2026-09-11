@@ -17,7 +17,10 @@ import time
 
 import store
 from gateway import PlatformEvent
-from core.i18n import format_date as _format_date, plural as _t_plural, t as _t
+from core.i18n import (
+    format_date as _format_date, grain_label as _grain_label,
+    plural as _t_plural, t as _t,
+)
 from datetime import date as _dt_date
 from core.llm import llm_complete, build_sql_system_prompt, resolve_provider
 from core.prompt_cache import prompt_cache_enabled
@@ -1034,37 +1037,90 @@ def _multi_period_column_formats(
 
 # The date windows whose answers are relative to the DATA's most recent date
 # rather than to the calendar. Only these get the freshness banner below.
+#
+# Membership is decided by what the COMPILER does, not by how the phrase reads.
+# Every kind here compiles against anchor.max_business_date
+# (_compile_governed_request_sql for last_n/today/yesterday, calendar_period_bounds
+# for the rest), so on a warehouse loaded to 17 Apr 2025 the answer is about
+# April 2025 however the reader wrote the question.
+#
+# last_n and the previous_* family were missing, and they are the commonest way
+# a trend is asked for: "revenue for the last 4 days", "returns last month".
+# Both compile off the data anchor exactly like "today" does, both were answered
+# from sixteen-month-old data with a confident number, and neither said so --
+# "last month" is the worse of the two, because the answer never names a month
+# and there is nothing on the card to check.
+#
+# previous_week and this_week are here but are NOT in the compiler's
+# _COMPILABLE_WINDOW_KINDS: the dialects disagree about where a week starts, so
+# the SQL falls back to generation. The disclosure still applies -- the window
+# is still governed and still resolved against the data's own newest date.
 BUSINESS_DATE_WINDOW_KINDS = frozenset({
-    "today", "yesterday", "this_week", "this_month", "this_quarter", "this_year",
+    "today", "yesterday",
+    "this_week", "this_month", "this_quarter", "this_year",
+    "previous_week", "previous_month", "previous_quarter", "previous_year",
+    "last_n",
 })
 
 
-def business_date_window_kind(policies) -> str:
-    """Which requested window kind earns the freshness note, across all policies.
+def spoken_window_phrase(window_kind: str, window: dict | None = None) -> str:
+    """How to say a governed window to a reader.
+
+    Most kinds are one fixed phrase. ``last_n`` is not: it carries an amount and
+    a unit, and the disclosure has to name the window it is about or it is not
+    about anything. "the last 4 days is answered as of 17 Apr" is a sentence;
+    "last_n is answered as of 17 Apr" is a wire token on a reader's screen,
+    which is the defect this branch has now fixed in eleven other places.
+
+    A last_n that arrives without a usable amount and unit falls back to the
+    generic phrase rather than to "the last 0 days" -- the banner's point is the
+    DATE, and a wrong count beside a right date discredits both.
+    """
+    if window_kind == "last_n":
+        try:
+            count = int((window or {}).get("amount"))
+        except (TypeError, ValueError):
+            count = 0
+        unit = str((window or {}).get("unit") or "").strip().lower()
+        if count > 0 and unit:
+            return _t_plural("date.window.last_n", count,
+                             unit=_grain_label(unit, count))
+        return _t("clar.date.the_requested_period")
+    return _t(f"date.window.{window_kind}")
+
+
+def business_date_window(policies) -> dict:
+    """The policy whose window the freshness disclosure is about.
 
     A question resolving one governed date per fact carries one temporal policy
-    PER FACT, and they all describe the same requested window. Reading
-    ``policies[0]`` therefore made the disclosure depend on which fact happened
-    to sort first: ask for "this month's revenue and returns" and whether the
+    PER FACT, describing the same requested window against different facts.
+    Reading ``policies[0]`` made the disclosure depend on which fact happened to
+    sort first: ask for "this month's revenue and returns" and whether the
     reader was told the data only runs to the 8th came down to alphabetical
     order of table names.
-
-    Any policy naming a data-relative window earns the note. Falls back to the
-    first policy's kind so a non-disclosing window still reads the same as
-    before.
     """
     policies = [policy for policy in (policies or []) if isinstance(policy, dict)]
-    kinds = [str(policy.get("kind") or "") for policy in policies]
     return next(
-        (kind for kind in kinds if kind in BUSINESS_DATE_WINDOW_KINDS),
-        kinds[0] if kinds else "",
+        (policy for policy in policies
+         if str(policy.get("kind") or "") in BUSINESS_DATE_WINDOW_KINDS),
+        policies[0] if policies else {},
     )
+
+
+def business_date_window_kind(policies) -> str:
+    """The kind of the window the freshness disclosure is about.
+
+    Falls back to the first policy's kind so a question whose window earns no
+    note still reads the same as before.
+    """
+    return str(business_date_window(policies).get("kind") or "")
 
 
 def business_date_banner(
     window_kind: str,
     anchor: dict | None,
     today: _dt_date | None = None,
+    window: dict | None = None,
 ) -> tuple[int | None, str]:
     """The freshness note for a data-relative window: ``(drift_days, message)``.
 
@@ -1076,7 +1132,7 @@ def business_date_banner(
     still records a trace step in that case, which is why it comes back rather
     than being folded into the message.
     """
-    spoken = _t(f"date.window.{window_kind}")
+    spoken = spoken_window_phrase(window_kind, window)
     value = str((anchor or {}).get("value") or "")
     drift_days: int | None = None
     anchor_date = None
@@ -5473,12 +5529,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Without a probed date we cannot name the day, but we can still say the
     # answer is data-relative rather than calendar-relative.
     try:
-        _window_kind = business_date_window_kind(_anchor_policies)
+        _window_policy = business_date_window(_anchor_policies)
+        _window_kind = str(_window_policy.get("kind") or "")
         if _window_kind in BUSINESS_DATE_WINDOW_KINDS:
             _anchor_meta = (
                 _generation_semantic_context.get("resolved_date_anchor") or {}
             )
-            _drift_days, _banner = business_date_banner(_window_kind, _anchor_meta)
+            _drift_days, _banner = business_date_banner(
+                _window_kind, _anchor_meta, window=_window_policy
+            )
             if _banner:
                 await adapter.send_message(event, _banner)
             if _drift_days is None or _drift_days > 1:

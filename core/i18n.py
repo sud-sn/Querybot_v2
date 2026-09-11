@@ -4311,6 +4311,21 @@ MESSAGES: dict[str, dict[str, str]] = {
     "date.window.this_month": {"en": "this month", "fr": "ce mois-ci"},
     "date.window.this_quarter": {"en": "this quarter", "fr": "ce trimestre"},
     "date.window.this_year": {"en": "this year", "fr": "cette année"},
+    # The previous_* family and last_n compile against the data's newest date
+    # exactly as "today" does, so they earn the same disclosure and need the
+    # same phrase. "last month" is the one a reader can least check on their
+    # own: the answer never names a month.
+    "date.window.previous_week": {"en": "last week", "fr": "la semaine dernière"},
+    "date.window.previous_month": {"en": "last month", "fr": "le mois dernier"},
+    "date.window.previous_quarter": {
+        "en": "last quarter", "fr": "le trimestre dernier"},
+    "date.window.previous_year": {"en": "last year", "fr": "l'année dernière"},
+    # Parameterised: the unit comes through grain_label, which already agrees
+    # in both languages ("1 mois"/"3 mois", "1 année"/"3 années").
+    "date.window.last_n.one": {
+        "en": "the last {unit}", "fr": "le dernier {unit}"},
+    "date.window.last_n.other": {
+        "en": "the last {count} {unit}", "fr": "les {count} derniers {unit}"},
     "date.anchor.checked_now": {"en": "just now", "fr": "à l'instant"},
     "date.anchor.checked_cache": {"en": "from cache", "fr": "depuis le cache"},
     "date.anchor.drift.one": {

@@ -175,6 +175,45 @@ class TestTheKindsAreOnesTheRestOfTheProductKnows:
             assert detect_temporal_window(question)["kind"] in \
                 BUSINESS_DATE_WINDOW_KINDS, question
 
+    def test_every_window_anchored_on_the_data_is_disclosed(self):
+        """The general rule the four spellings above are one case of.
+
+        The pipeline collects its anchor policies by filtering on exactly this
+        field -- anchor_policy == "latest_available" -- so a window carrying it
+        IS answered as of the newest date in the data. If such a kind is missing
+        from BUSINESS_DATE_WINDOW_KINDS the answer is given anyway and the note
+        never fires, which is how "revenue for the last 4 days" was answered off
+        a sixteen-month-old warehouse with nothing on the card to notice it by.
+
+        Deriving the expectation from the detector rather than listing the kinds
+        means a window added later is covered the day it is added.
+        """
+        seen = set()
+        for question in self.ALL + [
+            "revenue today", "revenue yesterday", "revenue this week",
+            "revenue this month", "revenue this quarter", "revenue this year",
+            "revenue last 4 days", "revenue last 6 months",
+            "revenue last 3 available days",
+        ]:
+            window = detect_temporal_window(question)
+            if str(window.get("anchor_policy") or "") != "latest_available":
+                continue
+            kind = str(window.get("kind") or "")
+            seen.add(kind)
+            assert kind in BUSINESS_DATE_WINDOW_KINDS, (
+                f"{question!r} resolves to {kind!r}, which is answered as of "
+                "the newest date in the data and is not disclosed as such")
+        assert {"today", "last_n", "previous_month", "this_year"} <= seen, seen
+
+    def test_an_observed_window_is_not_claimed_to_be_data_relative(self):
+        """latest_n_observed picks the N most recent days that HAVE rows, so
+        the freshness note -- which is about a window ending at the data's
+        maximum -- does not describe it."""
+        window = detect_temporal_window("revenue last 3 available days")
+        assert window["kind"] == "latest_n_observed"
+        assert window["anchor_policy"] == "observed_periods"
+        assert window["kind"] not in BUSINESS_DATE_WINDOW_KINDS
+
 
 class TestTheTwoHalvesOfTheProductAgree:
     """question_has_temporal_intent listed ytd and mtd while the window
