@@ -5452,6 +5452,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "intent": query_intent,
         "top_n": top_n_intent.to_dict() if top_n_intent else None,
         "question": question,
+        # The canonical English beside the reader's own words. Every refusal gate
+        # in the governed compilers is an English regex, and on the raw French
+        # text all ten of "comparer / par rapport / différence / classer / les 5
+        # meilleurs / pourquoi / répartition / prévision / part / corrélation"
+        # failed to refuse -- so a comparison question compiled to a single-window
+        # scalar and the reader got one number where they asked for two and a
+        # difference. The reader's own text stays under "question" for everything
+        # that displays or prompts.
+        "canonical_question": _semantic_plan_question,
         "production_sql": True,
         "graph_context": _graph_ctx,
         "semantic_plan": _semantic_plan,

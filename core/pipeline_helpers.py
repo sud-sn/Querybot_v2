@@ -780,6 +780,25 @@ def _required_join_path(
     return []
 
 
+def _gate_question(context: dict) -> str:
+    """The text the compilers' refusal and shape gates should read.
+
+    Every one of those gates is an English regex -- "compare", "rank", "trend",
+    "by month" -- and the reader's own words are not necessarily English. The
+    canonical form is produced once at the front door
+    (core/question_normalizer.py) and carried in the semantic context beside the
+    reader's text; this prefers it and falls back to the reader's, so a caller
+    that has not been updated behaves exactly as it did.
+
+    Measured on the scalar compiler's refusal gate before this existed: ten
+    French questions that their English twins all refused -- comparisons,
+    rankings, a "why", a forecast, a distribution -- every one compiled to a
+    single-window scalar instead.
+    """
+    return str((context or {}).get("canonical_question")
+               or (context or {}).get("question") or "")
+
+
 def _compile_governed_grouped_request_sql(
     db_type: str,
     known_tables: set[str],
@@ -800,7 +819,7 @@ def _compile_governed_grouped_request_sql(
     context = semantic_context or {}
     plan = context.get("semantic_plan") or {}
     request = context.get("analytical_request_plan") or {}
-    question = str(context.get("question") or "")
+    question = _gate_question(context)
     if str(request.get("status") or "") != "compiled":
         return ""
     source_facts = [str(table) for table in (request.get("source_facts") or []) if table]
@@ -1383,7 +1402,7 @@ def compile_governed_temporal_metric_sql(
     context = semantic_context or {}
     plan = context.get("semantic_plan") or {}
     request_plan = context.get("analytical_request_plan") or {}
-    question = str(context.get("question") or "")
+    question = _gate_question(context)
     policies = list(plan.get("temporal_policies") or [])
     metrics = [
         metric for metric in (context.get("metric_formulas") or [])
@@ -1396,9 +1415,17 @@ def compile_governed_temporal_metric_sql(
         return ""
     if request_plan.get("subrequests") or len(request_plan.get("source_facts") or []) > 1:
         return ""
+    # A ranking request is already RESOLVED upstream by detect_top_n_intent,
+    # which reads "top 5" and "top five" alike and lands in the context as
+    # top_n. Reading the structured signal instead of re-deriving it from words
+    # closes a whole class of vocabulary gap: "the 5 best revenue" carries a
+    # top-N intent and contains none of the words below, in either language.
+    if context.get("top_n"):
+        return ""
     if re.search(
-        r"\b(?:compare|comparison|versus|vs\.?|difference|change|rank|top|bottom|"
-        r"distribution|share|percentile|correlation|why|forecast)\b",
+        r"\b(?:compare|comparison|versus|vs\.?|difference|change|rank|ranking|"
+        r"top|bottom|best|worst|highest|lowest|breakdown|distribution|share|"
+        r"percentile|correlation|why|forecast)\b",
         question,
         re.I,
     ):
