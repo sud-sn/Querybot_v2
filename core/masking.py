@@ -719,10 +719,11 @@ def _apply_det(value: Any, strategy: str, rng: random.Random) -> Any:
             f"{rng.randint(0, 255)}.{rng.randint(1, 254)}"
         )
     if strategy == "coordinate":
-        try:
-            return round(float(value) + rng.uniform(-0.5, 0.5), 6)
-        except Exception:
-            return value
+        # No local try/except: a conversion failure must propagate to
+        # _mask_row's except clause, which substitutes "[MASKED]" -- see
+        # _shift_date's docstring for why returning the raw value here
+        # instead is the actual defect.
+        return round(float(value) + rng.uniform(-0.5, 0.5), 6)
     if strategy == "birthdate":
         return _shift_date(value, max_days=730, rng=rng)
     if strategy == "date_shift":
@@ -765,7 +766,25 @@ def _mask_row(
                 result[field] = _apply_det(result[field], strategy, rng)
             else:
                 result[field] = _apply(result[field], strategy, faker)
-        except Exception:
+        except Exception as exc:
+            # Loud on purpose. This was silent, and four strategies
+            # (coordinate, birthdate, date_shift, salary, numeric_shift) used
+            # to catch their OWN conversion failure and return the raw value
+            # instead of raising -- which made this except clause, the one
+            # thing standing between a masking bug and a raw regulated value
+            # reaching a KB sample or LLM prompt, unreachable for exactly
+            # those failures. See core/masking.py's fixed strategies for
+            # where that raise now happens.
+            #
+            # Logged by exception TYPE only, never str(exc) or the value
+            # itself: Python's own ValueError from float() or strptime()
+            # embeds the unparseable string verbatim in its message, which
+            # would turn this log line into the very leak it exists to catch.
+            log.warning(
+                "Masking failed for field=%r strategy=%r (%s) -- "
+                "substituting [MASKED] rather than the source value",
+                field, strategy, type(exc).__name__,
+            )
             result[field] = "[MASKED]"
     return result
 
@@ -810,10 +829,9 @@ def _apply(value: Any, strategy: str, faker) -> Any:  # noqa: C901
     if strategy == "ip_address":
         return f"{random.randint(10,192)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
     if strategy == "coordinate":
-        try:
-            return round(float(value) + random.uniform(-0.5, 0.5), 6)
-        except Exception:
-            return value
+        # No local try/except: see _apply_det's identical branch and
+        # _shift_date's docstring below for why.
+        return round(float(value) + random.uniform(-0.5, 0.5), 6)
     if strategy == "birthdate":
         return _shift_date(value, max_days=730)
     if strategy == "date_shift":
@@ -835,6 +853,18 @@ def _shift_date(
     max_days: int = 5,
     rng: random.Random | None = None,
 ) -> Any:
+    """Shift a date value by a small random offset for de-identification.
+
+    Raises when `value` is neither a date/datetime nor one of the five
+    formats tried, rather than returning it unshifted. This function has no
+    caller of its own -- it is reached only through _apply/_apply_det, inside
+    _mask_row's try block, whose except clause substitutes "[MASKED]" for
+    exactly this case. Returning the raw value here instead of raising made
+    that safety net unreachable: an ISO timestamp with a timezone offset
+    ("1985-03-02T00:00:00+05:00"), or any format outside the five tried,
+    wrote the real, unmasked birthdate straight into a KB sample or LLM
+    prompt with nothing to show it had happened.
+    """
     from datetime import timedelta, date, datetime
     _rng = rng or random
     shift = _rng.randint(-max_days, max_days)
@@ -848,7 +878,12 @@ def _shift_date(
             return (d + timedelta(days=shift)).strftime(fmt)
         except ValueError:
             continue
-    return value
+    # Deliberately no value in the message: it reaches _mask_row's except
+    # clause, and from there is logged by exception TYPE only, never
+    # str(exc) -- but raising ValueError(f"...{value}...") here would still
+    # be the wrong habit to leave behind for the next strategy added to this
+    # function to copy.
+    raise ValueError("_shift_date: value is not a recognized date format")
 
 
 def _shift_numeric(
@@ -856,17 +891,25 @@ def _shift_numeric(
     pct: float = 0.10,
     rng: random.Random | None = None,
 ) -> Any:
+    """Shift a numeric value by a small random percentage for
+    de-identification.
+
+    Raises when `value` cannot convert to float, rather than returning it
+    unshifted -- see _shift_date's docstring for why: the only safety net for
+    that failure is the caller's except clause, which this function used to
+    make unreachable by catching its own conversion failure and returning the
+    raw value instead. A salary column containing "$85,000" (comma and
+    currency symbol) is exactly the shape that fails float() and used to
+    write the real, unmasked salary straight through.
+    """
     _rng = rng or random
-    try:
-        n = float(value)
-        n_new = n * (1.0 + _rng.uniform(-pct, pct))
-        if isinstance(value, int):
-            return max(0, int(round(n_new)))
-        if isinstance(value, str) and value.isdigit():
-            return max(0, int(round(n_new)))
-        return round(n_new, 2)
-    except Exception:
-        return value
+    n = float(value)
+    n_new = n * (1.0 + _rng.uniform(-pct, pct))
+    if isinstance(value, int):
+        return max(0, int(round(n_new)))
+    if isinstance(value, str) and value.isdigit():
+        return max(0, int(round(n_new)))
+    return round(n_new, 2)
 
 
 def _mask_text(value: str, rng: random.Random | None = None) -> str:
