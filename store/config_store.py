@@ -1571,7 +1571,9 @@ def validate_metric_refs(account_id: str, formula: str) -> list[str]:
         return [str(exc)]
 
 
-def _metric_covers_temporal_scope(phrase: str, question_window: dict, question_is_dated: bool) -> bool:
+def _metric_covers_temporal_scope(
+    phrase: str, question_window: dict, question_is_dated: bool, *, lang: str = "",
+) -> bool:
     """Does the metric wording that matched carry the question's own time scope?
 
     A stored template is a fixed string. It answers exactly one question: the
@@ -1591,17 +1593,24 @@ def _metric_covers_temporal_scope(phrase: str, question_window: dict, question_i
 
     An absolute date ("revenue in March 2026") never qualifies: a synonym does
     not name a specific month, so a match there means the date was dropped.
+
+    ``lang`` canonicalises the SYNONYM before reading a window out of it, for the
+    same reason the question is canonicalised: an admin who authored "chiffre
+    d'affaires du mois en cours" for an MTD metric wrote a window, and
+    detect_temporal_window reads English.
     """
     from core.contextual_dates import detect_temporal_window
+    from core.question_normalizer import canonical_question
 
     if question_is_dated:
         return False
     if not question_window:
         return True
-    return detect_temporal_window(phrase).get("kind") == question_window.get("kind")
+    phrase_window = detect_temporal_window(canonical_question(phrase, lang))
+    return phrase_window.get("kind") == question_window.get("kind")
 
 
-def match_metric(account_id: str, question: str) -> dict | None:
+def match_metric(account_id: str, question: str, *, lang: str = "") -> dict | None:
     """
     Check if the question matches any trusted full-SQL metric by synonym lookup.
     Returns the metric dict if matched, None otherwise.
@@ -1614,9 +1623,42 @@ def match_metric(account_id: str, question: str) -> dict | None:
     Skips it likewise when the question scopes a time window the matched wording
     does not itself carry — see _metric_covers_temporal_scope. Both guards are
     the same rule: a fixed template only answers the question it was written for.
+
+    ``lang`` is the reader's language, and both guards need it because both are
+    written in ENGLISH. Measured on a French reader over eleven questions, nine
+    diverged from their English twins and every divergence was this function
+    serving a fixed template the English question correctly declined:
+
+        ventes nettes par succursale  -> the ungrouped total, for a per-branch
+                                         question
+        ventes nettes le mois dernier -> the all-time total, for last month
+        ventes nettes aujourd'hui     -> the all-time total, for today
+
+    "par" is not "per" and "le mois dernier" is not a window any English regex
+    reads, so neither guard fired at all. Both now read the CANONICAL text.
+
+    Synonyms are matched against the reader's own words AND the canonical form,
+    because a synonym is admin-authored and may be in either language: an
+    English-built KB whose metric says "net sales" was unreachable in French,
+    and canonicalising alone would have made a French-authored synonym
+    unreachable in turn.
+
+    Default ``lang`` is English, where the canonical form IS the input, so every
+    existing caller and tenant runs the same bytes it ran before.
     """
     import re
-    q_lower = question.lower()
+    from core.question_normalizer import _fold, canonical_question
+
+    # Folded, not merely lowercased. A synonym is typed by an admin and the
+    # question by a reader, months apart and on different keyboards, so
+    # "chiffre d'affaires du mois en cours" and "chiffre d’affaires du mois en
+    # cours" are one phrase that shared no byte at the apostrophe. Folding both
+    # sides makes the match accent- and apostrophe-insensitive; for ASCII
+    # English _fold is exactly .lower(), so nothing changes for an English
+    # tenant.
+    q_lower = _fold(question)
+    canonical = canonical_question(question, lang)
+    canonical_lower = _fold(canonical)
 
     # Skip metric registry for grouping/dimension questions
     # These need LLM to generate GROUP BY — stored SQL won't have it
@@ -1630,7 +1672,9 @@ def match_metric(account_id: str, question: str) -> dict | None:
         r"\bfor\s+each\b",   # "for each"
     ]
     for pat in grouping_patterns:
-        if re.search(pat, q_lower):
+        # The canonical text, not the reader's: these patterns are English, and
+        # "par succursale" matched none of them.
+        if re.search(pat, canonical_lower):
             return None  # Fall through to LLM for GROUP BY queries
 
     # Resolved once: the question's time scope, if it states one at all. Read
@@ -1645,7 +1689,7 @@ def match_metric(account_id: str, question: str) -> dict | None:
             detect_temporal_window,
             question_has_explicit_date_filter,
         )
-        asked = extract_original_question(question)
+        asked = canonical_question(extract_original_question(question), lang)
         question_window = detect_temporal_window(asked) or {}
         question_is_dated = question_has_explicit_date_filter(asked)
     except Exception:
@@ -1664,12 +1708,13 @@ def match_metric(account_id: str, question: str) -> dict | None:
             continue
         if not (metric.get("sql_template") or "").lstrip().upper().startswith("SELECT"):
             continue
-        synonyms = [s.strip().lower() for s in metric["synonyms"].split(",") if s.strip()]
-        synonyms.append(metric["name"].lower())
+        synonyms = [_fold(s.strip()) for s in metric["synonyms"].split(",") if s.strip()]
+        synonyms.append(_fold(metric["name"]))
         for syn in synonyms:
             pattern = r"\b" + re.escape(syn) + r"\b"
-            if re.search(pattern, q_lower):
-                if not _metric_covers_temporal_scope(syn, question_window, question_is_dated):
+            if re.search(pattern, q_lower) or re.search(pattern, canonical_lower):
+                if not _metric_covers_temporal_scope(
+                        syn, question_window, question_is_dated, lang=lang):
                     log.info(
                         "Metric %r matched %r but does not carry its time scope "
                         "(%s) — planning the question instead of returning the "

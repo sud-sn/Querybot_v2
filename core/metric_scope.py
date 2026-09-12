@@ -62,7 +62,25 @@ def _metric_phrases(metric: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(phrases))
 
 
-def _phrase_score(metric: dict[str, Any], question: str) -> int:
+def _phrase_score(metric: dict[str, Any], question: str, *, reader_question: str = "") -> int:
+    """How strongly this metric's wording matches the question.
+
+    Scored against the canonical English AND, when they differ, the reader's own
+    words -- taking the better of the two. Both are needed and neither is
+    sufficient. _norm keeps only [a-z0-9], so an accented French word is SHREDDED
+    rather than merely unmatched ("annee" survives, "année" becomes "ann e"), and
+    measured on a French reader this function returned no metric at all where its
+    English twin returned one. Scoring the canonical form alone would then have
+    made a French-authored synonym unreachable in turn, which is the opposite
+    failure on the same axis.
+    """
+    best = _phrase_score_one(metric, question)
+    if reader_question and reader_question != question:
+        best = max(best, _phrase_score_one(metric, reader_question))
+    return best
+
+
+def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
     q = _norm(question)
     q_tokens = _tokens(question)
     if not q_tokens:
@@ -257,12 +275,18 @@ def resolve_metric_scope(
     graph: dict[str, Any] | None = None,
     semantic_plan: dict[str, Any] | None = None,
     entity_schema_map: dict[str, str] | None = None,
+    reader_question: str = "",
     limit: int = 6,
 ) -> MetricScopeResult:
     """Return the metrics that should be visible/enforced for this question.
 
     Parameters
     ----------
+    reader_question : The reader's own words, when ``question`` is the
+        canonicalised English form and the two differ. Scored alongside it and
+        the better score wins, so a metric whose synonyms an admin wrote in the
+        reader's language is still matched. Omit for an English reader, where the
+        two are the same string.
     entity_schema_map : Optional dict mapping entity_name → schema_name (UPPER).
         Built from the full entity graph.  When provided, ``base_entity`` on each
         metric is used as the primary schema lookup — bypassing fragile
@@ -276,7 +300,7 @@ def resolve_metric_scope(
 
     scored: list[tuple[int, dict[str, Any], set[str]]] = []
     for metric in metrics or []:
-        score = _phrase_score(metric, question)
+        score = _phrase_score(metric, question, reader_question=reader_question)
         if score <= 0:
             continue
         schemas = metric_source_schemas(metric, table_columns, entity_schema_map)

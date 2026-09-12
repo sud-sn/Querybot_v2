@@ -2399,7 +2399,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         else None
     )
 
-    matched_metric = store.match_metric(account_id, question)
+    matched_metric = store.match_metric(
+        account_id, question, lang=(portal_user or {}).get("lang") or "en")
     if matched_metric:
         _trace_update(trace_id, route="metric_registry", generated_sql=matched_metric["sql_template"].strip())
         _trace_step(trace_id, "route", output_summary={"route": "metric_registry", "metric": matched_metric.get("name", "")})
@@ -2407,7 +2408,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         sql_from_metric = matched_metric["sql_template"].strip()
         # Warn when user asks for a dimensional breakdown of a query-type metric
         import re as _re_grp
-        if matched_metric.get("formula_type") == "query" and _re_grp.search(r'\b(by|per|for each|grouped by|split by|breakdown)\b', question, _re_grp.IGNORECASE):
+        if matched_metric.get("formula_type") == "query" and _re_grp.search(
+                r'\b(by|per|for each|grouped by|split by|breakdown)\b',
+                _analysis_question, _re_grp.IGNORECASE):
             await adapter.send_message(
                 event,
                 metric_not_groupable_disclosure(
@@ -3151,9 +3154,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _raw_temporal_window = _event_raw.get("_clarification_temporal_window")
         if isinstance(_raw_temporal_window, dict) and _raw_temporal_window.get("kind"):
             _structured_temporal_window = dict(_raw_temporal_window)
+    # Kept side by side deliberately. _semantic_plan_question is the text every
+    # ENGLISH detector reads; _reader_plan_question is what the reader actually
+    # typed, and metric synonyms may be authored in either language.
+    _reader_plan_question = (
+        _structured_semantic_question or extract_original_question(question)
+    )
     _semantic_plan_question = canonical_question(
-        _structured_semantic_question or extract_original_question(question),
-        (portal_user or {}).get("lang"),
+        _reader_plan_question, (portal_user or {}).get("lang"),
     )
 
     _semantic_plan = {}
@@ -3220,6 +3228,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _semantic_plan_question,
             all_columns,
             selected_schema=schema_hint,
+            reader_question=_reader_plan_question,
             limit=6,
         )
         _early_metric_tables: set[str] = set()
@@ -3874,13 +3883,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # bare "revenue" question remains ambiguous and should ask the user.
     _metric_scope = resolve_metric_scope(
         _metric_candidates,
-        question,
+        _semantic_plan_question,
         all_columns,
         selected_schema=schema_hint,
         graph_context=_graph_ctx,
         graph=_full_graph,
         semantic_plan=_semantic_plan,
         entity_schema_map=_entity_schema_map or None,
+        reader_question=question,
         limit=6,
     )
     # A pinned draft IS the user's disambiguation -- they just defined, in this

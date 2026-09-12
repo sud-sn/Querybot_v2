@@ -108,8 +108,21 @@ _LEXICON: dict[str, str] = {
     # "ça" are the same two letters, and "qu'est-ce que ça donne" would become
     # "what does revenue give". Case would tell them apart, and matching runs on
     # folded lowercase text precisely so accents cannot be relied on either.
+    # "ventes nettes" before "ventes": the lexicon is applied longest-first, and
+    # "sales nettes" matches no metric synonym, no KB field and no BM25 token.
+    # It is the measure an EMCO reader asks for by name.
+    "ventes nettes": "net sales",
+    "ventes brutes": "gross sales",
     "ventes": "sales",
     "vente": "sales",
+    # The returns fact has a French name and no English one. Measured:
+    # "retours par succursale" resolved to NO metric at all while "returns by
+    # branch" resolved to the Returns metric.
+    # Longest-first ordering is what keeps this from reading ROI as a returns
+    # question: "retour sur investissement" is not a credit note.
+    "retour sur investissement": "return on investment",
+    "retours": "returns",
+    "retour": "returns",
     "marge brute": "gross margin",
     "marge nette": "net margin",
     "marge": "margin",
@@ -298,6 +311,13 @@ _LEXICON: dict[str, str] = {
     "mois a date": "month to date",
     "trimestre a date": "quarter to date",
     "semaine a date": "week to date",
+    # "à ce jour" is the idiomatic French for "to date" and the direct mirror of
+    # the four above. Only the unit-anchored forms are entries: "à ce jour"
+    # alone can also mean all of history up to now, which is not a window.
+    "annee a ce jour": "year to date",
+    "mois a ce jour": "month to date",
+    "trimestre a ce jour": "quarter to date",
+    "semaine a ce jour": "week to date",
     "annee derniere": "last year",
     "l'annee derniere": "last year",
     "annee precedente": "previous year",
