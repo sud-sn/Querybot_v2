@@ -1967,6 +1967,34 @@ def is_single_request_rejection(exc: BaseException) -> bool:
     return "context_length_exceeded" in blob or "maximum context length" in blob
 
 
+def is_rate_limited(exc: BaseException) -> bool:
+    """Did the provider refuse this call because the tenant is over quota?
+
+    Separate from is_single_request_rejection on purpose: a rate limit is
+    neither of that predicate's two cases. It is not about this one request --
+    the next one fails the same way -- but it is not permanent either, which is
+    the one thing that distinguishes it from a rejected key. It is the only
+    error here that gets better by waiting.
+
+    Only a caller with nobody waiting should act on that. Azure admits requests
+    against a tokens-per-minute quota using the max_tokens the request ASKED
+    for, so the workload most likely to exhaust it is the knowledge-base build:
+    two calls per table, back to back, each asking for up to 16,000 output
+    tokens. A question in the chat window is the opposite case -- there is a
+    reader watching a spinner -- so the query path does not retry on this and
+    should not.
+
+    Read from the message, like the predicate above and for the same reason:
+    the provider wrappers interpolate the provider's own text.
+    """
+    blob = f"{type(exc).__name__} {exc}".lower()
+    if "429" in blob:
+        return True
+    return any(word in blob for word in
+               ("rate limit", "ratelimit", "too many requests",
+                "exceeded token rate", "quota"))
+
+
 class EgressPostureError(RuntimeError):
     """A model call was refused because the tenant's egress posture forbids it.
 

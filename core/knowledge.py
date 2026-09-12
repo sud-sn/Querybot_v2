@@ -99,6 +99,14 @@ _KB_QUERY_MAX_TOKENS = 8000
 # a caller may ask for less.
 _KB_TEMPERATURE = 0.1
 
+# How long to wait out a rate limit, per label, before giving the build back.
+# Three waits covering a minute: Azure's TPM quota refills on a one-minute
+# window, so a build that crossed the line early in one is usually through after
+# the first wait. Bounded rather than exponential-forever because a provider
+# that is simply unreachable must still fail the build in under a minute --
+# waiting is only correct while there is a quota to wait for.
+_KB_RATE_LIMIT_WAITS = (5.0, 15.0, 30.0)
+
 # The business vocabulary covers every table at once, so its budget scales with
 # the table count rather than the column count.
 _KB_VOCAB_BASE_TOKENS = 3000
@@ -128,13 +136,29 @@ def kb_vocab_token_budget(table_count: int) -> int:
                _KB_VOCAB_BASE_TOKENS + extra * _KB_VOCAB_TOKENS_PER_TABLE)
 
 
+async def _wait_unless_stopped(seconds: float, stop_event) -> bool:
+    """Sleep, and return True if the operator pressed Stop while we did.
+
+    Polled in one-second slices rather than slept through in one go: build_kb
+    checks the stop event between tables, so a wait that ignored it would leave
+    the admin's Stop button doing nothing for the length of the wait.
+    """
+    remaining = float(seconds)
+    while remaining > 0:
+        if stop_event is not None and stop_event.is_set():
+            return True
+        await asyncio.sleep(min(1.0, remaining))
+        remaining -= 1.0
+    return stop_event is not None and stop_event.is_set()
+
+
 async def _kb_complete(
     label: str, system: str, user: str, provider: str, model: str,
-    api_key: str, *, max_tokens: int, **kw,
+    api_key: str, *, max_tokens: int, stop_event=None, **kw,
 ) -> tuple[str | None, str]:
     """One KB completion: ``(text, "")``, or ``(None, reason)`` when it cannot.
 
-    Four behaviours, and each one is a defect this replaces:
+    Five behaviours, and each one is a defect this replaces:
 
     * the ceiling comes from the caller's own estimate of the document's size,
       rather than a constant that fitted nothing wide;
@@ -159,14 +183,28 @@ async def _kb_complete(
       never written at all. The admin got a failed build, a raw Azure error blob
       as its only explanation, and no record of which table caused it.
 
+    * a RATE LIMIT is waited out rather than contained or propagated, because it
+      is neither. It is not about this one document -- the next table fails the
+      same way -- but unlike a rejected key it stops being true. Azure admits
+      requests against a tokens-per-minute quota using the max_tokens the
+      request ASKED for, and this build is the workload most likely to exhaust
+      one: two calls per table, back to back, each asking for up to 16,000
+      output tokens. With the SDK allowed a single automatic retry, a build of
+      any size on a modest quota ended at whichever table happened to cross the
+      line. Three waits of 5, 15 and 30 seconds cover a TPM window; the budget
+      is per label, not per attempt, so a provider that is simply down still
+      fails in under a minute. The waits poll the stop event, so the admin's
+      Stop button keeps working through them.
+
     What still propagates: everything that will reject the next table
-    identically -- a refused key, a deployment that does not exist, a dead
-    endpoint, a rate limit, an egress posture refusal. Containing those is how a
-    build reports success having produced nothing, and a knowledge base with
-    holes answers questions about those tables from the schema alone, quietly,
-    for as long as nobody rebuilds it. core.llm.is_single_request_rejection
-    draws the line and is deliberately narrow: anything it does not recognise
-    propagates exactly as it did before it existed.
+    identically AND will still be true a minute later -- a refused key, a
+    deployment that does not exist, a dead endpoint, an egress posture refusal.
+    Containing those is how a build reports success having produced nothing, and
+    a knowledge base with holes answers questions about those tables from the
+    schema alone, quietly, for as long as nobody rebuilds it.
+    core.llm.is_single_request_rejection draws the line and is deliberately
+    narrow: anything it does not recognise propagates exactly as it did before
+    it existed.
 
     The reason comes back with the None rather than being logged and dropped,
     because the caller writes it into _build_failures.json and "output truncated
@@ -175,7 +213,12 @@ async def _kb_complete(
     Logged at error, not debug: a KB document that was never written is
     invisible at query time. It simply makes the table answer worse.
     """
-    from core.llm import LLMTruncatedError, is_single_request_rejection, llm_complete
+    from core.llm import (
+        LLMTruncatedError,
+        is_rate_limited,
+        is_single_request_rejection,
+        llm_complete,
+    )
 
     # Clamped here rather than at the three call sites, for the same reason the
     # endpoint is normalised inside the client: a stage added later cannot forget
@@ -184,38 +227,58 @@ async def _kb_complete(
         float(kw.get("temperature", _KB_TEMPERATURE)), _KB_TEMPERATURE)
 
     ceiling = int(max_tokens)
-    for attempt, budget in enumerate((ceiling, _KB_DOC_MAX_TOKENS)):
-        if attempt and budget <= ceiling:
-            break  # the estimate was already at the cap; a retry is the same call
-        try:
-            text, _, _ = await llm_complete(
-                system, user, provider, model, api_key,
-                max_tokens=budget, **kw,
-            )
-            if attempt:
-                log.warning(
-                    "KB %s finished on the retry at %d tokens (the %d-token "
-                    "estimate was short)", label, budget, ceiling,
+    budgets = [ceiling]
+    if _KB_DOC_MAX_TOKENS > ceiling:
+        # Otherwise the estimate was already at the cap and a retry is the
+        # identical call, spent to learn nothing.
+        budgets.append(_KB_DOC_MAX_TOKENS)
+
+    # One patience budget for the whole label, not one per ceiling: the point is
+    # to ride out a quota window, not to retry until the build never ends.
+    waits = list(_KB_RATE_LIMIT_WAITS)
+
+    for attempt, budget in enumerate(budgets):
+        while True:
+            try:
+                text, _, _ = await llm_complete(
+                    system, user, provider, model, api_key,
+                    max_tokens=budget, **kw,
                 )
-            return text, ""
-        except LLMTruncatedError as exc:
-            log.warning(
-                "KB %s hit its %d-token ceiling: %s", label, budget, exc,
-            )
-        except Exception as exc:
-            if not is_single_request_rejection(exc):
-                raise
-            # Retrying HIGHER is exactly wrong for a ceiling that was already
-            # too high, and a filtered document is not filtered less on a second
-            # try. One call, then this label is done.
-            log.error(
-                "KB %s was rejected by %s at a %d-token ceiling: %s. This one "
-                "is SKIPPED and the rest of the build continues; it will have "
-                "no knowledge-base document, so questions about it are answered "
-                "from the schema alone.",
-                label, model, budget, exc,
-            )
-            return None, f"{type(exc).__name__}: {str(exc)[:300]}"
+                if attempt:
+                    log.warning(
+                        "KB %s finished on the retry at %d tokens (the %d-token "
+                        "estimate was short)", label, budget, ceiling,
+                    )
+                return text, ""
+            except LLMTruncatedError as exc:
+                log.warning(
+                    "KB %s hit its %d-token ceiling: %s", label, budget, exc,
+                )
+                break  # a bigger ceiling is the only thing that helps
+            except Exception as exc:
+                if is_rate_limited(exc) and waits:
+                    delay = waits.pop(0)
+                    log.warning(
+                        "KB %s was rate-limited by %s; waiting %.0fs before "
+                        "trying again (%d further attempt(s) allowed). %s",
+                        label, model, delay, len(waits), exc,
+                    )
+                    if await _wait_unless_stopped(delay, stop_event):
+                        raise
+                    continue  # the SAME ceiling: nothing about it was wrong
+                if not is_single_request_rejection(exc):
+                    raise
+                # Retrying HIGHER is exactly wrong for a ceiling that was already
+                # too high, and a filtered document is not filtered less on a
+                # second try. One call, then this label is done.
+                log.error(
+                    "KB %s was rejected by %s at a %d-token ceiling: %s. This "
+                    "one is SKIPPED and the rest of the build continues; it "
+                    "will have no knowledge-base document, so questions about "
+                    "it are answered from the schema alone.",
+                    label, model, budget, exc,
+                )
+                return None, f"{type(exc).__name__}: {str(exc)[:300]}"
     log.error(
         "KB %s could not be generated: the document did not finish within %d "
         "output tokens, the highest ceiling this provider is asked for. The "
@@ -856,7 +919,8 @@ async def build_kb(
     with llm_audit_component("kb_business_vocab", new_request_id=True):
         biz_text, biz_reason = await _kb_complete(
             "business vocabulary", system_base, biz_user, provider, model,
-            api_key, max_tokens=kb_vocab_token_budget(len(table_names)), **kw
+            api_key, max_tokens=kb_vocab_token_budget(len(table_names)),
+            stop_event=stop_event, **kw
         )
     if biz_text is None:
         # Nothing downstream requires this file to exist -- it is swept into the
@@ -1176,7 +1240,8 @@ async def build_kb(
             kb_text, kb_reason = await _kb_complete(
                 f"document for {table_name}", system, stage1_user, provider,
                 model, api_key,
-                max_tokens=kb_doc_token_budget(len(table_cols)), **kw
+                max_tokens=kb_doc_token_budget(len(table_cols)),
+                stop_event=stop_event, **kw
             )
         if kb_text is None:
             # This one table only. Before this the exception left the loop and
@@ -1225,7 +1290,8 @@ async def build_kb(
             query_text, query_reason = await _kb_complete(
                 f"query examples for {table_name}", system, query_user, provider,
                 model, api_key,
-                max_tokens=kb_query_token_budget(len(table_cols)), **kw
+                max_tokens=kb_query_token_budget(len(table_cols)),
+                stop_event=stop_event, **kw
             )
         if query_text is None:
             # The document itself was written, so the table is documented and is
