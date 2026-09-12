@@ -7186,7 +7186,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         if not (_zr_has_required or _zr_has_multi_metric):
             # No ambiguity signal: return business-readable RCA for the empty result.
             _zr_tables = extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql"))
-            _zr_counts = await asyncio.to_thread(_count_tables_for_zero_row, db_cfg, _zr_tables)
+            # _execute_with_policy is the SAME governed executor the main
+            # answer's own SQL runs through -- reusing it here means these
+            # counts are scoped to this reader's row policy, not the whole
+            # table. Passing the raw table name straight to a closure that
+            # expects SQL would be wrong; _count_tables_for_zero_row builds
+            # its own SELECT COUNT(*) internally and calls `run(sql)`.
+            _zr_counts = await asyncio.to_thread(
+                _count_tables_for_zero_row, db_cfg, _zr_tables,
+                run=_execute_with_policy,
+            )
             _zr_empty_tables = [table for table, count in _zr_counts.items() if count == 0]
             _trace_finish(trace_id, status="success", answer_type="empty", row_count=0, duration_ms=duration_ms, final_answer_summary="Query returned no rows")
             await adapter.send_message(event, _build_zero_row_message(

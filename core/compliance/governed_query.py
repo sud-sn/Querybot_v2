@@ -36,6 +36,70 @@ class GovernedQueryResult:
     truncated: bool = False
 
 
+def governed_reader_for_user(
+    account_id: str,
+    user: dict | None,
+    *,
+    channel: str,
+    purpose_id: str = "",
+    db_cfg: dict | None = None,
+):
+    """A ``run(sql) -> GovernedQueryResult`` closure scoped to `user`'s row
+    policy and table grants, or ``None`` when there is no user to scope the
+    read to.
+
+    For diagnostic reads that run ALONGSIDE a main governed answer -- a
+    coverage-gap probe (core/date_coverage.py), a zero-row table count
+    (core/pipeline_helpers.py) -- and that used to bypass governance
+    entirely via a raw core.schema.run_query call. That is the exact defect
+    class already fixed for core/alert_engine.py's date-anchor probe (see
+    that module's ``_owner_execution``, which this mirrors): a user whose
+    row policy restricts them to a subset of a shared fact table got a
+    coverage verdict or a zero-row diagnosis computed over rows they are not
+    authorized to see.
+
+    Returns ``None`` rather than an ungoverned fallback closure when
+    `account_id` or `user` is falsy -- the CALLER decides whether an
+    ungoverned read is still acceptable for its own diagnostic (and must say
+    so explicitly, loudly), this function will not make that call silently.
+
+    Not for the main answer's own execution, which already builds its own
+    context once per request and should keep doing so -- core/query_pipeline
+    .py's ``_execute_with_policy`` closure is that context, already built
+    with the request's real known_tables/table_columns; a diagnostic running
+    in the SAME request should reuse it rather than calling this a second
+    time to rebuild an equivalent one.
+    """
+    if not account_id or not user:
+        return None
+
+    import store
+
+    from core.compliance.policy_engine import resolve_context
+    from core.schema import load_known_tables, load_schema_columns
+
+    state = store.get_client_state(account_id) or {}
+    context = resolve_context(
+        account_id, user, action="query_execution",
+        channel=channel, purpose_id=purpose_id,
+    )
+    known_tables = load_known_tables(state.get("schema_dir", ""))
+    table_columns = load_schema_columns(state.get("schema_dir", ""))
+    allowed_tables = store.get_allowed_tables(user)
+    cfg = db_cfg or {}
+    credentials = cfg.get("credentials") or cfg
+    db_type = cfg.get("db_type", "azure_sql")
+
+    def run(sql: str) -> GovernedQueryResult:
+        return execute_governed_query(
+            credentials, db_type, sql,
+            context=context, known_tables=known_tables,
+            table_columns=table_columns, allowed_tables=allowed_tables,
+        )
+
+    return run
+
+
 def execute_governed_query(
     credentials: dict,
     db_type: str,

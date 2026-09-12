@@ -8,12 +8,22 @@ the last 7 days") otherwise hides completely -- the returned rows carry no
 date column at all to inspect, so the gap can only be found by asking the
 database directly, not by looking at what already came back.
 
-Runs two small, read-only diagnostic queries via core.schema.run_query,
-bypassing the heavier governed_query pipeline for the same reason
-core/pipeline_helpers.py::_count_tables_for_zero_row already does: these are
-aggregate counts (COUNT/MIN), never raw regulated row data. Best-effort
-throughout -- any failure, missing policy field, or adequate coverage returns
-None rather than altering or blocking the main answer.
+Runs its diagnostic queries through the caller's OWN governed reader when one
+is supplied (``check_date_coverage(..., run=...)``) -- the same fix already
+applied to core/alert_engine.py's date-anchor probe: a raw, ungoverned read
+here computed a coverage verdict, or an anchor date, over rows a row-policy
+would have hidden from the requesting user. These reads are still never raw
+regulated row data -- COUNT/MIN aggregates only -- but "aggregate, not raw
+row data" was never the property a row policy restricts; a policy that says
+"only your region's rows" restricts EVERY read of the table, aggregates
+included, and this diagnostic was reading past it.
+
+The `run` parameter is optional and the ungoverned core.schema.run_query path
+remains as the fallback -- loudly logged when taken, per core/date_coverage
+.py's own doctrine that a fail-open path must be visible, not silent. A
+caller with no live PolicyContext to build a reader from (a test, or a
+context this module predates) still gets a working, if now-visibly-ungoverned,
+diagnostic rather than a hard failure.
 
 Deliberately no LLM call: this is exact date arithmetic on a database's own
 clock, and a model has no business rephrasing a fact this precise.
@@ -25,6 +35,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Callable
 
 from core.i18n import grain_label as _grain, plural as _plural, t as _t
 from core.pipeline_helpers import _quote_table_for_count
@@ -122,8 +133,13 @@ def _parse_date_value(value) -> date | None:
         return None
 
 
-def _run_scalar(credentials: dict, db_type: str, sql: str) -> object | None:
-    rows = run_query(credentials, db_type, sql, max_rows=1)
+def _run_scalar(
+    credentials: dict, db_type: str, sql: str,
+    *, run: Callable[[str], object] | None = None,
+) -> object | None:
+    """Fetch one scalar. Through `run` (a governed reader) when supplied;
+    through the ungoverned core.schema.run_query otherwise."""
+    rows = run(sql).rows if run is not None else run_query(credentials, db_type, sql, max_rows=1)
     if not rows:
         return None
     return next(iter(rows[0].values()), None)
@@ -135,12 +151,30 @@ def check_date_coverage(
     db_type: str,
     metric_name: str = "",
     metric_formula: str = "",
+    *,
+    run: Callable[[str], object] | None = None,
 ) -> CoverageGap | None:
     """Compare the requested window (``policy['amount']``/``policy['unit']``)
     against how many distinct calendar days actually have data in that
     window, using the same fact/dimension resolution the main query's date
     anchor already uses (core.contextual_dates.format_required_anchor).
+
+    `run` is a governed reader (see core.compliance.governed_query
+    .governed_reader_for_user) -- when supplied, every read in this function
+    goes through it, scoped to the requesting user's row policy. When it is
+    not, the reads fall back to core.schema.run_query, ungoverned, and that
+    fallback is logged loudly: a reader restricted to a subset of a shared
+    fact table must not get a silent, unfiltered coverage verdict.
     """
+    if run is None:
+        log.warning(
+            "check_date_coverage running WITHOUT a governed reader for "
+            "%s.%s -- this coverage check reads the WHOLE table, unfiltered "
+            "by any row policy. Pass run= (see "
+            "core.compliance.governed_query.governed_reader_for_user) "
+            "wherever a live PolicyContext is available.",
+            policy.get("fact_table"), policy.get("fact_column"),
+        )
     from core.contextual_dates import format_required_anchor
 
     # Day-coverage diagnostics count distinct days. A period-grained source is
@@ -181,7 +215,7 @@ def check_date_coverage(
 
     try:
         anchor_value = _run_scalar(
-            credentials, db_type, f"SELECT {anchor_expr} AS AnchorDate",
+            credentials, db_type, f"SELECT {anchor_expr} AS AnchorDate", run=run,
         )
         anchor_date = _parse_date_value(anchor_value)
         if anchor_date is None:
@@ -236,7 +270,7 @@ def check_date_coverage(
                 f"SELECT COUNT(DISTINCT {coverage_date_ref}) AS DaysWithData "
                 f"FROM {coverage_from} WHERE {coverage_where}"
             )
-        actual_value = _run_scalar(credentials, db_type, coverage_sql)
+        actual_value = _run_scalar(credentials, db_type, coverage_sql, run=run)
         actual_days = int(actual_value) if actual_value is not None else 0
 
         metric_active_days: int | None = None
@@ -252,7 +286,7 @@ def check_date_coverage(
                 ") metric_activity"
             )
             try:
-                metric_value = _run_scalar(credentials, db_type, metric_activity_sql)
+                metric_value = _run_scalar(credentials, db_type, metric_activity_sql, run=run)
                 metric_active_days = int(metric_value) if metric_value is not None else 0
             except Exception as exc:
                 # This extra probe is advisory.  Formula shapes that need more

@@ -894,6 +894,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     _temporal_policies = (confidence_context.get("semantic_plan") or {}).get("temporal_policies") or []
     if _temporal_policies:
         try:
+            from core.compliance.governed_query import governed_reader_for_user
             from core.date_coverage import check_date_coverage
             _coverage_metrics = (display_context or {}).get("metrics") or []
             _coverage_metric_name = ""
@@ -906,10 +907,21 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         or _coverage_metrics[0].get("formula")
                         or ""
                     )
+            # Scoped to the reader THIS answer is being sent to -- the same
+            # requesting user whose row policy already filtered `rows` above.
+            # Without this, the coverage check read the whole fact table
+            # unfiltered: a reader restricted to a subset of a shared table
+            # got a coverage verdict computed over rows they cannot see.
+            _coverage_run = governed_reader_for_user(
+                account_id, portal_user,
+                channel=getattr(event, "platform", "") or "portal",
+                db_cfg=db_cfg,
+            )
             _gap = check_date_coverage(
                 db_cfg, _temporal_policies[0], str(db_cfg.get("db_type", "azure_sql")),
                 metric_name=_coverage_metric_name,
                 metric_formula=_coverage_metric_formula,
+                run=_coverage_run,
             )
             if _gap:
                 coverage_caveats.append(_gap.message)

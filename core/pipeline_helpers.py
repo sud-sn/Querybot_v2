@@ -376,18 +376,48 @@ def _quote_table_for_count(table: str, db_type: str) -> str:
 
 # ── Zero-row RCA helpers ──────────────────────────────────────────────────────
 
-def _count_tables_for_zero_row(db_cfg: dict, tables: list[str]) -> dict[str, int | None]:
-    """Best-effort table row counts for business RCA after a zero-row answer."""
+def _count_tables_for_zero_row(
+    db_cfg: dict, tables: list[str],
+    *, run: Callable[[str], object] | None = None,
+) -> dict[str, int | None]:
+    """Best-effort table row counts for business RCA after a zero-row answer.
+
+    `run` is a governed reader (core.compliance.governed_query
+    .governed_reader_for_user, or the caller's own _execute_with_policy) --
+    when supplied, every count goes through it, scoped to the requesting
+    user's row policy. Without it, this fell back to core.schema.run_query,
+    which reads the WHOLE table: a user whose row policy restricts them to a
+    subset of a shared fact table got told a table was non-empty (or how many
+    rows it held) using rows they are not authorized to see. The exact defect
+    class already fixed for core/alert_engine.py's date-anchor probe.
+
+    A governance REFUSAL for a table this reader may not see is not
+    distinguished from any other failure -- both land on `None` ("could not
+    determine"), which is the correct answer for "I don't know whether this
+    table is empty because I am not authorized to check it" and is exactly
+    how this function already reports every other kind of failure.
+    """
     db_type = str((db_cfg or {}).get("db_type") or "azure_sql")
     credentials = (db_cfg or {}).get("credentials") or {}
+    if run is None:
+        log.warning(
+            "Zero-row RCA table counts for %s running WITHOUT a governed "
+            "reader -- these counts read the WHOLE table, unfiltered by any "
+            "row policy. Pass run= (see core.compliance.governed_query"
+            ".governed_reader_for_user, or the caller's own governed "
+            "executor) wherever a live PolicyContext is available.",
+            ", ".join(tables[:6]) or "(no tables)",
+        )
     counts: dict[str, int | None] = {}
     for table in tables[:6]:
         quoted = _quote_table_for_count(table, db_type)
         if not quoted or table in counts:
             continue
         count_expr = "COUNT_BIG(1)" if db_type == "azure_sql" else "COUNT(*)"
+        sql = f"SELECT {count_expr} AS RowCount FROM {quoted}"
         try:
-            rows = run_query(credentials, db_type, f"SELECT {count_expr} AS RowCount FROM {quoted}", max_rows=1)
+            rows = run(sql).rows if run is not None else run_query(
+                credentials, db_type, sql, max_rows=1)
             first = rows[0] if rows else {}
             value = next(iter(first.values())) if first else None
             counts[table] = int(value) if value is not None else None
