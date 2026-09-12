@@ -396,9 +396,36 @@ _VALIDATION_REASONS: dict[str, str] = {
     "fanout_aggregate": "fail.v.fanout_aggregate.reason",
     "derived_measure_mismatch": "fail.v.derived_measure_mismatch.reason",
     "locking_select": "fail.v.locking_select.reason",
+    # The sixteen the validator could emit and this map had never heard of. The
+    # cost was not a vaguer card: core/query_pipeline.py's terminal handler gated
+    # the card itself on membership here, so each of these ended the turn with the
+    # raw validator sentence and no card, in English whatever the reader's
+    # language. tests/test_every_validator_refusal_has_a_reader.py now fails if a
+    # seventeenth is added without one.
+    "cartesian_join": "fail.v.cartesian_join.reason",
+    "missing_join_condition": "fail.v.missing_join_condition.reason",
+    "graph_join_missing": "fail.v.graph_join_missing.reason",
+    "graph_join_type_mismatch": "fail.v.graph_join_type_mismatch.reason",
+    "join_plan_unresolved": "fail.v.join_plan_unresolved.reason",
+    "field_plan_join_missing": "fail.v.field_plan_join_missing.reason",
+    "bridge_allocation_missing": "fail.v.bridge_allocation_missing.reason",
+    "bridge_allocation_unresolved": "fail.v.bridge_allocation_unresolved.reason",
+    "multi_fact_not_isolated": "fail.v.multi_fact_not_isolated.reason",
+    "multi_fact_not_aggregated": "fail.v.multi_fact_not_aggregated.reason",
+    "multi_fact_shared_cte": "fail.v.multi_fact_shared_cte.reason",
+    "multi_fact_cte_contract": "fail.v.multi_fact_cte_contract.reason",
+    "multi_fact_missing_subplan": "fail.v.multi_fact_missing_subplan.reason",
+    "temporal_anchor_ungoverned": "fail.v.temporal_anchor_ungoverned.reason",
+    "observed_period_shape": "fail.v.observed_period_shape.reason",
+    "select_star": "fail.v.select_star.reason",
 }
 
 _VALIDATION_NEXT_STEPS: dict[str, str] = {
+    "cartesian_join": "fail.v.cartesian_join.next_step",
+    "join_plan_unresolved": "fail.v.join_plan_unresolved.next_step",
+    "bridge_allocation_missing": "fail.v.bridge_allocation_missing.next_step",
+    "temporal_anchor_ungoverned": "fail.v.temporal_anchor_ungoverned.next_step",
+    "select_star": "fail.v.select_star.next_step",
     "access_denied": "fail.v.access_denied.next_step",
     "cannot_generate": "fail.v.cannot_generate.next_step",
     "dialect_mismatch": "fail.v.dialect_mismatch.next_step",

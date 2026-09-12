@@ -1745,6 +1745,99 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The generated query measured the amount from a different business dataset than the one this question resolved to.",
         "fr": "La requête générée a mesuré le montant à partir d'un jeu de données métier différent de celui auquel cette question a été rattachée.",
     },
+    # ── The sixteen validator codes that had no business reason ──────────────
+    # Every one of these is a code core/validator.py can emit and the card
+    # builder had no entry for. The consequence was not a vaguer card: the
+    # terminal handler in core/query_pipeline.py GATED the card on dictionary
+    # membership, so these sixteen took the else-branch and the reader was sent
+    # the raw validator sentence with no card at all -- in English, whatever
+    # their language. Each reason below says what the query would have got wrong,
+    # and each next step is something a reader or their admin can actually do.
+    "fail.v.cartesian_join.reason": {
+        "en": "The generated query combined two tables without saying how their rows match, so every row of one would be paired with every row of the other.",
+        "fr": "La requête générée a combiné deux tables sans indiquer comment leurs lignes correspondent : chaque ligne de l'une aurait été associée à toutes les lignes de l'autre.",
+    },
+    "fail.v.cartesian_join.next_step": {
+        "en": "Name the two things you want compared and the field they share — for example \"net sales by warehouse\" rather than \"net sales and warehouses\".",
+        "fr": "Nommez les deux éléments à comparer et le champ qu'ils partagent — par exemple « ventes nettes par entrepôt » plutôt que « ventes nettes et entrepôts ».",
+    },
+    "fail.v.missing_join_condition.reason": {
+        "en": "One of the table joins in the generated query had no matching condition, which would multiply the rows instead of lining them up.",
+        "fr": "L'une des jointures de la requête générée n'avait aucune condition de correspondance, ce qui aurait multiplié les lignes au lieu de les aligner.",
+    },
+    "fail.v.graph_join_missing.reason": {
+        "en": "The generated query did not use the approved relationship between the tables it needed, so the rows it returned could not be trusted to match.",
+        "fr": "La requête générée n'a pas utilisé la relation approuvée entre les tables nécessaires : rien ne garantissait la correspondance des lignes renvoyées.",
+    },
+    "fail.v.graph_join_type_mismatch.reason": {
+        "en": "The generated query joined two tables differently from the approved relationship between them, which changes which rows are kept.",
+        "fr": "La requête générée a joint deux tables autrement que la relation approuvée entre elles, ce qui change les lignes conservées.",
+    },
+    "fail.v.join_plan_unresolved.reason": {
+        "en": "This question needs data from tables with no approved relationship between them, so there is no trustworthy way to combine them.",
+        "fr": "Cette question nécessite des données issues de tables sans relation approuvée entre elles : il n'existe aucun moyen fiable de les combiner.",
+    },
+    "fail.v.join_plan_unresolved.next_step": {
+        "en": "Ask about one of them at a time, or ask an administrator to approve the relationship between them.",
+        "fr": "Interrogez-les séparément, ou demandez à un administrateur d'approuver la relation entre elles.",
+    },
+    "fail.v.field_plan_join_missing.reason": {
+        "en": "One of the fields this answer needs lives on a table the generated query never joined, so that field would have been missing or wrong.",
+        "fr": "L'un des champs nécessaires à cette réponse se trouve dans une table que la requête générée n'a jamais jointe : ce champ aurait été absent ou erroné.",
+    },
+    "fail.v.bridge_allocation_missing.reason": {
+        "en": "This question crosses a many-to-many relationship, and there is no approved rule for how to split the amounts across it — so any total would be a guess.",
+        "fr": "Cette question traverse une relation plusieurs-à-plusieurs, et aucune règle approuvée n'indique comment y répartir les montants : tout total serait une supposition.",
+    },
+    "fail.v.bridge_allocation_missing.next_step": {
+        "en": "Ask an administrator to define the allocation rule for that relationship, or ask for the two sides separately.",
+        "fr": "Demandez à un administrateur de définir la règle de répartition pour cette relation, ou interrogez les deux côtés séparément.",
+    },
+    "fail.v.bridge_allocation_unresolved.reason": {
+        "en": "The approved rule for splitting amounts across a many-to-many relationship could not be applied to this query, so the totals would not add up.",
+        "fr": "La règle approuvée de répartition des montants sur une relation plusieurs-à-plusieurs n'a pas pu être appliquée : les totaux n'auraient pas été cohérents.",
+    },
+    "fail.v.multi_fact_not_isolated.reason": {
+        "en": "The generated query read two different business event tables in one pass, which double-counts rows from both.",
+        "fr": "La requête générée a lu deux tables d'événements métier différentes en une seule passe, ce qui compte deux fois les lignes de chacune.",
+    },
+    "fail.v.multi_fact_not_aggregated.reason": {
+        "en": "The generated query combined two business event tables before totalling each one, so the totals would have been multiplied together.",
+        "fr": "La requête générée a combiné deux tables d'événements métier avant de totaliser chacune d'elles : les totaux auraient été multipliés entre eux.",
+    },
+    "fail.v.multi_fact_shared_cte.reason": {
+        "en": "The generated query put two business event tables through the same intermediate step, so their rows could no longer be told apart.",
+        "fr": "La requête générée a fait passer deux tables d'événements métier par la même étape intermédiaire : leurs lignes ne pouvaient plus être distinguées.",
+    },
+    "fail.v.multi_fact_cte_contract.reason": {
+        "en": "This question needs each business event table totalled on its own before the two are compared, and the generated query did not do that.",
+        "fr": "Cette question exige que chaque table d'événements métier soit totalisée séparément avant comparaison, ce que la requête générée n'a pas fait.",
+    },
+    "fail.v.multi_fact_missing_subplan.reason": {
+        "en": "This question spans more than one business event table and one of them has no approved plan, so part of the answer would have been unaccounted for.",
+        "fr": "Cette question porte sur plusieurs tables d'événements métier et l'une d'elles n'a aucun plan approuvé : une partie de la réponse n'aurait pas été justifiée.",
+    },
+    "fail.v.temporal_anchor_ungoverned.reason": {
+        "en": "The time period in the generated query was not anchored on this workspace's approved business date, so it could have been measured against the server clock instead of the data.",
+        "fr": "La période de la requête générée n'était pas rattachée à la date métier approuvée de cet espace de travail : elle aurait pu être mesurée sur l'horloge du serveur plutôt que sur les données.",
+    },
+    "fail.v.temporal_anchor_ungoverned.next_step": {
+        "en": "Name the period you mean — \"last month\", \"the last 6 months\" — or ask an administrator to approve a default business date for this table.",
+        "fr": "Précisez la période visée — « le mois dernier », « les 6 derniers mois » — ou demandez à un administrateur d'approuver une date métier par défaut pour cette table.",
+    },
+    "fail.v.observed_period_shape.reason": {
+        "en": "This question asked for the most recent periods that actually have data, and the generated query did not select them in a way that guarantees that.",
+        "fr": "Cette question portait sur les dernières périodes contenant réellement des données, et la requête générée ne les a pas sélectionnées de manière fiable.",
+    },
+    "fail.v.select_star.reason": {
+        "en": "The generated query asked for every column rather than the ones this answer needs, which is not allowed against governed tables.",
+        "fr": "La requête générée a demandé toutes les colonnes au lieu de celles nécessaires à cette réponse, ce qui n'est pas autorisé sur les tables gouvernées.",
+    },
+    "fail.v.select_star.next_step": {
+        "en": "Name the fields you want to see, or ask for a specific measure such as net sales or order count.",
+        "fr": "Nommez les champs à afficher, ou demandez une mesure précise comme les ventes nettes ou le nombre de commandes.",
+    },
+
     "fail.v.raw_fact_to_fact_join.reason": {
         "en": "The generated query joined two business event tables directly, which would multiply the totals.",
         "fr": "La requête générée a joint directement deux tables d'événements métier, ce qui aurait multiplié les totaux.",

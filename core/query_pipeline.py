@@ -6034,6 +6034,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     rows        = None
     exec_error  = None
     last_reason = ""
+    # Whether last_reason is prose a reader can already read. A PolicyDeniedError
+    # carries decision.explanation, which is business-written; everything else
+    # that reaches the terminal handler is a validator sentence about SQL.
+    _reason_is_reader_ready = False
     last_code   = ""
 
     await _send_live_stage(adapter, event, "validating_sql", _t("stage.validating_sql.label"), _t("stage.validating_sql.detail"))
@@ -6821,6 +6825,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         ok = False
                         last_reason = policy_error.decision.explanation or "Blocked by regulated data policy."
                         last_code = policy_error.decision.reason_code
+                        _reason_is_reader_ready = True
                         log.warning(
                             "Retry denied by policy for %s: %s",
                             account_id,
@@ -6996,6 +7001,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         ok = False
                         last_reason = policy_error.decision.explanation or "Blocked by regulated data policy."
                         last_code = policy_error.decision.reason_code
+                        _reason_is_reader_ready = True
                     except Exception as progressive_exec_err:
                         exec_error = str(progressive_exec_err)
                         log.warning(
@@ -7035,7 +7041,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                question_id=audit_request_id, error_code=last_code or "")
         _trace_finish(trace_id, status="error", answer_type="error", error_message=last_reason)
         from core.failure_messages import translate_failure, suggest_closest_terms, _VALIDATION_REASONS
-        if (last_code or "").lower() in _VALIDATION_REASONS:
+        # Gated on whether the reason is already readable, NOT on whether this
+        # code happens to be in _VALIDATION_REASONS. Sixteen codes the validator
+        # can emit were absent from that map, and dictionary membership decided
+        # whether the reader got a card at all -- so those sixteen ended the turn
+        # with the raw validator sentence ("Query rejected: the join between
+        # EMDW_DMART.CUS_ORD_IVC_FCT and ... has no ON condition") in English,
+        # whatever the reader's language, with no headline and no next step. All
+        # sixteen now have a business reason, and a seventeenth gets a card with
+        # the generic reason instead of raw SQL talk.
+        if not _reason_is_reader_ready:
             _suggest = (
                 suggest_closest_terms(_analysis_question, account_id, state.get("kb_dir", ""))
                 if (last_code or "").lower() in {"unknown_column", "cannot_generate", "field_plan_mismatch"}
