@@ -1825,6 +1825,60 @@ def _is_temperature_rejection(exc: Exception) -> bool:
     )
 
 
+def is_single_request_rejection(exc: BaseException) -> bool:
+    """Is this error about THIS request, or about the configuration behind it?
+
+    A caller that walks a list of items -- ``core.knowledge.build_kb`` walks a
+    schema, one table at a time -- has to know whether skipping the item it is
+    on is honest. Two rejections are about one item and nothing else:
+
+    * the output ceiling this request asked for is above what the deployment
+      allows. GPT-4o caps output at 16,384 tokens from version 2024-08-06 but at
+      4,096 on 2024-05-13, and the KB budget is derived from the table's WIDTH --
+      a 121-column fact asks for 7,984. So on that deployment the wide tables
+      are rejected and the narrow ones are fine, which is per-item by
+      definition.
+    * a content filter rejected this prompt or completion. Azure applies one to
+      every deployment by default, and what trips it is the text of this one
+      document.
+
+    Everything else fails the next item identically -- a rejected key, a
+    deployment that does not exist, a dead endpoint, a rate limit that will
+    still be in force a second later -- so it must propagate and stop the walk.
+    Containing those is how a build "succeeds" having produced nothing, which is
+    worse than failing: a knowledge base with holes in it answers questions
+    about those tables from the schema alone, quietly and forever.
+
+    Read from the message, because every provider wrapper here raises
+    ``RuntimeError(f"<provider> error: {e}")`` and so carries the provider's own
+    text -- which is where a 400's code and body live. Reading ``__cause__`` as
+    well was tried and removed: it changed no outcome on any error these wrappers
+    can produce, and unexercised branches in a classifier are how it comes to be
+    trusted for something it never did.
+
+    Deliberately narrow, same trade as _is_temperature_rejection above: a false
+    negative costs nothing new, because the error then propagates exactly as it
+    did before this existed.
+    """
+    blob = f"{type(exc).__name__} {exc}".lower()
+
+    if any(word in blob for word in
+           ("content_filter", "content filter", "responsibleaipolicy",
+            "content management policy")):
+        return True
+
+    if "max_tokens" in blob or "max_completion_tokens" in blob:
+        # "must be less than or equal to 4096", "is too large", "exceeds the
+        # maximum" -- an upper bound, never "max_tokens is required".
+        return any(word in blob for word in
+                   ("less than or equal", "too large", "maximum", "exceed",
+                    "at most"))
+
+    # A prompt longer than the model's window is this document's size too, not
+    # the configuration's.
+    return "context_length_exceeded" in blob or "maximum context length" in blob
+
+
 class EgressPostureError(RuntimeError):
     """A model call was refused because the tenant's egress posture forbids it.
 

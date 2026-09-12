@@ -153,9 +153,10 @@ class TestOneCompletionRetriesThenGivesUp(unittest.IsolatedAsyncioTestCase):
     async def _complete(self, needs, budget):
         fake, calls = self._provider(needs)
         with patch("core.llm.llm_complete", side_effect=fake):
-            text = await _kb_complete(
+            text, reason = await _kb_complete(
                 "document for CUS_ORD_IVC_FCT", "sys", "user", "anthropic",
                 "claude-sonnet-5", "key", max_tokens=budget)
+        self.reason = reason
         return text, calls
 
     async def test_a_document_that_fits_is_returned_on_the_first_call(self):
@@ -174,6 +175,7 @@ class TestOneCompletionRetriesThenGivesUp(unittest.IsolatedAsyncioTestCase):
         text, calls = await self._complete(needs=40_000, budget=12_256)
         self.assertIsNone(text)
         self.assertEqual(calls, [12_256, _KB_DOC_MAX_TOKENS])
+        self.assertEqual(self.reason, "output truncated at the token ceiling")
 
     async def test_an_estimate_already_at_the_cap_is_not_repeated(self):
         """Retrying the identical call would spend a second call to learn
@@ -182,9 +184,15 @@ class TestOneCompletionRetriesThenGivesUp(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(text)
         self.assertEqual(calls, [_KB_DOC_MAX_TOKENS])
 
-    async def test_an_error_that_is_not_truncation_still_propagates(self):
+    async def test_a_configuration_error_still_propagates(self):
         """A refused key or a dead endpoint is not a document that was too
-        long, and swallowing it would report a build that never ran."""
+        long, and swallowing it would report a build that never ran.
+
+        The rule sharpened after this test was written: a rejection that is
+        about THIS request -- an output ceiling above what the deployment
+        allows, a content filter -- is contained per table like a truncation.
+        See test_a_wide_fact_is_not_the_whole_build for that half. Everything
+        that would reject the next table identically still lands here."""
         async def boom(*a, **kw):
             raise RuntimeError("401 invalid api key")
 

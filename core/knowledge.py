@@ -110,10 +110,10 @@ def kb_vocab_token_budget(table_count: int) -> int:
 async def _kb_complete(
     label: str, system: str, user: str, provider: str, model: str,
     api_key: str, *, max_tokens: int, **kw,
-) -> str | None:
-    """One KB completion, retried once higher, or None when it cannot finish.
+) -> tuple[str | None, str]:
+    """One KB completion: ``(text, "")``, or ``(None, reason)`` when it cannot.
 
-    Three behaviours, and each one is a defect this replaces:
+    Four behaviours, and each one is a defect this replaces:
 
     * the ceiling comes from the caller's own estimate of the document's size,
       rather than a constant that fitted nothing wide;
@@ -124,12 +124,37 @@ async def _kb_complete(
       skip that one table and keep building. The refusal in llm_complete is
       right -- a truncated KB document is missing sections, and one missing
       "## Business Synonyms" header silently disables the whole deterministic
-      synonym layer for that table -- but it was killing every OTHER table too.
+      synonym layer for that table -- but it was killing every OTHER table too;
+    * and so does any OTHER rejection that is about this one request. Truncation
+      was the only trigger the previous fix caught, and it is not the only one
+      that is per-table. On Azure the obvious second one is the output ceiling
+      itself: GPT-4o allows 16,384 output tokens from version 2024-08-06 but only
+      4,096 on 2024-05-13, and this budget is derived from the table's WIDTH, so
+      a 121-column fact asks for 7,984 and is rejected with a 400 while every
+      narrow table in the same build is fine. A content filter is the same shape.
+      Those used to propagate out of build_kb's per-table loop, which has no
+      try of its own, and took every remaining table down -- along with the
+      _build_failures.json report, which is written AFTER the loop and so was
+      never written at all. The admin got a failed build, a raw Azure error blob
+      as its only explanation, and no record of which table caused it.
+
+    What still propagates: everything that will reject the next table
+    identically -- a refused key, a deployment that does not exist, a dead
+    endpoint, a rate limit, an egress posture refusal. Containing those is how a
+    build reports success having produced nothing, and a knowledge base with
+    holes answers questions about those tables from the schema alone, quietly,
+    for as long as nobody rebuilds it. core.llm.is_single_request_rejection
+    draws the line and is deliberately narrow: anything it does not recognise
+    propagates exactly as it did before it existed.
+
+    The reason comes back with the None rather than being logged and dropped,
+    because the caller writes it into _build_failures.json and "output truncated
+    at the token ceiling" is now only one of the things that can have happened.
 
     Logged at error, not debug: a KB document that was never written is
     invisible at query time. It simply makes the table answer worse.
     """
-    from core.llm import LLMTruncatedError, llm_complete
+    from core.llm import LLMTruncatedError, is_single_request_rejection, llm_complete
 
     ceiling = int(max_tokens)
     for attempt, budget in enumerate((ceiling, _KB_DOC_MAX_TOKENS)):
@@ -145,11 +170,25 @@ async def _kb_complete(
                     "KB %s finished on the retry at %d tokens (the %d-token "
                     "estimate was short)", label, budget, ceiling,
                 )
-            return text
+            return text, ""
         except LLMTruncatedError as exc:
             log.warning(
                 "KB %s hit its %d-token ceiling: %s", label, budget, exc,
             )
+        except Exception as exc:
+            if not is_single_request_rejection(exc):
+                raise
+            # Retrying HIGHER is exactly wrong for a ceiling that was already
+            # too high, and a filtered document is not filtered less on a second
+            # try. One call, then this label is done.
+            log.error(
+                "KB %s was rejected by %s at a %d-token ceiling: %s. This one "
+                "is SKIPPED and the rest of the build continues; it will have "
+                "no knowledge-base document, so questions about it are answered "
+                "from the schema alone.",
+                label, model, budget, exc,
+            )
+            return None, f"{type(exc).__name__}: {str(exc)[:300]}"
     log.error(
         "KB %s could not be generated: the document did not finish within %d "
         "output tokens, the highest ceiling this provider is asked for. The "
@@ -158,7 +197,7 @@ async def _kb_complete(
         "schema alone.",
         label, _KB_DOC_MAX_TOKENS,
     )
-    return None
+    return None, "output truncated at the token ceiling"
 
 
 
@@ -788,7 +827,7 @@ async def build_kb(
     # ── Business vocabulary KB ────────────────────────────────────────────────
     biz_user = build_biz_vocab_prompt(table_names, column_reference, business_desc)
     with llm_audit_component("kb_business_vocab", new_request_id=True):
-        biz_text = await _kb_complete(
+        biz_text, biz_reason = await _kb_complete(
             "business vocabulary", system_base, biz_user, provider, model,
             api_key, max_tokens=kb_vocab_token_budget(len(table_names)), **kw
         )
@@ -797,8 +836,9 @@ async def build_kb(
         # vector index with the rest of kb_dir -- so the build continues without
         # the cross-table vocabulary rather than stopping before table one.
         log.error(
-            "Business vocabulary KB was not written for %s; retrieval will have "
-            "no cross-table vocabulary document", account_id or "this account",
+            "Business vocabulary KB was not written for %s (%s); retrieval will "
+            "have no cross-table vocabulary document",
+            account_id or "this account", biz_reason,
         )
     else:
         (kb_path / "_business_kb.md").write_text(biz_text, encoding="utf-8")
@@ -1106,7 +1146,7 @@ async def build_kb(
         # (admin/routes.py) shares one request_id across every table, so that
         # alone can't disambiguate which table a given audit row belongs to.
         with llm_audit_component("kb_table_doc", question=table_name, new_request_id=True):
-            kb_text = await _kb_complete(
+            kb_text, kb_reason = await _kb_complete(
                 f"document for {table_name}", system, stage1_user, provider,
                 model, api_key,
                 max_tokens=kb_doc_token_budget(len(table_cols)), **kw
@@ -1118,7 +1158,9 @@ async def build_kb(
                 "table": table_name, "stage": "table_doc",
                 "columns": len(table_cols),
                 "max_tokens": kb_doc_token_budget(len(table_cols)),
-                "reason": "output truncated at the token ceiling",
+                # From the call, not a constant: truncation is no longer the
+                # only thing that can have happened here.
+                "reason": kb_reason,
             })
             await _progress(
                 phase="building",
@@ -1153,7 +1195,7 @@ async def build_kb(
         with llm_audit_component(
             "kb_query_examples", question=table_name, new_request_id=True
         ):
-            query_text = await _kb_complete(
+            query_text, query_reason = await _kb_complete(
                 f"query examples for {table_name}", system, query_user, provider,
                 model, api_key,
                 max_tokens=kb_query_token_budget(len(table_cols)), **kw
@@ -1166,7 +1208,7 @@ async def build_kb(
                 "table": table_name, "stage": "query_examples",
                 "columns": len(table_cols),
                 "max_tokens": kb_query_token_budget(len(table_cols)),
-                "reason": "output truncated at the token ceiling",
+                "reason": query_reason,
             })
         else:
             (kb_path / f"{table_name}_queries.md").write_text(
