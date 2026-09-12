@@ -217,6 +217,9 @@ def _safe_pct(a: float, b: float) -> Optional[float]:
     return round(((b - a) / abs(a)) * 100, 2)
 
 
+from core.analysis_evidence import MIN_CATEGORIES_FOR_CONCENTRATION
+
+
 def _classify_columns(rows: list[dict]) -> tuple[list[str], list[str]]:
     """Split columns into numeric and text."""
     if not rows:
@@ -254,7 +257,17 @@ def _looks_temporal(labels: list[str]) -> bool:
         "july", "august", "september", "october", "november", "december",
         "week", "month", "quarter", "year", "date", "day",
     ]
+    from core.temporal_columns import labels_are_bare_years
+
     if bool(re.search(r"\b\d{4}[-/]\d{1,2}([-/]\d{1,2})?\b", sample)):
+        return True
+    # A bare year is a period label, and it was the one shape none of the
+    # classifiers read -- so "net sales by year" off an M3 mart, which returns
+    # an INTEGER year, was not treated as a series at all. Shared with
+    # core/response_builder.py's copy of this classifier: that file's own
+    # docstring records four copies of this rule drifting apart, so this rule
+    # lives in one place.
+    if labels_are_bare_years(labels):
         return True
     if any(tok in sample for tok in substr_tokens):
         return True
@@ -364,6 +377,17 @@ def compute_data_brief(
         }
 
     numeric_cols, text_cols = _classify_columns(rows)
+    # An integer calendar period parses as a number, so it was counted as a
+    # measure -- and numeric_cols[0] is what this brief describes, what the KEY
+    # INSIGHTS callouts read and what reaches the narration prompt. On an M3
+    # mart "net sales by year" returns an integer IVC_YR, and the brief reported
+    # the average of six calendar years as its finding. The same rule and the
+    # same helper as core/response_builder.py, so the two briefs cannot disagree
+    # about which column is the measure.
+    from core.response_builder import _measure_and_label_cols
+
+    numeric_cols, text_cols, period_cols = _measure_and_label_cols(
+        rows, numeric_cols, text_cols)
     brief: dict[str, Any] = {
         "row_count": len(rows),
         "column_count": len(rows[0]),
@@ -375,6 +399,8 @@ def compute_data_brief(
         "metric_semantics": detect_metric_semantics(question, context=ctx),
     }
     brief["columns"].update({col: "text" for col in text_cols})
+    if period_cols:
+        brief["columns"].update({col: "period" for col in period_cols})
 
     # ── Single-value result ──────────────────────────────────────────────────
     if len(rows) == 1 and len(rows[0]) == 1:
@@ -401,11 +427,14 @@ def compute_data_brief(
         }
         if len(values) >= 3:
             s["std_dev"] = round(stdev(values), 2)
-        # Concentration — what % does top-3 represent?
-        sorted_vals = sorted(values, reverse=True)
-        if len(sorted_vals) >= 3 and s["total"] > 0:
-            top3_pct = round(sum(sorted_vals[:3]) / s["total"] * 100, 1)
-            s["top_3_concentration_pct"] = top3_pct
+        # No top-3 concentration here any more. It was the top three ROWS of the
+        # raw result, which on anything grouped by two things is three periods of
+        # one category, and every consumer that read it made a wrong claim --
+        # the card's callout, the advisory signal and this brief's own prompt.
+        # category_breakdown["top_3_share_pct"] is the collapsed, correct number
+        # and is the only one now published. Removed rather than left in place:
+        # a field nobody should read is one a future reader picks up anyway,
+        # which is exactly how it outlived the fix that replaced it.
         numeric_summaries[col] = s
 
     brief["numeric_summaries"] = numeric_summaries
@@ -1551,8 +1580,6 @@ def _format_brief_for_prompt(brief: dict) -> str:
         )
         if "std_dev" in stats:
             lines.append(f"    std_dev={stats['std_dev']}")
-        if "top_3_concentration_pct" in stats:
-            lines.append(f"    top 3 items account for {stats['top_3_concentration_pct']}% of total")
 
     # Category breakdown
     cat = brief.get("category_breakdown")
@@ -1566,6 +1593,18 @@ def _format_brief_for_prompt(brief: dict) -> str:
             lines.append(f"  Top 5: {top_str}")
         if cat.get("leader_share_pct"):
             lines.append(f"  Leader holds {cat['leader_share_pct']}% of total")
+        # The share of the COLLAPSED categories, which is the same number the
+        # answer card's callout states. The model used to be shown the top three
+        # ROWS instead -- three months of one warehouse on a two-dimensional
+        # result -- so the prose it wrote and the card beside it disagreed about
+        # the same result. Withheld below the floor because the top three of
+        # three categories is 100% by construction, and a model shown that
+        # number writes a concentration warning about it.
+        if (cat.get("top_3_share_pct") is not None
+                and (cat.get("category_count") or 0)
+                >= MIN_CATEGORIES_FOR_CONCENTRATION):
+            lines.append(
+                f"  Top 3 categories hold {cat['top_3_share_pct']}% of total")
         if cat.get("leader_vs_runner_up_gap"):
             lines.append(f"  Leader vs runner-up gap: {cat['leader_vs_runner_up_gap']}")
 

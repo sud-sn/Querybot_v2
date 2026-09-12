@@ -289,6 +289,11 @@ FLAT_TREND_PCT = 5.0
 _LEADER_MIN_SHARE = 0.35
 # Top-20% share above this is a Pareto concentration.
 _PARETO_MIN_SHARE = 0.60
+# Below this many categories, "the top few account for X%" is arithmetic rather
+# than a finding: the top three of three categories is 100% of the total by
+# construction. Exported because the answer card and the narration prompt make
+# the same claim and three classifiers on one result must not disagree.
+MIN_CATEGORIES_FOR_CONCENTRATION = 5
 # ...but only when it exceeds the leader's own share by at least this much,
 # otherwise the two findings are one fact stated twice.
 _PARETO_ADDS_OVER_LEADER = 0.15
@@ -603,7 +608,9 @@ def concentration_findings(
         leader_share < _LEADER_MIN_SHARE
         or top_share - leader_share >= _PARETO_ADDS_OVER_LEADER
     )
-    if top_share >= _PARETO_MIN_SHARE and len(ordered) >= 5 and pareto_adds_information:
+    if (top_share >= _PARETO_MIN_SHARE
+            and len(ordered) >= MIN_CATEGORIES_FOR_CONCENTRATION
+            and pareto_adds_information):
         found.append(Finding(
             kind=CONCENTRATION_PARETO,
             columns=(label_col, value_col),

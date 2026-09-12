@@ -305,6 +305,15 @@ SERIES = [{"month": f"2026-{m:02d}", "revenue": v}
 RANKING = [{"region": "North", "revenue": 900},
            {"region": "South", "revenue": 50},
            {"region": "East", "revenue": 20}]
+# Five regions, three of them holding 91.9% of the total. A top-3 share is only
+# a finding when there are more than three categories to take three of -- see
+# core/analysis_evidence.MIN_CATEGORIES_FOR_CONCENTRATION -- so the concentration
+# line needs its own fixture rather than RANKING's three regions.
+CONCENTRATED = [{"region": "North", "revenue": 450},
+                {"region": "South", "revenue": 280},
+                {"region": "East", "revenue": 189},
+                {"region": "West", "revenue": 50},
+                {"region": "Central", "revenue": 31}]
 PERIOD = [{"category": "Pumps", "revenue_2025": 100, "revenue_2026": 150},
           {"category": "Valves", "revenue_2025": 200, "revenue_2026": 180}]
 
@@ -396,9 +405,18 @@ class TestTheDecisionSignal:
         assert signal["basis"] == "decline"
 
     def test_a_concentrated_ranking_is_french(self, french):
-        assert _card(RANKING, "revenue by region")["decision_signal"]["line"] == \
-            "Les premières entrées représentent 100 % du total — risque de " \
+        assert _card(CONCENTRATED, "revenue by region")["decision_signal"]["line"] == \
+            "Les premières entrées représentent 92 % du total — risque de " \
             "concentration si l'une d'elles est perdue."
+
+    def test_three_regions_get_the_dominance_line_instead(self, french):
+        """This used to read "Les premières entrées représentent 100 % du total",
+        which is what the top three of three regions always add up to. The claim
+        was arithmetic, not a finding, and the real risk in this result is that
+        ONE region holds 93% of it -- which is what the card now says."""
+        assert _card(RANKING, "revenue by region")["decision_signal"]["line"] == \
+            "North détient à lui seul 93 % du total — un point de dépendance " \
+            "unique."
 
 
 class TestTheNamedPeriodNote:

@@ -256,6 +256,45 @@ def _numeric_cols(rows: list[dict]) -> list[str]:
     return cols
 
 
+from core.analysis_evidence import MIN_CATEGORIES_FOR_CONCENTRATION
+
+
+def _measure_and_label_cols(
+    rows: list[dict], numeric_cols: list[str], text_cols: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Split the numeric columns into measures and calendar periods.
+
+    A period stored as an integer parses as a number, so every classifier in
+    this file counted it as a measure, and the FIRST numeric column is what the
+    narrative describes. On an Infor M3 mart "net sales by year" returns an
+    integer IVC_YR beside NET_SLS_AMT, so the answer read
+
+        6 records — Invoice Yr ranges 2,020 to 2,025, avg 2,022.50.
+
+    -- the average of six calendar years, presented as the finding. And because
+    the year was numeric, text_cols was EMPTY: the result had no label column,
+    so it fell to numeric_table mode and produced no trend, no ranking and no
+    chart either. The year was both the measure and the missing axis.
+
+    Periods move to the LABEL candidates rather than being dropped, and they go
+    after the text columns so a result carrying both a warehouse name and a year
+    still narrates the warehouse.
+
+    A result whose numeric columns are ALL periods is left exactly as it was:
+    there is no measure to find, and taking the axis away as well would leave
+    nothing to say at all.
+    """
+    from core.temporal_columns import period_columns
+
+    period_cols = period_columns(rows, numeric_cols)
+    if not period_cols:
+        return numeric_cols, text_cols, []
+    measures = [column for column in numeric_cols if column not in period_cols]
+    if not measures:
+        return numeric_cols, text_cols, []
+    return measures, list(text_cols) + period_cols, period_cols
+
+
 def _normalise_result_format(value: Any) -> str:
     fmt = str(value or "number").strip().lower()
     return fmt if fmt in _RESULT_FORMATS else "number"
@@ -602,11 +641,22 @@ def _looks_temporal(values: list[str]) -> bool:
         "week", "month", "quarter", "year", "date",
         "semaine", "mois", "trimestre", "année", "annee",
     ]
+    from core.temporal_columns import labels_are_bare_years
+
     return (
         bool(re.search(r"\b\d{4}[-/]\d{1,2}([-/]\d{1,2})?\b", sample))
         # Q1 2026, 2026-Q1, T1 2026 (trimestre). Absent entirely before, so a
         # fiscal-quarter column read as an ordinary business dimension.
         or bool(re.search(r"\b(?:q|t)[1-4]\b", sample))
+        # A bare year is the coarsest period label there is and was the one
+        # shape no classifier read. "Net sales by year" over an M3 mart returns
+        # an INTEGER year column, so the series was not merely mis-grained --
+        # it was not a series at all, and the answer ranked six calendar years
+        # against each other as if they were warehouses. Matched over EVERY
+        # label, not found inside the joined sample: a warehouse called "Depot
+        # 2019" is not a period. Shared with core/insight.py's copy of this
+        # classifier rather than written twice.
+        or labels_are_bare_years(values)
         or any(re.search(r"\b" + re.escape(tok) + r"\b", sample)
                for tok in tokens)
     )
@@ -646,7 +696,13 @@ def _chronological_analysis_rows(rows: list[dict]) -> list[dict]:
     if len(copied) < 2:
         return copied
     numeric_cols = _numeric_cols(copied)
-    for column in _text_cols(copied, numeric_cols):
+    # An integer year sorts chronologically only if it is looked at. Left in the
+    # numeric pool it was never a sort candidate, so a year series arrived in
+    # whatever order the warehouse returned it and the trend was computed across
+    # it anyway.
+    _measures, label_cols, _periods = _measure_and_label_cols(
+        copied, numeric_cols, _text_cols(copied, numeric_cols))
+    for column in label_cols:
         values = [str(row.get(column, "")) for row in copied]
         if not _looks_temporal(values):
             continue
@@ -1021,6 +1077,8 @@ def _period_pair_facts(rows: list[dict], plan_labels: list[str] | None) -> dict 
 
     numeric_cols = _numeric_cols(rows)
     text_cols = _text_cols(rows, numeric_cols)
+    numeric_cols, text_cols, _period_cols = _measure_and_label_cols(
+        rows, numeric_cols, text_cols)
     label_col = text_cols[0] if text_cols else ""
 
     movers: list[dict] = []
@@ -1368,6 +1426,8 @@ def build_answer(
 
     numeric_cols = _numeric_cols(rows)
     text_cols = _text_cols(rows, numeric_cols)
+    numeric_cols, text_cols, _period_cols = _measure_and_label_cols(
+        rows, numeric_cols, text_cols)
 
     if len(rows) == 1 and len(rows[0]) == 1:
         col = next(iter(rows[0].keys()))
@@ -1541,11 +1601,16 @@ def build_answer(
 def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> dict:
     numeric_cols = _numeric_cols(rows)
     text_cols = _text_cols(rows, numeric_cols)
+    numeric_cols, text_cols, period_cols = _measure_and_label_cols(
+        rows, numeric_cols, text_cols)
     ctx: dict[str, Any] = {
         "question": question,
         "row_count": len(rows),
         "numeric_cols": numeric_cols,
         "text_cols": text_cols,
+        # Named so a consumer can tell a period axis from a measure without
+        # re-deriving it, and so the split is visible in the trace.
+        "period_cols": period_cols,
         "mode": "table",
         "chartable": False,
     }
@@ -2071,15 +2136,27 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
 
     elif mode == "ranking":
         cat = brief.get("category_breakdown") or {}
-        for _col, stats in (brief.get("numeric_summaries") or {}).items():
-            conc = stats.get("top_3_concentration_pct")
-            if conc and conc >= 80:
-                callouts.append({
-                    "type": "concentration", "icon": "◉",
-                    "message": _t("answer.callout.concentration", pct=conc),
-                    "severity": "info",
-                })
-                break
+        # The COLLAPSED category share, and only when there are enough
+        # categories for "the top three" to mean anything.
+        #
+        # This read numeric_summaries[col]["top_3_concentration_pct"] -- the top
+        # three ROWS of the raw result -- which core/insight.py had already
+        # replaced for the breakdown itself and documented as wrong. It stayed
+        # wrong here, and in both directions. Five warehouses over three months:
+        # the three leading warehouses hold 91.9% of the total and the callout
+        # said nothing at all, because the top three ROWS were three months of
+        # one warehouse and came to 45%. Three warehouses: it announced "100.0%
+        # of total — highly concentrated", which is what the top three of three
+        # always add up to.
+        conc = cat.get("top_3_share_pct")
+        categories = cat.get("category_count") or 0
+        if (conc and conc >= 80
+                and categories >= MIN_CATEGORIES_FOR_CONCENTRATION):
+            callouts.append({
+                "type": "concentration", "icon": "◉",
+                "message": _t("answer.callout.concentration", pct=conc),
+                "severity": "info",
+            })
         leader_share = cat.get("leader_share_pct")
         top5 = cat.get("top_5") or []
         if leader_share and leader_share >= 50 and top5 and len(callouts) < 2:
@@ -2132,12 +2209,14 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
     if mode == "ranking":
         cat = brief.get("category_breakdown") or {}
         leader_share = cat.get("leader_share_pct")
-        # concentration from numeric summaries (top-3)
-        conc = None
-        for _c, stats in (brief.get("numeric_summaries") or {}).items():
-            if stats.get("top_3_concentration_pct") is not None:
-                conc = stats["top_3_concentration_pct"]
-                break
+        # Same field and same floor as the callout above. This line is the
+        # advisory signal, so it was the most expensive place to read the raw
+        # rows: on five warehouses over three months it told the reader "volume
+        # is spread across the field — broadly diversified" while three of the
+        # five held 91.9% of it.
+        conc = cat.get("top_3_share_pct")
+        if (cat.get("category_count") or 0) < MIN_CATEGORIES_FOR_CONCENTRATION:
+            conc = None
         top5 = cat.get("top_5") or []
         leader = top5[0]["label"] if top5 else ""
         if conc is not None and conc >= 80:

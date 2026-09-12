@@ -215,3 +215,148 @@ def infer_series_grain(labels: list[Any]) -> tuple[str, float]:
 def seasonal_period_for_grain(grain: str) -> int:
     """How many periods make one seasonal cycle at this grain, 0 when none applies."""
     return {"day": 7, "week": 52, "month": 12, "quarter": 4}.get(str(grain or "").lower(), 0)
+
+
+# ── Is this numeric column a period, or is it the measure? ────────────────────
+#
+# A different question from is_temporal_result_column above, and it needs a
+# different answer. That one asks "can this be a forecast's time axis", and its
+# generosity is affordable there: it accepts a column whose values all LOOK like
+# periods even when the name says nothing, because a forecast is refused for many
+# other reasons too. Asked instead "is this the measure", that generosity is a
+# wrong number: ORD_QTY holding [2020, 1500, 3200] passes it, and stealing the
+# measure leaves the answer describing quantities as if they were calendar years.
+#
+# So this one requires the NAME and the VALUES to agree, and lets a measure
+# suffix veto both. Measured on an Infor M3 mart, the cost of getting it wrong in
+# the other direction was: IVC_YR classified as the measure, an answer reading
+# "6 records — Invoice Yr ranges 2,020 to 2,025, avg 2,022.50", and -- because
+# the year was the only numeric column left standing as a label candidate -- no
+# trend, no ranking and no chart for "net sales by year" at all.
+
+_PERIOD_NAME_RE = re.compile(
+    r"(?:^|_)(?:date|dt|day|dow|week|wk|month|mth|quarter|qtr|year|yr|"
+    r"period|prd|yyyymm|yyyymmdd|fiscal|fy|calendar)(?:_|$)",
+    re.I,
+)
+# A column carrying one of these is a measure even when it also carries a period
+# token: YR_TO_DT_AMT is an amount, and DLV_DAY_CNT is a count of days.
+_MEASURE_NAME_RE = re.compile(
+    r"(?:^|_)(?:amt|amount|qty|quantity|cnt|count|sum|tot|total|val|value|"
+    r"pct|percent|percentage|rate|ratio|prc|price|cost|margin|avg|average|"
+    r"bal|balance|min|max|stddev|variance)(?:_|$)",
+    re.I,
+)
+# Month and quarter NUMBERS are read; day and week numbers are not. A column
+# named *_MTH holding 1..12 is overwhelmingly a calendar month, and mistaking a
+# duration in months for one costs a chart axis. Durations in days and weeks are
+# ordinary business measures -- LEAD_TIME_DAY, AGE_WK -- and mistaking one of
+# those for a period would steal the measure, which is the failure being fixed.
+_UNIT_NUMBER_RANGES: tuple[tuple[re.Pattern[str], int, int], ...] = (
+    (re.compile(r"(?:^|_)(?:month|mth)(?:_|$)", re.I), 1, 12),
+    (re.compile(r"(?:^|_)(?:quarter|qtr)(?:_|$)", re.I), 1, 4),
+)
+
+
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (float, Decimal)):
+        return int(value) if float(value).is_integer() else None
+    text = str(value or "").strip()
+    if not re.fullmatch(r"-?\d+", text):
+        return None
+    return int(text)
+
+
+def _is_bare_year(value: Any) -> bool:
+    number = _as_int(value)
+    return number is not None and _MIN_YEAR <= number <= _MAX_YEAR
+
+
+def _is_encoded_period(value: Any) -> bool:
+    """A YYYYMM or YYYYMMDD integer that names a real month or day."""
+    number = _as_int(value)
+    if number is None:
+        return False
+    text = str(number)
+    if len(text) == 6:
+        year, month = int(text[:4]), int(text[4:])
+        return _MIN_YEAR <= year <= _MAX_YEAR and 1 <= month <= 12
+    if len(text) == 8:
+        return _encoded_time_value(text)
+    return False
+
+
+def _is_calendar_period_value(value: Any) -> bool:
+    if isinstance(value, (date, datetime)):
+        return True
+    return (_is_bare_year(value) or _is_encoded_period(value)
+            or bool(_TIME_VALUE_RE.match(str(value or "").strip())))
+
+
+def is_calendar_period_column(col_name: Any, values: list[Any]) -> bool:
+    """Whether this column names a calendar period rather than a measure.
+
+    Both halves must agree, and a measure suffix vetoes both:
+
+        IVC_YR        [2020 .. 2025]        -> True
+        IVC_PRD       [202401, 202402]      -> True
+        IVC_MTH       [1 .. 12]             -> True
+        ORD_QTY       [2020, 1500, 3200]    -> False   values only
+        FISCAL_YR     ["north", "south"]    -> False   name only
+        YR_TO_DT_AMT  [2024.50]             -> False   measure suffix
+        DLV_DAY_CNT   [1, 2, 3]             -> False   measure suffix
+        LEAD_TIME_DAY [14, 21, 30]          -> False   a duration, not a day
+    """
+    name = str(col_name or "")
+    if not name or not _PERIOD_NAME_RE.search(name):
+        return False
+    if _MEASURE_NAME_RE.search(name):
+        return False
+    sample = [value for value in (values or [])[:_SAMPLE_SIZE]
+              if value is not None and str(value).strip() != ""]
+    if not sample:
+        # A period name with nothing to corroborate is not evidence enough to
+        # take a column out of the measure pool.
+        return False
+    if all(_is_calendar_period_value(value) for value in sample):
+        return True
+    for pattern, low, high in _UNIT_NUMBER_RANGES:
+        if not pattern.search(name):
+            continue
+        numbers = [_as_int(value) for value in sample]
+        if all(number is not None and low <= number <= high
+               for number in numbers):
+            return True
+    return False
+
+
+def period_columns(rows: list[dict], candidates: list[str]) -> list[str]:
+    """Which of these columns are calendar periods, in the order given."""
+    if not rows:
+        return []
+    return [
+        column for column in candidates
+        if is_calendar_period_column(column, [row.get(column) for row in rows])
+    ]
+
+
+def labels_are_bare_years(labels: list[Any]) -> bool:
+    """Whether every one of these labels is a four-digit calendar year.
+
+    Shared rather than copied because the two ``_looks_temporal`` classifiers
+    (core/response_builder.py and core/insight.py) both needed it and the file
+    they live in already documents four copies of that rule drifting apart.
+
+    ALL of them, not any: "Depot 2019" is a warehouse, and a single year found
+    somewhere inside a joined sample of labels is not a time axis. A year series
+    is every label being nothing but a year.
+    """
+    sample = [str(label).strip() for label in (labels or [])[:_SAMPLE_SIZE]
+              if label is not None and str(label).strip() != ""]
+    if len(sample) < 2:
+        return False
+    return all(_is_bare_year(label) for label in sample)
