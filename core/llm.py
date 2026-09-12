@@ -2030,6 +2030,80 @@ def _get_local_client(base_url: str, api_key: str):
     return _llm_client_cache[key]
 
 
+def azure_deployment_name(sys_cfg: dict, client: dict, purpose: str) -> str:
+    """The Azure deployment to call for this purpose, or a legible refusal.
+
+    Azure routes on a DEPLOYMENT name the tenant chose, not on a model id. The
+    two are unrelated strings: a resource can serve GPT-4o under the name
+    ``emco-prod`` and have nothing called ``gpt-4o`` at all. So the only usable
+    sources are the ones an admin actually typed, and ``_default_model``'s guess
+    is deliberately not one of them.
+
+    That guess is what this replaces, and it was worse than an error, because it
+    differs by purpose -- "fast" for a query, "high" for a KB build. On a blank
+    deployment field the product asked Azure for a deployment literally named
+    ``gpt-4o-mini`` when generating SQL and one named ``gpt-4o`` when building
+    the knowledge base. Either every question 404'd with DeploymentNotFound, or
+    -- on a resource that happens to have both -- the SQL behind every answer
+    was written by the mini model while the knowledge base it read was written
+    by GPT-4o, and nothing anywhere said so.
+
+    Order, most specific first:
+
+    1. this purpose's own deployment field, which is what Admin -> System's
+       "Fetch deployments from Azure" step writes;
+    2. the model the admin configured for this purpose -- a string they typed,
+       so it is a plausible deployment name and was already being used as one;
+    3. anything the admin typed for the OTHER purpose, with a warning. They
+       picked a real, verified deployment; borrowing it keeps the workspace
+       answering and, unlike the guess, never silently changes model TIER, which
+       is the whole defect. The UI's own hint says the two can be the same.
+    4. nothing typed anywhere -> refuse, naming the field to fill.
+
+    So every name this can return is one a human entered. That is the invariant,
+    and it is why (3) exists rather than a shorter "own field or refuse": every
+    configuration that worked before still works, and the one that "worked" by
+    landing on a different model tier now says so.
+    """
+    own_key = ("azure_kb_deployment_name" if purpose == "kb"
+               else "azure_query_deployment_name")
+    other_key = ("azure_query_deployment_name" if purpose == "kb"
+                 else "azure_kb_deployment_name")
+
+    def _model_for(which: str) -> str:
+        if which == "kb":
+            return str(sys_cfg.get("kb_llm_model") or "").strip()
+        return str(
+            client.get("llm_model") or sys_cfg.get("default_llm_model") or ""
+        ).strip()
+
+    other_purpose = "query" if purpose == "kb" else "kb"
+
+    for source in (sys_cfg.get(own_key), _model_for(purpose)):
+        name = str(source or "").strip()
+        if name:
+            return name
+
+    for source in (sys_cfg.get(other_key), _model_for(other_purpose)):
+        borrowed = str(source or "").strip()
+        if borrowed:
+            log.warning(
+                "No Azure deployment is configured for %s, so the %s "
+                "deployment %r is being used for it as well. Set %s in "
+                "Admin → System so both purposes are explicit.",
+                purpose, other_purpose, borrowed, own_key,
+            )
+            return borrowed
+
+    raise RuntimeError(
+        "No Azure OpenAI deployment name is configured. Go to Admin → System "
+        "→ Azure OpenAI, fetch the deployments from your resource, and pick "
+        "one for queries and one for knowledge-base generation. Azure routes on "
+        "the deployment name you chose rather than on a model name, so there is "
+        "nothing here that can safely be guessed."
+    )
+
+
 def normalize_azure_endpoint(raw: str) -> str:
     """The resource base URL, from whatever an admin actually pasted in.
 
@@ -2316,17 +2390,19 @@ def resolve_provider(client: dict, purpose: str = "query") -> tuple[str, str, st
         api_key  = sys_cfg.get("azure_openai_api_key", "")
         endpoint = normalize_azure_endpoint(sys_cfg.get("azure_openai_endpoint", ""))
         version  = sys_cfg.get("azure_openai_api_version", "2024-02-01")
-        # Azure deployment names are set separately from the generic model dropdown.
-        # They take priority so admins can use any custom deployment name.
-        _deploy_key = "azure_kb_deployment_name" if purpose == "kb" else "azure_query_deployment_name"
-        _deploy = sys_cfg.get(_deploy_key, "").strip()
-        if _deploy:
-            model = _deploy
+        # Endpoint first, matching the order of the steps in Admin -> System: an
+        # operator who has configured nothing should be told about step 1 before
+        # step 3.
         if not endpoint:
             raise RuntimeError(
                 "Azure OpenAI endpoint not configured. "
                 "Go to Admin → System → Azure OpenAI settings."
             )
+        # Resolved from scratch rather than by overriding `model` above, because
+        # `model` has already collapsed to _default_model's guess by this point
+        # and there is no way left to tell a guessed name from a typed one. The
+        # sources are the same ones the block above reads, minus that guess.
+        model = azure_deployment_name(sys_cfg, client, purpose)
         extra_kwargs = {"azure_endpoint": endpoint, "azure_api_version": version}
     elif provider == "local":
         # A local runtime needs an address, not a key. Most ignore the key
@@ -2361,10 +2437,18 @@ def resolve_provider(client: dict, purpose: str = "query") -> tuple[str, str, st
 
 
 def _default_model(provider: str, quality: str) -> str:
+    """A last-resort model id for a provider that routes on model ids.
+
+    azure_openai is deliberately absent. Azure routes on a deployment name the
+    tenant chose, so there is no id to default to, and the row that used to be
+    here was actively harmful: it differed by quality tier, so a workspace with
+    no deployment name configured generated SQL against a deployment named
+    "gpt-4o-mini" and built its knowledge base against one named "gpt-4o".
+    azure_deployment_name() resolves that from admin-typed values or refuses.
+    """
     defaults = {
         "anthropic":    {"fast": "claude-sonnet-4-6", "high": "claude-opus-4-5"},
         "openai":       {"fast": "gpt-4o-mini",       "high": "gpt-4o"},
-        "azure_openai": {"fast": "gpt-4o-mini",       "high": "gpt-4o"},
         # Named rather than guessed: a local server serves whatever the
         # operator pulled, so these are only the fallback when
         # local_llm_model is unset, and the error from a wrong name is
