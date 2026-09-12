@@ -2939,6 +2939,107 @@ MESSAGES: dict[str, dict[str, str]] = {
     "caveat.join.days_ago.one": {"en": "{count} day ago", "fr": "il y a {count} jour"},
     "caveat.join.days_ago.other": {"en": "{count} days ago", "fr": "il y a {count} jours"},
 
+    # ── The messages that END a turn ─────────────────────────────────────────
+    # Twenty-two reader-facing literals built inline in core/query_pipeline.py and
+    # passed straight to send_message. Each one is the LAST thing a reader sees
+    # on a turn that produced no answer -- a limit, a timeout, a missing access
+    # grant, a plan the semantic layer could not compile -- so in French the turn
+    # ended in a language the reader may not read, at the one moment they need to
+    # know what to do next. tests/test_a_turn_ends_in_the_readers_language.py
+    # fails if a twenty-third is added.
+    'terminal.no_database': {
+        "en": '⚠️ No database assigned. Contact your administrator.',
+        "fr": "⚠️ Aucune base de données n'est associée. Contactez votre administrateur.",
+    },
+    'terminal.query_limit_reached': {
+        "en": '❌ Monthly query limit reached ({used}/{limit}).',
+        "fr": '❌ Limite mensuelle de requêtes atteinte ({used}/{limit}).',
+    },
+    'terminal.query_limit_warning': {
+        "en": '⚠️ {used}/{limit} queries used this month.',
+        "fr": '⚠️ {used}/{limit} requêtes utilisées ce mois-ci.',
+    },
+    'terminal.token_limit_reached': {
+        "en": '❌ Monthly token limit reached ({used}/{limit}).',
+        "fr": '❌ Limite mensuelle de jetons atteinte ({used}/{limit}).',
+    },
+    'terminal.token_limit_warning': {
+        "en": '⚠️ {used}/{limit} tokens used this month.',
+        "fr": '⚠️ {used}/{limit} jetons utilisés ce mois-ci.',
+    },
+    'terminal.config_error': {
+        "en": '⚠️ Configuration error: {detail}',
+        "fr": '⚠️ Erreur de configuration : {detail}',
+    },
+    'terminal.no_tables_in_schema': {
+        "en": '⚠️ No tables from the **{schema}** schema are available to you. Switch to a different schema or ask your administrator to grant access.',
+        "fr": '⚠️ Aucune table du schéma **{schema}** ne vous est accessible. Changez de schéma ou demandez un accès à votre administrateur.',
+    },
+    'terminal.no_table_access': {
+        "en": '🔒 *No table access assigned.*\n\nYour account is not yet linked to any tables in this workspace. Please contact your administrator to request access.',
+        "fr": "🔒 *Aucun accès aux tables ne vous est attribué.*\n\nVotre compte n'est pas encore rattaché à des tables de cet espace de travail. Contactez votre administrateur pour demander un accès.",
+    },
+    'terminal.no_tables_available': {
+        "en": '⚠️ No tables are available to query. Contact your administrator.',
+        "fr": "⚠️ Aucune table n'est disponible pour être interrogée. Contactez votre administrateur.",
+    },
+    'terminal.needs_governed_context': {
+        "en": 'I still do not have enough governed context to answer accurately. Please restate the request and specify {slot}.',
+        "fr": "Je ne dispose toujours pas d'un contexte gouverné suffisant pour répondre avec exactitude. Reformulez la demande en précisant {slot}.",
+    },
+    'terminal.blocked_by_policy': {
+        "en": 'This request is blocked by the workspace data policy. Reason: {reason}',
+        "fr": "Cette demande est bloquée par la politique de données de l'espace de travail. Motif : {reason}",
+    },
+    'terminal.metric_blocked_by_policy': {
+        "en": 'This metric is blocked by the workspace data policy. Reason: {reason}',
+        "fr": "Cet indicateur est bloqué par la politique de données de l'espace de travail. Motif : {reason}",
+    },
+    'terminal.cached_operation_unsafe': {
+        "en": 'I could not safely apply that operation to the cached result. Use an exact result column name or a row number. No cached values were sent to the model.',
+        "fr": "Je n'ai pas pu appliquer cette opération au résultat en cache en toute sécurité. Utilisez un nom de colonne exact du résultat ou un numéro de ligne. Aucune valeur du cache n'a été transmise au modèle.",
+    },
+    'terminal.trend_timeout': {
+        "en": '⏱ The trend query timed out after 3 minutes. Try a narrower window or a coarser period.',
+        "fr": '⏱ La requête de tendance a expiré après 3 minutes. Essayez une fenêtre plus étroite ou une période plus large.',
+    },
+    'terminal.query_timeout': {
+        "en": '⏱ Query timed out after 3 minutes. Try adding a filter (e.g. date range or specific customer) to narrow the result.',
+        "fr": '⏱ La requête a expiré après 3 minutes. Ajoutez un filtre (plage de dates ou client précis, par exemple) pour réduire le résultat.',
+    },
+    'terminal.kb_not_ready': {
+        "en": '⚠️ Knowledge Base not ready.',
+        "fr": "⚠️ La base de connaissances n'est pas prête.",
+    },
+    'terminal.count_entity_unmapped': {
+        "en": 'I understand that you want to count {entity}s, but the semantic layer does not yet identify which business field represents one {entity}. Please ask your administrator to approve that business identifier before I calculate it.',
+        "fr": "Je comprends que vous souhaitez compter les {entity}s, mais la couche sémantique n'identifie pas encore le champ métier qui représente un {entity}. Demandez à votre administrateur d'approuver cet identifiant métier avant que je le calcule.",
+    },
+    'terminal.count_identifier_unconfirmed': {
+        "en": 'I could not confirm a safe business identifier to count. Please choose one of the business meanings when prompted or ask your administrator to approve one.',
+        "fr": "Je n'ai pas pu confirmer un identifiant métier fiable à compter. Choisissez l'une des significations métier proposées, ou demandez à votre administrateur d'en approuver un.",
+    },
+    'terminal.count_plan_uncompilable': {
+        "en": 'I resolved the business event to count, but I could not compile a consistent governed field and join plan for it. No query was run.',
+        "fr": "J'ai identifié l'événement métier à compter, mais je n'ai pas pu en compiler un plan de champs et de jointures gouverné et cohérent. Aucune requête n'a été exécutée.",
+    },
+    'terminal.analytical_plan_unresolved': {
+        "en": 'I understand the analytical request, but I cannot compile a trusted query until the semantic layer resolves {missing}. Please name the business measure or event more specifically, or ask an administrator to approve the missing semantic mapping.',
+        "fr": "Je comprends la demande analytique, mais je ne peux pas compiler une requête fiable tant que la couche sémantique n'a pas résolu {missing}. Nommez la mesure ou l'événement métier plus précisément, ou demandez à un administrateur d'approuver le rattachement sémantique manquant.",
+    },
+    'terminal.semantic_conflict': {
+        "en": "I can't answer this confidently yet — it touches part of the semantic model with an unresolved conflict:\n\n{conflicts}\n\nPlease ask an admin to resolve this in Model Health, then try again.",
+        "fr": 'Je ne peux pas encore répondre avec confiance : cette question touche une partie du modèle sémantique présentant un conflit non résolu :\n\n{conflicts}\n\nDemandez à un administrateur de le résoudre dans Santé du modèle, puis réessayez.',
+    },
+    'terminal.temporal_contract_uncompilable': {
+        "en": 'I retained your requested time period, but could not compile it into the selected business-date contract. I did not run an unbounded query. Please retry the request; if it persists, ask an administrator to review the applicable Date Role.',
+        "fr": "J'ai conservé la période demandée, mais je n'ai pas pu la compiler dans le contrat de date métier retenu. Aucune requête non bornée n'a été exécutée. Réessayez ; si le problème persiste, demandez à un administrateur de vérifier le rôle de date applicable.",
+    },
+    'terminal.ai_error': {
+        "en": '⚠️ AI error: {detail}',
+        "fr": '⚠️ Erreur du modèle : {detail}',
+    },
+
     # ── Disclosures the pipeline sends before the answer ─────────────────────
     # Each of these was an English f-string built inline in
     # core/query_pipeline.py and sent straight to the reader, so a French

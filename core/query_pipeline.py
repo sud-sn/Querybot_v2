@@ -1420,7 +1420,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     if not db_cfg:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No database assigned")
-        await adapter.send_message(event, "⚠️ No database assigned. Contact your administrator.")
+        await adapter.send_message(event, _t("terminal.no_database", lang=(portal_user or {}).get("lang") or "en"))
         return
 
     await _send_live_stage(adapter, event, "authorization", _t("stage.authorization.label"), _t("stage.authorization.detail"))
@@ -1428,25 +1428,29 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     within_limit, used, limit = check_query_limit(account_id)
     if not within_limit:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="Monthly query limit reached")
-        await adapter.send_message(event, f"❌ Monthly query limit reached ({used}/{limit}).")
+        await adapter.send_message(event, _t("terminal.query_limit_reached", lang=(portal_user or {}).get("lang") or "en",
+                       used=used, limit=limit))
         return
     if used >= int(limit * 0.8):
-        await adapter.send_message(event, f"⚠️ {used}/{limit} queries used this month.")
+        await adapter.send_message(event, _t("terminal.query_limit_warning", lang=(portal_user or {}).get("lang") or "en",
+                       used=used, limit=limit))
 
     within_token_limit, tokens_used, token_limit = check_token_limit(account_id)
     if not within_token_limit:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="Monthly token limit reached")
-        await adapter.send_message(event, f"❌ Monthly token limit reached ({tokens_used}/{token_limit}).")
+        await adapter.send_message(event, _t("terminal.token_limit_reached", lang=(portal_user or {}).get("lang") or "en",
+                       used=tokens_used, limit=token_limit))
         return
     if token_limit and tokens_used >= int(token_limit * 0.8):
-        await adapter.send_message(event, f"⚠️ {tokens_used}/{token_limit} tokens used this month.")
+        await adapter.send_message(event, _t("terminal.token_limit_warning", lang=(portal_user or {}).get("lang") or "en",
+                       used=tokens_used, limit=token_limit))
 
     try:
         provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
         _trace_update(trace_id, llm_provider=provider, llm_model=model, db_type=db_cfg.get("db_type", ""))
     except RuntimeError as e:
         _trace_finish(trace_id, status="error", answer_type="error", error_message=str(e))
-        await adapter.send_message(event, f"⚠️ Config error: {e}")
+        await adapter.send_message(event, _t("terminal.config_error", lang=(portal_user or {}).get("lang") or "en", detail=e))
         return
 
     # Determine this user's allowed tables
@@ -1502,8 +1506,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 error_message=f"No tables available in selected schema {schema_hint}",
             )
             await adapter.send_message(event,
-                f"⚠️ No tables from the **{schema_hint}** schema are available to you. "
-                f"Switch to a different schema or ask your administrator to grant access.")
+                _t("terminal.no_tables_in_schema", lang=(portal_user or {}).get("lang") or "en",
+                       schema=schema_hint))
             return
 
     # ── Domain scoping — which subject area this question belongs to ─────────
@@ -1568,16 +1572,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     if portal_user and allowed_tables is not None and not effective:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No table access assigned")
         await adapter.send_message(event,
-            "🔒 *No table access assigned.*\n\n"
-            "Your account is not yet linked to any tables in this workspace. "
-            "Please contact your administrator to request access before you "
-            "can ask data questions.")
+            _t("terminal.no_table_access", lang=(portal_user or {}).get("lang") or "en"))
         return
 
     if not effective:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No tables available")
         await adapter.send_message(event,
-            "⚠️ No tables are available to query. Contact your administrator.")
+            _t("terminal.no_tables_available", lang=(portal_user or {}).get("lang") or "en"))
         return
 
     # ── Step 2.5: Tier-2 DuckDB routing — answer from cached result set ──────
@@ -1724,8 +1725,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             await adapter.send_message(
                 event,
-                "I still do not have enough governed context to answer accurately. "
-                f"Please restate the request and specify {_plan_clarification.slot.replace('_', ' ')}.",
+                _t("terminal.needs_governed_context", lang=(portal_user or {}).get("lang") or "en",
+                   slot=_plan_clarification.slot.replace("_", " ")),
             )
             return
 
@@ -1856,8 +1857,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             await adapter.send_message(
                 event,
-                "This request is blocked by the workspace data policy. "
-                f"Reason: {llm_decision.explanation}",
+                _t("terminal.blocked_by_policy", lang=(portal_user or {}).get("lang") or "en",
+                   reason=llm_decision.explanation),
             )
             return
 
@@ -2099,9 +2100,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             await adapter.send_message(
                 event,
-                "I could not safely apply that operation to the cached result. "
-                "Use an exact result column name or a row number. No cached values "
-                "were sent to the model or source database.",
+                _t("terminal.cached_operation_unsafe", lang=(portal_user or {}).get("lang") or "en"),
             )
             return
 
@@ -2255,8 +2254,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 except asyncio.TimeoutError:
                     await adapter.send_message(
                         event,
-                        "⏱ The trend query timed out after 3 minutes. Try a "
-                        "narrower window or a coarser period.",
+                        _t("terminal.trend_timeout", lang=(portal_user or {}).get("lang") or "en"),
                     )
                     _trace_finish(
                         trace_id, status="error", answer_type="timeout",
@@ -2432,7 +2430,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             except asyncio.TimeoutError:
                 await adapter.send_message(
                     event,
-                    "⏱ Query timed out after 3 minutes. Try adding a filter (e.g. date range or specific customer) to narrow the result.",
+                    _t("terminal.query_timeout", lang=(portal_user or {}).get("lang") or "en"),
                 )
                 _trace_finish(trace_id, status="error", answer_type="timeout", error_message="Metric query timed out after 60s")
                 return
@@ -2526,8 +2524,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             await adapter.send_message(
                 event,
-                "This metric is blocked by the workspace data policy. "
-                f"Reason: {policy_error.decision.explanation}",
+                _t("terminal.metric_blocked_by_policy", lang=(portal_user or {}).get("lang") or "en",
+                   reason=policy_error.decision.explanation),
             )
             return
         except Exception as e:
@@ -2697,7 +2695,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     except Exception as e:
         log.error("RAG retrieval failed: %s", e)
         _trace_finish(trace_id, status="error", answer_type="error", error_message=f"RAG retrieval failed: {e}")
-        await adapter.send_message(event, "⚠️ Knowledge Base not ready.")
+        await adapter.send_message(event, _t("terminal.kb_not_ready", lang=(portal_user or {}).get("lang") or "en"))
         return
 
     # ── Compiled semantic contract — the single runtime truth source ─────────
@@ -3496,10 +3494,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         if _count_target_resolution.get("status") == "missing":
             await adapter.send_message(
                 event,
-                f"I understand that you want to count {_analytical_plan.counted_entity}s, "
-                "but the semantic layer does not yet identify which business field "
-                f"represents one {_analytical_plan.counted_entity}. Please ask your "
-                "administrator to approve that business identifier before I calculate it.",
+                _t("terminal.count_entity_unmapped", lang=(portal_user or {}).get("lang") or "en",
+                   entity=_analytical_plan.counted_entity),
             )
             _trace_finish(
                 trace_id,
@@ -3512,9 +3508,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         if _count_target_resolution.get("status") != "selected":
             await adapter.send_message(
                 event,
-                "I could not confirm a safe business identifier to count. Please choose "
-                "one of the business meanings when prompted or ask your administrator "
-                "to approve the intended identifier.",
+                _t("terminal.count_identifier_unconfirmed", lang=(portal_user or {}).get("lang") or "en"),
             )
             _trace_finish(
                 trace_id,
@@ -3617,8 +3611,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
                 await adapter.send_message(
                     event,
-                    "I resolved the business event to count, but I could not compile "
-                    "a consistent governed field and join plan for it. No query was run.",
+                    _t("terminal.count_plan_uncompilable", lang=(portal_user or {}).get("lang") or "en"),
                 )
                 _trace_finish(
                     trace_id,
@@ -5358,10 +5351,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         await adapter.send_message(
             event,
-            "I understand the analytical request, but I cannot compile a trusted "
-            f"query until the semantic layer resolves {_missing_copy}. "
-            "Please name the business measure or event more specifically, or ask "
-            "an administrator to approve the missing semantic mapping.",
+            _t("terminal.analytical_plan_unresolved", lang=(portal_user or {}).get("lang") or "en",
+               missing=_missing_copy),
         )
         return
 
@@ -5435,10 +5426,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
                 await adapter.send_message(
                     event,
-                    "I can't answer this confidently yet — it touches part of the "
-                    "semantic model with an unresolved conflict:\n\n"
-                    f"{_conflict_lines}\n\n"
-                    "Please ask an admin to resolve this in Model Health, then try again.",
+                    _t("terminal.semantic_conflict", lang=(portal_user or {}).get("lang") or "en",
+                    conflicts=_conflict_lines),
                 )
                 return
 
@@ -5496,10 +5485,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         await adapter.send_message(
             event,
-            "I retained your requested time period, but could not compile it "
-            "into the selected business-date contract. I did not run an "
-            "unbounded query. Please retry the request; if it persists, ask "
-            "an administrator to review the applicable Date Role.",
+            _t("terminal.temporal_contract_uncompilable", lang=(portal_user or {}).get("lang") or "en"),
         )
         return
     # ── Resolve the business-date anchor once, not per question ───────────────
@@ -5827,7 +5813,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id, error_code="llm_error")
         _trace_finish(trace_id, status="error", answer_type="error", error_message=f"AI error: {e}")
-        await adapter.send_message(event, f"⚠️ AI error: {e}")
+        await adapter.send_message(event, _t("terminal.ai_error", lang=(portal_user or {}).get("lang") or "en", detail=e))
         return
 
     # Fence stripping, the DISTINCT safety net for list-entity questions

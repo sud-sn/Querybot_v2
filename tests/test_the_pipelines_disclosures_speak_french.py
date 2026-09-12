@@ -176,30 +176,11 @@ class TestTheCatalogueCarriesBothLanguages:
 # Matched by opening text, not by line number: a line number stops covering the
 # code it names the moment anything is inserted above it.
 _UNTRANSLATED_BACKLOG = {
-    "",  # a pass-through f-string that opens with an already-translated variable
-    "I can't answer this confidently yet — it tou",
-    "I could not confirm a safe business identifi",
-    "I could not safely apply that operation to t",
-    "I resolved the business event to count, but ",
-    "I retained your requested time period, but c",
-    "I still do not have enough governed context ",
-    "I understand that you want to count ",
-    "I understand the analytical request, but I c",
-    "This metric is blocked by the workspace data",
-    "This request is blocked by the workspace dat",
-    "⏱ Query timed out after 3 minutes. Try addin",
-    "⏱ The trend query timed out after 3 minutes.",
-    "⚠️ ",
-    "⚠️ AI error: ",
-    "⚠️ Config error: ",
-    "⚠️ Knowledge Base not ready.",
-    "⚠️ No database assigned. Contact your admini",
-    "⚠️ No tables are available to query. Contact",
-    "⚠️ No tables from the **",
-    "❌ ",
-    "❌ Monthly query limit reached (",
-    "❌ Monthly token limit reached (",
-    "🔒 *No table access assigned.*\n\nYour account ",
+    # EMPTIED. The twenty-four terminal messages this quarantined are now
+    # catalogue lookups; see tests/test_a_turn_ends_in_the_readers_language.py.
+    # What is left are the two payloads that are not literals at all:
+    "\u274c ",  # f"❌ {last_reason}" -- a policy explanation a person wrote
+    "",          # f"{prompt}\n\n{options}" -- both already translated
 }
 
 
@@ -240,8 +221,25 @@ def _reader_literals() -> list[tuple[int, str]]:
 class TestNoNewEnglishLiteralReachesTheReader:
 
     def test_the_scan_finds_the_call_sites_it_is_named_for(self):
-        """If send_message is ever renamed this check silently covers nothing."""
-        assert len(_reader_literals()) >= 20
+        """If send_message is ever renamed this check silently covers nothing, so
+        prove the walker still reaches the sends. Payloads that are LITERALS are
+        now down to the two pass-throughs; the sends themselves are many."""
+        import ast as _ast
+        from pathlib import Path as _Path
+
+        source = (_Path(__file__).resolve().parents[1]
+                  / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        function = next(
+            node for node in _ast.walk(_ast.parse(source))
+            if isinstance(node, (_ast.AsyncFunctionDef, _ast.FunctionDef))
+            and node.name == "_handle_query_impl")
+        sends = [
+            node for node in _ast.walk(function)
+            if isinstance(node, _ast.Call)
+            and (node.func.attr if isinstance(node.func, _ast.Attribute)
+                 else getattr(node.func, "id", "")) == "send_message"
+        ]
+        assert len(sends) >= 20, len(sends)
 
     def test_the_three_fixed_here_are_gone(self):
         openings = {text for _line, text in _reader_literals()}

@@ -553,10 +553,29 @@ class GovernedCacheWiringTests(unittest.TestCase):
         )
 
     def test_bound_literal_failure_is_fail_closed(self):
+        """A blocked cached-result plan tells the reader and stops the turn.
+
+        The message it tells them with moved into the i18n catalogue when the
+        turn-ending messages were translated, and this used to look for the
+        substring "No cached values" in the pipeline's own source -- so it broke
+        on a move that changed no behaviour, having never checked the behaviour
+        it is named for. It now asserts the branch stops the turn, that the
+        message is the catalogue key rather than a literal, and that the message
+        itself still makes the no-values promise in BOTH languages, which is the
+        part a reader actually depends on.
+        """
+        from core.i18n import t
+
         block = self._cache_block()
         self.assertIn('_cache_followup.status == "blocked"', block)
-        self.assertIn("No cached values", block)
+        self.assertIn("terminal.cached_operation_unsafe", block)
         self.assertIn("return", block)
+
+        english = t("terminal.cached_operation_unsafe", lang="en")
+        self.assertIn("No cached values were sent to the model", english)
+        french = t("terminal.cached_operation_unsafe", lang="fr")
+        self.assertIn("Aucune valeur du cache", french)
+        self.assertNotIn("No cached values", french)
 
 
 class TemplateRenderingTests(unittest.TestCase):
