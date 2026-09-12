@@ -1916,6 +1916,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question,
             _has_cached_result,
             cached_col_names=_cached_cols,
+            lang=(portal_user or {}).get("lang") or "en",
         )
     )
     # should_attempt_cache_followup (core/query_router.py) additionally gives
@@ -1938,6 +1939,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question, _has_cached_result,
             cached_col_names=_cached_cols,
             cached_rows=_cached_rows_for_gate,
+            lang=(portal_user or {}).get("lang") or "en",
         )
     )
     if _route_to_cached_result:

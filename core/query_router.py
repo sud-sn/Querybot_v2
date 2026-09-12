@@ -96,9 +96,27 @@ _COLUMN_NOISE = {
 }
 
 
+def _flat(value: object) -> str:
+    """Letters and digits only, accent- and apostrophe-folded.
+
+    Folding is what lets a reader reference their own data. The comparison was
+    `[^a-z0-9]+` over casefolded text, which does not strip an accent -- it
+    SHREDS it, so "Montréal" flattened to "montr" + "al" while "Montreal"
+    flattened to "montreal" and the two never met. Measured on EMCO's own branch
+    names, in BOTH directions: a reader typing "Montreal" could not reference a
+    warehouse called Montréal, and a reader typing "Montréal" could not
+    reference one called Montreal.
+    """
+    from core.question_normalizer import _fold
+
+    return re.sub(r"[^a-z0-9]+", "", _fold(str(value or "")))
+
+
 def _tokens(value: str) -> set[str]:
+    from core.question_normalizer import _fold
+
     return {
-        token for token in re.findall(r"[a-z0-9]+", str(value or "").casefold())
+        token for token in re.findall(r"[a-z0-9]+", _fold(str(value or "")))
         if token not in _COLUMN_NOISE
     }
 
@@ -121,7 +139,7 @@ def _question_references_cached_value(question: str, rows: list[dict] | None) ->
     """
     if not rows:
         return False
-    q_norm = re.sub(r"[^a-z0-9]+", "", question.casefold())
+    q_norm = _flat(question)
     if not q_norm:
         return False
     seen: set[str] = set()
@@ -134,7 +152,7 @@ def _question_references_cached_value(question: str, rows: list[dict] | None) ->
             display = str(value).strip()
             if len(display) < 2:
                 continue
-            norm = re.sub(r"[^a-z0-9]+", "", display.casefold())
+            norm = _flat(display)
             if not norm or norm in seen:
                 continue
             seen.add(norm)
@@ -186,10 +204,33 @@ _FROM_RESULTS_PREFIX_RE = re.compile(
 )
 
 
+def _spellings(question: str, lang: str) -> tuple[str, ...]:
+    """The reader's own words, and the canonical English, when they differ.
+
+    Every gate in this module is an English regex. A French reader's follow-up
+    reaches none of them, and a follow-up that does not route is not a smaller
+    answer -- it becomes a FRESH, unrelated query against the warehouse, so
+    "et par entrepôt ?" stops meaning "the result I am looking at, by
+    warehouse".
+
+    Both spellings are tried rather than only the canonical one: a cached column
+    or a cached value is tenant data, and canonicalisation is a translation.
+    """
+    from core.question_normalizer import canonical_question
+
+    reader = str(question or "")
+    canonical = canonical_question(reader, lang)
+    if canonical == reader:
+        return (reader,)
+    return (reader, canonical)
+
+
 def should_route_to_result_cache(
     question: str,
     has_cached_result: bool,
     cached_col_names: list[str] | None = None,
+    *,
+    lang: str = "",
 ) -> bool:
     """
     Return True when the question should be answered from the cached result
@@ -201,10 +242,23 @@ def should_route_to_result_cache(
     cached_col_names: column names from the last result. When provided,
     routing also fires if the question mentions an analytic operation
     AND one of those column names appears in the question.
+
+    ``lang`` is the reader's language. Every phrase gate below is English, and
+    an English default means the canonical form IS the input, so an English
+    tenant matches exactly the phrases it matched before.
     """
     if not has_cached_result:
         return False
+    return any(
+        _phrases_route_to_cache(spelling, cached_col_names)
+        for spelling in _spellings(question, lang)
+    )
 
+
+def _phrases_route_to_cache(
+    question: str, cached_col_names: list[str] | None,
+) -> bool:
+    """The phrase gate itself, over one spelling of the question."""
     q = question.strip()
 
     # Deterministic result commands must never be rejected as off-topic or
@@ -260,6 +314,7 @@ def should_attempt_cache_followup(
     *,
     cached_col_names: list[str] | None = None,
     cached_rows: list[dict] | None = None,
+    lang: str = "",
 ) -> bool:
     """
     Return True when the metadata-only LLM planner (run_governed_result_
@@ -293,21 +348,38 @@ def should_attempt_cache_followup(
     low-confidence interpretation now asks for confirmation rather than
     executing silently (core/governed_result_followup.py).
     """
-    if should_route_to_result_cache(question, has_cached_result, cached_col_names=cached_col_names):
+    if should_route_to_result_cache(
+            question, has_cached_result,
+            cached_col_names=cached_col_names, lang=lang):
         return True
     if not has_cached_result:
         return False
+    spellings = _spellings(question, lang)
     # Before _looks_like_new_query, deliberately. "what about last month?"
     # trips that heuristic on the word "what" -- it is looking for question
     # words, and an elliptical follow-up is allowed to have one.
-    if looks_elliptical(question):
+    #
+    # Both spellings, because the opener and the refinement target this looks
+    # for are English: "et le mois dernier ?" is as elliptical as "and last
+    # month?" and shares not one word with it.
+    if any(looks_elliptical(spelling) for spelling in spellings):
         return True
-    if _looks_like_new_query(question):
+    # The canonical form, because this is an English starter-word heuristic and
+    # untranslated French is not an input it can say anything about. Asked over
+    # both spellings the answer is the same on every phrasing tried -- there is
+    # no wording where the raw French trips it and the canonical does not, only
+    # the reverse ("tendance des ventes" -> "trend of sales") -- so this is the
+    # right input rather than a behaviour difference.
+    if _looks_like_new_query(spellings[-1]):
         return False
-    if _DEICTIC_RE.search(question):
+    if any(_DEICTIC_RE.search(spelling) for spelling in spellings):
         return True
-    if question_mentions_cached_column(question, cached_col_names):
+    if any(question_mentions_cached_column(spelling, cached_col_names)
+           for spelling in spellings):
         return True
+    # The reader's own words for the cached VALUES. A warehouse called
+    # "Montréal" is data, not vocabulary, and the canonical form is a
+    # translation of the sentence around it.
     return _question_references_cached_value(question, cached_rows)
 
 

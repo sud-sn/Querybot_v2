@@ -5028,6 +5028,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     text,
                     bool(_cache_snapshot),
                     cached_col_names=_cache_columns,
+                    # Every phrase gate in that router is English. Without this a
+                    # French follow-up does not route to the cached result -- it
+                    # becomes a fresh, unrelated query against the warehouse.
+                    lang=(portal_user or {}).get("lang") or "en",
                 )
             if _route_cached_analysis:
                 if current_query_task and not current_query_task.done():

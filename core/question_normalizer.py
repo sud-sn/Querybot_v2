@@ -553,6 +553,20 @@ _NUMERIC_RULES: tuple[tuple[re.Pattern[str], object], ...] = (
     # English plural cannot come from the lexicon -- only the number knows.
     (re.compile(rf"\b({_COUNT_ALT})\s+({_UNIT_ALT})\b"),
      lambda m: f"{_count(m.group(1))} {_UNITS[m.group(2)]}"),
+    # "les 3 premiers mois" is the FIRST three months -- a calendar window, not a
+    # ranking -- and has to be separated from "les 3 premiers" before the
+    # ranking rule below sees it. The unit is what tells them apart.
+    (re.compile(
+        rf"\b([lc]es?\s+)?({_COUNT_ALT})\s+premi[e]re?s?\s+({_UNIT_ALT})\b"),
+     lambda m: f"{'the ' if m.group(1) else ''}first "
+               f"{_count(m.group(2))} {_UNITS[m.group(3)]}"),
+    # "les 3 premiers" -> "top 3". French puts the count first and the lexicon
+    # turns "premiers" into "top", which leaves "the 3 top" -- and every English
+    # gate downstream is written for "top 3", so a perfectly ordinary follow-up
+    # ("montre-moi les 3 premiers") reached none of them.
+    (re.compile(
+        rf"\b([lc]es?\s+)?({_COUNT_ALT})\s+premi[e]re?s?\b(?!\s+(?:{_UNIT_ALT})\b)"),
+     lambda m: f"top {_count(m.group(2))}"),
     # "les cinq meilleurs clients" -> "les 5 meilleurs clients", which the
     # lexicon then finishes into "the 5 best customers". Only the COUNT is
     # rewritten, by lookahead, so the superlative is still the lexicon's to
