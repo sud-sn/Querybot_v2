@@ -252,9 +252,52 @@ _LEXICON: dict[str, str] = {
     "derniers": "bottom",
 
     # ── Time ─────────────────────────────────────────────────────────────────
+    #
+    # THE CURRENT PERIOD, which had no entry at all. Measured: "du mois en
+    # cours", "de l'annee en cours", "du mois courant", "du mois actuel" and
+    # every quarter/week sibling all reached detect_temporal_window with no
+    # window -- and a question with no window gets no governed business date,
+    # so generation falls through to the dialect's own recipes and anchors on
+    # the SERVER CLOCK. On a mart loaded nightly that is a silently wrong
+    # number; on a stale demo mart it is an empty result reported as a fact.
+    #
+    # Every key here anchors a CALENDAR UNIT. That is deliberate and it is the
+    # whole reason "en cours" is safe to read: on its own it means "in
+    # progress", and a distributor's questions are full of it -- "commandes en
+    # cours" is open orders, "travaux en cours" is WIP. Neither contains a
+    # unit, so neither is touched.
+    "mois en cours": "this month",
+    "annee en cours": "this year",
+    "trimestre en cours": "this quarter",
+    "semaine en cours": "this week",
+    "en cours d'annee": "this year",
+    "mois courant": "this month",
+    "annee courante": "this year",
+    "trimestre courant": "this quarter",
+    "semaine courante": "this week",
+    "mois actuel": "this month",
+    "annee actuelle": "this year",
+    "trimestre actuel": "this quarter",
+    "semaine actuelle": "this week",
+
+    # TO-DATE. detect_temporal_window already reads "month to date" and its
+    # siblings and maps each onto the matching this_* kind; French had only the
+    # year forms, so "mois a date" and "cumul mensuel" carried no window while
+    # "cumul annuel" did. "a date" is written folded -- "à date" reaches the
+    # lexicon with the accent already stripped.
     "depuis le debut de l'annee": "year to date",
     "depuis le debut de l annee": "year to date",
+    "depuis le debut du mois": "month to date",
+    "depuis le debut du trimestre": "quarter to date",
+    "depuis le debut de la semaine": "week to date",
     "cumul annuel": "year to date",
+    "cumul mensuel": "month to date",
+    "cumul trimestriel": "quarter to date",
+    "cumul hebdomadaire": "week to date",
+    "annee a date": "year to date",
+    "mois a date": "month to date",
+    "trimestre a date": "quarter to date",
+    "semaine a date": "week to date",
     "annee derniere": "last year",
     "l'annee derniere": "last year",
     "annee precedente": "previous year",
@@ -428,6 +471,42 @@ _UNITS = {
 }
 _UNIT_ALT = "|".join(sorted(_UNITS, key=len, reverse=True))
 
+# A count is as often written as a word as a digit -- "les six derniers mois" is
+# ordinary business French. Read ONLY in the count position below (directly
+# before derniers/prochains or a unit), which is what makes "neuf" safe: on its
+# own it means "new", and "un produit neuf" is a new product, not nine of them.
+# "un"/"une" are deliberately absent: they are already lexicon entries meaning
+# the English article, and "un client" must stay "a client".
+_COUNT_WORDS = {
+    "deux": "2", "trois": "3", "quatre": "4", "cinq": "5", "six": "6",
+    "sept": "7", "huit": "8", "neuf": "9", "dix": "10", "onze": "11",
+    "douze": "12", "quinze": "15", "dix-huit": "18", "vingt": "20",
+    "vingt-quatre": "24", "trente": "30", "soixante": "60",
+    "quatre-vingt-dix": "90",
+}
+# Longest first so "quatre-vingt-dix" is not read as "quatre", and digits first
+# so a digit is never partially eaten by a word alternative.
+_COUNT_ALT = r"\d+|" + "|".join(
+    re.escape(word) for word in sorted(_COUNT_WORDS, key=len, reverse=True))
+
+
+def _count(token: str) -> str:
+    return _COUNT_WORDS.get(token, token)
+
+
+# The superlatives the lexicon already knows. A count word sitting directly in
+# front of one of these is a count and nothing else -- French adjectives do not
+# stack that way, so "neuf meilleurs" cannot be read as "new best".
+_RANK_AHEAD = "|".join((
+    r"meilleur(?:es?|s)?",
+    r"pires?",
+    r"premier(?:es?|s)?",
+    r"dernier(?:es?|s)?",
+    r"plus\s+(?:eleve|faible|gros|grand|petit)(?:e?s)?",
+    r"moins\s+(?:eleve|faible|gros|grand|petit)(?:e?s)?",
+))
+
+
 _NUMERIC_RULES: tuple[tuple[re.Pattern[str], object], ...] = (
     # "les 6 derniers mois" -> "the last 6 months". The determiner is
     # TRANSLATED, not dropped: analyze_query_intent's time-series pattern is
@@ -435,15 +514,38 @@ _NUMERIC_RULES: tuple[tuple[re.Pattern[str], object], ...] = (
     # and the reader gets a flat aggregate instead of a series. It is also not
     # left in place -- "ces last 12 months" keeps a French word in the middle
     # of the phrase the detector reads.
-    (re.compile(rf"\b([lc]es?\s+)?(\d+)\s+derniers?\s+({_UNIT_ALT})\b"),
-     lambda m: f"{'the ' if m.group(1) else ''}last {m.group(2)} {_UNITS[m.group(3)]}"),
+    #
+    # `dernier(?:es?|s)?` covers all four inflections. `derniers?` covered two,
+    # and the two it missed are the FEMININE ones -- which is not an edge case,
+    # because semaine and annee are feminine nouns. Measured: "les 4 dernieres
+    # semaines" and "les 2 dernieres annees" fell through to the flat lexicon,
+    # came out as "the 4 last weeks", and matched no window pattern at all.
+    (re.compile(
+        rf"\b([lc]es?\s+)?({_COUNT_ALT})\s+dernier(?:es?|s)?\s+({_UNIT_ALT})\b"),
+     lambda m: f"{'the ' if m.group(1) else ''}last "
+               f"{_count(m.group(2))} {_UNITS[m.group(3)]}"),
     # "les 3 prochains mois" -> "the next 3 months"
-    (re.compile(rf"\b([lc]es?\s+)?(\d+)\s+prochains?\s+({_UNIT_ALT})\b"),
-     lambda m: f"{'the ' if m.group(1) else ''}next {m.group(2)} {_UNITS[m.group(3)]}"),
+    (re.compile(
+        rf"\b([lc]es?\s+)?({_COUNT_ALT})\s+prochain(?:es?|s)?\s+({_UNIT_ALT})\b"),
+     lambda m: f"{'the ' if m.group(1) else ''}next "
+               f"{_count(m.group(2))} {_UNITS[m.group(3)]}"),
     # "sur 3 mois" -> "over 3 months". French "mois" is invariant, so the
     # English plural cannot come from the lexicon -- only the number knows.
-    (re.compile(rf"\b(\d+)\s+({_UNIT_ALT})\b"),
-     lambda m: f"{m.group(1)} {_UNITS[m.group(2)]}"),
+    (re.compile(rf"\b({_COUNT_ALT})\s+({_UNIT_ALT})\b"),
+     lambda m: f"{_count(m.group(1))} {_UNITS[m.group(2)]}"),
+    # "les cinq meilleurs clients" -> "les 5 meilleurs clients", which the
+    # lexicon then finishes into "the 5 best customers". Only the COUNT is
+    # rewritten, by lookahead, so the superlative is still the lexicon's to
+    # translate.
+    #
+    # This is the asymmetry that made it worth doing: detect_top_n_intent reads
+    # "top five customers" and "top 5 customers" alike, so ENGLISH was never
+    # exposed here. French was. "les cinq meilleurs clients" produced no
+    # TopNIntent at all, which means no row limit was ever requested and the
+    # reader was handed every customer, narrated as the top five -- this
+    # module's own headline example, in the one spelling it still missed.
+    (re.compile(rf"\b({_COUNT_ALT})(?=\s+(?:{_RANK_AHEAD}))"),
+     lambda m: _count(m.group(1))),
     # "T1 2025" / "T1" -> "Q1 2025" / "Q1". core/multi_period.py's quarter
     # pattern is anchored on the letter Q.
     (re.compile(r"\bt([1-4])\b(?=\s*(?:20\d{2})?)"), lambda m: f"Q{m.group(1)}"),
