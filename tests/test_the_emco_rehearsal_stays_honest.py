@@ -23,6 +23,15 @@ unable to name any of the four role-playing dates.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+import uuid
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -228,3 +237,44 @@ class TestTheGapsItFoundStayClosed:
                 else:
                     os.environ[key] = value
             shutil.rmtree(workdir, ignore_errors=True)
+
+
+class TestTheHarnessRunsTheWayItIsDocumented(unittest.TestCase):
+    """A rehearsal tool that only runs one way does not get run.
+
+    `python3 evals/emco_rehearsal.py` puts evals/ on sys.path and not the repo
+    root, so every `import store` and `import core.*` inside raised
+    ModuleNotFoundError. Only `python -m evals.emco_rehearsal` worked, and the
+    difference is invisible until the person preparing a customer release types
+    the path instead of the module -- which is the moment it matters most.
+
+    Executed as a real subprocess rather than by importing: the failure was in
+    how the interpreter was started, so starting it the same way is the only
+    thing that can see it. Running from a DIFFERENT working directory matters
+    too -- being inside the repo masks it, because cwd is already on the path.
+    """
+
+    REPO = Path(__file__).resolve().parents[1]
+    SCRIPT = REPO / "evals" / "emco_rehearsal.py"
+
+    def _run(self, argv, cwd):
+        return subprocess.run(
+            [sys.executable, *argv], cwd=str(cwd),
+            capture_output=True, text=True, timeout=900,
+        )
+
+    def test_it_runs_as_a_path_from_inside_the_repo(self):
+        done = self._run(["evals/emco_rehearsal.py", "--only", "role"], self.REPO)
+        self.assertEqual(done.returncode, 0, done.stderr[-1500:])
+        self.assertIn("as expected", done.stdout)
+
+    def test_it_runs_as_a_path_from_anywhere_else(self):
+        with tempfile.TemporaryDirectory() as elsewhere:
+            done = self._run([str(self.SCRIPT), "--only", "role"], elsewhere)
+        self.assertEqual(done.returncode, 0, done.stderr[-1500:])
+        self.assertIn("as expected", done.stdout)
+
+    def test_it_still_runs_as_the_module_the_docstring_names(self):
+        done = self._run(["-m", "evals.emco_rehearsal", "--only", "role"], self.REPO)
+        self.assertEqual(done.returncode, 0, done.stderr[-1500:])
+        self.assertIn("as expected", done.stdout)

@@ -60,6 +60,15 @@ from typing import Any
 
 import yaml
 
+# `python3 evals/emco_rehearsal.py` puts evals/ on sys.path, not the repo root,
+# so every `import store` / `import core.*` below failed with ModuleNotFoundError
+# — the harness ran only as `python -m evals.emco_rehearsal`. It is the tool for
+# checking a release before it goes back to the customer, and a tool that fails
+# on the obvious invocation is a tool that does not get run.
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 CORPUS = Path(__file__).resolve().parent / "emco_questions.yaml"
 
 # ── The mart, in EMCO's shape ────────────────────────────────────────────────
