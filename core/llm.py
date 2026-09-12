@@ -2030,9 +2030,62 @@ def _get_local_client(base_url: str, api_key: str):
     return _llm_client_cache[key]
 
 
+def normalize_azure_endpoint(raw: str) -> str:
+    """The resource base URL, from whatever an admin actually pasted in.
+
+    One function because two readers have to agree on one spelling. The admin
+    "Test selected deployment" button normalised the field before testing while
+    the runtime client only stripped a trailing slash, so the target URI copied
+    out of the Azure portal -- which carries
+    ``/openai/deployments/<name>/chat/completions?api-version=...`` -- tested
+    GREEN and then 404'd on every question, because the SDK appends its own
+    ``/openai/deployments/...`` to whatever base it is handed:
+
+        https://res.openai.azure.com/openai
+          -> https://res.openai.azure.com/openai/openai/deployments/...
+
+    A host with no scheme was worse: the SDK treats the base as relative and
+    builds a URL with the hostname in it twice.
+
+    The cut is at the first path segment that IS ``openai``, not at a substring:
+    a gateway that fronts the resource under its own prefix keeps that prefix,
+    and Azure AI Foundry project endpoints keep their ``/api/projects/<name>``
+    path, which the listing route depends on.
+
+    Returns "" unchanged for an empty field -- every caller already has its own
+    message for an endpoint that was never configured.
+    """
+    base = str(raw or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if not base.startswith(("http://", "https://")):
+        base = "https://" + base
+    from urllib.parse import urlparse, urlunparse
+    parsed = urlparse(base)
+    kept: list[str] = []
+    for segment in parsed.path.split("/"):
+        if not segment:
+            continue
+        if segment.lower() == "openai":
+            break
+        kept.append(segment)
+    # Query and fragment go with it: a pasted target URI carries ?api-version=,
+    # and the SDK supplies its own.
+    return urlunparse((
+        parsed.scheme, parsed.netloc,
+        "/" + "/".join(kept) if kept else "",
+        "", "", "",
+    ))
+
+
 def _get_azure_client(api_key: str, endpoint: str, api_version: str):
     import openai as _oai
-    base = endpoint.rstrip("/")
+    # Normalised here rather than only in resolve_provider, for the same reason
+    # execute_governed_query takes no "skip the checks" argument: a caller that
+    # reads the endpoint from somewhere else cannot opt out of agreeing with the
+    # admin test. It also keeps the client cache from holding two entries for
+    # one resource spelled two ways.
+    base = normalize_azure_endpoint(endpoint)
     timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
     key = ("azure", api_key, base, api_version, timeout, retries)
     if key not in _llm_client_cache:
@@ -2261,7 +2314,7 @@ def resolve_provider(client: dict, purpose: str = "query") -> tuple[str, str, st
         api_key = sys_cfg.get("openai_api_key", "")
     elif provider == "azure_openai":
         api_key  = sys_cfg.get("azure_openai_api_key", "")
-        endpoint = sys_cfg.get("azure_openai_endpoint", "")
+        endpoint = normalize_azure_endpoint(sys_cfg.get("azure_openai_endpoint", ""))
         version  = sys_cfg.get("azure_openai_api_version", "2024-02-01")
         # Azure deployment names are set separately from the generic model dropdown.
         # They take priority so admins can use any custom deployment name.

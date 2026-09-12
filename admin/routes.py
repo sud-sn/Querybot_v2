@@ -735,21 +735,14 @@ async def azure_deployments_api(request: Request):
     if not api_key:
         return JSONResponse({"ok": False, "error": "No API key saved yet — fill in the Azure API key and save first."}, status_code=400)
 
-    # Fix 1 — auto-add missing scheme; reject http://
-    if not endpoint.startswith(("http://", "https://")):
-        endpoint = "https://" + endpoint
+    # One spelling, shared with the runtime client: adds a missing scheme, drops
+    # an accidentally-pasted /openai/* path, keeps the /api/projects/* path an
+    # Azure AI Foundry project endpoint needs. This used to be a private copy
+    # here, which is how the test could pass on a value the product then 404'd on.
+    from core.llm import normalize_azure_endpoint
+    endpoint = normalize_azure_endpoint(endpoint)
     if endpoint.startswith("http://"):
         return JSONResponse({"ok": False, "error": "Endpoint must use https://, not http://."}, status_code=400)
-
-    # Fix 2 — strip paths that look like accidentally-pasted /openai/* URLs,
-    # but KEEP /api/projects/* paths required for Azure AI Foundry project endpoints.
-    from urllib.parse import urlparse, urlunparse
-    _p = urlparse(endpoint)
-    _path = _p.path.rstrip("/")
-    if _path.startswith("/openai"):
-        endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
-    else:
-        endpoint = urlunparse((_p.scheme, _p.netloc, _path, "", "", ""))
 
     _FALLBACK_VERSIONS = [
         "2025-01-01-preview",
@@ -942,15 +935,12 @@ async def test_llm_connection(request: Request, provider: str = ""):
         if not api_key:
             return JSONResponse({"ok": False, "error": "No API key saved — fill in the Azure API key and save."})
 
-        if not endpoint.startswith(("http://", "https://")):
-            endpoint = "https://" + endpoint
-        from urllib.parse import urlparse, urlunparse
-        _p = urlparse(endpoint)
-        _path = _p.path.rstrip("/")
-        if _path.startswith("/openai"):
-            endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
-        else:
-            endpoint = urlunparse((_p.scheme, _p.netloc, _path, "", "", ""))
+        # The runtime client normalises with this same function, so what this
+        # button tests is the URL the product will actually call. Keeping a
+        # private copy here is what let a saved endpoint ending in /openai pass
+        # the test and then 404 on every question.
+        from core.llm import normalize_azure_endpoint
+        endpoint = normalize_azure_endpoint(endpoint)
 
         is_foundry = "services.ai.azure.com" in endpoint
 
