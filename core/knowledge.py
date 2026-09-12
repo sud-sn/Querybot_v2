@@ -78,6 +78,27 @@ _KB_QUERY_BASE_TOKENS = 3000
 _KB_QUERY_TOKENS_PER_COLUMN = 16
 _KB_QUERY_MAX_TOKENS = 8000
 
+# Every KB completion is near-deterministic, and none of them was.
+#
+# The three build stages passed no temperature at all, so llm_complete's own
+# default of 0.7 applied -- to the table document, to the business vocabulary,
+# and to the question->SQL example pairs. That default is the OpenAI SDK's
+# historical one leaking through; nothing in this product wants it.
+#
+# It matters most for the two stages that are not prose. The example pairs are
+# executable SQL, held in the retriever and read by the compiler. The vocabulary
+# is the synonym list the DETERMINISTIC matching layer reads -- so at 0.7 two
+# rebuilds of an unchanged schema produced different synonyms, and a question
+# that matched a metric before the rebuild could stop matching after it, with
+# nothing in the schema having changed. A knowledge base is a build artifact: it
+# should be reproducible from its inputs.
+#
+# 0.1 rather than 0.0 because it is the value repair_failed_query_patterns in
+# this same module already chose for the same content, and one rule across the
+# module beats two that differ by a hair for no stated reason. It is a CEILING:
+# a caller may ask for less.
+_KB_TEMPERATURE = 0.1
+
 # The business vocabulary covers every table at once, so its budget scales with
 # the table count rather than the column count.
 _KB_VOCAB_BASE_TOKENS = 3000
@@ -155,6 +176,12 @@ async def _kb_complete(
     invisible at query time. It simply makes the table answer worse.
     """
     from core.llm import LLMTruncatedError, is_single_request_rejection, llm_complete
+
+    # Clamped here rather than at the three call sites, for the same reason the
+    # endpoint is normalised inside the client: a stage added later cannot forget
+    # it, because there is no argument to forget.
+    kw["temperature"] = min(
+        float(kw.get("temperature", _KB_TEMPERATURE)), _KB_TEMPERATURE)
 
     ceiling = int(max_tokens)
     for attempt, budget in enumerate((ceiling, _KB_DOC_MAX_TOKENS)):
@@ -1404,7 +1431,11 @@ async def repair_failed_query_patterns(
     join_map = join_map_path.read_text(encoding="utf-8", errors="replace") if join_map_path.exists() else ""
     dialect_rules = _KB_DIALECT_RULES.get(db_type, _KB_DIALECT_RULES["azure_sql"])
     kw = dict(extra_kwargs or {})
-    kw["temperature"] = min(float(kw.get("temperature", 0.1)), 0.1)
+    # The same ceiling _kb_complete applies, from the same constant: this path
+    # calls llm_complete directly (it has its own per-file error handling), and
+    # two copies of a sampling rule is how they come to differ.
+    kw["temperature"] = min(
+        float(kw.get("temperature", _KB_TEMPERATURE)), _KB_TEMPERATURE)
     total_files = len(grouped)
 
     for file_index, (source_file, file_failures) in enumerate(sorted(grouped.items()), start=1):

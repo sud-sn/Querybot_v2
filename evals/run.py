@@ -229,7 +229,18 @@ async def _generate_sql(account_id: str, question: str, db_type: str, allowed_ta
     if examples:
         context = format_examples_for_prompt(examples) + "\n\n---\n\n" + context
     system = build_sql_system_prompt(db_type, context)
-    sql, _, _ = await llm_complete(system, question, provider, model, api_key, max_tokens=512, **az_kwargs)
+    # The pipeline's own sampling and its own output budget. An eval that
+    # generated at a different temperature and a flat 512-token ceiling was
+    # measuring a configuration nobody runs: 512 truncates a legitimate
+    # period-comparison CTE, which is the defect _sql_completion_token_budget
+    # was added for, so the eval could fail a query production gets right.
+    from core.query_pipeline import _sql_completion_token_budget
+    sql, _, _ = await llm_complete(
+        system, question, provider, model, api_key,
+        temperature=0.0,
+        max_tokens=_sql_completion_token_budget(question),
+        **az_kwargs,
+    )
     if sql and sql.startswith("```"):
         sql = "\n".join(sql.split("\n")[1:]).rsplit("```", 1)[0].strip()
     return (sql or "").strip()

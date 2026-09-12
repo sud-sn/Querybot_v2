@@ -3422,7 +3422,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_sql_raw, _, _ = await llm_complete(
                                         _fb_system, rc_question,
                                         _fb_prov, _fb_model, _fb_key,
-                                        max_tokens=512, **_fb_az,
+                                        max_tokens=512, temperature=0.0, **_fb_az,
                                     )
                                 log.info(
                                     "result_chat DB fallback generated SQL: %s",
@@ -3479,7 +3479,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                             _fb_retry_raw, _, _ = await llm_complete(
                                                 _fb_system, _fb_retry_user,
                                                 _fb_prov, _fb_model, _fb_key,
-                                                max_tokens=512, **_fb_az,
+                                                max_tokens=512, temperature=0.0, **_fb_az,
                                             )
                                         if _fb_retry_raw and _fb_retry_raw.startswith("```"):
                                             _fb_retry_raw = "\n".join(
@@ -3553,7 +3553,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                 _exec_retry_raw, _, _ = await llm_complete(
                                                     _fb_system, _exec_retry_user,
                                                     _fb_prov, _fb_model, _fb_key,
-                                                    max_tokens=512, **_fb_az,
+                                                    max_tokens=512, temperature=0.0, **_fb_az,
                                                 )
                                             if _exec_retry_raw and _exec_retry_raw.startswith("```"):
                                                 _exec_retry_raw = "\n".join(

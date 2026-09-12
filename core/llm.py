@@ -1897,7 +1897,7 @@ async def llm_complete(
     max_tokens: int = 1024,
     azure_endpoint: str = "",
     azure_api_version: str = "2024-02-01",
-    temperature: float = 0.7,
+    temperature: float = 0.0,
     allow_truncated: bool = False,
 ) -> tuple[str, int, int]:
     """Complete against the configured provider.
@@ -1911,6 +1911,16 @@ async def llm_complete(
     explicit cache breakpoint between its two halves. Every other provider --
     and the audit trail, which must record what was actually sent -- sees the
     concatenated text, exactly as before.
+
+    ``temperature`` defaults to 0.0. It was 0.7, which is the OpenAI SDK's
+    historical default rather than anything this product chose: of the call
+    sites that state a temperature, the highest is 0.5, most are 0.0, and every
+    SQL path pins 0.0. So 0.7 was reached only by FORGETTING the argument, and
+    three call sites had -- the knowledge-base build, which writes the synonym
+    vocabulary a deterministic layer reads, and the result-chat SQL fallback,
+    which generates SQL the main pipeline generates at 0.0. A default that is
+    only ever reached by accident should be the conservative one; a caller that
+    genuinely wants variance can say so.
     """
     truncated = False
     system_text = as_prompt_text(system)
@@ -2236,7 +2246,7 @@ def _get_azure_client(api_key: str, endpoint: str, api_version: str):
     return _llm_client_cache[key]
 
 
-async def _anthropic_complete(system, user, model, api_key, max_tokens, temperature=0.7):
+async def _anthropic_complete(system, user, model, api_key, max_tokens, temperature=0.0):
     global _anthropic_prompt_cache_supported
     client = _get_anthropic_client(api_key)
     kwargs: dict = {
@@ -2310,7 +2320,7 @@ async def _anthropic_complete(system, user, model, api_key, max_tokens, temperat
     return text, tok_in, tok_out
 
 
-async def _openai_complete(system, user, model, api_key, max_tokens, temperature=0.7):
+async def _openai_complete(system, user, model, api_key, max_tokens, temperature=0.0):
     client = _get_openai_client(api_key)
     try:
         resp = await client.chat.completions.create(
@@ -2331,7 +2341,7 @@ async def _openai_complete(system, user, model, api_key, max_tokens, temperature
     return text, tok_in, tok_out
 
 
-async def _local_complete(system, user, model, api_key, max_tokens, base_url, temperature=0.7):
+async def _local_complete(system, user, model, api_key, max_tokens, base_url, temperature=0.0):
     """Complete against a model on the tenant's own hardware.
 
     Deliberately tolerant of a missing ``usage`` block: llama.cpp and some
@@ -2366,7 +2376,7 @@ async def _local_complete(system, user, model, api_key, max_tokens, base_url, te
     return text, tok_in, tok_out
 
 
-async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpoint, api_version, temperature=0.7):
+async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpoint, api_version, temperature=0.0):
     if not endpoint:
         raise RuntimeError(
             "Azure OpenAI endpoint not configured. "
