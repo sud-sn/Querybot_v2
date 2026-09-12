@@ -58,16 +58,36 @@ import unicodedata
 CANONICALISABLE = ("fr",)
 
 
+# The typographic apostrophe is not an exotic character in French -- it is the
+# DEFAULT. A French (AZERTY) layout, macOS, Word, Google Docs and every mobile
+# keyboard all produce U+2019 for the elision apostrophe, so "chiffre
+# d’affaires" is what a reader actually types and "chiffre d'affaires" is the
+# variant. Folded without this, the two share not one lexicon key: the measure
+# entry misses, "aujourd’hui" misses, and "depuis le début de l’année" loses
+# its whole window -- detect_temporal_window then returns {} and the answer is
+# anchored on the SERVER CLOCK instead of the data. Silent, and confident.
+#
+# Every character here is an apostrophe someone's editor substitutes: the two
+# curly quotes, the modifier letter, the prime, the fullwidth form, and the
+# acute/grave a typist reaches for when the layout fights them. All fold to the
+# ASCII apostrophe the lexicon keys are written with.
+_APOSTROPHE_FOLD = str.maketrans(
+    {ch: "'" for ch in "\u2018\u2019\u02bc\u2032\uff07\u00b4\u0060"}
+)
+
+
 def _fold(text: str) -> str:
-    """Lowercase and strip accents, for MATCHING only.
+    """Lowercase, strip accents and normalise apostrophes, for MATCHING only.
 
     The replacement text is always the canonical English, so nothing accented
     survives into the output by this path. Folding is what lets one entry match
-    "l'année dernière", "l'annee derniere" and "L'Année Dernière" alike --
-    accents are the first thing a hurried typist drops.
+    "l'année dernière", "l’annee derniere" and "L'Année Dernière" alike --
+    accents and the shape of the apostrophe are the first two things a hurried
+    typist or an autocorrecting editor changes.
     """
     decomposed = unicodedata.normalize("NFD", text.lower())
-    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    stripped = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    return stripped.translate(_APOSTROPHE_FOLD)
 
 
 # ── The lexicon ──────────────────────────────────────────────────────────────

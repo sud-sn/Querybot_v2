@@ -282,8 +282,10 @@ def detect_conversational(text: str) -> str | None:
     # Matched against accent-folded text so "a bientot" and "à bientôt" reach
     # the same pattern. Folding is a no-op for the English patterns (they are
     # ASCII and already case-insensitive), so every existing tenant classifies
-    # exactly the messages it classified before.
-    t = _fold_accents(t).replace("\u2019", "'").replace("\u2018", "'")
+    # exactly the messages it classified before. The typographic apostrophe is
+    # folded to ASCII by _fold itself -- it used to be replaced again here, and
+    # two copies of one rule is how they drift.
+    t = _fold_accents(t)
     if _GREETING_RE.match(t):
         return "greeting"
     if _THANKS_RE.match(t):
