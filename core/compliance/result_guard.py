@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import re
 from typing import Any
 
 from core.compliance.models import PolicyDecision
+from core.process_secrets import env_secret_or_random
 
 
 _NAME_FIELD = re.compile(r"(?:^|[._])(?:DOCTOR|PHYSICIAN|PRESCRIBER|PROVIDER|PATIENT|PERSON)(?:_|[.]|$)|(?:NAME|_NM)$", re.I)
@@ -18,11 +18,13 @@ _IDENTIFIER_FIELD = re.compile(
 
 
 def _pseudonym_secret() -> bytes:
-    value = (
-        os.getenv("PII_PSEUDONYM_SECRET")
-        or os.getenv("PORTAL_SESSION_SECRET")
-        or os.getenv("SESSION_SECRET")
-        or "querybot-development-pseudonym-secret"
+    # See core/process_secrets.py: the literal string this used to fall back
+    # to was public, so anyone who had read this file could recompute the
+    # HMAC below for a candidate value and de-mask any pseudonym shown to a
+    # deployment that never set one of these three env vars.
+    value = env_secret_or_random(
+        "PII_PSEUDONYM_SECRET", "PORTAL_SESSION_SECRET", "SESSION_SECRET",
+        purpose="pii_pseudonym",
     )
     return value.encode("utf-8")
 

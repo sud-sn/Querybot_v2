@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 import store
+from core.process_secrets import env_secret_or_random
 from core.schema import run_query
 from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
@@ -211,7 +212,12 @@ def _language_context(request: Request) -> dict:
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def _session_secret() -> str:
-    return os.getenv("PORTAL_SESSION_SECRET") or os.getenv("SESSION_SECRET") or "change-me-in-production"
+    # See core/process_secrets.py: the literal string this used to fall back
+    # to was public, so anyone who had read this file could forge a portal
+    # session cookie for any deployment that never set one of these two
+    # env vars.
+    return env_secret_or_random(
+        "PORTAL_SESSION_SECRET", "SESSION_SECRET", purpose="portal_session")
 
 
 def _sign_session_value(user_id: int) -> str:

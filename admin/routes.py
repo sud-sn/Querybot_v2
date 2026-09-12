@@ -43,6 +43,7 @@ from store.db import get_db as _get_db
 from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
 from store.config_store import get_db_config
 from core.pipeline_context import save_state
+from core.process_secrets import env_secret_or_random
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.log_export import (
     DEFAULT_EXPORT_TIME,
@@ -140,7 +141,12 @@ def _hash(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
 
 def _session_secret() -> str:
-    return os.getenv("ADMIN_SESSION_SECRET") or os.getenv("SESSION_SECRET") or "change-me-in-production"
+    # See core/process_secrets.py: the literal string this used to fall back
+    # to was public, so anyone who had read this file could forge an admin
+    # session cookie for any deployment that never set one of these two
+    # env vars.
+    return env_secret_or_random(
+        "ADMIN_SESSION_SECRET", "SESSION_SECRET", purpose="admin_session")
 
 def _sign_admin_session() -> str:
     payload = b"admin"
