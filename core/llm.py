@@ -1758,6 +1758,94 @@ def _truncated(
     )
 
 
+class LLMContentFilteredError(RuntimeError):
+    """A content filter cut the completion short, or refused it outright.
+
+    Its own type, and deliberately NOT a subclass of LLMTruncatedError. Those
+    two look alike -- both leave a partial payload -- but a caller cannot treat
+    them alike:
+
+    * ``allow_truncated`` means "a cut-off answer is still useful to me", which
+      is a statement about a ceiling the caller chose. A filtered answer is not
+      the caller's ceiling; it is whatever survived a policy the caller knows
+      nothing about, so keeping it has to be a separate decision.
+    * core.knowledge's _kb_complete RETRIES a truncation at a higher ceiling.
+      Retrying a filtered document at a higher ceiling is one more refusal.
+
+    Carries the partial text so the caller can log or inspect what arrived.
+    """
+
+    def __init__(self, message: str, *, text: str = "",
+                 input_tokens: int = 0, output_tokens: int = 0):
+        super().__init__(message)
+        self.text = text
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+def _filtered(
+    provider: str, model: str, text: str, tok_in: int, tok_out: int,
+) -> LLMContentFilteredError:
+    """Build the error, and log it -- the reason nobody could see this before.
+
+    Before this, ``finish_reason == "content_filter"`` fell through the
+    truncation check and RETURNED. A completion the filter had cut mid-sentence
+    read as a clean success and was recorded in the audit trail as one. Azure
+    applies a content filter to every deployment by default, so this was live
+    from the first question.
+    """
+    log.warning(
+        "%s completion for %s was cut short by a content filter after %d "
+        "chars; the response is incomplete.", provider, model, len(text),
+    )
+    return LLMContentFilteredError(
+        f"{provider} completion for {model} was stopped by a content filter; "
+        f"the response is incomplete.",
+        text=text, input_tokens=tok_in, output_tokens=tok_out,
+    )
+
+
+def _read_chat_completion(provider: str, model: str, max_tokens: int, resp):
+    """Read an OpenAI-shaped chat completion, or say what was wrong with it.
+
+    One function because three providers speak this shape -- OpenAI, Azure
+    OpenAI and every local runtime -- and each had its own copy of these eight
+    lines. Two of the three copies were missing a guard the third had, which is
+    what having three copies does:
+
+    * ``resp.choices[0]`` was unguarded in two of them. A response carrying no
+      choice at all -- which Azure returns when a prompt is refused with
+      asynchronous filtering configured -- raised ``IndexError: list index out
+      of range``, so the reader got a bare Python error instead of the module's
+      own "check your endpoint URL, API key, and deployment name" message.
+    * ``resp.usage`` was unguarded in two of them; the local path had already
+      learned that some servers omit it.
+    * ``finish_reason == "content_filter"`` was handled in none of them.
+    """
+    choices = getattr(resp, "choices", None) or []
+    if not choices:
+        raise RuntimeError(
+            f"{provider} returned no completion for {model}: the response "
+            "carried an empty 'choices' list. This is what a prompt refused by "
+            "a content filter looks like when the deployment is configured for "
+            "asynchronous filtering; it is also what a misrouted request to a "
+            "proxy in front of the provider looks like."
+        )
+
+    choice = choices[0]
+    text = (getattr(getattr(choice, "message", None), "content", "") or "").strip()
+    usage = getattr(resp, "usage", None)
+    tok_in = int(getattr(usage, "prompt_tokens", 0) or 0)
+    tok_out = int(getattr(usage, "completion_tokens", 0) or 0)
+
+    reason = getattr(choice, "finish_reason", "") or ""
+    if reason == "length":
+        raise _truncated(provider, model, max_tokens, text, tok_in, tok_out)
+    if reason == "content_filter":
+        raise _filtered(provider, model, text, tok_in, tok_out)
+    return text, tok_in, tok_out
+
+
 # ── Anthropic sampling parameters ────────────────────────────────────────────
 # Claude models from the Opus 4.7 / Sonnet 5 generation onward removed
 # `temperature`, `top_p` and `top_k`. The API rejects them with a 400 rather
@@ -1971,6 +2059,22 @@ async def llm_complete(
             raise
         truncated = True
         result = (exc.text, exc.input_tokens, exc.output_tokens)
+    except LLMContentFilteredError as exc:
+        # Its own audit status, and always re-raised. "The filter cut this one
+        # off" is a different question for an admin than "the provider failed",
+        # and it is the row to find when a reader reports an answer that stops
+        # mid-sentence. Never swallowed, even under allow_truncated: that flag
+        # is the caller accepting THEIR ceiling, not a policy they never saw.
+        record_llm_call(
+            llm_provider=provider,
+            llm_model=model,
+            system=system_text,
+            user=user,
+            status="content_filtered",
+            error_msg=str(exc),
+            response=exc.text,
+        )
+        raise
     except Exception as exc:
         record_llm_call(
             llm_provider=provider,
@@ -2333,12 +2437,7 @@ async def _openai_complete(system, user, model, api_key, max_tokens, temperature
         log.error("OpenAI API error: %s", e)
         raise RuntimeError(f"OpenAI API error: {e}") from e
 
-    choice = resp.choices[0]
-    text = (choice.message.content or "").strip()
-    tok_in, tok_out = resp.usage.prompt_tokens, resp.usage.completion_tokens
-    if getattr(choice, "finish_reason", "") == "length":
-        raise _truncated("OpenAI", model, max_tokens, text, tok_in, tok_out)
-    return text, tok_in, tok_out
+    return _read_chat_completion("OpenAI", model, max_tokens, resp)
 
 
 async def _local_complete(system, user, model, api_key, max_tokens, base_url, temperature=0.0):
@@ -2366,14 +2465,7 @@ async def _local_complete(system, user, model, api_key, max_tokens, base_url, te
             "configured base URL, and that the model name is one it serves."
         ) from e
 
-    choice = resp.choices[0]
-    text = (choice.message.content or "").strip()
-    usage = getattr(resp, "usage", None)
-    tok_in = int(getattr(usage, "prompt_tokens", 0) or 0)
-    tok_out = int(getattr(usage, "completion_tokens", 0) or 0)
-    if getattr(choice, "finish_reason", "") == "length":
-        raise _truncated("Local model", model, max_tokens, text, tok_in, tok_out)
-    return text, tok_in, tok_out
+    return _read_chat_completion("Local model", model, max_tokens, resp)
 
 
 async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpoint, api_version, temperature=0.0):
@@ -2397,12 +2489,7 @@ async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpo
             "Check your endpoint URL, API key, and deployment name in Admin → System."
         ) from e
 
-    choice = resp.choices[0]
-    text = (choice.message.content or "").strip()
-    tok_in, tok_out = resp.usage.prompt_tokens, resp.usage.completion_tokens
-    if getattr(choice, "finish_reason", "") == "length":
-        raise _truncated("Azure OpenAI", model, max_tokens, text, tok_in, tok_out)
-    return text, tok_in, tok_out
+    return _read_chat_completion("Azure OpenAI", model, max_tokens, resp)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
