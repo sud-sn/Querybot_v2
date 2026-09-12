@@ -2846,6 +2846,43 @@ MESSAGES: dict[str, dict[str, str]] = {
     "caveat.join.days_ago.one": {"en": "{count} day ago", "fr": "il y a {count} jour"},
     "caveat.join.days_ago.other": {"en": "{count} days ago", "fr": "il y a {count} jours"},
 
+    # ── Disclosures the pipeline sends before the answer ─────────────────────
+    # Each of these was an English f-string built inline in
+    # core/query_pipeline.py and sent straight to the reader, so a French
+    # session got English prose in the middle of its own conversation. The
+    # ranked-relationship one is the worst of the three: it tells the reader how
+    # to REDIRECT the answer, and an instruction nobody can read is the same as
+    # no disclosure at all.
+    "disclosure.relationship.ranked": {
+        "en": ("ℹ️ Using the **{chosen}** relationship to reach {target}. Ask "
+               "again naming *{alternative}* to use the other one."),
+        "fr": ("ℹ️ Utilisation de la relation **{chosen}** pour atteindre "
+               "{target}. Posez la question à nouveau en nommant "
+               "*{alternative}* pour utiliser l’autre."),
+    },
+    "disclosure.metric.query_not_groupable": {
+        "en": ("ℹ️ **{metric}** is a fixed SQL query — it returns an overall "
+               "value and cannot be broken down by individual dimensions. "
+               "Showing the overall result:"),
+        "fr": ("ℹ️ **{metric}** est une requête SQL figée : elle renvoie une "
+               "valeur globale et ne peut pas être ventilée par dimension. "
+               "Voici le résultat global :"),
+    },
+    "disclosure.metric.this_metric": {
+        "en": "This metric", "fr": "Cet indicateur",
+    },
+    "disclosure.question.identifiers_removed": {
+        "en": ("ℹ️ Personal identifiers in your question were removed before "
+               "processing, per this workspace's data policy. Results may be "
+               "less specific — try filtering by an ID or category instead of a "
+               "person's name or contact details."),
+        "fr": ("ℹ️ Les identifiants personnels présents dans votre question ont "
+               "été supprimés avant traitement, conformément à la politique de "
+               "données de cet espace de travail. Les résultats peuvent être "
+               "moins précis — filtrez plutôt par identifiant ou par catégorie "
+               "que par nom ou coordonnées d’une personne."),
+    },
+
     # ── The named-period comparison that came back incomplete ────────────────
     "caveat.period.missing_columns": {
         "en": "The result did not come back with a column for {missing}, so the change shown below is between {oldest} and {newest} only.",

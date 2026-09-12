@@ -1274,6 +1274,45 @@ def measures_without_a_business_date(matched_metrics, undated_facts) -> list[str
     })
 
 
+def ranked_relationship_disclosure(ranked, *, lang) -> str:
+    """The "I took this join path, say the word to take the other" message.
+
+    Extracted from _handle_query_impl so it can be executed. It was an English
+    f-string built inline and sent straight to the reader, and of the three
+    disclosures on that path it is the one that matters most in another
+    language: it tells the reader how to REDIRECT the answer. An instruction
+    nobody can read is the same as no disclosure at all -- the join path is then
+    chosen silently, which is precisely what ranking deterministically instead
+    of escalating was supposed to stop being.
+
+    Returns "" when there was no real choice to disclose, so the caller has one
+    thing to check rather than three.
+    """
+    chosen = str((ranked or {}).get("chosen") or "")
+    alternatives = [
+        str(name) for name in ((ranked or {}).get("alternatives") or []) if name
+    ]
+    if not chosen or not alternatives:
+        return ""
+    return _t(
+        "disclosure.relationship.ranked",
+        lang=lang,
+        chosen=chosen,
+        target=str((ranked or {}).get("target") or ""),
+        alternative=alternatives[0],
+    )
+
+
+def metric_not_groupable_disclosure(metric, *, lang) -> str:
+    """Why a query-type metric ignored the "by branch" the reader asked for."""
+    label = str((metric or {}).get("label") or (metric or {}).get("name") or "")
+    return _t(
+        "disclosure.metric.query_not_groupable",
+        lang=lang,
+        metric=label or _t("disclosure.metric.this_metric", lang=lang),
+    )
+
+
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
     # Set from every governed execution below. Row-level statistics (quartiles,
@@ -1716,10 +1755,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             await adapter.send_message(
                 event,
-                "ℹ️ Personal identifiers in your question were removed before "
-                "processing, per this workspace's data policy. Results may be "
-                "less specific — try filtering by an ID or category instead "
-                "of a person's name or contact details.",
+                _t("disclosure.question.identifiers_removed",
+                   lang=(portal_user or {}).get("lang") or "en"),
             )
 
     compliance_context = resolve_context(
@@ -2373,9 +2410,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         if matched_metric.get("formula_type") == "query" and _re_grp.search(r'\b(by|per|for each|grouped by|split by|breakdown)\b', question, _re_grp.IGNORECASE):
             await adapter.send_message(
                 event,
-                f"ℹ️ **{matched_metric.get('label') or matched_metric.get('name', 'This metric')}** is a fixed SQL query — "
-                "it returns an overall value and cannot be broken down by individual dimensions. "
-                "Showing the overall result:",
+                metric_not_groupable_disclosure(
+                    matched_metric,
+                    lang=(portal_user or {}).get("lang") or "en"),
             )
         log.info("Metric registry hit: %s → %s", matched_metric["name"], sql_from_metric[:60])
         _metric_exec_t0 = time.time()
@@ -4849,15 +4886,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # choice is visible and the user can redirect, instead of stopping the
         # answer to ask a question only a data modeller could answer.
         _ranked_rel = _graph_ctx.get("ranked_relationship") or {}
-        if _ranked_rel.get("chosen") and _ranked_rel.get("alternatives"):
+        _ranked_note = ranked_relationship_disclosure(
+            _ranked_rel, lang=(portal_user or {}).get("lang") or "en")
+        if _ranked_note:
             try:
-                await adapter.send_message(
-                    event,
-                    f"ℹ️ Using the **{_ranked_rel['chosen']}** relationship to reach "
-                    f"{_ranked_rel.get('target')}. "
-                    f"Ask again naming *{_ranked_rel['alternatives'][0]}* to use "
-                    "the other one.",
-                )
+                await adapter.send_message(event, _ranked_note)
                 _trace_step(
                     trace_id,
                     "relationship_path_ranked",
