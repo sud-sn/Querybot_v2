@@ -1,0 +1,681 @@
+{
+  "auto_applied_packs": [],
+  "field_count": 262,
+  "pack_recommendations": [
+    {
+      "confidence": 24.9,
+      "date_pattern_matches": [],
+      "erp_name": "Generic star schema (Kimball)",
+      "exact_column_matches": [],
+      "exact_table_matches": [],
+      "pack_id": "generic_star_schema",
+      "record_prefixed_column_matches": [],
+      "score": 4,
+      "table_pattern_matches": [
+        "CUS_ORD_IVC_FCT",
+        "CUS_RTN_FCT"
+      ],
+      "unique_evidence": 0
+    }
+  ],
+  "primary_style": "upper_snake",
+  "style_confidence": 100.0,
+  "style_counts": {
+    "upper_snake": 265
+  },
+  "unresolved_count": 262,
+  "unresolved_fields": [
+    {
+      "column": "COL_000_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "000",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "000"
+      ]
+    },
+    {
+      "column": "COL_001_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "001",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "001"
+      ]
+    },
+    {
+      "column": "COL_002_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "002",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "002"
+      ]
+    },
+    {
+      "column": "COL_003_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "003",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "003"
+      ]
+    },
+    {
+      "column": "COL_004_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "004",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "004"
+      ]
+    },
+    {
+      "column": "COL_005_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "005",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "005"
+      ]
+    },
+    {
+      "column": "COL_006_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "006",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "006"
+      ]
+    },
+    {
+      "column": "COL_007_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "007",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "007"
+      ]
+    },
+    {
+      "column": "COL_008_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "008",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "008"
+      ]
+    },
+    {
+      "column": "COL_009_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "009",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "009"
+      ]
+    },
+    {
+      "column": "COL_010_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "010",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "010"
+      ]
+    },
+    {
+      "column": "COL_011_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "011",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "011"
+      ]
+    },
+    {
+      "column": "COL_012_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "012",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "012"
+      ]
+    },
+    {
+      "column": "COL_013_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "013",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "013"
+      ]
+    },
+    {
+      "column": "COL_014_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "014",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "014"
+      ]
+    },
+    {
+      "column": "COL_015_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "015",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "015"
+      ]
+    },
+    {
+      "column": "COL_016_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "016",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "016"
+      ]
+    },
+    {
+      "column": "COL_017_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "017",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "017"
+      ]
+    },
+    {
+      "column": "COL_018_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "018",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "018"
+      ]
+    },
+    {
+      "column": "COL_019_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "019",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "019"
+      ]
+    },
+    {
+      "column": "COL_020_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "020",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "020"
+      ]
+    },
+    {
+      "column": "COL_021_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "021",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "021"
+      ]
+    },
+    {
+      "column": "COL_022_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "022",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "022"
+      ]
+    },
+    {
+      "column": "COL_023_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "023",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "023"
+      ]
+    },
+    {
+      "column": "COL_024_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "024",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "024"
+      ]
+    },
+    {
+      "column": "COL_025_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "025",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "025"
+      ]
+    },
+    {
+      "column": "COL_026_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "026",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "026"
+      ]
+    },
+    {
+      "column": "COL_027_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "027",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "027"
+      ]
+    },
+    {
+      "column": "COL_028_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "028",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "028"
+      ]
+    },
+    {
+      "column": "COL_029_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "029",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "029"
+      ]
+    },
+    {
+      "column": "COL_030_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "030",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "030"
+      ]
+    },
+    {
+      "column": "COL_031_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "031",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "031"
+      ]
+    },
+    {
+      "column": "COL_032_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "032",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "032"
+      ]
+    },
+    {
+      "column": "COL_033_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "033",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "033"
+      ]
+    },
+    {
+      "column": "COL_034_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "034",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "034"
+      ]
+    },
+    {
+      "column": "COL_035_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "035",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "035"
+      ]
+    },
+    {
+      "column": "COL_036_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "036",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "036"
+      ]
+    },
+    {
+      "column": "COL_037_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "037",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "037"
+      ]
+    },
+    {
+      "column": "COL_038_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "038",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "038"
+      ]
+    },
+    {
+      "column": "COL_039_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "039",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "039"
+      ]
+    },
+    {
+      "column": "COL_040_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "040",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "040"
+      ]
+    },
+    {
+      "column": "COL_041_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "041",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "041"
+      ]
+    },
+    {
+      "column": "COL_042_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "042",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "042"
+      ]
+    },
+    {
+      "column": "COL_043_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "043",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "043"
+      ]
+    },
+    {
+      "column": "COL_044_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "044",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "044"
+      ]
+    },
+    {
+      "column": "COL_045_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "045",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "045"
+      ]
+    },
+    {
+      "column": "COL_046_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "046",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "046"
+      ]
+    },
+    {
+      "column": "COL_047_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "047",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "047"
+      ]
+    },
+    {
+      "column": "COL_048_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "048",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "048"
+      ]
+    },
+    {
+      "column": "COL_049_AMT",
+      "confidence": 68,
+      "tokens": [
+        "COL",
+        "049",
+        "AMT"
+      ],
+      "unresolved_tokens": [
+        "col",
+        "049"
+      ]
+    }
+  ],
+  "version": 1,
+  "vocabulary_coverage_pct": 0.0
+}

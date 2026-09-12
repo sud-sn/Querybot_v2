@@ -8,7 +8,10 @@ Stage 1 — Per-table KB:
   Columns / Common Query Patterns / Join Keys / Business Synonyms.
   NEEDS CONTEXT flags for ambiguous columns.
   Distinct values from schema discovery grounded into every section.
-  max_tokens=4096 so all 7 sections always fit.
+  The output ceiling SCALES WITH THE COLUMN COUNT — see
+  kb_doc_token_budget. It was a flat 4096, which fits a narrow dimension
+  and cannot fit a 210-column ERP fact; the provider then stopped
+  mid-document and the exception took the whole build down with it.
 
 Stage 2 — Query translation document:
   Second LLM call per table using the Stage 1 KB as input.
@@ -35,6 +38,128 @@ from pathlib import Path
 log = logging.getLogger("querybot.knowledge")
 
 _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+
+# ── How many output tokens a KB document needs ───────────────────────────────
+#
+# A table's KB document is eight fixed sections plus ONE ROW PER COLUMN in the
+# field table, so its length is linear in the column count and one constant
+# cannot serve both a 12-column dimension and a 210-column ERP fact. The
+# constant was 4096, chosen when nothing wide had been tried.
+#
+# Measured on a synthetic 210-column EMDW_DMART fact: the prompt alone is
+# 105,093 characters (~26k tokens), and the model was asked to document all 210
+# fields across all eight sections in 4,096 output tokens — about 19 tokens per
+# field, headers included. It stopped mid-document every time, and because
+# llm_complete refuses a truncated completion by design, the LLMTruncatedError
+# propagated out of the per-table loop and ABORTED THE WHOLE BUILD: every
+# remaining table, however narrow, went undocumented.
+#
+# Raising a ceiling costs nothing that is not used. max_tokens is a limit, not a
+# request, so a narrow table still produces a short document; only the table
+# that needed the room spends it.
+_KB_DOC_BASE_TOKENS = 4096
+# A field row -- physical name, business label, description, synonyms -- runs
+# 25-40 tokens. 48 leaves room for the ones that need a whole sentence.
+_KB_DOC_TOKENS_PER_COLUMN = 48
+# At or below this width the base already covers the document, so an existing
+# tenant's narrow tables ask for exactly what they asked for before.
+_KB_DOC_FREE_COLUMNS = 40
+# Beyond this, one call is the wrong shape whatever the ceiling: splitting the
+# field table across calls is the real answer for a 300-column fact and is not
+# this fix. The cap sits where every provider this product routes to still
+# accepts it, and a table that overruns it now fails ALONE.
+_KB_DOC_MAX_TOKENS = 16000
+
+# Stage 2 turns the finished document into question->SQL pairs. Its output grows
+# with the number of columns worth asking about, not as steeply as the document
+# itself.
+_KB_QUERY_BASE_TOKENS = 3000
+_KB_QUERY_TOKENS_PER_COLUMN = 16
+_KB_QUERY_MAX_TOKENS = 8000
+
+# The business vocabulary covers every table at once, so its budget scales with
+# the table count rather than the column count.
+_KB_VOCAB_BASE_TOKENS = 3000
+_KB_VOCAB_TOKENS_PER_TABLE = 300
+_KB_VOCAB_FREE_TABLES = 10
+_KB_VOCAB_MAX_TOKENS = 12000
+
+
+def kb_doc_token_budget(column_count: int) -> int:
+    """Output tokens to allow for one table's KB document."""
+    extra = max(0, int(column_count or 0) - _KB_DOC_FREE_COLUMNS)
+    return min(_KB_DOC_MAX_TOKENS,
+               _KB_DOC_BASE_TOKENS + extra * _KB_DOC_TOKENS_PER_COLUMN)
+
+
+def kb_query_token_budget(column_count: int) -> int:
+    """Output tokens to allow for one table's question->SQL examples."""
+    extra = max(0, int(column_count or 0) - _KB_DOC_FREE_COLUMNS)
+    return min(_KB_QUERY_MAX_TOKENS,
+               _KB_QUERY_BASE_TOKENS + extra * _KB_QUERY_TOKENS_PER_COLUMN)
+
+
+def kb_vocab_token_budget(table_count: int) -> int:
+    """Output tokens to allow for the business vocabulary across all tables."""
+    extra = max(0, int(table_count or 0) - _KB_VOCAB_FREE_TABLES)
+    return min(_KB_VOCAB_MAX_TOKENS,
+               _KB_VOCAB_BASE_TOKENS + extra * _KB_VOCAB_TOKENS_PER_TABLE)
+
+
+async def _kb_complete(
+    label: str, system: str, user: str, provider: str, model: str,
+    api_key: str, *, max_tokens: int, **kw,
+) -> str | None:
+    """One KB completion, retried once higher, or None when it cannot finish.
+
+    Three behaviours, and each one is a defect this replaces:
+
+    * the ceiling comes from the caller's own estimate of the document's size,
+      rather than a constant that fitted nothing wide;
+    * an estimate that still falls short is RETRIED once at the cap, because the
+      per-column allowance is a calibration and being wrong about one table
+      should cost a second call rather than the table;
+    * a second truncation returns None instead of raising, so the caller can
+      skip that one table and keep building. The refusal in llm_complete is
+      right -- a truncated KB document is missing sections, and one missing
+      "## Business Synonyms" header silently disables the whole deterministic
+      synonym layer for that table -- but it was killing every OTHER table too.
+
+    Logged at error, not debug: a KB document that was never written is
+    invisible at query time. It simply makes the table answer worse.
+    """
+    from core.llm import LLMTruncatedError, llm_complete
+
+    ceiling = int(max_tokens)
+    for attempt, budget in enumerate((ceiling, _KB_DOC_MAX_TOKENS)):
+        if attempt and budget <= ceiling:
+            break  # the estimate was already at the cap; a retry is the same call
+        try:
+            text, _, _ = await llm_complete(
+                system, user, provider, model, api_key,
+                max_tokens=budget, **kw,
+            )
+            if attempt:
+                log.warning(
+                    "KB %s finished on the retry at %d tokens (the %d-token "
+                    "estimate was short)", label, budget, ceiling,
+                )
+            return text
+        except LLMTruncatedError as exc:
+            log.warning(
+                "KB %s hit its %d-token ceiling: %s", label, budget, exc,
+            )
+    log.error(
+        "KB %s could not be generated: the document did not finish within %d "
+        "output tokens, the highest ceiling this provider is asked for. The "
+        "table is SKIPPED and the rest of the build continues; it will have no "
+        "knowledge-base document, so questions about it are answered from the "
+        "schema alone.",
+        label, _KB_DOC_MAX_TOKENS,
+    )
+    return None
+
 
 
 def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str], vocab=None) -> str:
@@ -663,11 +788,21 @@ async def build_kb(
     # ── Business vocabulary KB ────────────────────────────────────────────────
     biz_user = build_biz_vocab_prompt(table_names, column_reference, business_desc)
     with llm_audit_component("kb_business_vocab", new_request_id=True):
-        biz_text, _, _ = await llm_complete(
-            system_base, biz_user, provider, model, api_key, max_tokens=3000, **kw
+        biz_text = await _kb_complete(
+            "business vocabulary", system_base, biz_user, provider, model,
+            api_key, max_tokens=kb_vocab_token_budget(len(table_names)), **kw
         )
-    (kb_path / "_business_kb.md").write_text(biz_text, encoding="utf-8")
-    log.info("Business vocab KB written (%d tables grounded)", len(table_names))
+    if biz_text is None:
+        # Nothing downstream requires this file to exist -- it is swept into the
+        # vector index with the rest of kb_dir -- so the build continues without
+        # the cross-table vocabulary rather than stopping before table one.
+        log.error(
+            "Business vocabulary KB was not written for %s; retrieval will have "
+            "no cross-table vocabulary document", account_id or "this account",
+        )
+    else:
+        (kb_path / "_business_kb.md").write_text(biz_text, encoding="utf-8")
+        log.info("Business vocab KB written (%d tables grounded)", len(table_names))
     await _progress(
         phase="building",
         step="Business vocabulary ready",
@@ -678,6 +813,10 @@ async def build_kb(
     )
 
     # ── Per-table KB — two stages ─────────────────────────────────────────────
+    # Tables this build could not document, and why. A build that silently
+    # returns a smaller number than the admin selected is the same defect as one
+    # that dies: either way nobody is told which tables have no KB document.
+    failures: list[dict] = []
     processed = 0
     for md_file in md_files:
         # Check for stop signal before each table
@@ -967,10 +1106,29 @@ async def build_kb(
         # (admin/routes.py) shares one request_id across every table, so that
         # alone can't disambiguate which table a given audit row belongs to.
         with llm_audit_component("kb_table_doc", question=table_name, new_request_id=True):
-            kb_text, _, _ = await llm_complete(
-                system, stage1_user, provider, model, api_key,
-                max_tokens=4096, **kw
+            kb_text = await _kb_complete(
+                f"document for {table_name}", system, stage1_user, provider,
+                model, api_key,
+                max_tokens=kb_doc_token_budget(len(table_cols)), **kw
             )
+        if kb_text is None:
+            # This one table only. Before this the exception left the loop and
+            # every table after it went undocumented as well.
+            failures.append({
+                "table": table_name, "stage": "table_doc",
+                "columns": len(table_cols),
+                "max_tokens": kb_doc_token_budget(len(table_cols)),
+                "reason": "output truncated at the token ceiling",
+            })
+            await _progress(
+                phase="building",
+                step=f"Skipped {table_name} — document did not fit",
+                current=processed,
+                total=len(md_files),
+                percent=round(processed / len(md_files) * 100),
+                current_table=table_name,
+            )
+            continue
 
         # Fix 4: guarantee ERP synonym rows are present regardless of LLM output
         kb_text = _inject_deterministic_synonyms(kb_text, table_cols, vocab=_vocab)
@@ -995,12 +1153,25 @@ async def build_kb(
         with llm_audit_component(
             "kb_query_examples", question=table_name, new_request_id=True
         ):
-            query_text, _, _ = await llm_complete(
-                system, query_user, provider, model, api_key,
-                max_tokens=3000, **kw
+            query_text = await _kb_complete(
+                f"query examples for {table_name}", system, query_user, provider,
+                model, api_key,
+                max_tokens=kb_query_token_budget(len(table_cols)), **kw
             )
-        (kb_path / f"{table_name}_queries.md").write_text(query_text, encoding="utf-8")
-        log.info("Stage 2 query patterns written for %s", table_name)
+        if query_text is None:
+            # The document itself was written, so the table is documented and is
+            # NOT skipped -- it just has no worked examples. Recorded so the
+            # admin can see which tables are missing them.
+            failures.append({
+                "table": table_name, "stage": "query_examples",
+                "columns": len(table_cols),
+                "max_tokens": kb_query_token_budget(len(table_cols)),
+                "reason": "output truncated at the token ceiling",
+            })
+        else:
+            (kb_path / f"{table_name}_queries.md").write_text(
+                query_text, encoding="utf-8")
+            log.info("Stage 2 query patterns written for %s", table_name)
 
         # Record hash after successful generation
         _schema_hashes[table_name] = _build_hash
@@ -1014,6 +1185,26 @@ async def build_kb(
             percent=round(processed / len(md_files) * 100),
             current_table=table_name,
         )
+
+    # ── What the build could not write ────────────────────────────────────────
+    # A durable artifact rather than a log line only: by the time an admin asks
+    # why a table answers badly, the build log is long gone.
+    _failure_file = kb_path / "_build_failures.json"
+    try:
+        if failures:
+            _failure_file.write_text(
+                _json.dumps(failures, indent=2), encoding="utf-8")
+            log.error(
+                "KB build finished with %d table(s) incomplete: %s",
+                len(failures),
+                ", ".join(f"{item['table']} ({item['stage']})" for item in failures),
+            )
+        elif _failure_file.exists():
+            # A clean rebuild must not leave the previous run's failures behind
+            # looking current.
+            _failure_file.unlink()
+    except Exception as _fe:
+        log.warning("KB: could not record build failures: %s", _fe)
 
     # ── Persist schema hashes for next partial-rebuild check ──────────────────
     try:
