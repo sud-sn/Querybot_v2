@@ -1237,7 +1237,7 @@ def _refresh_chart(
     try:
         from core.compliance.governed_query import execute_governed_query
         from core.compliance.policy_engine import evaluate, resolve_context
-        from core.compliance.sql_guard import analyze_sql
+        from core.compliance.sql_guard import aggregate_only_violations, analyze_sql
         from core.schema import load_known_tables, load_schema_columns
 
         state = store.get_client_state(user["account_id"])
@@ -1288,18 +1288,12 @@ def _refresh_chart(
             purpose_id=query_context.purpose_id,
         )
         chart_decision = evaluate(chart_context, analysis.resources)
-        aggregate_sources = {
-            source
-            for output, sources in analysis.lineage.items()
-            if output in analysis.aggregate_outputs
-            for source in sources
-        }
         required_aggregate = {
             resource.key for resource in chart_decision.aggregate_only
         }
         if (
             not chart_decision.effective_allowed
-            or bool(required_aggregate - aggregate_sources)
+            or aggregate_only_violations(analysis, required_aggregate)
         ):
             raise PermissionError(chart_decision.explanation or "Chart blocked by data policy.")
         from core.result_renderer import _sanitize_rows

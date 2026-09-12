@@ -6,7 +6,12 @@ import store
 from core.compliance.models import PolicyContext, PolicyDecision
 from core.compliance.policy_engine import evaluate
 from core.compliance.result_guard import protect_rows
-from core.compliance.sql_guard import SqlPolicyAnalysis, analyze_sql, inject_row_policies
+from core.compliance.sql_guard import (
+    SqlPolicyAnalysis,
+    aggregate_only_violations,
+    analyze_sql,
+    inject_row_policies,
+)
 from core.schema import run_query
 from core.validator import validate_sql
 
@@ -72,14 +77,8 @@ def execute_governed_query(
     if not decision.effective_allowed:
         raise PolicyDeniedError(decision)
 
-    aggregate_sources = {
-        source
-        for output, sources in analysis.lineage.items()
-        if output in analysis.aggregate_outputs
-        for source in sources
-    }
     required_aggregate = {resource.key for resource in decision.aggregate_only}
-    if required_aggregate - aggregate_sources:
+    if aggregate_only_violations(analysis, required_aggregate):
         decision.allowed = False
         decision.reason_code = "aggregate_only_violation"
         decision.explanation = "One or more fields may only be returned as aggregates."
@@ -94,6 +93,18 @@ def execute_governed_query(
 
     release_context = PolicyContext(**{**context.__dict__, "action": "result_release"})
     release_decision = evaluate(release_context, analysis.resources)
+    if decision.reason_code == "aggregate_only_violation":
+        # Only reachable in shadow mode -- enforce mode already raised above.
+        # release_decision comes from a SEPARATE evaluate() call, scoped to
+        # the result_release action, which knows nothing about a violation
+        # found against the query_execution decision. Left unpropagated, the
+        # decision this function actually RETURNS reports "policy_allow" for
+        # a query shadow mode was specifically supposed to flag -- undetected
+        # in shadow mode is worse than undetected nowhere, because shadow mode
+        # exists so an operator can see what enforce mode would have blocked.
+        release_decision.allowed = False
+        release_decision.reason_code = "aggregate_only_violation"
+        release_decision.explanation = decision.explanation
     if not release_decision.effective_allowed:
         raise PolicyDeniedError(release_decision)
     combined_masking = {**decision.masking, **release_decision.masking}

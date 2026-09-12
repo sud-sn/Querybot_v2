@@ -74,6 +74,7 @@ def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
                 aggregate_nodes.extend(
                     part for part in node.expression.walk()
                     if isinstance(part, exp.AggFunc)
+                    and part.find_ancestor(exp.Window) is None
                 )
                 if not isinstance(node.expression, exp.Table):
                     continue
@@ -106,7 +107,9 @@ def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
                 resources[resource.key] = resource
                 sources.append(resource.key)
             aggregate_nodes = [
-                node for node in expression.walk() if isinstance(node, exp.AggFunc)
+                node for node in expression.walk()
+                if isinstance(node, exp.AggFunc)
+                and node.find_ancestor(exp.Window) is None
             ]
 
         lineage[alias] = sorted(set(sources))
@@ -129,6 +132,56 @@ def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
         mask_exempt_outputs=mask_exempt_outputs,
         has_star=has_star,
     )
+
+
+def aggregate_only_violations(
+    analysis: SqlPolicyAnalysis, required: set[str]
+) -> set[str]:
+    """Which of `required` (resource keys under an aggregate_only obligation)
+    reach the caller in a form other than a genuine, row-reducing aggregate.
+
+    Three independent call sites -- execute_governed_query, chart_policy's
+    aggregate_only_gate_passes, and the dashboard chart route -- each computed
+    this themselves, all three the same way, and all three the same way wrong:
+    `required_aggregate - aggregate_sources` only asks "does this resource
+    appear in SOME aggregated output?" A column can satisfy that and still
+    reach the reader raw:
+
+        SELECT SUM(SALARY) AS TOTAL, SALARY AS RAW FROM EMPLOYEES
+
+    TOTAL puts EMPLOYEES.SALARY in aggregate_sources, so the old check saw
+    nothing missing -- RAW was never asked about. The obligation is about
+    what reaches the reader, not about whether the query also computed
+    something safe elsewhere in the same result set. So this checks the
+    complement too: is the resource ALSO a source of some NON-aggregated
+    output? If it is, that output IS the leak, regardless of what the
+    aggregated one shows beside it.
+
+    A window function (FIRST_VALUE/LAST_VALUE/LAG/NTH_VALUE, or a "safe"
+    aggregate like SUM used with OVER (...)) never counts as the row-reducing
+    kind: it preserves cardinality -- one output row per input row -- so it
+    exposes the same raw value a bare column would. analyze_sql already
+    excludes it from aggregate_outputs; this function only combines what
+    analyze_sql computed, so the fix reaches all three call sites without
+    each having to know why.
+    """
+    if not required:
+        return set()
+    aggregate_sources = {
+        source
+        for output, sources in analysis.lineage.items()
+        if output in analysis.aggregate_outputs
+        for source in sources
+    }
+    raw_sources = {
+        source
+        for output, sources in analysis.lineage.items()
+        if output not in analysis.aggregate_outputs
+        for source in sources
+    }
+    never_aggregated = required - aggregate_sources
+    exposed_raw = required & raw_sources
+    return never_aggregated | exposed_raw
 
 
 def _resolve_value(condition: dict, context: PolicyContext) -> Any:

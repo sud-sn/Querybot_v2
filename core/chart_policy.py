@@ -36,7 +36,7 @@ def aggregate_only_gate_passes(
     """
     try:
         from core.compliance.policy_engine import evaluate, resolve_context
-        from core.compliance.sql_guard import analyze_sql
+        from core.compliance.sql_guard import aggregate_only_violations, analyze_sql
 
         analysis = analyze_sql(sql, db_type or "azure_sql")
         context = resolve_context(
@@ -46,16 +46,10 @@ def aggregate_only_gate_passes(
             channel=getattr(event, "platform", "") or "portal",
         )
         decision = evaluate(context, analysis.resources)
-        aggregate_sources = {
-            source
-            for output, sources in analysis.lineage.items()
-            if output in analysis.aggregate_outputs
-            for source in sources
-        }
         required_aggregate = {resource.key for resource in decision.aggregate_only}
         if (
             not decision.effective_allowed
-            or bool(required_aggregate - aggregate_sources)
+            or aggregate_only_violations(analysis, required_aggregate)
         ):
             return False
         return True
