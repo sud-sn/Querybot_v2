@@ -131,6 +131,9 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 {{ alert("Date role approved and saved to the semantic model.", "success") }}
 {% endif %}
 {% endif %}
+{% if notice %}
+{{ alert(notice, "amber") }}
+{% endif %}
 {% if error %}
 {{ alert(error, "error") }}
 {% endif %}
@@ -281,7 +284,12 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           <div class="dr-field dr-span-2"><label>Date column or surrogate key</label><select name="fact_column" id="drFactColumn" required><option value="">Select source table first</option></select></div>
           <div class="dr-field dr-span-2"><label>Storage type</label><select name="date_key_type" id="drDateKeyType"><option value="surrogate_fk" selected>Surrogate key (join to date dimension)</option><option value="yyyymmdd_integer">YYYYMMDD integer on source table</option><option value="yyyymm_integer">YYYYMM integer (month grain) on source table</option><option value="native_date">Native date on source table</option><option value="timestamp">Date/time on source table</option></select></div>
           <p class="dr-mode-help" id="drModeHelp">Choose the date dimension that translates this source key into a calendar date.</p>
-          <div class="dr-field dr-span-2 dr-surrogate-only"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable"><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          {# A date dimension that the model did not TYPE as a dimension is still the
+   table this key joins to. Listing only type == 'dimension' meant a mart whose
+   DT_DMS came back untyped could not be selected at all, which is the one
+   selection this form exists to make. #}
+          {% set date_dimension_names = (date_key_bindings or {}).get('date_dimensions') or [] %}
+          <div class="dr-field dr-span-2 dr-surrogate-only"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable"><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' or table.qualified_name in date_dimension_names %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
           <div class="dr-field dr-surrogate-only"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey"><option value="">Select dimension</option></select></div>
           <div class="dr-field dr-surrogate-only"><label>Calendar date value</label><select name="date_value_column" id="drDateValue"><option value="">Select dimension</option></select></div>
           <div class="dr-field"><label>Role key</label><input name="business_role" required placeholder="e.g. inventory_sales_date"></div>
@@ -459,21 +467,25 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 (function(){
   const tables = {{ semantic_tables | tojson }};
   const byName = Object.fromEntries(tables.map(t => [String(t.qualified_name || t.table || '').toUpperCase(), t]));
+  // How a column is physically stored, and which date dimension translates it,
+  // as decided ON THE SERVER by the same functions the KB build uses -- see
+  // core.semantic_model.suggest_date_key_bindings.
+  //
+  // This used to be a second copy of those naming rules, written here in
+  // JavaScript, and it was missing the rule that decides EMCO's entire fact
+  // set: a relationship to a date dimension beats a name. So every
+  // *_DT_DMS_KEY column was auto-typed as a packed YYYYMMDD integer with
+  // DT_DMS sitting in the same schema, the dimension pickers were then hidden
+  // as unnecessary, and the role was saved with the surrogate key itself
+  // standing in as the calendar date. On Azure that reads as NULL rather than
+  // an error, so every dated question on the fact returned zero rows.
+  const BINDINGS = {{ ((date_key_bindings or {}).get('bindings') or {}) | tojson }};
   function columnName(field){
     return String(field.column || field.name || '');
   }
-  function inferredDateType(field){
-    const raw = String(field.data_type || field.type || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    const base = raw.split(/[\s(]/, 1)[0];
-    const name = String(columnName(field) || '').trim().toUpperCase();
-    if(base === 'date') return 'native_date';
-    if(['datetime', 'datetime2', 'smalldatetime', 'datetimeoffset', 'timestamptz'].includes(base)) return 'timestamp';
-    if(raw === 'timestamp with time zone' || raw === 'timestamp without time zone') return 'timestamp';
-    if(['tinyint', 'smallint', 'int', 'integer', 'bigint', 'number', 'numeric', 'decimal'].includes(base)){
-      if(/(^|_)(DT_DMS_KEY|DATE_DMS_KEY)$/.test(name) || /(^|_)YYYYMMDD(_|$)/.test(name)) return 'yyyymmdd_integer';
-      if(/(^|_)(PRD_DMS_KEY|PERIOD_DMS_KEY)$/.test(name) || /(^|_)(YYYYMM|YEAR_MONTH|YR_MTH)(_|$)/.test(name)) return 'yyyymm_integer';
-    }
-    return '';
+  function bindingFor(tableName, column){
+    if(!tableName || !column) return null;
+    return BINDINGS[String(tableName) + '|' + String(column)] || null;
   }
   function fill(select, tableName, predicate, placeholder){
     if(!select) return;
@@ -483,9 +495,22 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
       const option = document.createElement('option');
       option.value = columnName(field);
       option.textContent = columnName(field) + ((field.data_type || field.type) ? ' (' + (field.data_type || field.type) + ')' : '');
-      option.dataset.dateType = inferredDateType(field);
+      const binding = bindingFor(tableName, columnName(field));
+      option.dataset.dateType = (binding && binding.date_key_type) || '';
+      option.dataset.dimensionTable = (binding && binding.dimension_table) || '';
+      option.dataset.dimensionKey = (binding && binding.dimension_key) || '';
+      option.dataset.dateValueColumn = (binding && binding.date_value_column) || '';
       select.appendChild(option);
     });
+  }
+  function selectValue(select, value){
+    if(!select || !value) return false;
+    const wanted = String(value).toUpperCase();
+    const match = Array.from(select.options).find(
+      option => String(option.value).toUpperCase() === wanted);
+    if(!match) return false;
+    select.value = match.value;
+    return true;
   }
   function setGroupEnabled(group, enabled){
     group.hidden = !enabled;
@@ -517,8 +542,19 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
     syncAddMode();
   });
   if(factColumn) factColumn.addEventListener('change', () => {
-    const inferred = factColumn.selectedOptions[0] && factColumn.selectedOptions[0].dataset.dateType;
+    const picked = factColumn.selectedOptions[0];
+    const inferred = picked && picked.dataset.dateType;
     if(inferred && dateKeyType) dateKeyType.value = inferred;
+    // Fill the mapping in too. Leaving the admin to reconstruct a DT_DMS join
+    // the server had already resolved is how a correct role got saved wrong.
+    if(picked && picked.dataset.dimensionTable && dimTable){
+      if(selectValue(dimTable, picked.dataset.dimensionTable)){
+        fill(dimKey, dimTable.value, () => true, 'Select dimension key');
+        fill(dateValue, dimTable.value, () => true, 'Select calendar date value');
+        selectValue(dimKey, picked.dataset.dimensionKey);
+        selectValue(dateValue, picked.dataset.dateValueColumn);
+      }
+    }
     syncAddMode();
   });
   if(dateKeyType) dateKeyType.addEventListener('change', syncAddMode);

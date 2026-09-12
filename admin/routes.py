@@ -7660,15 +7660,31 @@ async def date_roles_page(request: Request, account_id: str):
     metrics: list[dict] = []
     context_bindings: list[dict] = []
     date_role_coverage: dict = {}
+    # What the discovery layer would say about each column the Add form offers.
+    # Computed here so the form reads one answer instead of re-deriving it in
+    # JavaScript from its own copy of the naming rules -- the copy that typed
+    # every *_DT_DMS_KEY as a packed integer with the date dimension in plain
+    # sight. See core.semantic_model.suggest_date_key_bindings.
+    date_key_bindings: dict = {"bindings": {}, "date_dimensions": []}
     has_model = False
 
     if kb_dir:
         try:
-            from core.semantic_model import load_semantic_model
+            from core.semantic_model import (
+                load_semantic_model,
+                suggest_date_key_bindings,
+            )
             model = load_semantic_model(kb_dir)
             if model:
                 has_model = True
                 semantic_tables = [dict(table) for table in (model.get("tables") or [])]
+                try:
+                    date_key_bindings = suggest_date_key_bindings(model)
+                except Exception as exc:
+                    log.warning(
+                        "date_roles_page: date key suggestions unavailable for "
+                        "%s: %s", account_id, exc,
+                    )
                 # Use top-level date_roles for the canonical list — it aggregates
                 # across all fact tables and deduplicates by fact_table+fact_column.
                 date_roles = [dict(dr) for dr in (model.get("date_roles") or [])]
@@ -7696,8 +7712,10 @@ async def date_roles_page(request: Request, account_id: str):
         "metrics": metrics,
         "context_bindings": context_bindings,
         "date_role_coverage": date_role_coverage,
+        "date_key_bindings": date_key_bindings,
         "saved":      request.query_params.get("saved"),
         "error":      request.query_params.get("error"),
+        "notice":     request.query_params.get("notice"),
     })
 
 
@@ -7726,12 +7744,12 @@ async def date_role_approve(
     state = store.get_client_state(account_id)
     kb_dir = (state or {}).get("kb_dir") or ""
     if not kb_dir:
-        from urllib.parse import quote
         return RedirectResponse(
             f"/admin/clients/{account_id}/date-roles?error={quote('KB directory not configured')}",
             status_code=303,
         )
 
+    notes: list[str] = []
     try:
         from core.semantic_model import patch_date_role
         changed = patch_date_role(
@@ -7746,23 +7764,26 @@ async def date_role_approve(
             date_key_type=date_key_type.strip(),
             synonyms=[value.strip() for value in re.split(r"[,;\n]+", synonyms) if value.strip()],
             status="approved",
+            notes=notes,
         )
         if not changed:
-            from urllib.parse import quote
             return RedirectResponse(
                 f"/admin/clients/{account_id}/date-roles?error={quote('Date role not found in semantic model')}",
                 status_code=303,
             )
     except Exception as exc:
         log.exception("date_role_approve: unexpected error for %s: %s", account_id, exc)
-        from urllib.parse import quote
         return RedirectResponse(
             f"/admin/clients/{account_id}/date-roles?error={quote(str(exc))}",
             status_code=303,
         )
 
     _after_semantic_approval(account_id, f"date role approved on {fact_table.strip()}")
-    return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=1", status_code=303)
+    # A server that quietly ignores the choice an admin just made is the same
+    # defect as the form that made the wrong choice for them. Say what changed.
+    suffix = f"&notice={quote(notes[0][:220])}" if notes else ""
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/date-roles?saved=1{suffix}", status_code=303)
 
 
 @router.post("/clients/{account_id}/date-roles/add")
@@ -7784,6 +7805,7 @@ async def date_role_add(
         return RedirectResponse("/admin/login", status_code=303)
     state = store.get_client_state(account_id)
     kb_dir = (state or {}).get("kb_dir") or ""
+    notes: list[str] = []
     try:
         from core.semantic_model import patch_date_role
         changed = patch_date_role(
@@ -7799,11 +7821,16 @@ async def date_role_add(
             synonyms=[value.strip() for value in re.split(r"[,;\n]+", synonyms) if value.strip()],
             status="approved",
             create_if_missing=True,
+            notes=notes,
         )
         if not changed:
             raise ValueError("The selected tables or columns are not present in the semantic model.")
         _after_semantic_approval(account_id, f"date role added on {fact_table.strip()}")
-        return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=role-added", status_code=303)
+        suffix = f"&notice={quote(notes[0][:220])}" if notes else ""
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/date-roles?saved=role-added{suffix}",
+            status_code=303,
+        )
     except Exception as exc:
         return RedirectResponse(
             f"/admin/clients/{account_id}/date-roles?error={quote(str(exc)[:180])}",

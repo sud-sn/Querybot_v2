@@ -3263,6 +3263,116 @@ def get_model_health(kb_dir: str) -> dict[str, Any]:
     }
 
 
+def suggest_date_key_bindings(model: dict[str, Any]) -> dict[str, Any]:
+    """What the discovery layer would say about every column an admin can pick.
+
+    The Add-Date-Role form let an admin declare a date role for a column the KB
+    build had not discovered, and it inferred the column's physical storage type
+    in JavaScript, with its own copy of the naming rules. That copy was missing
+    the one rule that matters most here, the rule ``classify_date_key`` states
+    in as many words -- "A relationship to a date dimension always wins over
+    name-based inference: integer IDs such as 4067 are surrogate keys, not
+    YYYYMMDD values". So every ``*_DT_DMS_KEY`` column in an Infor M3 mart was
+    auto-typed as a packed YYYYMMDD integer even with the date dimension sitting
+    in the same schema, the form then hid the dimension pickers, and the role
+    was saved with the surrogate key itself standing in as the calendar date.
+
+    This is that answer computed once, on the server, by the same functions
+    ``_date_roles`` uses, so the form can look it up instead of re-deriving it.
+    Two implementations of one rule is the shape that drifts, and this one had.
+
+    Returns ``{"bindings": {"FACT_FQN|COLUMN": {...}}, "date_dimensions": [...]}``.
+    Only heuristic evidence is available here: declared database FK constraints
+    live in the raw schema, not in the model, and a column that has one already
+    has a discovered role with its mapping filled in.
+    """
+    def _cols(table: dict[str, Any]) -> list[dict[str, str]]:
+        """Model fields in the shape core.date_roles' helpers read."""
+        return [
+            {
+                "name": str(field.get("column") or field.get("name") or ""),
+                "type": str(field.get("data_type") or field.get("type") or ""),
+            }
+            for field in (table.get("fields") or [])
+        ]
+
+    def _fqn(table: dict[str, Any]) -> str:
+        return str(table.get("qualified_name") or table.get("table") or "")
+
+    def _schema_of(name: str) -> str:
+        return name.rsplit(".", 1)[0].upper() if "." in name else ""
+
+    tables = [t for t in (model.get("tables") or []) if isinstance(t, dict)]
+    date_dims: list[tuple[str, str, str]] = []
+    for table in tables:
+        columns = _cols(table)
+        if not is_date_dimension_table(_fqn(table), columns):
+            continue
+        key = find_date_dimension_key(columns)
+        value_column = find_date_value_column(columns)
+        if key and value_column:
+            date_dims.append((_fqn(table), key, value_column))
+
+    bindings: dict[str, dict[str, str]] = {}
+    for table in tables:
+        fqn = _fqn(table)
+        columns = _cols(table)
+        if not fqn or is_date_dimension_table(fqn, columns):
+            continue
+        for field in columns:
+            column = field["name"]
+            data_type = field["type"]
+            if not column:
+                continue
+            binding = {
+                "date_key_type": "",
+                "dimension_table": "",
+                "dimension_key": "",
+                "date_value_column": "",
+            }
+            physical = physical_date_key_type(data_type)
+            if physical:
+                # The column carries the date itself; no join exists to make.
+                binding["date_key_type"] = physical
+                binding["date_value_column"] = column
+                bindings[f"{fqn}|{column}"] = binding
+                continue
+            role = detect_date_role(column)
+            encoded = infer_encoded_date_key(column, data_type)
+            if encoded and (
+                encoded["date_key_type"] == "yyyymm_integer"
+                or not role
+                or not date_dims
+            ):
+                # _date_roles' own gate: a monthly *_PRD_DMS_KEY is a period
+                # encoding rather than a key into a day dimension, and without a
+                # recognised role or any date dimension there is nothing to join.
+                binding["date_key_type"] = encoded["date_key_type"]
+                binding["date_value_column"] = column
+                bindings[f"{fqn}|{column}"] = binding
+                continue
+            if not role or not date_dims:
+                continue
+            same_key = [dim for dim in date_dims if dim[1].upper() == column.upper()]
+            same_schema = [
+                dim for dim in (same_key or date_dims)
+                if _schema_of(dim[0]) == _schema_of(fqn)
+            ]
+            dimension_table, dimension_key, value_column = (
+                same_schema or same_key or date_dims)[0]
+            binding["date_key_type"] = classify_date_key(
+                column, data_type, has_date_dimension_fk=True)
+            binding["dimension_table"] = dimension_table
+            binding["dimension_key"] = dimension_key
+            binding["date_value_column"] = value_column
+            bindings[f"{fqn}|{column}"] = binding
+
+    return {
+        "bindings": bindings,
+        "date_dimensions": [dim[0] for dim in date_dims],
+    }
+
+
 def patch_date_role(
     *,
     kb_dir: str,
@@ -3277,6 +3387,7 @@ def patch_date_role(
     synonyms: list[str] | tuple[str, ...] | None = None,
     status: str = "approved",
     create_if_missing: bool = False,
+    notes: list[str] | None = None,
 ) -> bool:
     """Patch an approved date role entry in the structured semantic model.
 
@@ -3288,6 +3399,12 @@ def patch_date_role(
     Updates both the top-level ``model.date_roles`` list **and** the per-table
     entry so both ``build_runtime_semantic_context`` and
     ``build_runtime_semantic_plan`` see the approved mapping.
+
+    ``notes`` collects anything the caller should tell the admin -- currently
+    only the one case where a requested integer encoding was overruled by a
+    validated date-dimension mapping. A server that silently ignores the
+    choice an admin just made is the same class of defect as the form that
+    made the wrong choice for them.
 
     Returns ``True`` if the model was changed and written.
     """
@@ -3303,11 +3420,72 @@ def patch_date_role(
     new_conf = 100 if status == "approved" else 80
     changed = False
 
+    def _dimension_is_valid(table_name: str, key: str, value: str) -> bool:
+        """Whether this mapping names a table and two columns the model has."""
+        if not (table_name and key and value):
+            return False
+        wanted = str(table_name).upper()
+        dimension = next((
+            candidate for candidate in (model.get("tables") or [])
+            if wanted in {
+                str(candidate.get("qualified_name") or "").upper(),
+                str(candidate.get("table") or "").upper(),
+            }
+        ), None)
+        if not dimension:
+            return False
+        columns = {
+            str(field.get("column") or "").upper()
+            for field in (dimension.get("fields") or [])
+        }
+        return str(key).upper() in columns and str(value).upper() in columns
+
     def _patch_dr(dr: dict[str, Any]) -> None:
         nonlocal changed
         requested_type = normalize_date_key_type(
             date_key_type or dr.get("date_key_type") or "surrogate_fk"
         )
+        # A date-dimension relationship beats a name-inferred integer encoding.
+        # That is normalize_date_key_type's own documented rule -- "integer IDs
+        # such as 4067 are surrogate keys, not YYYYMMDD values" -- and this
+        # call site skipped it, with the worst possible consequence. The admin
+        # form auto-types a *_DT_DMS_KEY column as a packed integer, hides the
+        # dimension pickers and so POSTs them empty; the branch below then
+        # cleared a validated date-dimension mapping and left the surrogate key
+        # ITSELF standing as the calendar date, status approved, confidence 100.
+        # On Azure that compiles to TRY_CONVERT(date, CONVERT(varchar(8), 4067),
+        # 112), which is NULL rather than an error -- so every dated question on
+        # that fact returns zero rows, with no failure anywhere to look at.
+        #
+        # Only the two integer encodings are overruled, and only when the
+        # mapping resolves against this model's own tables. native_date and
+        # timestamp stay an explicit admin override, and a mart whose surrogate
+        # key genuinely is a YYYYMMDD smart key loses nothing: joining the
+        # dimension for its date is correct there too.
+        if requested_type in {"yyyymmdd_integer", "yyyymm_integer"}:
+            kept_table = dimension_table or str(dr.get("dimension_table") or "")
+            kept_key = dimension_key or str(dr.get("dimension_key") or "")
+            kept_value = date_value_column or str(dr.get("date_value_column") or "")
+            if _dimension_is_valid(kept_table, kept_key, kept_value):
+                log.warning(
+                    "patch_date_role: not reading %s.%s as %s -- it is a "
+                    "validated surrogate key into %s.%s; keeping the "
+                    "date-dimension mapping to %s",
+                    fact_table, fact_column, requested_type,
+                    kept_table, kept_key, kept_value,
+                )
+                if notes is not None:
+                    grain = ("YYYYMMDD" if requested_type == "yyyymmdd_integer"
+                             else "YYYYMM")
+                    note = (
+                        f"{fact_column} is a surrogate key into "
+                        f"{kept_table}.{kept_key}, so its date-dimension "
+                        f"mapping to {kept_value} was kept rather than reading "
+                        f"the key itself as a {grain} integer."
+                    )
+                    if note not in notes:
+                        notes.append(note)
+                requested_type = "surrogate_fk"
         dr["date_key_type"] = requested_type
         if requested_type == "surrogate_fk":
             if dimension_table:
