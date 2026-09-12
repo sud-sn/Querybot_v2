@@ -1659,6 +1659,31 @@ def question_has_explicit_date_filter(question: str) -> bool:
     return any(re.search(pattern, q) for pattern in _EXPLICIT_DATE_PATTERNS)
 
 
+# A count spelled as a word is a count. "the last six months" carried NO window
+# at all while "the last 6 months" carried one, in both languages -- French
+# converts its own number words before reaching here, and English had nothing.
+# detect_top_n_intent has read "top five" as readily as "top 5" for as long as it
+# has existed; this is the same courtesy on the axis where missing it means the
+# window is lost and the answer is measured against the server clock.
+#
+# Only the counts a period is actually written with. "a"/"one" are deliberately
+# absent: "the last one month" is not something anyone types, and "a" would make
+# "the last a month" parse.
+_COUNT_WORDS: dict[str, int] = {
+    "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "eighteen": 18,
+    "twenty": 20, "thirty": 30, "sixty": 60, "ninety": 90,
+}
+_COUNT_PATTERN = r"\d+|" + "|".join(
+    sorted(_COUNT_WORDS, key=len, reverse=True))
+
+
+def _as_count(token: str) -> int:
+    text = str(token or "").strip().lower()
+    return _COUNT_WORDS.get(text, 0) or int(text)
+
+
 def detect_temporal_window(question: str) -> dict:
     """Detect relative calendar wording that must use a data-relative anchor.
 
@@ -1732,13 +1757,13 @@ def detect_temporal_window(question: str) -> dict:
     rolling = re.search(
         # "trailing" and "rolling" are how finance writes exactly this window.
         r"\b(?:last|past|previous|latest|trailing|rolling)\s+"
-        r"(\d+)\s+(day|week|month|quarter|year)s?\b",
+        rf"({_COUNT_PATTERN})\s+(day|week|month|quarter|year)s?\b",
         q,
     )
     if rolling:
         return {
             "kind": "last_n",
-            "amount": int(rolling.group(1)),
+            "amount": _as_count(rolling.group(1)),
             "unit": rolling.group(2),
             "anchor_policy": "latest_available",
         }

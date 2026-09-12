@@ -1,0 +1,389 @@
+# EMCO rehearsal corpus — the ways a plumbing/HVAC/waterworks distributor asks.
+#
+# Shape this is written against (Infor M3 -> Azure SQL data mart):
+#
+#   EMDW_DMART.CUS_ORD_IVC_FCT   invoiced sales.  NET_SLS_AMT, GRS_SLS_AMT,
+#                                ORD_QTY, and FOUR role-playing date keys:
+#                                CUS_IVC_DT_DMS_KEY, SHP_DT_DMS_KEY,
+#                                CNL_ORD_DT_DMS_KEY, IVC_PRD_DMS_KEY
+#   EMDW_DMART.CUS_RTN_FCT       credits/returns.  RTN_AMT, RTN_QTY,
+#                                RTN_DT_DMS_KEY
+#   EMDW_DMART.INV_BAL_FCT       stock balance, SEMI-ADDITIVE.  BAL_QTY,
+#                                BAL_VAL_AMT, BAL_DT_DMS_KEY
+#   EMDW_DMART.DT_DMS            the shared date dimension every key joins to
+#
+# Each case is one question in both languages, plus what the pipeline is
+# expected to do with it. `expect` is deliberately about the DECISION, not the
+# text: which window, whether a metric template may answer it, whether the
+# governed compiler may build it, whether it is a follow-up about the result on
+# screen. Those are the things that were wrong, and they are what a rehearsal
+# needs to see.
+#
+# expect keys:
+#   window        the temporal window kind, or `none`
+#   compile       yes | no        may the scalar governed compiler build it
+#   template      yes | no        may a fixed metric template answer it
+#   followup      yes | no | -    does it route to the result already on screen
+#   note          why, when the expectation is not obvious
+
+cases:
+
+# ── Scalar totals over a rolling window ──────────────────────────────────────
+- id: scalar-last-6-months
+  intent: scalar total, rolling window
+  english: what is the total net sales for the last 6 months?
+  french: quel est le total des ventes nettes des 6 derniers mois ?
+  expect: {window: last_n, compile: yes, template: no}
+
+- id: scalar-last-30-days
+  intent: scalar total, rolling days
+  english: total net sales for the last 30 days
+  french: total des ventes nettes des 30 derniers jours
+  expect: {window: last_n, compile: yes, template: no}
+
+- id: scalar-spelled-count
+  intent: scalar total, count spelled as a word
+  english: total net sales for the last six months
+  french: total des ventes nettes des six derniers mois
+  expect: {window: last_n, compile: yes, template: no}
+  note: French spells the count more often than not; English still cannot.
+
+- id: scalar-4-weeks
+  intent: scalar total, feminine plural unit
+  english: net sales for the last 4 weeks
+  french: ventes nettes des 4 dernières semaines
+  expect: {window: last_n, compile: yes, template: no}
+  note: semaine is feminine — the inflection that used to lose the window.
+
+- id: scalar-2-years
+  intent: scalar total, feminine plural unit
+  english: net sales for the last 2 years
+  french: ventes nettes des 2 dernières années
+  expect: {window: last_n, compile: yes, template: no}
+
+# ── The current period, and to-date ──────────────────────────────────────────
+- id: current-month
+  intent: current period
+  english: what is the total net sales for the current month?
+  french: quel est le total des ventes nettes du mois en cours ?
+  expect: {window: this_month, compile: yes, template: no}
+
+- id: current-month-courant
+  intent: current period, second spelling
+  english: net sales this month
+  french: ventes nettes du mois courant
+  expect: {window: this_month, compile: yes, template: no}
+
+- id: current-quarter
+  intent: current period
+  english: net sales this quarter
+  french: ventes nettes du trimestre en cours
+  expect: {window: this_quarter, compile: yes, template: no}
+
+- id: year-to-date
+  intent: to-date
+  english: net sales year to date
+  french: ventes nettes depuis le début de l'année
+  expect: {window: this_year, compile: yes, template: no}
+
+- id: year-to-date-cumul
+  intent: to-date, accounting wording
+  english: net sales year to date
+  french: ventes nettes cumul annuel
+  expect: {window: this_year, compile: yes, template: no}
+
+- id: month-to-date
+  intent: to-date
+  english: net sales month to date
+  french: ventes nettes cumul mensuel
+  expect: {window: this_month, compile: yes, template: no}
+
+- id: last-month
+  intent: previous period
+  english: net sales last month
+  french: ventes nettes le mois dernier
+  expect: {window: previous_month, compile: yes, template: no}
+
+- id: last-year
+  intent: previous period
+  english: net sales last year
+  french: ventes nettes de l'année dernière
+  expect: {window: previous_year, compile: yes, template: no}
+
+- id: last-year-curly
+  intent: previous period, typographic apostrophe
+  english: net sales last year
+  french: ventes nettes de l’année dernière
+  expect: {window: previous_year, compile: yes, template: no}
+  note: U+2019 is what a French keyboard actually produces.
+
+- id: yesterday
+  intent: single day
+  english: net sales yesterday
+  french: ventes nettes hier
+  expect: {window: yesterday, compile: yes, template: no}
+
+# ── Trends ───────────────────────────────────────────────────────────────────
+- id: trend-by-month
+  intent: trend
+  english: net sales trend by month for the last 6 months
+  french: tendance des ventes nettes par mois sur les 6 derniers mois
+  expect: {window: last_n, compile: no, template: no}
+  note: a grouped/trend request leaves the scalar compiler by design.
+
+- id: trend-by-year
+  intent: trend over an integer year column
+  english: net sales by year
+  french: ventes nettes par année
+  expect: {window: none, compile: no, template: no}
+  note: the shape where IVC_YR used to be read as the measure.
+
+# ── Rankings ─────────────────────────────────────────────────────────────────
+- id: top-5-customers
+  intent: ranking
+  english: top 5 customers by net sales
+  french: les 5 meilleurs clients par ventes nettes
+  expect: {window: none, compile: no, template: no}
+
+- id: top-5-spelled
+  intent: ranking, count spelled as a word
+  english: the five best customers by net sales
+  french: les cinq meilleurs clients par ventes nettes
+  expect: {window: none, compile: no, template: no}
+
+- id: top-branches
+  intent: ranking, French word order
+  english: the top 3 branches by net sales
+  french: les 3 premières succursales par ventes nettes
+  expect: {window: none, compile: no, template: no}
+
+- id: worst-products
+  intent: ranking, ascending
+  english: the 3 worst products by margin
+  french: les 3 pires produits par marge
+  expect: {window: none, compile: no, template: no}
+
+# ── Grouped breakdowns ───────────────────────────────────────────────────────
+- id: by-warehouse
+  intent: grouped breakdown
+  english: net sales by warehouse
+  french: ventes nettes par entrepôt
+  expect: {window: none, compile: no, template: no}
+
+- id: by-branch-last-month
+  intent: grouped breakdown, scoped
+  english: net sales by branch last month
+  french: ventes nettes par succursale le mois dernier
+  expect: {window: previous_month, compile: no, template: no}
+  note: the scoped grouped question a fixed template must never answer.
+
+- id: by-rep
+  intent: grouped breakdown
+  english: net sales by sales rep
+  french: ventes nettes par représentant
+  expect: {window: none, compile: no, template: no}
+
+- id: by-category-6m
+  intent: grouped breakdown, scoped
+  english: net sales by product category for the last 6 months
+  french: ventes nettes par catégorie de produit sur les 6 derniers mois
+  expect: {window: last_n, compile: no, template: no}
+
+- id: returns-by-warehouse
+  intent: grouped breakdown on the returns fact
+  english: returns by warehouse
+  french: retours par entrepôt
+  expect: {window: none, compile: no, template: no}
+
+# ── Comparisons ──────────────────────────────────────────────────────────────
+- id: compare-quarter-vs-last-year
+  intent: comparison
+  english: compare net sales this quarter with last year
+  french: comparer les ventes nettes de ce trimestre avec l'an dernier
+  expect: {window: this_quarter, compile: no, template: no}
+  note: must NOT compile to a single-window scalar.
+
+- id: versus-last-year
+  intent: comparison, second wording
+  english: net sales versus last year
+  french: ventes nettes par rapport à l'an dernier
+  expect: {window: previous_year, compile: no, template: no}
+
+- id: difference
+  intent: comparison, difference
+  english: what is the difference in net sales
+  french: quelle est la différence de ventes nettes
+  expect: {window: none, compile: no, template: no}
+
+- id: why-changed
+  intent: causal
+  english: why did net sales change
+  french: pourquoi les ventes nettes ont-elles changé
+  expect: {window: none, compile: no, template: no}
+
+# ── Distribution and share ───────────────────────────────────────────────────
+- id: share-by-warehouse
+  intent: share of total
+  english: net sales share by warehouse
+  french: part des ventes nettes par entrepôt
+  expect: {window: none, compile: no, template: no}
+
+- id: distribution
+  intent: distribution
+  english: net sales distribution
+  french: répartition des ventes nettes
+  expect: {window: none, compile: no, template: no}
+
+- id: forecast
+  intent: forecast
+  english: net sales forecast
+  french: prévision des ventes nettes
+  expect: {window: none, compile: no, template: no}
+
+# ── Metric registry ──────────────────────────────────────────────────────────
+- id: metric-bare
+  intent: metric by name
+  english: net sales
+  french: ventes nettes
+  expect: {window: none, compile: no, template: yes}
+  note: the one shape a fixed template may answer.
+
+- id: metric-revenue-word
+  intent: metric by synonym
+  english: revenue
+  french: chiffre d'affaires
+  expect: {window: none, compile: no, template: yes}
+
+- id: metric-scoped-window
+  intent: metric with a window the template does not carry
+  english: net sales last month
+  french: ventes nettes le mois dernier
+  expect: {window: previous_month, compile: yes, template: no}
+
+- id: metric-grouped
+  intent: metric with a breakdown the template cannot do
+  english: net sales by warehouse
+  french: ventes nettes par entrepôt
+  expect: {window: none, compile: no, template: no}
+
+# ── Role-playing dates ───────────────────────────────────────────────────────
+- id: role-invoice-date
+  intent: role-playing date, invoice
+  english: net sales by invoice date for the last 3 months
+  french: ventes nettes par date de facturation sur les 3 derniers mois
+  expect: {window: last_n, compile: no, template: no}
+
+- id: role-ship-date
+  intent: role-playing date, shipment
+  english: net sales by shipment date for the last 3 months
+  french: ventes nettes par date d'expédition sur les 3 derniers mois
+  expect: {window: last_n, compile: no, template: no}
+
+- id: role-cancelled
+  intent: role-playing date, cancellation
+  english: cancelled orders last month
+  french: commandes annulées le mois dernier
+  expect: {window: previous_month, compile: no, template: no}
+
+# ── Inventory, semi-additive ─────────────────────────────────────────────────
+- id: inventory-balance
+  intent: semi-additive balance
+  english: inventory balance by warehouse
+  french: solde d'inventaire par entrepôt
+  expect: {window: none, compile: no, template: no}
+
+- id: inventory-balance-month
+  intent: semi-additive balance over time
+  english: inventory balance by warehouse by month
+  french: solde d'inventaire par entrepôt par mois
+  expect: {window: none, compile: no, template: no}
+  note: a balance must not be summed across months.
+
+# ── Counts ───────────────────────────────────────────────────────────────────
+- id: count-customers
+  intent: distinct count
+  english: how many customers do we have
+  french: combien de clients avons-nous
+  expect: {window: none, compile: no, template: no}
+
+- id: count-orders-last-month
+  intent: distinct count, scoped
+  english: how many orders last month
+  french: combien de commandes le mois dernier
+  expect: {window: previous_month, compile: no, template: no}
+
+# ── Windows the product deliberately declines ────────────────────────────────
+- id: last-week
+  intent: week boundary, documented decline
+  english: net sales last week
+  french: ventes nettes la semaine dernière
+  expect: {window: previous_week, compile: no, template: no}
+  note: week boundaries differ per dialect; detected and governed, not compiled.
+
+- id: this-week
+  intent: week boundary, documented decline
+  english: net sales this week
+  french: ventes nettes de la semaine en cours
+  expect: {window: this_week, compile: no, template: no}
+
+# ── Follow-ups about the result on screen ────────────────────────────────────
+- id: followup-by-warehouse
+  intent: follow-up, elliptical
+  english: and by warehouse?
+  french: et par entrepôt ?
+  expect: {followup: yes}
+
+- id: followup-last-month
+  intent: follow-up, elliptical with a period
+  english: what about last month?
+  french: et le mois dernier ?
+  expect: {followup: yes}
+
+- id: followup-top-3
+  intent: follow-up, ranking
+  english: show me the top 3
+  french: montre-moi les 3 premiers
+  expect: {followup: yes}
+
+- id: followup-only-value
+  intent: follow-up naming a cached value
+  english: only Montreal
+  french: seulement Montréal
+  expect: {followup: yes}
+
+- id: followup-drill-value
+  intent: follow-up naming a cached value
+  english: drill into Montreal
+  french: détaille Montréal
+  expect: {followup: yes}
+
+- id: followup-sort
+  intent: follow-up, result command
+  english: sort these by net sales
+  french: trie ces résultats par ventes nettes
+  expect: {followup: yes}
+
+- id: followup-average-column
+  intent: follow-up naming a cached column
+  english: what is the average of NET_SLS_AMT?
+  french: quelle est la moyenne de NET_SLS_AMT ?
+  expect: {followup: yes}
+
+- id: followup-remove-rows
+  intent: follow-up, result command
+  english: remove the previous rows
+  french: supprime les lignes précédentes
+  expect: {followup: yes}
+
+- id: fresh-not-followup
+  intent: a NEW question while a result is on screen
+  english: how many customers do we have?
+  french: combien de clients avons-nous ?
+  expect: {followup: no}
+  note: must not be answered from the snapshot.
+
+- id: fresh-not-followup-2
+  intent: a NEW question while a result is on screen
+  english: net sales by warehouse for 2024
+  french: ventes nettes par entrepôt pour 2024
+  expect: {followup: no}

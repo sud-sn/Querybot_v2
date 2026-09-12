@@ -42,7 +42,10 @@ DATE_ROLES: tuple[DateRole, ...] = (
     DateRole("confirmed_delivery_date", "Confirmed Delivery Date", ("confirmed delivery date", "confirmed ship date", "confirmed delivery month"), 87),
     DateRole("planned_delivery_date", "Planned Delivery Date", ("planned delivery date", "planned ship date", "planned delivery month"), 86),
     DateRole("valid_delivery_date", "Valid Delivery Date", ("valid delivery date", "validated delivery date", "valid ship date", "valid delivery month"), 84),
-    DateRole("delivery_date", "Delivery Date", ("delivery date", "ship date", "shipped date", "fulfillment date", "delivery month", "delivery year"), 82),
+    # "shipment date" was absent while "ship date" was present, so a reader who
+    # wrote the longer form reached no role at all and silently got the default
+    # one. Found by evals/emco_rehearsal.py comparing the two spellings.
+    DateRole("delivery_date", "Delivery Date", ("delivery date", "ship date", "shipment date", "shipped date", "fulfillment date", "delivery month", "delivery year"), 82),
     # SAP BLDAT, Dynamics DOCUMENTDATE and NAV/BC "Document Date" all name
     # this, and it is NOT the posting date: a document dated the 28th can post
     # in the following period, which is the whole reason finance keeps both.

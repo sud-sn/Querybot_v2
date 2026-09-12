@@ -1677,6 +1677,26 @@ def match_metric(account_id: str, question: str, *, lang: str = "") -> dict | No
         if re.search(pat, canonical_lower):
             return None  # Fall through to LLM for GROUP BY queries
 
+    # Third guard, same rule as the other two: a fixed template only answers the
+    # question it was written for. A stored SELECT SUM(...) is one number over
+    # all time, and these words each ask for something a single number cannot be:
+    # two numbers and a difference, a ranking, a distribution, a projection, a
+    # cause. Found by evals/emco_rehearsal.py, which asked "what is the
+    # difference in net sales" and got the all-time total -- the template matched
+    # on the measure name and neither existing guard had anything to say, because
+    # the question names no breakdown and no window.
+    #
+    # The governed compiler already refuses this exact vocabulary
+    # (core/pipeline_helpers.py), so this is that refusal at the one entry point
+    # that ran before it.
+    if re.search(
+        r"\b(?:compare|comparison|versus|vs\.?|difference|change|trend|"
+        r"rank|ranking|top|bottom|best|worst|highest|lowest|breakdown|"
+        r"distribution|share|percentile|correlation|why|forecast|project)\b",
+        canonical_lower,
+    ):
+        return None
+
     # Resolved once: the question's time scope, if it states one at all. Read
     # from the user's own sentence, not the augmented prompt text — a
     # clarification label ("Synonyms: order month, ship month") is administrative

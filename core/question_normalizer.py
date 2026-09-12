@@ -264,6 +264,52 @@ _LEXICON: dict[str, str] = {
     "premieres": "top",
     "derniers": "bottom",
 
+    # ── Naming a date ROLE ───────────────────────────────────────────────────
+    # EMCO's invoice fact carries four role-playing dates reaching one DT_DMS
+    # dimension, so which date a question means IS the answer: invoice-dated
+    # sales and shipment-dated sales are different numbers over the same rows.
+    # core/date_roles.py picks the role from ENGLISH phrases -- "invoice date",
+    # "ship date", "cancelled order date" -- and not one French phrasing reached
+    # any of them:
+    #
+    #     par date de facturation   ->  by date of facturation
+    #     par date d'expedition     ->  by date expedition
+    #     par date d'annulation     ->  by date annulation
+    #
+    # So every French question silently fell back to the default role. A
+    # word-by-word map cannot fix it either, because French reverses the order:
+    # "date de facturation" is date-of-invoicing, and the vocabulary wants
+    # "invoice date". These are phrase entries that emit the English role phrase
+    # in English order, which is the whole reason multi-word entries exist here.
+    "date de facturation": "invoice date",
+    "date de facture": "invoice date",
+    "date d'expedition": "ship date",
+    "date d expedition": "ship date",
+    "date de livraison": "delivery date",
+    "date de commande": "order date",
+    "date d'annulation": "cancelled order date",
+    "date d annulation": "cancelled order date",
+    "date de reception": "receipt date",
+    "date de paiement": "payment date",
+    "date d'echeance": "due date",
+    "date d echeance": "due date",
+    "date comptable": "accounting date",
+    "date de transaction": "transaction date",
+    "date du document": "document date",
+    "date de creation": "creation date",
+    # The same events named without the word "date".
+    "commandes annulees": "cancelled orders",
+    "commande annulee": "cancelled order",
+    "annulees": "cancelled",
+    "annulee": "cancelled",
+    "annules": "cancelled",
+    "annule": "cancelled",
+    "facturation": "billing",
+    "expedition": "shipment",
+    "expeditions": "shipments",
+    "livraison": "delivery",
+    "livraisons": "deliveries",
+
     # ── Time ─────────────────────────────────────────────────────────────────
     #
     # THE CURRENT PERIOD, which had no entry at all. Measured: "du mois en
@@ -320,6 +366,19 @@ _LEXICON: dict[str, str] = {
     "semaine a ce jour": "week to date",
     "annee derniere": "last year",
     "l'annee derniere": "last year",
+    # "an" for "annee" is not casual shorthand -- "par rapport à l'an dernier"
+    # is how a French business writes a year-over-year comparison, and it
+    # reached the detector as "versus an last", carrying no window at all.
+    # Anchored on the qualifier, never on "an" alone: "un an" is a duration and
+    # the numeric rules already read it as a unit.
+    "an dernier": "last year",
+    "l'an dernier": "last year",
+    "an passe": "last year",
+    "l'an passe": "last year",
+    "an precedent": "previous year",
+    "l'an precedent": "previous year",
+    "an prochain": "next year",
+    "l'an prochain": "next year",
     "annee precedente": "previous year",
     "cette annee": "this year",
     "mois dernier": "last month",
