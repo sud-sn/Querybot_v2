@@ -124,6 +124,33 @@ class ResolutionTierTests(unittest.TestCase):
         self.assertEqual(set(r["in_lists"][0]["values"]),
                          {"EMCO Corporation", "EMCO Corp EU", "EMCO Corp USA"})
 
+    def test_an_in_list_refuses_a_phrase_none_of_its_candidates_accounts_for(self):
+        """'emco corp' above drops no words, so the guard had nothing to catch
+        there and the bucket looked covered. A phrase carrying a qualifier none
+        of the candidates has is the case that shipped: "STEEL ROD 11MM" was
+        injected as IN ('STEEL ROD 10MM','STEEL ROD 12MM') under a heading
+        reading "verified to exist in the database", and the injection's own
+        escape clause — "unless the question clearly selects one of them" —
+        cannot fire when the question selects neither."""
+        r = resolve_literals("acct", "how many Steel Rod 11mm did we sell",
+                             base_dir=self.base)
+        self.assertEqual(r["in_lists"], [],
+                         "near-miss candidates must not be offered as an IN list")
+        self.assertEqual([n["phrase"] for n in r["narrowed"]], ["Steel Rod 11mm"])
+        self.assertEqual(r["narrowed"][0]["dropped"], ["11mm"])
+
+    def test_the_refused_in_list_reaches_the_prompt_as_a_refusal(self):
+        """The bucket is only half the story. What must not reach the model is
+        an IN clause offering values the user never asked for; the narrowed
+        path still names the nearest value, deliberately, in order to forbid
+        filtering on it. Assert the instruction, not the absence of the word."""
+        r = resolve_literals("acct", "sales for 'EMCO Corp East'", base_dir=self.base)
+        injection = build_verified_values_injection(r) or ""
+        self.assertNotIn("IN (", injection,
+                         "a near-miss must never be offered as a usable value set")
+        self.assertIn("NO verified match", injection)
+        self.assertIn("NOT on that value", injection)
+
     def test_weak_typo_dropped_silently(self):
         r = resolve_literals("acct", "sales for 'Emko Corpp'", base_dir=self.base)
         self.assertEqual({k: len(v) for k, v in r.items()},

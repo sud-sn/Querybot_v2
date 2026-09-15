@@ -344,13 +344,43 @@ def resolve_literals(
             accept_fuzzy(phrase, top)
         elif len(columns) == 1 and 2 <= len(fuzzy) <= 5:
             first = fuzzy[0]
-            result["in_lists"].append({
-                "phrase": phrase,
-                "table_fqn": first["table_fqn"],
-                "column": first["column"],
-                "business_name": first["business_name"],
-                "values": [m["value"] for m in fuzzy],
-            })
+            # The same check accept_fuzzy makes, for the same reason. An IN list
+            # is honest when the phrase is genuinely ambiguous between values
+            # that all account for the user's words ("emco corp" -> EMCO Corp
+            # EU / USA). It is not when every candidate drops a qualifier the
+            # user typed: "STEEL ROD 11MM" against 10MM and 12MM offered the
+            # model two rods nobody asked about, under a heading that calls them
+            # verified. The escape clause in that injection ("unless the
+            # question clearly selects one of them") cannot fire, because the
+            # question selects neither.
+            dropped_by_all = [
+                uncovered_phrase_tokens(phrase, str(m.get("value") or ""))
+                for m in fuzzy
+            ]
+            if all(dropped_by_all):
+                log.info(
+                    "Refusing an IN list for %r: every candidate (%s) leaves %s "
+                    "unaccounted for. Filtering on the closest known values "
+                    "would answer a different question.",
+                    phrase, ", ".join(repr(m.get("value")) for m in fuzzy),
+                    ", ".join(repr(d) for d in dropped_by_all[0]),
+                )
+                result["narrowed"].append({
+                    "phrase": phrase,
+                    "table_fqn": first.get("table_fqn"),
+                    "column": first.get("column"),
+                    "business_name": first.get("business_name"),
+                    "value": first.get("value"),
+                    "dropped": dropped_by_all[0],
+                })
+            else:
+                result["in_lists"].append({
+                    "phrase": phrase,
+                    "table_fqn": first["table_fqn"],
+                    "column": first["column"],
+                    "business_name": first["business_name"],
+                    "values": [m["value"] for m in fuzzy],
+                })
         elif len(columns) > 1 and len(fuzzy) <= 5:
             result["clarify"].append({
                 "phrase": phrase,
