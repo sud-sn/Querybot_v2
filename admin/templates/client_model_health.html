@@ -133,7 +133,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
           <div class="mh-stat-value" style="color:{% if compile_counts.errors %}var(--red){% elif compile_counts.warnings %}var(--amber){% else %}var(--green){% endif %}">
             {{ compile_counts.open_total or 0 }}
           </div>
-          <div class="mh-stat-sub">{{ compile_counts.errors or 0 }} errors Â· {{ compile_counts.warnings or 0 }} warnings</div>
+          <div class="mh-stat-sub">{{ compile_counts.errors or 0 }} errors · {{ compile_counts.warnings or 0 }} warnings{% if compile_counts.other %} · {{ compile_counts.other }} informational{% endif %}</div>
         </div>
       </div>
       {% if compiler.conflicts %}

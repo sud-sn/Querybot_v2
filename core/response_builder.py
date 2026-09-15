@@ -2032,6 +2032,19 @@ def _build_insight_summary(
                 last=format_value(ts.get("last_value"), raw_value_col),
                 last_period=ts.get("last_period") or _t("answer.second_period"))
             return _movement_suffix(sentence, ts.get("overall_pct_change"))
+        # From here down the sentence is a claim about the WHOLE series — a
+        # direction, an overall percentage, a peak. On a truncated result it
+        # describes wherever the row cap happened to fall: a daily revenue
+        # question capped at 200 rows read "trended down 36.6% from 2025-01-02
+        # to 2025-07-20", a window that ends where the preview ends and not
+        # where the data does, printed one line under a banner withholding
+        # median and quartiles because "computing them over a partial result
+        # would give a misleading answer". The single-observation and
+        # two-endpoint sentences above are safe by contrast: each describes the
+        # rows it was given and claims no momentum.
+        _scope = brief.get("result_scope") or ctx.get("result_scope") or {}
+        if _scope.get("was_limited"):
+            return ""
         direction = ts.get("direction", "stable")
         pct = ts.get("overall_pct_change")
         first = ts.get("first_period", "")
@@ -2208,6 +2221,19 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
 
     if mode == "ranking":
         cat = brief.get("category_breakdown") or {}
+        # Every share below divides by the sum of the rows that CAME BACK
+        # (core/insight.py builds category_breakdown["total"] from `paired`).
+        # On a TOP 5 that denominator is the top-5 subtotal, so "20.2% of
+        # total" is a share of the five biggest rows and "broadly diversified"
+        # is a tautology of the user's own filter — near-equal shares among the
+        # five largest is what a top-5 always looks like. The dominance line is
+        # worse: it warns about a single point of dependence computed over a
+        # population it never saw. The ranking explanation further down already
+        # suppresses its runner-up clause on `is_top_n` for exactly this
+        # reason; this chain never asked.
+        scope = brief.get("result_scope") or ctx.get("result_scope") or {}
+        if scope.get("was_limited"):
+            return {}
         leader_share = cat.get("leader_share_pct")
         # Same field and same floor as the callout above. This line is the
         # advisory signal, so it was the most expensive place to read the raw
@@ -2231,9 +2257,14 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
                 "tone": "watch", "basis": "dominance",
             }
         if leader_share is not None:
+            # "no single entry exceeds {pct}%" is an upper BOUND, not an
+            # approximation, so it has to round up. With :.0f a 20.2% leader
+            # printed "no single entry exceeds 20%" directly above its own
+            # "20.2% of total" bullet — the card contradicting itself by a
+            # rounding mode.
             return {
                 "line": _t("answer.signal.spread",
-                           pct=f"{max(leader_share, 1):.0f}"),
+                           pct=f"{math.ceil(max(leader_share, 1))}"),
                 "tone": "positive", "basis": "spread",
             }
 

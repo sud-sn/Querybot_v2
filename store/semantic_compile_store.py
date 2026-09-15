@@ -356,6 +356,16 @@ def get_semantic_compiler_summary(account_id: str) -> dict[str, Any]:
             """SELECT
                    SUM(CASE WHEN status = 'open' AND severity = 'ERROR' THEN 1 ELSE 0 END) AS errors,
                    SUM(CASE WHEN status = 'open' AND severity = 'WARNING' THEN 1 ELSE 0 END) AS warnings,
+                   -- Anything open that is neither: INFO today, and whatever a
+                   -- later detector emits. Counted rather than assumed away,
+                   -- because the card subtitles open_total with this breakdown
+                   -- and the two stopped adding up — a live workspace read
+                   -- "2177" over "0 errors · 2067 warnings", leaving 110
+                   -- conflicts the reader could see the total of and never the
+                   -- nature of.
+                   SUM(CASE WHEN status = 'open'
+                            AND severity NOT IN ('ERROR', 'WARNING')
+                            THEN 1 ELSE 0 END) AS other,
                    SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_total
                FROM semantic_conflict WHERE account_id = ?""",
             (account_id,),
