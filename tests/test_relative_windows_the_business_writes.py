@@ -231,3 +231,42 @@ class TestTheTwoHalvesOfTheProductAgree:
             f"{question!r} reads as temporal but carries no window, so the "
             "fail-closed check for a fact with no governed business date "
             "never runs and generation uses the server clock")
+
+
+class TestAFollowUpsOwnWindowBeatsTheOneItInherits:
+    """Live on 32dc59b: "revenue YTD" then "revenue MTD" in one thread returned
+    $44,430,302.60 twice — the year's total reported as the month's, at High
+    confidence 100/100, with the banner narrating "this year" on a month
+    question.
+
+    Nothing in the SQL builder was wrong. core/clarification.py merges the
+    turns as "<parent>\nFollow-up request: <child>" so a deterministic planner
+    inherits the metric, and the window patterns are priority-ordered rather
+    than position-aware — so whichever window ranks higher wins, regardless of
+    which turn the user actually just typed. The parent's window is still the
+    right answer when the child names none; that inheritance is what the merge
+    is for.
+    """
+
+    MERGED = "revenue YTD\nFollow-up request: revenue MTD"
+
+    def test_the_child_window_wins_when_it_has_one(self):
+        assert detect_temporal_window(self.MERGED)["kind"] == "this_month"
+
+    def test_and_the_parent_is_still_inherited_when_the_child_has_none(self):
+        window = detect_temporal_window("revenue YTD\nFollow-up request: by warehouse")
+        assert window["kind"] == "this_year"
+
+    def test_each_turn_alone_is_unaffected(self):
+        assert detect_temporal_window("revenue YTD")["kind"] == "this_year"
+        assert detect_temporal_window("revenue MTD")["kind"] == "this_month"
+
+    @pytest.mark.parametrize("parent,child,expected", [
+        ("revenue MTD", "revenue for the last week", "previous_week"),
+        ("revenue for the last week", "revenue YTD", "this_year"),
+        ("revenue YTD", "revenue trailing 30 days", "last_n"),
+    ])
+    def test_the_rule_holds_whichever_way_the_windows_rank(
+            self, parent, child, expected):
+        merged = f"{parent}\nFollow-up request: {child}"
+        assert detect_temporal_window(merged)["kind"] == expected

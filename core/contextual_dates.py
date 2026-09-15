@@ -320,9 +320,20 @@ def infer_calendar_attributes(
                 ) if value
             ),
         ),
+        # The abbreviated spellings below are the ones an M3-shaped warehouse
+        # actually ships: EMCO's DT_DMS holds CAL_YR, MTH_NO, QTR_NO, WK_OF_YR
+        # and DAY_OF_MTH, of which only MTH_NM and DMS_DT were recognised. An
+        # unrecognised attribute is not a cosmetic miss — the validator's
+        # acceptance set is {planned date column} plus these, so correct SQL
+        # filtering `inv.CAL_YR = 2024` was rejected as field_plan_mismatch and
+        # the answer refused, while the reader was told the business date could
+        # not be resolved. Exact matching is kept: the docstring's reasoning
+        # holds, and each name added here is a real column read from a live
+        # date dimension, not a pattern.
         "year": _calendar_column_name(
             columns,
-            ("CALENDAR_YEAR", "DMS_YR", "YEAR_NUM", "YEAR_NUMBER", "YEAR", "YR"),
+            ("CALENDAR_YEAR", "CAL_YR", "DMS_YR", "YEAR_NUM", "YEAR_NUMBER",
+             "YEAR", "YR"),
         ),
         "year_month": _calendar_column_name(
             columns,
@@ -330,7 +341,8 @@ def infer_calendar_attributes(
         ),
         "month_number": _calendar_column_name(
             columns,
-            ("MONTH_NUMBER", "MONTH_NUM", "MONTH_NO", "DMS_MTH", "MONTH", "MTH"),
+            ("MONTH_NUMBER", "MONTH_NUM", "MONTH_NO", "MTH_NO", "DMS_MTH",
+             "MONTH", "MTH"),
         ),
         "month_name": _calendar_column_name(
             columns,
@@ -338,15 +350,18 @@ def infer_calendar_attributes(
         ),
         "quarter": _calendar_column_name(
             columns,
-            ("QUARTER_NUMBER", "QUARTER_NUM", "QUARTER_NO", "DMS_QTR", "QUARTER", "QTR"),
+            ("QUARTER_NUMBER", "QUARTER_NUM", "QUARTER_NO", "QTR_NO",
+             "DMS_QTR", "QUARTER", "QTR"),
         ),
         "week": _calendar_column_name(
             columns,
-            ("WEEK_NUMBER", "WEEK_NUM", "WEEK_NO", "DMS_WK", "WEEK", "WK"),
+            ("WEEK_NUMBER", "WEEK_NUM", "WEEK_NO", "WK_OF_YR", "WK_NO",
+             "DMS_WK", "WEEK", "WK"),
         ),
         "day": _calendar_column_name(
             columns,
-            ("DAY_OF_MONTH", "DAY_NUMBER", "DAY_NUM", "DMS_DAY", "DAY"),
+            ("DAY_OF_MONTH", "DAY_OF_MTH", "DAY_NUMBER", "DAY_NUM", "DMS_DAY",
+             "DAY"),
         ),
     }
     return {key: value for key, value in result.items() if value}
@@ -1712,6 +1727,27 @@ def detect_temporal_window(question: str) -> dict:
     still earns its place: a detected window is governed, disclosed and gated
     even when the SQL itself falls back.
     """
+    # A merged follow-up carries BOTH windows. core/clarification.py joins the
+    # turns as "<parent>\nFollow-up request: <child>" so a deterministic
+    # planner inherits the metric, and the patterns below are priority-ordered
+    # rather than position-aware — so the PARENT's window won whatever the user
+    # had just asked. Live: "revenue YTD" then "revenue MTD" in one thread
+    # compiled the year boundary twice and reported $44.4M, the year's total,
+    # as the month's, at High confidence 100/100 with the banner narrating
+    # "this year" on a month question.
+    #
+    # The child's window is the one the user is asking about. The parent's
+    # still applies when the child names none — that inheritance is the whole
+    # point of the merge, and a follow-up like "by warehouse" must keep it.
+    _marker = "follow-up request:"
+    _lowered = (question or "").lower()
+    if _marker in _lowered:
+        _child = question[_lowered.rindex(_marker) + len(_marker):]
+        # The tail holds no further marker, so this recurses exactly once.
+        _child_window = detect_temporal_window(_child)
+        if _child_window:
+            return _child_window
+
     q = normalize_date_role_text(question)
     observed = re.search(
         r"\b(?:last|latest|most\s+recent)\s+(\d+)\s+"
