@@ -332,7 +332,10 @@ class TestNoLocalIsReadBeforeItCanBeBound:
     @staticmethod
     def _python_files():
         root = Path(__file__).resolve().parents[1]
-        skip = {"__pycache__", "venv", ".git", "node_modules", ".venv"}
+        # ".claude" holds agent worktrees — full copies of this repo, whose
+        # files are not the ones under test.
+        skip = {"__pycache__", "venv", ".git", "node_modules", ".venv",
+                ".claude"}
         return [p for p in root.rglob("*.py")
                 if not (skip & set(p.relative_to(root).parts))]
 
@@ -585,7 +588,10 @@ class TestALocalImportReachesEveryBranchThatReadsIt:
 
     def test_no_function_reads_a_local_import_it_may_not_have_made(self):
         root = Path(__file__).resolve().parents[1]
-        skip = {"__pycache__", "venv", ".git", "node_modules", ".venv"}
+        # ".claude" holds agent worktrees — full copies of this repo, whose
+        # files are not the ones under test.
+        skip = {"__pycache__", "venv", ".git", "node_modules", ".venv",
+                ".claude"}
         offenders = []
         scanned = 0
         for path in root.rglob("*.py"):

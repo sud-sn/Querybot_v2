@@ -567,6 +567,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Monthly query limit",
         "fr": "Limite mensuelle de requêtes",
     },
+    # The dashboard builds this label in the route rather than the template, so
+    # it escaped t() while the query-limit label two lines above it did not: a
+    # French reader saw "461 restantes" and "Unlimited" side by side in one card.
+    "ui.shell.tokens_unlimited": {
+        "en": "Unlimited",
+        "fr": "Illimité",
+    },
     "ui.shell.limit_reached_body.one": {
         "en": "{count}/{limit} query used this month. Ask your admin to increase the limit.",
         "fr": "{count}/{limit} requête utilisée ce mois-ci. Demandez à votre administrateur d'augmenter la limite.",

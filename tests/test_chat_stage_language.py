@@ -53,9 +53,16 @@ def _stage_pushes():
     # have been invisible to a hard-coded pair. core/pipeline_helpers.py
     # defines the function and calls it nowhere, which is why the pair was
     # complete and stayed complete by luck.
-    skip = {"__pycache__", "venv", ".venv", ".git", "node_modules", "tests"}
+    # ".claude" holds agent worktrees: full copies of this repo. Walking into
+    # one finds a second main.py carrying this repo's own stage literals, and
+    # the test then fails against a file nobody edited.
+    skip = {"__pycache__", "venv", ".venv", ".git", "node_modules", "tests",
+            ".claude"}
+    # as_posix(), because the exclusions below are written with forward
+    # slashes and str() yields backslashes on Windows — the exclusion silently
+    # stopped matching and the test failed only on a developer machine.
     modules = sorted(
-        str(path.relative_to(root))
+        path.relative_to(root).as_posix()
         for path in root.rglob("*.py")
         if not (skip & set(path.relative_to(root).parts))
         and "_send_live_stage" in path.read_text(encoding="utf-8")
@@ -88,9 +95,10 @@ class TestEveryStagePushGoesThroughTheCatalogue:
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1]
-        skip = {"__pycache__", "venv", ".venv", ".git", "node_modules", "tests"}
+        skip = {"__pycache__", "venv", ".venv", ".git", "node_modules", "tests",
+                ".claude"}
         carriers = {
-            str(path.relative_to(root))
+            path.relative_to(root).as_posix()
             for path in root.rglob("*.py")
             if not (skip & set(path.relative_to(root).parts))
             and "_send_live_stage(" in path.read_text(encoding="utf-8")

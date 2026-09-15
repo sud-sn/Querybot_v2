@@ -1163,7 +1163,8 @@ async def _render_dashboard(request: Request, user: dict):
     token_status["used_label"] = _compact_number(token_status.get("total_tokens"))
     token_status["limit_label"] = _compact_number(token_status.get("limit"))
     token_status["remaining_label"] = (
-        "Unlimited" if token_status.get("unlimited")
+        i18n_t("ui.shell.tokens_unlimited", lang=_request_language(request))
+        if token_status.get("unlimited")
         else _compact_number(token_status.get("remaining"))
     )
 

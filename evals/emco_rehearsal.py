@@ -756,4 +756,16 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # The report draws its section rules with U+2500. On Windows the console
+    # encoding is cp1252, so the first such line raised UnicodeEncodeError and
+    # the harness exited 1 — the whole rehearsal unrunnable on a developer
+    # machine, while the same code prints fine on the Linux box it deploys to.
+    # Reconfigure rather than strip the characters: the report is meant to be
+    # read, and errors="replace" keeps it printing even where a glyph is
+    # genuinely unavailable.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # redirected to something without it
+            pass
     raise SystemExit(main())

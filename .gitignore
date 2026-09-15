@@ -17,5 +17,10 @@ data/querybot.db
 # Persisted runtime connection configuration may contain database credentials.
 data/pg_url
 
+# The Fernet key every stored credential and system secret is encrypted with.
+# data/querybot.db and data/pg_url were both ignored and this was not, so a
+# single `git add -A` would have published the key that decrypts them.
+data/.querybot_key
+
 # Generated per-client lookup indexes are rebuilt from the client knowledge base.
 clients/*/value_index.sqlite
