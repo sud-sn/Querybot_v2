@@ -9,6 +9,7 @@ Question-time literal grounding:
   4. find_unmatched_literals for the zero-row RCA (sqlglot + regex fallback)
   5. Pipeline wiring guards
 """
+import ast
 import json
 import os
 import sys
@@ -805,11 +806,22 @@ class PipelineWiringGuards(unittest.TestCase):
         self.assertIn("value-index/refresh", src)
 
     def test_zero_row_rca_receives_account_id(self):
+        """The zero-row diagnosis looks up unmatched literals in the value
+        index, which is per account -- so the pipeline must hand the builder
+        its account_id. Read as a syntax tree: the call inside
+        _handle_query_impl carries account_id=account_id."""
         src = (ROOT / "core" / "pipeline_helpers.py").read_text(encoding="utf-8")
         self.assertIn("find_unmatched_literals", src)
         self.assertIn("unmatched_literals=unmatched_literals", src)
-        qp = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
-        self.assertIn("account_id=account_id,\n            ))", qp)
+        tree = ast.parse((ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8"))
+        impl = next(n for n in ast.walk(tree)
+                    if isinstance(n, ast.AsyncFunctionDef) and n.name == "_handle_query_impl")
+        calls = [n for n in ast.walk(impl) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", "") == "build_zero_row_parts"]
+        self.assertTrue(calls, "the pipeline no longer builds the zero-row diagnosis")
+        for call in calls:
+            passed = {k.arg: getattr(k.value, "id", None) for k in call.keywords}
+            self.assertEqual(passed.get("account_id"), "account_id", passed)
 
 
 class RcaBranchTests(unittest.TestCase):

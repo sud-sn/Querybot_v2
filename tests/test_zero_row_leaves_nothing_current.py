@@ -31,6 +31,7 @@ still see that card on screen, and its chips, its inline chat and its CSV all
 have to keep working.
 """
 
+import ast
 import json
 import os
 import sys
@@ -514,11 +515,15 @@ class TestThePipelineActuallyCallsIt:
 
     def test_it_happens_before_the_diagnostic_is_sent(self):
         """After the send, the reader's next turn has already been decided by
-        the stale pointer -- and after the `return`, it would never run."""
-        _node, source = self._pipeline_ast()
+        the stale pointer -- and after the `return`, it would never run. The
+        send is the format_zero_row_parts call: the diagnosis is built, then
+        reworded for the reader, then formatted and sent."""
+        node, _source = self._pipeline_ast()
         forget_at = min(line for line, _test in self._forget_calls())
-        send_at = source[:source.index("_build_zero_row_message(")].count("\n") + 1
-        assert forget_at < send_at, (forget_at, send_at)
+        sends = [n.lineno for n in ast.walk(node) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", "") == "format_zero_row_parts"]
+        assert sends, "the pipeline no longer sends the zero-row diagnostic"
+        assert forget_at < min(sends), (forget_at, sends)
 
     def test_the_adapter_actually_has_the_method_it_calls(self):
         """A getattr hook that names a method nobody implements is a no-op that
