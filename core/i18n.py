@@ -2467,6 +2467,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "date_role.discharge_date": {"en": "Discharge Date", "fr": "Date de sortie"},
     "date_role.claim_date": {"en": "Claim Date", "fr": "Date de réclamation"},
     "date_role.prescription_date": {"en": "Prescription Date", "fr": "Date de prescription"},
+    "date_role.reported_date": {"en": "Reported Date", "fr": "Date de déclaration"},
+    "date_role.actual_finish_date": {"en": "Actual Finish Date", "fr": "Date de fin réelle"},
+    "date_role.actual_start_date": {"en": "Actual Start Date", "fr": "Date de début réelle"},
+    "date_role.planned_finish_date": {"en": "Planned Finish Date", "fr": "Date de fin prévue"},
+    "date_role.planned_start_date": {"en": "Planned Start Date", "fr": "Date de début prévue"},
+    "date_role.release_date": {"en": "Release Date", "fr": "Date de lancement"},
 
     "coverage.gap.no_date_role": {
         "en": "No business date is bound to this metric, so it cannot answer questions about a period. Add a date role.",

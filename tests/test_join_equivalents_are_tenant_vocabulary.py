@@ -50,6 +50,12 @@ M3_KEYS = {
     "CUS_DMS_KEY": ["CUNO", "PYNO"],
     "WHS_DMS_KEY": ["WHLO"],
     "FCY_DMS_KEY": ["FACI"],
+    # Manufacturing: the MO number and the work centre, under the names an M3
+    # data mart gives them.
+    "MFG_ORD_NUM": ["MFNO"],
+    "MO_NUM": ["MFNO"],
+    "WRK_CTR_DMS_KEY": ["PLGR"],
+    "WC_DMS_KEY": ["PLGR"],
 }
 
 
@@ -154,7 +160,7 @@ class TestThereIsOnlyOneCopyLeft(unittest.TestCase):
                        "WHS_DMS_KEY", "FCY_DMS_KEY"):
             self.assertIn(column, stored["join_synonyms"], column)
 
-    def test_the_pack_file_holds_all_eight(self):
+    def test_the_pack_file_holds_every_equivalence(self):
         stored = json.loads(
             (ROOT / "packs" / "infor_m3.json").read_text(encoding="utf-8"))
         self.assertEqual(

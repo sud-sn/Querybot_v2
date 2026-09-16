@@ -1,0 +1,517 @@
+{
+  "pack_id": "manufacturing",
+  "erp_name": "Manufacturing",
+  "pack_kind": "industry",
+  "version": 1,
+  "status": "complete",
+  "description": "Industry vocabulary for manufacturers: manufacturing orders, routings and operations, work centres, scrap, yield and rework, WIP, finished goods and raw material, downtime and changeover, plants and shifts. Expands the warehouse's SPELLINGS (SCRP, YLD, WCTR, DWNTM, PLNT) and leaves the acronyms people actually say (BOM, MRP, OEE, WIP, COGS) alone. Carries the production date roles -- planned and actual start and finish, release, reported -- under the column names a manufacturing mart gives them. Carries no table or column dictionary, so it never competes with the ERP pack your database's naming detects; select it alongside that pack.",
+  "abbreviations": {
+    "PRDN": "production",
+    "PRODN": "production",
+    "PRDORD": "production order",
+    "MFGORD": "manufacturing order",
+    "MO": "manufacturing order",
+    "WO": "work order",
+    "SCRP": "scrap",
+    "SCRPD": "scrapped",
+    "SCRAPD": "scrapped",
+    "YLD": "yield",
+    "RWK": "rework",
+    "REWK": "rework",
+    "WC": "work centre",
+    "WCTR": "work centre",
+    "WKCTR": "work centre",
+    "WRKCTR": "work centre",
+    "WRK": "work",
+    "RTG": "routing",
+    "RTNG": "routing",
+    "OPN": "operation",
+    "OPER": "operation",
+    "OPRN": "operation",
+    "ASSY": "assembly",
+    "ASM": "assembly",
+    "ASSM": "assembly",
+    "SUBASSY": "subassembly",
+    "SUBASM": "subassembly",
+    "CMPNT": "component",
+    "COMPNT": "component",
+    "CMPT": "component",
+    "BTCH": "batch",
+    "SERL": "serial",
+    "SRL": "serial",
+    "SERNO": "serial number",
+    "INSP": "inspection",
+    "INSPN": "inspection",
+    "DEFCT": "defect",
+    "DFCT": "defect",
+    "REJ": "rejected",
+    "REJT": "rejected",
+    "RJCT": "rejected",
+    "DWNTM": "downtime",
+    "DWNTIME": "downtime",
+    "DNTM": "downtime",
+    "CHGOVR": "changeover",
+    "CHGOV": "changeover",
+    "CHOVR": "changeover",
+    "MAINT": "maintenance",
+    "MNTC": "maintenance",
+    "MNT": "maintenance",
+    "BRKDWN": "breakdown",
+    "BKDN": "breakdown",
+    "CAPA": "capacity",
+    "CAPY": "capacity",
+    "CPCTY": "capacity",
+    "UTIL": "utilisation",
+    "UTLZ": "utilisation",
+    "UTILZ": "utilisation",
+    "EFF": "efficiency",
+    "EFFY": "efficiency",
+    "EFFCY": "efficiency",
+    "THRPT": "throughput",
+    "THRUPUT": "throughput",
+    "PLNT": "plant",
+    "PLT": "plant",
+    "SHFT": "shift",
+    "MACH": "machine",
+    "MCH": "machine",
+    "MACHN": "machine",
+    "MCHN": "machine",
+    "FG": "finished goods",
+    "FGD": "finished goods",
+    "FGDS": "finished goods",
+    "RM": "raw material",
+    "RAWM": "raw material",
+    "RMAT": "raw material",
+    "STD": "standard",
+    "VAR": "variance",
+    "VRNC": "variance",
+    "TOL": "tolerance",
+    "SPEC": "specification",
+    "SPCF": "specification",
+    "CYC": "cycle",
+    "CYCT": "cycle time",
+    "HRS": "hours",
+    "MINS": "minutes",
+    "SECS": "seconds",
+    "PLND": "planned",
+    "SCHD": "scheduled",
+    "SCHED": "scheduled",
+    "ACTL": "actual",
+    "STRT": "start",
+    "FNSH": "finish",
+    "CMPL": "completed",
+    "COMPL": "completed",
+    "RLS": "release",
+    "RLSE": "release",
+    "RPT": "report",
+    "RPTD": "reported",
+    "RPTG": "reporting"
+  },
+  "direct_aliases": {
+    "MO_NO": [
+      "manufacturing order",
+      "MO",
+      "MO number",
+      "production order",
+      "work order"
+    ],
+    "WO_NO": [
+      "work order",
+      "work order number",
+      "MO"
+    ],
+    "MO_QTY": [
+      "order quantity",
+      "manufacturing order quantity",
+      "planned quantity",
+      "quantity ordered"
+    ],
+    "PRDN_QTY": [
+      "production",
+      "production quantity",
+      "output",
+      "produced quantity",
+      "units produced"
+    ],
+    "PROD_QTY": [
+      "production",
+      "production quantity",
+      "output",
+      "produced quantity",
+      "units produced"
+    ],
+    "MFG_QTY": [
+      "manufactured quantity",
+      "production quantity",
+      "output",
+      "produced quantity"
+    ],
+    "SCRP_QTY": [
+      "scrap",
+      "scrap quantity",
+      "scrapped units",
+      "rejects"
+    ],
+    "SCRAP_QTY": [
+      "scrap",
+      "scrap quantity",
+      "scrapped units",
+      "rejects"
+    ],
+    "SCRP_PCT": [
+      "scrap rate",
+      "scrap percent",
+      "scrap percentage",
+      "reject rate"
+    ],
+    "SCRAP_RATE": [
+      "scrap rate",
+      "scrap percent",
+      "reject rate"
+    ],
+    "SCRAP_PCT": [
+      "scrap rate",
+      "scrap percent",
+      "reject rate"
+    ],
+    "YLD_PCT": [
+      "yield",
+      "yield percent",
+      "yield rate",
+      "first pass yield"
+    ],
+    "YIELD_PCT": [
+      "yield",
+      "yield percent",
+      "yield rate",
+      "first pass yield"
+    ],
+    "RWK_QTY": [
+      "rework",
+      "rework quantity",
+      "reworked units"
+    ],
+    "WIP_QTY": [
+      "work in progress",
+      "WIP",
+      "WIP quantity",
+      "in process quantity"
+    ],
+    "WIP_AMT": [
+      "work in progress value",
+      "WIP value",
+      "WIP"
+    ],
+    "FG_QTY": [
+      "finished goods",
+      "finished goods on hand",
+      "finished goods quantity",
+      "FG stock"
+    ],
+    "RM_QTY": [
+      "raw material",
+      "raw material on hand",
+      "raw material quantity",
+      "raw material stock"
+    ],
+    "INV_BAL_QTY": [
+      "inventory balance",
+      "inventory balance quantity",
+      "stock balance",
+      "on hand",
+      "stock on hand"
+    ],
+    "INV_BAL_AMT": [
+      "inventory value",
+      "inventory balance value",
+      "stock value",
+      "value of inventory"
+    ],
+    "WC_CD": [
+      "work centre",
+      "work center",
+      "work centre code",
+      "resource"
+    ],
+    "WC_NM": [
+      "work centre name",
+      "work center name",
+      "resource name"
+    ],
+    "WRK_CTR_CD": [
+      "work centre",
+      "work center",
+      "work centre code",
+      "resource"
+    ],
+    "WRK_CTR_NM": [
+      "work centre name",
+      "work center name",
+      "resource name"
+    ],
+    "WORK_CENTER": [
+      "work centre",
+      "work center",
+      "resource"
+    ],
+    "WORK_CENTRE": [
+      "work centre",
+      "work center",
+      "resource"
+    ],
+    "MACH_CD": [
+      "machine",
+      "machine code",
+      "equipment"
+    ],
+    "MACH_NM": [
+      "machine name",
+      "equipment name"
+    ],
+    "PLNT_CD": [
+      "plant",
+      "plant code",
+      "site",
+      "factory"
+    ],
+    "PLNT_NM": [
+      "plant name",
+      "site name",
+      "factory"
+    ],
+    "PLANT_CD": [
+      "plant",
+      "plant code",
+      "site",
+      "factory"
+    ],
+    "SHFT_CD": [
+      "shift",
+      "shift code",
+      "production shift"
+    ],
+    "LOT_NO": [
+      "lot",
+      "lot number",
+      "batch",
+      "batch number"
+    ],
+    "LOT_NUM": [
+      "lot",
+      "lot number",
+      "batch",
+      "batch number"
+    ],
+    "BOM_ID": [
+      "bill of materials",
+      "BOM",
+      "product structure"
+    ],
+    "BOM_NO": [
+      "bill of materials",
+      "BOM",
+      "product structure"
+    ],
+    "RTG_ID": [
+      "routing",
+      "routing id",
+      "operation sequence"
+    ],
+    "RTG_NO": [
+      "routing",
+      "routing number",
+      "operation sequence"
+    ],
+    "OP_NO": [
+      "operation",
+      "operation number",
+      "routing step"
+    ],
+    "OPN_NO": [
+      "operation",
+      "operation number",
+      "routing step"
+    ],
+    "CYC_TM": [
+      "cycle time",
+      "cycle time per unit"
+    ],
+    "CYCLE_TIME": [
+      "cycle time",
+      "cycle time per unit"
+    ],
+    "SETUP_TM": [
+      "setup time",
+      "changeover time"
+    ],
+    "RUN_TM": [
+      "run time",
+      "processing time"
+    ],
+    "DWNTM_HRS": [
+      "downtime",
+      "downtime hours",
+      "hours down",
+      "unplanned downtime"
+    ],
+    "DOWNTIME_HRS": [
+      "downtime",
+      "downtime hours",
+      "hours down",
+      "unplanned downtime"
+    ],
+    "OEE_PCT": [
+      "OEE",
+      "overall equipment effectiveness",
+      "equipment effectiveness"
+    ],
+    "OTIF_PCT": [
+      "OTIF",
+      "on time in full",
+      "on-time in-full rate"
+    ],
+    "ON_TIME_PCT": [
+      "on time delivery",
+      "on-time rate",
+      "on time percent"
+    ],
+    "STD_CST_AMT": [
+      "standard cost",
+      "standard cost amount"
+    ],
+    "STD_COST": [
+      "standard cost",
+      "standard cost amount"
+    ],
+    "PPV_AMT": [
+      "purchase price variance",
+      "PPV",
+      "price variance"
+    ],
+    "COGS_AMT": [
+      "cost of goods sold",
+      "COGS",
+      "cost of sales"
+    ],
+    "RTN_AMT": [
+      "returns",
+      "return amount",
+      "returned value",
+      "credits"
+    ],
+    "RTN_QTY": [
+      "returns",
+      "returned quantity",
+      "units returned"
+    ],
+    "RTN_PCT": [
+      "return rate",
+      "return percent",
+      "returns as a share of sales"
+    ],
+    "RTN_RATE": [
+      "return rate",
+      "return percent",
+      "returns as a share of sales"
+    ],
+    "NET_SLS_AMT": [
+      "net sales",
+      "sales",
+      "revenue",
+      "net revenue",
+      "net sales amount"
+    ],
+    "GRS_SLS_AMT": [
+      "gross sales",
+      "gross sales amount",
+      "gross revenue"
+    ],
+    "GRS_MRG_AMT": [
+      "gross margin",
+      "gross profit",
+      "margin",
+      "gross margin amount"
+    ],
+    "GRS_MRG_PCT": [
+      "gross margin percent",
+      "gross margin",
+      "margin rate",
+      "GM percent",
+      "margin percent"
+    ],
+    "PRDN_DT": [
+      "production date",
+      "date produced",
+      "reporting date"
+    ],
+    "MO_STRT_DT": [
+      "start date",
+      "MO start date",
+      "planned start date"
+    ],
+    "MO_FIN_DT": [
+      "finish date",
+      "MO finish date",
+      "planned finish date"
+    ],
+    "RPT_DT": [
+      "reported date",
+      "reporting date",
+      "production reporting date"
+    ],
+    "RLS_DT": [
+      "release date",
+      "order release date"
+    ]
+  },
+  "date_role_patterns": [
+    {
+      "pattern": "(?:^|_)(?:PLN|PLND|PLANNED|SCHD|SCHED|SCHEDULED)_(?:STRT|START|ST)_(?:DT|DATE)(?:_|$)",
+      "role": "planned_start_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:MO|WO|MFG_ORD|MFGORD|PRDORD)_(?:STRT|START)_(?:DT|DATE)(?:_|$)",
+      "role": "planned_start_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:ACT|ACTL|ACTUAL)_(?:STRT|START|ST)_(?:DT|DATE)(?:_|$)",
+      "role": "actual_start_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:STRT|START)ED_(?:DT|DATE)(?:_|$)",
+      "role": "actual_start_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:PLN|PLND|PLANNED|SCHD|SCHED|SCHEDULED)_(?:FIN|FNSH|FINISH|END|CMPL|COMPL|COMPLETION)_(?:DT|DATE)(?:_|$)",
+      "role": "planned_finish_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:MO|WO|MFG_ORD|MFGORD|PRDORD)_(?:FIN|FNSH|FINISH|END)_(?:DT|DATE)(?:_|$)",
+      "role": "planned_finish_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:ACT|ACTL|ACTUAL)_(?:FIN|FNSH|FINISH|END|CMPL|COMPL|COMPLETION)_(?:DT|DATE)(?:_|$)",
+      "role": "actual_finish_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:CMPL|COMPL|COMPLETED|COMPLETION|FNSHD|FINISHED)_(?:DT|DATE)(?:_|$)",
+      "role": "actual_finish_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:RLS|RLSE|RELEASE|RELEASED)_(?:DT|DATE)(?:_|$)",
+      "role": "release_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:MO|WO)_(?:RLS|RLSE|RELEASE)_(?:DT|DATE)(?:_|$)",
+      "role": "release_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:RPT|RPTD|REPORT|REPORTED|REPORTING)_(?:DT|DATE)(?:_|$)",
+      "role": "reported_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:PRDN|PRODN|PROD|PRODUCTION)_(?:DT|DATE)(?:_|$)",
+      "role": "reported_date"
+    }
+  ]
+}

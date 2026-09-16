@@ -58,6 +58,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 DISTRIBUTION = "wholesale_distribution"
 CONSTRUCTION = "construction_products"
+MANUFACTURING = "manufacturing"
 
 # An M3-shaped warehouse. The detector must still pick infor_m3 with the new
 # packs on disk, or adding them would have cost every M3 tenant their pack.
@@ -82,7 +83,7 @@ class TestThePacksExist(unittest.TestCase):
 
     def test_both_are_offered_to_an_admin(self):
         offered = {m["pack_id"]: m for m in list_available_packs()}
-        for pack_id in (DISTRIBUTION, CONSTRUCTION):
+        for pack_id in (DISTRIBUTION, CONSTRUCTION, MANUFACTURING):
             self.assertIn(pack_id, offered)
             self.assertEqual(offered[pack_id]["status"], "complete")
             self.assertTrue(offered[pack_id]["description"])
@@ -133,6 +134,7 @@ class TestTheyNeverCompeteWithTheErpPack(unittest.TestCase):
         recommended = {r["pack_id"] for r in profile.get("pack_recommendations") or []}
         self.assertNotIn(DISTRIBUTION, recommended)
         self.assertNotIn(CONSTRUCTION, recommended)
+        self.assertNotIn(MANUFACTURING, recommended)
 
     def test_a_distribution_shaped_warehouse_does_not_summon_them_either(self):
         # Every column here is one the distribution pack knows. It still must
@@ -215,8 +217,11 @@ class TestWhatTheTradePackTeaches(unittest.TestCase):
 
     def test_no_shipped_pack_expands_an_acronym_people_say(self):
         say_it = {"HVAC", "PVF", "SKU", "RMA", "BTU", "PSI", "CFM", "GPM",
-                  "SEER", "PVC", "PEX", "DSO", "MSRP", "ASN", "OTIF"}
-        for pack_id in (DISTRIBUTION, CONSTRUCTION):
+                  "SEER", "PVC", "PEX", "DSO", "MSRP", "ASN", "OTIF",
+                  # The shop floor's own: said as letters, typed as letters.
+                  "OEE", "BOM", "MRP", "MPS", "WIP", "COGS", "PPV", "NCR",
+                  "FPY", "KPI", "ERP", "MES"}
+        for pack_id in (DISTRIBUTION, CONSTRUCTION, MANUFACTURING):
             expanded = set(load_pack(pack_id).get("abbreviations") or {}) & say_it
             self.assertEqual(expanded, set(), f"{pack_id} expands {expanded}")
 
@@ -237,7 +242,7 @@ class TestTheyLayerOverTheErpPack(unittest.TestCase):
         # actually is. Nothing in either industry pack may quietly redefine an
         # M3 field code.
         m3 = set(load_pack("infor_m3").get("abbreviations") or {})
-        for pack_id in (DISTRIBUTION, CONSTRUCTION):
+        for pack_id in (DISTRIBUTION, CONSTRUCTION, MANUFACTURING):
             clash = m3 & set(load_pack(pack_id).get("abbreviations") or {})
             self.assertEqual(clash, set(), f"{pack_id} redefines M3 codes: {clash}")
 

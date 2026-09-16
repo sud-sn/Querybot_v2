@@ -1,9 +1,9 @@
 {
   "pack_id": "infor_m3",
   "erp_name": "Infor M3",
-  "version": 2,
+  "version": 3,
   "status": "complete",
-  "description": "Infor M3 / MovEx operational files, record-prefixed physical columns, short codes, business dates, and naming conventions.",
+  "description": "Infor M3 / MovEx operational files, record-prefixed physical columns, short codes, business dates, and naming conventions -- order-to-cash, inventory, purchasing, finance and manufacturing (manufacturing orders, product structures, routings, work centres).",
   "table_dict": {
     "OOHEAD": {
       "label": "Customer Order Header",
@@ -189,6 +189,86 @@
         "period end inventory"
       ],
       "type": "fact"
+    },
+    "MWOHED": {
+      "label": "Manufacturing Order Header",
+      "synonyms": [
+        "manufacturing orders",
+        "production orders",
+        "work orders",
+        "MO headers"
+      ],
+      "type": "fact"
+    },
+    "MWOOPE": {
+      "label": "Manufacturing Order Operations",
+      "synonyms": [
+        "MO operations",
+        "production operations",
+        "operation reporting",
+        "reported operations"
+      ],
+      "type": "fact"
+    },
+    "MWOMAT": {
+      "label": "Manufacturing Order Materials",
+      "synonyms": [
+        "MO materials",
+        "component issues",
+        "material consumption",
+        "issued components"
+      ],
+      "type": "fact"
+    },
+    "MMOPLP": {
+      "label": "Planned Manufacturing Orders",
+      "synonyms": [
+        "planned orders",
+        "MO proposals",
+        "planned production",
+        "planning proposals"
+      ],
+      "type": "fact"
+    },
+    "MPDHED": {
+      "label": "Product Structure Header",
+      "synonyms": [
+        "product structures",
+        "bills of material",
+        "BOM headers",
+        "product versions"
+      ],
+      "type": "dimension"
+    },
+    "MPDMAT": {
+      "label": "Product Structure Materials",
+      "synonyms": [
+        "BOM lines",
+        "bill of material components",
+        "structure materials",
+        "component list"
+      ],
+      "type": "dimension"
+    },
+    "MPDOPE": {
+      "label": "Product Structure Operations",
+      "synonyms": [
+        "routing",
+        "routing operations",
+        "standard operations",
+        "operation list"
+      ],
+      "type": "dimension"
+    },
+    "MPDWCT": {
+      "label": "Work Center Master",
+      "synonyms": [
+        "work centres",
+        "work centers",
+        "production resources",
+        "machine groups"
+      ],
+      "type": "dimension"
     }
   },
   "record_prefixes": {
@@ -209,7 +289,15 @@
     "FG": "FGLEDG",
     "UC": "OSASTD",
     "UB": "OSBSTD",
-    "CT": "CSYTAB"
+    "CT": "CSYTAB",
+    "VH": "MWOHED",
+    "VO": "MWOOPE",
+    "VM": "MWOMAT",
+    "RO": "MMOPLP",
+    "PH": "MPDHED",
+    "PM": "MPDMAT",
+    "PO": "MPDOPE",
+    "PP": "MPDWCT"
   },
   "date_role_patterns": [
     {
@@ -283,6 +371,18 @@
     {
       "pattern": "^(?:[A-Z0-9]{2})?LMDT$",
       "role": "modified_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:V[HO])?STDT(?:_|$)",
+      "role": "planned_start_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:V[HO])?FIDT(?:_|$)",
+      "role": "planned_finish_date"
+    },
+    {
+      "pattern": "(?:^|_)(?:V[HOM])?RPDT(?:_|$)",
+      "role": "reported_date"
     }
   ],
   "column_dict": {
@@ -1617,6 +1717,238 @@
         "customer name",
         "client name"
       ]
+    },
+    "MFNO": {
+      "label": "Manufacturing Order Number",
+      "synonyms": [
+        "manufacturing order",
+        "MO number",
+        "production order",
+        "work order number",
+        "manufacturing order number"
+      ]
+    },
+    "PRNO": {
+      "label": "Product Number",
+      "synonyms": [
+        "product",
+        "product number",
+        "manufactured item",
+        "finished item"
+      ]
+    },
+    "OPNO": {
+      "label": "Operation Number",
+      "synonyms": [
+        "operation",
+        "operation number",
+        "routing step",
+        "op number"
+      ]
+    },
+    "PLGR": {
+      "label": "Work Center",
+      "synonyms": [
+        "work centre",
+        "work center",
+        "machine group",
+        "production resource",
+        "resource"
+      ]
+    },
+    "PLNM": {
+      "label": "Work Center Name",
+      "synonyms": [
+        "work centre name",
+        "work center name",
+        "resource name"
+      ]
+    },
+    "MTNO": {
+      "label": "Component Item Number",
+      "synonyms": [
+        "component",
+        "material",
+        "component item",
+        "material number",
+        "component number"
+      ]
+    },
+    "STRT": {
+      "label": "Product Structure Type",
+      "synonyms": [
+        "structure type",
+        "BOM type",
+        "product structure type"
+      ]
+    },
+    "PLPN": {
+      "label": "Planned Order Number",
+      "synonyms": [
+        "planned order",
+        "planned order number",
+        "proposal number"
+      ]
+    },
+    "MAQT": {
+      "label": "Manufactured Quantity",
+      "synonyms": [
+        "manufactured quantity",
+        "produced quantity",
+        "quantity produced",
+        "output quantity",
+        "production quantity"
+      ]
+    },
+    "MAQA": {
+      "label": "Manufactured Quantity (alternate unit)",
+      "synonyms": [
+        "manufactured quantity alternate unit",
+        "produced quantity alternate unit"
+      ]
+    },
+    "SCQT": {
+      "label": "Scrapped Quantity",
+      "synonyms": [
+        "scrapped quantity",
+        "scrap quantity",
+        "scrap",
+        "rejected quantity"
+      ]
+    },
+    "SCQA": {
+      "label": "Scrapped Quantity (alternate unit)",
+      "synonyms": [
+        "scrapped quantity alternate unit",
+        "scrap quantity alternate unit"
+      ]
+    },
+    "RPQT": {
+      "label": "Reported Quantity",
+      "synonyms": [
+        "reported quantity",
+        "quantity reported",
+        "issued quantity"
+      ]
+    },
+    "RPQA": {
+      "label": "Reported Quantity (alternate unit)",
+      "synonyms": [
+        "reported quantity alternate unit"
+      ]
+    },
+    "REQT": {
+      "label": "Required Quantity",
+      "synonyms": [
+        "required quantity",
+        "quantity required",
+        "component requirement",
+        "planned consumption"
+      ]
+    },
+    "CNQT": {
+      "label": "Quantity per Unit",
+      "synonyms": [
+        "quantity per",
+        "consumption per unit",
+        "BOM quantity",
+        "usage per unit"
+      ]
+    },
+    "PPQT": {
+      "label": "Planned Quantity",
+      "synonyms": [
+        "planned quantity",
+        "planned order quantity",
+        "proposal quantity"
+      ]
+    },
+    "SETI": {
+      "label": "Setup Time",
+      "synonyms": [
+        "setup time",
+        "set-up time",
+        "changeover time"
+      ]
+    },
+    "PITI": {
+      "label": "Run Time",
+      "synonyms": [
+        "run time",
+        "unit run time",
+        "processing time",
+        "pitch time"
+      ]
+    },
+    "UMAT": {
+      "label": "Used Machine Time",
+      "synonyms": [
+        "machine time",
+        "used machine time",
+        "machine hours"
+      ]
+    },
+    "ULAT": {
+      "label": "Used Labor Time",
+      "synonyms": [
+        "labour time",
+        "labor time",
+        "used labour time",
+        "labour hours"
+      ]
+    },
+    "WHST": {
+      "label": "Manufacturing Order Status",
+      "synonyms": [
+        "MO status",
+        "manufacturing order status",
+        "production order status"
+      ]
+    },
+    "WHHS": {
+      "label": "Highest Manufacturing Order Status",
+      "synonyms": [
+        "highest MO status",
+        "highest status"
+      ]
+    },
+    "WOST": {
+      "label": "Operation Status",
+      "synonyms": [
+        "operation status",
+        "op status"
+      ]
+    },
+    "WMST": {
+      "label": "Material Status",
+      "synonyms": [
+        "material status",
+        "component status"
+      ]
+    },
+    "STDT": {
+      "label": "Start Date",
+      "synonyms": [
+        "start date",
+        "planned start date",
+        "MO start date"
+      ]
+    },
+    "FIDT": {
+      "label": "Finish Date",
+      "synonyms": [
+        "finish date",
+        "planned finish date",
+        "MO finish date"
+      ]
+    },
+    "RPDT": {
+      "label": "Reporting Date",
+      "synonyms": [
+        "reporting date",
+        "reported date",
+        "production reporting date"
+      ]
     }
   },
   "abbreviations": {
@@ -1774,7 +2106,18 @@
     "WHS": "warehouse",
     "WRG": "wrong",
     "XCH": "exchange",
-    "XTR": "extra"
+    "XTR": "extra",
+    "SLS": "sales",
+    "RTN": "return",
+    "FAC": "facility",
+    "DIV": "division",
+    "NO": "number",
+    "NBR": "number",
+    "CAL": "calendar",
+    "YR": "year",
+    "MTH": "month",
+    "QTR": "quarter",
+    "WK": "week"
   },
   "direct_aliases": {
     "ALC_QTY": [
@@ -1912,6 +2255,27 @@
     "WHLO": [
       "warehouse location",
       "whs"
+    ],
+    "MFG_ORD_NUM": [
+      "manufacturing order",
+      "manufacturing order number",
+      "MO number",
+      "production order"
+    ],
+    "MO_NUM": [
+      "manufacturing order",
+      "MO number",
+      "production order"
+    ],
+    "WRK_CTR_DMS_KEY": [
+      "work centre",
+      "work center",
+      "production resource"
+    ],
+    "WC_DMS_KEY": [
+      "work centre",
+      "work center",
+      "production resource"
     ]
   },
   "join_synonyms": {
@@ -1939,6 +2303,18 @@
     ],
     "WHS_DMS_KEY": [
       "WHLO"
+    ],
+    "MFG_ORD_NUM": [
+      "MFNO"
+    ],
+    "MO_NUM": [
+      "MFNO"
+    ],
+    "WRK_CTR_DMS_KEY": [
+      "PLGR"
+    ],
+    "WC_DMS_KEY": [
+      "PLGR"
     ]
   },
   "numbered_series": [
@@ -2093,7 +2469,13 @@
     "PUNO",
     "SINO",
     "VONO",
-    "WHLO"
+    "WHLO",
+    "MFNO",
+    "PRNO",
+    "OPNO",
+    "PLGR",
+    "MTNO",
+    "PLPN"
   ],
   "raw_measure_codes": [
     "ACBL",
@@ -2130,7 +2512,20 @@
     "TRQT",
     "UCOS",
     "VOL3",
-    "VTAM"
+    "VTAM",
+    "MAQT",
+    "MAQA",
+    "SCQT",
+    "SCQA",
+    "RPQT",
+    "RPQA",
+    "REQT",
+    "CNQT",
+    "PPQT",
+    "SETI",
+    "PITI",
+    "UMAT",
+    "ULAT"
   ],
   "raw_status_codes": [
     "STAT",
@@ -2140,7 +2535,11 @@
     "RMST",
     "IIST",
     "CLST",
-    "CUST"
+    "CUST",
+    "WHST",
+    "WHHS",
+    "WOST",
+    "WMST"
   ],
   "raw_date_codes": [
     "ACDT",
@@ -2157,13 +2556,17 @@
     "ORDT",
     "PLDT",
     "RGDT",
-    "RVDT"
+    "RVDT",
+    "STDT",
+    "FIDT",
+    "RPDT"
   ],
   "join_key_codes": [
     "ORNO",
     "PONR",
     "POSX",
-    "DLIX"
+    "DLIX",
+    "MFNO"
   ],
   "join_qualifier_codes": [
     "CONO"

@@ -472,8 +472,13 @@ class TestErpKnowledgeLivesInThePackNotInPython:
 
         assert "join_key_codes" in MergedVocab.__dataclass_fields__
         pack = load_pack("infor_m3") or {}
+        # Order number, line, suffix, delivery -- and the manufacturing order
+        # number, which links the MO header to its operations and materials
+        # the way ORNO links a header to its lines. The invariant this file
+        # protects is the next test's: a company or division code is never
+        # one of these.
         assert set(pack.get("join_key_codes") or []) == {
-            "ORNO", "PONR", "POSX", "DLIX",
+            "ORNO", "PONR", "POSX", "DLIX", "MFNO",
         }
 
     def test_the_company_code_qualifies_a_join_and_cannot_create_one(self):

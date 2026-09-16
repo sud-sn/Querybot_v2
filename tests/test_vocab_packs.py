@@ -33,7 +33,7 @@ _ERP_PACK_IDS = {
     "dynamics", "netsuite", "jde",
 }
 _INDUSTRY_PACK_IDS = {"wholesale_distribution", "construction_products",
-                      "healthcare"}
+                      "healthcare", "manufacturing"}
 _ALL_PACK_IDS = _ERP_PACK_IDS | _INDUSTRY_PACK_IDS
 
 

@@ -27,7 +27,15 @@
     "TRANS": "transaction",
     "REV": "revenue",
     "EXP": "expense",
-    "ACCT": "account"
+    "ACCT": "account",
+    "NO": "number",
+    "NUM": "number",
+    "NBR": "number",
+    "CAL": "calendar",
+    "YR": "year",
+    "MTH": "month",
+    "QTR": "quarter",
+    "WK": "week"
   },
   "table_classification": {
     "fact_patterns": [

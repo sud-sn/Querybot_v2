@@ -93,6 +93,22 @@ DATE_ROLES: tuple[DateRole, ...] = (
     DateRole("discharge_date", "Discharge Date", ("discharge date", "date discharged", "discharged date"), 85),
     DateRole("claim_date", "Claim Date", ("claim date", "claim submission date", "claim received date", "date submitted"), 83),
     DateRole("prescription_date", "Prescription Date", ("prescription date", "prescribed date", "date written", "written date"), 81),
+    # ── Production ───────────────────────────────────────────────────────────
+    # A manufacturing order has four dates a plant lives by, and the product
+    # could read none of them: when it was meant to start and finish, and
+    # when it did. "Output last month" is a different number under each --
+    # the shop floor reports against the date production was REPORTED, the
+    # planner against the finish date it was scheduled for. As with the
+    # clinical roles above, the keys are builtin and the spellings are not:
+    # START_DT on a subscription table is not a production start, so the
+    # column patterns live in packs/manufacturing.json and packs/infor_m3.json
+    # and a tenant opts in by selecting one.
+    DateRole("reported_date", "Reported Date", ("reported date", "reporting date", "date reported", "production date", "production reporting date", "reported month"), 78),
+    DateRole("actual_finish_date", "Actual Finish Date", ("actual finish date", "finish date", "completion date", "completed date", "date completed", "finished date", "actual finish month"), 76),
+    DateRole("actual_start_date", "Actual Start Date", ("actual start date", "start date", "started date", "date started", "production start date", "actual start month"), 74),
+    DateRole("planned_finish_date", "Planned Finish Date", ("planned finish date", "planned completion date", "scheduled finish date", "planned end date", "planned finish month"), 70),
+    DateRole("planned_start_date", "Planned Start Date", ("planned start date", "scheduled start date", "planned start", "start date planned", "planned start month"), 69),
+    DateRole("release_date", "Release Date", ("release date", "released date", "date released", "order release date", "release month"), 66),
 )
 
 _ROLE_BY_KEY = {role.key: role for role in DATE_ROLES}
@@ -594,6 +610,12 @@ _EVENT_DATE_VARIANTS: dict[str, tuple[str, ...]] = {
     "admission_date": ("date admitted", "when admitted", "admitted date"),
     "discharge_date": ("date discharged", "when discharged"),
     "claim_date": ("date claimed", "when submitted", "claimed date"),
+    "reported_date": ("when reported", "reported on", "date of reporting"),
+    "actual_finish_date": ("when finished", "when completed", "finished on", "completed on"),
+    "actual_start_date": ("when started", "started on"),
+    "planned_finish_date": ("when planned to finish", "scheduled finish", "planned completion"),
+    "planned_start_date": ("when planned to start", "scheduled start"),
+    "release_date": ("when released", "released on"),
     "prescription_date": ("date prescribed", "when prescribed", "prescribed date"),
 }
 
