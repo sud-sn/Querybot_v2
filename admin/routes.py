@@ -2312,6 +2312,80 @@ def _client_erp_pack_ids(client: dict | None) -> list[str]:
     ))
 
 
+def _client_industry_pack_ids(client: dict) -> list[str]:
+    """The industry packs a client has selected, in the order they were saved."""
+    industry = {
+        str(pack.get("pack_id") or "")
+        for pack in _list_erp_packs() if pack.get("pack_kind") == "industry"
+    }
+    return [p for p in _client_erp_pack_ids(client) if p in industry]
+
+
+def _discovered_schema_names(schema_dir: str) -> tuple[list[str], list[str]]:
+    """Column and table names from a discovered schema directory.
+
+    The same reading core/knowledge.py does at build time -- one markdown
+    file per table, columns in backticks down the first cell -- so the
+    recommendation the wizard shows is computed from exactly what the build
+    would see. Empty when there is nothing discovered yet.
+    """
+    import re as _re
+    from pathlib import Path as _P
+
+    columns: list[str] = []
+    tables: list[str] = []
+    root = _P(schema_dir) if schema_dir else None
+    if not root or not root.exists():
+        return columns, tables
+    for schema_file in sorted(root.glob("*.md")):
+        if schema_file.name.startswith("_"):
+            continue
+        tables.append(schema_file.stem)
+        try:
+            columns.extend(
+                match.group(1)
+                for match in _re.finditer(r"(?m)^\|\s*`([^`]+)`\s*\|", schema_file.read_text(encoding="utf-8"))
+            )
+        except OSError:
+            continue
+    return columns, tables
+
+
+def _naming_recommendation(client: dict) -> dict | None:
+    """What the discovered schema's own naming says the source system is.
+
+    The detector already ran at KB build and its verdict sat on the Model
+    Health page -- two steps after the admin had chosen a source system
+    blind. Run here over the discovered schema, when there is one, so the
+    choice is made with the evidence in view. Never raises: a recommendation
+    is decoration on the setup page, not a gate.
+    """
+    try:
+        state_data = json.loads(client.get("state_data") or "{}")
+        columns, tables = _discovered_schema_names(str(state_data.get("schema_dir") or ""))
+        if not columns and not tables:
+            return None
+        from core.identifier_intelligence import detect_naming_profile
+        profile = detect_naming_profile(columns, tables)
+        ranked = [
+            rec for rec in (profile.get("pack_recommendations") or [])
+            if rec.get("pack_id") and rec.get("pack_id") != "generic_star_schema"
+        ] or list(profile.get("pack_recommendations") or [])
+        if not ranked:
+            return None
+        top = ranked[0]
+        return {
+            "pack_id": str(top.get("pack_id")),
+            "erp_name": str(top.get("erp_name") or top.get("pack_id")),
+            "confidence": int(round(float(top.get("confidence") or 0))),
+            "auto_applied": str(top.get("pack_id")) in (profile.get("auto_applied_packs") or []),
+            "selected": str(top.get("pack_id")) in _client_erp_pack_ids(client),
+        }
+    except Exception as exc:  # noqa: BLE001 - decoration must never break setup
+        log.debug("naming recommendation skipped for %s: %s", client.get("account_id"), exc)
+        return None
+
+
 def _setup_source_pack_value(client: dict | None) -> str:
     """Value shown by the setup wizard's single source-system selector.
 
@@ -8531,6 +8605,8 @@ async def client_setup_page(request: Request, account_id: str):
         "client":               client,
         "erp_packs_available":  _list_erp_packs(),
         "client_source_pack":   _setup_source_pack_value(client),
+        "client_industry_packs": _client_industry_pack_ids(client),
+        "naming_recommendation": _naming_recommendation(client),
         "state":                state,
         "graph_pending_reviews": graph_pending_reviews,
         "db_cfg":               db_cfg,
@@ -8876,6 +8952,58 @@ async def admin_setup_save_table_description(request: Request, account_id: str):
         # saved but cannot route a question until the KB is built.
         "terms_live": terms_live,
     })
+
+
+@router.post("/clients/{account_id}/setup/industry-vocabulary")
+async def admin_setup_industry_vocabulary(request: Request, account_id: str):
+    """Persist the industry vocabulary chosen in the setup wizard.
+
+    An industry pack describes what the business calls things and layers on
+    top of the source system's spellings, so this ADDS to the client's packs
+    and never touches the source system: saving here keeps whatever ERP pack
+    the step above chose, and saving there keeps whatever is chosen here.
+    Only shipped, complete industry packs are accepted; anything else in the
+    form is ignored rather than stored.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from urllib.parse import quote
+
+    form = await request.form()
+    chosen = [str(p).strip() for p in form.getlist("industry_packs") if str(p).strip()]
+    manifests = _list_erp_packs()
+    industry = {
+        str(pack.get("pack_id") or ""): pack
+        for pack in manifests if pack.get("pack_kind") == "industry"
+    }
+    selected: list[str] = []
+    for pack in manifests:
+        pack_id = str(pack.get("pack_id") or "")
+        if pack_id in chosen and pack_id in industry and pack.get("status") != "stub":
+            selected.append(pack_id)
+    sources = [p for p in _client_erp_pack_ids(client) if p not in industry]
+    new_ids = [*sources, *selected]
+    changed = _client_erp_pack_ids(client) != new_ids
+    store.update_client_meta(account_id, erp_packs=json.dumps(new_ids))
+
+    names = ", ".join(str(industry[p].get("erp_name") or p) for p in selected)
+    message = f"Industry vocabulary saved: {names}." if selected else "Industry vocabulary cleared."
+    try:
+        state_data = json.loads(client.get("state_data") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        state_data = {}
+    if changed and (state_data.get("schema_dir") or state_data.get("kb_dir")):
+        message += " Re-run schema discovery and rebuild the Knowledge Base to apply it."
+    elif changed:
+        message += " It will be used during schema discovery and Knowledge Base generation."
+    else:
+        message += " No rebuild is required because the selection did not change."
+    log.info("Admin selected industry vocabulary for %s: %s", account_id, selected)
+    return RedirectResponse(f"/admin/clients/{account_id}/setup?saved={quote(message)}", status_code=303)
 
 
 @router.post("/clients/{account_id}/setup/source-system")
