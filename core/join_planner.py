@@ -258,13 +258,31 @@ def compile_join_plan(
         ).to_dict()
 
     if len(facts) > 1 and not anti_join:
-        touched_by_fact: dict[str, set[str]] = {fact: set() for fact in facts}
+        # Which requested dimensions each fact reaches along the planned
+        # edges -- transitively, because a grain reached through a snowflake
+        # hop (Invoice -> Item -> Product Category) is still that fact's
+        # grain. Counting only edges that land DIRECTLY on a requested
+        # dimension read "sales and inventory by product category" as two
+        # facts sharing nothing, and told each isolated sub-plan to GROUP BY
+        # nothing. Other facts are walls: a dimension is not reached by
+        # walking through the fact that owns it.
+        adjacency: dict[str, set[str]] = {}
         for edge in path:
             source, target = str(edge.get("from_entity") or ""), str(edge.get("to_entity") or "")
-            if source in touched_by_fact and target in dimensions:
-                touched_by_fact[source].add(target)
-            if target in touched_by_fact and source in dimensions:
-                touched_by_fact[target].add(source)
+            if source and target:
+                adjacency.setdefault(source, set()).add(target)
+                adjacency.setdefault(target, set()).add(source)
+        touched_by_fact: dict[str, set[str]] = {}
+        for fact in facts:
+            seen, frontier = {fact}, [fact]
+            while frontier:
+                node = frontier.pop()
+                for neighbour in adjacency.get(node, ()):
+                    if neighbour in seen or neighbour in facts:
+                        continue
+                    seen.add(neighbour)
+                    frontier.append(neighbour)
+            touched_by_fact[fact] = {name for name in seen if name in dimensions}
         sets = [values for values in touched_by_fact.values() if values]
         common = sorted(set.intersection(*sets)) if len(sets) == len(facts) and sets else []
         isolated = [

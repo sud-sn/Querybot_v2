@@ -928,6 +928,75 @@ def _question_edge_weight(edge: dict, question: str) -> float:
     return max(0.1, weight)
 
 
+def _multi_fact_paths(
+    facts: list[str],
+    dimensions: list[str],
+    graph: dict,
+    *,
+    question: str = "",
+    selected_edge_ids=None,
+) -> tuple[list[dict], dict]:
+    """One governed path per fact to the requested dimensions, merged.
+
+    A second fact is not a destination. Before this, the join tree grew from
+    the anchor fact and treated every other detected entity -- the second fact
+    included -- as a target to reach, so the second fact was reached BACKWARD
+    through whichever shared dimension happened to rank cheapest, and its own
+    edge to the dimension the question actually named was never in the path.
+    For "net sales and returns by warehouse" on an M3 mart that produced
+
+        Invoice -> Customer, Return -> Customer, Invoice -> Warehouse
+
+    Return had no governed edge to Warehouse, compile_join_plan found no
+    dimension both facts touched, and each isolated sub-plan was told to
+    GROUP BY nothing: two grand totals for a per-warehouse question, or a
+    refusal of the correct SQL for joining an edge the plan had left out. It
+    also raised a near-tie between "via Customer" and "via Warehouse" for a
+    question that had already said which.
+
+    Facts are roots. Each is searched on its own against the non-fact
+    entities and the union of those paths is the plan, so every fact carries
+    its own edge to every requested dimension and nothing else. A dimension
+    no fact can reach is unreachable as before; a dimension SOME fact cannot
+    reach is reported per fact, because "Return has no governed path to
+    Product Category" is the sentence a reader can act on, and conforming two
+    facts to a grain one of them cannot express is not a comparison.
+
+    With no dimensions at all -- "net sales and returns" -- each per-fact
+    search is a single entity and yields no edges, which is right: two
+    scalars need no join, and compile_join_plan isolates them as it already
+    did. The anti-join existence path (a fact LEFT JOINed to another fact to
+    find what is missing) is the one legitimate fact-to-fact traversal and
+    never comes through here.
+    """
+    merged: list[dict] = []
+    seen: set[tuple] = set()
+    diagnostics: dict = {
+        "unreachable": [],
+        "ambiguous_targets": [],
+        "unreachable_by_fact": [],
+    }
+    for fact in facts:
+        path, diag = find_join_path_with_diagnostics(
+            [fact, *dimensions], graph, prefer_fact_anchor=True,
+            question=question, selected_edge_ids=selected_edge_ids,
+        )
+        for step in path:
+            # The same snowflake hop (Item -> Product Category) reached from
+            # two facts is one physical join, planned once.
+            signature = physical_relationship_signature(step)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(step)
+        for target in diag.get("unreachable") or []:
+            diagnostics["unreachable_by_fact"].append({"fact": fact, "entity": target})
+            if target not in diagnostics["unreachable"]:
+                diagnostics["unreachable"].append(target)
+        diagnostics["ambiguous_targets"].extend(diag.get("ambiguous_targets") or [])
+    return merged, diagnostics
+
+
 def find_join_path_with_diagnostics(
     entity_names: list[str],
     graph: dict,
@@ -957,6 +1026,20 @@ def find_join_path_with_diagnostics(
     entities_map = {e["entity_name"]: e for e in graph.get("entities", [])}
     rels = graph.get("relationships", [])
     adj  = _build_adjacency(rels)
+
+    # ── Two or more facts: each is a root, never a destination ──────────────
+    fact_names = [
+        name for name in entity_names
+        if str(entities_map.get(name, {}).get("entity_type") or "").lower() == "fact"
+    ]
+    if len(fact_names) >= 2 and not anti_join:
+        return _multi_fact_paths(
+            fact_names,
+            [name for name in entity_names if name not in fact_names],
+            graph,
+            question=question,
+            selected_edge_ids=selected_edge_ids,
+        )
 
     # Prefer starting from a fact entity for normal analytics. Anti-join mode
     # can disable this so the source/parent entity remains the anchor.
@@ -1635,6 +1718,16 @@ def _resolve_on_graph(
         if entity_name
     }
     reached_entities.add(ordered_detected[0])
+    # Every detected fact is the root of its own sub-plan (see
+    # _multi_fact_paths). Two facts with no requested dimension -- "net sales
+    # and returns" -- need no edge at all: two scalars, isolated below. An
+    # anti-join's target fact is different in kind, a destination, but needs
+    # no special case here: the finder either planned its edge or listed it
+    # as unreachable, and the unreachable list is merged in just below.
+    reached_entities.update(
+        name for name in detected
+        if str(entities_map.get(name, {}).get("entity_type") or "").lower() == "fact"
+    )
     missing_entities = [
         entity_name for entity_name in detected if entity_name not in reached_entities
     ]
@@ -1644,13 +1737,27 @@ def _resolve_on_graph(
         if entity_name not in missing_entities
     )
     if missing_entities:
+        by_fact = path_diagnostics.get("unreachable_by_fact") or []
+        if by_fact:
+            # Which fact, and which grain. A bare list of entity names tells
+            # the reader what was missing and nothing about why.
+            detail = "; ".join(
+                f"{item['fact']} has no governed path to {item['entity']}"
+                for item in by_fact
+            )
+            reason = (
+                "The confirmed entity graph cannot conform every fact to the "
+                f"requested grain: {detail}."
+            )
+        else:
+            reason = (
+                "The confirmed entity graph cannot reach every business entity "
+                f"required by this question: {', '.join(missing_entities)}."
+            )
         return _unresolved_result(
             detected,
             status="blocked",
-            reason=(
-                "The confirmed entity graph cannot reach every business entity "
-                f"required by this question: {', '.join(missing_entities)}."
-            ),
+            reason=reason,
             missing_entities=missing_entities,
         )
 
