@@ -361,6 +361,34 @@ def suggest_closest_terms(
     return [display for _score, display in ranked[:max(1, int(limit))]]
 
 
+def cannot_generate_message(closest: list[str] | None = None, *, lang: str | None = None) -> str:
+    """The reply when no SQL could be written and nothing was worth asking.
+
+    It lived inline in core/query_pipeline.py's CANNOT_GENERATE branch as a
+    hard-coded English literal — four lines below a clarification that had
+    always been translated. The relevance gate above it made a French reader
+    reach it more often, so it moved here: to be translated, and to be a
+    function a test can execute, which the branch around it is not.
+
+    ``closest`` is suggest_closest_terms' output; the sentence naming it is
+    fail.v.suggestions, the same one the validator refusals use, rather than a
+    second spelling of it.
+    """
+    lines = [_t("terminal.cannot_generate.headline", lang=lang), ""]
+    if closest:
+        lines += [_t("fail.v.suggestions", lang=lang, terms=", ".join(closest)), ""]
+    lines.append(_t("terminal.cannot_generate.try_rephrasing", lang=lang))
+    lines += [
+        f"  • {_t(key, lang=lang)}" for key in (
+            "terminal.cannot_generate.hint_metric",
+            "terminal.cannot_generate.hint_timeframe",
+            "terminal.cannot_generate.hint_column",
+        )
+    ]
+    lines += ["", _t("terminal.cannot_generate.ask_admin", lang=lang)]
+    return "\n".join(lines)
+
+
 # ── Validator-code translations ───────────────────────────────────────────────
 
 _VALIDATION_REASONS: dict[str, str] = {

@@ -6003,21 +6003,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
                 _trace_update(trace_id, error_message="")
                 return
-        from core.failure_messages import suggest_closest_terms
+        from core.failure_messages import cannot_generate_message, suggest_closest_terms
         _closest = suggest_closest_terms(_analysis_question, account_id, state.get("kb_dir", ""))
-        _closest_line = (
-            f"Closest known terms in your data: {', '.join(_closest)}.\n\n" if _closest else ""
-        )
-        await adapter.send_message(event,
-                "❓ I couldn't find the right tables or columns to answer that.\n\n"
-                + _closest_line +
-                "Try rephrasing — for example:\n"
-                "  • Be more specific about the metric you want\n"
-                "  • Include a time range (last month, this year)\n"
-                "  • Mention the specific column or category name\n\n"
-                "If this is a business concept not in the data, ask your "
-                "administrator to add it to the Metric Registry."
-            )
+        await adapter.send_message(event, cannot_generate_message(
+            _closest, lang=(portal_user or {}).get("lang") or "en",
+        ))
         return
 
     # ── Validate + Execute with ONE unified retry on failure ────────────────

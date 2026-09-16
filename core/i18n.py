@@ -3046,6 +3046,35 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": '⚠️ No tables are available to query. Contact your administrator.',
         "fr": "⚠️ Aucune table n'est disponible pour être interrogée. Contactez votre administrateur.",
     },
+    # The end of the CANNOT_GENERATE branch: no SQL could be written, and
+    # (since the relevance gate) no clarification was worth asking either. It
+    # was the last hard-coded English block on a user-facing path in the
+    # pipeline, four lines below a clarification that had always been
+    # translated, and the gate made a French reader reach it more often.
+    'terminal.cannot_generate.headline': {
+        "en": "❓ I couldn't find the right tables or columns to answer that.",
+        "fr": "❓ Je n'ai pas trouvé les tables ou les colonnes permettant de répondre à cette question.",
+    },
+    'terminal.cannot_generate.try_rephrasing': {
+        "en": "Try rephrasing — for example:",
+        "fr": "Essayez de reformuler — par exemple :",
+    },
+    'terminal.cannot_generate.hint_metric': {
+        "en": "Be more specific about the metric you want",
+        "fr": "Précisez davantage l'indicateur que vous souhaitez",
+    },
+    'terminal.cannot_generate.hint_timeframe': {
+        "en": "Include a time range (last month, this year)",
+        "fr": "Indiquez une période (le mois dernier, cette année)",
+    },
+    'terminal.cannot_generate.hint_column': {
+        "en": "Mention the specific column or category name",
+        "fr": "Citez le nom précis de la colonne ou de la catégorie",
+    },
+    'terminal.cannot_generate.ask_admin': {
+        "en": "If this is a business concept not in the data, ask your administrator to add it to the Metric Registry.",
+        "fr": "S'il s'agit d'un concept métier absent des données, demandez à votre administrateur de l'ajouter au registre des indicateurs.",
+    },
     'terminal.needs_governed_context': {
         "en": 'I still do not have enough governed context to answer accurately. Please restate the request and specify {slot}.',
         "fr": "Je ne dispose toujours pas d'un contexte gouverné suffisant pour répondre avec exactitude. Reformulez la demande en précisant {slot}.",
