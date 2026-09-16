@@ -901,6 +901,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "answer.note.leader_share": {
         "en": " ({pct}% of total)", "fr": " ({pct} % du total)",
     },
+    "answer.note.second_measure": {
+        "en": "{leader} leads {measure} at {value}{share}.",
+        "fr": "{leader} arrive en tête pour {measure} avec {value}{share}.",
+    },
     "answer.note.leads_across": {
         "en": "{leader} leads at {value}{share} across {count} {label}.",
         "fr": "{leader} arrive en tête avec {value}{share}, sur {count} {label}.",

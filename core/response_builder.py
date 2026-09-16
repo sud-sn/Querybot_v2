@@ -2171,11 +2171,14 @@ def _build_insight_summary(
             count = cat.get("category_count", row_count)
             share_str = (_t("answer.note.leader_share", pct=leader_share)
                          if leader_share else "")
-            return _t(
+            sentence = _t(
                 "answer.note.leads_across", leader=leader["label"],
                 value=format_value(leader["value"], ctx.get("value_col") or ""),
                 share=share_str, count=count,
                 label=label_col or _t("answer.entries"))
+            second = _second_measure_sentence(
+                rows, ctx, cat.get("label_column") or "", format_value)
+            return f"{sentence} {second}" if second else sentence
 
     if mode == "numeric_table":
         value_col = _display_label(ctx.get("value_col") or "")
@@ -2189,6 +2192,36 @@ def _build_insight_summary(
             avg=format_value(avg, ctx.get("value_col") or ""))
 
     return ""
+
+
+def _second_measure_sentence(rows: list[dict], ctx: dict, label_col: str, format_value) -> str:
+    """The measure the ranking sentence did not narrate.
+
+    "Net sales and returns by warehouse" described the sales -- leader, share,
+    count -- and never said the word returns. The second measure gets one
+    clause: who leads it, at what value, and with what share when it adds up.
+    Period columns were already taken out of numeric_cols by
+    _measure_and_label_cols, so a year beside the measure is not "second".
+    """
+    from core.analysis_contract import measure_class_for_column
+
+    measures = list(ctx.get("numeric_cols") or [])
+    if len(measures) < 2 or not label_col:
+        return ""
+    second = measures[1]
+    items = _ranked_items(rows, label_col, second, limit=max(len(rows), 1))
+    if not items:
+        return ""
+    leader = items[0]
+    share = ""
+    if measure_class_for_column(second) == "additive":
+        total = sum(item["value"] for item in items)
+        if total > 0:
+            share = _t("answer.note.leader_share",
+                       pct=round(leader["value"] / total * 100, 1))
+    return _t("answer.note.second_measure", leader=leader["label"],
+              measure=_display_label(second),
+              value=format_value(leader["value"], second), share=share)
 
 
 def _listing_summary(rows: list[dict], ctx: dict, column_formats: dict, format_value) -> str:
