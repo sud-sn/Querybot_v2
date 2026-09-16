@@ -110,17 +110,36 @@ class TestATrendClaimNeedsTheWholeSeries:
     SERIES = [{"IVC_MTH": f"2025-{m:02d}", "REVENUE": 100.0 - m} for m in range(1, 13)]
     SERIES_SQL = "SELECT IVC_MTH, SUM(NET_SLS_AMT) AS REVENUE FROM F GROUP BY IVC_MTH"
     CAPPED_SQL = "SELECT TOP 200 IVC_MTH, SUM(NET_SLS_AMT) AS REVENUE FROM F GROUP BY IVC_MTH"
+    # The live case in the module docstring: a DAILY question whose 200 rows
+    # end where the cap fell, not where the data does. Two hundred rows under
+    # TOP 200 is a limit that bound. Twelve rows under the same TOP 200 -- the
+    # fixture this test first shipped with -- is a limit that never bit, and
+    # it only read as truncated because infer_result_scope treated the
+    # presence of TOP as the fact of truncation. That is the defect the last
+    # test below now pins from the other side.
+    CAPPED_SERIES = [
+        {"IVC_DT": f"2025-{1 + d // 28:02d}-{d % 28 + 1:02d}", "REVENUE": 100.0 - d * 0.3}
+        for d in range(200)
+    ]
 
-    def summary_for(self, sql):
+    def summary_for(self, sql, rows=None):
+        rows = self.SERIES if rows is None else rows
         question = "revenue by month"
-        scope = infer_result_scope(self.SERIES, question, sql, mode="time_series")
-        brief = compute_data_brief(self.SERIES, question, result_scope=scope)
-        ctx = summarize_result_context(self.SERIES, question, sql)
+        scope = infer_result_scope(rows, question, sql, mode="time_series")
+        brief = compute_data_brief(rows, question, result_scope=scope)
+        ctx = summarize_result_context(rows, question, sql)
         ctx["mode"] = "time_series"
-        return _build_insight_summary(self.SERIES, ctx, brief)
+        return _build_insight_summary(rows, ctx, brief)
 
     def test_a_complete_series_still_gets_its_trend_sentence(self):
         assert self.summary_for(self.SERIES_SQL).strip() != ""
 
     def test_a_truncated_series_makes_no_trend_claim(self):
-        assert self.summary_for(self.CAPPED_SQL) == ""
+        assert self.summary_for(self.CAPPED_SQL, rows=self.CAPPED_SERIES) == ""
+
+    def test_a_top_that_never_bit_does_not_silence_a_complete_series(self):
+        """Twelve months under TOP 200: the limit did nothing, the series is
+        whole, and the trend sentence it earns must not be withheld. The Azure
+        prompt writes TOP 20 by default, so without this every complete
+        T-SQL series lost its trend the day the truncation rule landed."""
+        assert self.summary_for(self.CAPPED_SQL).strip() != ""

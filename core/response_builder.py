@@ -19,6 +19,7 @@ from core.i18n import (
     t as _t,
 )
 from core.clarification import extract_original_question
+from core.query_semantics import detect_top_n_intent
 from core.temporal_columns import infer_series_grain, parse_period_label
 
 log = logging.getLogger("querybot.response_builder")
@@ -1309,9 +1310,26 @@ def infer_result_scope(
     row_count = len(rows)
     lower_sql = (sql or "").lower()
     explicit_limit = _extract_limit(sql)
-    preview_cap_hit = row_count >= _PREVIEW_ROW_CAP and explicit_limit is None and row_count > 0
+    # A row limit only truncated the result if the result REACHED it.
+    #
+    # The Azure prompt tells the model to write TOP 20 by default, so every
+    # generated T-SQL query carries a limit whether or not the question asked
+    # for one. Reading the mere presence of TOP as "this is a top-N slice"
+    # marked a three-warehouse breakdown as limited: the trend sentence, the
+    # decision signal and the ranking's runner-up clause were all withheld --
+    # each gated on this flag for good reason -- and the ranking explanation
+    # was told the reader had asked for a top twenty. Fewer rows back than the
+    # limit is proof the limit never bit. Exactly the limit is treated as
+    # bound: it may have been, and the cost of assuming so is one withheld
+    # sentence rather than a claim about rows that were cut.
+    limit_bound = (
+        explicit_limit is not None and row_count > 0 and row_count >= explicit_limit
+    )
+    # The preview cap is a truncation of its own, whether or not the SQL also
+    # carried a larger TOP: TOP 500 returning 200 rows was cut by the cap.
+    preview_cap_hit = row_count >= _PREVIEW_ROW_CAP and row_count > 0 and not limit_bound
     filtered_subset = " where " in f" {lower_sql} "
-    was_limited = explicit_limit is not None or preview_cap_hit
+    was_limited = limit_bound or preview_cap_hit
 
     scope: dict[str, Any] = {
         "kind": mode,
@@ -1328,7 +1346,12 @@ def infer_result_scope(
     }
 
     if mode == "ranking":
-        if explicit_limit is not None:
+        # A top-N framing needs a limit that bound, or a question that asked
+        # for one ("top 5 customers" returning all 3 that exist is still the
+        # reader's top-5 framing, and complete). A defensive TOP that never
+        # bit, on a question that never asked, is neither.
+        asks_top_n = detect_top_n_intent(question) is not None
+        if explicit_limit is not None and (limit_bound or asks_top_n):
             scope["is_top_n"] = True
             scope["n"] = explicit_limit
         scope["is_complete_distribution"] = not was_limited
