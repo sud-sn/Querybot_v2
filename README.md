@@ -134,6 +134,20 @@ autocorrelation at the seasonal lag. If a model is unavailable or will not
 converge, the fit falls back down that ladder and says so; a missing library is
 never a reason to refuse a user a forecast.
 
+**Investigations.** An explicit ask -- *investigate*, *look into*, *dig into*,
+*root-cause analysis of* -- starts a bounded, multi-step inquiry instead of one
+query and one guess. The objective itself is always the first governed
+question; every question after that is a model's own choice, made from
+nothing but the labels and figures each prior step actually found (never the
+row set), to either ask one more question or stop and summarize. The summary
+is checked before a reader ever sees it: every figure it states must be one a
+step found, every quoted term or column-like identifier must come from a step
+or the objective. A summary that fails the check, a planner that returns
+nothing usable, or a budget that runs out first, all fall back to a template
+built from the steps alone. A regulated tenant is refused before the first
+question is even asked. Each investigation runs under its own agent run, with
+a step per question asked, completed or failed as each one actually went.
+
 ### Evaluation, learning, and observability
 
 - End-to-end traces from question, retrieval, semantic plan, graph plan, SQL validation, execution, and response.
@@ -351,7 +365,7 @@ Run the complete suite:
 python -m pytest -q
 ```
 
-The current baseline is **11155 passed, 9 skipped**. Treat any drop as a
+The current baseline is **11219 passed, 9 skipped**. Treat any drop as a
 regression rather than noise; the statistical suites are seeded and the coverage
 bounds are set from measurement, not tuned to pass.
 
@@ -474,6 +488,9 @@ Primary implementation entry points:
 | `core/result_conversation.py` | Talking to a result on screen, and the card's own courtesy replies |
 | `core/situation_phraser.py` | A failed turn reworded by the model for the reader, checked, with the catalogue as fallback |
 | `core/vocab_packs.py` | Source-system and industry terminology packs merged into the tenant's vocabulary |
+| `core/investigation.py` | The one tool an investigation calls: an ordinary governed question, captured |
+| `core/investigation_planner.py` | The plan-act-observe loop, its verified synthesis, and the template fallback |
+| `core/agent_runtime.py` | A durable, budgeted agent run and its steps |
 | `core/question_normalizer.py` | French questions canonicalised for the deterministic detectors |
 | `core/i18n.py` | The English and French message catalogue and number formatting |
 | `core/contextual_dates.py` | Metric-aware date-context resolution |
@@ -508,6 +525,7 @@ rule would be one copy that can be forgotten.
 - A result card's conversation lives in the server process for the session: a page reload starts it afresh, and the memory is the last five turns.
 - "Is that good?" typed in the main chat while a result is on screen is routed as a refinement of that result, not to the analyst; ask it in the card, where the conversational reply reads the same brief.
 - The analyst's offer to run a query ("if you'd like, I can run…") replays the reader's own message when accepted, not the question the analyst proposed.
+- An investigation's live progress is a single status update before the loop starts, not a per-step trail as it happens; the full step-by-step trail is recorded and shown only once the loop returns. The one tool it calls today is an ordinary governed question -- drill, compare, and forecast as distinct typed tools are a natural next step, not yet built. Its checked synthesis catches an invented figure and a quoted or warehouse-shaped term that was not returned, not an ordinary swapped proper noun written in plain prose with neither marker -- the same boundary `core/situation_phraser.py`'s identical check has.
 
 ## License and support
 
