@@ -45,7 +45,7 @@ class TestWhichQuestionsEarnAnAnalyst:
         "what changed between March and April?",
     ])
     def test_a_causal_question_gets_the_causal_treatment(self, question):
-        assert analysis_action_for(question) == "why"
+        assert analysis_action_for(question, mode="on_request") == "why"
 
     @pytest.mark.parametrize("question", [
         "analyse revenue by region",
@@ -54,7 +54,7 @@ class TestWhichQuestionsEarnAnAnalyst:
     ])
     def test_an_explicit_request_for_analysis_now_gets_one(self, question):
         """Every one of these returned nothing at all."""
-        assert analysis_action_for(question) == "analyze"
+        assert analysis_action_for(question, mode="on_request") == "analyze"
 
     @pytest.mark.parametrize("question", [
         "revenue by region",
@@ -65,14 +65,14 @@ class TestWhichQuestionsEarnAnAnalyst:
     def test_a_plain_retrieval_still_costs_nothing_extra(self, question):
         """The half of the old gate that was right. A round trip here buys
         nothing the deterministic summary does not already say."""
-        assert analysis_action_for(question) == ""
+        assert analysis_action_for(question, mode="on_request") == ""
 
     def test_a_clarification_reply_is_not_a_new_question(self):
-        assert analysis_action_for("why did revenue drop?",
+        assert analysis_action_for("why did revenue drop?", mode="on_request",
                                    is_clarification=True) == ""
 
     def test_nothing_at_all_is_not_a_question(self):
-        assert analysis_action_for("") == ""
+        assert analysis_action_for("", mode="on_request") == ""
 
 
 class _Adapter:

@@ -359,6 +359,16 @@
           </div>
         </div>
         {% endif %}
+        <div class="form-grid" style="margin-top:.25rem">
+          <div class="form-group">
+            <label>Analyst explanation</label>
+            <select name="analysis_mode">
+              <option value="always" {% if (client.analysis_mode or 'always') == 'always' %}selected{% endif %}>After every answer</option>
+              <option value="on_request" {% if client.analysis_mode == 'on_request' %}selected{% endif %}>Only when the question asks for analysis or a cause</option>
+            </select>
+            <p class="form-note">The model-written explanation of a result, sent as a second message after the answer card, in the reader's language. "After every answer" costs one extra model call per question. Regulated tenants never send result data to the model, whatever this says.</p>
+          </div>
+        </div>
         <div class="form-group" style="margin-top:.25rem">
           <label class="form-switch">
             <input type="checkbox" name="enable_llm_audit" value="1" {% if client.enable_llm_audit %}checked{% endif %}>

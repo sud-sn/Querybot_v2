@@ -97,32 +97,63 @@ def is_causal_question(question: str) -> bool:
     return any(re.search(p, q) for p in _CAUSAL_STRICT_PATTERNS)
 
 
-def analysis_action_for(question: str, *, is_clarification: bool = False) -> str:
-    """Which model-written analysis a fresh question has earned, if any.
+ANALYSIS_MODES = ("always", "on_request")
 
-    Returns "why", "analyze", or "" — and "" is the common case on purpose.
+
+def analysis_mode_for(client: dict | None) -> str:
+    """The tenant's analyst setting, read off its client row.
+
+    "always" unless the row says "on_request". Anything else -- a row from
+    before the column existed, an empty string, a typo in a hand-edited
+    database -- is the default, because the default is the behaviour the
+    product promises and a silent downgrade to on-request is exactly the
+    kind of failure nobody notices until a customer does.
+    """
+    mode = str((client or {}).get("analysis_mode") or "").strip().lower()
+    return mode if mode in ANALYSIS_MODES else "always"
+
+
+def analysis_action_for(
+    question: str, *, mode: str, is_clarification: bool = False,
+) -> str:
+    """Which model-written analysis this answer gets, if any.
+
+    Returns "why", "analyze", or "".
 
         "why did revenue drop"       -> "why"      causal treatment, drill-down
                                                    queries against the warehouse
         "analyse revenue by region"  -> "analyze"  one call, no further SQL,
                                                    written from the result on
                                                    screen
-        "revenue by region"          -> ""         the deterministic summary
-                                                   the answer card already has
+        "revenue by region"          -> "analyze"  when the tenant's mode is
+                                                   "always" -- the default
+                                     -> ""         when it is "on_request":
+                                                   the deterministic summary
+                                                   the card already carries
 
-    Only the first row existed. The pipeline gated its one narrative on
-    is_causal_question, a strict subset of is_insight_question, so a reader who
-    asked in as many words to be told what a result MEANS -- "analyse this",
-    "what stands out", "interpret the revenue split" -- was answered with a
-    table and no analyst. The narrow gate was right about cost: a round trip on
-    every "revenue by region" buys nothing the deterministic summary does not
-    already say. It was wrong that an explicit request for analysis is the same
-    thing as a request to be shown some rows.
+    ``mode`` is the tenant's setting (analysis_mode_for) and has no default
+    here on purpose: a caller that forgot it would silently get one of two
+    behaviours, and the one place that calls this in production is the query
+    pipeline, which knows its tenant.
 
-    A clarification reply earns nothing: the reader is answering the bot's own
-    question, not asking a new one.
+    "always" is what a reader expects of an analyst: after every result, a
+    few sentences on what it shows, in the reader's language. The gate that
+    used to exist -- analysis only for causal wording, later also for an
+    explicit "analyse" -- was right about cost, one model round trip per
+    question, and wrong about the product: the customer who saw a table and
+    three computed sentences asked where the analyst was. The cost is now the
+    tenant's choice, and "on_request" keeps the old behaviour exactly.
+
+    A clarification reply earns nothing in "on_request" mode: the reader is
+    answering the bot's own question, not asking a new one. In "always" mode
+    the result it produces is still a result, and the question that reaches
+    here is the reader's resolved question, so it is explained like any other.
     """
-    if is_clarification or not question:
+    if not question:
+        return ""
+    if mode == "always":
+        return "why" if is_causal_question(question) else "analyze"
+    if is_clarification:
         return ""
     if is_causal_question(question):
         return "why"

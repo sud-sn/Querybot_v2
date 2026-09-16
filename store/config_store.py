@@ -426,6 +426,7 @@ def update_client_meta(
     graph_use_suggested: Optional[int] = None,
     erp_packs: Optional[str] = None,
     teams_tenant_id: Optional[str] = None,
+    analysis_mode: Optional[str] = None,
 ) -> None:
     """Update one or more metadata fields on a client row.
 
@@ -469,6 +470,15 @@ def update_client_meta(
         fields.append("erp_packs = ?"); params.append(erp_packs)
     if teams_tenant_id is not None:
         fields.append("teams_tenant_id = ?"); params.append(teams_tenant_id)
+    if analysis_mode is not None:
+        # Two values, and a third is a bug upstream rather than a preference
+        # to store: the pipeline would read it as "always" (core.insight
+        # .analysis_mode_for) while the admin form showed neither option.
+        if analysis_mode not in ("always", "on_request"):
+            raise ValueError(
+                f"analysis_mode must be 'always' or 'on_request', not {analysis_mode!r}"
+            )
+        fields.append("analysis_mode = ?"); params.append(analysis_mode)
     if not fields:
         return
     fields.append("updated_at = datetime('now')")

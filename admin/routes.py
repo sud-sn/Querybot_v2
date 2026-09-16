@@ -2201,6 +2201,7 @@ async def client_update(
     sql_accuracy_target_pct: str = Form("85"),
     portal_only:         str = Form(""),
     teams_platform_config_id: str = Form(""),
+    analysis_mode:       str = Form("always"),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -2252,6 +2253,7 @@ async def client_update(
         # "— not assigned —" selected: clear the mapping.
         _teams_kwargs = {"teams_tenant_id": ""}
 
+    from core.insight import analysis_mode_for
     try:
         store.update_client_meta(
             account_id,
@@ -2262,6 +2264,9 @@ async def client_update(
             query_limit_monthly = int(query_limit_monthly) if query_limit_monthly else None,
             token_limit_monthly = int(token_limit_monthly) if token_limit_monthly else 0,
             enable_llm_audit    = 1 if enable_llm_audit else 0,
+            # The same reader the pipeline uses, so an unknown value from a
+            # stale form is stored as the default the pipeline would apply.
+            analysis_mode       = analysis_mode_for({"analysis_mode": analysis_mode}),
             enable_python_analysis = 1 if enable_python_analysis else 0,
             # Pasted source is a stricter child capability and cannot remain
             # active while governed Python itself is disabled.

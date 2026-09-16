@@ -300,8 +300,8 @@ class TestThePipelineReadsTheCanonicalTextAndKeepsTheReadersOwn:
         from core.question_normalizer import canonical_question
 
         french = "Pourquoi les ventes ont-elles baissé ?"
-        assert analysis_action_for(french) == ""
-        assert analysis_action_for(canonical_question(french, "fr")) == "why"
+        assert analysis_action_for(french, mode="on_request") == ""
+        assert analysis_action_for(canonical_question(french, "fr"), mode="on_request") == "why"
 
     def test_retrieval_reads_it_too(self):
         """BM25 strips every non-[A-Za-z0-9_] character and the embedder is

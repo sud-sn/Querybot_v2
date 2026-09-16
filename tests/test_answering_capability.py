@@ -366,20 +366,20 @@ class CausalRouteTests(unittest.TestCase):
         from core.question_normalizer import canonical_question
 
         # Causal: the full treatment, drill-down queries included.
-        self.assertEqual(analysis_action_for("why did revenue drop?"), "why")
+        self.assertEqual(analysis_action_for("why did revenue drop?", mode="on_request"), "why")
         # A French reader asks the same thing with no "why" in it.
         french = "Pourquoi les ventes ont-elles baissé ?"
-        self.assertEqual(analysis_action_for(french), "")
+        self.assertEqual(analysis_action_for(french, mode="on_request"), "")
         self.assertEqual(
-            analysis_action_for(canonical_question(french, "fr")), "why")
+            analysis_action_for(canonical_question(french, "fr"), mode="on_request"), "why")
         # An explicit request for analysis: one call, no drill-down.
-        self.assertEqual(analysis_action_for("analyse revenue by region"),
+        self.assertEqual(analysis_action_for("analyse revenue by region", mode="on_request"),
                          "analyze")
         # A plain retrieval still costs nothing extra.
-        self.assertEqual(analysis_action_for("revenue by region"), "")
+        self.assertEqual(analysis_action_for("revenue by region", mode="on_request"), "")
         # A clarification reply is the reader answering, not asking.
         self.assertEqual(
-            analysis_action_for("why did revenue drop?", is_clarification=True), "")
+            analysis_action_for("why did revenue drop?", mode="on_request", is_clarification=True), "")
 
     def test_pipeline_hooks_after_both_success_paths(self):
         src = _src("core/query_pipeline.py")

@@ -1360,11 +1360,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
 
     # "why" (causal, drills down), "analyze" (one call, no further SQL)
-    # or "" (the deterministic summary the card already carries). See
-    # core.insight.analysis_action_for for why the middle row exists.
-    from core.insight import analysis_action_for
+    # or "" (the deterministic summary the card already carries). Whether a
+    # plain question earns the analyst at all is the tenant's analysis_mode,
+    # "always" by default. See core.insight.analysis_action_for.
+    from core.insight import analysis_action_for, analysis_mode_for
     _analysis_action = analysis_action_for(
-        _analysis_question, is_clarification=is_clarification)
+        _analysis_question, mode=analysis_mode_for(client),
+        is_clarification=is_clarification)
     _why_mode = bool(_analysis_action)
 
     # Identity passed through every query-log row for audit + billing.

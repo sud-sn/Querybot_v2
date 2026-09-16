@@ -1260,6 +1260,10 @@ def _run_migrations() -> None:
         # joins to feed SQL generation. Default 1 preserves existing behaviour;
         # set 0 to enforce admin review before the graph affects queries.
         ("client", "graph_use_suggested",        "INTEGER NOT NULL DEFAULT 1"),
+        # v35: the model-written analyst explanation after an answer. "always"
+        # sends it after every result; "on_request" only when the question
+        # asked for analysis or a cause. See core.insight.analysis_action_for.
+        ("client", "analysis_mode",              "TEXT NOT NULL DEFAULT 'always'"),
         # v30: validated_examples governance columns
         ("validated_examples", "approval_status",          "TEXT NOT NULL DEFAULT 'legacy'"),
         ("validated_examples", "candidate_id",             "TEXT NOT NULL DEFAULT ''"),
