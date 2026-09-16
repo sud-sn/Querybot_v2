@@ -10829,6 +10829,25 @@ async def admin_build_kb(
                         "percent": 0,
                         "current_table": "",
                     })
+                    # The repair rewrote the Stage-2 files, so the suggestion
+                    # cache is rebuilt from them BEFORE the second validation,
+                    # never after. build_suggestion_cache reads every Q: line
+                    # in those files, including the ones this validation is
+                    # about to reject, and the validation prunes the cache as
+                    # its last act. Rebuilding afterwards therefore restored
+                    # exactly the questions the prune had just removed — on
+                    # precisely the builds that had failures, which is where
+                    # the panel most needed the prune. The prune has to be the
+                    # last word, so the rebuild goes first.
+                    try:
+                        from core.suggestions import build_suggestion_cache as _repair_bsc
+                        _repair_bsc(kb_dir)
+                    except Exception as _repair_suggestion_error:
+                        log.warning(
+                            "Suggestion cache rebuild after SQL repair failed for %s "
+                            "(%s) — the panel keeps the pre-repair question set",
+                            account_id, _repair_suggestion_error,
+                        )
                     validation_result = await _run_example_validation(
                         account_id,
                         kb_dir,
@@ -10838,11 +10857,6 @@ async def admin_build_kb(
                         progress_callback=_on_kb_progress,
                     )
                     validation_result["repair"] = repair_result
-                    try:
-                        from core.suggestions import build_suggestion_cache as _repair_bsc
-                        _repair_bsc(kb_dir)
-                    except Exception as _repair_suggestion_error:
-                        log.debug("Suggestion cache after SQL repair: %s", _repair_suggestion_error)
             building_state["kb_example_validation"] = validation_result
             validation_status = validation_result.get("status")
             if validation_status == "stopped":

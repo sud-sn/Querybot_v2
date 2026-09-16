@@ -412,10 +412,41 @@ class TestASuggestionIsCheckedAgainstWhatWillPlanIt:
             assert prune_suggestion_cache(tmp, set()) == 0
 
     def test_the_pruner_is_called_after_validation(self):
+        """"After" is the whole guarantee, and a substring search cannot see it.
+
+        The pruner keeps the questions validation accepted, so running it
+        before validation would keep the previous run's answer — and reading
+        the file for the call name says nothing about where the call sits.
+        The validation worker needs a live warehouse to reach either line, so
+        the order is read from the syntax tree instead.
+        """
+        import ast
         from pathlib import Path
 
-        source = Path("core/dispatcher.py").read_text(encoding="utf-8")
-        assert "prune_suggestion_cache(" in source
+        tree = ast.parse(Path("core/dispatcher.py").read_text(encoding="utf-8"))
+        worker = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_example_validation_process_entry"
+        )
+        # ast.walk is breadth-first, so the earliest call has to be taken by
+        # line number rather than by the order the walk happens to yield.
+        lines: dict[str, int] = {}
+        for node in ast.walk(worker):
+            if isinstance(node, ast.Call):
+                name = getattr(node.func, "id", "") or getattr(node.func, "attr", "")
+                if name in {"validate_and_store_examples", "prune_suggestion_cache"}:
+                    lines[name] = min(lines.get(name, node.lineno), node.lineno)
+
+        assert "validate_and_store_examples" in lines, "the worker no longer validates"
+        assert "prune_suggestion_cache" in lines, (
+            "nothing prunes the suggestion cache after validation — every "
+            "question whose SQL failed is still a clickable chip"
+        )
+        assert lines["validate_and_store_examples"] < lines["prune_suggestion_cache"], (
+            "the cache is pruned before validation runs, so it is pruned "
+            "against the previous run's verdict"
+        )
 
     def test_the_portal_filler_is_gated_and_acl_checked(self):
         """It ran after get_suggestions() and was gated on nothing, and its own
