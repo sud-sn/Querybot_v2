@@ -478,12 +478,15 @@ class QuestionScrubWiringTests(unittest.TestCase):
         #
         # `history` is keyword-only and the gate always passes it -- the recent
         # non-data exchanges, so the analyst can answer a follow-up about its
-        # own previous reply. Spelled out rather than swallowed by **kwargs: a
-        # double that accepts anything cannot tell you when it has drifted from
-        # what production actually calls.
-        async def _fake_analyst(text, account_id, client_row, *, history=None):
+        # own previous reply -- as are `result_question` and `result_brief`,
+        # the result on the reader's screen. Spelled out rather than swallowed
+        # by **kwargs: a double that accepts anything cannot tell you when it
+        # has drifted from what production actually calls.
+        async def _fake_analyst(text, account_id, client_row, *, history=None,
+                                result_question="", result_brief=""):
             seen["classifier_text"] = text
             seen["history"] = history
+            seen["result_brief"] = result_brief
             return None  # None = let through to pipeline (same as old True)
 
         async def _fake_hq(account_id, event, adapter, text, portal_user, is_clarification=False):

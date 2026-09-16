@@ -201,9 +201,10 @@ class TestTheReaderCanNameTheirOwnData:
         """The reason cached values are matched on the READER's words. A
         warehouse or channel called "Marge" canonicalises to "margin" and a
         product line called "Vente" to "sales" -- translate the sentence and
-        the tenant's own value is gone from it."""
+        the tenant's own value is gone from it. ("seulement" itself is "only"
+        since the card's verbs joined the lexicon; the value is the point.)"""
         assert canonical_question(f"seulement {value}", "fr") == \
-            f"seulement {rewritten}"
+            f"only {rewritten}"
         assert routes(f"seulement {value}", "fr",
                       rows=[{"WHS_DSC": value}]) is True
 
