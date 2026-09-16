@@ -1529,6 +1529,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Wording by the model; the diagnosis is the system's.",
         "fr": "Formulation par le modèle ; le diagnostic est celui du système.",
     },
+    "investigation.regulated_refusal": {
+        "en": "This workspace's compliance posture does not allow an investigation to run: no step's findings may reach a planning model. Ask one governed question at a time instead.",
+        "fr": "La posture de conformité de cet espace de travail ne permet pas de lancer une investigation : les résultats d'aucune étape ne peuvent être transmis à un modèle de planification. Posez plutôt vos questions gouvernées une par une.",
+    },
+    "investigation.template.headline": {
+        "en": "Investigated: {objective}",
+        "fr": "Investigation : {objective}",
+    },
+    "investigation.template.step_found": {
+        "en": "Step {index} asked: {question}\nFound: {brief}",
+        "fr": "Étape {index} — question posée : {question}\nRésultat : {brief}",
+    },
+    "investigation.template.step_failed": {
+        "en": "Step {index} asked: {question}\nCould not be answered: {error}",
+        "fr": "Étape {index} — question posée : {question}\nSans réponse : {error}",
+    },
     "fail.generic.next_step_technical": {
         "en": "Try rephrasing the question; if it keeps failing, share the technical details with your administrator.",
         "fr": "Reformulez la question ; si l'échec persiste, transmettez les détails techniques à votre administrateur.",
