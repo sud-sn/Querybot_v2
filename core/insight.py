@@ -1158,8 +1158,11 @@ def _converse_user_message(
 
     `history` entries are the turn records the socket already keeps
     (`question`, and whichever of `row_count` / `operation` / `sql` that turn
-    produced). Only the reader's own wording and the shape of what came back
-    are passed on: a turn's rows are never re-sent.
+    produced, or `reply` when the turn was answered in prose). Only the
+    reader's own wording, the shape of what came back and what was said back
+    are passed on: a turn's rows are never re-sent. Without the reply, "why
+    did you say that?" was answered by a model that had never seen what it
+    said.
     """
     parts = [
         f"The result on screen answers: {action_contract.get('question', '')}",
@@ -1177,6 +1180,9 @@ def _converse_user_message(
             shape = f" (ran: {turn['operation']})"
         elif turn.get("row_count") is not None:
             shape = f" (returned {turn['row_count']} rows)"
+        replied = str(turn.get("reply") or "").strip()
+        if replied:
+            shape = f"{shape} -- you answered: {replied[:240]}"
         parts.append(f"Earlier in this conversation they asked: {asked}{shape}")
     parts.append(f"\nData brief:\n{_format_brief_for_prompt(action_contract)}")
     grounding_block = _format_grounding_for_prompt(

@@ -45,7 +45,8 @@ from core.result_commands import (
     parse_result_command,
 )
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
-from core.result_conversation import converse_about_result
+from core.result_conversation import converse_about_result, courtesy_reply_for_card, is_card_courtesy
+from core.conversational import detect_conversational
 from core.result_planner import (
     is_metadata_result_question,
     strip_result_context,
@@ -3012,6 +3013,38 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     _rc_db_cfg      = get_client_db(account_id) or {}
                     _rc_history     = _result_chat_histories.get(rc_result_id, [])
 
+                    # A courtesy typed into the card -- "thanks", "merci",
+                    # "bonjour", "bye" -- is not a question about the result,
+                    # and it used to be routed like one: the metadata planner,
+                    # then the production-database fallback, then the
+                    # conversational model. Three model calls to answer
+                    # "thanks", and a planner that sometimes read it as a
+                    # filter. Heard on the reader's own words first, then on
+                    # the canonical text, so "merci" and "c'est parfait" both
+                    # reach the pattern that knows them.
+                    _rc_courtesy = (detect_conversational(rc_question)
+                                    or detect_conversational(_rc_analysis_question))
+                    if is_card_courtesy(_rc_courtesy):
+                        _rc_courtesy_reply = courtesy_reply_for_card(_rc_courtesy, portal_user)
+                        _rc_history.append({"question": rc_question, "reply": _rc_courtesy_reply})
+                        _result_chat_histories[rc_result_id] = _rc_history[-5:]
+                        await websocket.send_json({
+                            "type": "result_chat_message",
+                            "result_id": rc_result_id,
+                            "question": rc_question,
+                            "content": _rc_courtesy_reply,
+                        })
+                        _trace_finish(
+                            _rc_trace_id,
+                            status="success",
+                            answer_type="result_courtesy",
+                            duration_ms=int(time.time() * 1000) - _rc_start_ms,
+                            final_answer_summary=(
+                                "Courtesy answered without a planner, a query or a model"
+                            ),
+                        )
+                        continue
+
                     _rc_provider, _rc_model, _rc_key, _rc_az = resolve_provider(
                         client, purpose="query"
                     )
@@ -3110,6 +3143,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             "operation": _rc_outcome.operation,
                         })
                         _result_chat_histories[rc_result_id] = _rc_history[-5:]
+                        # The browser addresses its next question to the card
+                        # this turn produced (portal_chat.html switches
+                        # currentResultId to derived_result_id), so the
+                        # conversation has to be findable under that id too --
+                        # keyed by the source id alone, every transform reset
+                        # the memory to nothing.
+                        if (_rc_outcome.derived_result_id
+                                and _rc_outcome.derived_result_id != rc_result_id):
+                            _result_chat_histories[_rc_outcome.derived_result_id] = (
+                                _result_chat_histories[rc_result_id])
                         _log_q(
                             account_id, rc_question, _rc_sql, len(_rc_rows), True, "",
                             "governed_result_cache", "duckdb", 0, 0, _rc_dur_ms,
@@ -3155,10 +3198,23 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             if _rc_followup.status == "blocked"
                             else _t("reply.result_chat.retry_detail")
                         )
+                        # "blocked" is the planner declining or failing on a
+                        # question that names a value in the result, and its
+                        # reason is written for the trace -- "The metadata
+                        # planner did not return valid JSON" was the whole
+                        # reply a reader got. They get the catalogue's
+                        # sentence, in their language, as the main chat
+                        # already sends for the same status; the reason
+                        # still goes to the trace below.
+                        _rc_reader_reason = (
+                            _t("reply.result.unsafe_operation")
+                            if _rc_followup.status == "blocked"
+                            else (_rc_followup.reason or _t("reply.result.followup_failed"))
+                        )
                         await websocket.send_json({
                             "type": "result_chat_error",
                             "result_id": rc_result_id,
-                            "content": _rc_followup.reason or _t("reply.result.followup_failed"),
+                            "content": _rc_reader_reason,
                             "detail": detail,
                         })
                         _trace_finish(
@@ -3712,7 +3768,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     **_rc_az,
                                 )
                             if _rc_conv_reply:
-                                _rc_history.append({"question": rc_question})
+                                _rc_history.append({
+                                    "question": rc_question,
+                                    "reply": str(_rc_conv_reply)[:400],
+                                })
                                 _result_chat_histories[rc_result_id] = _rc_history[-5:]
                                 await websocket.send_json({
                                     "type":        "result_chat_message",

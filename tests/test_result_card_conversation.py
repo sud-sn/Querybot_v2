@@ -47,7 +47,6 @@ CONVERSATIONAL = [
     "what is the total?",
     "why is that?",
     "what does NET_AMOUNT mean?",
-    "thanks!",
 ]
 
 
@@ -90,6 +89,16 @@ class TestTheCardAnswersAQuestionItCannotQuery:
         frame = _reply(_ask_the_card(typed))
         assert frame.get("type") == "result_chat_message", frame
         assert frame["content"] == model["reply"]["text"]
+
+    def test_a_courtesy_is_answered_by_the_card_without_the_model(self, model):
+        """"thanks!" used to be one of the cases above: three model calls to
+        say you're welcome. The card now answers it itself, in the reader's
+        language (tests/test_the_card_keeps_the_conversation.py has the rest)."""
+        from core.i18n import t
+        frame = _reply(_ask_the_card("thanks!"))
+        assert frame.get("type") == "result_chat_message", frame
+        assert frame["content"] == t("reply.thanks", "en")
+        assert not model["conversational"], "the model was asked to say you're welcome"
 
     def test_the_reply_says_where_it_came_from(self, model):
         """The governed cache engine can claim no result values reached the

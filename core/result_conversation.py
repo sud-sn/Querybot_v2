@@ -142,3 +142,38 @@ async def converse_about_result(
     if headline and headline not in body:
         return f"{headline} {body}".strip()
     return body or headline
+
+
+# ── Courtesies typed into the card ──────────────────────────────────────────
+# "thanks", "merci", "bonjour", "bye" are not questions about the result, and
+# they used to be routed as if they were: the metadata planner, then the
+# production-database fallback, then the conversational model -- three model
+# calls to answer "thanks", and a planner that sometimes read "merci" as a
+# filter. The reply is deterministic and in the reader's language, which the
+# socket has already activated for the connection.
+_COURTESY_KINDS = ("greeting", "thanks", "goodbye")
+
+
+def is_card_courtesy(kind: str | None) -> bool:
+    """Whether a core.conversational kind is one the card answers by itself."""
+    return kind in _COURTESY_KINDS
+
+
+def courtesy_reply_for_card(kind: str, portal_user: dict | None = None) -> str:
+    """What the card says back to a greeting, a thank-you or a goodbye.
+
+    "" for any other kind, so a caller that forgot to check gets nothing to
+    send rather than a greeting under a real question.
+    """
+    from core.i18n import t as _t
+
+    if kind == "thanks":
+        return _t("reply.thanks")
+    if kind == "goodbye":
+        return _t("reply.goodbye")
+    if kind == "greeting":
+        name = str((portal_user or {}).get("name") or "").strip()
+        hello = (_t("reply.greeting.hello_named", name=name.split()[0]) if name
+                 else _t("reply.greeting.hello"))
+        return f"{hello} {_t('reply.result_chat.greeting_hint')}"
+    return ""

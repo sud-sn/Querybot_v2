@@ -5514,6 +5514,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Run the business question again or use an exact result column.",
         "fr": "Reposez la question métier ou utilisez un nom de colonne exact du résultat.",
     },
+    "reply.result_chat.greeting_hint": {
+        "en": "Ask me anything about the result above — a total, a comparison, or why a figure looks the way it does.",
+        "fr": "Posez-moi n'importe quelle question sur le résultat ci-dessus — un total, une comparaison, ou pourquoi un chiffre se présente ainsi.",
+    },
 
     # ── The prior-period chip ───────────────────────────────────────────────
     "reply.prior.failed_headline": {
