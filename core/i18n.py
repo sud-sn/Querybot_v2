@@ -1525,6 +1525,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Try rephrasing the question, or contact your administrator.",
         "fr": "Reformulez la question ou contactez votre administrateur.",
     },
+    "fail.phrased_note": {
+        "en": "Wording by the model; the diagnosis is the system's.",
+        "fr": "Formulation par le modèle ; le diagnostic est celui du système.",
+    },
     "fail.generic.next_step_technical": {
         "en": "Try rephrasing the question; if it keeps failing, share the technical details with your administrator.",
         "fr": "Reformulez la question ; si l'échec persiste, transmettez les détails techniques à votre administrateur.",

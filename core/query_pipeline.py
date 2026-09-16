@@ -111,9 +111,10 @@ from core.pipeline_context import (
     _scope_semantic_plan_to_analytical_request,
     check_query_limit, check_token_limit,
 )
+from core.situation_phraser import phrase_failure
 from core.pipeline_helpers import (
     _extract_kb_synonym_injection, _send_live_stage, _sql_preview,
-    _count_tables_for_zero_row, _build_zero_row_message,
+    _count_tables_for_zero_row, build_zero_row_parts, format_zero_row_parts,
     _format_metric_formula_context, _extract_metric_formula_tables,
     _build_row_metric_join_sql, attempt_field_plan_repair,
     attempt_governed_temporal_metric_repair, compile_governed_temporal_metric_sql,
@@ -7102,6 +7103,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 sql=sql, question=question,
                 suggestions=_suggest,
             )
+            # The diagnosis is the system's; the wording can be the model's,
+            # tied to the question and in the reader's language. Checked
+            # before it is shown, and the catalogue's sentences stand when
+            # it cannot be (core/situation_phraser.py).
+            _rca = await phrase_failure(
+                _rca, question=question, account_id=account_id, client=client,
+                provider=provider, model=model, api_key=api_key, **az_kwargs,
+            )
             from core.answer_formatter import format_failure_business_response
             await adapter.send_message(event, format_failure_business_response(
                 rca=_rca, sql=sql, sql_preview_fn=_sql_preview,
@@ -7161,6 +7170,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 f"A repaired query passed validation but failed to execute. "
                 f"Original validation failure: {last_code}."
             )
+        # After the timeout guidance, so the model rewords the final diagnosis.
+        _rca = await phrase_failure(
+            _rca, question=question, account_id=account_id, client=client,
+            provider=provider, model=model, api_key=api_key, **az_kwargs,
+        )
         await adapter.send_message(event, format_failure_business_response(
             rca=_rca, sql=sql, sql_preview_fn=_sql_preview,
         ))
@@ -7255,7 +7269,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             _zr_empty_tables = [table for table, count in _zr_counts.items() if count == 0]
             _trace_finish(trace_id, status="success", answer_type="empty", row_count=0, duration_ms=duration_ms, final_answer_summary="Query returned no rows")
-            await adapter.send_message(event, _build_zero_row_message(
+            _zr_confidence, _zr_rca = build_zero_row_parts(
                 question,
                 sql,
                 _graph_ctx,
@@ -7265,7 +7279,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 empty_tables=_zr_empty_tables,
                 semantic_plan=_semantic_plan,
                 account_id=account_id,
-            ))
+            )
+            _zr_rca = await phrase_failure(
+                _zr_rca, question=question, account_id=account_id, client=client,
+                provider=provider, model=model, api_key=api_key, **az_kwargs,
+            )
+            await adapter.send_message(event, format_zero_row_parts(
+                _zr_confidence, _zr_rca, sql))
             return
 
         with llm_audit_scope(

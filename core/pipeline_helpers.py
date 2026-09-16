@@ -443,7 +443,7 @@ def _zero_row_rca_hints(question: str, graph_ctx: dict | None = None) -> str:
     return "\n".join(f"- {h}" for h in hints)
 
 
-def _build_zero_row_message(
+def build_zero_row_parts(
     question: str,
     sql: str,
     graph_ctx: dict | None,
@@ -453,7 +453,11 @@ def _build_zero_row_message(
     empty_tables: list[str] | None = None,
     semantic_plan: dict | None = None,
     account_id: str = "",
-) -> str:
+) -> tuple[dict, dict]:
+    """(confidence, rca) for an empty result -- the diagnosis, before it is
+    formatted. Split from the formatting so the pipeline can have the RCA's
+    reason and next step reworded for the reader (core/situation_phraser.py)
+    and still render the same card."""
     tables = tables_used or extract_sql_tables(sql)
     empty = empty_tables or []
     # A WHERE literal that matches nothing in the value index is the most
@@ -486,12 +490,36 @@ def _build_zero_row_message(
         semantic_plan=semantic_plan,
         unmatched_literals=unmatched_literals,
     )
+    return confidence, rca
+
+
+def format_zero_row_parts(confidence: dict, rca: dict, sql: str) -> str:
+    """The zero-row card from its two halves."""
     return format_zero_row_business_response(
         confidence=confidence,
         rca=rca,
         sql=sql,
         sql_preview_fn=_sql_preview,
     )
+
+
+def _build_zero_row_message(
+    question: str,
+    sql: str,
+    graph_ctx: dict | None,
+    validation_code: str,
+    retry_count: int,
+    tables_used: list[str] | None = None,
+    empty_tables: list[str] | None = None,
+    semantic_plan: dict | None = None,
+    account_id: str = "",
+) -> str:
+    confidence, rca = build_zero_row_parts(
+        question, sql, graph_ctx, validation_code, retry_count,
+        tables_used=tables_used, empty_tables=empty_tables,
+        semantic_plan=semantic_plan, account_id=account_id,
+    )
+    return format_zero_row_parts(confidence, rca, sql)
 
 
 # ── Metric formula helpers ────────────────────────────────────────────────────
