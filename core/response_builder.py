@@ -1548,8 +1548,10 @@ def build_answer(
             trend = ("answer.trend_up" if last_val > first_val
                      else "answer.trend_down" if last_val < first_val
                      else "answer.trend_flat")
-            last_label = format_value(
-                last.get(label_col, _t("answer.latest_period")), label_col)
+            # The period in the words the table and the insight sentence use
+            # for it, not through the number formatter, which turned an
+            # integer year into "2,025".
+            last_label = narrative_period_labels(labels)[-1] or _t("answer.latest_period")
             headline = _t("answer.series_close", label=last_label,
                           value=format_value(last_val, value_col))
             comparison = scope.get("badge") or _t(
