@@ -4961,9 +4961,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "State what you want to measure, then add any breakdown, time range, filter, comparison, or presentation preference. You can ask for totals, KPIs, trends, top/bottom rankings, distributions, period comparisons, tables, and charts. After an answer, you can say things like _show only the top 10_, _format this as currency_, _show month and year_, _change this to a pie chart_, or _add this to a dashboard_. If the intended format or business meaning is unclear, I will ask a follow-up question.",
         "fr": "Indiquez ce que vous voulez mesurer, puis ajoutez une ventilation, une période, un filtre, une comparaison ou une préférence de présentation. Vous pouvez demander des totaux, des KPI, des tendances, des classements, des distributions, des comparaisons de périodes, des tableaux et des graphiques. Après une réponse, vous pouvez dire par exemple _affiche seulement le top 10_, _formate ceci en devise_, _affiche le mois et l'année_, _transforme ceci en camembert_ ou _ajoute ceci à un tableau de bord_. Si le format ou la signification métier n'est pas clair, je vous poserai une question complémentaire.",
     },
+    # Two headings, one promise each. "Validated" means every question under
+    # it is one a reader asked that came back with rows; core.suggestions can
+    # say that of its first tier only, and the guide used to print it over all
+    # three. The second heading is what is true of the rest: they are scoped
+    # to this reader's access and the entity graph can reach what they name,
+    # which is not the same as having been run.
     "guide.questions.validated": {
         "en": "*Validated questions for your current access:*",
         "fr": "*Questions validées pour vos accès actuels :*",
+    },
+    "guide.questions.available": {
+        "en": "*Questions you can ask with your current access:*",
+        "fr": "*Questions que vous pouvez poser avec vos accès actuels :*",
     },
     "guide.examples.none": {
         "en": "No validated starter questions are available for your current access yet.",

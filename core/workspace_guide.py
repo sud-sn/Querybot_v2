@@ -216,7 +216,18 @@ def _safe_examples(
     schema_dir: str,
     allowed_tables: set[str] | None,
     limit: int = 6,
-) -> list[str]:
+) -> tuple[list[str], bool]:
+    """The starter questions, and whether every one of them is proven.
+
+    core.suggestions fills this list from three tiers and only one of them —
+    a question a reader actually asked that actually returned rows — can be
+    called validated. The metric registry synthesises "What is our total
+    {name}?" from a name, and the Stage-2 tier is text the model wrote during
+    the knowledge-base build and nothing ever ran. The guide used to print
+    "Validated questions for your current access" over all three, so the
+    second return value is what the label is now allowed to claim: true only
+    when there is at least one question and every one of them is proven.
+    """
     try:
         from core.suggestions import get_suggestions
         suggestions = get_suggestions(
@@ -226,14 +237,20 @@ def _safe_examples(
             n=limit,
             schema_dir=schema_dir,
         )
-        return [
-            _clean_text(item.get("question"), 180).rstrip(" ?.!;:") + "?"
-            for item in suggestions
+        kept = [
+            item for item in suggestions
             if _clean_text(item.get("question"), 180)
         ][:limit]
+        questions = [
+            _clean_text(item.get("question"), 180).rstrip(" ?.!;:") + "?"
+            for item in kept
+        ]
+        # A suggestion with no "proven" key at all is not proven: the portal's
+        # shortfall filler appends bare {question, fqn} dicts of its own.
+        return questions, bool(kept) and all(item.get("proven") for item in kept)
     except Exception as exc:
         log.debug("Workspace guide suggestions unavailable: %s", exc)
-        return []
+        return [], False
 
 
 def build_workspace_guide(account_id: str, user: dict | None) -> dict:
@@ -312,7 +329,9 @@ def build_workspace_guide(account_id: str, user: dict | None) -> dict:
         except Exception as exc:
             log.debug("Workspace guide dashboards unavailable: %s", exc)
 
-    examples = _safe_examples(account_id, kb_dir, schema_dir, allowed_tables)
+    examples, examples_are_proven = _safe_examples(
+        account_id, kb_dir, schema_dir, allowed_tables,
+    )
     business = _sentence_safe_text(
         client.get("business_desc")
         or model.get("business_description")
@@ -334,6 +353,7 @@ def build_workspace_guide(account_id: str, user: dict | None) -> dict:
         "date_role_count": len(date_roles),
         "dashboards": dashboards,
         "examples": examples,
+        "examples_are_proven": examples_are_proven,
         "is_admin": allowed_tables is None,
     }
 
@@ -464,7 +484,16 @@ def render_workspace_guide(
     if kind == "question_examples":
         text = f"{_t('guide.questions.title')}\n\n{_t('guide.questions.body')}"
         if include_examples:
-            text += ("\n\n" + _t("guide.questions.validated") + "\n"
+            # "Validated" is a promise about provenance, and it was printed
+            # over a list where two of the three tiers have never been run.
+            # It is now claimed only when every question shown is one a reader
+            # actually asked and actually got rows from; otherwise the heading
+            # says what is true of all of them — that they are answerable
+            # within this reader's access.
+            heading = ("guide.questions.validated"
+                       if guide.get("examples_are_proven")
+                       else "guide.questions.available")
+            text += ("\n\n" + _t(heading) + "\n"
                      + _examples_block(examples))
         return text, examples
 

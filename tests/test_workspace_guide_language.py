@@ -71,7 +71,7 @@ class _Workspace:
     """
 
     def __init__(self, *, metrics=1, terms=1, dashboards=1, tables=True,
-                 examples=2, business=True):
+                 examples=2, business=True, examples_are_proven=False):
         allowed = ({"DB.SALES.F_ORDERS", "DB.SALES.D_CUSTOMER", "DB.SALES.D_DATE"}
                    if tables else set())
         self._patchers = [
@@ -95,8 +95,13 @@ class _Workspace:
             patch("core.workspace_guide.store.list_dashboards", return_value=[
                 {"id": i, "name": f"Board {i}", "chart_count": 1}
                 for i in range(dashboards)]),
-            patch("core.workspace_guide._safe_examples", return_value=[
-                f"Question {i}?" for i in range(examples)]),
+            # (questions, every one of them proven). core.suggestions can
+            # only make the second claim for its first tier, so the guide's
+            # heading is chosen from it -- see tests/test_a_starter_question_
+            # is_only_called_validated_when_it_is.py.
+            patch("core.workspace_guide._safe_examples", return_value=(
+                [f"Question {i}?" for i in range(examples)],
+                bool(examples) and examples_are_proven)),
         ]
 
     def __enter__(self):

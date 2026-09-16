@@ -332,7 +332,7 @@ def get_suggestions(
     suggestions: list[dict] = []
     seen: set[str] = set()
 
-    def _add(q: str, fqn: str = "") -> bool:
+    def _add(q: str, fqn: str = "", *, proven: bool = False) -> bool:
         # Clarification retries retain an internal wrapper in the audit log so
         # SQL generation can reproduce the resolved choice. That metadata is
         # not a user-facing question and must not leak into starter cards.
@@ -346,7 +346,14 @@ def get_suggestions(
         if not q or key in seen or len(suggestions) >= n:
             return False
         seen.add(key)
-        suggestions.append({"question": q, "fqn": fqn or ""})
+        # `proven` is the narrow claim, and only one tier can make it: a
+        # question a real reader asked that came back with rows. It travels
+        # with the suggestion because the panel that shows these used to label
+        # all of them "Validated questions", including the two tiers that have
+        # never been executed at all. A caller that ignores the key sees no
+        # change; a caller that makes a promise about these questions now has
+        # something to base it on.
+        suggestions.append({"question": q, "fqn": fqn or "", "proven": bool(proven)})
         return True
 
     allowed_upper = (
@@ -484,7 +491,12 @@ def get_suggestions(
                 continue
             if not _date_scope_is_answerable(q):
                 continue
-            _add(q, entry.get("fqn", ""))
+            # Only the query_log half of this tier is proven ANSWERABLE. A
+            # kb_stage2 example was compile-checked, which says its tables and
+            # columns resolve and nothing at all about whether it returns a
+            # row -- the same distinction the sort above is made on.
+            _add(q, entry.get("fqn", ""),
+                 proven=str(ex.get("source") or "") == "query_log")
             if len(suggestions) >= n:
                 break
     except Exception as e:

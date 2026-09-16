@@ -64,9 +64,11 @@ class WorkspaceGuideTests(unittest.TestCase):
             patch("core.workspace_guide.store.list_dashboards", return_value=[
                 {"id": 1, "name": "Sales overview", "chart_count": 4}
             ]),
-            patch("core.workspace_guide._safe_examples", return_value=[
-                "Show monthly revenue?", "Which customers placed the most orders?"
-            ]),
+            # (questions, every one of them proven) -- see _safe_examples.
+            patch("core.workspace_guide._safe_examples", return_value=(
+                ["Show monthly revenue?", "Which customers placed the most orders?"],
+                False,
+            )),
         ]
         for patcher in self.patchers:
             patcher.start()
