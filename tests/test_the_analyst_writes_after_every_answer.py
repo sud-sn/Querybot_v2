@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import os
+import shutil
+import tempfile
 import inspect
 import unittest
 import uuid
@@ -124,18 +127,26 @@ def _arun(coro):
 
 
 class TestTheSettingIsStoredAndEdited(unittest.TestCase):
-    """The real store and the real admin handler, on a throwaway client."""
+    """The real store and the real admin handler, on a throwaway client in a
+    throwaway database -- never the application's data/querybot.db."""
 
     def setUp(self):
         import store
+        self._tmp = tempfile.mkdtemp(prefix="qb_analyst_")
+        self._saved_env = {k: os.environ.get(k) for k in ("DB_PATH", "QUERYBOT_DB_PATH")}
+        os.environ["DB_PATH"] = os.environ["QUERYBOT_DB_PATH"] = os.path.join(self._tmp, "store.db")
         store.init_db()
         self.store = store
         self.account = f"acct-analyst-{uuid.uuid4().hex[:8]}"
         store.upsert_client(self.account, "portal")
 
     def tearDown(self):
-        with self.store.get_db() as conn:
-            conn.execute("DELETE FROM client WHERE account_id = ?", (self.account,))
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
     def _update(self, **kwargs):
         import admin.routes as routes
