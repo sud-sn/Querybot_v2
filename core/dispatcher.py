@@ -410,10 +410,68 @@ def _result_on_screen_for_analyst(account_id: str, snapshot: dict | None) -> tup
         return "", ""
 
 
+def _reply_asserts_an_unseen_figure(reply: str, allowed_text: str) -> str:
+    """The first figure in ``reply`` that neither the result brief nor the
+    reader's own message contains, or "" when every figure is accounted for.
+
+    The brief is the only data the analyst has seen, so a figure that is not
+    in it was not computed by anything. Small numbers pass ("the top 3", "two
+    columns"), and a figure within a rounding step of a known one passes.
+    """
+    from core.analysis_narrative import SMALL_NUMBER_CEILING, numbers_in
+
+    known = numbers_in(allowed_text or "")
+    for value in numbers_in(reply or ""):
+        if abs(value) <= SMALL_NUMBER_CEILING:
+            continue
+        if any(abs(value - k) <= 0.51 for k in known):
+            continue
+        return f"{value:g}"
+    return ""
+
+
+async def _reply_to_frustration(
+    account_id: str, event, adapter, text: str, portal_user, client_row: dict,
+) -> str:
+    """What to say when the reader says the last answer was wrong.
+
+    The catalogue's reply was the same three tips whatever had been answered.
+    The analyst can do better: it is handed the conversation so far and the
+    result on screen (where the tenant's policy allows), told the reader has
+    just called the answer wrong, and asked for one concrete way to correct
+    course. If it declines, hands the turn to the query pipeline, or fails,
+    the catalogue's reply is sent exactly as before -- a complaint is never
+    answered with silence or a query.
+    """
+    from core.conversational import build_reply
+    from core.result_cache import result_cache
+
+    fallback = build_reply("frustration", account_id, portal_user)
+    try:
+        history_fn = getattr(adapter, "get_analyst_history", None)
+        history = history_fn() if callable(history_fn) else []
+        session_id = _conversation_session_id(account_id, event, adapter)
+        snapshot = result_cache.get_snapshot(session_id) if session_id else {}
+        result_question, result_brief = _result_on_screen_for_analyst(account_id, snapshot)
+        reply = await _generate_analyst_reply(
+            text, account_id, client_row or {}, history=history,
+            result_question=result_question, result_brief=result_brief,
+            told_wrong=True,
+        )
+    except Exception as e:  # noqa: BLE001 - the catalogue's reply stands
+        log.warning("Frustration reply fell back to the catalogue: %s", e)
+        return fallback
+    if not reply:
+        return fallback
+    _remember_analyst_turn(adapter, text, reply)
+    return reply
+
+
 async def _generate_analyst_reply(
     text: str, account_id: str, client_row: dict,
     *, history: list[dict] | None = None,
     result_question: str = "", result_brief: str = "",
+    told_wrong: bool = False,
 ) -> str | None:
     """
     Dynamic conversational analyst — replaces the static _ABOUT / _OFF_TOPIC_REPLY blocks.
@@ -435,7 +493,10 @@ async def _generate_analyst_reply(
     them. The brief names real values, so the caller
     (_result_on_screen_for_analyst) passes it only where
     result_llm_features_allowed permits; a regulated tenant's analyst stays
-    metadata-only.
+    metadata-only. When a brief was given, a reply that asserts a figure the
+    brief does not hold is withheld and the catalogue's line sent instead: the
+    analyst may read the result, never invent one. `told_wrong` says the
+    reader has just called the last answer wrong or unhelpful.
 
     Fails open (returns None) on any error so a misconfigured LLM never blocks queries.
     Wraps the LLM call in llm_audit_scope so audit rows are written (previously missing).
@@ -478,6 +539,17 @@ async def _generate_analyst_reply(
             "question you could run instead.\n"
             if result_brief else ""
         )
+        wrong_rule = (
+            "- Told the answer was wrong, unhelpful or not what they asked: "
+            "acknowledge in a few words, say what the result on screen actually "
+            "covers (from its brief) or that you cannot see one, and offer one "
+            "concrete way to correct course -- a rephrasing, a filter, or a term "
+            "to name. Do not defend the answer and do not apologise at length.\n"
+        )
+        told_wrong_block = (
+            "\n\nThe reader has just said the last answer was wrong or unhelpful."
+            if told_wrong else ""
+        )
 
         # This reply is shown to the reader verbatim -- it is the answer to
         # "what can you do?" and to anything off-topic -- so it follows the
@@ -510,7 +582,7 @@ async def _generate_analyst_reply(
             "- Asked about something you just said: answer from the "
             "conversation above. If it is not there, say you do not have it "
             "rather than inventing it.\n"
-            + result_rule +
+            + result_rule + wrong_rule +
             "- Asked about yourself, or told something conversational: reply "
             "briefly and plainly, then say what you could look up. Do not "
             "recite your capabilities at someone who did not ask.\n"
@@ -521,6 +593,7 @@ async def _generate_analyst_reply(
             f"{history_block}"
             f"{result_block}"
             f"{context_block}"
+            f"{told_wrong_block}"
         )
         with llm_audit_scope(
             account_id=account_id,
@@ -543,6 +616,13 @@ async def _generate_analyst_reply(
         # instruction, so treat its presence anywhere as the handoff.
         if _PROCEED_TO_QUERY in reply.upper():
             return None  # genuine data query — fall through to pipeline
+        if reply and result_brief:
+            unseen = _reply_asserts_an_unseen_figure(
+                reply, f"{result_brief}\n{result_question}\n{text}")
+            if unseen:
+                log.warning("Analyst reply withheld: it asserts %s, which the result "
+                            "brief does not hold", unseen)
+                return _t("reply.analyst.figure_withheld")
         return reply or None
     except Exception as e:
         # warning, not debug: this call silently returning None on every
@@ -1553,6 +1633,12 @@ async def dispatch(
             await adapter.send_message(event, _intro)
             if _qs:
                 await _send_sq(event, _t("reply.greeting.starters"), _qs)
+        elif _conv_kind == "frustration":
+            # "This is wrong" is about a specific answer, so the reply is
+            # about that answer: the analyst, with the conversation and the
+            # result on screen, and the catalogue's tips as its fallback.
+            await adapter.send_message(event, await _reply_to_frustration(
+                account_id, event, adapter, text, portal_user, client_row))
         else:
             await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
         return

@@ -4988,6 +4988,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Want to try rephrasing your question?",
         "fr": "Voulez-vous reformuler votre question ?",
     },
+    "reply.analyst.figure_withheld": {
+        "en": "I can't quote a figure for that from the result on screen without computing it — ask me to run it and I will.",
+        "fr": "Je ne peux pas citer ce chiffre à partir du résultat affiché sans le calculer — demandez-moi de l'exécuter et je le ferai.",
+    },
     "reply.opinion.lead": {
         "en": "I report data — the judgment calls are yours. 🙂",
         "fr": "Je rapporte les données — les jugements vous appartiennent. 🙂",

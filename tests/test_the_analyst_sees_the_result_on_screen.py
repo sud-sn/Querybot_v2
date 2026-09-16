@@ -134,8 +134,10 @@ class TestThePromptCarriesTheResult:
         assert dispatcher._PROCEED_TO_QUERY in system
 
     def test_the_reply_comes_back(self, model):
+        # Every figure the canned reply asserts is in this brief; a figure the
+        # brief does not hold is withheld (tests/test_being_told_the_answer_is_wrong_gets_a_real_reply.py).
         assert self._ask("is that good?", result_question=QUESTION,
-                         result_brief="Total: 190.0") == model["reply"]
+                         result_brief="Leader: North 100.0\nTotal: 190.0") == model["reply"]
 
 
 class TestTheDispatcherLooksAtTheScreen:
