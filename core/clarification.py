@@ -231,6 +231,45 @@ def can_request_clarification(event=None, source: str = "") -> bool:
     return round_count < max_rounds and (not source or source not in resolved)
 
 
+# The analytical slots whose only possible answer is the name of a governed
+# measure. Every other slot is asking for the reader's own words.
+_MEASURE_SLOTS = {"metric", "subject"}
+
+
+def measure_clarification_is_answerable(
+    slot: str,
+    options=None,
+    available_measures=None,
+) -> bool:
+    """Whether a measure clarification is one this reader could answer at all.
+
+    core.analytical_intent returns no options for a measure slot on purpose:
+    when nothing in the catalogue is relevant to the reader's words, a
+    shortlist of unrelated measures is worse than free text, and
+    tests/test_analytical_intent.py pins that. Free text is therefore the
+    intended reply — but a measure slot can only be answered with a name the
+    semantic layer already knows, so against a workspace with no governed
+    measure in this reader's scope, "what measure should I use to rank them?"
+    cannot be answered by anybody. Asking anyway spends every round of the
+    bounded loop to arrive at what was already true before the first one.
+
+    Only the measure slots are judged. An option-less clarification for a
+    business definition asks for the reader's own rule rather than a catalogue
+    name, and stays answerable however empty the metric registry is, so it is
+    none of this predicate's business and gets a plain yes.
+
+    Takes the measures rather than reading them. The caller has already loaded
+    and scoped them to the tables this reader may see; a second read here would
+    be a second, differently-scoped answer to the same question.
+    """
+    if str(slot or "").strip() not in _MEASURE_SLOTS or options:
+        return True
+    return any(
+        str((measure or {}).get("name") or "").strip()
+        for measure in available_measures or ()
+    )
+
+
 def prepare_clarification_meta(
     event,
     meta: Optional[dict] = None,

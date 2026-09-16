@@ -32,6 +32,7 @@ from core.clarification import (
     can_request_clarification, clarification_session_id,
     clarification_progress, prepare_clarification_meta,
     selected_clarification_option, has_ambiguity_signal,
+    measure_clarification_is_answerable,
 )
 from core.analytical_intent import plan_analytical_intent
 from core.analytical_request_plan import compile_analytical_request_plan
@@ -1688,6 +1689,35 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     ):
         _plan_clarification = _analytical_plan.clarification
         _plan_source = f"analytical_plan:{_plan_clarification.slot}"
+        # A measure slot can only be answered with a name the semantic layer
+        # knows. With no governed measure in this reader's scope there is no
+        # such name, so the question is unanswerable and every round of the
+        # loop would end where this one does — except three cards later. Say it
+        # now, with the refusal this pipeline already gives an unresolved
+        # measure slot, which also names the administrator's remedy.
+        if not measure_clarification_is_answerable(
+            _plan_clarification.slot,
+            _plan_clarification.options,
+            _planner_metrics,
+        ):
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="semantic_plan_incomplete",
+                error_message=(
+                    f"No governed measure in scope for slot: "
+                    f"{_plan_clarification.slot}"
+                ),
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            await adapter.send_message(
+                event,
+                _t("terminal.analytical_plan_unresolved",
+                   lang=(portal_user or {}).get("lang") or "en",
+                   missing=_t("slot.measure",
+                              lang=(portal_user or {}).get("lang") or "en")),
+            )
+            return
         if can_request_clarification(event, _plan_source):
             _plan_options = [dict(option) for option in _plan_clarification.options]
             _plan_meta = {
@@ -1707,7 +1737,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             if callable(send_prompt) and _plan_options:
                 await send_prompt(event, _plan_clarification.question, _plan_options)
             else:
-                await adapter.send_message(event, _plan_clarification.question)
+                # With no options there is nothing to press, so the answer has
+                # to be the reader's own words — and a question arriving on its
+                # own does not say so. The same closing line the
+                # CANNOT_GENERATE and zero-row clarifications use for exactly
+                # this case.
+                _plan_text = _plan_clarification.question
+                if not _plan_options:
+                    _plan_text += "\n\n" + _t(
+                        "clar.reply_in_plain_language",
+                        lang=(portal_user or {}).get("lang") or "en",
+                    )
+                await adapter.send_message(event, _plan_text)
             _trace_finish(
                 trace_id,
                 status="success",
@@ -5334,16 +5375,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _missing_plan_slots,
             _semantic_plan_question[:120],
         )
-        _slot_labels = {
-            "source_fact": "the business event dataset to analyse",
-            "measure": "the governed measure to calculate",
-            "count_target": "the stable business identifier to count",
-            "date_role": "the business date to use",
-            "comparison_window": "the periods or windows to compare",
-        }
+        # The slot names, in the reader's language. They are interpolated into
+        # terminal.analytical_plan_unresolved, which is translated, so leaving
+        # them as English literals put an English noun phrase inside a French
+        # sentence. A slot the catalogue has no label for keeps its own name,
+        # de-underscored, as before.
+        _slot_lang = (portal_user or {}).get("lang") or "en"
+
+        def _slot_copy(slot: str) -> str:
+            # core.i18n.lookup returns the id itself for a key it does not
+            # have, which is the signal that this slot has no label yet.
+            key = f"slot.{slot}"
+            label = _t(key, lang=_slot_lang)
+            return slot.replace("_", " ") if label == key else label
+
         _missing_copy = ", ".join(
-            _slot_labels.get(slot, slot.replace("_", " "))
-            for slot in _missing_plan_slots[:3]
+            _slot_copy(slot) for slot in _missing_plan_slots[:3]
         )
         _trace_finish(
             trace_id,

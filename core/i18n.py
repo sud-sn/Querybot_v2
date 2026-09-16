@@ -3079,6 +3079,34 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": 'I still do not have enough governed context to answer accurately. Please restate the request and specify {slot}.',
         "fr": "Je ne dispose toujours pas d'un contexte gouverné suffisant pour répondre avec exactitude. Reformulez la demande en précisant {slot}.",
     },
+    # The {missing} fillers for terminal.analytical_plan_unresolved below.
+    # core/query_pipeline.py carried these five as raw English literals in a
+    # _slot_labels dict and interpolated them into that translated sentence,
+    # which is how a French reader got a French refusal with an English noun
+    # phrase inside it. Deliberately not named terminal.* :
+    # tests/test_a_turn_ends_in_the_readers_language.py collects every
+    # _t("terminal.…") call inside _handle_query_impl and asserts the set
+    # equals TERMINAL_KEYS exactly, and a filler is not a terminal message.
+    'slot.source_fact': {
+        "en": 'the business event dataset to analyse',
+        "fr": "le jeu de données d'événements métier à analyser",
+    },
+    'slot.measure': {
+        "en": 'the governed measure to calculate',
+        "fr": "la mesure gouvernée à calculer",
+    },
+    'slot.count_target': {
+        "en": 'the stable business identifier to count',
+        "fr": "l'identifiant métier stable à compter",
+    },
+    'slot.date_role': {
+        "en": 'the business date to use',
+        "fr": "la date métier à utiliser",
+    },
+    'slot.comparison_window': {
+        "en": 'the periods or windows to compare',
+        "fr": "les périodes ou fenêtres à comparer",
+    },
     'terminal.blocked_by_policy': {
         "en": 'This request is blocked by the workspace data policy. Reason: {reason}',
         "fr": "Cette demande est bloquée par la politique de données de l'espace de travail. Motif : {reason}",
