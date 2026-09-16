@@ -641,6 +641,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "This result reflects the full returned time series.",
         "fr": "Ce résultat reflète la série temporelle complète renvoyée.",
     },
+    "answer.scope.partial_series": {
+        "en": "First {n} periods only", "fr": "{n} premières périodes uniquement",
+    },
+    "answer.scope.partial_series_note": {
+        "en": "This result is based only on the first {n} returned periods.",
+        "fr": "Ce résultat repose uniquement sur les {n} premières périodes renvoyées.",
+    },
     "answer.scope.preview": {"en": "Preview", "fr": "Aperçu"},
     "answer.scope.preview_note": {
         "en": "This result is a preview because the returned rows are capped for display.",
@@ -1036,6 +1043,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "answer.scope.full_series.inline": {
         "en": "the full returned series", "fr": "la série complète renvoyée",
+    },
+    "answer.scope.partial_series.inline": {
+        "en": "the first {n} periods only", "fr": "uniquement les {n} premières périodes",
     },
     "answer.scope.preview.inline": {
         "en": "a capped preview of the rows", "fr": "un aperçu plafonné des lignes",

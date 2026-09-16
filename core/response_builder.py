@@ -1376,6 +1376,10 @@ def infer_result_scope(
         badge_key = "full_distribution"
     elif mode == "time_series" and scope["is_complete_series"]:
         badge_key = "full_series"
+    elif mode == "time_series" and limit_bound:
+        # A series cut by a binding TOP. A ranking cut the same way says
+        # "Top 20 only"; this said "Returned result", which names nothing.
+        badge_key, fields = "partial_series", {"n": explicit_limit}
     elif scope["is_preview"]:
         badge_key = "preview"
     elif filtered_subset:
@@ -2295,6 +2299,15 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         ts = brief.get("time_series") or {}
         period_count = int(ts.get("period_count") or brief.get("row_count") or 0)
         if period_count < 3:
+            return {}
+        # Every line below is a claim about the WHOLE series -- a direction,
+        # an overall percentage. The insight sentence withholds those on a
+        # truncated result (03bb5b6) and the ranking branch above checks the
+        # same flag; this branch never did, so a daily series cut at the row
+        # cap lost its trend sentence and kept "Sustained downward trend
+        # (-12% overall)" two lines under it.
+        scope = brief.get("result_scope") or ctx.get("result_scope") or {}
+        if scope.get("was_limited"):
             return {}
         direction = ts.get("direction", "stable")
         pct = ts.get("overall_pct_change")
