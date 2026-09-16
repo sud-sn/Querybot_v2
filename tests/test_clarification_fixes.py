@@ -441,9 +441,14 @@ class ConstrainedMenuAmbiguityTests(unittest.TestCase):
             with patch("store.list_terms", return_value=fake_terms), \
                  patch("core.llm.llm_complete",
                        return_value=(model_reply, 100, 50)):
+                # The question has to touch BOTH terms for a menu to exist.
+                # It used to say only "absenteeism", and the menu was built
+                # anyway because _scored_terms_for_ambiguity_menu fell back to
+                # the whole vocabulary when under two terms scored -- which is
+                # what put measures a reader had never named in front of them.
                 return await clar._llm_ambiguity_check_constrained(
                     account_id="acct",
-                    question="show me absenteeism",
+                    question="show me absenteeism and turnover",
                     context="",
                     provider="test", model="test", api_key="",
                     extra_kwargs={},
@@ -483,16 +488,20 @@ class ConstrainedMenuAmbiguityTests(unittest.TestCase):
         from core import clarification as clar
 
         async def _run():
+            # Real names the question names, so the menu is genuinely built:
+            # a single-letter term against a single-letter question only ever
+            # produced a menu through the whole-vocabulary fallback.
             fake_terms = [
-                {"id": 1, "term": "a", "kind": "metric", "aliases": "", "definition": "", "canonical_expression": "x", "tables_involved": ""},
-                {"id": 2, "term": "b", "kind": "metric", "aliases": "", "definition": "", "canonical_expression": "y", "tables_involved": ""},
+                {"id": 1, "term": "revenue", "kind": "metric", "aliases": "", "definition": "", "canonical_expression": "x", "tables_involved": ""},
+                {"id": 2, "term": "margin", "kind": "metric", "aliases": "", "definition": "", "canonical_expression": "y", "tables_involved": ""},
             ]
             # Model invents "t999" which is NOT in the menu
             reply = '{"status":"AMBIGUOUS","question":"?","option_ids":["t1","t999"]}'
             with patch("store.list_terms", return_value=fake_terms), \
                  patch("core.llm.llm_complete", return_value=(reply, 50, 10)):
                 return await clar._llm_ambiguity_check_constrained(
-                    account_id="acct", question="q", context="",
+                    account_id="acct", question="revenue or margin this year",
+                    context="",
                     provider="test", model="test", api_key="", extra_kwargs={},
                 )
 

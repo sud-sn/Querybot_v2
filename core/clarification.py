@@ -1119,8 +1119,21 @@ def _scored_terms_for_ambiguity_menu(
             score += 3
         scored.append((score, term))
 
-    positives = [item for item in scored if item[0] > 0]
-    chosen = positives if len(positives) >= 2 else scored
+    # Only terms the question actually touched. This used to fall back to the
+    # WHOLE scoped vocabulary whenever fewer than two terms scored -- and both
+    # callers turn this list into the menu a constrained model must pick the
+    # reader's options from, so a term scoring zero became an option offered to
+    # someone whose question had not mentioned anything like it. That is how a
+    # reader asking how many pallets shipped from a warehouse was invited to
+    # choose between net revenue and gross margin.
+    #
+    # Under two positives, both callers fall through to the plain classifier,
+    # which asks in free text with no options -- the honest shape for "we do
+    # not know which of your terms you meant, because none of them is yours".
+    # Terms an admin marked ambiguous are unaffected: Step 1 of
+    # check_ambiguity_glossary_first resolves those deterministically, before
+    # this menu is built at all.
+    chosen = [item for item in scored if item[0] > 0]
     chosen.sort(key=lambda item: item[0], reverse=True)
     return [term for _, term in chosen[:20]]
 
