@@ -95,6 +95,12 @@ class MergedVocab:
     bridge_patterns: list[re.Pattern] = field(default_factory=list)
     fact_tables: set[str] = field(default_factory=set)
     dimension_tables: set[str] = field(default_factory=set)
+    # {french phrase: canonical English} -- the domain words a French reader
+    # uses for what this pack describes. core.question_normalizer keeps the
+    # French GRAMMAR and the analytics vocabulary; the nouns of a trade (ordre
+    # de fabrication, rebut, gamme) belong to the pack that knows the trade,
+    # and are applied only for a tenant that selected it.
+    french_terms: dict[str, str] = field(default_factory=dict)
     source_packs: list[str] = field(default_factory=list)
 
 
@@ -190,6 +196,10 @@ def _merge_pack(vocab: MergedVocab, pack: dict, origin: str) -> None:
         vocab.abbreviations[str(tok).upper()] = str(expansion)
         vocab.planner_abbreviations[str(tok).upper()] = str(expansion)
 
+    for phrase, english in (pack.get("terms_fr") or {}).items():
+        phrase_text, english_text = str(phrase or "").strip(), str(english or "").strip()
+        if phrase_text and english_text:
+            vocab.french_terms[phrase_text] = english_text
     for col, aliases in (pack.get("direct_aliases") or {}).items():
         vocab.direct_aliases[str(col).upper()] = {str(a) for a in (aliases or [])}
 

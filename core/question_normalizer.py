@@ -566,6 +566,7 @@ _ENTRIES: tuple[tuple[str, str], ...] = tuple(sorted(
 ))
 
 
+
 def _boundary_after(key: str) -> str:
     """The word boundary a key needs after it.
 
@@ -716,6 +717,50 @@ def _spans_to_skip(text: str) -> list[tuple[int, int]]:
     return [m.span() for m in _QUOTED_RE.finditer(text)]
 
 
+_pack_terms_cache: dict[int, tuple[dict, re.Pattern, dict[str, str]]] = {}
+
+
+def _active_pack_terms() -> tuple[re.Pattern, dict[str, str]] | None:
+    """The French terms of the tenant's active terminology packs, compiled.
+
+    A manufacturing tenant's "rebuts par centre de charge" has to reach
+    retrieval as "scrap by work centre", and the lexicon in this module is
+    deliberately not a dictionary: it carries French grammar and the analytics
+    words every detector reads. The nouns of a trade travel with the pack that
+    knows the trade (packs/<id>.json "terms_fr") and apply only where that
+    pack is selected -- so a distributor's "gamme" stays a product range and
+    a manufacturer's becomes a routing.
+
+    Longest phrase first, like the lexicon, so "ordre de fabrication" is read
+    before "de" becomes "of". Compiled once per vocabulary object; the active
+    vocabulary is a ContextVar the pipeline sets per request.
+    """
+    try:
+        from core.vocab_packs import get_active_vocab
+        vocab = get_active_vocab()
+    except Exception:  # noqa: BLE001 - canonicalisation must never fail a turn
+        return None
+    terms = getattr(vocab, "french_terms", None)
+    if not terms:
+        return None
+    key = id(vocab)
+    cached = _pack_terms_cache.get(key)
+    if cached is not None and cached[0] is terms:
+        return cached[1], cached[2]
+    entries = sorted(
+        ((_fold(source), target) for source, target in terms.items()),
+        key=lambda pair: (-len(pair[0]), pair[0]),
+    )
+    pattern = re.compile(
+        r"(?<![0-9a-z])(?:" + "|".join(re.escape(k) for k, _ in entries) + r")(?![0-9a-z])"
+    )
+    compiled = (pattern, dict(entries))
+    if len(_pack_terms_cache) > 32:
+        _pack_terms_cache.clear()
+    _pack_terms_cache[key] = (terms, *compiled)
+    return compiled
+
+
 def canonicalise(text: str) -> str:
     """The canonical English form of a French question.
 
@@ -724,6 +769,10 @@ def canonicalise(text: str) -> str:
     source. That costs the accents on words the lexicon does not know -- which
     is the right trade, since core/date_roles.py shreds them anyway and the
     reader's own text is preserved separately.
+
+    The tenant's terminology packs go first (see _active_pack_terms): a trade
+    noun is a phrase, and the lexicon's "de" -> "of" would otherwise split
+    "ordre de fabrication" before the pack could read it.
     """
     original = str(text or "")
     if not original.strip():
@@ -734,6 +783,15 @@ def canonicalise(text: str) -> str:
 
     def _outside_quotes(start: int, end: int) -> bool:
         return not any(a <= start and end <= b for a, b in protected)
+
+    pack_terms = _active_pack_terms()
+    if pack_terms is not None:
+        pack_re, pack_map = pack_terms
+        folded = pack_re.sub(
+            lambda m: pack_map[m.group(0)] if _outside_quotes(*m.span()) else m.group(0),
+            folded,
+        )
+        protected = _spans_to_skip(folded)
 
     for pattern, build in _NUMERIC_RULES:
         folded = pattern.sub(
