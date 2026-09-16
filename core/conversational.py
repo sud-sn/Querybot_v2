@@ -423,12 +423,24 @@ def _example_questions(
     # The workspace guide uses validated examples and applies the signed-in
     # user's table ACL.  Prefer it whenever identity is available; the legacy
     # account-wide lookup below is retained only for non-user system greetings.
+    #
+    # A signed-in reader never falls through to it. The legacy path is
+    # account-wide by construction, so a guide failure used to downgrade them
+    # from their own ACL to everyone's -- a governance decision made by an
+    # exception handler, and logged at debug where nobody would see it. Offering
+    # no starter questions is the safe failure here; offering someone else's
+    # tables is not.
     if portal_user:
         try:
             from core.workspace_guide import build_workspace_guide
             return build_workspace_guide(account_id, portal_user).get("examples", [])[:limit]
         except Exception as exc:
-            log.debug("conversational: governed examples unavailable: %s", exc)
+            log.warning(
+                "conversational: governed examples unavailable for %s (%s) — "
+                "offering none rather than falling back to the account-wide "
+                "list, which is not scoped to this reader", account_id, exc,
+            )
+            return []
 
     examples: list[str] = []
     seen: set[str] = set()
@@ -455,11 +467,24 @@ def _example_questions(
         log.debug("conversational: metric examples unavailable: %s", exc)
 
     try:
+        from store.config_store import _harvest_qualifies
         from store.db import get_db
+        # success=1 alone is far weaker than it reads, and this path was the
+        # last one still using it. A question that returned NO ROWS is logged
+        # successful -- correctly, nothing went wrong -- and offering it back
+        # as a starter question reproduces the empty answer exactly; a
+        # follow-up answered from the in-memory snapshot is logged successful
+        # too, and its SQL is DuckDB dialect over a temporary table, a hard
+        # error against the warehouse. store._harvest_qualifies is the
+        # predicate written to replace this test, and its own comment calls
+        # these two "the single most common thing a user sees behind 'the
+        # suggested question did nothing'". Same bar here, from the same
+        # source of truth, so the two cannot drift.
         with get_db() as conn:
             rows = conn.execute(
                 "SELECT DISTINCT question FROM query_log "
                 "WHERE account_id=? AND success=1 AND question IS NOT NULL "
+                + _harvest_qualifies() +
                 "ORDER BY created_at DESC LIMIT 20",
                 (account_id,),
             ).fetchall()
