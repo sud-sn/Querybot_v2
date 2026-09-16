@@ -62,7 +62,11 @@ _WHY_PATTERNS = [
     # this product's users, and the one the French UI sits next to -- asked
     # for analysis in a word the analyst gate could not read.
     r"\banaly[sz](?:e|es|ed|ing|is)\b",
-    r"\binsight\b",
+    # "Summarize", "a summary of", "insights on": a request to be told what
+    # the rows mean, in words the gate did not read. The trailing s was the
+    # whole difference between "insight into" and "insights on".
+    r"\bsummar(?:y|i[sz]e[sd]?|i[sz]ing)\b",
+    r"\binsights?\b",
     r"\binterpret\b",
     r"\bwhat\s+stands\s+out\b",
 ]

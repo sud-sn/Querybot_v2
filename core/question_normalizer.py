@@ -452,6 +452,27 @@ _LEXICON: dict[str, str] = {
     "chaque": "each",
     "par": "by",
     "pourquoi": "why",
+    # Requests for analysis. The gate that decides whether a model-written
+    # explanation follows an answer reads the canonical question, and until
+    # these existed it carried "pourquoi" alone: "analyser", "explique",
+    # "résume" and "interprète" reached it untranslated and earned a table.
+    # "analyse" itself is spelt the same in both languages and needs no entry.
+    "analyser": "analyse",
+    "analysez": "analyse",
+    "explique-moi": "explain",
+    "expliquez-moi": "explain",
+    "explique": "explain",
+    "expliquer": "explain",
+    "expliquez": "explain",
+    "resume-moi": "summarize",
+    "resume": "summarize",
+    "resumer": "summarize",
+    "resumez": "summarize",
+    "interprete": "interpret",
+    "interpreter": "interpret",
+    "interpretez": "interpret",
+    "que ressort-il": "what stands out",
+    "ressort": "stands out",
     "quelle est la raison": "what is the reason",
     "qu'est-ce qui a cause": "what caused",
     "qu est ce qui a cause": "what caused",

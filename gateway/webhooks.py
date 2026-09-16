@@ -5041,10 +5041,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 ))
                 continue
 
-            # Detect "why" follow-up questions about the last result
+            # Detect "why" follow-up questions about the last result. Read
+            # in canonical form: the gate's vocabulary is English, and a
+            # French "explique ce résultat" typed against the last result
+            # otherwise becomes a fresh, unrelated query. canonical_question
+            # is this module's import -- a local one here would shadow it
+            # for the whole function, including the result_chat branch that
+            # reads it two thousand lines above this point.
             from core.insight import is_insight_question
             cached = adapter.last_result
-            if is_insight_question(text) and cached and cached.get("rows"):
+            if is_insight_question(canonical_question(text, (portal_user or {}).get("lang"))) and cached and cached.get("rows"):
                 try:
                     provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
                     from core.response_builder import generate_analysis_response
