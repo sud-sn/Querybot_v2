@@ -1,6 +1,6 @@
 # QueryBot v2
 
-QueryBot is a multi-tenant, governed natural-language analytics platform for enterprise databases. Business users ask questions in plain English; QueryBot resolves approved business semantics and join paths, generates database-aware read-only SQL, validates it, executes it, and returns a business-readable result with diagnostics and visualizations.
+QueryBot is a multi-tenant, governed natural-language analytics platform for enterprise databases. Business users ask questions in plain English or French; QueryBot resolves approved business semantics and join paths, generates database-aware read-only SQL, validates it, executes it, and returns a business-readable result with a computed summary, an analyst's explanation, diagnostics, and visualizations.
 
 The product includes an administrator workspace for onboarding, Knowledge Base generation, semantic modeling, metrics, entity relationships, date roles, access control, compliance, evaluation, observability, and governed learning.
 
@@ -26,12 +26,19 @@ The product includes an administrator workspace for onboarding, Knowledge Base g
 
 - Web portal, Microsoft Teams, Zoom, and Slack entry points.
 - Tenant, user, group, table, and schema-aware query scope.
-- Azure OpenAI, OpenAI, and Anthropic model providers, with system defaults and per-client overrides.
+- Azure OpenAI, OpenAI, and Anthropic model providers, with system defaults and per-client overrides. For Azure OpenAI the endpoint is normalised from whatever form was pasted (resource URL, full chat-completions URL, or a Foundry project URL), the deployment name is resolved rather than guessed from a model id, SQL is generated at temperature 0, and content-filter rejections, empty responses, and rate limits are read as what they are instead of as blank SQL.
 - Database-dialect-aware prompt rules and SQL validation.
 - Read-only SQL enforcement, exact table and column validation, ACL checks, and structured repair feedback.
 - Support for aggregations, rankings, top-N, period comparisons, running totals, contribution analysis, anti-joins, and multi-step CTE queries.
 - Guardrails for fact-to-fact joins, table grain, approved metrics, semantic field sources, and entity-graph relationships.
 - One controlled SQL repair attempt when a generated query fails validation or execution.
+
+### Languages
+
+- The portal, the answer card, clarifications, refusals, and follow-up chips are available in English and French. Each user's language is chosen in the portal and remembered on their account.
+- A French question is canonicalised into the English the deterministic detectors read (periods, top-N, comparisons, causal and analytical wording) before planning, so "les 5 meilleurs clients de l'année dernière" reaches the same planner as its English form. The reader's own words are still what the model sees and what retrieval and value resolution use.
+- Every computed sentence comes from one message catalogue with an English and a French value, including number formatting (a non-breaking thin space and a decimal comma in French). Model-written prose is written in the reader's language through a rule in the prompt; column names and category values from the client's database are quoted as they are.
+- `python -m evals.emco_rehearsal` drives a client's demo questions through the real pipeline stages in both languages without a warehouse and reports each stage's decision, so a question that quietly answers something else is visible before a demo rather than during it.
 
 ### Knowledge Base and retrieval
 
@@ -42,6 +49,7 @@ The product includes an administrator workspace for onboarding, Knowledge Base g
 - Table-coverage gap filling when retrieval misses a required table.
 - KB quality reporting for unconfirmed grain, weak field meanings, missing display dimensions, unconnected facts, and unapproved relationships.
 - Admin edits and approved semantic corrections are preserved across rebuilds and re-embedded.
+- A KB build survives its provider: a content-filter rejection skips that one table's request rather than the build, a rate limit is waited out with the build's stop button still honoured, and the token budget for a wide fact table grows in steps instead of failing at a fixed ceiling.
 
 ### Semantic layer and metrics
 
@@ -73,6 +81,7 @@ and a table revoked mid-thread invalidates a live draft on the next turn.
 - Admins can add, edit, validate, probe, approve, or disable relationships.
 - Join direction, join type, cardinality, confidence, source, and validation status are retained.
 - The graph resolver selects an approved path; the validator checks that generated SQL follows the governed path.
+- A question over two or more facts ("net sales and returns by warehouse") treats every fact as a root, never as a destination reached through a shared dimension. Each fact is planned to the requested grain on its own edge, the facts are aggregated in isolation and joined only on the dimensions they share, and a grain reached through a snowflake hop counts. Direct fact-to-fact joins are refused; a fact that cannot reach the requested grain blocks the plan with that fact named.
 - Graph health and relationship diagnostics expose weak or untested model areas before users encounter them.
 
 ### Contextual and role-playing dates
@@ -89,7 +98,11 @@ Surrogate date IDs are distinguished from native dates, timestamps, and `YYYYMMD
 
 ### Business results and analytical UX
 
-- Business-readable result summaries, confidence evidence, and query-production details.
+- Every answer card carries a computed summary written from the result itself, with no model call: a headline, the leader and its share or the trend and its peak, a decision signal (concentration, dominance, spread, growth, decline), and anomaly callouts. A ranking with two measures narrates both. A listing of records (invoice lines, order headers) is described as records and what they add up to, not as a race between them.
+- After the card, an analyst's explanation of the result arrives as a second message in the reader's language. It is written from a statistical brief of the result, never from the rows, and it is delivered as a second message so the factual answer is never held up by it. It follows every answer by default; the per-client setting **Analyst explanation** can restrict it to questions that ask for analysis or a cause. Causal questions ("why did sales drop in March") additionally run governed drill-down queries.
+- A claim about the whole needs the whole. When a result was cut by a `TOP`, a row cap, or a filter, the trend sentence, the decision signal, median and quartiles are withheld rather than computed over the slice, and the card's badge says what came back: full distribution, top N only, full series, first N periods only, preview, or filtered subset. A default `TOP` that never bound is not a truncation.
+- The reader can talk to a result instead of only commanding it: filter, aggregate, sort, keep the top N, exclude, chart and compare are understood as commands, and anything else ("what is the total?", "why is that?", "what does this column mean?") is answered by the model from the same brief, with the reader's own words the last thing it reads.
+- Business-readable provenance, confidence evidence, and query-production details, in the tenant's own vocabulary rather than raw table and column codes.
 - Structured zero-row root-cause hints rather than a generic empty result.
 - Result tables, CSV export, charts, contribution views, follow-up questions, and result follow-ups through DuckDB.
 - Chart selection based on result shape and question intent, with user-selectable chart styles and palettes.
@@ -322,6 +335,8 @@ Never deploy with the example `CHANGE_ME` values or the development fallback sec
 3. Configure PostgreSQL for shared/concurrent usage and verify Qdrant health.
 4. Add a client database and test the connection.
 5. Register a client and complete the onboarding sequence described above.
+6. Complete the client's compliance setup and choose a posture. A client with no compliance profile is treated as regulated, which is fail-closed on purpose: the analyst's explanation, follow-up suggestions, and every other feature that shows the model a result are silently off until a posture is chosen.
+7. Review the client's **Analyst explanation** setting (after every answer by default) and its LLM audit setting.
 
 ## Testing
 
@@ -331,9 +346,18 @@ Run the complete suite:
 python -m pytest -q
 ```
 
-The current baseline is **5299 passed, 4 skipped**. Treat any drop as a
+The current baseline is **10990 passed, 9 skipped**. Treat any drop as a
 regression rather than noise; the statistical suites are seeded and the coverage
 bounds are set from measurement, not tuned to pass.
+
+The demo rehearsal is a separate, faster check that runs the real pipeline
+stages over a client's question set in both languages and compares every
+stage's decision with the expected one:
+
+```bash
+python -m evals.emco_rehearsal
+python -m evals.emco_rehearsal --lang fr --verbose
+```
 
 High-value focused suites include:
 
@@ -349,6 +373,10 @@ python -m pytest -q tests/test_forecast_gate.py tests/test_forecast_models.py
 python -m pytest -q tests/test_post_process_actually_runs.py
 python -m pytest -q tests/test_learning_loop_integration.py
 python -m pytest -q tests/test_production_ui.py
+python -m pytest -q tests/test_each_fact_reaches_the_grain_by_its_own_edge.py tests/test_join_planner_v2.py
+python -m pytest -q tests/test_the_analyst_writes_after_every_answer.py tests/test_analysis_reaches_the_reader.py
+python -m pytest -q tests/test_a_limit_that_never_bit_is_not_a_truncation.py tests/test_claims_respect_a_truncated_result.py
+python -m pytest -q tests/test_question_normalizer.py tests/test_a_french_reader_can_ask_for_analysis.py
 ```
 
 Tests use isolated fixtures and must not require a production client database. Live database validation, query-plan review, concurrency/load testing, and recovery exercises remain deployment responsibilities.
@@ -365,6 +393,16 @@ where that is hard:
 
 An assertion that accepts either outcome (`assert model in {"ets", "ols"}`)
 tests nothing; one of those hid two broken model branches for a full commit.
+
+Two further habits are now expected of a change here. First, a new test is
+shown to fail before it is trusted: the defect is put back, or the fix is
+mutated in the source, and the test goes red; a test that stays green through
+that is decoration. Second, `tests/test_post_process_actually_runs.py` walks
+every function in the repository for a local that is read before it can be
+bound, including a function-local import that shadows a module import for the
+rest of a long handler. That shape has silently killed a whole feature twice,
+most recently for one commit during the work above, and the detector caught it
+before it shipped.
 
 ## Operations
 
@@ -403,7 +441,7 @@ portal/                 User portal routes and templates
 store/                  SQLite/PostgreSQL persistence and repositories
 static/                 Shared visual tokens and frontend assets
 packs/                  ERP terminology and industry vocabulary packs
-evals/                  Golden evaluation definitions
+evals/                  Golden evaluation definitions and the bilingual demo rehearsal harness
 tests/                  Unit, integration, architecture, UI, and regression tests
 deploy/                 Qdrant and operating-system deployment assets
 main.py                 FastAPI application composition and lifecycle
@@ -417,7 +455,14 @@ Primary implementation entry points:
 | `core/llm.py` | Provider resolution and SQL-generation prompts |
 | `core/validator.py` | SQL, schema, ACL, and semantic validation |
 | `core/semantic_planner.py` | Approved field and metric planning |
-| `core/graph_resolver.py` | Governed join-path resolution |
+| `core/graph_resolver.py` | Governed join-path resolution, one root per fact |
+| `core/join_planner.py` | Isolated aggregation and shared-grain planning across facts |
+| `core/response_builder.py` | The answer card: computed summary, result scope, decision signal |
+| `core/insight.py` | The statistical brief and the analyst's explanation |
+| `core/analysis_narrative.py` | Evidence-checked phrasing, template or model, in either language |
+| `core/result_conversation.py` | Talking to a result on screen |
+| `core/question_normalizer.py` | French questions canonicalised for the deterministic detectors |
+| `core/i18n.py` | The English and French message catalogue and number formatting |
 | `core/contextual_dates.py` | Metric-aware date-context resolution |
 | `core/semantic_model.py` | Structured semantic artifacts |
 | `core/knowledge.py` | KB retrieval and ranking |
@@ -446,6 +491,7 @@ rule would be one copy that can be forgotten.
 - Compliance features reduce risk but do not independently establish regulatory compliance.
 - **Forecast intervals are calibrated for series with a stable trend, and understate uncertainty at longer horizons when the level itself wanders.** Measured against a nominal 95%: about 0.93–0.98 one step ahead, and 0.82–0.86 three steps ahead on a random walk with drift. Neither a straight line nor a damped trend can express a stochastic level, and no interval built from one of them fully accounts for the model being the wrong shape — a differenced ARIMA would, and the model selector only reaches for one when it detects seasonality. The numbers above are asserted by a test so the limitation cannot quietly get worse.
 - A projection is an extrapolation of the past, not a business plan. It knows nothing about a price change, a lost customer, or a closed site.
+- The tenant vocabulary carries one display label per column, in English. A French sentence therefore names a warehouse column in English ("sur 3 warehouse names") until per-language labels exist in the naming profile. Category values and column names from the database are quoted as they are in both languages by design.
 
 ## License and support
 
