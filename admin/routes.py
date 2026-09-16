@@ -10868,7 +10868,13 @@ async def admin_build_kb(
                     # already established it cannot answer. Prune from here
                     # against the same stored evidence the worker uses, so the
                     # rebuild is never the last word.
-                    if validation_result.get("status") in {"timeout", "error"}:
+                    # "stopped" belongs here with the other two: a user stop
+                    # terminates the worker where it stands, so its prune is as
+                    # unlikely to have run as after a timeout. The prune is
+                    # idempotent and no-ops when the store has nothing
+                    # validated, so covering a status that did prune costs
+                    # nothing.
+                    if validation_result.get("status") in {"timeout", "error", "stopped"}:
                         try:
                             from core.suggestions import prune_suggestion_cache_to_validated
                             prune_suggestion_cache_to_validated(kb_dir, account_id)

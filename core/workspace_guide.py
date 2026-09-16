@@ -425,8 +425,13 @@ def render_workspace_guide(
             f"{_t('guide.capability.footer')}"
         )
         if include_examples:
-            text += ("\n\n" + _t("guide.capability.try_these") + "\n"
-                     + _examples_block(examples))
+            # Same list, same rule as the question_examples heading below: the
+            # strong claim only when every question shown is one a reader asked
+            # and got rows from.
+            text += ("\n\n" + _t("guide.capability.try_these"
+                                 if guide.get("examples_are_proven")
+                                 else "guide.capability.try_these_available")
+                     + "\n" + _examples_block(examples))
         return text, examples
 
     if kind == "business_overview":

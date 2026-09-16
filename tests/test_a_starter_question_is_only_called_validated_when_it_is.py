@@ -176,6 +176,54 @@ class TheHeadingSaysWhichOneItIs(unittest.TestCase):
 
     USER = {"id": 1, "account_id": ACCOUNT, "role": "user"}
 
+    def _rendered(self, kind: str, proven: bool, lang: str,
+                  examples=(ASKED_AND_ANSWERED,)) -> str:
+        patchers = [
+            patch("core.workspace_guide.store.get_client", return_value={}),
+            patch("core.workspace_guide.get_state", return_value={}),
+            patch("core.workspace_guide.load_semantic_model", return_value={}),
+            patch("core.workspace_guide.store.get_allowed_tables",
+                  return_value={"DB.SALES.F_ORDERS"}),
+            patch("core.workspace_guide.store.list_metrics", return_value=[]),
+            patch("core.workspace_guide.store.list_terms", return_value=[]),
+            patch("core.workspace_guide.store.list_dashboards", return_value=[]),
+            patch("core.workspace_guide._safe_examples",
+                  return_value=(list(examples), proven)),
+        ]
+        for patcher in patchers:
+            patcher.start()
+        token = i18n.activate_language(lang)
+        try:
+            return render_workspace_guide(kind, ACCOUNT, self.USER)[0]
+        finally:
+            i18n.deactivate_language(token)
+            for patcher in reversed(patchers):
+                patcher.stop()
+
+    def test_the_capability_overview_withdraws_the_claim_too(self):
+        """It prints the SAME list under its own heading, and that heading said
+        "Try one of these validated questions" — the identical claim, missed
+        when the other one was split."""
+        for lang, claimed in (("en", "validated"), ("fr", "validée")):
+            with self.subTest(lang=lang):
+                unproven = self._rendered("capability_overview", False, lang)
+                self.assertIn(ASKED_AND_ANSWERED, unproven)
+                self.assertNotIn(claimed, unproven.lower())
+                # ...and the strong claim is still available when earned.
+                self.assertIn(
+                    claimed, self._rendered(
+                        "capability_overview", True, lang).lower())
+
+    def test_an_empty_list_does_not_claim_validation_either(self):
+        """"No VALIDATED starter questions are available" invites the reader to
+        infer that unvalidated ones exist and are being withheld."""
+        for lang, claimed in (("en", "validated"), ("fr", "validée")):
+            with self.subTest(lang=lang):
+                for kind in ("question_examples", "capability_overview"):
+                    text = self._rendered(kind, False, lang, examples=())
+                    self.assertNotIn(claimed, text.lower(), kind)
+                    self.assertNotIn("guide.examples.none", text)
+
     def _heading(self, proven: bool, lang: str) -> str:
         patchers = [
             patch("core.workspace_guide.store.get_client", return_value={}),

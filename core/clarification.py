@@ -233,7 +233,20 @@ def can_request_clarification(event=None, source: str = "") -> bool:
 
 # The analytical slots whose only possible answer is the name of a governed
 # measure. Every other slot is asking for the reader's own words.
-_MEASURE_SLOTS = {"metric", "subject"}
+#
+# Only the ranking slot qualifies, and the difference is visible in
+# core.analytical_intent. Its ranking branch re-asks on every reply until a
+# reply MATCHES the registry -- verified by execution: against an empty
+# registry, "by revenue", "by trading margin" and "net revenue" all come back
+# asking the same question, so with nothing in the catalogue no reply resolves
+# it and asking is pointless. The subject branch does the opposite: it takes
+# the reader's words as the subject outright (`if clarified: metric_matches =
+# [clarified]`), so "show me my data" -> "pallets shipped" resolves with no
+# catalogue lookup at all. "subject" was in this set for one commit and that
+# was a regression: it dead-ended every daily-snapshot and data-overview
+# question in a workspace with no metrics in scope, which is every workspace on
+# day one.
+_MEASURE_SLOTS = {"metric"}
 
 
 def measure_clarification_is_answerable(
@@ -1175,9 +1188,16 @@ def has_ambiguity_signal(
     try:
         matches = store.match_terms_in_question(account_id, question, allowed_tables)
     except Exception:
-        log.debug(
+        # Warning, not debug. Returning False switches clarification off at
+        # BOTH gated call sites, so a glossary this read cannot reach takes a
+        # whole capability with it -- and a fail-open handler on a user-facing
+        # path is indistinguishable from working correctly unless it says so.
+        # Before the gate existed, this exception propagated and crashed the
+        # turn at the zero-row site, which was at least visible.
+        log.warning(
             "Glossary ambiguity signal unavailable for %s — treating the "
-            "question as unambiguous", account_id, exc_info=True,
+            "question as unambiguous, so no clarification will be offered "
+            "on this turn", account_id, exc_info=True,
         )
         return False
 

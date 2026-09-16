@@ -4886,9 +4886,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Presentation-only follow-ups can reuse your governed recent result. If a request needs new data or a different calculation, I run a new governed query. Access controls and masking still apply.",
         "fr": "Les demandes de mise en forme peuvent réutiliser votre dernier résultat gouverné. Si une demande nécessite de nouvelles données ou un calcul différent, j'exécute une nouvelle requête gouvernée. Les contrôles d'accès et le masquage continuent de s'appliquer.",
     },
+    # Two headings over the same list, chosen the same way guide.questions.*
+    # are: "validated" is a claim about provenance and only core.suggestions'
+    # first tier can make it. This block was missed when that heading was
+    # split, so the identical claim went on standing here over the identical
+    # list.
     "guide.capability.try_these": {
         "en": "*Try one of these validated questions:*",
         "fr": "*Essayez l'une de ces questions validées :*",
+    },
+    "guide.capability.try_these_available": {
+        "en": "*Try one of these questions your access covers:*",
+        "fr": "*Essayez l'une de ces questions couvertes par vos accès :*",
     },
 
     # ── The business, and what the data covers ──────────────────────────────
@@ -5003,9 +5012,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "*Questions you can ask with your current access:*",
         "fr": "*Questions que vous pouvez poser avec vos accès actuels :*",
     },
+    # An empty list claims nothing, so it must not claim "validated" either --
+    # a reader told no VALIDATED questions are available reasonably infers that
+    # unvalidated ones exist and are being withheld.
     "guide.examples.none": {
-        "en": "No validated starter questions are available for your current access yet.",
-        "fr": "Aucune question de démarrage validée n'est encore disponible pour vos accès actuels.",
+        "en": "No starter questions are available for your current access yet.",
+        "fr": "Aucune question de démarrage n'est encore disponible pour vos accès actuels.",
     },
 
     # ── A table with no curated description ─────────────────────────────────

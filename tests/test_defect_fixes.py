@@ -307,18 +307,57 @@ class ClosestTermSuggestionTests(unittest.TestCase):
             )
 
     def test_the_failure_card_still_carries_its_suggestions(self):
-        """The other route the same terms travel: translate_failure's card."""
+        """The other route the same terms travel: translate_failure's card.
+
+        Constrained to translate_failure calls specifically: matching any call
+        anywhere that happens to take a `suggestions=` keyword would pass on a
+        tree where translate_failure had stopped receiving it.
+
+        Constrained to the VALIDATION cards, and to every one of them. "Closest
+        known terms in your data" answers "we could not map your words onto the
+        model" — it says nothing useful about kind="execution", where the query
+        compiled, ran, and the database rejected it at runtime.
+        """
         tree = ast.parse((ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8"))
-        passed = [
-            keyword.lineno
-            for node in ast.walk(tree) if isinstance(node, ast.Call)
-            for keyword in node.keywords
-            if keyword.arg == "suggestions"
-            and getattr(keyword.value, "id", "") == "_suggest"
+        calls = [
+            node for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and (getattr(node.func, "id", "")
+                 or getattr(node.func, "attr", "")) == "translate_failure"
         ]
+        self.assertTrue(calls, "nothing calls translate_failure any more")
+
+        def _kind(call):
+            for kw in call.keywords:
+                if kw.arg == "kind" and isinstance(kw.value, ast.Constant):
+                    return kw.value.value
+            return ""
+
+        validation_cards = [call for call in calls if _kind(call) == "validation"]
         self.assertTrue(
-            passed, "translate_failure no longer receives the closest terms"
+            validation_cards,
+            "no validation failure card is built here any more, so nothing "
+            "carries the closest known terms to the reader",
         )
+        for call in validation_cards:
+            names = [
+                getattr(kw.value, "id", "") for kw in call.keywords
+                if kw.arg == "suggestions"
+            ]
+            self.assertEqual(
+                names, ["_suggest"],
+                f"the validation failure card built at line {call.lineno} does "
+                "not carry the closest known terms",
+            )
+
+    def test_the_failure_card_renders_those_suggestions(self):
+        """And the executed half: translate_failure is a pure function, so
+        there is no reason to take the wiring's word for what it does with
+        them."""
+        rca = translate_failure(
+            kind="validation", code="unknown_column", reason="x",
+            suggestions=["Purchase Order Quantity"],
+        )
+        self.assertIn("Purchase Order Quantity", rca["suggested_next_step"])
 
 
 class WsFallbackErrorTests(unittest.TestCase):

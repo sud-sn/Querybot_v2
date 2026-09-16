@@ -205,8 +205,23 @@ def test_the_late_prune_runs_when_the_second_validation_did_not_finish():
         "so a timed-out build leaves the rebuilt, unvalidated question set in "
         "the panel"
     )
+    # The constants alone are not the guarantee: `status in {...}` and
+    # `status not in {...}` carry the identical constants, and the second is
+    # the defect. So the comparison SHAPE is pinned too, and the set is pinned
+    # by equality rather than by a lower bound.
+    test = guarded[0].test
+    assert isinstance(test, ast.Compare), ast.dump(test)
+    assert isinstance(test.ops[0], ast.In), (
+        f"the late prune is guarded by {type(test.ops[0]).__name__}, not In — "
+        "inverted, it prunes on the statuses that did not need it and skips "
+        "the ones that did"
+    )
+    assert ast.unparse(test.left) == "validation_result.get('status')", \
+        ast.unparse(test.left)
     statuses = {
-        node.value for node in ast.walk(guarded[0].test)
+        node.value for node in ast.walk(test.comparators[0])
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
-    assert {"timeout", "error"} <= statuses, statuses
+    # A user stop terminates the worker where it stands, exactly like a
+    # timeout, so it belongs with the other two.
+    assert statuses == {"timeout", "error", "stopped"}, statuses

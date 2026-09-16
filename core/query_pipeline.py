@@ -1614,6 +1614,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # loading failed open.
     _planner_metrics: list[dict] = []
     _planner_terms: list[dict] = []
+    # Whether the registry was actually READ this turn, as opposed to read and
+    # found empty. The clarification gate below refuses a measure question when
+    # there is no measure to name, and [] on its own cannot tell "this
+    # workspace has none in scope" from "the read raised and we failed open" --
+    # so a briefly locked database would have turned a deliberately fail-open
+    # catalogue load into a turn-ending refusal whose trace said something
+    # untrue. False means unknown, and unknown keeps asking.
+    _planner_metrics_read = False
     try:
         _planner_metrics = []
         for _metric in store.list_metrics(account_id):
@@ -1624,6 +1632,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             ):
                 continue
             _planner_metrics.append(_metric)
+        # The registry read completed. Set here rather than after the whole try:
+        # store.list_terms below can raise on its own, and a terms failure says
+        # nothing about whether the metrics are known.
+        _planner_metrics_read = True
         _planner_terms = []
         for _term in store.list_terms(account_id):
             _term_tables = {
@@ -1689,35 +1701,6 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     ):
         _plan_clarification = _analytical_plan.clarification
         _plan_source = f"analytical_plan:{_plan_clarification.slot}"
-        # A measure slot can only be answered with a name the semantic layer
-        # knows. With no governed measure in this reader's scope there is no
-        # such name, so the question is unanswerable and every round of the
-        # loop would end where this one does — except three cards later. Say it
-        # now, with the refusal this pipeline already gives an unresolved
-        # measure slot, which also names the administrator's remedy.
-        if not measure_clarification_is_answerable(
-            _plan_clarification.slot,
-            _plan_clarification.options,
-            _planner_metrics,
-        ):
-            _trace_finish(
-                trace_id,
-                status="error",
-                answer_type="semantic_plan_incomplete",
-                error_message=(
-                    f"No governed measure in scope for slot: "
-                    f"{_plan_clarification.slot}"
-                ),
-                duration_ms=int(time.time() * 1000) - start_ms,
-            )
-            await adapter.send_message(
-                event,
-                _t("terminal.analytical_plan_unresolved",
-                   lang=(portal_user or {}).get("lang") or "en",
-                   missing=_t("slot.measure",
-                              lang=(portal_user or {}).get("lang") or "en")),
-            )
-            return
         if can_request_clarification(event, _plan_source):
             _plan_options = [dict(option) for option in _plan_clarification.options]
             _plan_meta = {
@@ -1760,16 +1743,53 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
         _round_count, _max_rounds, _ = clarification_progress(event)
         if _round_count >= _max_rounds:
+            # Which terminal message is honest depends on whether the reader
+            # could ever have answered. terminal.needs_governed_context says
+            # "restate the request and specify {slot}" -- fine when the slot is
+            # the reader's to fill, useless when the slot needed the name of a
+            # governed measure and this workspace has none in scope. There the
+            # true answer names the administrator's remedy instead.
+            #
+            # Checked HERE and not before the ask, deliberately. The rounds are
+            # not wasted: a reply can resolve a ranking without naming a
+            # registered metric at all, by naming something countable -- "total
+            # shipments by warehouse" against an empty registry resolves on
+            # counted_entity. Refusing before asking removed that recovery, so
+            # the reader is asked first and told only once the loop is spent.
+            _unanswerable_measure = (
+                _planner_metrics_read
+                and not measure_clarification_is_answerable(
+                    _plan_clarification.slot,
+                    _plan_clarification.options,
+                    _planner_metrics,
+                )
+            )
             _trace_finish(
                 trace_id,
                 status="error",
-                answer_type="clarification_limit",
-                error_message=f"Unresolved analytical slot: {_plan_clarification.slot}",
+                answer_type=("semantic_plan_incomplete" if _unanswerable_measure
+                             else "clarification_limit"),
+                error_message=(
+                    f"No governed measure in scope for slot: "
+                    f"{_plan_clarification.slot}" if _unanswerable_measure
+                    else f"Unresolved analytical slot: {_plan_clarification.slot}"
+                ),
                 duration_ms=int(time.time() * 1000) - start_ms,
             )
+            # The reader's language is read from portal_user at each call site,
+            # not hoisted into a local: tests/test_a_turn_ends_in_the_readers_
+            # language.py checks every terminal.* call here for exactly that,
+            # because a cached-result snapshot is the other thing a lang could
+            # come from and it goes stale the moment a reader switches.
             await adapter.send_message(
                 event,
-                _t("terminal.needs_governed_context", lang=(portal_user or {}).get("lang") or "en",
+                _t("terminal.analytical_plan_unresolved",
+                   lang=(portal_user or {}).get("lang") or "en",
+                   missing=_t("slot.measure",
+                              lang=(portal_user or {}).get("lang") or "en"))
+                if _unanswerable_measure else
+                _t("terminal.needs_governed_context",
+                   lang=(portal_user or {}).get("lang") or "en",
                    slot=_plan_clarification.slot.replace("_", " ")),
             )
             return

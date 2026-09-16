@@ -331,10 +331,14 @@ class TheFallbacksAndEdgesAreTranslated(unittest.TestCase):
                 _table_summary(table, {})["meaning"],
                 "Aucune description métier n'a encore été rédigée pour cette table.")
 
-    def test_no_validated_examples_says_so_in_french(self):
+    def test_no_starter_examples_says_so_in_french(self):
+        """The word "validée" left this sentence deliberately: telling a reader
+        no VALIDATED questions are available invites them to infer that
+        unvalidated ones exist and are being withheld."""
         with _Workspace(examples=0) as workspace:
             french = workspace.render("question_examples", "fr")
-        self.assertIn("Aucune question de démarrage validée", french)
+        self.assertIn("Aucune question de démarrage n'est encore disponible", french)
+        self.assertNotIn("validée", french)
 
     def test_an_empty_workspace_says_so_in_french(self):
         with _Workspace(tables=False, metrics=0, terms=0, dashboards=0) as workspace:

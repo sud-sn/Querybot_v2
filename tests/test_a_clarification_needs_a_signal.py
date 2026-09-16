@@ -115,6 +115,33 @@ def test_a_measure_menu_is_only_offered_when_the_question_named_one():
         assert has_ambiguity_signal("acct", QUESTION, SCOPE) is False
 
 
+def test_a_glossary_we_could_not_read_says_so_out_loud(caplog):
+    """Failing open here switches clarification off at BOTH call sites, so the
+    log is the only way to tell a workspace with nothing ambiguous from a
+    glossary the product cannot reach. It was at debug, where nobody sees it —
+    and before the gate existed this exception at least crashed the turn
+    visibly."""
+    import logging
+
+    import store
+    from core.clarification import has_ambiguity_signal
+
+    with caplog.at_level(logging.WARNING, logger="querybot.clarification"):
+        with patch.object(store, "match_terms_in_question",
+                          side_effect=RuntimeError("database is locked")):
+            assert has_ambiguity_signal("acct", QUESTION, SCOPE) is False
+
+    loud = [
+        record for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and "ambiguity signal" in record.getMessage()
+    ]
+    assert loud, (
+        "clarification was switched off for this turn and nothing above debug "
+        "said so"
+    )
+
+
 def test_both_pipeline_branches_ask_the_gate_before_asking_the_reader():
     """The wiring, read as a syntax tree.
 
@@ -151,3 +178,48 @@ def test_both_pipeline_branches_ask_the_gate_before_asking_the_reader():
     # Interleaved: each gate is consulted before the ask it guards, and no two
     # asks share one gate.
     assert gates[0] < asks[0] < gates[1] < asks[1], (gates, asks)
+
+    # Counting and ordering are not enough: both gates would still be present,
+    # in the same order, with their polarity inverted -- and inverted is the
+    # reported defect restored. So each one's SENSE is pinned, from the If that
+    # encloses it.
+    #
+    # The two sites are deliberately opposite. At the CANNOT_GENERATE branch
+    # the gate guards the ASK, so it appears un-negated. At the zero-row branch
+    # it guards the root-cause card that runs INSTEAD of asking, so it appears
+    # under `not`.
+    def _gate_calls(tree) -> list[ast.Call]:
+        return [
+            node for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "has_ambiguity_signal"
+        ]
+
+    negated: dict[int, bool] = {}
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.If) or not _gate_calls(node.test):
+            continue
+        # A `not` anywhere above the call inside this test negates it. Checking
+        # whether the unparsed test STARTS with "not" would miss the real
+        # shape at the first site, where the gate is the second operand of an
+        # `and` — `can_request_clarification(event) and not has_ambiguity_...`.
+        under_not = {
+            call.lineno
+            for unary in ast.walk(node.test)
+            if isinstance(unary, ast.UnaryOp) and isinstance(unary.op, ast.Not)
+            for call in _gate_calls(unary.operand)
+        }
+        for call in _gate_calls(node.test):
+            negated[call.lineno] = call.lineno in under_not
+
+    assert len(negated) == 2, negated
+    ask_line, rca_line = sorted(negated)
+    assert negated[ask_line] is False, (
+        f"the gate guarding the clarification at line {ask_line} is negated — "
+        "the bot now asks precisely when there is nothing to ask about, which "
+        "is the reported defect inverted rather than fixed"
+    )
+    assert negated[rca_line] is True, (
+        f"the gate guarding the root-cause card at line {rca_line} is not "
+        "negated — the zero-row path sends the card when it should be asking, "
+        "and asks when it should send the card"
+    )

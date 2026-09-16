@@ -117,46 +117,64 @@ class TheMenuIsBuiltFromTheQuestion(unittest.TestCase):
 class TheCallersSeeTheNarrowerMenu(unittest.TestCase):
     """The menu is only worth narrowing if the narrowing reaches the reader."""
 
-    def test_a_sparse_menu_means_no_options_are_offered(self):
+    @staticmethod
+    def _prompt_for(question: str, reply: str) -> str:
+        """The prompt actually sent to the model for this question.
+
+        Observing the PROMPT is the point. A verdict of CLEAR comes back empty
+        whichever path was taken, so asserting on the verdict would pass with
+        the narrowing reverted — the model was still handed the whole
+        vocabulary, it just happened to be told to say CLEAR.
+        """
         import asyncio
 
         from core import clarification as clar
 
+        seen: list[str] = []
+
+        async def _fake_complete(*args, **kwargs):
+            seen.append("\n".join(str(a) for a in args) + str(kwargs))
+            return reply, 10, 5
+
         async def _run():
             with patch("store.list_terms",
                        return_value=[dict(t) for t in VOCABULARY]), \
-                 patch("core.llm.llm_complete",
-                       return_value=('{"status":"CLEAR"}', 10, 5)):
+                 patch("core.llm.llm_complete", new=_fake_complete):
                 return await clar._llm_ambiguity_check_constrained(
-                    account_id="acct", question=UNRELATED, context="",
+                    account_id="acct", question=question, context="",
                     provider="test", model="test", api_key="", extra_kwargs={},
                 )
 
-        is_ambiguous, _question, options = asyncio.run(_run())
-        self.assertFalse(is_ambiguous)
+        result = asyncio.run(_run())
+        return result, "\n".join(seen)
+
+    def test_an_unrelated_question_never_puts_a_menu_in_front_of_the_model(self):
+        """The reply is stubbed AMBIGUOUS on purpose: if the constrained menu
+        were still being built, the model would be free to pick from it."""
+        (is_ambiguous, _q, options), prompt = self._prompt_for(
+            UNRELATED,
+            '{"status":"AMBIGUOUS","question":"Which one?","option_ids":["t1","t2"]}',
+        )
         self.assertEqual(options, [])
+        for term in ("net revenue", "gross margin", "scrap rate"):
+            self.assertNotIn(term, prompt.lower(), f"{term!r} was offered anyway")
+        # And the ids the constrained prompt would have carried are absent, so
+        # the model could not have been asked to choose between readings.
+        self.assertNotIn("t1", prompt)
+        self.assertNotIn("t2", prompt)
 
-    def test_the_constrained_menu_still_runs_when_the_question_earns_it(self):
-        import asyncio
-
-        from core import clarification as clar
-
-        async def _run():
-            reply = ('{"status":"AMBIGUOUS","question":"Which one?",'
-                     '"option_ids":["t1","t2"]}')
-            with patch("store.list_terms",
-                       return_value=[dict(t) for t in VOCABULARY]), \
-                 patch("core.llm.llm_complete", return_value=(reply, 10, 5)):
-                return await clar._llm_ambiguity_check_constrained(
-                    account_id="acct",
-                    question="net revenue and gross margin by region",
-                    context="",
-                    provider="test", model="test", api_key="", extra_kwargs={},
-                )
-
-        is_ambiguous, _question, options = asyncio.run(_run())
+    def test_a_question_that_earns_a_menu_gets_one(self):
+        """The mirror, so the test above cannot pass by the menu never being
+        built at all."""
+        (is_ambiguous, _q, options), prompt = self._prompt_for(
+            "net revenue and gross margin by region",
+            '{"status":"AMBIGUOUS","question":"Which one?","option_ids":["t1","t2"]}',
+        )
         self.assertTrue(is_ambiguous)
         self.assertEqual([option["_term_id"] for option in options], [1, 2])
+        self.assertIn("net revenue", prompt.lower())
+        self.assertIn("gross margin", prompt.lower())
+
 
 
 if __name__ == "__main__":
