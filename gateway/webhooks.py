@@ -366,6 +366,22 @@ _RECONCILE_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# An explicit ask to run a multi-step inquiry from scratch -- distinct from
+# _ANALYSIS_WORK_INTENT_RE below (which operates on rows a question has
+# ALREADY returned) and from an ordinary causal "why" question (which stays
+# a single governed drill-down, core.query_pipeline._send_why_insight). The
+# verb has to be followed by something to investigate: bare "investigate"
+# matches nothing.
+_INVESTIGATION_INTENT_RE = re.compile(
+    r"\b(?:investigate|look\s+into|dig\s+into|dive\s+into|"
+    r"do\s+a\s+deep\s+dive\s+(?:on|into)|run\s+an\s+investigation\s+(?:on|into)|"
+    r"root[\s-]cause\s+(?:analysis\s+)?(?:on|of|into))\s+\S",
+    re.IGNORECASE,
+)
+# The number of governed questions core.investigation_planner may ask
+# (the objective itself, always step one, plus a model's own choices).
+_INVESTIGATION_MAX_STEPS = 4
+
 # Explicit deep-work follow-ups over an already governed result.  This route
 # never queries the database. Prebuilt operations and administrator-enabled
 # governed Python both receive only bounded copies of released result rows.
@@ -1098,6 +1114,94 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 pass
         finally:
             agent_context.__exit__(None, None, None)
+
+    async def _run_investigation(text: str) -> None:
+        """Ask several governed questions instead of one, and answer with a
+        checked synthesis. See core/investigation_planner.py.
+
+        One AgentRunSession covers the whole investigation; the loop's own
+        run_query_tool suppresses it for the duration of each sub-question
+        (core/investigation.py), so it is opened here once and its steps are
+        recorded here, after the loop, from the trail it returns -- not live,
+        step by step, except for the one status update sent before the loop
+        starts, which is the only signal the reader gets that this is a
+        multi-step ask rather than a stuck ordinary one.
+        """
+        event = adapter.make_event(text)
+        agent_run = None
+        try:
+            agent_run = AgentRunSession.start(
+                account_id=account_id,
+                portal_user=portal_user,
+                external_thread_id=adapter.thread_id,
+                objective=text,
+                purpose_id="investigation",
+                max_tool_calls=_INVESTIGATION_MAX_STEPS,
+                initial_tool="query_data",
+                initial_label=_t("investigation.stage.label"),
+                initial_detail=_t("investigation.stage.detail", question=text[:160]),
+            )
+            await adapter.send_agent_event(agent_run.event("agent_run_started"))
+        except Exception as exc:
+            log.warning("Investigation run could not be started; continuing without a trail: %s", exc)
+
+        agent_context = activate_agent_run(agent_run)
+        agent_context.__enter__()
+        run_id = agent_run.run_id if agent_run else make_llm_audit_request_id()
+        try:
+            _send = getattr(adapter, "send_status", None)
+            if callable(_send):
+                await _send(event, "investigating", _t("investigation.stage.label"),
+                           _t("investigation.stage.detail", question=text[:160]))
+
+            provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+
+            async def _complete_plan(**kwargs):
+                return await llm_complete(provider=provider, model=model, api_key=api_key,
+                                          **kwargs, **az_kwargs)
+
+            from core.investigation_planner import run_investigation as _run_loop
+
+            request_id = make_llm_audit_request_id()
+            with llm_audit_scope(
+                account_id=account_id, question=text, enabled=bool(client.get("enable_llm_audit")),
+                request_id=request_id, component="investigation_planner",
+            ):
+                outcome = await _run_loop(
+                    objective=text, account_id=account_id, portal_user=portal_user, run_id=run_id,
+                    max_steps=_INVESTIGATION_MAX_STEPS, complete=_complete_plan,
+                    lang=(portal_user or {}).get("lang"),
+                )
+
+            if agent_run:
+                for step in outcome.steps:
+                    if step.index > 1:
+                        agent_run.next_step(
+                            "query_data", _t("investigation.stage.label"),
+                            _t("investigation.stage.detail", question=step.question[:160]),
+                        )
+                    agent_run.complete_step("completed" if step.result.ok else "failed")
+                agent_run.record_assistant_message(
+                    outcome.synthesis or outcome.refused, message_type="investigation_synthesis",
+                    metadata={"step_count": len(outcome.steps), "phrasing": outcome.phrasing},
+                )
+                agent_run.complete_if_running()
+                await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+
+            await adapter.send_message(event, outcome.refused or outcome.synthesis)
+        except Exception as exc:
+            log.exception("Investigation failed for %s: %s", account_id, exc)
+            if agent_run:
+                try:
+                    agent_run.fail(exc)
+                    await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+                except Exception as inner_exc:
+                    log.debug("Agent failure audit failed: %s", inner_exc)
+            await adapter.send_message(event, _t("reply.error.answer_failed"))
+        finally:
+            agent_context.__exit__(None, None, None)
+            async with adapter.send_lock:
+                await websocket.send_json({"type": "typing", "active": False})
 
     async def _run_local_result_command(
         text: str, command, table_hint: str = "", schema_hint: str = "",
@@ -4992,6 +5096,18 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 current_query_task = asyncio.create_task(_guarded_turn(
                     _run_metric_authoring_chat(text, table_hint, schema_hint)
                 ))
+                continue
+
+            # An explicit multi-step investigation starts fresh -- it has
+            # nothing to do with a cached result, and it is a deliberate ask
+            # a reader would not type by accident, so it is checked before
+            # every other route including the deep-analysis one just below
+            # (which operates on rows a question has ALREADY returned).
+            if _INVESTIGATION_INTENT_RE.search(text):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(
+                    _guarded_turn(_run_investigation(text)))
                 continue
 
             # Deep analysis is explicit and operates only on the most recent

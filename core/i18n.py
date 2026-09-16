@@ -1529,6 +1529,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Wording by the model; the diagnosis is the system's.",
         "fr": "Formulation par le modèle ; le diagnostic est celui du système.",
     },
+    "investigation.stage.label": {
+        "en": "Investigating",
+        "fr": "Investigation en cours",
+    },
+    "investigation.stage.detail": {
+        "en": "Asking: {question}",
+        "fr": "Question posée : {question}",
+    },
     "investigation.regulated_refusal": {
         "en": "This workspace's compliance posture does not allow an investigation to run: no step's findings may reach a planning model. Ask one governed question at a time instead.",
         "fr": "La posture de conformité de cet espace de travail ne permet pas de lancer une investigation : les résultats d'aucune étape ne peuvent être transmis à un modèle de planification. Posez plutôt vos questions gouvernées une par une.",
