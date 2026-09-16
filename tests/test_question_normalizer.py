@@ -120,6 +120,22 @@ class TestTheLexicon:
         planner rather than to a detector, so they are checked here."""
         assert canonicalise(french) == english
 
+    def test_an_elided_count_is_still_a_count(self):
+        """"nombre de commandes" is "count of orders". Before a vowel French
+        elides the article -- "nombre d'ordres" -- and the elision used to
+        leave "nombre" untranslated with the "of" swallowed."""
+        assert canonical_question("nombre de commandes par client", "fr") == "count of orders by customer"
+        assert canonical_question("nombre d'ordres par client", "fr") == "count of ordres by customer"
+        assert canonical_question("nombre d’ordres par client", "fr") == "count of ordres by customer"
+        assert canonical_question("combien de commandes par client", "fr") == "how many orders by customer"
+        assert canonical_question("combien d'articles par commande", "fr").startswith("how many articles by")
+
+    def test_over_time_is_the_phrase_the_series_detector_reads(self):
+        out = canonical_question("évolution des ventes au fil du temps", "fr")
+        assert out == "trend of sales over time"
+        assert analyze_query_intent(out)["wants_time_series"]
+        assert canonical_question("ventes dans le temps", "fr") == "sales over time"
+
     def test_a_word_is_not_matched_inside_another(self):
         assert "margin" not in canonicalise("margelle")
         assert "month" not in canonicalise("moissonneuse")

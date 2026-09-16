@@ -182,6 +182,11 @@ _LEXICON: dict[str, str] = {
     "contre": "versus",
     "evolution": "trend",
     "tendance": "trend",
+    # "over time" is the phrase the time-series detector reads; "temps" on
+    # its own is the word a manufacturer's "temps de cycle" is built on.
+    "au fil du temps": "over time",
+    "dans le temps": "over time",
+    "temps": "time",
     "prevision": "forecast",
     "previsions": "forecast",
     "prevoir": "forecast",
@@ -237,6 +242,11 @@ _LEXICON: dict[str, str] = {
     "mediane": "median",
     "somme": "sum",
     "nombre de": "count of",
+    # Elided before a vowel -- "nombre d'ordres". The key ends at the
+    # apostrophe (see _boundary_after) and the target carries the space.
+    "nombre d'": "count of ",
+    "combien de": "how many",
+    "combien d'": "how many ",
     "combien": "how much",
 
     # ── Superlatives, which are what carry Top-N ─────────────────────────────
@@ -555,8 +565,22 @@ _ENTRIES: tuple[tuple[str, str], ...] = tuple(sorted(
     key=lambda pair: (-len(pair[0]), pair[0]),
 ))
 
+
+def _boundary_after(key: str) -> str:
+    """The word boundary a key needs after it.
+
+    An elided key ("nombre d'") ends at the apostrophe, and the character
+    after it is the first letter of the noun the article was attached to --
+    so it has no boundary after it, and its target carries the space the
+    elision swallowed.
+    """
+    return "" if key.endswith("'") else r"(?![0-9a-z])"
+
+
 _LEXICON_RE = re.compile(
-    r"(?<![0-9a-z])(?:" + "|".join(re.escape(key) for key, _ in _ENTRIES) + r")(?![0-9a-z])"
+    r"(?<![0-9a-z])(?:"
+    + "|".join(re.escape(key) + _boundary_after(key) for key, _ in _ENTRIES)
+    + r")"
 )
 _REPLACEMENTS = dict(_ENTRIES)
 
