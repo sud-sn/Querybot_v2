@@ -144,6 +144,29 @@ def prune_suggestion_cache(kb_dir: str, valid_questions: set[str]) -> int:
     return removed
 
 
+def prune_suggestion_cache_to_validated(kb_dir: str, account_id: str) -> int:
+    """Prune the cache against whatever the store currently calls validated.
+
+    The prune that matters runs inside the validation worker, and that worker
+    is a child process: it is terminated outright when it exceeds its timeout
+    and it swallows its own exceptions, so its last act is one the parent
+    cannot assume happened. Whoever rebuilt the cache on the strength of that
+    assumption needs a way to finish the job from this side, against the same
+    stored evidence and the same rule.
+
+    Returns the number of entries removed.
+    """
+    import store
+
+    return prune_suggestion_cache(
+        kb_dir,
+        {
+            str(example.get("question") or "")
+            for example in store.get_validated_examples(account_id, limit=5000)
+        },
+    )
+
+
 def _fqn_from_kb_header(content: str) -> str | None:
     """
     Extract FQN from the first heading of a KB markdown file.

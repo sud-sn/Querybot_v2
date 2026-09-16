@@ -10857,6 +10857,29 @@ async def admin_build_kb(
                         progress_callback=_on_kb_progress,
                     )
                     validation_result["repair"] = repair_result
+                    # The rebuild above deliberately put every Q: line back,
+                    # the rejected ones included, because only a rebuild can
+                    # re-admit a question whose repair now compiles — pruning
+                    # can never add. That is safe exactly as long as the
+                    # validation above prunes again as its last act, and it is
+                    # a child process: on timeout it is terminated where it
+                    # stands, and on an exception it reports and returns. Both
+                    # leave the panel advertising the questions this build has
+                    # already established it cannot answer. Prune from here
+                    # against the same stored evidence the worker uses, so the
+                    # rebuild is never the last word.
+                    if validation_result.get("status") in {"timeout", "error"}:
+                        try:
+                            from core.suggestions import prune_suggestion_cache_to_validated
+                            prune_suggestion_cache_to_validated(kb_dir, account_id)
+                        except Exception as _late_prune_error:
+                            log.warning(
+                                "Suggestion cache could not be pruned after a %s "
+                                "second validation for %s (%s) — the panel keeps "
+                                "the unvalidated post-repair question set",
+                                validation_result.get("status"), account_id,
+                                _late_prune_error,
+                            )
             building_state["kb_example_validation"] = validation_result
             validation_status = validation_result.get("status")
             if validation_status == "stopped":

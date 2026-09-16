@@ -141,3 +141,72 @@ def test_the_cache_rebuild_runs_before_the_validation_that_prunes_it():
         f"validation at line {validation_line} that prunes it -- every question "
         "the second validation rejected is back in the panel"
     )
+
+
+def test_the_parent_can_finish_the_prune_the_worker_may_not_have_run():
+    """The rebuild is safe only while the prune after it actually happens.
+
+    That prune lives in the validation child process, which is terminated
+    outright on timeout and swallows its own exceptions -- so the parent's
+    "the validation prunes afterwards" is an assumption, not a fact. This is
+    the same rule, applied from the parent against the same stored evidence.
+    """
+    from unittest.mock import patch
+
+    from core.suggestions import prune_suggestion_cache_to_validated
+
+    with tempfile.TemporaryDirectory() as tmp:
+        kb_dir = _kb_dir(tmp)
+        build_suggestion_cache(kb_dir)
+        assert sorted(_cached(kb_dir)) == sorted([COMPILES, DOES_NOT])
+
+        import store
+        with patch.object(store, "get_validated_examples", return_value=[
+            {"question": COMPILES, "sql_query": "SELECT 1"},
+        ]) as validated:
+            assert prune_suggestion_cache_to_validated(kb_dir, "acct") == 1
+
+        assert _cached(kb_dir) == [COMPILES]
+        # Read from the store, not from the files the rebuild came from --
+        # rebuilding from those is what put the rejected question back.
+        assert validated.call_args.args[0] == "acct"
+
+
+def test_the_late_prune_keeps_everything_when_the_store_vouches_for_it():
+    """It must narrow to the validated set, not empty the panel: an account
+    whose examples all validated loses nothing."""
+    from unittest.mock import patch
+
+    from core.suggestions import prune_suggestion_cache_to_validated
+
+    with tempfile.TemporaryDirectory() as tmp:
+        kb_dir = _kb_dir(tmp)
+        build_suggestion_cache(kb_dir)
+
+        import store
+        with patch.object(store, "get_validated_examples", return_value=[
+            {"question": COMPILES}, {"question": DOES_NOT},
+        ]):
+            assert prune_suggestion_cache_to_validated(kb_dir, "acct") == 0
+        assert sorted(_cached(kb_dir)) == sorted([COMPILES, DOES_NOT])
+
+
+def test_the_late_prune_runs_when_the_second_validation_did_not_finish():
+    """Wiring, read as a syntax tree: the route needs a live warehouse and an
+    LLM to reach this branch, and what matters is which statuses trigger it."""
+    body = _repair_branch_statements()
+    guarded = [
+        node for statement in body for node in ast.walk(statement)
+        if isinstance(node, ast.If)
+        and "prune_suggestion_cache_to_validated" in ast.dump(node)
+    ]
+    assert guarded, (
+        "nothing prunes the cache when the second validation does not finish, "
+        "so a timed-out build leaves the rebuilt, unvalidated question set in "
+        "the panel"
+    )
+    statuses = {
+        node.value for node in ast.walk(guarded[0].test)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert {"timeout", "error"} <= statuses, statuses
