@@ -380,9 +380,40 @@ def _remember_analyst_turn(adapter, message: str, reply: str) -> None:
         log.warning("Could not record a conversational turn: %s", exc)
 
 
+def _result_on_screen_for_analyst(account_id: str, snapshot: dict | None) -> tuple[str, str]:
+    """(question the result answers, its brief as prompt text) -- or ("", "").
+
+    The conversational analyst reasoned over workspace metadata alone, so a
+    reader who had a result in front of them and asked "is that good?", "what
+    does the second column mean?" or "what did that show?" was answered by a
+    model that could not see it. The brief names real values (the leader, a
+    total), so it reaches the model only where result_llm_features_allowed
+    says this tenant's results may: a regulated workspace keeps the analyst
+    metadata-only, exactly as before.
+    """
+    if not snapshot:
+        return "", ""
+    try:
+        from core.compliance.policy_engine import result_llm_features_allowed
+
+        if not result_llm_features_allowed(account_id):
+            return "", ""
+        from core.insight import describe_result_for_prompt
+
+        question = str(snapshot.get("question") or "").strip()
+        brief = describe_result_for_prompt(
+            list(snapshot.get("rows") or []), question, sql=str(snapshot.get("sql") or ""),
+        )
+        return (question, brief) if brief else ("", "")
+    except Exception as e:  # noqa: BLE001 - the analyst answers without it
+        log.warning("Result on screen not described for the analyst: %s", e)
+        return "", ""
+
+
 async def _generate_analyst_reply(
     text: str, account_id: str, client_row: dict,
     *, history: list[dict] | None = None,
+    result_question: str = "", result_brief: str = "",
 ) -> str | None:
     """
     Dynamic conversational analyst — replaces the static _ABOUT / _OFF_TOPIC_REPLY blocks.
@@ -398,12 +429,19 @@ async def _generate_analyst_reply(
     nothing, and the reader could not have a conversation, only a series of
     unrelated first messages.
 
+    `result_question` and `result_brief` are the result on the reader's
+    screen -- what it answers and its statistical brief -- so "is that good?"
+    and "what does this column mean?" are answered about the thing in front of
+    them. The brief names real values, so the caller
+    (_result_on_screen_for_analyst) passes it only where
+    result_llm_features_allowed permits; a regulated tenant's analyst stays
+    metadata-only.
+
     Fails open (returns None) on any error so a misconfigured LLM never blocks queries.
     Wraps the LLM call in llm_audit_scope so audit rows are written (previously missing).
-    Only reasons over metadata (business_desc, industry, table/metric names) — never over
-    real data rows, so it is safe for regulated tenants. The history it now
-    carries is prose the analyst itself wrote from that same metadata, so that
-    remains true.
+    Otherwise reasons over metadata (business_desc, industry, table/metric names) — never
+    over real data rows. The history it carries is prose the analyst itself
+    wrote, so that remains true.
     """
     # Fast-path: obvious data requests skip the LLM call entirely
     if _looks_like_data_request(text, account_id):
@@ -427,6 +465,18 @@ async def _generate_analyst_reply(
         history_block = (
             "\n\nConversation so far (oldest first):\n" + "\n\n".join(history_lines)
             if history_lines else ""
+        )
+        result_block = (
+            f"\n\nResult on screen (it answers: {result_question}):\n{result_brief}"
+            if result_brief else ""
+        )
+        result_rule = (
+            "- Asked about the result on screen -- a figure in it, what a column "
+            "means, whether something is high or low, what it showed: answer "
+            "from the result brief below, using only its figures and labels. If "
+            "the brief does not hold what they asked, say so and name the exact "
+            "question you could run instead.\n"
+            if result_brief else ""
         )
 
         # This reply is shown to the reader verbatim -- it is the answer to
@@ -460,6 +510,7 @@ async def _generate_analyst_reply(
             "- Asked about something you just said: answer from the "
             "conversation above. If it is not there, say you do not have it "
             "rather than inventing it.\n"
+            + result_rule +
             "- Asked about yourself, or told something conversational: reply "
             "briefly and plainly, then say what you could look up. Do not "
             "recite your capabilities at someone who did not ask.\n"
@@ -468,6 +519,7 @@ async def _generate_analyst_reply(
             "Never invent a table, a metric, a number, or a fact about this "
             "workspace that is not in the context below."
             f"{history_block}"
+            f"{result_block}"
             f"{context_block}"
         )
         with llm_audit_scope(
@@ -668,8 +720,11 @@ async def _run_query_with_guard_locked(
         _analyst_history = (
             _analyst_history_fn() if callable(_analyst_history_fn) else []
         )
+        _result_question, _result_brief = _result_on_screen_for_analyst(
+            account_id, _cached_snapshot)
         _analyst_reply = await _generate_analyst_reply(
             text, account_id, client_row, history=_analyst_history,
+            result_question=_result_question, result_brief=_result_brief,
         )
         if _analyst_reply is not None:
             if _analyst_reply_offers_query(_analyst_reply) and event.user_id:

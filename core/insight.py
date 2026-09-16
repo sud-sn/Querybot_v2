@@ -2296,3 +2296,32 @@ async def generate_followup_suggestions(
             "Follow-up suggestion generation failed (non-critical): %s", exc
         )
         return []
+
+
+def describe_result_for_prompt(rows: list[dict], question: str, sql: str = "") -> str:
+    """The statistical brief of a result, as the text a prompt carries.
+
+    Exactly what the conversational reply in the card sends about a result
+    (core/result_conversation.py): the brief compute_data_brief builds, framed
+    by build_action_contract, rendered by _format_brief_for_prompt -- a
+    summary, never the row set. "" for an empty result or any failure, so a
+    caller has nothing to insert rather than an exception to catch.
+
+    The brief names real values (the leader, the top five, a total), so a
+    caller decides with result_llm_features_allowed whether this tenant's
+    result may reach a model at all; this function only describes it.
+    """
+    if not rows or not isinstance(rows, list):
+        return ""
+    try:
+        from core.response_builder import summarize_result_context
+
+        context = summarize_result_context(rows, question, sql=sql)
+        brief = compute_data_brief(
+            rows, question, result_scope=context.get("result_scope"), context=context,
+        )
+        contract = build_action_contract("converse", question, brief)
+        return _format_brief_for_prompt(contract).strip()
+    except Exception as exc:  # noqa: BLE001 - a missing brief must never fail a turn
+        log.warning("Result brief for the analyst could not be built: %s", exc)
+        return ""
