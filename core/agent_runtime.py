@@ -351,6 +351,65 @@ class AgentRunSession:
             error_message=error,
         )
 
+    def next_step(
+        self, tool_name: str, label: str, detail: str = "", metadata: dict | None = None,
+    ) -> dict:
+        """Start a NEW step (step_index + 1) under this run's own budget.
+
+        A run used to carry exactly one tool call, created by .start(), and
+        every later stage update (record_stage) rewrote that same step in
+        place -- correct for "ask one question", wrong for "ask several and
+        synthesize": the trail would show one step whose label kept changing,
+        never the steps that were actually taken.
+
+        store.create_agent_step enforces the run's own max_tool_calls BEFORE
+        inserting anything, raising RuntimeError on an exhausted budget.
+        Local state is updated only after that call succeeds, so a caller
+        that catches the error and finishes the run is left with self at its
+        last SUCCESSFUL step -- never pointing at a step that was refused.
+        """
+        new_index = self.step_index + 1
+        tool_name = _safe_text(tool_name, 96) or "tool"
+        label = _safe_text(label, 200)
+        detail = _safe_text(detail, 500)
+        store.create_agent_step(
+            run_id=self.run_id,
+            account_id=self.account_id,
+            portal_user_id=self.portal_user_id,
+            step_index=new_index,
+            tool_name=tool_name,
+            label=label,
+            detail=detail,
+            metadata=metadata or {},
+        )
+        self.step_index = new_index
+        self.tool_name = tool_name
+        self.label = label
+        self.detail = detail
+        # store.create_agent_step above already advanced agent_run's own
+        # current_stage to this tool_name as part of the same write; nothing
+        # else here needs updating -- the run's status does not change on an
+        # ordinary step, and next_step is never the call that ends one.
+        return self.event("agent_run_progress")
+
+    def complete_step(
+        self, status: str = "completed", *, answer_trace_id: int | None = None,
+    ) -> None:
+        """Close the CURRENT step (the one next_step or .start() opened).
+
+        Every step a multi-step run opens is closed exactly once, whether it
+        succeeded or not -- an "running" step left open when the run moves on
+        is a step the trail can never explain.
+        """
+        store.update_agent_step(
+            run_id=self.run_id,
+            account_id=self.account_id,
+            portal_user_id=self.portal_user_id,
+            step_index=self.step_index,
+            status=status,
+            answer_trace_id=answer_trace_id,
+        )
+
     def event(self, event_type: str) -> dict:
         return {
             "type": event_type,
@@ -360,6 +419,7 @@ class AgentRunSession:
             "tool": self.tool_name,
             "tool_label": self.label,
             "detail": self.detail,
+            "step_index": self.step_index,
             "governed": True,
             "read_only": True,
         }

@@ -214,6 +214,79 @@ def test_analysis_run_and_child_tasks_are_durable_and_tenant_scoped(agent_db):
     assert get_active_agent_run() is None
 
 
+class TestMultiStepRuns:
+    """next_step/complete_step -- added for a run that calls its tool more
+    than once (core.investigation). Before this, record_stage was the only
+    way to update a step in progress, and it always rewrote step 1: a run
+    that asked three questions produced a trail of one step whose label
+    changed twice, never three steps."""
+
+    def test_next_step_opens_a_new_step_under_the_same_run(self, agent_db):
+        run = _start()
+        event = run.next_step("compare", "Investigating: revenue",
+                              "Asking: revenue by region")
+        assert run.step_index == 2
+        assert event["type"] == "agent_run_progress"
+        assert event["step_index"] == 2
+        assert event["tool"] == "compare"
+        steps = store.list_agent_steps(
+            account_id="tenant-a", portal_user_id=1, run_id=run.run_id)
+        assert [s["step_index"] for s in steps] == [1, 2]
+        assert steps[1]["tool_name"] == "compare"
+        assert steps[1]["label"] == "Investigating: revenue"
+        assert steps[1]["detail"] == "Asking: revenue by region"
+        assert steps[1]["status"] == "running"
+        stored = store.get_agent_run(
+            account_id="tenant-a", portal_user_id=1, run_id=run.run_id)
+        assert stored["tool_calls_used"] == 2
+        assert stored["current_stage"] == "compare"
+        assert stored["status"] == "running"
+
+    def test_the_runs_own_budget_is_enforced(self, agent_db):
+        run = AgentRunSession.start(
+            account_id="tenant-a", portal_user={"id": 1, "account_id": "tenant-a"},
+            external_thread_id="budget-thread", objective="Investigate something",
+            max_tool_calls=2,
+        )
+        run.next_step("query_data", "second question")
+        assert run.step_index == 2
+        with pytest.raises(RuntimeError, match="budget"):
+            run.next_step("query_data", "third question")
+        # A refused step must not have moved local state past the last one
+        # that actually succeeded -- otherwise the run's own record of "where
+        # it is" disagrees with what the store actually holds.
+        assert run.step_index == 2
+
+    def test_complete_step_closes_the_current_step(self, agent_db):
+        run = _start()
+        run.complete_step("completed", answer_trace_id=42)
+        steps = store.list_agent_steps(
+            account_id="tenant-a", portal_user_id=1, run_id=run.run_id)
+        assert steps[0]["status"] == "completed"
+        assert steps[0]["answer_trace_id"] == 42
+        assert steps[0]["completed_at"] is not None
+
+    def test_a_failed_step_is_recorded_as_failed_not_completed(self, agent_db):
+        run = _start()
+        run.complete_step("failed")
+        steps = store.list_agent_steps(
+            account_id="tenant-a", portal_user_id=1, run_id=run.run_id)
+        assert steps[0]["status"] == "failed"
+
+    def test_several_steps_leave_a_real_trail_not_one_row_rewritten(self, agent_db):
+        run = _start()
+        first_label = run.label
+        run.complete_step("completed")
+        run.next_step("query_data", "step two")
+        run.complete_step("completed")
+        run.next_step("query_data", "step three")
+        run.complete_step("failed")
+        steps = store.list_agent_steps(
+            account_id="tenant-a", portal_user_id=1, run_id=run.run_id)
+        assert [s["label"] for s in steps] == [first_label, "step two", "step three"]
+        assert [s["status"] for s in steps] == ["completed", "completed", "failed"]
+
+
 def test_portal_and_pipeline_agent_wiring_is_present():
     root = Path(__file__).resolve().parents[1]
     webhooks = (root / "gateway" / "webhooks.py").read_text("utf-8")
