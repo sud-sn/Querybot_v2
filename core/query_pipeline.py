@@ -31,7 +31,7 @@ from core.clarification import (
     build_schema_grounded_clarification_hint, extract_original_question,
     can_request_clarification, clarification_session_id,
     clarification_progress, prepare_clarification_meta,
-    selected_clarification_option,
+    selected_clarification_option, has_ambiguity_signal,
 )
 from core.analytical_intent import plan_analytical_intent
 from core.analytical_request_plan import compile_analytical_request_plan
@@ -5926,7 +5926,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # A clarification reply may expose a different missing slot. Re-check
         # ambiguity under the source-aware round limit instead of skipping all
         # later clarification opportunities.
-        if can_request_clarification(event):
+        #
+        # Gated on a glossary signal, exactly as the zero-row path below is.
+        # Failing to write SQL means the question could not be mapped onto the
+        # model at all; it says nothing about which of two readings the reader
+        # meant. Without the gate that non-fact reached the constrained-menu
+        # model as if it were evidence of ambiguity, and readers were asked
+        # "which measure do you want?" about measures their question had never
+        # named. With no signal the honest reply is the one below: we could
+        # not find the tables, and here are the closest terms we do know.
+        if can_request_clarification(event) and has_ambiguity_signal(
+            account_id, question, query_scope_tables
+        ):
             with llm_audit_scope(
                 account_id=account_id,
                 question=question,
@@ -7247,14 +7258,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _forget_result()
 
     if (len(rows) == 0 or _zero_match_diagnostic) and event.user_id and can_request_clarification(event):
-        _zr_matches = store.match_terms_in_question(account_id, question, query_scope_tables)
-        _zr_has_required = any(
-            m.get("requires_clarification") and m.get("clarification_options")
-            for m in _zr_matches
-        )
-        _zr_has_multi_metric = len([m for m in _zr_matches if m.get("kind") == "metric"]) >= 2
-
-        if not (_zr_has_required or _zr_has_multi_metric):
+        # The rule the CANNOT_GENERATE branch above applies, and now literally
+        # the same code. It lived here as three throwaway locals, which is why
+        # that branch shipped without it — there was nothing to reuse.
+        if not has_ambiguity_signal(account_id, question, query_scope_tables):
             # No ambiguity signal: return business-readable RCA for the empty result.
             _zr_tables = extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql"))
             # _execute_with_policy is the SAME governed executor the main

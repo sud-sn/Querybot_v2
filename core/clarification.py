@@ -1087,6 +1087,57 @@ def _scored_terms_for_ambiguity_menu(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Is there anything worth asking about?
+# ══════════════════════════════════════════════════════════════════════════════
+
+def has_ambiguity_signal(
+    account_id: str,
+    question: str,
+    allowed_tables: Optional[set[str]] = None,
+) -> bool:
+    """Whether this question names something the glossary knows is ambiguous.
+
+    check_ambiguity_glossary_first is not a relevance check and was never
+    meant to be one — it answers "what should I ask?", not "is there anything
+    to ask?". So the relevance decision belongs to the caller, and this is it.
+    Two signals count, because they are the two the glossary can actually
+    prove: a term an admin marked as needing clarification AND gave options
+    for, and two or more registered metrics the question genuinely names.
+    Everything else is the product guessing out loud — which is how a reader
+    asking how many pallets shipped from a warehouse came to be asked which
+    measure they meant, over measures their question had never named.
+
+    Deliberately a floor, not a second opinion. It is more permissive than its
+    consumer — Step 2 of check_ambiguity_glossary_first drops metric-colliding
+    terms before it counts, and comparison intent suppresses the menu outright
+    — so a gate that also applied those rules would close on questions the
+    consumer would have handled well. Opening the gate is permission to look,
+    not a promise to ask.
+
+    A glossary read that fails is not a signal. This is a SQLite read
+    underneath, so a locked database must not turn into an invented question;
+    the honest reply in that case is the caller's own diagnostic.
+    """
+    import store
+
+    try:
+        matches = store.match_terms_in_question(account_id, question, allowed_tables)
+    except Exception:
+        log.debug(
+            "Glossary ambiguity signal unavailable for %s — treating the "
+            "question as unambiguous", account_id, exc_info=True,
+        )
+        return False
+
+    has_required = any(
+        m.get("requires_clarification") and m.get("clarification_options")
+        for m in matches
+    )
+    has_multi_metric = len([m for m in matches if m.get("kind") == "metric"]) >= 2
+    return bool(has_required or has_multi_metric)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Glossary-first ambiguity check (deterministic when possible)
 # ══════════════════════════════════════════════════════════════════════════════
 
