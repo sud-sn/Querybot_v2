@@ -19,6 +19,7 @@ Regression tests for the tester's validation defect report:
   F. WS error paths degrade to a visible assistant_error instead of silence
      (defect 5 hardening).
 """
+import ast
 import asyncio
 import json
 import os
@@ -258,16 +259,66 @@ class ClosestTermSuggestionTests(unittest.TestCase):
         rca = translate_failure(kind="validation", code="unknown_column", reason="x")
         self.assertNotIn("Closest known terms", rca["suggested_next_step"])
 
-    def test_cannot_generate_path_wired_in_pipeline(self):
-        src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
-        # The canonical question: the KB's terms are English, so a French
-        # question had nothing to be close TO.
-        self.assertIn(
-            "suggest_closest_terms(_analysis_question, account_id, state.get(\"kb_dir\", \"\"))",
-            src,
+    def test_the_closest_terms_reach_the_reader(self):
+        """The suggestions are the point: a dead end that does not name them
+        is the generic "try rephrasing" this defect was about.
+
+        The message itself is executed here. It used to be a hard-coded
+        literal inside _handle_query_impl, which no test could run, so this
+        one read the pipeline source for the literal — and would have passed
+        just as happily if the branch never sent it.
+        """
+        from core.failure_messages import cannot_generate_message
+
+        terms = suggest_closest_terms(
+            "what is the total previous year customer ordered quantity",
+            "acct_defects", self.kb,
         )
-        self.assertIn("Closest known terms in your data:", src)
-        self.assertIn("suggestions=_suggest", src)
+        self.assertTrue(terms)
+        message = cannot_generate_message(terms, lang="en")
+        for term in terms:
+            self.assertIn(term, message)
+        self.assertNotIn(", ,", message)
+
+    def test_the_canonical_question_is_what_gets_matched(self):
+        """The KB's terms are English, so a French question has nothing to be
+        close TO until the normaliser has had it.
+
+        Read as a syntax tree: both call sites sit inside branches that need a
+        warehouse, a knowledge base and a model to reach, so the argument is
+        what can be checked — and the argument is the whole defect.
+        """
+        import ast
+
+        tree = ast.parse((ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8"))
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", "") == "suggest_closest_terms"
+        ]
+        self.assertTrue(calls, "nothing calls suggest_closest_terms any more")
+        for call in calls:
+            first = call.args[0] if call.args else None
+            self.assertIsInstance(first, ast.Name, ast.dump(call))
+            self.assertEqual(
+                first.id, "_analysis_question",
+                f"line {call.lineno} matches the raw question, so a French "
+                "reader is compared against an English glossary",
+            )
+
+    def test_the_failure_card_still_carries_its_suggestions(self):
+        """The other route the same terms travel: translate_failure's card."""
+        tree = ast.parse((ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8"))
+        passed = [
+            keyword.lineno
+            for node in ast.walk(tree) if isinstance(node, ast.Call)
+            for keyword in node.keywords
+            if keyword.arg == "suggestions"
+            and getattr(keyword.value, "id", "") == "_suggest"
+        ]
+        self.assertTrue(
+            passed, "translate_failure no longer receives the closest terms"
+        )
 
 
 class WsFallbackErrorTests(unittest.TestCase):
