@@ -1470,7 +1470,12 @@ def build_answer(
             "scope_note": scope.get("note", ""),
         }
 
-    if numeric_cols and text_cols:
+    # A listing (summarize_result_context, _is_listing) is records, and its
+    # first numeric column is not a measure to lead on. It takes the
+    # record-count headline at the bottom, like a result with no numbers.
+    _listing = scope.get("kind") == "text_table"
+
+    if numeric_cols and text_cols and not _listing:
         # A named-period comparison, before the ranking path. Fixing the SQL
         # alone does not fix the answer: build_answer took numeric_cols[0] --
         # the OLDEST period column on a widened result -- and opened the card
@@ -1592,7 +1597,7 @@ def build_answer(
             "scope_note": scope.get("note", ""),
         }
 
-    if numeric_cols:
+    if numeric_cols and not _listing:
         col = numeric_cols[0]
         value_fmt = column_formats.get(col)
         values = [_to_float_z(r.get(col)) for r in rows]
@@ -1623,6 +1628,57 @@ def build_answer(
         "scope_badge": scope.get("badge", ""),
         "scope_note": scope.get("note", ""),
     }
+
+
+_AGGREGATION_RE = re.compile(
+    r"\bGROUP\s+BY\b|\bOVER\s*\(|"
+    r"\b(?:SUM|COUNT|COUNT_BIG|AVG|MIN|MAX|STRING_AGG|STDEV|STDEVP|VAR|VARP)\s*\(",
+    re.IGNORECASE,
+)
+
+
+def _is_listing(
+    question: str, sql: str, rows: list[dict],
+    numeric_cols: list[str], text_cols: list[str],
+) -> bool:
+    """Rows that are individual records rather than one row per label.
+
+    A SELECT that aggregated nothing returns records -- invoice lines, order
+    headers -- and the first numeric column of a record is an attribute of
+    it, not a measure the records compete on. Read as a ranking, twelve
+    invoice lines of one customer became
+
+        INV11 leads at 21 (11.3% of total) across 12 invoice nos.
+        Volume is spread across the field — no single entry exceeds 12%.
+
+    Records are known by their key: a text column that names an identifier
+    (the chart's own rule, _looks_identifier -- IVC_NO, ORD_NO, CUS_ID). A
+    two-column label-and-value result read straight off a pre-aggregated
+    view carries no such column and stays the ranking it looks like.
+
+    Three things make records a ranking after all: the SQL aggregated (a
+    GROUP BY, an aggregate, a window), the reader asked for a top N, or the
+    rows are sorted by a measure, descending. Without the SQL nothing can be
+    known and the reading stays what it was.
+    """
+    from core.chart_spec import _looks_identifier
+
+    text = str(sql or "")
+    if not text.strip():
+        return False
+    if not any(_looks_identifier(rows, column) for column in text_cols):
+        return False
+    if _AGGREGATION_RE.search(text):
+        return False
+    if detect_top_n_intent(question) is not None:
+        return False
+    order = re.search(r"\bORDER\s+BY\b(.*)$", text, re.IGNORECASE | re.DOTALL)
+    if order:
+        clause = order.group(1)
+        for column in numeric_cols:
+            if re.search(rf"\b{re.escape(column)}\b[^,]*\bDESC\b", clause, re.IGNORECASE):
+                return False
+    return True
 
 
 def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> dict:
@@ -1715,6 +1771,12 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
                     "pct_change": round(pct, 2) if pct is not None else None,
                 },
             })
+        elif _is_listing(question, sql, rows, numeric_cols, text_cols):
+            # Records, not a ranking. The columns and values stay for the
+            # sentence about what they add up to; no leader, no share, no
+            # chart, and build_answer reads the scope's kind to agree.
+            ctx.update({"mode": "text_table", "listing": True, "chartable": False})
+            ctx.pop("top_items", None)
         else:
             ctx["mode"] = "ranking"
             total = sum(values)
@@ -2032,6 +2094,9 @@ def _build_insight_summary(
                       previous_period=_cmp["previous_period"])
         return _movement_suffix(sentence, _cmp.get("pct_change"))
 
+    if ctx.get("listing"):
+        return _listing_summary(rows, ctx, column_formats, format_value)
+
     if mode == "time_series":
         ts = brief.get("time_series") or {}
         observation_count = int(
@@ -2124,6 +2189,45 @@ def _build_insight_summary(
             avg=format_value(avg, ctx.get("value_col") or ""))
 
     return ""
+
+
+def _listing_summary(rows: list[dict], ctx: dict, column_formats: dict, format_value) -> str:
+    """What a set of records adds up to.
+
+    The count, and the total of the measure that adds up -- the currency
+    column when there is one, because invoice lines carry a quantity and a
+    unit price beside the amount and the amount is what the reader came for.
+    A listing whose numbers do not add up (a rate, a percentage) gets the
+    range sentence a numeric table already gets.
+    """
+    from core.analysis_contract import measure_class_for_column
+    from core.chart_spec import _format_for_column
+
+    measures = list(ctx.get("numeric_cols") or [])
+    if not measures:
+        return ""
+    additive = [c for c in measures if measure_class_for_column(c) == "additive"]
+    # The same name rule the chart uses to tell an amount from a count, so
+    # the sentence and the axis agree on which column is the money.
+    currency = [
+        c for c in additive
+        if (column_formats or {}).get(c) == "currency"
+        or _format_for_column(c, {}) == "currency"
+    ]
+    count = len(rows)
+    chosen = (currency or additive or [None])[0]
+    if chosen is None:
+        col = measures[0]
+        values = [_to_float_z(r.get(col)) for r in rows]
+        return _t_plural(
+            "answer.note.range_summary", count, measure=_display_label(col),
+            low=format_value(min(values), col), high=format_value(max(values), col),
+            avg=format_value(mean(values), col))
+    values = [_to_float_z(r.get(chosen)) for r in rows]
+    return _t_plural(
+        "answer.note.listing_total", count, measure=_display_label(chosen),
+        total=format_value(sum(values), chosen),
+        low=format_value(min(values), chosen), high=format_value(max(values), chosen))
 
 
 def _build_anomaly_callouts(brief: dict) -> list[dict]:

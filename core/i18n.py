@@ -905,6 +905,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "{leader} leads at {value}{share} across {count} {label}.",
         "fr": "{leader} arrive en tête avec {value}{share}, sur {count} {label}.",
     },
+    "answer.note.listing_total.one": {
+        "en": "{count} record — {measure} totals {total}.",
+        "fr": "{count} enregistrement — {measure} totalise {total}.",
+    },
+    "answer.note.listing_total.other": {
+        "en": "{count} records — {measure} totals {total} ({low} to {high} per record).",
+        "fr": "{count} enregistrements — {measure} totalise {total} ({low} à {high} par enregistrement).",
+    },
     "answer.note.range_summary.one": {
         "en": "{count} record — {measure} ranges {low} to {high}, avg {avg}.",
         "fr": "{count} enregistrement — {measure} varie de {low} à {high}, moyenne {avg}.",

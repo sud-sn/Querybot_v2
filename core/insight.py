@@ -583,6 +583,15 @@ def compute_data_brief(
             brief["mode"] = "time_series"
             ts = _compute_time_series_brief(labels, values)
             brief["time_series"] = ts
+        elif ctx.get("listing"):
+            # The context read the SQL and found records, not one row per
+            # label (core.response_builder._is_listing). A leader among
+            # records is not a finding, and this brief is what the decision
+            # signal, the callouts and the analyst's prompt read -- so it
+            # follows the context rather than re-deciding from the columns
+            # and telling the reader twelve invoices are "broadly diversified".
+            brief["mode"] = "text_table"
+            brief.pop("category_breakdown", None)
         else:
             brief["mode"] = "ranking"
     elif numeric_cols:
