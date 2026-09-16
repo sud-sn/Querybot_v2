@@ -38,12 +38,15 @@ The product includes an administrator workspace for onboarding, Knowledge Base g
 - The portal, the answer card, clarifications, refusals, and follow-up chips are available in English and French. Each user's language is chosen in the portal and remembered on their account.
 - A French question is canonicalised into the English the deterministic detectors read (periods, top-N, comparisons, causal and analytical wording) before planning, so "les 5 meilleurs clients de l'année dernière" reaches the same planner as its English form. The reader's own words are still what the model sees and what retrieval and value resolution use.
 - Every computed sentence comes from one message catalogue with an English and a French value, including number formatting (a non-breaking thin space and a decimal comma in French). Model-written prose is written in the reader's language through a rule in the prompt; column names and category values from the client's database are quoted as they are.
+- A French reader can command the result card in French: *trier par montant décroissant*, *exclure Paris*, *garder les 3 premiers*, *montrer en camembert*, *annuler la dernière modification* are canonicalised into the verbs the card's parser reads. Elided counts ("nombre d'ordres", "combien d'articles") and the words for time ("au fil du temps") canonicalise too.
+- A terminology pack can carry French terms (`terms_fr`). The nouns of a trade -- *ordre de fabrication*, *rebut*, *centre de charge* -- are read as their English before the lexicon runs, longest phrase first, and only for a tenant that selected the pack, so a distributor's *gamme* stays a product range.
 - `python -m evals.emco_rehearsal` drives a client's demo questions through the real pipeline stages in both languages without a warehouse and reports each stage's decision, so a question that quietly answers something else is visible before a demo rather than during it.
 
 ### Knowledge Base and retrieval
 
 - Schema discovery with tables, columns, types, primary keys, foreign keys, and sample-value controls.
-- ERP naming enrichment and optional terminology packs for cryptic warehouse fields.
+- ERP naming enrichment and terminology packs for cryptic warehouse fields: a source-system pack (Infor M3, with its sales, purchasing, inventory and manufacturing files, record prefixes, measure codes and dates) and industry packs layered on top of it (wholesale distribution, manufacturing). The manufacturing pack carries the shop floor's spellings and aliases -- MO, WO, WIP, scrap, yield, rework, work centre, routing, changeover, downtime, OEE, OTIF -- its production date roles (planned and actual start and finish, release, reported) and its French terms. Industry packs never redefine a source system's abbreviations; a pack ships without any customer's name in it.
+- Industry vocabulary is chosen in the setup wizard, in a step right after the source system, and once the schema has been discovered the source step shows what the schema's own naming looks like ("looks like Infor M3, 91% confidence") so the choice is made with the evidence in view. Selecting packs after a KB build calls for a rebuild, and the wizard says so.
 - Human-readable Markdown KB documents plus machine-readable JSON/YAML semantic artifacts.
 - Qdrant vector retrieval combined with BM25 keyword retrieval and document-quality ranking.
 - Table-coverage gap filling when retrieval misses a required table.
@@ -101,7 +104,9 @@ Surrogate date IDs are distinguished from native dates, timestamps, and `YYYYMMD
 - Every answer card carries a computed summary written from the result itself, with no model call: a headline, the leader and its share or the trend and its peak, a decision signal (concentration, dominance, spread, growth, decline), and anomaly callouts. A ranking with two measures narrates both. A listing of records (invoice lines, order headers) is described as records and what they add up to, not as a race between them.
 - After the card, an analyst's explanation of the result arrives as a second message in the reader's language. It is written from a statistical brief of the result, never from the rows, and it is delivered as a second message so the factual answer is never held up by it. It follows every answer by default; the per-client setting **Analyst explanation** can restrict it to questions that ask for analysis or a cause. Causal questions ("why did sales drop in March") additionally run governed drill-down queries.
 - A claim about the whole needs the whole. When a result was cut by a `TOP`, a row cap, or a filter, the trend sentence, the decision signal, median and quartiles are withheld rather than computed over the slice, and the card's badge says what came back: full distribution, top N only, full series, first N periods only, preview, or filtered subset. A default `TOP` that never bound is not a truncation.
-- The reader can talk to a result instead of only commanding it: filter, aggregate, sort, keep the top N, exclude, chart and compare are understood as commands, and anything else ("what is the total?", "why is that?", "what does this column mean?") is answered by the model from the same brief, with the reader's own words the last thing it reads.
+- The reader can talk to a result instead of only commanding it: filter, aggregate, sort, keep the top N, exclude, chart and compare are understood as commands, and anything else ("what is the total?", "why is that?", "what does this column mean?") is answered by the model from the same brief, with the reader's own words the last thing it reads. The card keeps its conversation across transforms (the memory follows the card a transform produced) and remembers what it answered, not only what was asked. A courtesy typed into the card -- thanks, merci, bonjour, bye -- is answered by the card itself, in the reader's language, without a planner, a query or a model. A plan the governance layer stopped is explained in the reader's language, never with the planner's diagnostic.
+- In the main chat, the conversational analyst is handed the result on screen -- what it answers and its statistical brief, never the rows -- where the tenant's policy allows, so "what does this column mean?" is answered about the thing in front of the reader. A figure the analyst asserts that the brief does not hold is withheld and a catalogue line sent instead: the analyst may read a result, never invent one. Told the answer is wrong, the analyst replies about that answer with one concrete way to correct course; the catalogue's tips remain the fallback.
+- When a question cannot be answered -- the validator refused the SQL, the database raised, the query returned no rows -- the card's reason and next step are reworded by the model for this reader, in their language and tied to what they asked, and checked before they are shown: every figure must be one the diagnosis states, every quoted term and column-like identifier must come from the diagnosis or the question. The diagnosis is the system's; a rewording that fails the check, a provider failure or a regulated tenant leaves the catalogue's sentences exactly as before, and a note on the card says whose words they are.
 - Business-readable provenance, confidence evidence, and query-production details, in the tenant's own vocabulary rather than raw table and column codes.
 - Structured zero-row root-cause hints rather than a generic empty result.
 - Result tables, CSV export, charts, contribution views, follow-up questions, and result follow-ups through DuckDB.
@@ -184,7 +189,7 @@ The KB is intentionally more than a collection of embeddings. It combines severa
 ### Recommended onboarding sequence
 
 1. Register the client and assign its database.
-2. Select an industry/compliance profile and optional ERP terminology packs.
+2. Select an industry/compliance profile, the source-system terminology pack, and the industry vocabulary packs the wizard offers right after it (once discovery has run, the source step shows what the schema's own naming looks like).
 3. Discover the selected schemas and tables.
 4. Review masking and data-egress previews before KB generation.
 5. Build the KB and inspect its quality report.
@@ -346,9 +351,15 @@ Run the complete suite:
 python -m pytest -q
 ```
 
-The current baseline is **10990 passed, 9 skipped**. Treat any drop as a
+The current baseline is **11155 passed, 9 skipped**. Treat any drop as a
 regression rather than noise; the statistical suites are seeded and the coverage
 bounds are set from measurement, not tuned to pass.
+
+No test process opens the application's database. `tests/conftest.py` replaces,
+before collection and again before every test, any database path that is not
+under the temp directory with one temporary database for the run, so a test
+module that names no database of its own cannot write into `data/querybot.db`.
+A module that points itself at its own temporary database is left alone.
 
 The demo rehearsal is a separate, faster check that runs the real pipeline
 stages over a client's question set in both languages and compares every
@@ -460,7 +471,9 @@ Primary implementation entry points:
 | `core/response_builder.py` | The answer card: computed summary, result scope, decision signal |
 | `core/insight.py` | The statistical brief and the analyst's explanation |
 | `core/analysis_narrative.py` | Evidence-checked phrasing, template or model, in either language |
-| `core/result_conversation.py` | Talking to a result on screen |
+| `core/result_conversation.py` | Talking to a result on screen, and the card's own courtesy replies |
+| `core/situation_phraser.py` | A failed turn reworded by the model for the reader, checked, with the catalogue as fallback |
+| `core/vocab_packs.py` | Source-system and industry terminology packs merged into the tenant's vocabulary |
 | `core/question_normalizer.py` | French questions canonicalised for the deterministic detectors |
 | `core/i18n.py` | The English and French message catalogue and number formatting |
 | `core/contextual_dates.py` | Metric-aware date-context resolution |
@@ -492,6 +505,9 @@ rule would be one copy that can be forgotten.
 - **Forecast intervals are calibrated for series with a stable trend, and understate uncertainty at longer horizons when the level itself wanders.** Measured against a nominal 95%: about 0.93–0.98 one step ahead, and 0.82–0.86 three steps ahead on a random walk with drift. Neither a straight line nor a damped trend can express a stochastic level, and no interval built from one of them fully accounts for the model being the wrong shape — a differenced ARIMA would, and the model selector only reaches for one when it detects seasonality. The numbers above are asserted by a test so the limitation cannot quietly get worse.
 - A projection is an extrapolation of the past, not a business plan. It knows nothing about a price change, a lost customer, or a closed site.
 - The tenant vocabulary carries one display label per column, in English. A French sentence therefore names a warehouse column in English ("sur 3 warehouse names") until per-language labels exist in the naming profile. Category values and column names from the database are quoted as they are in both languages by design.
+- A result card's conversation lives in the server process for the session: a page reload starts it afresh, and the memory is the last five turns.
+- "Is that good?" typed in the main chat while a result is on screen is routed as a refinement of that result, not to the analyst; ask it in the card, where the conversational reply reads the same brief.
+- The analyst's offer to run a query ("if you'd like, I can run…") replays the reader's own message when accepted, not the question the analyst proposed.
 
 ## License and support
 
