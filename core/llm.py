@@ -15,6 +15,7 @@ v8 prompt changes:
     All 3 DB types updated.
 """
 
+import json
 import logging
 import os
 import re
