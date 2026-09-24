@@ -59,7 +59,10 @@ if [ ! -d "$VENV" ]; then
     echo "  Created new venv at $VENV"
 fi
 "$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+# requirements.lock, not requirements.txt: the exact versions CI ran the full
+# suite against. requirements.txt holds ranges, so installing from it resolved
+# whatever was newest on the day of the deploy -- never the set the tests saw.
+"$VENV/bin/pip" install --quiet -r "$APP_DIR/requirements.lock"
 echo "  Dependencies installed"
 
 # ── Create data directory ─────────────────────────────────────────────────────

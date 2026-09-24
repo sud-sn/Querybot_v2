@@ -278,17 +278,19 @@ python -m pip install -r requirements-windows.txt
 Copy-Item .env.windows.example .env
 ```
 
-On Linux/macOS:
+On Linux (the platform `deploy.sh` targets):
 
 ```bash
 git clone https://github.com/sud-sn/Querybot_v2.git
 cd Querybot_v2
-python3 -m venv venv
+python3.11 -m venv venv
 source venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.lock
 cp .env.example .env
 ```
+
+`requirements.lock` holds the exact versions CI tests and `deploy.sh` installs; `requirements.txt` holds the ranges it is generated from. The lock is resolved for Linux x86_64 on Python 3.11 — on other platforms install from `requirements.txt` (Windows: `requirements-windows.txt`), which is not pinned.
 
 Configure `.env`, start Qdrant, and then run:
 

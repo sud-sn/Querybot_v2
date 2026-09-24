@@ -1,0 +1,147 @@
+# requirements.lock -- the exact versions CI tests and deploy.sh installs.
+# Linux x86_64, Python 3.11: resolved for that platform, and it pins
+# Linux-only wheels (uvloop, cuda-bindings). Windows installs still go
+# through requirements-windows.txt and are NOT pinned by this file.
+#
+# GENERATED. Edit requirements.txt (the ranges a human chooses), then
+# regenerate this file and let CI prove it before anything deploys it:
+#
+#   python3.11 -m venv /tmp/lock && /tmp/lock/bin/pip install --dry-run \
+#       --ignore-installed --report /tmp/lock.json \
+#       -c requirements.lock -r requirements.txt
+#
+# and rewrite this file from the report's "install" list, keeping the
+# exclusions below. Dropping `-c requirements.lock` re-resolves everything to
+# the newest compatible release -- sometimes that is the point, but then the
+# whole suite has to go green on the result before it is committed.
+#
+# Why this file exists: requirements.txt had no exact pins, so every deploy
+# resolved whatever was newest that day, and the environment the test suite
+# had always run in did not even satisfy it -- cryptography 41.0.7 against a
+# declared >=42.0.0, and six of the 23 requirements (psycopg2-binary,
+# snowflake-connector-python, oracledb, pyodbc, sentence-transformers,
+# statsmodels) not installed at all. With statsmodels absent, eight forecast
+# tests always skipped: the ETS and SARIMAX paths production actually runs had
+# never been executed by the suite.
+#
+# Excluded on purpose: 17 CUDA packages -- the nvidia-* libraries,
+# triton and cuda-toolkit. They belong to PyPI's Linux torch build, which pins
+# each of them to an exact version itself, so a deploy installing
+# torch==2.14.0 still gets a fully determined set. CI installs the CPU-only
+# build of the same torch version from download.pytorch.org, which needs none of
+# them. cuda-bindings and cuda-pathfinder stay pinned below: torch asks for
+# cuda-bindings by RANGE, so leaving it out would let deploys drift.
+#
+# 112 distributions.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anthropic==1.3.0
+anyio==4.15.0
+asn1crypto==1.5.1
+boto3==1.43.101
+botocore==1.43.101
+certifi==2026.2.25
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+cloudpickle==3.1.2
+contourpy==1.3.3
+cryptography==50.0.1
+cuda-bindings==13.4.3
+cuda-pathfinder==1.8.2
+cycler==0.12.1
+docstring_parser==0.18.0
+duckdb==1.5.5
+dukpy==0.6.0
+faker==40.38.0
+fastapi==0.141.1
+filelock==3.32.7
+fonttools==4.64.0
+formulaic==1.2.2
+fsspec==2026.9.0
+grpcio==1.83.1
+h11==0.16.0
+h2==4.4.1
+hf-xet==1.6.0
+hpack==4.2.0
+httpcore==1.0.9
+httpcore2==2.12.0
+httptools==0.8.0
+httpx==0.28.1
+httpx2==2.12.0
+huggingface_hub==1.32.0
+hyperframe==6.1.0
+idna==3.19
+interface_meta==2.0.1
+jinja2==3.1.6
+jiter==0.16.0
+jmespath==1.1.0
+joblib==1.6.0
+kiwisolver==1.5.1
+markdown-it-py==4.2.0
+markupsafe==3.0.3
+matplotlib==3.11.1
+mdurl==0.1.2
+mpmath==1.3.0
+narwhals==2.26.0
+networkx==3.6.1
+numpy==2.4.6
+openai==3.8.0
+oracledb==26.0.1
+packaging==24.0
+pandas==3.0.6
+patsy==1.0.3
+pillow==12.3.0
+platformdirs==4.11.12
+portalocker==3.2.0
+protobuf==7.36.1
+psycopg2-binary==2.9.13
+pycparser==3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+pygments==2.21.0
+pyjwt==2.15.0
+pyodbc==5.3.0
+pyopenssl==26.4.0
+pyparsing==3.1.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+pytz==2026.4
+pyyaml==6.0.1
+qdrant-client==1.19.0
+rank-bm25==0.2.2
+regex==2026.9.10
+requests==2.34.2
+rich==15.0.0
+s3transfer==0.19.2
+safetensors==0.8.0
+scikit-learn==1.9.1
+scipy==1.17.1
+sentence-transformers==6.1.0
+setuptools==84.0.0
+shellingham==1.5.4
+six==1.16.0
+sniffio==1.3.1
+snowflake-connector-python==4.7.5
+sortedcontainers==2.4.0
+sqlglot==30.18.0
+starlette==1.6.0
+statsmodels==0.15.0
+sympy==1.14.0
+threadpoolctl==3.7.0
+tokenizers==0.23.2
+tomlkit==0.15.1
+torch==2.14.0
+tqdm==4.70.1
+transformers==5.17.0
+truststore==0.10.4
+typer==0.27.2
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.6.3
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.1
+wrapt==2.4.1
