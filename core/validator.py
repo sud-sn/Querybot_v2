@@ -88,7 +88,7 @@ ALL_REASON_CODES = frozenset({
     "source_fact_mismatch", "surrogate_date_conversion",
     "temporal_anchor_mismatch", "temporal_anchor_missing",
     "temporal_anchor_ungoverned", "temporal_anchor_unscoped",
-    "temporal_role_mismatch", "top_n_shape", "unknown_column",
+    "temporal_role_mismatch", "top_n_shape", "units_mixed", "unknown_column",
     "unknown_members_ranked", "unknown_table",
 })
 
@@ -2563,6 +2563,34 @@ def _reads_only_period_extremes(select, column: str, qualifiers: set[str]) -> bo
     return True
 
 
+def _unit_mix_errors(tree, policies: list[dict], db_type: str = "azure_sql") -> list[dict]:
+    """A SUM or AVG of a quantity keeps one total per unit of measure
+    (core/units_of_measure.py): eaches, feet and metres do not add up."""
+    if not policies:
+        return []
+    from core.units_of_measure import unit_mixes
+
+    errors: list[dict] = []
+    seen: set[str] = set()
+    for mix in unit_mixes(tree, policies, db_type):
+        policy = mix["policy"]
+        if mix["required"].upper() in seen:
+            continue
+        seen.add(mix["required"].upper())
+        errors.append({
+            "code": "units_mixed",
+            "message": (
+                f"{policy['fact_table']} holds each item's quantity in that item's unit of "
+                f"measure, and this query totals {', '.join(policy['quantities'][:3])} across "
+                f"items without keeping units apart. Add {mix['required']} to the SELECT list "
+                "and the GROUP BY, or filter to one unit."
+            ),
+            "table": str(policy["fact_table"]),
+            "required_column": mix["required"],
+        })
+    return errors
+
+
 def _unknown_member_errors(tree, policies: list[dict], db_type: str = "azure_sql") -> list[dict]:
     """A ranking or a count of a dimension's members leaves its unknown
     members out (core/unknown_members.py): "NULL value provided" is not a top
@@ -3207,6 +3235,18 @@ def validate_sql_detailed(
             ),
             "unknown_members_ranked",
             unknown_member_errors,
+        )
+
+    unit_errors = _unit_mix_errors(tree, list(field_plan.get("unit_policies") or []), db_type)
+    if unit_errors:
+        return SqlValidationResult(
+            False,
+            (
+                "Generated SQL totals a quantity across items counted in different "
+                "units of measure. " + " ".join(error["message"] for error in unit_errors[:3])
+            ),
+            "units_mixed",
+            unit_errors,
         )
 
     select_aliases: set[str] = set()

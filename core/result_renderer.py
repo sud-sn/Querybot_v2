@@ -999,6 +999,15 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     if members_labelled:
         coverage_caveats.append(_t("caveat.unknown_members.labelled"))
 
+    # Quantities were totalled per unit of measure (core/units_of_measure.py):
+    # the reader asked for one total and is given one per unit -- say why.
+    _unit_policies = (confidence_context.get("semantic_plan") or {}).get("unit_policies") or []
+    if _unit_policies and sql:
+        from core.units_of_measure import totals_per_unit
+
+        if totals_per_unit(sql, _unit_policies, db_cfg.get("db_type", "azure_sql")):
+            coverage_caveats.append(_t("caveat.units"))
+
     _graph_edges = confidence_context.get("graph_edges") or []
     if _graph_edges:
         try:

@@ -141,6 +141,7 @@ from core.conversation_state import conversation_state_store
 from core.semantic_plan_utils import required_semantic_tables
 from core.period_rows import attach_period_row_policies
 from core.unknown_members import attach_unknown_member_policies
+from core.units_of_measure import attach_unit_policies
 
 log = logging.getLogger("querybot")
 
@@ -5533,6 +5534,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
     except Exception as _unknown_exc:
         log.warning("Unknown-member policies unavailable for %s: %s", account_id, _unknown_exc)
+    # A quantity is counted in its item's unit of measure and units do not add
+    # up: a total of one keeps a row per unit, unless the question asks for a
+    # total across units.
+    try:
+        attach_unit_policies(
+            _semantic_plan, account_id, _reader_plan_question, _semantic_plan_question,
+        )
+    except Exception as _unit_exc:
+        log.warning("Unit-of-measure policies unavailable for %s: %s", account_id, _unit_exc)
     _generation_semantic_context = {
         "intent": query_intent,
         "top_n": top_n_intent.to_dict() if top_n_intent else None,
@@ -6781,6 +6791,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "summed the year row.\n"
                     "- A year is the sum of its twelve month rows; a stock balance is the "
                     "last month of the period.\n"
+                )
+            elif last_code == "units_mixed":
+                validation_repair_note = (
+                    "\nUNIT-OF-MEASURE REPAIR REQUIRED:\n"
+                    "- Each item's quantity is in that item's unit (each, feet, metres, ...), "
+                    "and different units do not add up.\n"
+                    "- Add the unit column named above to the SELECT list and the GROUP BY -- "
+                    "join its table if the query does not read it yet -- so the answer has one "
+                    "total per unit. Or keep to one unit, or group by item.\n"
+                    "- Keep everything else: the measure, the grouping you had, the period.\n"
                 )
             elif last_code == "unknown_members_ranked":
                 validation_repair_note = (

@@ -1890,6 +1890,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The generated query read a period table's whole-year rows together with its month rows, which would have counted every year twice.",
         "fr": "La requête générée lisait les lignes d'année entière d'une table de périodes en même temps que ses lignes mensuelles, ce qui aurait compté chaque année deux fois.",
     },
+    "fail.v.units_mixed.reason": {
+        "en": "The generated query added up quantities counted in different units of measure (each, feet, metres), which would have given a number that measures nothing.",
+        "fr": "La requête générée additionnait des quantités exprimées dans des unités de mesure différentes (unité, pied, mètre), ce qui aurait donné un nombre qui ne mesure rien.",
+    },
     "fail.v.unknown_members_ranked.reason": {
         "en": "The generated query ranked or counted members with the placeholder members for empty and unmatched values among them, so \"NULL value provided\" could have been ranked or counted as a real member.",
         "fr": "La requête générée classait ou comptait des membres en y incluant les membres de remplacement des valeurs vides ou sans correspondance, si bien que « NULL value provided » aurait pu être classé ou compté comme un vrai membre.",
@@ -1950,6 +1954,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "fail.v.reused_plan_empty.next_step": {
         "en": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
         "fr": "Essayez de restreindre la question (une période ou un filtre précis) — les données sous-jacentes ont pu changer depuis le dernier succès de cette question.",
+    },
+    "fail.v.units_mixed.next_step": {
+        "en": "Ask for the quantity by unit of measure, or for one unit (for example, in eaches).",
+        "fr": "Demandez la quantité par unité de mesure, ou pour une seule unité (par exemple, à l'unité).",
     },
     "fail.v.unknown_members_ranked.next_step": {
         "en": "Ask again: rankings and counts leave the placeholder members out. To see them, ask about the unspecified or unmatched values directly.",
@@ -2869,6 +2877,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "caveat.unknown_members.labelled": {
         "en": "“Not specified”, “Unmatched” and “Unknown” are the warehouse's placeholders for a value that was empty or matched nothing.",
         "fr": "« Non renseigné », « Sans correspondance » et « Inconnu » sont les membres de remplacement de l'entrepôt pour une valeur vide ou sans correspondance.",
+    },
+    "caveat.units": {
+        "en": "Quantities are totalled per unit of measure: quantities counted in different units (each, feet, metres) do not add up.",
+        "fr": "Les quantités sont totalisées par unité de mesure : des quantités comptées dans des unités différentes (unité, pied, mètre) ne s'additionnent pas.",
     },
     "caveat.unknown_members.ranking": {
         "en": "Placeholder members (not specified, unmatched) are left out of this ranking: they stand for rows whose value was empty or matched nothing, not for real members.",
