@@ -716,15 +716,146 @@ def relationship_matches_date_role(question: str, label: str = "", description: 
 def is_date_dimension_table(table_name: str, columns: list[dict] | list[str]) -> bool:
     bare = (table_name or "").split(".")[-1].upper()
     compact = re.sub(r"[^A-Z0-9]+", "_", bare)
+    # A table named as a fact is never the calendar, whatever it carries.
+    if _is_fact_named(bare):
+        return False
     if compact in DATE_DIMENSION_TABLE_HINTS or any(h in compact for h in ("DIM_DATE", "DATE_DIM", "CALENDAR")):
         return True
     col_names = {_column_name(c).upper() for c in columns}
     # Structural inference requires both a canonical date key and a separate
     # business date value. Merely containing ORDER_DATE_ID must not cause a
     # fact table to be mistaken for the date dimension itself.
-    return bool(col_names & set(DATE_DIMENSION_KEY_HINTS)) and bool(
-        find_date_value_column(columns)
-    )
+    if not col_names & set(DATE_DIMENSION_KEY_HINTS):
+        return False
+    # The date key must be the table's OWN key. A monthly balance fact carries
+    # PRD_DMS_KEY as a foreign key beside its own ITM_BAL_PRD_FCT_KEY, and its
+    # audit timestamp used to pass for a business date, so the fact itself was
+    # counted as a date dimension -- and the first date table in discovery
+    # order was then given every date role in the warehouse.
+    # A calendar may carry a surrogate key of its own beside its date key, so
+    # the rule applies only to a table that describes no calendar at all.
+    if _has_own_key_besides(compact, col_names, find_date_dimension_key(columns)) and (
+        not _has_calendar_attributes(col_names)
+    ):
+        return False
+    return bool(find_date_value_column(columns))
+
+
+def _is_fact_named(bare_table: str) -> bool:
+    """Whether the table's name alone says it holds facts (``_FCT``, a pack pattern)."""
+    try:
+        from core.naming_convention import match_table_suffix
+
+        rule = match_table_suffix(bare_table)
+    except Exception:  # noqa: BLE001 - a naming lookup must never decide a join by failing
+        return False
+    return bool(rule and rule.table_type == "fact_table")
+
+
+def _has_own_key_besides(table: str, column_names: set[str], date_key: str) -> bool:
+    """True when the table has a surrogate key named after itself that is not ``date_key``."""
+    own = {f"{table}{suffix}" for suffix in ("_KEY", "_ID", "_SK")}
+    return any(name in own and name != (date_key or "").upper() for name in column_names)
+
+
+# Name tokens a calendar's own attributes are spelled with, one group per unit.
+_CALENDAR_TOKEN_GROUPS = (
+    {"YEAR", "YR"},
+    {"MONTH", "MTH"},
+    {"QUARTER", "QTR", "QR"},
+    {"WEEK", "WK"},
+    {"DAY", "DOW", "DOY", "WEEKDAY"},
+    {"HOLIDAY", "HDY"},
+)
+
+
+def _has_calendar_attributes(column_names: set[str]) -> bool:
+    """Whether the columns describe a calendar: at least two calendar units (year and month, ...)."""
+    tokens = {token for name in column_names for token in name.split("_")}
+    return sum(1 for group in _CALENDAR_TOKEN_GROUPS if tokens & group) >= 2
+
+
+@dataclass(frozen=True)
+class DateDimensionCandidate:
+    """A table a date key could join, as the caller knows it.
+
+    ``ref`` is whatever the caller needs back -- a schema FQN, a (fqn, meta)
+    pair -- and is returned untouched, so every builder can share one choice.
+    """
+
+    table: str
+    key: str
+    key_type: str = ""
+    schema: str = ""
+    ref: object = None
+
+
+def date_dimension_grain(key: str, key_type: str = "") -> str:
+    """The calendar grain a date key's own naming declares: "day", "month" or ""."""
+    encoded = infer_encoded_date_key(key, key_type or "int")
+    return str(encoded.get("temporal_grain") or "")
+
+
+def choose_date_dimension(
+    column: str,
+    data_type: str,
+    candidates: list[DateDimensionCandidate],
+    *,
+    schema: str = "",
+) -> tuple[DateDimensionCandidate | None, int]:
+    """Which date table ``column`` joins, and how sure that is -- or ``(None, 0)``.
+
+    Every builder used to take whichever date table discovery listed first.
+    A warehouse with a day table (``DT_DMS``, keyed yyyymmdd) and a period
+    table (``PRD_DMS``, keyed yyyymm) then joined every day-grain key to the
+    period table whenever the period table happened to sort first.
+
+    The choice is made on evidence instead, strongest first:
+
+    * the key's storage type must be able to equal the table's key;
+    * the calendar grain its name declares must match the table's;
+    * a key spelled exactly like the table's key, or ending with it
+      (``ITM_BAL_EFC_DT_DMS_KEY`` -> ``DT_DMS_KEY``), names its table;
+    * a single table left standing is the answer;
+    * among several, one in the same schema as the key's table wins.
+
+    Anything still ambiguous returns ``(None, 0)``: no join is better than a
+    guessed one, and the unbound column is reported for an administrator to map.
+    """
+    name = (column or "").strip().upper()
+    if not name:
+        return None, 0
+    key_grain = date_dimension_grain(name, data_type)
+    compatible = []
+    for candidate in candidates:
+        if not joins_date_dimension(name, data_type, candidate.key_type):
+            continue
+        table_grain = date_dimension_grain(candidate.key, candidate.key_type)
+        if key_grain and table_grain and key_grain != table_grain:
+            continue
+        compatible.append(candidate)
+    if not compatible:
+        return None, 0
+
+    same_key = [c for c in compatible if c.key.upper() == name]
+    named = [c for c in compatible if name.endswith("_" + c.key.upper())]
+    if named:
+        # ORD_FSC_DT_DMS_KEY ends with both FSC_DT_DMS_KEY and DT_DMS_KEY; the
+        # longer key is the one it names.
+        longest = max(len(c.key) for c in named)
+        named = [c for c in named if len(c.key) == longest]
+    for pool in (same_key, named):
+        if len(pool) == 1:
+            return pool[0], 95
+    if len(compatible) == 1:
+        return compatible[0], 92
+    same_schema = [
+        c for c in (named or compatible)
+        if schema and c.schema and c.schema.upper() == schema.upper()
+    ]
+    if len(same_schema) == 1:
+        return same_schema[0], 85
+    return None, 0
 
 
 def find_date_dimension_key(columns: list[dict] | list[str]) -> str:
@@ -755,6 +886,10 @@ def find_date_value_column(columns: list[dict] | list[str]) -> str:
             ).lower()
         if upper in DATE_DIMENSION_KEY_HINTS or upper.endswith(("_KEY", "_ID")):
             continue
+        # When a row was loaded is not a business date. AZ_LST_UPD_TS scored
+        # as one, which is how a balance fact passed for a date dimension.
+        if _is_pipeline_column(upper):
+            continue
         score = 0
         if data_type in {"date", "datetime", "datetime2", "timestamp", "timestamp_ntz", "timestamp_tz"}:
             score += 100
@@ -776,6 +911,22 @@ def _column_name(col: dict | str) -> str:
     if isinstance(col, dict):
         return str(col.get("name") or col.get("COLUMN_NAME") or "")
     return str(col)
+
+
+# The same pipeline vocabulary core.semantic_model refuses as a business date.
+_PIPELINE_COLUMN_RE = re.compile(r"(?:^|_)(?:ETL|LOAD|INGEST|BATCH|SYNC|CDC|DW)(?:_|$)")
+
+
+def _is_pipeline_column(column: str) -> bool:
+    """An audit or load column: when a row was written, never a business date."""
+    if _PIPELINE_COLUMN_RE.search(column or ""):
+        return True
+    try:
+        from core.naming_convention import match_audit_prefix
+
+        return match_audit_prefix(column) is not None
+    except Exception:  # noqa: BLE001 - the name rule alone still applies
+        return False
 
 
 # Physical plumbing that must never reach a business-date label shown to an

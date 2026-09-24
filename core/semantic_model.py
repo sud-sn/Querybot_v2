@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from core.date_roles import (
+    DateDimensionCandidate,
+    choose_date_dimension,
     classify_date_key,
     derive_date_role,
     detect_date_role,
@@ -480,6 +482,23 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
         if is_date_dimension_table(fqn, m.get("columns", []))
     ]
     date_dims = [(fqn, m, pk, value_col) for fqn, m, pk, value_col in date_dims if pk]
+    date_candidates = [
+        DateDimensionCandidate(
+            table=_schema_table_name(fqn, m),
+            key=pk,
+            key_type=next(
+                (
+                    str((c or {}).get("type") or (c or {}).get("data_type") or "")
+                    for c in m.get("columns", []) or []
+                    if str((c or {}).get("name") or "").upper() == pk.upper()
+                ),
+                "",
+            ),
+            schema=_schema_name(fqn, m),
+            ref=(fqn, m, pk, value_col),
+        )
+        for fqn, m, pk, value_col in date_dims
+    ]
     # The date dimension supplies values; it is not one of its own roles.
     if is_date_dimension_table(table_fqn, meta.get("columns", [])):
         return roles
@@ -609,14 +628,17 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
         if not role or not date_dims:
             continue
         if not chosen:
-            same_key = [item for item in date_dims if item[2].upper() == col.upper()]
-            same_schema = [
-                item for item in (same_key or date_dims)
-                if _schema_name(item[0], item[1]).upper() == table_schema.upper()
-            ]
-            pool = same_schema or same_key or date_dims
-            chosen = pool[0]
-            confidence = 92 if len(pool) == 1 and (same_schema or same_key) else 70
+            # Which calendar this key joins is decided on evidence -- key
+            # grain and naming -- never on which date table the schema listed
+            # first (core.date_roles.choose_date_dimension). A key no evidence
+            # settles gets no role: _date_role_coverage lists it for an admin
+            # to map instead of a guessed join being offered to readers.
+            pick, confidence = choose_date_dimension(
+                col, data_type, date_candidates, schema=table_schema,
+            )
+            if pick is None:
+                continue
+            chosen = pick.ref
 
         date_fqn, date_meta, date_pk, date_value_col = chosen
         roles.append({
@@ -3304,6 +3326,7 @@ def suggest_date_key_bindings(model: dict[str, Any]) -> dict[str, Any]:
 
     tables = [t for t in (model.get("tables") or []) if isinstance(t, dict)]
     date_dims: list[tuple[str, str, str]] = []
+    date_candidates: list[DateDimensionCandidate] = []
     for table in tables:
         columns = _cols(table)
         if not is_date_dimension_table(_fqn(table), columns):
@@ -3312,6 +3335,15 @@ def suggest_date_key_bindings(model: dict[str, Any]) -> dict[str, Any]:
         value_column = find_date_value_column(columns)
         if key and value_column:
             date_dims.append((_fqn(table), key, value_column))
+            date_candidates.append(DateDimensionCandidate(
+                table=_fqn(table),
+                key=key,
+                key_type=next(
+                    (c["type"] for c in columns if c["name"].upper() == key.upper()), "",
+                ),
+                schema=_schema_of(_fqn(table)),
+                ref=(_fqn(table), key, value_column),
+            ))
 
     bindings: dict[str, dict[str, str]] = {}
     for table in tables:
@@ -3353,13 +3385,14 @@ def suggest_date_key_bindings(model: dict[str, Any]) -> dict[str, Any]:
                 continue
             if not role or not date_dims:
                 continue
-            same_key = [dim for dim in date_dims if dim[1].upper() == column.upper()]
-            same_schema = [
-                dim for dim in (same_key or date_dims)
-                if _schema_of(dim[0]) == _schema_of(fqn)
-            ]
-            dimension_table, dimension_key, value_column = (
-                same_schema or same_key or date_dims)[0]
+            # The same evidence-based choice _date_roles makes, so the form and
+            # the discovered role can never disagree about the calendar.
+            pick, _ = choose_date_dimension(
+                column, data_type, date_candidates, schema=_schema_of(fqn),
+            )
+            if pick is None:
+                continue
+            dimension_table, dimension_key, value_column = pick.ref
             binding["date_key_type"] = classify_date_key(
                 column, data_type, has_date_dimension_fk=True)
             binding["dimension_table"] = dimension_table

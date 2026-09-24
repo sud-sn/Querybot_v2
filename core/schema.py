@@ -824,10 +824,11 @@ def _build_join_map(master: dict) -> str:
     matching alone.
     """
     from core.date_roles import (
+        DateDimensionCandidate,
+        choose_date_dimension,
         detect_date_role,
         find_date_dimension_key,
         is_date_dimension_table,
-        joins_date_dimension,
     )
     from core.vocab_packs import get_active_vocab
 
@@ -1007,7 +1008,7 @@ def _build_join_map(master: dict) -> str:
     # fact keys are named CUS_IVC_DT_DMS_KEY while the date dimension key is
     # usually DATE_DMS_KEY.
     date_role_lines: list[str] = []
-    date_dims: list[tuple[str, str]] = []
+    date_dims: list[DateDimensionCandidate] = []
     for tbl_name, tbl_info in master.items():
         if not isinstance(tbl_info, dict):
             continue
@@ -1019,48 +1020,59 @@ def _build_join_map(master: dict) -> str:
                     (_col_type(c) for c in cols
                      if _col_name(c).upper() == pk.upper()), "",
                 )
-                date_dims.append((tbl_name, pk, pk_type))
-
+                parts = str(tbl_name).split(".")
+                date_dims.append(DateDimensionCandidate(
+                    table=tbl_name, key=pk, key_type=pk_type,
+                    schema=tbl_info.get("schema") or (parts[-2] if len(parts) >= 2 else ""),
+                ))
     if date_dims:
         for fact_tbl, tbl_info in master.items():
             if not isinstance(tbl_info, dict):
                 continue
+            fact_parts = str(fact_tbl).split(".")
+            fact_schema = tbl_info.get("schema") or (fact_parts[-2] if len(fact_parts) >= 2 else "")
             for col in tbl_info.get("columns", []):
                 fact_col = _col_name(col)
                 role = detect_date_role(fact_col)
                 if not role:
                     continue
-                # A native date/timestamp already holds the calendar value.
-                # Teaching the LLM to join it to an integer dimension key
-                # emits a predicate no dialect can honour.
-                for date_tbl, date_pk, date_pk_type in date_dims:
-                    if fact_tbl == date_tbl:
-                        continue
-                    if not joins_date_dimension(
-                        fact_col, _col_type(col), date_pk_type,
-                    ):
-                        continue
-                    key = f"{fact_tbl}|{date_tbl}|{fact_col}={date_pk}|{role.key}"
-                    if key in join_pairs_seen:
-                        continue
-                    join_pairs_seen.add(key)
+                # One calendar per key, chosen on evidence. This listed every
+                # date role against EVERY date-like table -- the day table, the
+                # period table and a balance fact -- so the model was taught
+                # three joins for one key and two of them were wrong. A native
+                # date/timestamp needs no join at all, and an ambiguous key is
+                # left for Date Roles rather than guessed.
+                chosen, _ = choose_date_dimension(
+                    fact_col, _col_type(col), date_dims, schema=fact_schema,
+                )
+                # A calendar may point at another -- a period table's start and
+                # end dates reach the day table -- but a key back into its own
+                # table (its own key, the same day last year) is no join to
+                # document here.
+                if chosen is None or chosen.table == fact_tbl:
+                    continue
+                date_tbl, date_pk = chosen.table, chosen.key
+                key = f"{fact_tbl}|{date_tbl}|{fact_col}={date_pk}|{role.key}"
+                if key in join_pairs_seen:
+                    continue
+                join_pairs_seen.add(key)
+                date_role_lines.append(
+                    f"### {fact_tbl} → {date_tbl}  *(date role: {role.label})*"
+                )
+                date_role_lines.append(
+                    f"**Join:** `{fact_tbl}.{fact_col}` = `{date_tbl}.{date_pk}` "
+                    f"— use this for business questions about **{role.label.lower()}**."
+                )
+                if role.synonyms:
                     date_role_lines.append(
-                        f"### {fact_tbl} → {date_tbl}  *(date role: {role.label})*"
+                        "**Business terms:** " + ", ".join(f"`{s}`" for s in role.synonyms[:6])
                     )
-                    date_role_lines.append(
-                        f"**Join:** `{fact_tbl}.{fact_col}` = `{date_tbl}.{date_pk}` "
-                        f"— use this for business questions about **{role.label.lower()}**."
-                    )
-                    if role.synonyms:
-                        date_role_lines.append(
-                            "**Business terms:** " + ", ".join(f"`{s}`" for s in role.synonyms[:6])
-                        )
-                    date_role_lines.append("```sql")
-                    date_role_lines.append(
-                        f"JOIN [{date_tbl}] AS [{role.key}] ON [{fact_tbl}].{fact_col} = [{role.key}].{date_pk}"
-                    )
-                    date_role_lines.append("```")
-                    date_role_lines.append("")
+                date_role_lines.append("```sql")
+                date_role_lines.append(
+                    f"JOIN [{date_tbl}] AS [{role.key}] ON [{fact_tbl}].{fact_col} = [{role.key}].{date_pk}"
+                )
+                date_role_lines.append("```")
+                date_role_lines.append("")
 
     if not db_fk_lines and not relationships and not alias_lines and not date_role_lines:
         lines.append("No shared key columns detected automatically.")
@@ -1379,10 +1391,11 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     if not master:
         return {"entities": [], "relationships": []}
     from core.date_roles import (
+        DateDimensionCandidate,
+        choose_date_dimension,
         detect_date_role,
         find_date_dimension_key,
         is_date_dimension_table,
-        joins_date_dimension,
     )
 
     table_items = [
@@ -1467,12 +1480,26 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             date_dims.append((fqn, date_table, date_schema, date_pk, date_pk_type))
 
     role_entity_names: set[str] = {e["entity_name"] for e in entities}
+    role_entity_tables: dict[str, str] = {}
     role_date_relationships: list[dict] = []
-    if date_dims:
+    # A table the classifier calls a fact is never a calendar, whatever its
+    # columns look like: an alias of it would put a fact-to-fact join into the
+    # graph under a dimension's name.
+    date_candidates = [
+        DateDimensionCandidate(
+            table=date_table, key=date_pk, key_type=date_pk_type,
+            schema=date_schema, ref=(date_fqn, date_table, date_schema, date_pk, date_pk_type),
+        )
+        for date_fqn, date_table, date_schema, date_pk, date_pk_type in date_dims
+        if not (table_roles.get(date_fqn) and table_roles.get(date_fqn).role == "fact")
+    ]
+    if date_candidates:
         for fqn, tbl_info in table_items:
             fact_entity = fqn_to_entity.get(fqn, fqn.split(".")[-1])
             if (table_roles.get(fqn).role if table_roles.get(fqn) else _infer_entity_type(fact_entity)) != "fact":
                 continue
+            fact_parts = fqn.split(".")
+            fact_schema = tbl_info.get("schema") or (fact_parts[-2] if len(fact_parts) >= 2 else "")
             for col in tbl_info.get("columns", []):
                 fact_col = _col_name(col)
                 role = detect_date_role(fact_col)
@@ -1481,13 +1508,22 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                 # Role-playing entities exist to carry a JOIN. A column that
                 # physically stores a date needs none, so minting one here
                 # produces both an invalid edge and a duplicate entity for a
-                # role the real surrogate key already owns.
-                date_fqn, date_table, date_schema, date_pk, date_pk_type = date_dims[0]
-                if not joins_date_dimension(
-                    fact_col, _col_type(col), date_pk_type,
-                ):
+                # role the real surrogate key already owns. Which calendar
+                # it joins is decided on evidence -- key grain and naming --
+                # never on which date table discovery happened to list first.
+                chosen, bind_confidence = choose_date_dimension(
+                    fact_col, _col_type(col), date_candidates, schema=fact_schema,
+                )
+                if chosen is None:
                     continue
+                date_fqn, date_table, date_schema, date_pk, date_pk_type = chosen.ref
+                edge_confidence = min(88, bind_confidence)
                 entity_name = role.label
+                # One role name serving two different calendars (a day table
+                # for one fact, another for the next) must not share an alias.
+                if role_entity_tables.get(entity_name, date_table) != date_table:
+                    entity_name = f"{role.label} · {date_table}"
+                role_entity_tables.setdefault(entity_name, date_table)
                 if entity_name not in role_entity_names:
                     pos_idx = len(role_entity_names)
                     entities.append({
@@ -1519,7 +1555,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                     "join_type":         "LEFT",
                     "label":             role.label,
                     "relationship_key":  f"DATE_ROLE:{fact_entity}:{role.key}:{fact_col}",
-                    "confidence_score":  88,
+                    "confidence_score":  edge_confidence,
                     "status":            "suggested",
                     "generated_by":      "date_role",
                     "optionality":       "optional",
