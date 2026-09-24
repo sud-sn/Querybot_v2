@@ -15,6 +15,7 @@ v7 additions:
 import json
 import logging
 import os
+import re
 import time
 from collections import Counter
 from pathlib import Path
@@ -868,7 +869,6 @@ def _build_join_map(master: dict) -> str:
             col_to_tables.setdefault(cname, []).append(tbl_name)
 
     join_pairs_seen: set[str] = set()
-    relationships: list[dict] = []
 
     # ── Pass 0: DB-enforced FK constraints (authoritative, highest priority) ──
     # These come from sys.foreign_keys / INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
@@ -940,36 +940,12 @@ def _build_join_map(master: dict) -> str:
         db_fk_lines.append("```")
         db_fk_lines.append("")
 
-    # ── Pass 1: shared column name joins ──────────────────────────────────────
-    for col_name, tables in col_to_tables.items():
-        if len(tables) < 2:
-            continue
-        # Skip generic / audit columns that are not meaningful join keys
-        if col_name in {
-            "ID", "NAME", "STATUS", "TYPE", "CODE", "DATE",
-            "CREATED_AT", "UPDATED_AT", "DESCRIPTION", "NOTES",
-            # DMS/Azure audit columns present in every fact table — not join keys
-            "AZ_EXT_ID", "AZ_LST_UPD_TS", "AZ_LST_UPD_USR", "AZ_LST_UPD_DT",
-            "DEL_REC_IND", "DEL_ORD_REC_IND", "DEL_SOP_REC_IND", "DEL_IVC_REC_IND",
-            "UNT_OF_MSR",
-        }:
-            continue
-
-        for i in range(len(tables)):
-            for j in range(i + 1, len(tables)):
-                t1, t2 = sorted([tables[i], tables[j]])
-                key = f"{t1}|{t2}|{col_name}={col_name}"
-                if key in join_pairs_seen:
-                    continue
-                join_pairs_seen.add(key)
-                t1_cols = [c["name"] for c in master[t1].get("columns", [])]
-                t2_cols = [c["name"] for c in master[t2].get("columns", [])]
-                relationships.append({
-                    "left": t1, "right": t2,
-                    "left_col": col_name, "right_col": col_name,
-                    "alias": False,
-                    "left_cols": t1_cols, "right_cols": t2_cols,
-                })
+    # ── Pass 1: the entity graph's key joins ─────────────────────────────────
+    # The same edges the governed planner joins by. This pass once joined any
+    # column name two tables happened to share: two facts on every dimension
+    # key and every measure they both carried, and a fact to a dimension on a
+    # key that dimension does not own. The SQL model reads this document.
+    graph_lines = _graph_join_lines(master)
 
     # ── Pass 2: ERP↔DMS alias joins (different column names, same concept) ────
     # join_synonyms from the tenant's vocabulary, e.g.
@@ -1076,7 +1052,7 @@ def _build_join_map(master: dict) -> str:
                 date_role_lines.append("```")
                 date_role_lines.append("")
 
-    if not db_fk_lines and not relationships and not alias_lines and not date_role_lines:
+    if not db_fk_lines and not graph_lines and not alias_lines and not date_role_lines:
         lines.append("No shared key columns detected automatically.")
         lines.append("")
         lines.append("Tip: Join columns typically end in _ID, _NO, _CODE, or _NUM.")
@@ -1094,40 +1070,17 @@ def _build_join_map(master: dict) -> str:
         lines.append("")
         lines.extend(db_fk_lines)
 
-    # Count how many tables each shared column appears in (to detect dimension keys)
-    _col_table_count = {col: len(tbls) for col, tbls in col_to_tables.items()}
-
-    for rel in relationships:
-        left_extra = [c for c in rel["right_cols"] if c not in rel["left_cols"]][:6]
-        col = rel["left_col"]
-        # The warning against joining two facts directly on a shared dimension
-        # key was emitted only for M3's spelling, so the fan-out it prevents
-        # went unwarned on every other warehouse.
-        from core.vocab_packs import is_dimension_key_column
-        _is_dim_key = (
-            is_dimension_key_column(col) and _col_table_count.get(col.upper(), 0) >= 3
-        )
-        lines.append(f"### {rel['left']} ↔ {rel['right']}")
-        if _is_dim_key:
-            lines.append(
-                f"> **Note:** `{col}` is a dimension surrogate key shared across "
-                f"{_col_table_count[col.upper()]} tables. Both tables reference the same "
-                f"dimension — do NOT join these two fact tables directly on this key. "
-                f"Instead, join each to its respective dimension table."
-            )
-        lines.append(f"**Join column:** `{col}`")
-        lines.append("```sql")
-        lines.append(
-            f"JOIN [{rel['right']}] ON [{rel['left']}].{col}"
-            f" = [{rel['right']}].{rel['right_col']}"
-        )
-        lines.append("```")
-        if left_extra:
-            lines.append(
-                f"Joining gets from **{rel['right']}**: "
-                + ", ".join(f"`{c}`" for c in left_extra)
-            )
+    if graph_lines:
+        lines.append("## Dimension Joins")
         lines.append("")
+        lines.append(
+            "Each table reaches a dimension by the key below, with the join type "
+            "given: LEFT where the key can be empty, so those rows stay in every "
+            "total. Two fact tables are never joined to each other: aggregate "
+            "each to the dimension they share, then combine the results."
+        )
+        lines.append("")
+        lines.extend(graph_lines)
 
     if alias_lines:
         lines.append("## ERP ↔ DMS Alias Joins")
@@ -1160,6 +1113,70 @@ def _build_join_map(master: dict) -> str:
     lines.append("- Use INNER JOIN when you only want rows with matches in both tables")
 
     return "\n".join(lines)
+
+
+def _graph_join_lines(master: dict) -> list[str]:
+    """The join map's lines for the entity graph's key edges.
+
+    A database's own constraints and the role-playing dates have passes of
+    their own; this renders the rest -- a key joining the dimension that owns
+    it, and a key naming a role of one -- with the edge's join type. A role
+    joins under an alias, so one query can read two roles of one table.
+    """
+    graph = build_entity_graph(_normalize_schema(master))
+    # The graph names an entity's table and schema the way it split the key.
+    fqn_by_table: dict[tuple[str, str], str] = {}
+    for fqn in master:
+        parts = str(fqn).split(".")
+        schema = parts[-2] if len(parts) >= 2 else ""
+        fqn_by_table[(schema.upper(), parts[-1].upper())] = str(fqn)
+    table_of = {
+        str(entity["entity_name"]): fqn_by_table.get((
+            str(entity.get("schema_name") or "").upper(),
+            str(entity.get("table_name") or "").upper(),
+        ), "")
+        for entity in graph.get("entities") or []
+    }
+    lines: list[str] = []
+    for rel in graph.get("relationships") or []:
+        if rel.get("generated_by") != "heuristic":
+            continue
+        left = table_of.get(str(rel.get("from_entity") or ""), "")
+        right = table_of.get(str(rel.get("to_entity") or ""), "")
+        if not left or not right:
+            continue
+        from_col, to_col = str(rel["from_column"]), str(rel["to_column"])
+        join_type = str(rel.get("join_type") or "LEFT").upper()
+        label = str(rel.get("label") or "").strip()
+        why = (
+            "the key can be empty, and those rows must stay in every total"
+            if join_type == "LEFT" else "the key is never empty"
+        )
+        if label:
+            alias = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_").lower() or "role"
+            lines.append(f"### {left} → {right}  *(role: {label})*")
+            lines.append(
+                f"**Join:** `{left}.{from_col}` = `{right}.{to_col}` — use this for "
+                f"questions about the **{label.lower()}**. `{right}` plays other "
+                f"roles too; join it once per role, each under its own alias. "
+                f"{join_type} JOIN: {why}."
+            )
+            lines.append("```sql")
+            lines.append(
+                f"{join_type} JOIN [{right}] AS [{alias}] "
+                f"ON [{left}].{from_col} = [{alias}].{to_col}"
+            )
+        else:
+            lines.append(f"### {left} → {right}")
+            lines.append(
+                f"**Join:** `{left}.{from_col}` = `{right}.{to_col}` — many rows of "
+                f"`{left}` to one of `{right}`. {join_type} JOIN: {why}."
+            )
+            lines.append("```sql")
+            lines.append(f"{join_type} JOIN [{right}] ON [{left}].{from_col} = [{right}].{to_col}")
+        lines.append("```")
+        lines.append("")
+    return lines
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1470,8 +1487,18 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     schema_json = Path(schema_dir) / "_schema.json"
     if not schema_json.exists():
         return {"entities": [], "relationships": []}
+    return build_entity_graph(
+        _normalize_schema(json.loads(schema_json.read_text(encoding="utf-8")))
+    )
 
-    master: dict = _normalize_schema(json.loads(schema_json.read_text(encoding="utf-8")))
+
+def build_entity_graph(master: dict) -> dict:
+    """The starter entity graph for a normalised schema master.
+
+    What build_entity_graph_from_schema returns for the _schema.json holding
+    ``master``; the KB join map reads the same edges, so the SQL model is
+    taught the joins the governed planner will accept.
+    """
     if not master:
         return {"entities": [], "relationships": []}
     from core.date_roles import (
