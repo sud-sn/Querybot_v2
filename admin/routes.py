@@ -10428,6 +10428,13 @@ async def admin_discover_schema(
                 )
             except Exception as _gex:
                 log.warning("Entity graph auto-populate failed for %s: %s", account_id, _gex)
+            # ── Every suggested join, checked against the data ────────────
+            try:
+                from core.relationship_validator import profile_suggested_relationships
+                _profiled = await asyncio.to_thread(profile_suggested_relationships, account_id)
+                log.info("Suggested joins profiled for %s: %s", account_id, _profiled)
+            except Exception as _pex:
+                log.warning("Join profiling after discovery failed for %s: %s", account_id, _pex)
             import threading as _threading
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:

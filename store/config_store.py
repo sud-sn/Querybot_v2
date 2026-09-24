@@ -2621,6 +2621,21 @@ def update_relationship_validation(
         ))
 
 
+def set_suggested_join_type(
+    account_id: str, rel_id: int, join_type: str, *, optionality: str, reason: str,
+) -> bool:
+    """Change the join type of a SUGGESTED relationship. Confirmed and manual
+    rows are the admin's decision and are never changed here."""
+    with get_db() as conn:
+        cur = conn.execute("""
+            UPDATE entity_relationships
+               SET join_type=?, optionality=?, reason=?
+             WHERE account_id=? AND id=? AND status='suggested'
+               AND COALESCE(generated_by, 'heuristic') <> 'manual'
+        """, (join_type, optionality, reason, account_id, rel_id))
+        return cur.rowcount > 0
+
+
 def delete_relationship(account_id: str, rel_id: int) -> None:
     with get_db() as conn:
         conn.execute(

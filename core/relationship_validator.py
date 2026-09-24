@@ -110,6 +110,97 @@ def validate_relationship(
         )
 
 
+_PROFILE_GIVE_UP_AFTER = 3
+
+
+def profile_suggested_relationships(
+    account_id: str, *, limit: int = 100, timeout_seconds: int = 20,
+) -> dict[str, int]:
+    """Ask the warehouse about every suggested join it has not been asked about.
+
+    Discovery proposes joins from names; only the data says whether a key
+    matches, how often it is empty, whether it fans out. The admin's
+    validate-all asks on request; this asks after every discovery, so the
+    resolver -- which prefers a valid edge, penalises a warning and never takes
+    a broken or zero-match one -- has evidence to rank on. An unconfirmed INNER
+    join whose key is empty or matches nothing on some rows becomes LEFT:
+    INNER dropped those rows from every total grouped by that dimension.
+
+    A probe that could not run (no connection, a timeout) leaves the edge
+    untested rather than marking it down, and three of them end the run: a
+    timed-out probe's query is still running in the warehouse, and the rest
+    would only pile more onto it. Confirmed and manual edges are the admin's
+    and are not profiled here. Returns what happened, by outcome.
+    """
+    import store
+
+    pending = [
+        rel for rel in store.list_relationships(account_id, active_only=True)
+        if (rel.get("status") or "suggested") == "suggested"
+        and (rel.get("generated_by") or "heuristic") != "manual"
+        and (rel.get("validation_status") or "untested") == "untested"
+    ]
+    summary = {"valid": 0, "warning": 0, "broken": 0, "made_left": 0, "not_profiled": 0}
+    if len(pending) > limit:
+        log.warning(
+            "Join profiling for %s: %d suggested joins, profiling the first %d; "
+            "the rest stay untested until validate-all",
+            account_id, len(pending), limit,
+        )
+    unreachable = 0
+    for position, rel in enumerate(pending[:limit]):
+        if unreachable >= _PROFILE_GIVE_UP_AFTER:
+            log.warning(
+                "Join profiling for %s stopped: %d probes could not run; "
+                "%d joins left untested", account_id, unreachable,
+                len(pending[:limit]) - position,
+            )
+            break
+        rel_id = int(rel["id"])
+        try:
+            result = validate_relationship(
+                account_id, rel_id, execute=True, timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            # The type as well: some (a credential that no longer decrypts)
+            # carry no message at all.
+            log.warning("Join profiling for %s/%s failed: %s: %s",
+                        account_id, rel_id, type(exc).__name__, exc)
+            summary["not_profiled"] += 1
+            unreachable += 1
+            continue
+        if result.checked_by != "db" and result.status != STATUS_BROKEN:
+            summary["not_profiled"] += 1
+            unreachable += 1
+            continue
+        store.update_relationship_validation(
+            account_id, rel_id, result.status,
+            row_count_estimate=result.row_count_estimate,
+            join_multiplicity=result.join_multiplicity,
+            match_rate=result.match_rate, orphan_rate=result.orphan_rate,
+            null_fk_rate=result.null_fk_rate, fanout_ratio=result.fanout_ratio,
+        )
+        summary[result.status] = summary.get(result.status, 0) + 1
+        # A join that matches nothing is not made LEFT: it is not a join, and
+        # its verdict already keeps the resolver off it.
+        if (
+            result.checked_by == "db"
+            and result.join_multiplicity != "zero_match"
+            and str(rel.get("join_type") or "").upper() == "INNER"
+            and (result.null_fk_rate > 0 or result.orphan_rate > 0)
+            and store.set_suggested_join_type(
+                account_id, rel_id, "LEFT", optionality="optional",
+                reason=(
+                    f"Profiled: {result.null_fk_rate:.2f}% of keys empty and "
+                    f"{result.orphan_rate:.2f}% matching nothing; a LEFT join keeps "
+                    "those rows in every total."
+                ),
+            )
+        ):
+            summary["made_left"] += 1
+    return summary
+
+
 def _validate_against_schema(
     account_id: str,
     rel: dict,
