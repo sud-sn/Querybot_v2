@@ -338,12 +338,18 @@ def attach_unknown_member_policies(
     semantic_plan: dict | None, account_id: str, *questions: str,
 ) -> list[dict]:
     """Put the policies on the plan the prompt, the validator, the compiler
-    and the answer card all read -- unless the question asks about them."""
-    if not isinstance(semantic_plan, dict) or question_asks_for_unknown_members(*questions):
+    and the answer card all read -- unless the question asks about them, when
+    the plan carries them as a reference instead: no rule, only their keys."""
+    if not isinstance(semantic_plan, dict):
         return []
     policies = unknown_member_policies(account_id)
-    if policies:
-        semantic_plan["unknown_member_policies"] = policies
+    if not policies:
+        return []
+    if question_asks_for_unknown_members(*questions):
+        # Asked about: no rule, but the prompt says which keys they are.
+        semantic_plan["unknown_member_reference"] = policies
+        return []
+    semantic_plan["unknown_member_policies"] = policies
     return policies
 
 
@@ -767,3 +773,102 @@ def _scope(select, above, sources, policy: dict, how: str, mode: str) -> dict | 
         "required": exclusion_predicate(column_ref, policy),
         "excluded": all(excluded(str(member)) for member in policy["keys"]),
     }
+
+
+# ── Naming them in answers ───────────────────────────────────────────────────
+#
+# A listing keeps a placeholder member, and the reader should see it for what
+# it is: "Not specified", not "NULL value provided"; "Unmatched", not NO_MATCH.
+# Only a text that reads as a placeholder is relabelled, never a number that
+# happens to sit in a placeholder row (a size of "0"); a key only in a column
+# named for the key or for a key that points at it.
+
+
+def member_labels(account_id: str) -> dict:
+    """{"texts": {text: kind}, "keys": {COLUMN: {key: kind}}} for the
+    account's placeholder members, as an answer's cells can hold them."""
+    texts: dict[str, str] = {}
+    keys: dict[str, dict[str, str]] = {}
+    for policy in unknown_member_policies(account_id):
+        columns = {str(policy["key_column"]).upper()} | {
+            str(ref["column"]).upper() for ref in policy.get("references") or []
+        }
+        for key in policy["keys"]:
+            kind = str(policy["member_kinds"].get(key) or UNKNOWN)
+            for text in (policy["member_text"].get(key) or {}).values():
+                if _text_kind(text):
+                    texts.setdefault(_normal(text), kind)
+            for column in columns:
+                keys.setdefault(column, {})[str(key)] = kind
+    return {"texts": texts, "keys": keys}
+
+
+def label_unknown_members(rows: list[dict], labels: dict, label_for) -> tuple[list[dict], int]:
+    """The rows with each placeholder member's value replaced by
+    ``label_for(kind)``, and how many cells were replaced."""
+    texts, keys = labels.get("texts") or {}, labels.get("keys") or {}
+    if not rows or not (texts or keys):
+        return rows, 0
+    changed = 0
+    labelled = []
+    for row in rows:
+        out = dict(row)
+        for column, value in row.items():
+            kind = texts.get(_normal(value)) if isinstance(value, str) else None
+            if kind is None and value is not None:
+                kind = (keys.get(str(column).upper()) or {}).get(_key_text(value))
+            if kind:
+                out[column] = label_for(kind)
+                changed += 1
+        labelled.append(out)
+    return labelled, changed
+
+
+def references_in_scope(policies: list[dict] | None, *texts: str) -> list[dict]:
+    """The policies whose dimension, or a key pointing at it, is named in
+    ``texts`` -- a question about unspecified buyers may reach only the fact."""
+    haystack = " ".join(str(text or "") for text in texts).upper()
+
+    def named(name: str) -> bool:
+        return bool(name) and bool(
+            re.search(rf"(?<![A-Z0-9_]){re.escape(name.upper())}(?![A-Z0-9_])", haystack)
+        )
+
+    return [
+        policy for policy in policies or []
+        if isinstance(policy, dict) and (
+            named(_bare(str(policy.get("table") or "")))
+            or any(named(str(ref.get("column") or "")) for ref in policy.get("references") or [])
+        )
+    ]
+
+
+def format_unknown_member_reference(policies: list[dict] | None) -> str:
+    """The prompt block for a question ABOUT the placeholder members: which
+    keys they are, so the query selects them by key, not by a label."""
+    lines: list[str] = []
+    for policy in policies or []:
+        key = str(policy.get("key_column") or "")
+        if not key or not policy.get("keys"):
+            continue
+        members = "; ".join(
+            f"{_literal(k)} = {str(policy['member_kinds'].get(k) or UNKNOWN).replace('_', ' ')}"
+            + (f" (stored as {' / '.join(str(v) for v in (policy['member_text'].get(k) or {}).values())})"
+               if policy["member_text"].get(k) else "")
+            for k in policy["keys"]
+        )
+        refs = ", ".join(f"{_bare(r['table'])}.{r['column']}" for r in policy.get("references") or [])
+        lines.append(
+            f"- {policy['table']}: {key} {members}"
+            + (f"; the keys that point at it: {refs}" if refs else "")
+        )
+    if not lines:
+        return ""
+    return "\n".join([
+        "## Unknown members — the question asks about them",
+        "A dimension keeps placeholder rows for a fact value that was empty (not specified) "
+        "or matched nothing (unmatched). Select them by key, on the dimension or on the fact's "
+        "key that points at it -- never by a label such as \"Not specified\", which is not in "
+        "the data.",
+        *lines,
+    ])

@@ -1390,6 +1390,21 @@ def build_sql_system_prompt(
         )
         if unknown_text:
             base = base + "\n\n" + unknown_text
+    # A question ABOUT them ("stock with an unspecified buyer") carries no
+    # rule, but the model needs their keys: the label is not in the data.
+    if semantic_plan and semantic_plan.get("unknown_member_reference"):
+        from core.unknown_members import format_unknown_member_reference, references_in_scope
+
+        reference_text = format_unknown_member_reference(
+            references_in_scope(
+                semantic_plan.get("unknown_member_reference"),
+                table_context,
+                str(semantic_plan.get("required_tables") or ""),
+                str(semantic_plan.get("fields") or ""),
+            ),
+        )
+        if reference_text:
+            base = base + "\n\n" + reference_text
     # The preloaded knowledge base goes on the front LAST, after the rule
     # filter has finished with the prompt. The filter locates rules by
     # searching for their opening words and deletes from there to the next

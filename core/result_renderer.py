@@ -739,6 +739,19 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             rows,
             policy_version=int(profile.get("active_policy_version") or 0),
         )
+    # A placeholder member is named for what it is -- "Not specified", not
+    # "NULL value provided"; "Unmatched", not NO_MATCH -- in the table, the
+    # chart, the narrative and the card's own follow-ups. The protected copy
+    # above keeps the warehouse's values.
+    members_labelled = 0
+    try:
+        from core.unknown_members import label_unknown_members, member_labels
+
+        rows, members_labelled = label_unknown_members(
+            rows, member_labels(account_id), lambda kind: _t(f"member.{kind}"),
+        )
+    except Exception as exc:
+        log.warning("Placeholder members not relabelled for %s: %s", account_id, exc)
     column_formats = build_column_formats(
         rows,
         display_context=display_context,
@@ -983,6 +996,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             coverage_caveats.append(_t("caveat.unknown_members.ranking"))
         elif _left_out:
             coverage_caveats.append(_t("caveat.unknown_members.count"))
+    if members_labelled:
+        coverage_caveats.append(_t("caveat.unknown_members.labelled"))
 
     _graph_edges = confidence_context.get("graph_edges") or []
     if _graph_edges:

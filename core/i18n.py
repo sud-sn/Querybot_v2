@@ -2863,6 +2863,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     # zero as well as one.
 
     # The truncated result.
+    "member.not_specified": {"en": "Not specified", "fr": "Non renseigné"},
+    "member.unmatched": {"en": "Unmatched", "fr": "Sans correspondance"},
+    "member.unknown": {"en": "Unknown", "fr": "Inconnu"},
+    "caveat.unknown_members.labelled": {
+        "en": "“Not specified”, “Unmatched” and “Unknown” are the warehouse's placeholders for a value that was empty or matched nothing.",
+        "fr": "« Non renseigné », « Sans correspondance » et « Inconnu » sont les membres de remplacement de l'entrepôt pour une valeur vide ou sans correspondance.",
+    },
     "caveat.unknown_members.ranking": {
         "en": "Placeholder members (not specified, unmatched) are left out of this ranking: they stand for rows whose value was empty or matched nothing, not for real members.",
         "fr": "Les membres de remplacement (non renseigné, sans correspondance) sont exclus de ce classement : ils représentent des lignes dont la valeur était vide ou sans correspondance, pas de vrais membres.",

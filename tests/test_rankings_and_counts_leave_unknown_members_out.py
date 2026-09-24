@@ -562,5 +562,5 @@ class TestTheRealPipeline:
     def test_a_question_about_them_is_answered_with_them(self, account, tmp_path):
         # ("unmatched warehouses" is a missing-records question: an anti-join.)
         seen = self._run(account, tmp_path, "top 5 warehouses by sales quantity, unknown warehouses included")
-        assert not any("## Unknown members" in system for system, _user in seen["prompts"])
+        assert not any("## Unknown members — REQUIRED" in system for system, _user in seen["prompts"])
         assert seen["executed"] == [self.FIRST]
