@@ -16,7 +16,9 @@ import json
 import logging
 import os
 import time
+from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from core.synthetic import generate_synthetic_sample, should_use_synthetic
 
@@ -1301,6 +1303,83 @@ def _col_to_target_entity(
     return None
 
 
+# A key named for a ROLE its dimension plays: BYR_PTY_DMS_KEY is the party
+# acting as buyer, ABC_CLS_MNL_DMS_KEY the ABC class by the manual criterion.
+# Only surrogate-style keys; a natural code (_CD, _NO) is not read this way.
+_ROLE_KEY_SUFFIXES = ("_DMS_KEY", "_KEY", "_SK", "_FK", "_ID")
+# Qualifiers that name a role and nothing else, in words. A person stands
+# alone -- "Buyer" is the question's own word -- while a position names what it
+# qualifies: "Ship To Party", never a bare "Ship" that any shipping question
+# would match.
+_ROLE_QUALIFIERS: dict[str, tuple[str, bool]] = {
+    "BYR": ("Buyer", True), "BUYER": ("Buyer", True),
+    "SLR": ("Seller", True), "SELLER": ("Seller", True),
+    "PAYER": ("Payer", True), "PYR": ("Payer", True),
+    "OWN": ("Owner", True), "OWNER": ("Owner", True),
+    "SHP": ("Ship", False), "SHIP": ("Ship", False), "SHIPTO": ("Ship To", False),
+    "BIL": ("Bill", False), "BILL": ("Bill", False), "BILLTO": ("Bill To", False),
+    "SOLDTO": ("Sold To", False), "PAY": ("Pay", False),
+    "RCV": ("Receiving", False), "RECV": ("Receiving", False),
+    "RECEIVING": ("Receiving", False),
+    "TO": ("To", False), "FROM": ("From", False), "FRM": ("From", False),
+    "ORIG": ("Origin", False), "ORIGIN": ("Origin", False),
+    "DST": ("Destination", False), "DEST": ("Destination", False),
+    "PRI": ("Primary", False), "PRIMARY": ("Primary", False),
+    "SEC": ("Secondary", False), "SECONDARY": ("Secondary", False),
+    "ALT": ("Alternate", False), "ALTERNATE": ("Alternate", False),
+    "PRNT": ("Parent", False), "PARENT": ("Parent", False),
+    "CHLD": ("Child", False), "CHILD": ("Child", False),
+    "ULT": ("Ultimate", False), "ULTIMATE": ("Ultimate", False),
+    "RSP": ("Responsible", False), "RESPONSIBLE": ("Responsible", False),
+}
+# Words that name a dimension of their own. A key whose extra words include
+# one is a DIFFERENT dimension, one that was not selected: SLR_STS_DMS_KEY is
+# the supplier's STATUS, and joining it to the supplier table would match
+# small integer keys by coincidence and group by nonsense.
+_DIMENSION_NOUN_TOKENS = frozenset({
+    "STS", "STAT", "STATUS", "TYP", "TYPE", "GRP", "GROUP", "CLS", "CLASS",
+    "CAT", "CATEGORY", "CD", "CODE", "LOC", "LOCATION", "ZON", "ZONE", "BIN",
+    "PCY", "POLICY", "CHN", "CHANNEL", "RGN", "REGION", "DVN", "DIV",
+    "DIVISION", "ARA", "AREA", "LVL", "LEVEL", "SEG", "SEGMENT", "RTG",
+    "RATING", "RSN", "REASON", "CTR", "CENTER", "CENTRE", "DPT", "DEPT",
+    "BRD", "BRAND", "FAM", "FAMILY", "DT", "DATE", "PRD", "PERIOD", "YR",
+    "YEAR", "MTH", "MONTH", "WK", "WEEK", "TM", "TIME", "CUR", "CURRENCY",
+    "UOM", "UNIT", "ACC", "ACCT", "ACCOUNT",
+})
+
+
+def _role_target_entity(
+    col_upper: str, entity_upper_map: dict[str, str],
+) -> tuple[str, tuple[str, ...], str] | None:
+    """``(entity, role tokens, entity stem)`` for a key named for a role its
+    dimension plays.
+
+    Strips one or two words from either end of the key's stem, longest
+    remaining name first, until what is left names an entity. Never strips a
+    word that names a dimension of its own. Whether the stripped words really
+    are a role is the caller's decision -- it needs the rest of the table.
+    """
+    for sfx in _ROLE_KEY_SUFFIXES:
+        if not col_upper.endswith(sfx):
+            continue
+        tokens = [token for token in col_upper[:-len(sfx)].split("_") if token]
+        options: list[tuple[int, list[str], tuple[str, ...]]] = []
+        for drop in (1, 2):
+            if len(tokens) - drop < 1:
+                break
+            options.append((drop, tokens[drop:], tuple(tokens[:drop])))
+            options.append((drop, tokens[:-drop], tuple(tokens[-drop:])))
+        for _, kept, stripped in sorted(options, key=lambda option: option[0]):
+            if set(stripped) & _DIMENSION_NOUN_TOKENS:
+                continue
+            stem = "_".join(kept)
+            for candidate in (stem, stem + "_DMS", "DIM_" + stem, stem + "_DIM"):
+                if candidate in entity_upper_map:
+                    return entity_upper_map[candidate], stripped, stem
+        return None
+    return None
+
+
 def _infer_entity_type(table_name: str) -> str:
     # Compatibility wrapper for callers that only have a table name.  Full
     # schema builds use classify_schema_tables() below, which also considers
@@ -1334,9 +1413,14 @@ def _infer_pk_column(table_name: str, columns: list) -> str:
     bare = table_name.split(".")[-1].upper()
     col_names_upper = [_col_name(c).upper() for c in columns]
 
-    # 1. <TABLE>_ID pattern (e.g. CUSTOMER_ID in DIM_CUSTOMER)
+    # 1. <TABLE>_ID pattern (e.g. CUSTOMER_ID in DIM_CUSTOMER). The prefix
+    # comes off as a prefix: str.lstrip("DIM_") strips any leading D, I, M or
+    # _, so DIM_MANAGER became "ANAGER" and its key was never found.
+    stem = bare
+    for prefix in ("DIM_", "FACT_", "FCT_"):
+        stem = stem.removeprefix(prefix)
     for suffix in ("_ID", "_KEY", "_NO", "_NUM", "_CODE"):
-        candidate = bare.lstrip("DIM_").lstrip("FACT_").lstrip("FCT_") + suffix
+        candidate = stem + suffix
         # try the full bare name too
         for check in (bare + suffix, candidate):
             if check in col_names_upper:
@@ -1718,12 +1802,61 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
 
     # best_rel[(from, to)] = (confidence, rel_dict)
     best_rel: dict[tuple[str, str], tuple[int, dict]] = {}
+    date_tables = {date_table.upper() for _, date_table, _, _, _ in date_dims}
+    table_of_entity = {e["entity_name"]: str(e.get("table_name") or "") for e in entities}
+    role_edges: list[dict] = []
+
+    def _join_type_for(e_type: str, col: Any) -> tuple[str, str]:
+        """A fact's key that may be NULL keeps its rows with LEFT; a
+        dimension's link to a sub-dimension always did."""
+        nullable = not isinstance(col, dict) or bool(col.get("nullable", True))
+        if e_type == "fact" and not nullable:
+            return "INNER", "required"
+        return "LEFT", "optional" if nullable else "unknown"
 
     for fqn, tbl_info in table_items:
         e_name = fqn_to_entity.get(fqn, fqn.split(".")[-1])
         e_type = entity_type_map.get(e_name)
         if not e_type:
             continue
+
+        # A dimension playing several roles on one fact: ABC_CLS_MNL, _VOL,
+        # _FRQ and _CTB all name ABC_CLS_DMS, and none is its plain key. The
+        # family is the evidence; one variant alone, beside the plain key or
+        # with a qualifier that is not a known role, is left unresolved. A
+        # dimension's own role keys (a supplier's buyer) are left to the
+        # admin: labelled, they would pull that dimension into every question
+        # naming the role.
+        role_candidates: dict[str, tuple[str, tuple[str, ...], str, Any]] = {}
+        direct_targets: set[str] = set()
+        for col in tbl_info.get("columns", []) if e_type == "fact" else []:
+            col_name = _col_name(col)
+            if not _is_surrogate_key_col(col_name):
+                continue
+            direct = _col_to_target_entity(col_name.upper(), entity_upper_map)
+            if direct:
+                direct_targets.add(direct)
+                continue
+            found = _role_target_entity(col_name.upper(), entity_upper_map)
+            if found and found[0] != e_name:
+                role_candidates[col_name] = (*found, col)
+        family = Counter(target for target, _, _, _ in role_candidates.values())
+        for col_name, (target, stripped, stem, col) in role_candidates.items():
+            t_type = entity_type_map.get(target)
+            target_table = table_of_entity.get(target, "")
+            # A calendar's roles are the date roles above: SHP_DT_DMS_KEY is
+            # the ship date, never a second alias of the day table.
+            if t_type != "dimension" or target_table.upper() in date_tables:
+                continue
+            qualified = set(stripped) <= set(_ROLE_QUALIFIERS)
+            is_role = qualified or (family[target] >= 2 and target not in direct_targets)
+            if not is_role:
+                continue
+            role_edges.append(_role_edge(
+                e_name, col_name, target, pk_map.get(target) or col_name,
+                _role_label(stripped, stem, col_name, qualified),
+                _join_type_for(e_type, col),
+            ))
 
         for col in tbl_info.get("columns", []):
             col_name  = _col_name(col)
@@ -1763,6 +1896,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             to_col   = pk_map.get(target) or col_name
             pair     = (e_name, target)
             cur_best = best_rel.get(pair, (0, None))[0]
+            join_type, optionality = _join_type_for(e_type, col)
             if confidence > cur_best:
                 best_rel[pair] = (confidence, {
                     "from_entity":       e_name,
@@ -1770,13 +1904,13 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                     "from_column":       col_name,
                     "to_column":         to_col,
                     "relationship_type": "many_to_one",
-                    "join_type":         "INNER" if e_type == "fact" else "LEFT",
+                    "join_type":         join_type,
                     "relationship_key":  f"HEURISTIC:{e_name}:{target}:{col_name}:{to_col}",
                     "confidence_score":  confidence,
                     "status":            "suggested",
                     "generated_by":      "heuristic",
                     "reason":            f"FK column {col_name} resolves to {target}",
-                    "optionality":       "unknown",
+                    "optionality":       optionality,
                 })
 
     # Merge by full edge identity, not table pair. DB constraints supersede an
@@ -1793,13 +1927,61 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     existing = {
         physical_relationship_signature(rel) for rel in relationships
     }
-    for _, rel in best_rel.values():
+    for rel in [rel for _, rel in best_rel.values()] + role_edges:
         signature = physical_relationship_signature(rel)
         if signature not in existing:
             relationships.append(rel)
             existing.add(signature)
 
     return {"entities": entities, "relationships": relationships}
+
+
+def _role_label(stripped: tuple[str, ...], stem: str, column: str, qualified: bool) -> str:
+    """The business name of a role: the relationship's label, which is what a
+    question is matched against and what the answer discloses."""
+    from core.schema_enrichment import display_label
+
+    if qualified:
+        words = " ".join(_ROLE_QUALIFIERS[token][0] for token in stripped)
+        if all(_ROLE_QUALIFIERS[token][1] for token in stripped):
+            return words
+        return f"{words} {display_label(stem)}".strip()
+    key_stem = column.upper()
+    for sfx in _ROLE_KEY_SUFFIXES:
+        if key_stem.endswith(sfx):
+            key_stem = key_stem[:-len(sfx)]
+            break
+    return display_label(key_stem) or key_stem.replace("_", " ").title()
+
+
+def _role_edge(
+    from_entity: str, column: str, target: str, to_column: str, label: str,
+    join: tuple[str, str],
+) -> dict:
+    """One edge per key that names a role of ``target``, labelled with the role.
+
+    Into the dimension's own entity, as a database's foreign keys to one table
+    already are: the resolver prefers the edge whose label the question names
+    ("ABC class manual", "buyer"), and when a question names only the
+    dimension it takes the top-ranked role and says which, rather than joining
+    all four classifications at once.
+    """
+    join_type, optionality = join
+    return {
+        "from_entity":       from_entity,
+        "to_entity":         target,
+        "from_column":       column,
+        "to_column":         to_column,
+        "relationship_type": "many_to_one",
+        "join_type":         join_type,
+        "label":             label,
+        "relationship_key":  f"ROLE:{from_entity}:{column}:{target}:{to_column}".upper(),
+        "confidence_score":  80,
+        "status":            "suggested",
+        "generated_by":      "heuristic",
+        "reason":            f"Key {column} names {target} in the role '{label}'",
+        "optionality":       optionality,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
