@@ -860,6 +860,18 @@ async def build_kb(
     except Exception as exc:
         log.warning("Structured semantic model generation failed: %s", exc)
 
+    # Starter metrics for the stock snapshots the model found, filed for the
+    # administrator to accept or reject. Nothing here changes an answer.
+    if account_id and semantic_model:
+        try:
+            from core.starter_metrics import propose_starter_metrics
+
+            _proposed = propose_starter_metrics(account_id, semantic_model, db_type=db_type)
+            if _proposed:
+                log.info("KB: %d starter metric(s) proposed for review", len(_proposed))
+        except Exception as _starter_exc:
+            log.warning("KB: starter metric proposals skipped: %s", _starter_exc)
+
     # Base system prompt used for business vocab (no per-table ERP hints needed there)
     system_base = build_kb_system_prompt()
 

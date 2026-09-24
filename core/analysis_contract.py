@@ -209,6 +209,19 @@ def is_count_or_aging_measure(column: str) -> bool:
     return bool(_EVENT_COUNT_RE.search(name) or _AGING_BUCKET_RE.search(name))
 
 
+_ON_HAND_TOKENS = frozenset({"OH", "QOH", "SOH"})
+
+
+def is_on_hand_quantity(column: str) -> bool:
+    """True for stock held on hand, by name: ON_HND_QTY, CUR_ON_HAND_QTY, QOH.
+
+    A part of that stock (ALC_ON_HND_QTY, allocated) matches too; telling the
+    parts from the whole is the caller's business.
+    """
+    name = str(column or "")
+    return bool(_ON_HAND_RE.search(name) or _name_tokens(name) & _ON_HAND_TOKENS)
+
+
 def collapse_rows_by_label(
     rows: list[dict], label_col: str, value_col: str,
     *, measure_name: str = "",

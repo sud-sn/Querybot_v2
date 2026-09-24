@@ -149,11 +149,13 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
 
         n = metric_proposals.get(account_id, 0)
         if n:
-            # "warn", not "action": whoever asked already has their answer --
-            # the logic ran in their own thread. What is pending is only
-            # whether it becomes available to everyone else.
+            # "warn", not "action": nobody is blocked. Whoever asked in chat
+            # already has their answer -- the logic ran in their own thread --
+            # and a knowledge-base suggestion was asked for by nobody. What is
+            # pending is only whether it becomes available to everyone.
             hit("metric-proposal", "warn", "metric definitions awaiting approval",
-                "users composed these in chat and are waiting for them to become shared",
+                "composed in chat or suggested by the knowledge-base build; "
+                "accepting one shares it with everyone",
                 "/metrics#proposals", "Review metric requests", account_id, n)
 
         # ── Worth knowing ────────────────────────────────────────────────────

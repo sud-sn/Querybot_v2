@@ -54,7 +54,8 @@ def flagged_answers_by_account() -> dict[str, int]:
 
 
 def pending_metric_proposals_by_account() -> dict[str, int]:
-    """Metric definitions someone composed in chat, waiting to become shared.
+    """Metric definitions composed in chat or suggested by the knowledge-base
+    build, waiting to become shared.
 
     Ranked below the blocking signals on purpose: the person who asked already
     got their answer -- the ad-hoc logic ran for them in their own thread. What

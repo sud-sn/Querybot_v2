@@ -9,7 +9,8 @@
     <div>
       <h2>Metric requests{% if proposals %} <span class="mp-count">{{ proposals | length }}</span>{% endif %}</h2>
       <p>
-        Composed in chat by someone who already has their answer. Accepting one
+        Composed in chat by someone who already has their answer, or suggested
+        from the data model when the knowledge base was built. Accepting one
         makes it a shared metric for everyone and recompiles the semantic contract.
       </p>
     </div>
@@ -23,9 +24,12 @@
       <div class="mp-head">
         <strong>{{ p.payload.name or 'Untitled metric' }}</strong>
         <span class="mp-badge">{{ 'update' if p.action == 'update_metric' else 'new' }}</span>
+        {% if p.generated_by == 'starter_model' %}<span class="mp-badge">suggested</span>{% endif %}
         {% if p.confidence_score %}<span class="mp-conf">confidence {{ p.confidence_score }}%</span>{% endif %}
       </div>
       {% if p.source_question %}<div class="mp-asked">asked: “{{ p.source_question }}”</div>{% endif %}
+      {% if p.generated_by == 'starter_model' %}<div class="mp-asked">suggested when the knowledge base was built — nobody asked for it yet</div>{% endif %}
+      {% if p.payload.description %}<div class="mp-desc">{{ p.payload.description }}</div>{% endif %}
       <code class="mp-formula">{{ p.payload.sql_template }}</code>
       {#- The checks name what they DID, not a verdict.
 
@@ -43,6 +47,7 @@
         {% if p.validation and p.validation.valid %}<span class="mp-check">formula parses, columns exist</span>{% endif %}
         {% if p.dryrun and p.dryrun.status == 'ok' %}<span class="mp-check">ran on the database{% if p.dryrun.tables_probed %} ({{ p.dryrun.tables_probed | length }} table{{ '' if p.dryrun.tables_probed | length == 1 else 's' }}){% endif %}</span>{% endif %}
       </div>
+      {% if p.reason %}<div class="mp-evidence">Evidence: {{ p.reason }}</div>{% endif %}
       <div class="mp-unchecked">
         Not checked: whether this is the right calculation for the question.
         That is what you are approving.
