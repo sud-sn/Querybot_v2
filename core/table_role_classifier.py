@@ -7,6 +7,7 @@ terminology packs so cryptic ERP tables can still be classified safely.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -42,6 +43,38 @@ def _column_type(column: Any) -> str:
     if isinstance(column, dict):
         return str(column.get("type") or column.get("data_type") or column.get("DATA_TYPE") or "").upper()
     return ""
+
+
+# What a periodic snapshot is called. The spelled-out words are safe to find
+# inside a longer name (FactInventorySnapshot); the abbreviations only as whole
+# tokens, because "BAL" as a substring made GLOBAL_SALES_FCT a snapshot, and a
+# snapshot's measures are reported for one period instead of summed.
+_SNAPSHOT_WORDS = ("SNAPSHOT", "INVENTORY", "STOCK", "BALANCE")
+_SNAPSHOT_TOKENS = frozenset({"SNAP", "SNP", "BAL", "BALS", "STK"})
+_TABLE_TOKEN_SPLIT_RE = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _names_a_snapshot(table_name: str) -> bool:
+    name = str(table_name or "")
+    upper = name.upper()
+    if any(word in upper for word in _SNAPSHOT_WORDS):
+        return True
+    tokens = {part.upper() for part in _TABLE_TOKEN_SPLIT_RE.split(name) if part}
+    return bool(tokens & _SNAPSHOT_TOKENS)
+
+
+def is_periodic_snapshot_fact(table_name: str) -> bool:
+    """True when a table's NAME marks it as a fact holding periodic snapshots.
+
+    Name evidence only -- a fact suffix or prefix from the naming convention
+    and a snapshot word -- for a caller holding a table name and nothing else.
+    A table not recognisable as a fact by its name returns False.
+    """
+    bare = _bare(str(table_name or "").replace('"', "").replace("[", "").replace("]", "").replace("`", ""))
+    if not bare:
+        return False
+    role = classify_table(bare)
+    return role.role == "fact" and role.fact_type == "periodic_snapshot"
 
 
 def _contains_token(name: str, tokens: Iterable[str]) -> bool:
@@ -222,7 +255,7 @@ def classify_table(
     else:
         grain_columns = pk_columns
         upper = table_u
-        if any(token in upper for token in ("SNAP", "BAL", "INVENTORY", "STOCK")):
+        if _names_a_snapshot(table):
             fact_type = "periodic_snapshot"
             grain = "one row per snapshot grain"
         elif any(token in upper for token in ("ACCUM", "LIFECYCLE")):

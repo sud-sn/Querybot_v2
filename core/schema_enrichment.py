@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import logging
 import re
 
+from core.analysis_contract import is_count_or_aging_measure
 from core.date_roles import date_role_terms, detect_date_role
 from core.erp_column_dict import ERP_COLUMN_DICT
 from core.identifier_intelligence import (
@@ -496,6 +497,10 @@ def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> lis
     return deduped[:MAX_BUSINESS_CANDIDATES]
 
 
+# Integer types included: a count is an integer, and so is an aging bucket.
+_NUMERIC_TYPE_TOKENS = ("INT", "NUMBER", "NUMERIC", "DECIMAL", "FLOAT", "DOUBLE", "REAL", "MONEY")
+
+
 def _role_for_column(column: str, data_type: str = "", distinct_values: str = "", vocab=None) -> tuple[str, list[str], list[str], str]:
     col = _clean_identifier(column).upper()
     ctype = (data_type or "").upper()
@@ -550,6 +555,15 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         if record_prefix:
             evidence.append(f"M3 record prefix {record_prefix}={record_table}")
         evidence.append("measure naming pattern")
+        return "measure", evidence, warnings, default_filter
+    # A count of events (NUM_OF_RCT, receipts in the period) and an aging
+    # bucket of stock (AGE_24_PLU) carry none of the suffixes above, and are
+    # usually integers, so nothing else here ever called them measures -- the
+    # model listed them as attributes and no question could total them.
+    if is_count_or_aging_measure(col) and (
+        not ctype or any(t in ctype for t in _NUMERIC_TYPE_TOKENS)
+    ):
+        evidence.append("count-of-events or aging-bucket naming pattern")
         return "measure", evidence, warnings, default_filter
     if col.endswith("_IND") or col.endswith("_STS") or col.endswith("_STS_DMS_KEY"):
         evidence.append("status/indicator naming pattern")

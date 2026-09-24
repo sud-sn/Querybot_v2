@@ -31,6 +31,7 @@ from core.date_roles import (
     physical_date_key_type,
     question_has_temporal_intent,
 )
+from core.analysis_contract import grained_aggregation
 from core.naming_convention import match_audit_prefix, match_column_suffix, match_entity_prefix
 from core.vocab_packs import (
     is_dimension_key_column, strip_dimension_key_suffix,
@@ -343,6 +344,12 @@ def _field_entry(
     rule = match_column_suffix(item.column)
     entity_prefix = match_entity_prefix(item.column) or ""
     aggregation = rule.aggregation if rule else ""
+    # What the measure IS outranks how its suffix is spelled. The suffix rule
+    # reads ON_HND_QTY as a summable _QTY, ITM_CST as a summable cost amount and
+    # NUM_OF_PHY_INV as an _INV inventory level; the name says a stock level, a
+    # price per unit and a count of stock takes. Only a name with no such
+    # evidence keeps the suffix rule's verdict.
+    #
     # Semi-additivity was recognised only from a column-name SUFFIX (_BAL,
     # _INV). EMCO's inventory value is BAL_VAL_AMT, where BAL is a PREFIX, so
     # it fell through to the _AMT rule and was published as "additive - safe to
@@ -351,9 +358,14 @@ def _field_entry(
     #
     # The grain is a property of the TABLE, not of how the column happens to be
     # spelled, and the classifier already identifies a periodic snapshot. Trust
-    # that instead of the naming convention.
-    if snapshot_fact and aggregation in {"", "additive"} and item.role == "measure":
-        aggregation = "semi_additive"
+    # that instead of the naming convention -- for the measures whose name says
+    # nothing about time. A flow and a count of events beside the balances on a
+    # snapshot (purchased, sold, receipts) still add up across periods, and
+    # promoting them too would report one month's purchases for a year.
+    if item.role in {"measure", "measure_candidate"}:
+        aggregation, _basis = grained_aggregation(
+            item.column, aggregation, snapshot_fact=snapshot_fact,
+        )
     return {
         "column": item.column,
         "data_type": item.data_type or _field_type(meta, item.column),

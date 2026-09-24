@@ -177,7 +177,8 @@ def measures_are_semi_additive(measure_fields: list[dict] | None) -> bool:
     is made rather than leaving it to whether the user's vocabulary happened to
     match a five-word list.
     """
-    from core.analysis_contract import _measure_class
+    from core.analysis_contract import GRAIN_EXEMPT_BASES, measure_additivity
+    from core.table_role_classifier import is_periodic_snapshot_fact
 
     for field in measure_fields or []:
         if not isinstance(field, dict):
@@ -208,10 +209,22 @@ def measures_are_semi_additive(measure_fields: list[dict] | None) -> bool:
                 return True
             continue
         try:
-            if _measure_class(column, {}) == "semi_additive":
+            aggregation, basis = measure_additivity(column)
+            if aggregation == "semi_additive":
+                return True
+            # A name that says nothing about time -- ALC_QTY, RSV_QTY, ORD_QTY
+            # -- is a level when it sits on a periodic snapshot: the allocated
+            # quantity of every month on file, summed, is not an allocated
+            # quantity, and a unit cost averaged over every month is not the
+            # cost. The grain is read fresh from the table's name, never from a
+            # persisted verdict, for the reason given above. A flow or a count
+            # beside it (PCH_QTY, NUM_OF_RCT) keeps adding up across periods.
+            if basis not in GRAIN_EXEMPT_BASES and is_periodic_snapshot_fact(
+                str(field.get("table") or field.get("source_table") or "")
+            ):
                 return True
         except Exception:  # never let classification break date resolution
-            log.debug("semi-additive classification failed for %r", field, exc_info=True)
+            log.warning("semi-additive classification failed for %r", field, exc_info=True)
     return False
 
 

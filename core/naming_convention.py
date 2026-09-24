@@ -20,8 +20,11 @@ The patterns are matched longest-suffix-first so _DMS_KEY wins over _KEY.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
 
 
 # ── Column suffix rules ────────────────────────────────────────────────────────
@@ -719,6 +722,107 @@ def match_entity_prefix(column: str, vocab=None) -> str | None:
 
 # ── Hint generation ────────────────────────────────────────────────────────────
 
+# What the SQL model is told about a measure whose name or grain says more than
+# its suffix does. Keyed by (aggregation, basis); "grain" covers a measure that
+# is a level only because it sits on a periodic snapshot.
+_MEASURE_HINTS: dict[tuple[str, str], tuple[str, str, str, str]] = {
+    ("semi_additive", "balance"): (
+        "SEMI_ADDITIVE",
+        "Stock level or balance — semi-additive (point-in-time snapshot)",
+        "SUM across items, warehouses and other entities is valid. NEVER SUM "
+        "across dates or periods: filter to one snapshot (the latest, or the "
+        "period asked for).",
+        "SUM({col}) over several dates or periods counts the same stock once "
+        "per snapshot.",
+    ),
+    ("semi_additive", "grain"): (
+        "SEMI_ADDITIVE",
+        "Level held at each snapshot of a periodic-snapshot table — semi-additive",
+        "SUM across items, warehouses and other entities is valid. NEVER SUM "
+        "across dates or periods: filter to one snapshot (the latest, or the "
+        "period asked for).",
+        "SUM({col}) over several dates or periods counts the same quantity once "
+        "per snapshot.",
+    ),
+    ("non_additive", "unit_value"): (
+        "UNIT_VALUE",
+        "Price or cost per unit — non-additive",
+        "NEVER SUM. Report it per item, or value a quantity as "
+        "SUM(quantity * {col}).",
+        "SUM({col}) adds the unit prices of different items together.",
+    ),
+    ("non_additive", "average_or_rate"): (
+        "RATIO",
+        "Average or rate — non-additive",
+        "NEVER SUM. Recalculate from component measures, or AVG within one "
+        "period.",
+        "SUM({col}) adds averages together.",
+    ),
+    ("additive", "flow"): (
+        "MEASURE",
+        "Movement during the period (flow) — additive",
+        "Safe to SUM across periods and entities: each row records what moved "
+        "in its period, not a level.",
+        "",
+    ),
+    ("additive", "event_count"): (
+        "MEASURE",
+        "Count of events in the period — additive",
+        "Safe to SUM across periods and entities.",
+        "",
+    ),
+}
+_MEASURE_SUFFIX_ROLES = {"measure", "ratio", "semi_additive"}
+
+
+def _is_periodic_snapshot(table_name: str, column_names: list[str], vocab=None) -> bool:
+    if not table_name:
+        return False
+    try:
+        from core.table_role_classifier import classify_table
+
+        role = classify_table(
+            table_name, {"columns": [{"name": name} for name in column_names]}, vocab=vocab,
+        )
+    except Exception:
+        log.warning("snapshot classification failed for %r", table_name, exc_info=True)
+        return False
+    return role.role == "fact" and role.fact_type == "periodic_snapshot"
+
+
+def _measure_hint_line(col: str, suffix_rule, entity: str, snapshot: bool) -> str:
+    """A measure line that corrects the suffix rule, or "" to keep the rule's.
+
+    Only where they differ, or where a snapshot table needs its flows and
+    counts spelled out as summable -- everything else keeps the suffix line it
+    always had.
+    """
+    from core.analysis_contract import (
+        GRAIN_EXEMPT_BASES, grained_aggregation, is_count_or_aging_measure,
+    )
+
+    if suffix_rule is not None and suffix_rule.role not in _MEASURE_SUFFIX_ROLES:
+        return ""
+    if suffix_rule is None and not is_count_or_aging_measure(col):
+        return ""
+    fallback = suffix_rule.aggregation if suffix_rule else ""
+    aggregation, basis = grained_aggregation(col, fallback, snapshot_fact=snapshot)
+    differs = suffix_rule is None or aggregation != suffix_rule.aggregation
+    if not differs and not (snapshot and basis in GRAIN_EXEMPT_BASES):
+        return ""
+    key_basis = basis if basis in {b for _, b in _MEASURE_HINTS} else "grain"
+    hint = _MEASURE_HINTS.get((aggregation, key_basis))
+    if hint is None:
+        return ""
+    role, meaning, guidance, anti = hint
+    entity_part = f" | entity domain: {entity}" if entity else ""
+    anti_part = f" | ANTI-PATTERN: {anti.replace('{col}', col)}" if anti else ""
+    return (
+        f"- {col} [{role}{entity_part}]: {meaning} | aggregation={aggregation} | "
+        f"guidance={guidance.replace('{col}', col)}{anti_part}"
+    )
+
+
 def get_naming_hints(column_names: list[str], table_name: str = "", vocab=None) -> str:
     """
     Return a formatted hint block for columns in `column_names` that match
@@ -736,6 +840,7 @@ def get_naming_hints(column_names: list[str], table_name: str = "", vocab=None) 
     lines: list[str] = []
 
     # Table-level hint (once)
+    snapshot = _is_periodic_snapshot(table_name, column_names, vocab=vocab)
     if table_name:
         tbl_rule = match_table_suffix(table_name, vocab=vocab)
         if tbl_rule:
@@ -743,6 +848,15 @@ def get_naming_hints(column_names: list[str], table_name: str = "", vocab=None) 
                 f"TABLE TYPE [{table_name}]: {tbl_rule.table_type.upper()} — "
                 f"{tbl_rule.meaning} | {tbl_rule.sql_guidance}"
             )
+        if snapshot:
+            lines.append(
+                f"SNAPSHOT GRAIN [{table_name}]: PERIODIC SNAPSHOT — each row holds "
+                "levels as of one date or period. Stock levels and balances are "
+                "semi-additive: NEVER SUM them across dates or periods. Movements "
+                "and counts of events (purchases, sales, transfers, receipts) add "
+                "up across periods."
+            )
+        if tbl_rule or snapshot:
             lines.append("")
 
     # Per-column hints
@@ -762,7 +876,13 @@ def get_naming_hints(column_names: list[str], table_name: str = "", vocab=None) 
         suffix_rule = match_column_suffix(col)
         entity = match_entity_prefix(col, vocab=vocab)
 
-        if suffix_rule:
+        # A measure's name and its table's grain outrank the suffix: ON_HND_QTY
+        # is a stock level whatever _QTY says, ITM_CST a price per unit whatever
+        # _CST says, and NUM_OF_RCT a count that no suffix rule covers at all.
+        measure_line = _measure_hint_line(col, suffix_rule, entity, snapshot)
+        if measure_line:
+            lines.append(measure_line)
+        elif suffix_rule:
             entity_part = f" | entity domain: {entity}" if entity else ""
             guidance = suffix_rule.sql_guidance.replace("{col}", col)
             anti = (
@@ -873,12 +993,13 @@ def build_naming_convention_doc(vocab=None) -> str:
         "",
         "1. **`_DMS_KEY` columns** — NEVER SELECT directly. Always JOIN to the `_DMS` table and use `_DSC` or `_NM`.",
         "2. **`_PCT`, `_RATE`, `_RATIO` columns** — NEVER SUM. Recalculate as `SUM(num)/SUM(denom)*100`.",
-        "3. **`_AMT`, `_QTY`, `_CST`, `_PFT`, `_REV` columns** — safe to SUM (additive).",
+        "3. **`_AMT`, `_QTY`, `_CST`, `_PFT`, `_REV` columns** — safe to SUM (additive), unless the table's own hints say otherwise: a stock level or balance is semi-additive, and a price or cost per unit is never summed.",
         "4. **`_BAL`, `_INV` columns** — semi-additive: SUM by entity OK, never SUM across time.",
         "5. **`_TS`, `_DTM` columns** — system/ETL timestamps, NOT business dates. Use `_DT` or `_DT_DMS_KEY` for date filtering.",
         "6. **`AZ_`, `ETL_`, `DW_`, `SYS_` prefixes** — audit/pipeline columns. Never use in business queries.",
         "7. **`_FCT` tables** — contain measures. Always join to `_DMS` tables to resolve FK keys to display labels.",
         "8. **`_DMS` tables** — contain display fields. Use `_DSC`/`_NM` in SELECT, `_KEY` only for JOIN conditions.",
+        "9. **Periodic snapshot tables** (balances, stock) — levels are semi-additive: never SUM them across dates or periods. Movements and event counts beside them (purchases, sales, transfers, receipts) add up across periods.",
         "",
     ]
     return "\n".join(lines)
