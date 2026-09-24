@@ -841,7 +841,7 @@ def _compile_governed_grouped_request_sql(
     resolved those decisions but free-form generation can still drift onto an
     unrelated metric or fact table.
     """
-    from core.contextual_dates import format_period_bucket_expression
+    from core.contextual_dates import format_date_value_expression, format_period_bucket_expression
     from core.validator import validate_sql_detailed
 
     context = semantic_context or {}
@@ -1045,7 +1045,11 @@ def _compile_governed_grouped_request_sql(
                 return ""
             date_ref = f"{resolved_date_alias}.{qcol(date_column)}"
         else:
-            date_ref = f"fact_rows.{qcol(date_column)}"
+            # An encoded period key is decoded before it meets a date: the raw
+            # integer 202212 compared with DATEADD(...) is an error, not a window.
+            date_ref = format_date_value_expression(
+                "fact_rows", qcol(date_column), key_type, db_type,
+            )
 
     from_sql = "\n    ".join(from_lines)
     where_parts: list[str] = []
@@ -1414,7 +1418,7 @@ def compile_governed_temporal_metric_sql(
     relationship, distribution or multiple facts remains on the normal
     analytical planner path.
     """
-    from core.contextual_dates import format_period_bucket_expression
+    from core.contextual_dates import format_date_value_expression, format_period_bucket_expression
     from core.validator import validate_sql_detailed
 
     grouped = _compile_governed_grouped_request_sql(
@@ -1531,7 +1535,11 @@ def compile_governed_temporal_metric_sql(
         date_ref = f"{role_alias}.{qcol(date_column)}"
     else:
         from_sql = f"{fact_sql} AS fact_rows"
-        date_ref = f"fact_rows.{qcol(date_column)}"
+        # An encoded period key is decoded before it meets a date: the raw
+        # integer 202212 compared with DATEADD(...) is an error, not a window.
+        date_ref = format_date_value_expression(
+            "fact_rows", qcol(date_column), date_key_type, db_type,
+        )
 
     dialect = str(db_type or "").lower()
 
@@ -1835,7 +1843,7 @@ def attempt_governed_temporal_metric_repair(
     is unnecessary and unsafe.  More complex dimensional comparisons continue
     through the normal planner/retry path.
     """
-    from core.contextual_dates import format_period_bucket_expression
+    from core.contextual_dates import format_date_value_expression, format_period_bucket_expression
     from core.validator import validate_sql_detailed
 
     context = semantic_context or {}
@@ -1908,7 +1916,11 @@ def attempt_governed_temporal_metric_repair(
         date_ref = f"{role_alias}.{qcol(date_column)}"
     else:
         from_sql = f"{fact_sql} AS fact_rows"
-        date_ref = f"fact_rows.{qcol(date_column)}"
+        # An encoded period key is decoded before it meets a date: the raw
+        # integer 202212 compared with DATEADD(...) is an error, not a window.
+        date_ref = format_date_value_expression(
+            "fact_rows", qcol(date_column), date_key_type, db_type,
+        )
 
     bucket = format_period_bucket_expression(
         date_ref,

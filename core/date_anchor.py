@@ -31,6 +31,8 @@ import time
 from datetime import date, datetime, timezone
 from typing import Any, Callable
 
+from core.date_roles import normalize_date_key_type
+
 log = logging.getLogger("querybot.date_anchor")
 
 # How long a resolved anchor stays usable. A warehouse that loads hourly is well
@@ -193,11 +195,21 @@ def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> s
             f"anchor_date.{_quote_column(dimension_key, db_type)}\n"
             f")"
         )
-    return (
+    probe = (
         f"SELECT MAX(anchor_fact.{_quote_column(date_column, db_type)}) "
         f"AS max_business_date\n"
         f"FROM {_table_alias(fact_sql, 'anchor_fact', db_type)}"
     )
+    # A yyyymm period fact keeps a whole-year row (month 00) beside the months,
+    # and 202300 sorts after 202212: the newest year's row would win the MAX
+    # before any of its months exists. The anchor is the newest MONTH.
+    if normalize_date_key_type(str(policy.get("date_key_type") or "")) == "yyyymm_integer":
+        from core.period_rows import month_rows_predicate
+
+        probe += "\nWHERE " + month_rows_predicate(
+            f"anchor_fact.{_quote_column(date_column, db_type)}", db_type,
+        )
+    return probe
 
 
 def build_key_order_check_sql(policy: dict | None, db_type: str = "azure_sql") -> str:
@@ -271,8 +283,14 @@ def build_cheap_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql"
     ])
 
 
-def _coerce_anchor(value: Any) -> str:
-    """Render a probed value as an ISO date literal, or "" if it is not one."""
+def _coerce_anchor(value: Any, date_key_type: str = "") -> str:
+    """Render a probed value as an ISO date literal, or "" if it is not one.
+
+    A yyyymm period key is the first day of its month. Month 00 is a period
+    table's whole-year row, never an anchor. And a bare number is read as a
+    day only when it has the eight digits of one: "%Y%m%d" otherwise parses
+    six digits by backtracking, and the period 202212 became 2022-01-02.
+    """
     if value in (None, ""):
         return ""
     if isinstance(value, datetime):
@@ -281,6 +299,14 @@ def _coerce_anchor(value: Any) -> str:
         return value.isoformat()
     text = str(value).strip()
     if not text:
+        return ""
+    if text.endswith(".0") and text[:-2].isdigit():
+        text = text[:-2]
+    if normalize_date_key_type(date_key_type) == "yyyymm_integer":
+        if text.isdigit() and len(text) == 6 and 1 <= int(text[4:]) <= 12:
+            return f"{text[:4]}-{text[4:]}-01"
+        return ""
+    if text.isdigit() and len(text) != 8:
         return ""
     for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y%m%d"):
         try:
@@ -621,7 +647,7 @@ def resolve_business_anchor(
         else:
             raw = first
 
-    value = _coerce_anchor(raw)
+    value = _coerce_anchor(raw, str(policy.get("date_key_type") or ""))
     if not value:
         _remember_failure(key)
         log.warning(
