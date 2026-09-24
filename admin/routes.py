@@ -10443,6 +10443,15 @@ async def admin_discover_schema(
             except Exception as _uex:
                 log.warning("Unknown-member detection after discovery failed for %s: %s",
                             account_id, _uex)
+            # ── What the warehouse's codes mean, kept for the admin ──────
+            # After the value index (the values it reads) and the graph.
+            try:
+                from core.business_meaning import propose_for_account
+                _meanings = await asyncio.to_thread(propose_for_account, account_id)
+                log.info("Business meanings proposed for %s: %s", account_id, _meanings)
+            except Exception as _mex:
+                log.warning("Business meaning proposals after discovery failed for %s: %s",
+                            account_id, _mex)
             import threading as _threading
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:

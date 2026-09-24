@@ -31,6 +31,7 @@ model.
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from collections import defaultdict
@@ -39,6 +40,8 @@ from typing import Any, Iterable
 
 from core.date_roles import _has_calendar_attributes
 from core.identifier_intelligence import _expansion_lexicon, tokenize_identifier
+
+log = logging.getLogger("querybot.business_meaning")
 
 # Where a reading applies once confirmed.
 CODE = "code"      # every column the code appears in
@@ -613,3 +616,76 @@ def propose_meanings(
     for proposal in _party_proposals(wh):
         add(proposal)
     return list(by_subject.values())
+
+
+# ── At discovery ─────────────────────────────────────────────────────────────
+
+# Values read per column: enough to say what a column holds, few enough that
+# the evidence stays a sample.
+_VALUES_PER_COLUMN = 50
+
+
+def _discovered_tables(schema_dir: str) -> dict[str, list[tuple[str, str]]]:
+    """{table as discovered: [(column, type)]} from the discovered schema."""
+    import json
+    from pathlib import Path
+
+    from core.schema import _normalize_schema
+
+    path = Path(schema_dir) / "_schema.json" if schema_dir else None
+    if path is None or not path.exists():
+        return {}
+    try:
+        master = _normalize_schema(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError) as exc:
+        log.warning("Business meanings: could not read %s: %s", path, exc)
+        return {}
+    return {
+        str(fqn): [
+            (str(col["name"]), str(col.get("type") or ""))
+            for col in info.get("columns") or []
+            if isinstance(col, dict) and col.get("name")
+        ]
+        for fqn, info in master.items()
+        if not str(fqn).startswith("__") and isinstance(info, dict)
+    }
+
+
+def propose_for_account(account_id: str, *, base_dir: str = "clients") -> dict[str, int]:
+    """Discovery's pass: read the tenant's discovered tables and keep what
+    their codes appear to mean for the admin to confirm.
+
+    The values come from the tenant's value index, which discovery builds
+    first and which holds only what its privacy gates let it keep (masked,
+    sensitive and, for a regulated tenant, uncleared columns are never in
+    it); nothing is read from the warehouse here. The tenant's own name is
+    not a code. Returns counts: proposed, of them unread, kept, dropped.
+    """
+    import store
+    from core.value_index import sample_values_by_column
+    from core.vocab_packs import vocab_for_account
+
+    state = store.get_client_state(account_id) or {}
+    tables = _discovered_tables(str(state.get("schema_dir") or ""))
+    if not tables:
+        log.info("Business meanings for %s: no discovered schema", account_id)
+        return {"proposed": 0, "unread": 0, "kept": 0, "dropped": 0}
+    values = {
+        f"{row['table_fqn']}.{row['column']}": row["values"]
+        for row in sample_values_by_column(
+            account_id, per_column=_VALUES_PER_COLUMN, max_columns=2000, base_dir=base_dir,
+        )
+    }
+    client = store.get_client(account_id) or {}
+    own_name = re.findall(r"[A-Za-z0-9]+", str(client.get("client_name") or ""))
+    proposals = propose_meanings(
+        {fqn: columns for fqn, columns in tables.items()},
+        vocab=vocab_for_account(account_id), values=values, ignore=own_name,
+    )
+    saved = store.save_business_meanings(account_id, [p.as_dict() for p in proposals])
+    return {
+        "proposed": len(proposals),
+        "unread": sum(1 for p in proposals if not p.reading),
+        **saved,
+    }
+

@@ -2910,6 +2910,121 @@ def set_unknown_member_status(
         return cur.rowcount > 0
 
 
+_MEANING_STATUSES = {"suggested", "confirmed", "rejected"}
+
+
+def _json_list(text: object) -> list:
+    try:
+        value = json.loads(str(text or "[]"))
+    except (TypeError, ValueError):
+        return []
+    return value if isinstance(value, list) else []
+
+
+def save_business_meanings(account_id: str, proposals: list[dict]) -> dict[str, int]:
+    """Store what discovery proposes a tenant's codes mean.
+
+    A proposal found again is refreshed -- its reading, evidence, places and
+    confidence are what discovery says now -- whatever its status. A
+    suggestion no longer proposed is dropped: the warehouse changed. A
+    decision is the admin's and is kept apart from the proposal: a confirmed
+    meaning keeps the reading the admin confirmed, and a rejected one is never
+    proposed again. Returns counts: kept, dropped.
+    """
+    found = {(str(p["scope"]), str(p["subject"]).upper()) for p in proposals}
+    with get_db() as conn:
+        for proposal in proposals:
+            conn.execute("""
+                INSERT INTO business_meaning
+                    (account_id, scope, subject, reading, synonyms, rule, confidence,
+                     evidence, found_in)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, scope, subject) DO UPDATE SET
+                    reading=excluded.reading,
+                    synonyms=excluded.synonyms,
+                    rule=excluded.rule,
+                    confidence=excluded.confidence,
+                    evidence=excluded.evidence,
+                    found_in=excluded.found_in,
+                    detected_at=datetime('now')
+            """, (
+                account_id, str(proposal["scope"]), str(proposal["subject"]).upper(),
+                str(proposal.get("reading") or ""),
+                json.dumps(list(proposal.get("synonyms") or [])),
+                str(proposal.get("rule") or ""), int(proposal.get("confidence") or 0),
+                json.dumps(list(proposal.get("evidence") or [])),
+                json.dumps(list(proposal.get("where") or [])),
+            ))
+        stale = [
+            (row["scope"], row["subject"]) for row in conn.execute(
+                "SELECT scope, subject FROM business_meaning "
+                "WHERE account_id=? AND status='suggested'",
+                (account_id,),
+            ).fetchall()
+            if (row["scope"], row["subject"]) not in found
+        ]
+        for scope, subject in stale:
+            conn.execute(
+                "DELETE FROM business_meaning WHERE account_id=? AND scope=? AND subject=?",
+                (account_id, scope, subject),
+            )
+    return {"kept": len(found), "dropped": len(stale)}
+
+
+def list_business_meanings(account_id: str, *, statuses: set[str] | None = None) -> list[dict]:
+    """A tenant's proposed and decided meanings, JSON fields decoded; the
+    strongest first. `statuses` narrows to some of suggested, confirmed and
+    rejected."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM business_meaning WHERE account_id=? "
+            "ORDER BY confidence DESC, scope, subject",
+            (account_id,),
+        ).fetchall()
+    meanings = []
+    for row in rows:
+        meaning = dict(row)
+        if statuses and meaning["status"] not in statuses:
+            continue
+        for key in ("synonyms", "evidence", "found_in", "decided_synonyms"):
+            meaning[key] = _json_list(meaning.get(key))
+        meanings.append(meaning)
+    return meanings
+
+
+def decide_business_meaning(
+    account_id: str, scope: str, subject: str, status: str,
+    *, reading: str = "", synonyms: list[str] | None = None,
+) -> bool:
+    """An admin's decision on one proposed meaning. Confirming keeps the
+    reading and synonyms the admin confirmed -- the proposal's, or their own
+    edit of it; a code nothing read is confirmed with the admin's reading."""
+    if status not in _MEANING_STATUSES:
+        raise ValueError(f"business meaning status {status!r}")
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT reading, synonyms FROM business_meaning "
+            "WHERE account_id=? AND scope=? AND subject=?",
+            (account_id, scope, str(subject).upper()),
+        ).fetchone()
+        if row is None:
+            return False
+        decided = str(reading or "").strip() or str(row["reading"] or "")
+        if status == "confirmed" and not decided:
+            raise ValueError(f"{subject}: a meaning is confirmed with a reading")
+        chosen = [str(s).strip() for s in (synonyms if synonyms is not None else _json_list(row["synonyms"]))
+                  if str(s).strip()]
+        conn.execute(
+            "UPDATE business_meaning SET status=?, decided_reading=?, decided_synonyms=?, "
+            "decided_at=CASE WHEN ?='suggested' THEN NULL ELSE datetime('now') END "
+            "WHERE account_id=? AND scope=? AND subject=?",
+            (status, decided if status == "confirmed" else "",
+             json.dumps(chosen if status == "confirmed" else []), status,
+             account_id, scope, str(subject).upper()),
+        )
+    return True
+
+
 def get_full_graph(account_id: str) -> dict:
     """Return the complete graph as {entities, relationships, properties} for the resolver."""
     return {

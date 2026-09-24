@@ -65,6 +65,14 @@ _FILTERABLE_ROLES = {"display", "code"}
 # valid codes" — without indexing them, "how many orders are cancelled" gets
 # no value grounding and a wrong status literal gets no zero-row explanation.
 _FILTERABLE_ANY_TABLE_ROLES = {"status", "type", "group"}
+# A dimension's place columns: a city, a province or state, a country. They are
+# filter values ("stock in Calgary") and, by what they hold, say what a code
+# such as CO or PRV means (core/business_meaning.py), yet no naming role
+# marks them, so a profit center's PC_CTY, PC_PRV and PC_CO were never indexed.
+_PLACE_TOKENS = frozenset({
+    "CO", "CTY", "CITY", "PRV", "PROV", "PROVINCE", "STT", "STATE", "CNTRY",
+    "CTRY", "COUNTRY", "CNTY", "COUNTY",
+})
 
 
 # ── Paths / normalization ─────────────────────────────────────────────────────
@@ -327,7 +335,8 @@ def select_filterable_columns(
             is_display = bool(rule and rule.role in _FILTERABLE_ROLES) and _is_dimension_table(bare_table)
             is_state = bool(rule and rule.role in _FILTERABLE_ANY_TABLE_ROLES)
             is_cat = _is_categorical(name, ctype)
-            if not (is_display or is_state or is_cat):
+            is_place = _is_dimension_table(bare_table) and bool(_PLACE_TOKENS & set(upper.split("_")))
+            if not (is_display or is_state or is_cat or is_place):
                 continue
             # The write-time gate. Last check before a column becomes eligible
             # to have its real values copied onto disk.

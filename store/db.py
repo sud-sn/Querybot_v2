@@ -838,6 +838,32 @@ CREATE TABLE IF NOT EXISTS entity_unknown_members (
     UNIQUE(account_id, entity_name, key_value)
 );
 
+-- ── What a warehouse's codes mean ─────────────────────────────────────────────
+-- Readings proposed from the warehouse's own evidence at discovery
+-- (core/business_meaning.py): a code for every column it appears in, one
+-- column, or one table's name, with the evidence and a confidence; an empty
+-- reading is a code nothing reads, for the admin to write. The status is the
+-- admin's: a later discovery refreshes a proposal's evidence, drops a
+-- suggestion no longer found, and never touches a decision.
+CREATE TABLE IF NOT EXISTS business_meaning (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id       TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    scope            TEXT    NOT NULL,                     -- code|column|table
+    subject          TEXT    NOT NULL,                     -- SLR | PC_CO | ITM_BAL_DLY_FCT
+    reading          TEXT    NOT NULL DEFAULT '',          -- as proposed
+    synonyms         TEXT    NOT NULL DEFAULT '[]',        -- JSON list, as proposed
+    rule             TEXT    NOT NULL DEFAULT '',
+    confidence       INTEGER NOT NULL DEFAULT 0,
+    evidence         TEXT    NOT NULL DEFAULT '[]',        -- JSON list
+    found_in         TEXT    NOT NULL DEFAULT '[]',        -- JSON list of TABLE.COLUMN
+    status           TEXT    NOT NULL DEFAULT 'suggested', -- suggested|confirmed|rejected
+    decided_reading  TEXT    NOT NULL DEFAULT '',          -- what the admin confirmed
+    decided_synonyms TEXT    NOT NULL DEFAULT '[]',
+    detected_at      TEXT    DEFAULT (datetime('now')),
+    decided_at       TEXT,
+    UNIQUE(account_id, scope, subject)
+);
+
 -- Point-in-time snapshots of the whole entity graph (entities +
 -- relationships + properties as one JSON blob). Written on demand from the
 -- graph Tools menu and automatically before destructive operations
