@@ -49,18 +49,43 @@ def _column_type(column: Any) -> str:
 # inside a longer name (FactInventorySnapshot); the abbreviations only as whole
 # tokens, because "BAL" as a substring made GLOBAL_SALES_FCT a snapshot, and a
 # snapshot's measures are reported for one period instead of summed.
-_SNAPSHOT_WORDS = ("SNAPSHOT", "INVENTORY", "STOCK", "BALANCE")
-_SNAPSHOT_TOKENS = frozenset({"SNAP", "SNP", "BAL", "BALS", "STK"})
+_SNAPSHOT_WORDS = ("SNAPSHOT", "BALANCE")
+_SNAPSHOT_TOKENS = frozenset({"SNAP", "SNP", "BAL", "BALS"})
+# What a stock table is ABOUT, which is not what it holds: stock is kept as
+# levels and changed by movements, and either can be a fact. A stock table is a
+# snapshot unless its name says it records the movements -- STK_MVT_FCT and
+# INVENTORY_TRANSACTION_FCT are ledgers of events, whose quantities add up
+# across days, not a position read at one date.
+_STOCK_WORDS = ("INVENTORY", "STOCK")
+_STOCK_TOKENS = frozenset({"STK"})
+_MOVEMENT_WORDS = (
+    "TRANSACTION", "MOVEMENT", "LEDGER", "JOURNAL", "RECEIPT", "ADJUSTMENT",
+    "TRANSFER", "SHIPMENT",
+)
+_MOVEMENT_TOKENS = frozenset({
+    "MVT", "MVTS", "MVMT", "MVMTS", "MOV", "MOVE", "MOVES", "TXN", "TXNS", "TRX",
+    "TRN", "TRNS", "TRAN", "TRANS", "JNL", "JRN", "LDG", "RCT", "RCPT", "ADJ",
+    "TFR", "TRF", "XFR", "XFER", "SHP",
+})
+# ...except "in transit", a level: STK_IN_TRN_FCT is the stock on the road.
+_TRANSIT_TOKENS = frozenset({"TRN", "TRNS", "TRAN", "TRANS"})
 _TABLE_TOKEN_SPLIT_RE = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
 
 
 def _names_a_snapshot(table_name: str) -> bool:
     name = str(table_name or "")
     upper = name.upper()
-    if any(word in upper for word in _SNAPSHOT_WORDS):
+    sequence = [part.upper() for part in _TABLE_TOKEN_SPLIT_RE.split(name) if part]
+    tokens = set(sequence)
+    if any(word in upper for word in _SNAPSHOT_WORDS) or tokens & _SNAPSHOT_TOKENS:
         return True
-    tokens = {part.upper() for part in _TABLE_TOKEN_SPLIT_RE.split(name) if part}
-    return bool(tokens & _SNAPSHOT_TOKENS)
+    in_transit = {
+        token for before, token in zip(sequence, sequence[1:])
+        if before == "IN" and token in _TRANSIT_TOKENS
+    }
+    if any(word in upper for word in _MOVEMENT_WORDS) or (tokens - in_transit) & _MOVEMENT_TOKENS:
+        return False
+    return any(word in upper for word in _STOCK_WORDS) or bool(tokens & _STOCK_TOKENS)
 
 
 def is_periodic_snapshot_fact(table_name: str) -> bool:
