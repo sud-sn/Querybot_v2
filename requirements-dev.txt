@@ -1,0 +1,23 @@
+# requirements-dev.txt -- test and lint tooling, pinned to the versions CI was
+# switched on with. The application's own dependencies are in requirements.lock.
+#
+#   pip install -r requirements.lock -r requirements-dev.txt
+
+# Test runner (packaging is shared with the application and pinned there).
+pytest==9.1.1
+iniconfig==2.3.0
+pluggy==1.6.0
+Pygments==2.21.0
+
+# Lint. Rule selection and the reasons for it: [tool.ruff] in pyproject.toml.
+ruff==0.15.8
+
+# Types. Scope and the debt list: [tool.mypy] in pyproject.toml. The type-check
+# job installs ONLY these, never the application's dependencies, so third-party
+# names resolve to Any and the result does not depend on which wheels a runner
+# happened to get.
+mypy==1.19.1
+mypy_extensions==1.1.0
+pathspec==1.1.1
+librt==0.15.0
+typing_extensions==4.16.0

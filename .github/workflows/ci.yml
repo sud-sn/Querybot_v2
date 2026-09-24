@@ -1,0 +1,101 @@
+# CI -- lint, types, the full test suite and the EMCO rehearsal, on every push
+# to main and every pull request. All four must pass; a CI that is allowed to be
+# red is noise.
+#
+# The test job installs the FULL production dependency set from
+# requirements.lock -- the same file deploy.sh installs -- because the
+# environment the suite used to run in did not: it lacked statsmodels, the three
+# warehouse drivers and sentence-transformers, so the forecast paths production
+# runs (ETS, SARIMAX) had never been executed by a test.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dev.txt
+      # Rule selection, and why each rule is on: [tool.ruff] in pyproject.toml.
+      - run: ruff check .
+
+  types:
+    name: Types (mypy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Tooling only, never the application's dependencies: third-party names
+      # resolve to Any, so the result does not depend on which wheels a runner
+      # got. Scope and the type-debt list: [tool.mypy] in pyproject.toml.
+      - run: pip install -r requirements-dev.txt
+      - run: mypy
+
+  test:
+    name: Tests + EMCO rehearsal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # No test loads the embedding model (measured: zero instantiations across
+      # the whole suite). Offline mode keeps it that way -- a test that starts
+      # to would fail here instead of silently downloading a model on every run.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.txt
+
+      # pyodbc imports against the unixODBC driver manager, as it does in
+      # production. No SQL Server driver is installed: no test connects to one.
+      - name: unixODBC
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends unixodbc
+
+      # The CPU build of the torch version the lock pins. PyPI's Linux wheel of
+      # the same version drags in ~2.5 GB of CUDA libraries a runner cannot use;
+      # the lock leaves those out for this reason (see its header).
+      - name: torch (CPU build)
+        run: |
+          TORCH="$(grep -E '^torch==' requirements.lock | cut -d= -f3)"
+          pip install "torch==${TORCH}" --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Application dependencies and test tooling
+        run: pip install -r requirements.lock -r requirements-dev.txt
+
+      - name: Show what was installed
+        run: pip freeze
+
+      # tests/conftest.py points every test at a temporary database; the
+      # application's data/querybot.db is never opened.
+      - name: Test suite
+        run: python -m pytest -q
+
+      # Without --strict the rehearsal exits 0 whatever it finds.
+      - name: EMCO rehearsal (EN + FR)
+        run: python -m evals.emco_rehearsal --strict

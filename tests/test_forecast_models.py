@@ -203,6 +203,39 @@ class TestTheFallbackLadder:
             assert fit.model == "ols" and fit.fell_back_from == "ets"
         assert len(fit.predictions) == 3
 
+    def test_a_broken_statsmodels_still_gets_the_reader_a_forecast(self, monkeypatch):
+        """The fallback, exercised wherever this runs.
+
+        The two tests above branch on statsmodels_available(), so each
+        environment only ever checks one side. The environment this suite used
+        to run in had no statsmodels, so only the fallback was covered; CI
+        installs the full production set, so only the statsmodels side would
+        be -- and "a missing or broken library never costs the reader their
+        forecast" would stop being tested the day CI was switched on.
+
+        The import is made to fail for real (a None in sys.modules makes
+        `import` raise), so the loader's own except-branch runs rather than a
+        flag being set around it.
+        """
+        import sys
+
+        from core import forecast_models
+
+        monkeypatch.setattr(forecast_models, "_statsmodels", None)  # forget a cached load
+        monkeypatch.setitem(sys.modules, "statsmodels.tsa.holtwinters", None)
+        assert statsmodels_available() is False
+
+        # Noisy on purpose: a perfectly straight series has no residuals, so its
+        # band is zero-wide whichever model fits it, and that is not what this
+        # test is about.
+        noisy = [100 + i * 3 + (i % 3) for i in range(30)]
+        for model, extra in (("ets", {}), ("sarimax", {"seasonal_period": 12})):
+            fit = fit_series(noisy, 3, model=model, **extra)
+            assert fit.model == "ols", model
+            assert fit.fell_back_from == model
+            assert len(fit.predictions) == 3
+            assert all(lo < p < hi for lo, p, hi in zip(fit.lower, fit.predictions, fit.upper))
+
     def test_a_seasonal_series_is_fitted_seasonally_when_it_can_be(self):
         """The reason the dependency exists. A straight line through a sawtooth
         is wrong in a way no amount of arithmetic fixes."""

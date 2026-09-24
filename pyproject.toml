@@ -1,0 +1,140 @@
+# Tool configuration only. Dependencies live in requirements.txt (the ranges a
+# human edits) and requirements.lock (the exact versions CI tested and deploys
+# install) -- see the header of requirements.lock for how to regenerate it.
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["deploy", "clients", "evals/clients", "venv", "C:"]
+
+[tool.ruff.lint]
+# Day one enforces the rules that find code which cannot run correctly, not
+# style. Every rule here was at zero when CI was switched on, and must stay
+# there:
+#
+#   E9, F63, F7   syntax errors and statements in impossible places
+#   F82           undefined names -- found `json.dumps` with no `import json`
+#                 in core/llm.py, a NameError on every governed two-fact
+#                 question that reached free-form SQL generation
+#   F601          a dict literal repeating a key, silently dropping a value
+#   F811          a definition shadowed before it was ever used
+#   RUF006        asyncio.create_task() whose task can be garbage-collected
+#                 mid-flight
+#   RUF034        an if/else whose two arms are identical
+#   PLE           pylint's error class
+#
+# Style (unused imports, formatting, loop-variable closures, ...) is 1,400+
+# findings today. Tighten deliberately, a rule at a time, fixing as you go --
+# never by adding a rule and a baseline of ignores in the same change.
+select = ["E9", "F63", "F7", "F82", "F601", "F811", "RUF006", "RUF034", "PLE"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["core", "store", "gateway", "admin", "portal", "main.py"]
+# Third-party packages are not installed in the type-check job, so their names
+# resolve to Any. That keeps the job fast and its result independent of which
+# wheels a runner happened to get.
+ignore_missing_imports = true
+follow_imports = "silent"
+explicit_package_bases = true
+# core/i18n.py is one 1,867-key dict literal over 6,000 lines. CPython parses
+# it; mypy's parser reports "Invalid syntax" on a comment line inside it, and a
+# syntax error is blocking -- mypy then checks NOTHING else and still prints a
+# single error, which reads as a nearly clean codebase. So it is excluded here
+# and skipped wherever another module imports it.
+exclude = ['^core/i18n\.py$']
+
+[[tool.mypy.overrides]]
+module = ["core.i18n"]
+follow_imports = "skip"
+
+# Type debt: the modules that had errors when CI was switched on, 384 errors
+# across these 83 of 208. Everything NOT listed is checked and must stay clean,
+# including every new module. Remove a module from this list when you fix it;
+# never add one.
+[[tool.mypy.overrides]]
+module = [
+    "admin.routes",
+    "core.alert_engine",
+    "core.analysis_sandbox",
+    "core.analytical_intent",
+    "core.analytical_request_plan",
+    "core.anomaly_detection",
+    "core.candidate_selection",
+    "core.chart",
+    "core.chart_spec",
+    "core.clarification",
+    "core.cohort_analysis",
+    "core.contextual_dates",
+    "core.correlation_analysis",
+    "core.corroboration_run",
+    "core.date_anchor",
+    "core.date_coverage",
+    "core.dispatcher",
+    "core.distribution_analysis",
+    "core.domains",
+    "core.draft_review",
+    "core.drill_dimension",
+    "core.examples",
+    "core.forecast",
+    "core.forecast_models",
+    "core.funnel_analysis",
+    "core.governed_result_followup",
+    "core.graph_autopopulate",
+    "core.graph_resolver",
+    "core.insight",
+    "core.investigation",
+    "core.investigation_planner",
+    "core.join_coverage",
+    "core.join_governance",
+    "core.knowledge",
+    "core.metric_authoring",
+    "core.metric_builder",
+    "core.metric_validator",
+    "core.model_drafts",
+    "core.multi_period",
+    "core.naming_convention",
+    "core.period_comparison",
+    "core.pipeline_context",
+    "core.pipeline_helpers",
+    "core.query_pipeline",
+    "core.query_service",
+    "core.question_normalizer",
+    "core.relationship_validator",
+    "core.report_engine",
+    "core.report_planner",
+    "core.response_builder",
+    "core.result_commands",
+    "core.result_conversation",
+    "core.result_planner",
+    "core.result_regrain",
+    "core.result_renderer",
+    "core.result_verifier",
+    "core.schema",
+    "core.semantic_conflicts",
+    "core.semantic_contract",
+    "core.semantic_layer",
+    "core.semantic_model",
+    "core.semantic_planner",
+    "core.situation_phraser",
+    "core.source_resolution",
+    "core.stat_signals",
+    "core.suggestions",
+    "core.temporal_columns",
+    "core.validator",
+    "core.value_index",
+    "core.value_resolver",
+    "core.vector_store",
+    "core.vocab_packs",
+    "core.workspace_guide",
+    "gateway.teams_adapter",
+    "gateway.teams_chart_card",
+    "gateway.web_adapter",
+    "gateway.webhooks",
+    "portal.routes",
+    "store.config_store",
+    "store.dashboard_store",
+    "store.database",
+    "store.semantic_store",
+    "store.user_store",
+]
+ignore_errors = true

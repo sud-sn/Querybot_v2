@@ -260,7 +260,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for module-level behavior and [ARCHITECTU
 ### Prerequisites
 
 - Python 3.12 recommended; 3.11 and 3.14 are also verified to install cleanly.
-- `pip install -r requirements.txt` pulls statsmodels (and scipy/pandas with it) for the seasonal and exponential-smoothing forecast models — roughly 60MB of wheels. Forecasting still works without them: the models load through a guarded lazy import and fall back to pure-Python least squares, prediction intervals included. Both configurations are covered by tests.
+- `pip install -r requirements.txt` pulls statsmodels (and scipy/pandas with it) for the seasonal and exponential-smoothing forecast models — roughly 60MB of wheels. Forecasting still works without them: the models load through a guarded lazy import and fall back to pure-Python least squares, prediction intervals included. CI runs with statsmodels installed, as every deploy is; the fallback is covered by a test that makes the import fail on purpose.
 - A reachable Qdrant service.
 - SQLite for local evaluation, or PostgreSQL for concurrent production-oriented workloads.
 - Native database drivers for the client database. Azure SQL requires Microsoft ODBC Driver 18 for SQL Server.
@@ -291,6 +291,18 @@ cp .env.example .env
 ```
 
 `requirements.lock` holds the exact versions CI tests and `deploy.sh` installs; `requirements.txt` holds the ranges it is generated from. The lock is resolved for Linux x86_64 on Python 3.11 — on other platforms install from `requirements.txt` (Windows: `requirements-windows.txt`), which is not pinned.
+
+### Checks
+
+CI (`.github/workflows/ci.yml`) runs these on every push to `main` and every pull request, and all four must pass:
+
+```bash
+python -m pip install -r requirements.lock -r requirements-dev.txt
+ruff check .                                  # rules and why: [tool.ruff] in pyproject.toml
+mypy                                          # scope and type-debt list: [tool.mypy]
+python -m pytest -q                           # never opens data/querybot.db
+python -m evals.emco_rehearsal --strict       # EMCO questions, English and French
+```
 
 Configure `.env`, start Qdrant, and then run:
 
