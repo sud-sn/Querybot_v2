@@ -83,6 +83,35 @@ ABBREVIATIONS: dict[str, str] = {
     "VND": "vendor",
     "WIP": "work in progress",
     "YTD": "year to date",
+    # The calendar and the address. A date dimension spells its own columns
+    # this way -- WK_OF_YR, DAY_OF_MTH, BUS_DAY_OF_WK, HDY_FLG -- and so does
+    # a party's address: ADR_LIN_1, PSL_CD. Only the Infor M3 and star-schema
+    # packs knew YR, MTH and WK, so a warehouse without them printed "Wk Of
+    # Yr" at the reader and "week of year" matched nothing; HDY, ADR, PSL
+    # were in no vocabulary at all.
+    #
+    # Each code here has one meaning in any warehouse. The ones that do not
+    # are left out on purpose, because the dictionary is applied everywhere:
+    # DLY is daily in ITM_BAL_DLY_FCT and delivery in CFM_DLY_DT; QR is a
+    # quarter in a calendar and a QR code in an item master; CTY is a city or
+    # a county, PRV a province or "previous", STT a state, a status or a
+    # start, INV an inventory or an invoice, LST last or list, EXT external or
+    # extended, CTR a centre, a counter or a click-through rate, HND hand or
+    # handling, RM a room or a raw material. Those are read from context.
+    "YR": "year",
+    "MTH": "month",
+    "WK": "week",
+    "HDY": "holiday",
+    "FLG": "flag",
+    "EFC": "effective",
+    "FRQ": "frequency",
+    "UPD": "updated",
+    "ADR": "address",
+    "PSL": "postal",
+    "ZON": "zone",
+    "WT": "weight",
+    "MST": "master",
+    "PCY": "policy",
     "ABC": "abc",
     "ACC": "account",
     "ACCT": "account",
