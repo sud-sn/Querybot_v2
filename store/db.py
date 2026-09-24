@@ -820,6 +820,24 @@ CREATE TABLE IF NOT EXISTS entity_properties (
     UNIQUE(account_id, entity_name, column_name)
 );
 
+-- ── Unknown members of a dimension ────────────────────────────────────────────
+-- The rows a dimension keeps for "no value" / "no match" (key 0 NO_VALUE, key
+-- 777 NO_MATCH, -1 Unknown), found by probing the warehouse after discovery
+-- (core/unknown_members.py). Suggested by discovery; an admin may confirm or
+-- reject one, and a later discovery never changes those.
+CREATE TABLE IF NOT EXISTS entity_unknown_members (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    entity_name  TEXT    NOT NULL,
+    key_column   TEXT    NOT NULL,
+    key_value    TEXT    NOT NULL,
+    kind         TEXT    NOT NULL DEFAULT 'unknown',   -- not_specified|unmatched|unknown
+    member_text  TEXT    NOT NULL DEFAULT '{}',        -- JSON {column: text} as the dimension holds it
+    status       TEXT    NOT NULL DEFAULT 'suggested', -- suggested|confirmed|rejected
+    detected_at  TEXT    DEFAULT (datetime('now')),
+    UNIQUE(account_id, entity_name, key_value)
+);
+
 -- Point-in-time snapshots of the whole entity graph (entities +
 -- relationships + properties as one JSON blob). Written on demand from the
 -- graph Tools menu and automatically before destructive operations

@@ -327,6 +327,47 @@ SELECT
 """.strip()
 
 
+def run_probe(
+    db_type: str,
+    raw_cfg: dict,
+    sql: str,
+    *,
+    timeout_seconds: int = 20,
+    max_rows: int = 200,
+) -> list[tuple]:
+    """Run one read-only probe on a saved warehouse connection and return its
+    rows (at most `max_rows`). The connection is opened for the probe and
+    closed after it. A probe still running after `timeout_seconds` raises
+    TimeoutError; its query may go on running in the warehouse."""
+    import concurrent.futures
+    from core.schema import _az_connect, _ora_connect, _sf_connect
+
+    creds = raw_cfg.get("credentials", {})
+
+    def _run() -> list[tuple]:
+        if db_type == "azure_sql":
+            conn = _az_connect({**creds, "login_timeout": min(timeout_seconds, 20)}, max_retries=1)
+        elif db_type == "snowflake":
+            conn = _sf_connect(creds, max_retries=1)
+        else:
+            conn = _ora_connect(creds, max_retries=1)
+        try:
+            cur = conn.cursor()
+            cur.execute(sql)
+            return [tuple(row) for row in cur.fetchmany(max_rows) or []]
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(_run).result(timeout=timeout_seconds)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _execute_probe(
     account_id: str,
     rel: dict,
@@ -337,9 +378,6 @@ def _execute_probe(
     raw_cfg: dict | None = None,
     timeout_seconds: int = 20,
 ) -> RelationshipValidationResult:
-    import concurrent.futures
-    from core.schema import _az_connect, _ora_connect, _sf_connect
-
     if not raw_cfg:
         return RelationshipValidationResult(
             int(rel.get("id") or 0),
@@ -348,38 +386,12 @@ def _execute_probe(
             checked_by="schema",
         )
 
-    creds = raw_cfg.get("credentials", {})
     sql = build_profile_sql(db_type, rel, from_ent, to_ent)
-
-    def _run() -> tuple[int, int, int, int, int, int, int, int]:
-        if db_type == "azure_sql":
-            conn = _az_connect({**creds, "login_timeout": min(timeout_seconds, 20)}, max_retries=1)
-        elif db_type == "snowflake":
-            conn = _sf_connect(creds, max_retries=1)
-        else:
-            conn = _ora_connect(creds, max_retries=1)
-        try:
-            cur = conn.cursor()
-            cur.execute(sql)
-            row = cur.fetchone()
-            if not row:
-                return 0, 0, 0, 0, 0, 0, 0, 0
-            return tuple(int(value or 0) for value in row[:8])
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    try:
-        future = pool.submit(_run)
-        (left_rows, non_null_rows, matched_rows, orphan_rows, join_rows,
-         target_rows, target_distinct_keys, target_duplicate_keys) = future.result(
-            timeout=timeout_seconds
-        )
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+    rows = run_probe(db_type, raw_cfg, sql, timeout_seconds=timeout_seconds, max_rows=1)
+    (left_rows, non_null_rows, matched_rows, orphan_rows, join_rows,
+     target_rows, target_distinct_keys, target_duplicate_keys) = (
+        tuple(int(value or 0) for value in rows[0][:8]) if rows else (0,) * 8
+    )
 
     match_rate = round((matched_rows / non_null_rows) * 100.0, 2) if non_null_rows else 0.0
     orphan_rate = round((orphan_rows / non_null_rows) * 100.0, 2) if non_null_rows else 0.0

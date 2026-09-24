@@ -2285,6 +2285,10 @@ def delete_entity(account_id: str, entity_name: str) -> None:
             "DELETE FROM entity_properties WHERE account_id=? AND entity_name=?",
             (account_id, entity_name)
         )
+        conn.execute(
+            "DELETE FROM entity_unknown_members WHERE account_id=? AND entity_name=?",
+            (account_id, entity_name)
+        )
 
 
 def _split_table_ref(ref: str, fallback_schema: str = "") -> tuple[str, str]:
@@ -2353,6 +2357,10 @@ def prune_entity_graph_to_tables(account_id: str, table_refs: list[str] | set[st
             f"DELETE FROM entity_properties WHERE account_id=? AND entity_name IN ({placeholders})",
             (account_id, *stale_names),
         ).rowcount
+        conn.execute(
+            f"DELETE FROM entity_unknown_members WHERE account_id=? AND entity_name IN ({placeholders})",
+            (account_id, *stale_names),
+        )
         ent_removed = conn.execute(
             f"DELETE FROM entity_graph WHERE account_id=? AND entity_name IN ({placeholders})",
             (account_id, *stale_names),
@@ -2821,6 +2829,85 @@ def list_all_entity_properties(account_id: str) -> list[dict]:
             (account_id,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def save_unknown_members(
+    account_id: str, entity_name: str, key_column: str, members: list[dict],
+) -> None:
+    """Store what a probe of one dimension found as its unknown members.
+
+    A member found again has its text refreshed, whatever its status; a
+    suggested one no longer found is dropped -- the dimension changed. The
+    status is the admin's: a confirmed member stays confirmed, and a rejected
+    one is never brought back.
+    """
+    found = {str(m["key_value"]) for m in members}
+    with get_db() as conn:
+        for member in members:
+            conn.execute("""
+                INSERT INTO entity_unknown_members
+                    (account_id, entity_name, key_column, key_value, kind, member_text)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, entity_name, key_value) DO UPDATE SET
+                    key_column=excluded.key_column,
+                    kind=excluded.kind,
+                    member_text=excluded.member_text,
+                    detected_at=datetime('now')
+            """, (
+                account_id, entity_name, key_column, str(member["key_value"]),
+                member.get("kind") or "unknown",
+                json.dumps(member.get("member_text") or {}, sort_keys=True),
+            ))
+        stale = [
+            row["key_value"] for row in conn.execute(
+                "SELECT key_value FROM entity_unknown_members "
+                "WHERE account_id=? AND entity_name=? AND status='suggested'",
+                (account_id, entity_name),
+            ).fetchall()
+            if row["key_value"] not in found
+        ]
+        for key_value in stale:
+            conn.execute(
+                "DELETE FROM entity_unknown_members "
+                "WHERE account_id=? AND entity_name=? AND key_value=?",
+                (account_id, entity_name, key_value),
+            )
+
+
+def list_unknown_members(account_id: str, *, include_rejected: bool = False) -> list[dict]:
+    """Every dimension's unknown members, member_text decoded. Rejected ones
+    only when asked for (the admin's review)."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM entity_unknown_members WHERE account_id=? "
+            + ("" if include_rejected else "AND status<>'rejected' ")
+            + "ORDER BY entity_name, key_value",
+            (account_id,),
+        ).fetchall()
+    members = []
+    for row in rows:
+        member = dict(row)
+        try:
+            member["member_text"] = json.loads(member.get("member_text") or "{}")
+        except (TypeError, ValueError):
+            member["member_text"] = {}
+        members.append(member)
+    return members
+
+
+def set_unknown_member_status(
+    account_id: str, entity_name: str, key_value: str, status: str,
+) -> bool:
+    """An admin's decision on one unknown member: confirmed or rejected."""
+    if status not in {"confirmed", "rejected", "suggested"}:
+        raise ValueError(f"unknown member status {status!r}")
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE entity_unknown_members SET status=? "
+            "WHERE account_id=? AND entity_name=? AND key_value=?",
+            (status, account_id, entity_name, str(key_value)),
+        )
+        return cur.rowcount > 0
 
 
 def get_full_graph(account_id: str) -> dict:

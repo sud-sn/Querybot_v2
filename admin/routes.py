@@ -10435,6 +10435,14 @@ async def admin_discover_schema(
                 log.info("Suggested joins profiled for %s: %s", account_id, _profiled)
             except Exception as _pex:
                 log.warning("Join profiling after discovery failed for %s: %s", account_id, _pex)
+            # ── Each dimension's "no value" / "no match" members ──────────
+            try:
+                from core.unknown_members import detect_unknown_members
+                _unknown = await asyncio.to_thread(detect_unknown_members, account_id)
+                log.info("Unknown members found for %s: %s", account_id, _unknown)
+            except Exception as _uex:
+                log.warning("Unknown-member detection after discovery failed for %s: %s",
+                            account_id, _uex)
             import threading as _threading
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:
