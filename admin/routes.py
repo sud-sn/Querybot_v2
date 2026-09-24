@@ -283,7 +283,9 @@ def _after_semantic_approval(account_id: str, trigger: str = "") -> None:
     except RuntimeError:
         loop = None
     if loop is not None:
-        asyncio.create_task(_run_default_evals_async(account_id, trigger=trigger))
+        from core.background_tasks import spawn
+        spawn(_run_default_evals_async(account_id, trigger=trigger),
+              name=f"default-evals-{account_id}")
     else:
         # Sync route context (no running loop) — run evals in a thread.
         import threading

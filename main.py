@@ -117,7 +117,8 @@ async def startup() -> None:
         except Exception as exc:
             log.warning("Vector store warm-up failed (non-fatal): %s", exc)
 
-    asyncio.create_task(_warmup())
+    from core.background_tasks import spawn
+    spawn(_warmup(), name="vector-store-warmup")
 
     # Notify active Teams users the service is back up — symmetric to the
     # "signing off" notification in the shutdown handler below.
