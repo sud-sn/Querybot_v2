@@ -64,6 +64,12 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Annotation only: qdrant_client is imported lazily at first use, so
+    # the module stays importable where it is not installed.
+    from qdrant_client import QdrantClient
 
 log = logging.getLogger("querybot.vector_store")
 

@@ -411,7 +411,9 @@ def _format_for_column(col: str, explicit_formats: dict[str, str]) -> str:
         return "currency"
     if _is_temporal_name(col):
         return "date"
-    return "number" if _COUNT_RE.search(col) else "number"
+    # Counts and quantities render as plain numbers too: this function has no
+    # integer or count format to give them (see the explicit set above).
+    return "number"
 
 
 def _column_roles(rows: list[dict], column_formats: dict | None = None) -> dict[str, dict]:

@@ -153,7 +153,7 @@ ERP_COLUMN_DICT: dict[str, tuple[str, list[str]]] = {
     "GRWE": ("Gross Weight",               ["gross weight", "weight"]),
     "NEWE": ("Net Weight",                 ["net weight"]),
     "VOL3": ("Volume",                     ["volume", "cubic volume", "shipment volume"]),
-    "PROJ": ("Project Number",             ["project", "project number", "project code"]),
+    "PROJ": ("Project",                    ["project", "project number", "project code"]),
     "AGNO": ("Agreement Number",           ["agreement", "agreement number", "contract number", "contract"]),
     "ALUN": ("Alternate Unit of Measure",  ["alternate unit", "alternate uom", "alt unit"]),
     "SPUN": ("Sales Price Unit",           ["sales price unit", "price uom", "price unit"]),
@@ -206,10 +206,7 @@ ERP_COLUMN_DICT: dict[str, tuple[str, list[str]]] = {
     "PRCH": ("Price Changed",              ["price changed", "price change indicator"]),
     "VANO": ("Voucher Number",             ["voucher", "voucher number"]),
     "JOBN": ("Job Number",                 ["job", "job number"]),
-    "PROJ": ("Project",                    ["project", "project number", "project code"]),
     "INNO": ("Internal Invoice Number",    ["internal invoice", "internal invoice number"]),
-    "GRWE": ("Gross Weight",               ["gross weight", "weight"]),
-    "NEWE": ("Net Weight",                 ["net weight"]),
     # Common dimension display fields. These are not always raw ERP short codes,
     # but they keep KB generation from showing warehouse/customer/item keys when
     # a business-readable code or description field exists.

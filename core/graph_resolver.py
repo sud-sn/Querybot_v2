@@ -29,7 +29,7 @@ import itertools
 import json
 import re
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from core.date_roles import (
     DATE_DIMENSION_TABLE_HINTS,

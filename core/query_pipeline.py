@@ -14,6 +14,7 @@ import dataclasses
 from dataclasses import replace as _dataclass_replace
 import logging
 import time
+from typing import Any
 
 import store
 from gateway import PlatformEvent

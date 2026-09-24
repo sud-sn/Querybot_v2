@@ -203,10 +203,7 @@ class TestTheGapsItFoundStayClosed:
         difference, a cause, a distribution or a projection it answered with that
         number anyway -- the measure name matched and neither existing guard had
         anything to say, because the question names no breakdown and no window."""
-        import os
-        import shutil
         import tempfile
-        import uuid
 
         import store
 

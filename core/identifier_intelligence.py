@@ -5,7 +5,7 @@ language: ``ORD_DT``, ``CustAccount``, ``ORDERDATE`` and ``TRANDATE`` can all
 represent business concepts a user phrases differently.  This module provides
 one deterministic normalizer for both sides of the system:
 
-* schema/K​​B build: physical identifier -> evidence-backed meaning + aliases;
+* schema/KB build: physical identifier -> evidence-backed meaning + aliases;
 * question retrieval: user shorthand -> the same governed terminology.
 
 The implementation deliberately abstains when a compact token cannot be

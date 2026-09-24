@@ -281,7 +281,6 @@ def fiscal_period_label(
         if fsm == 1:
             fy = y
         else:
-            fy = y if mo >= fsm else y  # stays in same calendar year
             fy = y + 1 if mo >= fsm else y  # named by calendar year it ends in
         shift = 13 - fsm
         shifted_mo = ((mo - 1 + shift) % 12) + 1
