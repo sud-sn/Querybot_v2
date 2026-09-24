@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from core.contribution_analysis import detect_composition_intent
+from core.table_role_classifier import is_periodic_snapshot_fact
 
 
 _IDENTIFIER_RE = re.compile(r"(?:^|_)(?:ID|KEY|CODE|NUM|NO|NBR|SEQ)$", re.I)
@@ -278,6 +279,10 @@ def measure_class_for_metric(metric: dict[str, Any]) -> str:
     reading — a balance summed across time is wrong, whereas an additive
     measure aggregated at one grain is merely narrower than it needed to be.
 
+    A plain quantity or amount (RSV_QTY, ORD_AMT) on a metric whose base table
+    is a periodic snapshot is a level, as the semantic model reads the same
+    column on that table; a movement or a count beside it still adds.
+
     Tenant-neutral: reads only registry metadata and column naming, never
     physical schema names or a client's vocabulary.
     """
@@ -300,6 +305,18 @@ def measure_class_for_metric(metric: dict[str, Any]) -> str:
         measure_additivity(token)
         for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", source)
     ]
+    # The metric's base table says what a plain quantity on it is: the reserved
+    # quantity of every day on file, summed, is not a reserved quantity. The
+    # same rule the semantic model applies to the field (grained_aggregation);
+    # without it, a metric over a snapshot was summed across every period the
+    # field-level check would have pinned to one.
+    if is_periodic_snapshot_fact(str(metric.get("base_table") or "")):
+        verdicts = [
+            ("semi_additive", basis)
+            if aggregation == "additive" and basis == "generic"
+            else (aggregation, basis)
+            for aggregation, basis in verdicts
+        ]
     # A price or unit cost multiplied by a quantity takes the quantity's
     # additivity: SUM(SLD_QTY * ITM_CST) is the cost of what was sold, a flow,
     # and SUM(ON_HND_QTY * ITM_CST) is a stock valuation, a balance. Only a
