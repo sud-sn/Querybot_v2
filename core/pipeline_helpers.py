@@ -1053,6 +1053,22 @@ def _compile_governed_grouped_request_sql(
 
     from_sql = "\n    ".join(from_lines)
     where_parts: list[str] = []
+    # A ranking of a dimension's members, or a count of the keys that point at
+    # one, leaves its placeholder members out (core/unknown_members.py).
+    from core.unknown_members import exclusion_predicate
+
+    for unknown in plan.get("unknown_member_policies") or []:
+        if ranking and _same_physical_table(unknown.get("table"), unique_dimensions[0]["table"]):
+            where_parts.append(exclusion_predicate(
+                f"{alias_for(str(unique_dimensions[0]['table']))}.{qcol(str(unknown['key_column']))}",
+                unknown,
+            ))
+        if derived.get("semantics") == "count_distinct_business_identifier" and any(
+            _same_physical_table(ref.get("table"), fact_table)
+            and str(ref.get("column") or "").upper() == derived_target_column.upper()
+            for ref in unknown.get("references") or []
+        ):
+            where_parts.append(exclusion_predicate(f"fact_rows.{qcol(derived_target_column)}", unknown))
     anchor_sql = ""
     if policy:
         try:

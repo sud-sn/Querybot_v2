@@ -965,6 +965,25 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         if any(sql_reads_policy_table(sql, policy) for policy in _period_policies):
             coverage_caveats.append(_t("caveat.period_rows"))
 
+    # A dimension's placeholder members -- "NULL value provided", NO_MATCH --
+    # were left out of this ranking or count (core/unknown_members.py). A
+    # reader holding a report that ranked "NULL value provided" as a buyer
+    # deserves to know why it is not here.
+    _unknown_policies = (
+        (confidence_context.get("semantic_plan") or {}).get("unknown_member_policies") or []
+    )
+    if _unknown_policies and sql:
+        from core.unknown_members import member_scopes
+
+        _left_out = [
+            scope for scope in member_scopes(sql, _unknown_policies, db_cfg.get("db_type", "azure_sql"))
+            if scope["excluded"]
+        ]
+        if any(scope["how"] == "ranking" for scope in _left_out):
+            coverage_caveats.append(_t("caveat.unknown_members.ranking"))
+        elif _left_out:
+            coverage_caveats.append(_t("caveat.unknown_members.count"))
+
     _graph_edges = confidence_context.get("graph_edges") or []
     if _graph_edges:
         try:

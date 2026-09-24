@@ -88,7 +88,8 @@ ALL_REASON_CODES = frozenset({
     "source_fact_mismatch", "surrogate_date_conversion",
     "temporal_anchor_mismatch", "temporal_anchor_missing",
     "temporal_anchor_ungoverned", "temporal_anchor_unscoped",
-    "temporal_role_mismatch", "top_n_shape", "unknown_column", "unknown_table",
+    "temporal_role_mismatch", "top_n_shape", "unknown_column",
+    "unknown_members_ranked", "unknown_table",
 })
 
 # Raised by the pipeline rather than this module, but repairable all the same.
@@ -2562,6 +2563,44 @@ def _reads_only_period_extremes(select, column: str, qualifiers: set[str]) -> bo
     return True
 
 
+def _unknown_member_errors(tree, policies: list[dict], db_type: str = "azure_sql") -> list[dict]:
+    """A ranking or a count of a dimension's members leaves its unknown
+    members out (core/unknown_members.py): "NULL value provided" is not a top
+    buyer, and NO_MATCH is not a supplier. A listing or a total keeps them."""
+    if not policies:
+        return []
+    from core.unknown_members import member_scopes
+
+    errors: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for scope in member_scopes(tree, policies, db_type):
+        if scope["excluded"]:
+            continue
+        policy = scope["policy"]
+        key = (str(policy["table"]).upper(), scope["required"].upper())
+        if key in seen:
+            continue
+        seen.add(key)
+        members = ", ".join(
+            f"{k} ({str(policy['member_kinds'].get(k) or 'unknown').replace('_', ' ')})"
+            for k in policy["keys"]
+        )
+        errors.append({
+            "code": "unknown_members_ranked",
+            "message": (
+                f"{policy['table']} keeps placeholder members for a value that was empty or "
+                f"matched nothing -- {policy['key_column']} {members}. This query "
+                f"{'ranks' if scope['how'] == 'ranking' else 'counts'} its members with them "
+                f"among them. Add {scope['required']} to the WHERE clause of the SELECT that "
+                f"{'groups the ranking' if scope['how'] == 'ranking' else 'counts'}."
+            ),
+            "table": str(policy["table"]),
+            "how": scope["how"],
+            "required_predicate": scope["required"],
+        })
+    return errors
+
+
 def _period_row_errors(tree, policies: list[dict], db_type: str = "azure_sql") -> list[dict]:
     """Every SELECT that reads a yyyymm period fact keeps month rows only.
 
@@ -3153,6 +3192,21 @@ def validate_sql_detailed(
             ),
             "period_rows_mixed",
             period_row_errors,
+        )
+
+    unknown_member_errors = _unknown_member_errors(
+        tree, list(field_plan.get("unknown_member_policies") or []), db_type,
+    )
+    if unknown_member_errors:
+        return SqlValidationResult(
+            False,
+            (
+                "Generated SQL ranks or counts a dimension's members with its "
+                "placeholder members among them. "
+                + " ".join(error["message"] for error in unknown_member_errors[:3])
+            ),
+            "unknown_members_ranked",
+            unknown_member_errors,
         )
 
     select_aliases: set[str] = set()

@@ -1890,6 +1890,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The generated query read a period table's whole-year rows together with its month rows, which would have counted every year twice.",
         "fr": "La requête générée lisait les lignes d'année entière d'une table de périodes en même temps que ses lignes mensuelles, ce qui aurait compté chaque année deux fois.",
     },
+    "fail.v.unknown_members_ranked.reason": {
+        "en": "The generated query ranked or counted members with the placeholder members for empty and unmatched values among them, so \"NULL value provided\" could have been ranked or counted as a real member.",
+        "fr": "La requête générée classait ou comptait des membres en y incluant les membres de remplacement des valeurs vides ou sans correspondance, si bien que « NULL value provided » aurait pu être classé ou compté comme un vrai membre.",
+    },
     "fail.v.select_star.reason": {
         "en": "The generated query asked for every column rather than the ones this answer needs, which is not allowed against governed tables.",
         "fr": "La requête générée a demandé toutes les colonnes au lieu de celles nécessaires à cette réponse, ce qui n'est pas autorisé sur les tables gouvernées.",
@@ -1946,6 +1950,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "fail.v.reused_plan_empty.next_step": {
         "en": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
         "fr": "Essayez de restreindre la question (une période ou un filtre précis) — les données sous-jacentes ont pu changer depuis le dernier succès de cette question.",
+    },
+    "fail.v.unknown_members_ranked.next_step": {
+        "en": "Ask again: rankings and counts leave the placeholder members out. To see them, ask about the unspecified or unmatched values directly.",
+        "fr": "Reposez la question : les classements et les comptages excluent les membres de remplacement. Pour les voir, interrogez directement les valeurs non renseignées ou sans correspondance.",
     },
     "fail.v.period_rows_mixed.next_step": {
         "en": "Ask again: the answer is taken from the monthly rows only, and a year is the sum of its twelve months.",
@@ -2855,6 +2863,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     # zero as well as one.
 
     # The truncated result.
+    "caveat.unknown_members.ranking": {
+        "en": "Placeholder members (not specified, unmatched) are left out of this ranking: they stand for rows whose value was empty or matched nothing, not for real members.",
+        "fr": "Les membres de remplacement (non renseigné, sans correspondance) sont exclus de ce classement : ils représentent des lignes dont la valeur était vide ou sans correspondance, pas de vrais membres.",
+    },
+    "caveat.unknown_members.count": {
+        "en": "Placeholder members (not specified, unmatched) are not counted: they stand for rows whose value was empty or matched nothing, not for real members.",
+        "fr": "Les membres de remplacement (non renseigné, sans correspondance) ne sont pas comptés : ils représentent des lignes dont la valeur était vide ou sans correspondance, pas de vrais membres.",
+    },
     "caveat.period_rows": {
         "en": "Read from the monthly rows only: the warehouse's whole-year rows are left out, because the months already add up to each year.",
         "fr": "Calculé à partir des seules lignes mensuelles : les lignes d'année entière de l'entrepôt sont exclues, car les mois totalisent déjà chaque année.",

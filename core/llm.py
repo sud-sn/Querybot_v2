@@ -1373,6 +1373,23 @@ def build_sql_system_prompt(
         )
         if period_text:
             base = base + "\n\n" + period_text
+    # A dimension's placeholder members (key 0 "no value", 777 "no match")
+    # are stated whenever that dimension is in this prompt: a ranking or a
+    # count of its members leaves them out (core/unknown_members.py).
+    if semantic_plan and semantic_plan.get("unknown_member_policies"):
+        from core.unknown_members import format_unknown_member_rules
+        from core.unknown_members import policies_in_scope as unknown_members_in_scope
+
+        unknown_text = format_unknown_member_rules(
+            unknown_members_in_scope(
+                semantic_plan.get("unknown_member_policies"),
+                table_context,
+                str(semantic_plan.get("required_tables") or ""),
+                str(semantic_plan.get("fields") or ""),
+            ),
+        )
+        if unknown_text:
+            base = base + "\n\n" + unknown_text
     # The preloaded knowledge base goes on the front LAST, after the rule
     # filter has finished with the prompt. The filter locates rules by
     # searching for their opening words and deletes from there to the next

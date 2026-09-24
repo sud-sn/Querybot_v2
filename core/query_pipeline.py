@@ -140,6 +140,7 @@ from core.compliance.policy_engine import evaluate as evaluate_policy, resolve_c
 from core.conversation_state import conversation_state_store
 from core.semantic_plan_utils import required_semantic_tables
 from core.period_rows import attach_period_row_policies
+from core.unknown_members import attach_unknown_member_policies
 
 log = logging.getLogger("querybot")
 
@@ -5523,6 +5524,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
     except Exception as _period_exc:
         log.warning("Period-row policies unavailable for %s: %s", account_id, _period_exc)
+    # A dimension's placeholder members -- key 0 "no value", 777 "no match" --
+    # are not members. A ranking or a count of its members leaves them out,
+    # unless the question is about them; the rule rides on the same plan.
+    try:
+        attach_unknown_member_policies(
+            _semantic_plan, account_id, _reader_plan_question, _semantic_plan_question,
+        )
+    except Exception as _unknown_exc:
+        log.warning("Unknown-member policies unavailable for %s: %s", account_id, _unknown_exc)
     _generation_semantic_context = {
         "intent": query_intent,
         "top_n": top_n_intent.to_dict() if top_n_intent else None,
@@ -6771,6 +6781,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "summed the year row.\n"
                     "- A year is the sum of its twelve month rows; a stock balance is the "
                     "last month of the period.\n"
+                )
+            elif last_code == "unknown_members_ranked":
+                validation_repair_note = (
+                    "\nUNKNOWN-MEMBER REPAIR REQUIRED:\n"
+                    "- A dimension keeps placeholder rows for a value that was empty or "
+                    "matched nothing (NO_VALUE, NO_MATCH, Unknown). They are not members, "
+                    "so a ranking or a count of members must leave them out.\n"
+                    "- Add the predicate named above to the WHERE clause of the SELECT "
+                    "that groups the ranking or does the count, with that SELECT's own "
+                    "alias for the table (or for the fact's key to it). A LEFT JOIN's ON "
+                    "clause does not remove them.\n"
+                    "- Keep everything else: the measure, the grain, the period, the limit.\n"
                 )
             elif last_code == "reused_plan_empty":
                 validation_repair_note = (
