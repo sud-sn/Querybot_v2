@@ -139,6 +139,7 @@ from core.compliance.models import ResourceRef
 from core.compliance.policy_engine import evaluate as evaluate_policy, resolve_context
 from core.conversation_state import conversation_state_store
 from core.semantic_plan_utils import required_semantic_tables
+from core.period_rows import attach_period_row_policies
 
 log = logging.getLogger("querybot")
 
@@ -5510,6 +5511,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         dict(_structured_temporal_window)
         or detect_temporal_window(_semantic_plan_question)
     )
+    # A yyyymm period fact keeps a row for each whole year (month part 00)
+    # beside that year's month rows, and reading both counts every year twice.
+    # The rule rides on the plan, so the prompt states it and the validator
+    # refuses any SELECT that reads such a fact without it -- whichever date
+    # the question used, or none at all, which is where the double count lived.
+    try:
+        attach_period_row_policies(
+            _semantic_plan, _contract_model,
+            kb_dir=state.get("kb_dir", ""), db_type=db_cfg.get("db_type", "azure_sql"),
+        )
+    except Exception as _period_exc:
+        log.warning("Period-row policies unavailable for %s: %s", account_id, _period_exc)
     _generation_semantic_context = {
         "intent": query_intent,
         "top_n": top_n_intent.to_dict() if top_n_intent else None,
@@ -6745,6 +6758,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "calendar rows with no matching fact records.\n"
                     + (_date_contract_lines if _date_contract_lines else
                        "- Use the exact date-role JOIN and calendar field supplied in the semantic plan.\n")
+                )
+            elif last_code == "period_rows_mixed":
+                validation_repair_note = (
+                    "\nPERIOD-ROW REPAIR REQUIRED:\n"
+                    "- A period value ending in 00 is the warehouse's total for the whole "
+                    "year, and the month rows beside it already add up to it. Keep month "
+                    "rows only.\n"
+                    "- Add the predicate named above to the WHERE clause of EVERY SELECT, "
+                    "CTE and subquery that reads that table, with that SELECT's own alias "
+                    "for it. A filter on an outer query cannot undo a CTE that already "
+                    "summed the year row.\n"
+                    "- A year is the sum of its twelve month rows; a stock balance is the "
+                    "last month of the period.\n"
                 )
             elif last_code == "reused_plan_empty":
                 validation_repair_note = (

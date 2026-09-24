@@ -952,6 +952,19 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         str(note) for note in (confidence_context.get("multi_period_caveats") or []) if note
     )
 
+    # A period table's whole-year rows were left out on purpose: the months
+    # beside them already add up to the year (core/period_rows.py). A reader
+    # holding a report built on the year rows deserves to know which source
+    # this answer used, so say it whenever the executed query read such a table.
+    _period_policies = (
+        (confidence_context.get("semantic_plan") or {}).get("period_row_policies") or []
+    )
+    if _period_policies and sql:
+        from core.period_rows import sql_reads_policy_table
+
+        if any(sql_reads_policy_table(sql, policy) for policy in _period_policies):
+            coverage_caveats.append(_t("caveat.period_rows"))
+
     _graph_edges = confidence_context.get("graph_edges") or []
     if _graph_edges:
         try:

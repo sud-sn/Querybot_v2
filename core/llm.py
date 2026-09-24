@@ -1356,6 +1356,23 @@ def build_sql_system_prompt(
                 "base CTE. If you cannot use the plan with the available schema, return "
                 "CANNOT_GENERATE."
             )
+    # Period rows are stated whenever a yyyymm period fact is in this prompt,
+    # with or without a field plan: the question that counted every year twice
+    # was the one that named no period, and it often resolved no plan fields.
+    if semantic_plan and semantic_plan.get("period_row_policies"):
+        from core.period_rows import format_period_row_rules, policies_in_scope
+
+        period_text = format_period_row_rules(
+            policies_in_scope(
+                semantic_plan.get("period_row_policies"),
+                table_context,
+                str(semantic_plan.get("required_tables") or ""),
+                str(semantic_plan.get("fields") or ""),
+            ),
+            db_type,
+        )
+        if period_text:
+            base = base + "\n\n" + period_text
     # The preloaded knowledge base goes on the front LAST, after the rule
     # filter has finished with the prompt. The filter locates rules by
     # searching for their opening words and deletes from there to the next

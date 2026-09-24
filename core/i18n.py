@@ -1886,6 +1886,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "This question asked for the most recent periods that actually have data, and the generated query did not select them in a way that guarantees that.",
         "fr": "Cette question portait sur les dernières périodes contenant réellement des données, et la requête générée ne les a pas sélectionnées de manière fiable.",
     },
+    "fail.v.period_rows_mixed.reason": {
+        "en": "The generated query read a period table's whole-year rows together with its month rows, which would have counted every year twice.",
+        "fr": "La requête générée lisait les lignes d'année entière d'une table de périodes en même temps que ses lignes mensuelles, ce qui aurait compté chaque année deux fois.",
+    },
     "fail.v.select_star.reason": {
         "en": "The generated query asked for every column rather than the ones this answer needs, which is not allowed against governed tables.",
         "fr": "La requête générée a demandé toutes les colonnes au lieu de celles nécessaires à cette réponse, ce qui n'est pas autorisé sur les tables gouvernées.",
@@ -1942,6 +1946,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "fail.v.reused_plan_empty.next_step": {
         "en": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
         "fr": "Essayez de restreindre la question (une période ou un filtre précis) — les données sous-jacentes ont pu changer depuis le dernier succès de cette question.",
+    },
+    "fail.v.period_rows_mixed.next_step": {
+        "en": "Ask again: the answer is taken from the monthly rows only, and a year is the sum of its twelve months.",
+        "fr": "Reposez la question : la réponse est tirée des seules lignes mensuelles, et une année est la somme de ses douze mois.",
     },
     "fail.v.temporal_anchor_missing.next_step": {
         "en": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
@@ -2847,6 +2855,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     # zero as well as one.
 
     # The truncated result.
+    "caveat.period_rows": {
+        "en": "Read from the monthly rows only: the warehouse's whole-year rows are left out, because the months already add up to each year.",
+        "fr": "Calculé à partir des seules lignes mensuelles : les lignes d'année entière de l'entrepôt sont exclues, car les mois totalisent déjà chaque année.",
+    },
     "caveat.truncated": {
         "en": "Showing the first {count} rows — the full result is larger. Distribution statistics (median, quartiles, histogram bins, correlation) are not shown, because computing them over a partial result would give a misleading answer. Narrow the question with a filter or a shorter date range to see them.",
         "fr": "Affichage des {count} premières lignes — le résultat complet est plus grand. Les statistiques de distribution (médiane, quartiles, classes d'histogramme, corrélation) ne sont pas affichées : les calculer sur un résultat partiel donnerait une réponse trompeuse. Restreignez la question par un filtre ou une période plus courte pour les obtenir.",

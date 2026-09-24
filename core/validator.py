@@ -83,7 +83,7 @@ ALL_REASON_CODES = frozenset({
     "multi_fact_missing_subplan", "multi_fact_not_aggregated",
     "multi_fact_not_isolated", "multi_fact_shared_cte", "multi_statement",
     "not_select", "null_aggregate_diagnostic", "observed_period_shape",
-    "order_alias_mismatch", "parse", "period_comparison_shape",
+    "order_alias_mismatch", "parse", "period_comparison_shape", "period_rows_mixed",
     "production_shape", "raw_fact_to_fact_join", "select_star",
     "source_fact_mismatch", "surrogate_date_conversion",
     "temporal_anchor_mismatch", "temporal_anchor_missing",
@@ -2375,6 +2375,269 @@ def _observed_period_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
     return errors
 
 
+# Nodes that turn a yyyymm period key into a date. A year row (month 00) does
+# not decode -- TRY_CONVERT gives NULL, a strict CONVERT or TO_DATE raises --
+# so a NULL-rejecting predicate on the decoded key never reads it silently.
+_PERIOD_DECODE_NODES = (
+    sg_exp.Convert, sg_exp.Cast, sg_exp.TryCast, sg_exp.TsOrDsToDate,
+    sg_exp.StrToDate, sg_exp.StrToTime, sg_exp.DateFromParts,
+) if _HAS_SQLGLOT else ()
+_PERIOD_DECODE_FUNCTIONS = frozenset({
+    "TO_DATE", "TRY_TO_DATE", "STR_TO_DATE", "TRY_CONVERT", "DATEFROMPARTS",
+    "TO_TIMESTAMP",
+})
+# A NULL decoded date put back to a value (COALESCE/ISNULL/NVL, CASE, IIF)
+# brings the year row back in.
+_NULL_MASKING_NODES = (
+    sg_exp.Coalesce, sg_exp.Case, sg_exp.If, sg_exp.Nvl2,
+) if _HAS_SQLGLOT else ()
+_FLIPPED_COMPARISONS = {
+    "LT": "GT", "LTE": "GTE", "GT": "LT", "GTE": "LTE", "EQ": "EQ", "NEQ": "NEQ",
+}
+
+
+def _unparen(node):
+    while isinstance(node, sg_exp.Paren):
+        node = node.this
+    return node
+
+
+def _conjuncts(node) -> list:
+    node = _unparen(node)
+    if node is None:
+        return []
+    if isinstance(node, sg_exp.And):
+        return _conjuncts(node.this) + _conjuncts(node.expression)
+    return [node]
+
+
+def _is_period_key(node, column: str, qualifiers: set[str]) -> bool:
+    node = _unparen(node)
+    return (
+        isinstance(node, sg_exp.Column)
+        and str(node.name or "").upper() == column
+        and (not node.table or str(node.table).upper() in qualifiers)
+    )
+
+
+def _is_period_mod(node, column: str, qualifiers: set[str]) -> bool:
+    node = _unparen(node)
+    return (
+        isinstance(node, sg_exp.Mod)
+        and _is_period_key(node.this, column, qualifiers)
+        and _literal_int(_unparen(node.expression)) == 100
+    )
+
+
+def _decodes_period_key(operand, column: str, qualifiers: set[str]) -> bool:
+    """Whether ``operand`` is the period key decoded to a date, unmasked."""
+    operand = _unparen(operand)
+    if operand is None:
+        return False
+    for conversion in operand.find_all(*_PERIOD_DECODE_NODES, sg_exp.Anonymous):
+        if isinstance(conversion, sg_exp.Anonymous):
+            if str(conversion.name or "").upper() not in _PERIOD_DECODE_FUNCTIONS:
+                continue
+        elif isinstance(conversion, (sg_exp.Convert, sg_exp.Cast, sg_exp.TryCast)):
+            target = conversion.this if isinstance(conversion, sg_exp.Convert) else conversion.args.get("to")
+            if not (
+                isinstance(target, sg_exp.DataType)
+                and target.this in sg_exp.DataType.TEMPORAL_TYPES
+            ):
+                continue
+        if not any(
+            _is_period_key(found, column, qualifiers)
+            for found in conversion.find_all(sg_exp.Column)
+        ):
+            continue
+        node, masked = conversion, False
+        while node is not None:
+            if isinstance(node, _NULL_MASKING_NODES):
+                masked = True
+                break
+            if node is operand:
+                break
+            node = node.parent
+        if not masked:
+            return True
+    return False
+
+
+def _keeps_month_rows(node, column: str, qualifiers: set[str]) -> bool:
+    """Whether one WHERE/ON conjunct leaves every year row (month 00) out."""
+    from core.period_rows import is_month_period_value
+
+    node = _unparen(node)
+    if isinstance(node, sg_exp.Or):
+        # "(March) OR (April)" -- the multi-period comparison's own WHERE --
+        # keeps month rows when every branch does; one bare branch lets the
+        # year row back in.
+        branches, pending = [], [node]
+        while pending:
+            current = _unparen(pending.pop())
+            if isinstance(current, sg_exp.Or):
+                pending.extend([current.this, current.expression])
+            else:
+                branches.append(current)
+        return all(
+            any(_keeps_month_rows(part, column, qualifiers) for part in _conjuncts(branch))
+            for branch in branches
+        )
+    if isinstance(node, sg_exp.Between):
+        target = node.this
+        low = _literal_int(_unparen(node.args.get("low")))
+        high = _literal_int(_unparen(node.args.get("high")))
+        if _is_period_mod(target, column, qualifiers):
+            return low is not None and low >= 1
+        if _is_period_key(target, column, qualifiers):
+            return (
+                low is not None and high is not None and low <= high
+                and low // 100 == high // 100
+                and is_month_period_value(low) and is_month_period_value(high)
+            )
+        return _decodes_period_key(target, column, qualifiers)
+    if isinstance(node, sg_exp.In):
+        if _is_period_key(node.this, column, qualifiers):
+            values = [_literal_int(_unparen(value)) for value in node.expressions]
+            return bool(values) and all(is_month_period_value(value) for value in values)
+        return _decodes_period_key(node.this, column, qualifiers)
+    if isinstance(node, sg_exp.Not):
+        inner = _unparen(node.this)
+        if isinstance(inner, sg_exp.Is) and isinstance(inner.expression, sg_exp.Null):
+            return _decodes_period_key(inner.this, column, qualifiers)
+        if isinstance(inner, sg_exp.EQ):
+            for mod, value in ((inner.this, inner.expression), (inner.expression, inner.this)):
+                if _is_period_mod(mod, column, qualifiers) and _literal_int(_unparen(value)) == 0:
+                    return True
+        return False
+    comparison = type(node).__name__
+    if comparison not in _FLIPPED_COMPARISONS:
+        return False
+    for operand, other, operator in (
+        (node.this, node.expression, comparison),
+        (node.expression, node.this, _FLIPPED_COMPARISONS[comparison]),
+    ):
+        if _is_period_mod(operand, column, qualifiers):
+            value = _literal_int(_unparen(other))
+            if value is None:
+                continue
+            if (
+                (operator == "NEQ" and value == 0)
+                or (operator == "GT" and value >= 0)
+                or (operator == "GTE" and value >= 1)
+                or (operator == "EQ" and 1 <= value <= 12)
+            ):
+                return True
+            continue
+        if operator == "EQ" and _is_period_key(operand, column, qualifiers):
+            if is_month_period_value(_literal_int(_unparen(other))):
+                return True
+            continue
+        if _decodes_period_key(operand, column, qualifiers):
+            return True
+    return False
+
+
+def _reads_only_period_extremes(select, column: str, qualifiers: set[str]) -> bool:
+    """An anchor probe: every output is MAX/MIN of the decoded period key.
+
+    The decoded year row is NULL, and MAX/MIN skip NULLs, so this read cannot
+    pick a year row. MAX of the RAW key can -- 202300 sorts after 202212 -- and
+    is not exempt.
+    """
+    expressions = list(select.expressions or [])
+    if not expressions:
+        return False
+    for expression in expressions:
+        target = expression.this if isinstance(expression, sg_exp.Alias) else expression
+        if not isinstance(target, (sg_exp.Max, sg_exp.Min)):
+            return False
+        if not _decodes_period_key(target.this, column, qualifiers):
+            return False
+        if any(
+            not _is_period_key(found, column, qualifiers)
+            for found in target.find_all(sg_exp.Column)
+        ):
+            return False
+    return True
+
+
+def _period_row_errors(tree, policies: list[dict], db_type: str = "azure_sql") -> list[dict]:
+    """Every SELECT that reads a yyyymm period fact keeps month rows only.
+
+    Such a fact stores, beside each year's twelve month rows, a row for the
+    year itself (month part 00). Summing both counts every year twice, and the
+    SQL looks entirely ordinary. The predicate has to sit in the WHERE clause
+    (or the fact's own JOIN condition) of each SELECT that reads the table --
+    a filter in an outer query does not reach a CTE that already summed.
+
+    Accepted: the key modulo 100 kept to 1-12 (or kept above 0), a filter on
+    the decoded period date, or explicit month keys. Anything else is refused
+    with the exact predicate to add.
+    """
+    from core.period_rows import month_rows_predicate
+
+    governed = [
+        policy for policy in policies or []
+        if isinstance(policy, dict) and policy.get("fact_table") and policy.get("fact_column")
+    ]
+    if not governed:
+        return []
+    errors: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for select in tree.find_all(sg_exp.Select):
+        sources = []
+        source = select.args.get("from_") or select.args.get("from")
+        if source is not None and isinstance(source.this, sg_exp.Table):
+            sources.append((source.this, None))
+        for join in select.args.get("joins") or []:
+            if isinstance(join.this, sg_exp.Table):
+                sources.append((join.this, join.args.get("on")))
+        if not sources:
+            continue
+        where = select.args.get("where")
+        where_conjuncts = _conjuncts(where.this) if where is not None else []
+        for table, on in sources:
+            physical = ".".join(
+                part for part in (table.catalog, table.db, table.name) if part
+            )
+            for policy in governed:
+                fact_table = str(policy["fact_table"])
+                if not _table_matches(physical or str(table.name or ""), fact_table):
+                    continue
+                column = str(policy["fact_column"]).strip('[]"`').upper()
+                qualifiers = {
+                    str(table.alias_or_name or "").upper(), str(table.name or "").upper(),
+                } - {""}
+                if _reads_only_period_extremes(select, column, qualifiers):
+                    continue
+                candidates = where_conjuncts + (_conjuncts(on) if on is not None else [])
+                if any(_keeps_month_rows(node, column, qualifiers) for node in candidates):
+                    continue
+                alias = str(table.alias_or_name or table.name or "")
+                key = (fact_table.upper(), column, alias.upper())
+                if key in seen:
+                    continue
+                seen.add(key)
+                required = month_rows_predicate(f"{alias}.{policy['fact_column']}", db_type)
+                errors.append({
+                    "code": "period_rows_mixed",
+                    "message": (
+                        f"{fact_table} keeps a row for each whole year beside that "
+                        f"year's month rows: a {policy['fact_column']} ending in 00. "
+                        f"This query reads {alias} without keeping month rows only, "
+                        "so every year is counted twice. Add "
+                        f"{required} to the WHERE clause of every SELECT that reads "
+                        f"{fact_table}."
+                    ),
+                    "table": fact_table,
+                    "column": str(policy["fact_column"]),
+                    "alias": alias,
+                    "required_predicate": required,
+                })
+    return errors
+
+
 def _temporal_anchor_scope_errors(tree, policies: list[dict]) -> list[dict]:
     """
     The MAX() used to anchor a relative-date question must be scoped to the
@@ -2876,6 +3139,20 @@ def validate_sql_detailed(
             ),
             temporal_anchor_errors[0]["code"],
             temporal_anchor_errors,
+        )
+
+    period_row_errors = _period_row_errors(
+        tree, list(field_plan.get("period_row_policies") or []), db_type,
+    )
+    if period_row_errors:
+        return SqlValidationResult(
+            False,
+            (
+                "Generated SQL reads a period table's year rows together with its "
+                "month rows. " + " ".join(error["message"] for error in period_row_errors[:3])
+            ),
+            "period_rows_mixed",
+            period_row_errors,
         )
 
     select_aliases: set[str] = set()

@@ -445,6 +445,7 @@ _VALIDATION_REASONS: dict[str, str] = {
     "multi_fact_missing_subplan": "fail.v.multi_fact_missing_subplan.reason",
     "temporal_anchor_ungoverned": "fail.v.temporal_anchor_ungoverned.reason",
     "observed_period_shape": "fail.v.observed_period_shape.reason",
+    "period_rows_mixed": "fail.v.period_rows_mixed.reason",
     "select_star": "fail.v.select_star.reason",
 }
 
@@ -462,6 +463,7 @@ _VALIDATION_NEXT_STEPS: dict[str, str] = {
     "entity_field_unavailable": "fail.v.entity_field_unavailable.next_step",
     "surrogate_date_conversion": "fail.v.surrogate_date_conversion.next_step",
     "reused_plan_empty": "fail.v.reused_plan_empty.next_step",
+    "period_rows_mixed": "fail.v.period_rows_mixed.next_step",
     "temporal_anchor_missing": "fail.v.temporal_anchor_missing.next_step",
     "temporal_anchor_mismatch": "fail.v.temporal_anchor_mismatch.next_step",
     "temporal_role_mismatch": "fail.v.temporal_role_mismatch.next_step",
