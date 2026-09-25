@@ -330,10 +330,13 @@ class TestBuildChatSuggestionsGenie(unittest.TestCase):
         flag_on = bool(client.get("enable_genie_suggestions"))
         self.assertFalse(flag_on)
 
-    def test_suggestions_trimmed_to_six_after_ranking(self):
-        many = [{"question": f"Q{i}", "fqn": ""} for i in range(10)]
+    def test_suggestions_trimmed_after_ranking(self):
+        """To the dozen the chat page pages through, four at a time."""
+        from portal.routes import _CHAT_SUGGESTIONS
+
+        many = [{"question": f"Q{i}", "fqn": ""} for i in range(20)]
         with (
-            patch("store.get_allowed_tables", return_value=[]),
+            patch("store.get_allowed_tables", return_value=None),
             patch("store.get_client", return_value={"enable_genie_suggestions": 1}),
             patch("core.suggestions.get_suggestions", return_value=many),
             patch("portal.routes._guess_safe_metric_suggestions", return_value=[]),
@@ -341,7 +344,7 @@ class TestBuildChatSuggestionsGenie(unittest.TestCase):
         ):
             from portal.routes import _build_chat_suggestions
             result = _build_chat_suggestions(_USER)
-        self.assertEqual(len(result), 6)
+        self.assertEqual(len(result), _CHAT_SUGGESTIONS)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

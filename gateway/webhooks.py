@@ -877,6 +877,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             "type":    "message",
             "role":    "assistant",
             "content": build_reply("greeting", account_id, portal_user),
+            # Not an answer: the chat page keeps the suggested questions on
+            # screen under it (they are its examples, clickable).
+            "greeting": True,
         })
         try:
             from core.dispatcher import _offer_login_report_prompt

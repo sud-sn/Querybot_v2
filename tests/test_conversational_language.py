@@ -198,29 +198,66 @@ class TheConversationalRepliesAreTranslated(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.assertIn("`help`", self._reply("fr", kind))
 
+    WORKSPACE_QUESTIONS = ["Quel est le stock total ?", "Stock par site ?", "Stock par mois ?"]
+
+    def _with_examples(self, questions):
+        from unittest.mock import patch
+        return patch("core.conversational._example_questions", return_value=list(questions))
+
     def test_the_markdown_survives_translation(self):
         """The chat page renders these with formatBotText; a bullet that lost
         its underscores renders as a run-on line."""
-        french = self._reply("fr", "vague")
+        with self._with_examples(self.WORKSPACE_QUESTIONS):
+            french = self._reply("fr", "vague")
         self.assertIn("  • _", french)
         self.assertEqual(french.count("  • _"), 3)
 
-    def test_the_fallback_examples_are_french_for_a_french_reader(self):
-        """They go back through the pipeline when someone types one, and
-        core/question_normalizer.py canonicalises a French question to English
-        before any detector reads it."""
-        french = self._reply("fr", "greeting")
-        self.assertIn("chiffre d'affaires total ce mois-ci", french)
-        self.assertNotIn("total revenue this month", french)
+    def test_a_workspace_without_questions_is_offered_none_of_the_products(self):
+        """The product's own examples -- revenue this month, top customers by
+        sales, orders last week -- were offered to every workspace with none
+        of its own, and a stock or a finance workspace cannot answer them."""
+        for lang in ("en", "fr"):
+            for kind in ("greeting", "vague"):
+                with self.subTest(lang=lang, kind=kind):
+                    reply = self._reply(lang, kind)
+                    self.assertNotIn("  • ", reply)
+                    for product_example in ("revenue this month", "customers by sales",
+                                            "orders were created", "chiffre d'affaires",
+                                            "meilleurs clients", "Combien de commandes"):
+                        self.assertNotIn(product_example, reply)
+                    self.assertIn("`help`", reply)
+        # Nothing that promises examples which are not there.
+        self.assertNotIn("For example", self._reply("en", "greeting"))
+        self.assertFalse(self._reply("en", "vague").splitlines()[0].endswith(":"))
 
     def test_the_split_greeting_is_translated_too(self):
         """build_reply_split is the branch the portal actually takes, because
         WebAdapter can render the questions as buttons."""
-        with _InLanguage("fr"):
+        with self._with_examples(self.WORKSPACE_QUESTIONS), _InLanguage("fr"):
             intro, questions = build_reply_split("greeting", "acct", self.USER)
         self.assertTrue(intro.startswith("Bonjour Ada ! 👋"))
         self.assertIn("Voici quelques questions pour commencer", intro)
-        self.assertIsInstance(questions, list)
+        self.assertEqual(questions, self.WORKSPACE_QUESTIONS)
+
+    def test_the_split_greeting_promises_no_questions_it_has_not_got(self):
+        with _InLanguage("fr"):
+            intro, questions = build_reply_split("greeting", "acct", self.USER)
+        self.assertEqual(questions, [])
+        self.assertTrue(intro.startswith("Bonjour Ada ! 👋"))
+        self.assertNotIn("Voici quelques questions pour commencer", intro)
+        self.assertIn("`help`", intro)
+
+    def test_the_split_vague_reply_points_at_no_examples_it_has_not_got(self):
+        """Its lead ends in a colon that introduces the example buttons."""
+        for lang in ("en", "fr"):
+            with self.subTest(lang=lang), _InLanguage(lang):
+                lead, questions = build_reply_split("vague", "acct", self.USER)
+                self.assertEqual(questions, [])
+                self.assertFalse(lead.rstrip().endswith(":"), lead)
+        with self._with_examples(self.WORKSPACE_QUESTIONS), _InLanguage("fr"):
+            lead, questions = build_reply_split("vague", "acct", self.USER)
+        self.assertTrue(lead.rstrip().endswith(":"), lead)
+        self.assertEqual(questions, self.WORKSPACE_QUESTIONS)
 
     def test_the_split_vague_intro_is_translated(self):
         with _InLanguage("fr"):

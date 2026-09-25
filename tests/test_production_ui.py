@@ -224,7 +224,12 @@ def test_chat_empty_state_uses_workspace_suggestions_and_large_composer():
     # so a source assertion would pass against a page that renders nothing.
     from tests.chat_render import render as render_chat, visible as visible_chat
     assert "How can I help you today?" in visible_chat(render_chat())
-    assert "suggestions[:4]" in template
+    # Four on screen, the rest behind Refresh.
+    import re
+    many = render_chat(suggestions=[{"question": f"Question {n}?", "fqn": ""} for n in range(6)])
+    chips = re.findall(r'<button class="suggestion-chip"(.*?)data-question="([^"]*)"', many, re.S)
+    assert [("display:none" in attrs, question) for attrs, question in chips] == [
+        (n >= 4, f"Question {n}?") for n in range(6)]
     assert 'class="suggestion-card-copy"' in template
     assert 'id="input" class="chat-input"' in template
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in stylesheet

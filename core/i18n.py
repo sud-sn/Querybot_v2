@@ -5498,17 +5498,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "You can also type `help` for commands, or ask _what data do you have?_ to see what's available.",
         "fr": "Vous pouvez aussi taper `help` pour les commandes, ou demander _quelles données avez-vous ?_ pour voir ce qui est disponible.",
     },
-    "reply.examples.revenue": {
-        "en": "What is our total revenue this month?",
-        "fr": "Quel est notre chiffre d'affaires total ce mois-ci ?",
-    },
-    "reply.examples.top_customers": {
-        "en": "Show top 10 customers by sales",
-        "fr": "Affiche les 10 meilleurs clients par ventes",
-    },
-    "reply.examples.orders": {
-        "en": "How many orders were created last week?",
-        "fr": "Combien de commandes ont été créées la semaine dernière ?",
+    "reply.vague.lead_no_examples": {
+        "en": "Happy to help — I just need to know what to measure. Name a metric and, optionally, a breakdown or time range.",
+        "fr": "Avec plaisir — j'ai seulement besoin de savoir quoi mesurer. Nommez un indicateur et, éventuellement, une ventilation ou une période.",
     },
 
     # ── Turning down a clarification ────────────────────────────────────────

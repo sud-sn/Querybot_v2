@@ -793,12 +793,13 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         <div class="suggestions-wrap" id="suggestionsWrap">
           <div class="suggestions-heading">
             <span class="suggestions-label">{{ t('ui.chat.suggestions_label') }}</span>
-            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="{{ t('ui.chat.shuffle') }}">&#8635; {{ t('ui.chat.refresh') }}</button>
+            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>&#8635; {{ t('ui.chat.refresh') }}</button>
           </div>
           <div class="suggestions" id="suggestions">
-            {% for s in suggestions[:4] %}
+            {% for s in suggestions %}
             <button class="suggestion-chip" type="button"
-                    onclick="sendSuggestion(this)"
+                    onclick="sendSuggestion(this)"{% if loop.index0 >= 4 %}
+                    style="display:none"{% endif %}
                     data-fqn="{{ s.fqn | default('') }}"
                     data-question="{{ s.question }}"
                     title="{{ s.question }}">
@@ -807,7 +808,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
             </button>
             {% endfor %}
           </div>
-          <button type="button" onclick="shuffleSuggestions()" style="font-size:var(--font-xs);font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="{{ t('ui.chat.shuffle') }}">&#8635;</button>
+          <button type="button" onclick="shuffleSuggestions()" style="font-size:var(--font-xs);font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>&#8635;</button>
         </div>
         {% endif %}
       </div>
@@ -985,7 +986,8 @@ function _genieEvent(eventType, suggestionText) {
 function _visibleSuggestionTexts() {
   return Array.from(
     document.querySelectorAll('#suggestionsWrap .suggestion-chip')
-  ).map(c => (c.dataset.question || c.textContent).trim()).filter(Boolean);
+  ).filter(c => c.style.display !== 'none')
+   .map(c => (c.dataset.question || c.textContent).trim()).filter(Boolean);
 }
 // Used only when a status arrives with no label. Built from the SAME
 // catalogue ids the pipeline sends, which also collapses a drift: this table
@@ -1017,11 +1019,16 @@ function thread(){ return document.getElementById('thread'); }
 function scrollBottom(){ const t = thread(); t.scrollTop = t.scrollHeight; }
 function nowLabel(){ return window.qbTime(new Date()); }
 function timeLabel(ts){ return ts || nowLabel(); }
-function hideWelcome(){
+// The greeting a reader gets on connecting is not an answer. It replaces the
+// welcome copy, but the suggested questions under it stay: they are the
+// clickable version of its examples. They used to be hidden with the rest, so
+// a reader back after half an hour -- or on a New Thread then -- got a
+// greeting, and nothing to click.
+function hideWelcome(opts = {}){
   const el = document.getElementById('welcomeState');
   const suggestions = document.getElementById('suggestionsWrap');
   if (el) el.style.display = 'none';
-  if (suggestions) suggestions.style.display = 'none';
+  if (suggestions && !opts.keepSuggestions) suggestions.style.display = 'none';
 }
 function toast(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 1400); }
 function toastLong(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 5200); }
@@ -1701,7 +1708,8 @@ function replayCachedEntry(entry){
   const kind = entry.kind;
   if (kind === 'user') appendUser(entry.text || '', { persist:false, timestamp: entry.timestamp });
   else if (kind === 'system') appendSystem(entry.text || '', { persist:false, timestamp: entry.timestamp });
-  else if (kind === 'bot') appendBot(entry.text || '', { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'bot') appendBot(entry.text || '', { persist:false, timestamp: entry.timestamp,
+                                                          keepSuggestions: !!entry.keepSuggestions });
   else if (kind === 'assistant_response') appendAssistantResponse(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
   else if (kind === 'assistant_analysis') appendAnalysisResponse(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
   else if (kind === 'chart') appendChart(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
@@ -1904,7 +1912,7 @@ function _retryUserMessage(message){
   }
 }
 function appendBot(rawText, opts = {}){
-  hideWelcome();
+  hideWelcome({ keepSuggestions: !!opts.keepSuggestions });
   lastAssistantText = rawText;
   const timestamp = timeLabel(opts.timestamp);
   const diagnosticHtml = renderDiagnosticCard(rawText);
@@ -1929,7 +1937,8 @@ function appendBot(rawText, opts = {}){
     }
   });
   thread().appendChild(div);
-  if (opts.persist !== false) pushChatCache({ kind:'bot', text: rawText, timestamp });
+  if (opts.persist !== false) pushChatCache({ kind:'bot', text: rawText, timestamp,
+                                             keepSuggestions: !!opts.keepSuggestions });
   scrollBottom();
 }
 // ── Multi-turn conversation memory helpers ────────────────────────────────────
@@ -4744,39 +4753,51 @@ function initSchemaSelector() {
   selectSchema(selected.dataset.schema || "", selected, { persist: false });
 }
 
+// A suggestion belongs to every schema when it names no table.
+function _suggestionInSchema(chip, schemaName) {
+  if (!schemaName) return true;
+  const fqn = (chip.dataset.fqn || "").toUpperCase();
+  const parts = fqn.split(".");
+  // schema is the second-to-last part in DB.SCHEMA.TABLE
+  const chipSchema = parts.length >= 2 ? parts[parts.length - 2] : "";
+  return !fqn || chipSchema === schemaName.toUpperCase();
+}
+
+// The suggested questions, four at a time. The page renders every question
+// the workspace offers, and Refresh ("Show different suggestions") steps to
+// the next four -- it used to reshuffle the four already on screen, so it
+// never showed a different question, and the rest were never rendered.
+const SUGGESTIONS_PER_PAGE = 4;
+let _suggestionPage = 0;
+function _showSuggestionPage(schemaName = _activeSchema) {
+  const chips = Array.from(document.querySelectorAll("#suggestions .suggestion-chip"));
+  const eligible = chips.filter(c => _suggestionInSchema(c, schemaName));
+  const pages = Math.max(1, Math.ceil(eligible.length / SUGGESTIONS_PER_PAGE));
+  _suggestionPage = ((_suggestionPage % pages) + pages) % pages;
+  const start = _suggestionPage * SUGGESTIONS_PER_PAGE;
+  const onPage = eligible.slice(start, start + SUGGESTIONS_PER_PAGE);
+  chips.forEach(c => { c.style.display = onPage.indexOf(c) >= 0 ? "" : "none"; });
+  document.querySelectorAll("[data-suggestions-more]").forEach(b => {
+    b.hidden = eligible.length <= SUGGESTIONS_PER_PAGE;
+  });
+  return onPage;
+}
+
 function _refreshSuggestionsForSchema(schemaName) {
-  const chips = document.querySelectorAll(".suggestion-chip");
   const composerChips = document.querySelectorAll(".composer-chip");
   const wrap = document.getElementById("suggestionsWrap");
+  _suggestionPage = 0;
+  const visibleCount = _showSuggestionPage(schemaName).length;
 
   if (!schemaName) {
-    // Show all suggestions
-    chips.forEach(c => { c.style.display = ""; });
     composerChips.forEach(c => { c.style.display = ""; });
-    if (wrap) wrap.style.display = chips.length ? "" : "none";
+    if (wrap) wrap.style.display = visibleCount ? "" : "none";
     return;
   }
 
-  let visibleCount = 0;
-  chips.forEach(c => {
-    const fqn = (c.dataset.fqn || "").toUpperCase();
-    const parts = fqn.split(".");
-    // schema is the second-to-last part in DB.SCHEMA.TABLE
-    const chipSchema = parts.length >= 2 ? parts[parts.length - 2] : "";
-    const matches = !fqn || chipSchema === schemaName.toUpperCase() || fqn === "";
-    c.style.display = matches ? "" : "none";
-    if (matches) visibleCount++;
-  });
-
   // Composer chips — same filter
-  let composerVisible = 0;
   composerChips.forEach(c => {
-    const fqn = (c.dataset.fqn || "").toUpperCase();
-    const parts = fqn.split(".");
-    const chipSchema = parts.length >= 2 ? parts[parts.length - 2] : "";
-    const matches = !fqn || chipSchema === schemaName.toUpperCase() || fqn === "";
-    c.style.display = matches ? "" : "none";
-    if (matches) composerVisible++;
+    c.style.display = _suggestionInSchema(c, schemaName) ? "" : "none";
   });
 
   // Hide the wrap if nothing visible
@@ -4881,18 +4902,11 @@ function sendChartDrill(text){
   sendMessage();
 }
 function shuffleSuggestions(){
-  const wrap = document.getElementById('suggestions');
-  if (!wrap) return;
-  const chips = Array.from(wrap.querySelectorAll('.suggestion-chip'));
-  // Fisher-Yates shuffle then reattach in new order
-  for (let i = chips.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [chips[i], chips[j]] = [chips[j], chips[i]];
-  }
-  chips.forEach(c => { c.style.opacity='0'; c.style.transform='scale(.92)'; });
+  _suggestionPage += 1;
+  const shown = _showSuggestionPage();
+  shown.forEach(c => { c.style.opacity='0'; c.style.transform='scale(.92)'; });
   setTimeout(() => {
-    chips.forEach(c => wrap.appendChild(c));
-    chips.forEach(c => { c.style.transition='all .18s'; c.style.opacity='1'; c.style.transform='scale(1)'; });
+    shown.forEach(c => { c.style.transition='all .18s'; c.style.opacity='1'; c.style.transform='scale(1)'; });
   }, 100);
 }
 function prefillComposer(text){ const inp = document.getElementById('input'); inp.value = text; inp.focus(); inp.dispatchEvent(new Event('input')); }
@@ -5344,7 +5358,7 @@ function connect(){
         }
         // ────────────────────────────────────────────────────────────────────
         setAgentRunState('completed', msg);
-        appendBot(msgContent);
+        appendBot(msgContent, { keepSuggestions: !!msg.greeting });
         refreshQueryLimitStatus({toast:true});
         return;
       }

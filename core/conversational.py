@@ -516,17 +516,11 @@ def _metric_names(account_id: str, limit: int = 5) -> list[str]:
 
 
 def _format_examples_block(examples: list[str]) -> str:
-    if not examples:
-        # The workspace has no curated examples yet, so these are the
-        # product's own. They go back through the pipeline when someone types
-        # one, and core/question_normalizer.py canonicalises a French question
-        # to English before any detector reads it -- the same path a typed
-        # question takes.
-        examples = [
-            _t("reply.examples.revenue"),
-            _t("reply.examples.top_customers"),
-            _t("reply.examples.orders"),
-        ]
+    # Only this workspace's own questions. With none yet, this used to offer
+    # the product's -- revenue this month, top customers by sales, orders last
+    # week -- which a stock or a finance workspace cannot answer: the reader
+    # tried them, and they failed. The callers now say nothing about examples
+    # when there are none.
     return "\n".join(f"  • _{q}_" for q in examples)
 
 
@@ -554,10 +548,13 @@ def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> 
         log.warning("Workspace guide rendering failed for %s: %s", kind, exc)
 
     if kind == "greeting":
+        examples = _example_questions(account_id, portal_user=portal_user)
+        if not examples:
+            return f"{_greeting_intro(portal_user)}\n\n{_t('reply.greeting.help_hint')}"
         return (
             f"{_greeting_intro(portal_user)}\n\n"
             f"{_t('reply.greeting.for_example')}\n"
-            f"{_format_examples_block(_example_questions(account_id, portal_user=portal_user))}\n\n"
+            f"{_format_examples_block(examples)}\n\n"
             f"{_t('reply.greeting.help_hint')}"
         )
 
@@ -592,9 +589,12 @@ def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> 
         )
 
     if kind == "vague":
+        examples = _example_questions(account_id, portal_user=portal_user)
+        if not examples:
+            return f"{_t('reply.vague.lead_no_examples')}\n\n{_t('reply.vague.help_hint')}"
         return (
             f"{_t('reply.vague.lead')}\n\n"
-            f"{_format_examples_block(_example_questions(account_id, portal_user=portal_user))}\n\n"
+            f"{_format_examples_block(examples)}\n\n"
             f"{_t('reply.vague.help_hint')}"
         )
 
@@ -628,14 +628,17 @@ def build_reply_split(
     except Exception as exc:
         log.warning("Workspace guide split rendering failed for %s: %s", kind, exc)
 
+    # "Here are some questions to get you started:" promises the buttons
+    # under it, so it is said only when there are some.
     if kind == "greeting":
-        intro = (f"{_greeting_intro(portal_user)}\n\n"
-                 f"{_t('reply.greeting.starters')}")
-        return intro, _example_questions(account_id, portal_user=portal_user)
+        questions = _example_questions(account_id, portal_user=portal_user)
+        closing = _t("reply.greeting.starters") if questions else _t("reply.greeting.help_hint")
+        return f"{_greeting_intro(portal_user)}\n\n{closing}", questions
 
     if kind == "vague":
-        return _t("reply.vague.lead"), _example_questions(
-            account_id, portal_user=portal_user)
+        questions = _example_questions(account_id, portal_user=portal_user)
+        lead = _t("reply.vague.lead") if questions else _t("reply.vague.lead_no_examples")
+        return lead, questions
 
     # All other kinds: delegate to build_reply, no split
     return build_reply(kind, account_id, portal_user), []

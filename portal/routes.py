@@ -735,9 +735,15 @@ def _get_available_schemas(user: dict) -> list[dict]:
     )
 
 
+# The chat page shows four suggested questions at a time and pages through the
+# rest with Refresh ("Show different suggestions"). It was given six and drew
+# four, so Refresh reshuffled the same four and the other two were never seen.
+_CHAT_SUGGESTIONS = 12
+
+
 def _build_chat_suggestions(user: dict) -> list[dict]:
     """
-    Return up to 6 structured suggestion dicts: {"question": str, "fqn": str}.
+    Return up to 12 structured suggestion dicts: {"question": str, "fqn": str}.
     The fqn travels with the suggestion so the chat UI can pass it as a schema
     hint when the user clicks — fixing schema-unaware SQL generation.
 
@@ -751,7 +757,11 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
 
         account_id = user["account_id"]
         allowed    = store.get_allowed_tables(user)
-        allowed_set = set(allowed) if allowed else None
+        # None is an admin, who may read every table. An EMPTY set is a reader
+        # with no table access, and `set(allowed) if allowed else None` read it
+        # as the first: a reader who could query nothing was offered the
+        # questions of the whole workspace.
+        allowed_set = None if allowed is None else set(allowed)
 
         client     = store.get_client(account_id) or {}
         import json as _json
@@ -763,7 +773,7 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
             account_id=account_id,
             kb_dir=kb_dir,
             allowed_tables=allowed_set,
-            n=6,
+            n=_CHAT_SUGGESTIONS,
             schema_dir=schema_dir,
         )
 
@@ -776,7 +786,7 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
         # registry, including ones over tables this user cannot see. Put it
         # through the same gate the tiers use before it reaches the panel.
         if len(suggestions) < 4:
-            extra = _guess_safe_metric_suggestions(account_id, allowed, max_items=6)
+            extra = _guess_safe_metric_suggestions(account_id, allowed, max_items=_CHAT_SUGGESTIONS)
             if extra:
                 try:
                     from core.suggestions import _graph_reachability_check
@@ -792,7 +802,7 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
                         continue
                     if not any(s["question"] == q for s in suggestions):
                         suggestions.append({"question": q, "fqn": ""})
-                    if len(suggestions) >= 6:
+                    if len(suggestions) >= _CHAT_SUGGESTIONS:
                         break
 
         # ── Genie signal engine: re-rank by behavioral signals ────────────────
@@ -805,7 +815,7 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
                     "_build_chat_suggestions: genie ranking skipped (non-fatal): %s", exc
                 )
 
-        return suggestions[:6]
+        return suggestions[:_CHAT_SUGGESTIONS]
 
     except Exception:
         # A bare handler with no log at all: the chat panel showing no
@@ -2685,7 +2695,8 @@ async def portal_chat(request: Request):
     # Intentionally placed after _build_chat_suggestions so the display call
     # uses the already-resolved (ranked) suggestion list.
     if client.get("enable_genie_suggestions") and suggestions:
-        _record_suggestions_displayed(user, suggestions)
+        # The first four are the ones on screen; the rest wait behind Refresh.
+        _record_suggestions_displayed(user, suggestions[:4])
 
     # Build the list of schemas the user has access to — used for the schema
     # selector tab bar in the chat UI.

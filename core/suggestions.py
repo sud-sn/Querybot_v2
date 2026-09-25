@@ -460,8 +460,30 @@ def get_suggestions(
 
         return {"table": table_name, "fqn": table_name}
 
-    def _metric_allowed(sql: str) -> bool:
-        refs = _extract_sql_table_refs(sql)
+    table_columns: dict | None = None
+
+    def _metric_allowed(metric: dict) -> bool:
+        """Every table the metric reads is discovered, and the reader may read it.
+
+        The tables are the metric's own -- its base table, its SQL, its
+        required columns (core.metric_scope.metric_source_tables) -- not only
+        the tables its SQL names. A registry metric is usually an expression,
+        SUM(NET_AMT), with its table in base_table: the SQL names no table, and
+        this returned "allowed" for an admin only. Every other reader was
+        offered no metric question at all, and the examples the greeting and
+        the workspace guide take from this list were empty for them.
+        """
+        nonlocal table_columns
+        refs: set[str] | list[str]
+        try:
+            from core.metric_scope import metric_source_tables
+            if table_columns is None:
+                from core.schema import load_schema_columns
+                table_columns = load_schema_columns(schema_dir) if schema_dir else {}
+            refs = metric_source_tables(metric, table_columns)
+        except Exception as exc:
+            log.warning("Metric source tables unresolved (%s) — reading its SQL only", exc)
+            refs = _extract_sql_table_refs(str(metric.get("sql_template") or ""))
         if not refs:
             return allowed_upper is None
         if not all(_matches_any_known(ref, schema_tables) for ref in refs):
@@ -534,7 +556,7 @@ def get_suggestions(
             for metric in metrics:
                 name = (metric.get("name") or "").strip()
                 sql = (metric.get("sql_template") or "").strip()
-                if not name or not sql or not _metric_allowed(sql):
+                if not name or not sql or not _metric_allowed(metric):
                     continue
                 q = f"What is our total {name.replace('_', ' ')}?"
                 # Gated like every other tier. A metric's SQL template having
