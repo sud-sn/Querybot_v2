@@ -2061,6 +2061,19 @@ def is_single_request_rejection(exc: BaseException) -> bool:
     return "context_length_exceeded" in blob or "maximum context length" in blob
 
 
+def is_timed_out(exc: BaseException) -> bool:
+    """Did this call run out of time waiting for the provider's answer?
+
+    Read from the message, like the predicates around it: every provider
+    wrapper here interpolates the SDK's own text, and each SDK says "timed
+    out" ("Request timed out."; Anthropic's "Request timed out or
+    interrupted...").
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    return "timed out" in f"{exc}".lower()
+
+
 def is_rate_limited(exc: BaseException) -> bool:
     """Did the provider refuse this call because the tenant is over quota?
 

@@ -152,9 +152,31 @@ async def _wait_unless_stopped(seconds: float, stop_event) -> bool:
     return stop_event is not None and stop_event.is_set()
 
 
+# Timeouts in a row that end a build. One is a table whose document took too
+# long; several in a row is a provider that is not answering, and waiting out
+# every remaining table's timeout would only make a failed build slower.
+_KB_TIMEOUTS_IN_A_ROW = 3
+
+
+class _TimeoutStreak:
+    """Timeouts in a row across one build's KB requests."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def answered(self) -> None:
+        self.count = 0
+
+    def timed_out(self) -> bool:
+        """Count one; True when the build should stop."""
+        self.count += 1
+        return self.count >= _KB_TIMEOUTS_IN_A_ROW
+
+
 async def _kb_complete(
     label: str, system: str, user: str, provider: str, model: str,
-    api_key: str, *, max_tokens: int, stop_event=None, **kw,
+    api_key: str, *, max_tokens: int, stop_event=None,
+    timeouts: _TimeoutStreak | None = None, **kw,
 ) -> tuple[str | None, str]:
     """One KB completion: ``(text, "")``, or ``(None, reason)`` when it cannot.
 
@@ -217,6 +239,7 @@ async def _kb_complete(
         LLMTruncatedError,
         is_rate_limited,
         is_single_request_rejection,
+        is_timed_out,
         llm_complete,
     )
 
@@ -249,6 +272,8 @@ async def _kb_complete(
                         "KB %s finished on the retry at %d tokens (the %d-token "
                         "estimate was short)", label, budget, ceiling,
                     )
+                if timeouts is not None:
+                    timeouts.answered()
                 return text, ""
             except LLMTruncatedError as exc:
                 log.warning(
@@ -266,6 +291,23 @@ async def _kb_complete(
                     if await _wait_unless_stopped(delay, stop_event):
                         raise
                     continue  # the SAME ceiling: nothing about it was wrong
+                if is_timed_out(exc):
+                    # A document that took too long is this one's problem;
+                    # several in a row is the provider's, and ends the build.
+                    if timeouts is not None and timeouts.timed_out():
+                        raise RuntimeError(
+                            f"{_KB_TIMEOUTS_IN_A_ROW} knowledge-base requests in a row timed "
+                            f"out, the last for {label}: the AI service is not answering in "
+                            "time. Try again later, or raise QUERYBOT_LLM_TIMEOUT_SECONDS "
+                            "on the server."
+                        ) from exc
+                    log.error(
+                        "KB %s timed out: %s. This one is SKIPPED and the rest of "
+                        "the build continues; it will have no knowledge-base "
+                        "document, so questions about it are answered from the "
+                        "schema alone.", label, exc,
+                    )
+                    return None, f"timed out: {type(exc).__name__}: {str(exc)[:300]}"
                 if not is_single_request_rejection(exc):
                     raise
                 # Retrying HIGHER is exactly wrong for a ceiling that was already
@@ -927,12 +969,14 @@ async def build_kb(
     column_reference = "\n".join(column_ref_lines)
 
     # ── Business vocabulary KB ────────────────────────────────────────────────
+    # Every KB request this build makes counts toward one streak of timeouts.
+    timeouts = _TimeoutStreak()
     biz_user = build_biz_vocab_prompt(table_names, column_reference, business_desc)
     with llm_audit_component("kb_business_vocab", new_request_id=True):
         biz_text, biz_reason = await _kb_complete(
             "business vocabulary", system_base, biz_user, provider, model,
             api_key, max_tokens=kb_vocab_token_budget(len(table_names)),
-            stop_event=stop_event, **kw
+            stop_event=stop_event, timeouts=timeouts, **kw
         )
     if biz_text is None:
         # Nothing downstream requires this file to exist -- it is swept into the
@@ -1253,7 +1297,7 @@ async def build_kb(
                 f"document for {table_name}", system, stage1_user, provider,
                 model, api_key,
                 max_tokens=kb_doc_token_budget(len(table_cols)),
-                stop_event=stop_event, **kw
+                stop_event=stop_event, timeouts=timeouts, **kw
             )
         if kb_text is None:
             # This one table only. Before this the exception left the loop and
@@ -1303,7 +1347,7 @@ async def build_kb(
                 f"query examples for {table_name}", system, query_user, provider,
                 model, api_key,
                 max_tokens=kb_query_token_budget(len(table_cols)),
-                stop_event=stop_event, **kw
+                stop_event=stop_event, timeouts=timeouts, **kw
             )
         if query_text is None:
             # The document itself was written, so the table is documented and is
