@@ -26,7 +26,8 @@ from store.source_store import (
 from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (
     save_metric, list_metrics, get_metric, update_metric,
-    delete_metric, deprecate_metric, match_metric, list_metric_formula_context,
+    delete_metric, deprecate_metric, certify_metric, uncertify_metric,
+    match_metric, list_metric_formula_context,
     validate_metric_refs, increment_metric_usage,
     save_validated_example, get_validated_examples,
     harvest_successful_queries, purge_unqualified_examples,
@@ -194,7 +195,8 @@ __all__ = [
     "save_graph_version","list_graph_versions","get_graph_version",
     "replace_graph_from_snapshot",
     "save_metric","list_metrics","get_metric","update_metric",
-    "delete_metric","deprecate_metric","match_metric","list_metric_formula_context",
+    "delete_metric","deprecate_metric","certify_metric","uncertify_metric",
+    "match_metric","list_metric_formula_context",
     "increment_metric_usage",
     "save_platform","get_platform","list_platforms","delete_platform",
     "PLATFORM_FIELDS","PLATFORM_LABELS",

@@ -7142,6 +7142,30 @@ async def metric_deprecate(request: Request, account_id: str, metric_id: int):
     return RedirectResponse(f"/admin/clients/{account_id}/metrics", status_code=303)
 
 
+@router.post("/clients/{account_id}/metrics/{metric_id}/certify")
+async def metric_certify(request: Request, account_id: str, metric_id: int):
+    """The admin certifies that a metric's numbers were checked -- against a
+    figure the business already trusts. The readiness gate counts only a
+    certified metric; a change to the formula, the grain or the date it is
+    counted on takes the certification away (store.update_metric)."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    back = f"/admin/clients/{account_id}/metrics"
+    if not store.certify_metric(account_id, metric_id, by="admin"):
+        return RedirectResponse(
+            f"{back}?error={quote('Only a live metric whose formula validates can be certified')}",
+            status_code=303)
+    return RedirectResponse(f"{back}?saved=certified", status_code=303)
+
+
+@router.post("/clients/{account_id}/metrics/{metric_id}/uncertify")
+async def metric_uncertify(request: Request, account_id: str, metric_id: int):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    store.uncertify_metric(account_id, metric_id)
+    return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=uncertified", status_code=303)
+
+
 @router.post("/clients/{account_id}/metrics/{metric_id}/delete")
 async def metric_delete(request: Request, account_id: str, metric_id: int):
     """Hard-delete. Enforces account ownership. Returns JSON when called via fetch."""

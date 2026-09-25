@@ -1179,6 +1179,10 @@ def _ensure_metric_registry_schema(conn) -> None:
         "last_validated_at": "TEXT DEFAULT ''",
         "version": "INTEGER DEFAULT 1",
         "owner": "TEXT DEFAULT ''",
+        # An admin's word that the metric's numbers were checked: set by
+        # certify_metric, cleared by any change to what the numbers are.
+        "certified_at": "TEXT DEFAULT ''",
+        "certified_by": "TEXT DEFAULT ''",
     }
     for column, definition in columns.items():
         if column not in existing:
@@ -1371,6 +1375,17 @@ def update_metric(
     formula_fields = {"sql_template", "formula_type", "required_columns",
                       "base_table", "base_entity", "metric_builder_config"}
     needs_revalidation = bool(formula_fields & set(updates.keys()))
+    # A certification is of the numbers: a change to what they are -- the
+    # formula, the grain, the date they are counted on -- takes it away. A
+    # form that saves every field unchanged, or a new synonym, does not.
+    if _CERTIFIED_FIELDS & set(updates.keys()):
+        before = get_metric(metric_id) or {}
+        if any(
+            _metric_value(updates[key]) != _metric_value(before.get(key))
+            for key in _CERTIFIED_FIELDS & set(updates.keys())
+        ):
+            updates["certified_at"] = ""
+            updates["certified_by"] = ""
     if needs_revalidation:
         existing = get_metric(metric_id) or {}
         merged   = {**existing, **updates}
@@ -1387,7 +1402,7 @@ def update_metric(
         "result_format", "required_columns", "allowed_dimensions",
         "metric_builder_config", "example_questions", "grain", "category", "default_time_column",
         "is_active", "base_entity", "base_table", "metric_status",
-        "formula_ast", "validation_errors", "owner",
+        "formula_ast", "validation_errors", "owner", "certified_at", "certified_by",
     ):
         if key in updates:
             fields.append(f"{key}=?")
@@ -1435,11 +1450,58 @@ def deprecate_metric(metric_id: int, account_id: str) -> None:
     """
     from store.db import get_db
     with get_db() as conn:
+        _ensure_metric_registry_schema(conn)
         conn.execute(
             "UPDATE metric_registry SET metric_status='deprecated', is_active=0, "
+            "certified_at='', certified_by='', "
             "updated_at=datetime('now') WHERE id=? AND account_id=?",
             (metric_id, account_id),
         )
+
+
+# What a metric's numbers are. A change to any of them takes a certification
+# away (update_metric); the rest -- names, synonyms, descriptions, format,
+# the dimensions it may be cut by -- leave it standing.
+_CERTIFIED_FIELDS = frozenset({
+    "sql_template", "formula_type", "required_columns", "base_table", "base_entity",
+    "metric_builder_config", "grain", "default_time_column",
+})
+
+
+def _metric_value(value) -> str:
+    import json as _json
+
+    if isinstance(value, (dict, list)):
+        return _json.dumps(value, sort_keys=True)
+    return str(value if value is not None else "").strip()
+
+
+def certify_metric(account_id: str, metric_id: int, *, by: str) -> bool:
+    """An admin certifies that a metric's numbers were checked. Only a live
+    metric whose formula passes validation can be; False otherwise."""
+    from store.db import get_db
+    with get_db() as conn:
+        _ensure_metric_registry_schema(conn)
+        cur = conn.execute(
+            "UPDATE metric_registry SET certified_at=datetime('now'), certified_by=?, "
+            "updated_at=datetime('now') "
+            "WHERE id=? AND account_id=? AND is_active=1 "
+            "AND metric_status IN ('validated', 'published')",
+            (str(by or "admin"), metric_id, account_id),
+        )
+        return cur.rowcount > 0
+
+
+def uncertify_metric(account_id: str, metric_id: int) -> bool:
+    from store.db import get_db
+    with get_db() as conn:
+        _ensure_metric_registry_schema(conn)
+        cur = conn.execute(
+            "UPDATE metric_registry SET certified_at='', certified_by='', updated_at=datetime('now') "
+            "WHERE id=? AND account_id=? AND certified_at != ''",
+            (metric_id, account_id),
+        )
+        return cur.rowcount > 0
 
 
 def delete_metric(metric_id: int, account_id: str = "") -> None:

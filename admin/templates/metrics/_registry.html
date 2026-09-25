@@ -55,6 +55,7 @@
     {% elif m_status in ('published',) %}<span class="status-pill ok"><span class="status-dot"></span>Live</span>
     {% elif m_status in ('draft',) %}<span class="status-pill warning"><span class="status-dot"></span>Draft</span>
     {% elif m_status in ('deprecated',) %}<span class="status-pill error"><span class="status-dot"></span>Deprecated</span>{% endif %}
+    {% if m.certified_at %}<span class="status-pill ok" title="Certified by {{ m.certified_by or 'admin' }} on {{ m.certified_at[:10] }}: its numbers were checked"><span class="status-dot"></span>Certified</span>{% endif %}
     {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
     {% if (m.usage_count or 0) > 0 %}<span class="mr-usage" title="Times this metric was used to answer questions">{{ m.usage_count }}× used</span>{% endif %}
     {% if _errs %}<span style="font-size:10px;color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% endif %}
@@ -66,6 +67,18 @@
          a JSON endpoint. A metric that compiles is not a metric that works: the
          same definition is asked about as "top 10 by it", as "how has it changed
          this quarter", and by a name nobody wrote down. #}
+      {# Certified: the admin checked its numbers against a figure the business
+         already trusts. The readiness gate counts only certified metrics, and a
+         change to the formula, grain or date takes the certification away. #}
+      {% if m.is_active and m.certified_at %}
+      <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/uncertify" style="display:inline">
+        <button type="submit" class="btn btn-xs btn-secondary" title="Take the certification away">Uncertify</button>
+      </form>
+      {% elif m.is_active and m_status in ('validated', 'published') %}
+      <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/certify" style="display:inline">
+        <button type="submit" class="btn btn-xs btn-primary" title="You checked its numbers against a figure the business trusts">Certify</button>
+      </form>
+      {% endif %}
       <button class="btn btn-xs btn-secondary" onclick="showMetricCoverage({{ m.id }}, this)"
               title="Which real question shapes this metric answers">Coverage</button>
       <button class="btn btn-xs btn-secondary" onclick="toggleMetricEdit({{ m.id }})">Edit</button>
