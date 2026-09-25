@@ -23,9 +23,9 @@ templates already draw: one series per key in the row dict. So this needs no new
 renderer branch, no new payload concept and no new chart type.
 
 Every test executes the real code. The Python half calls infer_chart_spec and
-build_chart_payload; the JavaScript half lifts buildChartOption and
-buildDashboardOption out of the real templates and runs them under dukpy, on
-both pages, because the two are separate copies that have drifted before.
+build_chart_payload; the JavaScript half runs the chart renderer both pages
+load (static/js/qb-charts.js) under dukpy, once per page -- the pages carried
+separate copies of it before, and the copies drifted.
 """
 
 from __future__ import annotations

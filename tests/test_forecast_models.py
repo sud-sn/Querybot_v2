@@ -483,31 +483,40 @@ class TestTheForecastChartDoesNotFlattenItsOwnBand:
     series moving between 6.9M and 8.1M draws as a flat line with the interval
     collapsed into it -- which is what the live chart looked like."""
 
-    def _forecast_branch(self) -> str:
-        from pathlib import Path
+    def _axis(self, chart_type: str, rows: list[dict], axis: str = "yAxis") -> object:
+        import json
 
-        html = (Path(__file__).resolve().parents[1] / "portal" / "templates"
-                / "portal_chat.html").read_text(encoding="utf-8")
-        start = html.index("if (type === 'forecast')")
-        return html[start:html.index("if (type === 'histogram')", start)]
+        import pytest
+
+        pytest.importorskip("dukpy")
+        from tests.test_chart_annotation_language import _build
+
+        payload = {"rows": rows, "x_key": "PERIOD", "y_keys": ["REVENUE"],
+                   "chart_type": chart_type}
+        return json.loads(_build("portal_chat.html", "en", payload,
+                                 f"JSON.stringify(opt.{axis} && opt.{axis}.scale || false)"))
+
+    ROWS = [{"PERIOD": f"2026-0{m}", "REVENUE": 6_900_000.0 + m * 150_000.0,
+             "is_forecast": m > 6, "forecast_low": 7_500_000.0 if m > 6 else None,
+             "forecast_high": 8_100_000.0 if m > 6 else None} for m in range(1, 10)]
 
     def test_the_forecast_axis_is_not_pinned_to_zero(self):
-        branch = self._forecast_branch()
-        y = branch.index("yAxis:")
-        assert "scale: true" in branch[y:y + 900]
+        assert self._axis("forecast", self.ROWS) is True
 
     def test_no_other_chart_type_was_changed(self):
         """Zero-baselining stays the default everywhere else: it stops a small
         change looking dramatic, and only the forecast has a reason to give
         that up."""
-        from pathlib import Path
+        plain = [{"PERIOD": r["PERIOD"], "REVENUE": r["REVENUE"], "COST": r["REVENUE"] / 2}
+                 for r in self.ROWS]
+        for chart_type in ("bar", "line", "area", "waterfall"):
+            assert self._axis(chart_type, plain) is False, chart_type
+        for axis in ("xAxis", "yAxis"):
+            import json
 
-        html = (Path(__file__).resolve().parents[1] / "portal" / "templates"
-                / "portal_chat.html").read_text(encoding="utf-8")
-        # `scale: true` also appears in an emphasis block (symbol scaling on
-        # hover), which is a different option entirely.
-        axis_scales = [
-            i for i in range(len(html))
-            if html.startswith("scale: true", i) and "emphasis" not in html[max(0, i - 200):i]
-        ]
-        assert len(axis_scales) == 1, "exactly one chart type may drop the zero baseline"
+            from tests.test_chart_annotation_language import _build
+
+            scatter = {"rows": plain, "x_key": "PERIOD", "y_keys": ["REVENUE", "COST"],
+                       "chart_type": "scatter"}
+            assert json.loads(_build("portal_chat.html", "en", scatter,
+                                     f"JSON.stringify(opt.{axis}.scale || false)")) is False, axis

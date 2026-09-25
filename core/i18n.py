@@ -4262,6 +4262,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.dropoff": {"en": "Drop-off", "fr": "Abandon"},
     "ui.chart.from_prev": {"en": "{pct} from previous", "fr": "{pct} par rapport au précédent"},
     "ui.chart.not_available": {"en": "N/A", "fr": "s.o."},
+    # The caption under a donut's centre figure.
+    "ui.chart.total": {"en": "Total", "fr": "Total"},
 
     # The artifact pane's own copy.
     "ui.chat.artifact.result": {"en": "Analysis result", "fr": "Résultat d'analyse"},

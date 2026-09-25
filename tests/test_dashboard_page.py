@@ -387,14 +387,17 @@ class TestTheNumberFormatterMatchesTheChatPage:
     CHAT = ROOT / "portal" / "templates" / "portal_chat.html"
 
     def _fmt(self, template: Path, values, lang="en"):
-        # _fmtNum formats through the shell's window.qbNum now, so the harness
-        # has to supply the same window the browser does.
+        # The compact formatter lives in the chart renderer both pages load
+        # (static/js/qb-charts.js); it formats through the shell's
+        # window.qbNum, so the harness supplies the same window the browser
+        # does, and executes the renderer on the page's behalf only if the
+        # page actually loads it.
         from tests.browser_num import preamble
+        from tests.test_chart_annotation_language import _renderer_for
 
-        src = template.read_text(encoding="utf-8")
         harness = (preamble(lang)
-                   + _function(src, "function _fmtNum")
-                   + f"\nJSON.stringify({json.dumps(values)}.map(v => _fmtNum(v)));")
+                   + _renderer_for(template.name)
+                   + f"\nJSON.stringify({json.dumps(values)}.map(v => QBCharts.compactNumber(v)));")
         return json.loads(dukpy.evaljs(harness))
 
     CASES = [1200000000000, 1500000000, 2500000, 3500, 0, 0.004, -0.004, 12.5]

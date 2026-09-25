@@ -910,7 +910,14 @@ class TestChartResizeFixes(unittest.TestCase):
         )
 
     def test_chat_observer_on_chart_element(self):
-        self.assertIn("ro.observe(chartEl)", _src(CHAT_TMPL))
+        # Executed: the shared renderer the page loads observes the chart's own
+        # element, and a box change reaches the chart.
+        import pytest
+        pytest.importorskip("dukpy")
+        from tests.test_chart_annotation_language import mount_chart
+
+        drawn = mount_chart("portal_chat.html")
+        self.assertEqual((drawn["observed"], drawn["resized"]), (["chart-1"], 1))
 
     def test_dashboard_uses_ResizeObserver(self):
         self.assertIn("ResizeObserver", _src(DASH_TMPL))
@@ -919,7 +926,12 @@ class TestChartResizeFixes(unittest.TestCase):
         self.assertIn("requestAnimationFrame", _src(DASH_TMPL))
 
     def test_dashboard_observer_on_node(self):
-        self.assertIn("ro.observe(node)", _src(DASH_TMPL))
+        import pytest
+        pytest.importorskip("dukpy")
+        from tests.test_chart_annotation_language import mount_chart
+
+        drawn = mount_chart("portal_dashboard.html", "{grow: false}")
+        self.assertEqual((drawn["observed"], drawn["resized"]), (["chart-1"], 1))
 
 
 class TestDashboardMaximizeModal(unittest.TestCase):

@@ -220,6 +220,8 @@ class TestTheCatalogueIsWellFormed:
         # ("Moyenne"), which is why only these two are here.
         "ui.chart.box.max",
         "ui.chart.box.min",
+        "ui.chart.total",               # the caption under a donut's centre
+                                        # figure: "Total" in both languages.
         # "vs {period}", the prior-period card's title. French business writing
         # uses "vs" too, and the product already does: chip.compare_prior is
         # "vs période précédente". Inventing a longer French form here would

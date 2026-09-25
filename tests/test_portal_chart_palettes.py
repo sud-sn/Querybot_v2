@@ -73,9 +73,16 @@ def test_the_shared_file_defines_what_the_pages_expect(shared_source):
         block = re.search(rf"{palette}:\s*(\[[^\]]*\])", shared_source)
         assert block, f"{palette} is not a flat array"
         assert "'#" in block.group(1), f"{palette} holds no colours"
-    palettes = shared_source[shared_source.index("window.QB_PALETTES"):
-                             shared_source.index("window.QB_PALETTE_GRADIENTS")]
+    start = shared_source.index("window.QB_PALETTES")
+    palettes = shared_source[start:shared_source.index("\n};", start)]
     assert "dark:" not in palettes, "a dark array came back"
+
+
+def test_marks_are_flat_colour_with_no_gradient_table(shared_source):
+    """Bars were filled with a two-stop gradient per palette. The mark spec is a
+    flat fill -- a gradient is decoration that competes with the data -- so the
+    gradient table went with it, and nothing may bring it back."""
+    assert "QB_PALETTE_GRADIENTS" not in shared_source
 
 
 def test_the_validation_rationale_travelled_with_the_values(shared_source):

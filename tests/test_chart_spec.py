@@ -458,46 +458,37 @@ class ChartAnnotationTests(unittest.TestCase):
         self.assertLess(annotation_pos, payload_call_pos)
         self.assertIn("annotations=chart_annotations,", renderer_src)
 
-    def test_portal_chat_renders_annotations_as_mark_points(self):
-        # Wiring guard: the frontend must read payload.annotations and
-        # anchor the marker at the series' OWN value at that index (not a
-        # derived delta value, which would misplace the marker vertically)
-        # -- both the bar and line series attach markPoint using the same
-        # helper, only on the first/sole series.
-        src = self.CHAT.read_text(encoding="utf-8")
-        self.assertIn("function _buildAnnotationMarkPoints(payload, labels, values)", src)
-        self.assertIn("coord: [idx, values[idx]]", src)
-        self.assertEqual(
-            src.count("markPoint: "), 2,
-            "expected exactly one markPoint wiring each in the line/area and bar series builders",
-        )
-        self.assertIn("silent: true", src)
-        self.assertIn("formatter: `${isDrop ? '↓' : '↑'} ${pctLabel}", src)
-        # Was a source assertion on the exact grid expression, which broke on
-        # a reformat that changed no behaviour. What matters is that an
-        # annotated chart reserves more room above the plot than a plain one,
-        # or the callouts print over the topmost marks.
-        from tests.test_chart_annotation_language import _build
+    def test_both_pages_render_annotations_as_mark_points(self):
+        # The frontend reads payload.annotations and anchors each marker at the
+        # series' OWN value at that period (not a derived delta, which would
+        # misplace it vertically), on the first series only. Executed through
+        # the shared renderer each page loads.
+        import json
+
+        from tests.test_chart_annotation_language import PAGES, _build
 
         base = {"rows": [{"m": f"2026-0{n}", "v": n * 10} for n in range(1, 6)],
                 "x_key": "m", "y_keys": ["v"], "chart_type": "line"}
         annotated = dict(base, annotations={
-            "biggest_period_gain": {"index": 3, "pct": 25.0, "label": "2026-04"}})
-        plain_top = int(_build("portal_chat.html", "en", base, "String(opt.grid.top)"))
-        noted_top = int(_build("portal_chat.html", "en", annotated,
-                               "String(opt.grid.top)"))
-        self.assertGreater(noted_top, plain_top)
-        self.assertIn("backgroundColor: labelBackground", src)
+            "biggest_period_drop": {"period": "2026-03", "pct_change": -12.5},
+            "biggest_period_gain": {"period": "2026-04", "pct_change": 25.0}})
+        for page in PAGES:
+            with self.subTest(page=page):
+                points = json.loads(_build(page, "en", annotated,
+                                           "JSON.stringify(opt.series[0].markPoint)"))
+                self.assertTrue(points["silent"])
+                coords = [point["coord"] for point in points["data"]]
+                self.assertEqual(coords, [[2, 30], [3, 40]])
+                self.assertTrue(points["data"][0]["label"]["formatter"].startswith("\u2193"))
+                # An annotated chart reserves more room above the plot than a
+                # plain one, or the callouts print over the topmost marks.
+                plain_top = int(_build(page, "en", base, "String(opt.grid.top)"))
+                noted_top = int(_build(page, "en", annotated, "String(opt.grid.top)"))
+                self.assertGreater(noted_top, plain_top)
 
-    def test_dashboard_refresh_and_renderer_keep_annotations(self):
+    def test_dashboard_refresh_keeps_annotations(self):
         routes = (self.ROOT / "portal" / "routes.py").read_text(encoding="utf-8")
-        dash = (self.ROOT / "portal" / "templates" / "portal_dashboard.html").read_text(encoding="utf-8")
         self.assertIn("annotations=build_chart_annotations(", routes)
-        self.assertIn("function _buildAnnotationMarkPoints(payload, labels, values)", dash)
-        self.assertEqual(dash.count("markPoint:"), 2)
-        self.assertIn("silent:true", dash)
-        self.assertIn("top:hasAnnotations?(yKeys.length>1?68:58)", dash)
-        self.assertIn("backgroundColor:labelBackground", dash)
 
 
 class ChartRendererTemplateTests(unittest.TestCase):
@@ -508,48 +499,55 @@ class ChartRendererTemplateTests(unittest.TestCase):
     def _read(self, path: Path) -> str:
         return path.read_text(encoding="utf-8")
 
-    def test_chat_renderer_uses_chart_column_formats(self):
-        src = self._read(self.CHAT)
-        self.assertIn("function _chartFormatFor", src)
-        self.assertIn("payload?.column_formats", src)
-        self.assertIn("payload?.column_roles", src)
-        self.assertIn("function _fmtChartValue", src)
-        self.assertIn("valueFmt(p.value, p.seriesName)", src)
+    def _opt(self, page, payload, expression):
+        from tests.test_chart_annotation_language import _build
+        return _build(page, "en", payload, expression)
 
-    def test_dashboard_renderer_uses_chart_column_formats(self):
-        src = self._read(self.DASH)
-        self.assertIn("function _chartFormatFor", src)
-        self.assertIn("payload?.column_formats", src)
-        self.assertIn("payload?.column_roles", src)
-        self.assertIn("function _fmtChartValue", src)
-        self.assertIn("valueFmt(p.value, p.seriesName)", src)
+    def test_both_renderers_use_the_chart_column_formats(self):
+        # A currency column is drawn as money in the tooltip and on the axis,
+        # from the payload's own formats, on both pages.
+        payload = {"rows": [{"REGION": "North", "REV": 1234.5}, {"REGION": "South", "REV": 99.0}],
+                   "x_key": "REGION", "y_keys": ["REV"], "chart_type": "bar",
+                   "column_formats": {"REV": "currency"}}
+        for page in (self.CHAT.name, self.DASH.name):
+            with self.subTest(page=page):
+                tip = self._opt(page, payload, "opt.tooltip.formatter({name:'North', value:1234.5, color:'#000'})")
+                self.assertIn("$1,234.50", tip)
+                self.assertEqual(self._opt(page, payload, "opt.yAxis.axisLabel.formatter(2000)"), "$2K")
 
     def test_pie_renderers_name_category_and_share_in_labels_legends_and_tooltips(self):
-        # The two copy strings this used to pin -- "Share of total:" and
-        # "Unspecified" -- are message ids now, because a pie drawn for a
-        # French reader was labelled in English. Pinning the English words
-        # made this test object to that fix while never once checking that a
-        # slice actually gets named or that a share actually gets shown.
-        #
-        # What it can honestly check from source is that the structural pieces
-        # are still wired up. The behaviour it is named for is proved by
-        # execution in tests/test_chart_annotation_language.py, which builds a
-        # real pie option and calls the label, legend and tooltip formatters
-        # it returns, in both languages.
-        for path in [self.CHAT, self.DASH]:
-            src = self._read(path)
-            self.assertIn("function _chartColumnLabel", src)
-            self.assertIn("ui.chart.share_of_total", src)
-            self.assertIn("ui.chart.unspecified", src)
-            self.assertIn("pieLegend", src)
-            self.assertIn("compactPie", src)
-            self.assertIn("pieShare(p.value)", src)
+        # Executed on the shared renderer: every slice is named and carries its
+        # share, in the label, the legend and the tooltip, for a pie small
+        # enough to label directly and for one that needs the legend instead.
+        import json
+
+        few = {"rows": [{"CH": c, "V": v} for c, v in (("Retail", 60.0), ("Online", 30.0), ("Trade", 10.0))],
+               "x_key": "CH", "y_keys": ["V"], "chart_type": "pie"}
+        many = {"rows": [{"CH": f"C{n}", "V": float(10 - n)} for n in range(8)],
+                "x_key": "CH", "y_keys": ["V"], "chart_type": "pie"}
+        for page in (self.CHAT.name, self.DASH.name):
+            with self.subTest(page=page):
+                label = self._opt(page, few, "opt.series[0].label.formatter({name:'Retail', value:60, percent:60})")
+                self.assertIn("Retail", label)
+                self.assertIn("60.0%", label)
+                tip = self._opt(page, few, "opt.tooltip.formatter({name:'Online', value:30, percent:30})")
+                self.assertIn("Online", tip)
+                self.assertIn("Share of total", tip)
+                self.assertIn("30.0%", tip)
+                self.assertTrue(json.loads(self._opt(page, few, "JSON.stringify(opt.series[0].label.show)")))
+                self.assertFalse(json.loads(self._opt(page, many, "JSON.stringify(opt.series[0].label.show)")))
+                self.assertIn("%", self._opt(page, many, "opt.legend.formatter('C0')"))
 
     def test_mainstream_chart_tooltips_include_dynamic_dimension_label(self):
-        chat = self._read(self.CHAT)
-        dashboard = self._read(self.DASH)
-        self.assertGreaterEqual(chat.count("escHtml(xLabel)"), 4)
-        self.assertGreaterEqual(dashboard.count("_chartEscHtml(xLabel)"), 4)
+        payload = {"rows": [{"WHS_NM": "Halifax", "V": 10.0}, {"WHS_NM": "Calgary", "V": 20.0}],
+                   "x_key": "WHS_NM", "y_keys": ["V"], "chart_type": "bar",
+                   "column_roles": {"WHS_NM": {"label": "Warehouse Name", "role": "dimension"}}}
+        for page in (self.CHAT.name, self.DASH.name):
+            for kind in ("bar", "pie"):
+                with self.subTest(page=page, kind=kind):
+                    tip = self._opt(page, dict(payload, chart_type=kind),
+                                    "opt.tooltip.formatter({name:'Halifax', value:10, percent:33, color:'#000'})")
+                    self.assertIn("Warehouse Name", tip)
 
     def test_chart_type_controls_are_limited_by_renderable_types(self):
         """A reader may only press a type the data can honestly be drawn as.
@@ -559,25 +557,22 @@ class ChartRendererTemplateTests(unittest.TestCase):
         can never fail. Neither of the other two could tell whether the lists
         were USED, let alone how.
 
-        The rule is a named function on both pages now (_offeredChartTypes),
-        and this executes it. Offering a type the result cannot support ships a
+        The rule is one named function in the shared renderer
+        (QBCharts.offeredTypes), and this executes it for each page. Offering a type the result cannot support ships a
         button that draws an empty chart, which is what the invariant is for.
         """
         import json
 
         import pytest
 
-        dukpy = pytest.importorskip("dukpy")
-        from tests.js_lift import function as lift
+        pytest.importorskip("dukpy")
+        from tests.test_chart_annotation_language import _run
 
         every = ["bar", "line", "area", "pie", "donut", "scatter"]
         for path in (self.CHAT, self.DASH):
-            js = lift(self._read(path),
-                      "function _offeredChartTypes(payload, everyType)")
-
-            def offered(payload):
-                return json.loads(dukpy.evaljs(
-                    js + "\nJSON.stringify(_offeredChartTypes("
+            def offered(payload, page=path.name):
+                return json.loads(_run(page, "en",
+                    "JSON.stringify(QBCharts.offeredTypes("
                     f"{json.dumps(payload)}, {json.dumps(every)}))"))
 
             with self.subTest(page=path.name, case="renderable wins"):
@@ -617,46 +612,19 @@ class ChartRendererTemplateTests(unittest.TestCase):
 
         The rule itself is executed above; what cannot be executed here is the
         function that BUILDS the controls, because it writes into the DOM and
-        reads from a live chart instance. Without this, bypassing
-        _offeredChartTypes at the call site passes every test in this file --
-        which is the "the helper is tested and the call site is not" gap, and
-        it survived the first mutation pass.
-
-        So it asserts a CALL, not the presence of a word: the count of call
-        sites per page, and that the inline shape the helper replaced is gone.
-        Both fail for the right reason -- someone routing around the rule --
-        rather than on a reformat.
+        reads from a live chart instance. Without this, bypassing the rule at
+        the call site passes every test in this file -- the "the helper is
+        tested and the call site is not" gap, which survived the first mutation
+        pass. So it asserts a CALL per control strip, and that no page decides
+        the list inline again.
         """
         for path, expected_calls in ((self.CHAT, 1), (self.DASH, 2)):
             src = self._read(path)
             with self.subTest(page=path.name):
-                self.assertEqual(src.count("_offeredChartTypes("),
-                                 expected_calls + 1,   # + the definition
+                self.assertEqual(src.count("QBCharts.offeredTypes("), expected_calls,
                                  f"{path.name} does not route through the rule")
-                # Once, inside the helper. A second occurrence is a call site
-                # deciding for itself again.
-                self.assertEqual(src.count("renderable_types.length"), 1,
-                                 f"{path.name} still decides this inline")
-
-    def test_both_pages_offer_the_same_types_for_one_payload(self):
-        """They are separate copies of this rule, and copies drift."""
-        import json
-
-        import pytest
-
-        dukpy = pytest.importorskip("dukpy")
-        from tests.js_lift import function as lift
-
-        every = ["bar", "line", "area", "pie", "donut", "scatter"]
-        payload = {"renderable_types": ["bar", "line", "table"]}
-        results = []
-        for path in (self.CHAT, self.DASH):
-            js = lift(self._read(path),
-                      "function _offeredChartTypes(payload, everyType)")
-            results.append(json.loads(dukpy.evaljs(
-                js + "\nJSON.stringify(_offeredChartTypes("
-                f"{json.dumps(payload)}, {json.dumps(every)}))")))
-        self.assertEqual(results[0], results[1])
+                self.assertEqual(src.count("renderable_types.length"), 0,
+                                 f"{path.name} decides this inline again")
 
     def test_chart_warnings_render_in_chat_and_dashboard(self):
         for path in [self.CHAT, self.DASH]:
@@ -666,12 +634,20 @@ class ChartRendererTemplateTests(unittest.TestCase):
             self.assertIn("chart-warning", src)
 
     def test_chart_renderers_preserve_missing_values_and_report_library_failure(self):
-        for path in [self.CHAT, self.DASH]:
-            src = self._read(path)
-            self.assertIn("function _chartNumber", src)
-            self.assertIn("return Number.isFinite(n) ? n : null", src)
-            self.assertIn("t('ui.chat.err.chart_library')", src)
-            self.assertNotIn("Number(r?.[k] ?? 0)", src)
+        import json
+
+        from tests.test_chart_annotation_language import _build
+
+        # A missing measure is a gap in the series, never a zero -- zero is a
+        # claim and nobody made it.
+        payload = {"rows": [{"M": "2026-01", "V": 10.0}, {"M": "2026-02", "V": None},
+                            {"M": "2026-03", "V": 30.0}],
+                   "x_key": "M", "y_keys": ["V"], "chart_type": "line"}
+        for path in (self.CHAT, self.DASH):
+            with self.subTest(page=path.name):
+                data = json.loads(_build(path.name, "en", payload, "JSON.stringify(opt.series[0].data)"))
+                self.assertEqual(data, [10.0, None, 30.0])
+                self.assertIn("t('ui.chat.err.chart_library')", self._read(path))
 
 
 class ChartClickToDrillTests(unittest.TestCase):
@@ -951,19 +927,29 @@ class ChartPaletteValidationTests(unittest.TestCase):
                     )
 
     def test_bar_and_line_mark_specs_match_dataviz_skill(self):
-        # Pins the concrete mark-spec fixes made to buildChartOption's
-        # main bar/line/area path: bars capped at 24px (was 50px for a
-        # single series -- more than double the spec's ceiling) with 4px
-        # rounded ends (was 8px), lines at 2px with round caps/joins,
-        # markers >=8px (was 6px, a hover-target regression too), and a
-        # flat ~10% area wash instead of a steep top-to-bottom gradient.
-        src = self.CHAT.read_text(encoding="utf-8")
-        self.assertIn("barMaxWidth: 24", src)
-        self.assertIn("borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]", src)
-        self.assertIn("lineStyle: { width: 2, cap: 'round', join: 'round'", src)
-        self.assertIn("symbolSize: rows.length <= 20 ? 8 : 0", src)
-        self.assertIn("+ '1A', opacity: 1 }", src)
-        self.assertNotIn("barMaxWidth: horizontal ? 20 : (isMulti ? 28 : 50)", src)
+        # The mark specs, read off the option the shared renderer builds: bars
+        # capped at 24px with a 4px rounded data end and a square baseline,
+        # 2px lines with round caps and joins, 8px markers ringed in the
+        # surface colour, and a flat ~10% wash under an area -- no gradient.
+        import json
+
+        from tests.test_chart_annotation_language import _build
+
+        bar = {"rows": [{"C": c, "V": v} for c, v in (("A", 3.0), ("B", 2.0), ("C", 1.0))],
+               "x_key": "C", "y_keys": ["V"], "chart_type": "bar"}
+        drawn = json.loads(_build("portal_chat.html", "en", bar, "JSON.stringify(opt.series[0])"))
+        self.assertEqual(drawn["barMaxWidth"], 24)
+        self.assertEqual(drawn["itemStyle"]["borderRadius"], [4, 4, 0, 0])
+        area = dict(bar, chart_type="area")
+        line = json.loads(_build("portal_chat.html", "en", area, "JSON.stringify(opt.series[0])"))
+        self.assertEqual(line["lineStyle"]["width"], 2)
+        self.assertEqual((line["lineStyle"]["cap"], line["lineStyle"]["join"]), ("round", "round"))
+        self.assertGreaterEqual(line["symbolSize"], 8)
+        self.assertEqual(line["itemStyle"]["borderWidth"], 2)
+        self.assertAlmostEqual(line["areaStyle"]["opacity"], 0.10)
+        whole = _build("portal_chat.html", "en", bar, "JSON.stringify(opt)")
+        self.assertNotIn("colorStops", whole)
+        self.assertNotIn("shadowBlur", whole)
 
     def test_mono_is_reclassified_as_one_hue_ordinal_ramp(self):
         # mono's colors are true near-zero-chroma grayscale -- confirm they

@@ -468,12 +468,24 @@ class TestChartResizeObserver(unittest.TestCase):
         self.assertIn("requestAnimationFrame", tmpl)
 
     def test_chat_ResizeObserver_on_chart_element(self):
-        tmpl = _read(CHAT_TMPL)
-        self.assertIn("ro.observe(chartEl)", tmpl)
+        import pytest
+        pytest.importorskip("dukpy")
+        from tests.test_chart_annotation_language import mount_chart
+
+        drawn = mount_chart("portal_chat.html")
+        self.assertEqual(drawn["observed"], ["chart-1"])
+        self.assertEqual(drawn["resized"], 1)
+        # Drawn as SVG: text and hairlines stay crisp at any zoom.
+        self.assertEqual(drawn["renderer"], "svg")
 
     def test_dashboard_ResizeObserver_on_chart_element(self):
-        tmpl = _read(DASH_TMPL)
-        self.assertIn("ro.observe(node)", tmpl)
+        import pytest
+        pytest.importorskip("dukpy")
+        from tests.test_chart_annotation_language import mount_chart
+
+        drawn = mount_chart("portal_dashboard.html", "{grow: false}")
+        self.assertEqual(drawn["observed"], ["chart-1"])
+        self.assertEqual(drawn["resized"], 1)
 
 
 # ── 7  Dashboard maximize modal ───────────────────────────────────────────────

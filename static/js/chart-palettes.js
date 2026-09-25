@@ -54,15 +54,6 @@ window.QB_PALETTES = {
   mono: ['#a3acb8','#8a95a3','#69748a','#556173','#3d495c','#293344','#151d2b'],
 };
 
-// Gradient pair: [bright top, muted bottom] for each palette primary
-window.QB_PALETTE_GRADIENTS = {
-  default:  ['#4A96E8','#1A68C6'],
-  ocean:    ['#38BDF8','#0369A1'],
-  sunset:   ['#FB923C','#DC2626'],
-  forest:   ['#34D399','#047857'],
-  candy:    ['#A78BFA','#6D28D9'],
-  mono:     ['#64748b','#1e293b'],
-};
 
 /*
  * Status colours for chart annotations (biggest gain / biggest drop markers).
@@ -78,12 +69,13 @@ window.QB_PALETTE_GRADIENTS = {
  * The literals below are fallbacks for a missing token, not the design.
  */
 /*
- * Sequential ramp for the cohort heatmap. Not categorical: the order carries
- * magnitude, so it runs light-to-dark through the brand hue rather than using
- * distinct hues. Kept here with the other chart colours instead of inline in
- * the template, where it was the one array that escaped the shared file.
+ * The sequential ramp: one hue, light to dark, for magnitude -- heatmap cells,
+ * and (from its darker steps) the ordered stages of a funnel. Steps 100..700 of
+ * the validated blue the default palette's first slot is drawn from, so a
+ * magnitude and the series it belongs to read as the same colour family. Not a
+ * categorical set: the order IS the value, and it is never cycled.
  */
-window.QB_HEATMAP_RAMP = ['#EAF3F0', '#3FC0A9', '#0A6154'];
+window.QB_SEQUENTIAL = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
 
 window.QB_CHART_STATUS = function () {
   const root = getComputedStyle(document.documentElement);
@@ -132,40 +124,37 @@ window.QB_CHART_THEME = function () {
   const root = getComputedStyle(document.documentElement);
   const token = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
 
-  const channels = (value) => {
-    const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-    if (hex) {
-      const h = hex[1].length === 3
-        ? hex[1].split('').map((c) => c + c).join('')
-        : hex[1];
-      return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
-    }
-    const nums = (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
-    return nums.length === 3
-      ? (nums.every((n) => n <= 1) ? nums.map((n) => Math.round(n * 255)) : nums)
-      : [0, 0, 0];
-  };
-  const alpha = (value, a) => 'rgba(' + channels(value).join(',') + ',' + a + ')';
-
-  const muted = token('--text-muted', '#5E706A');
-  const border = token('--border', '#D8E2DD');
-  const surface = token('--surface', '#FCFDFC');
-  const text = token('--text', '#101C18');
+  const muted = token('--text-muted', '#5A665F');
+  const line = token('--line', '#B9C6C0');
+  const gridline = token('--line-subtle', '#D4DDD8');
+  const surface = token('--surface', '#F5F8F6');
+  const raised = token('--surface-raised', '#FAFCFB');
+  const strong = token('--text-strong', '#161E1A');
 
   return {
     // Retained and always false: callers that still pass it through to ECharts'
     // theme argument keep working, and removing the key would break them
     // silently rather than loudly.
     dark: false,
+    // Axis and tick labels.
     axis:        muted,
-    // Marks that punch a ring out of the page (pie slice borders, treemap
-    // gaps) need the surface as a concrete value.
+    // The surface is what separates touching marks -- the 2px gap between
+    // bars, slices and heatmap cells, the ring around a marker -- so it is
+    // needed as a concrete value.
     surface,
-    axisLine:    border,
-    // Gridlines are structure, not data: present enough to read a value
-    // against, quiet enough that the series stays the loudest thing.
-    split:       alpha(border, 0.85),
-    tooltipBg:   alpha(surface, 0.97),
-    tooltipText: text,
+    // The baseline a bar grows from.
+    axisLine:    line,
+    // Gridlines are structure, not data: a solid hairline one step off the
+    // surface, quiet enough that the series stays the loudest thing.
+    split:       gridline,
+    tooltipBg:   raised,
+    tooltipText: strong,
+    // Secondary ink: legend entries, data labels, tooltip row names.
+    ink2:        token('--text-secondary', '#45504A'),
+    // The product's delta colours: a variance going up or down, always with a
+    // sign beside it, never colour alone.
+    good:        token('--success', '#337438'),
+    bad:         token('--danger', '#A73832'),
+    font:        token('--font-ui', "'Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif"),
   };
 };

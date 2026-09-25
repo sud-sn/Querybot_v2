@@ -13,14 +13,15 @@ searched or inspected. The same goes for "23.4%" on a French page: the reader
 reads the dot as nothing at all and the comma, when it appears elsewhere, as
 the decimal point.
 
-Both pages build these charts from their own copy of the code, so every
-assertion here runs against BOTH portal_chat.html and portal_dashboard.html.
-The two drifted before -- the chat page translated the annotation's tooltip
-name and left the on-canvas label English, which is exactly the half-done state
-reading the diff would have called finished.
+Both pages draw their charts with one renderer, static/js/qb-charts.js. They
+used to carry a copy each, and the copies drifted -- the chat page translated
+the annotation's tooltip name and left the on-canvas label English, which is
+exactly the half-done state reading the diff would have called finished. So
+every assertion here still runs once per page: each page must load the shared
+renderer, and what that renderer draws is what the assertion is about.
 
-Nothing here asserts on source text: the real functions are lifted out of the
-real templates and EXECUTED, and the assertions are on what they return.
+Nothing here asserts on source text: the real renderer is EXECUTED, and the
+assertions are on what it returns.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ dukpy = pytest.importorskip(
 ROOT = Path(__file__).resolve().parents[1]
 SHELL = (ROOT / "portal" / "templates" / "portal_base.html").read_text(encoding="utf-8")
 PAGES = ("portal_chat.html", "portal_dashboard.html")
+RENDERER = ROOT / "static" / "js" / "qb-charts.js"
 
 # The theme is a DOM boundary (getComputedStyle on the document root), not the
 # code under test. Stubbed with the shape the real one returns; colours are
@@ -60,6 +62,18 @@ def _page(name: str) -> str:
     return (ROOT / "portal" / "templates" / name).read_text(encoding="utf-8")
 
 
+def _renderer_for(page: str) -> str:
+    """The chart renderer `page` draws with: the one shared file, which the
+    page must actually load -- a page that stopped loading it would draw
+    nothing, and executing the file on its behalf would hide that."""
+    assert 'src="/static/js/qb-charts.js' in _page(page), (
+        f"{page} does not load the shared chart renderer")
+    # In a browser `window` IS the global object, so the renderer's
+    # window.QBCharts is reachable as QBCharts; here `window` is a plain
+    # object, so the name is bound explicitly.
+    return RENDERER.read_text(encoding="utf-8") + "\nvar QBCharts = window.QBCharts;\n"
+
+
 def _shell_preamble(lang: str) -> str:
     """The real shell helpers, in scope, for one language."""
     return f"""
@@ -70,18 +84,43 @@ window.QB_NUM = {json.dumps(i18n.number_format(lang))};
 {lift(SHELL, "window.qbT = function (id, vars)")}
 {lift(SHELL, "window.qbNum = function (value, options)")}
 {lift(SHELL, "window.qbPct = function (value, digits)")}
+{lift(SHELL, "window.qbMonth = function (month, short)")}
 var I18N = window.QB_I18N;
 """
 
 
-def _run(page: str, lang: str, functions: tuple[str, ...], expression: str):
-    src = _page(page)
-    lifted = "\n".join(lift(src, sig) for sig in functions)
+def mount_chart(page: str, options: str = "undefined") -> dict:
+    """Mount a chart through the renderer `page` loads, with ECharts and
+    ResizeObserver stubbed at the boundary. Reports which elements were
+    observed, whether a box change reached the chart, and the renderer."""
+    script = """
+var resized = 0, observed = [];
+window.echarts = {
+  getInstanceByDom: function () { return null; },
+  init: function (el, theme, opts) {
+    return {renderer: opts.renderer, setOption: function () {},
+            resize: function () { resized += 1; }, dispose: function () {}};
+  }
+};
+window.ResizeObserver = function (callback) {
+  this.observe = function (el) { observed.push(el.id); callback(); };
+  this.disconnect = function () {};
+};
+var el = {id: 'chart-1', clientHeight: 320, style: {}};
+var chart = QBCharts.render(el, {rows: [{c: 'A', v: 1}, {c: 'B', v: 2}], x_key: 'c',
+                                 y_keys: ['v'], chart_type: 'bar'}, OPTIONS);
+JSON.stringify({observed: observed, resized: resized, renderer: chart.renderer});
+""".replace("OPTIONS", options)
+    return json.loads(_run(page, "en", script))
+
+
+def _run(page: str, lang: str, expression: str):
+    """Evaluate `expression` with the page's chart renderer loaded."""
     return dukpy.evaljs(
         _shell_preamble(lang)
-        + lift(src, "function t(id, vars)")
         + _STATUS_STUB
-        + lifted
+        + _THEME_STUB
+        + _renderer_for(page)
         + "\n"
         + expression
     )
@@ -97,15 +136,13 @@ ANNOTATED = {
 
 def _mark_points(page: str, lang: str):
     expression = (
-        "JSON.stringify(_buildAnnotationMarkPoints("
+        "JSON.stringify(QBCharts.annotationMarkPoints("
         f"{json.dumps(ANNOTATED)}, ['Jan','Feb','Mar'], [10,20,30]"
         ").map(function (p) {"
         "  return {name: p.name, formatter: p.label.formatter, value: p.value};"
         "}))"
     )
-    return json.loads(
-        _run(page, lang, ("function _buildAnnotationMarkPoints(payload",), expression)
-    )
+    return json.loads(_run(page, lang, expression))
 
 
 class TestTheAnnotationLabelIsDrawnInTheReadersLanguage:
@@ -158,8 +195,9 @@ class TestTheAnnotationLabelIsDrawnInTheReadersLanguage:
 
     @pytest.mark.parametrize("page", PAGES)
     def test_both_pages_draw_the_same_label(self, page):
-        # They are separate copies of this code. A fix applied to one and not
-        # the other is the failure mode; comparing them is the check.
+        # They were separate copies of this code, and a fix applied to one and
+        # not the other was the failure mode. One renderer now; the comparison
+        # stays as the guard that it remains one.
         assert _mark_points("portal_chat.html", "fr") == \
                _mark_points("portal_dashboard.html", "fr")
         assert _mark_points("portal_chat.html", "en") == \
@@ -167,11 +205,9 @@ class TestTheAnnotationLabelIsDrawnInTheReadersLanguage:
 
     @pytest.mark.parametrize("page", PAGES)
     def test_an_unannotated_payload_draws_nothing(self, page):
-        expression = ("JSON.stringify(_buildAnnotationMarkPoints("
+        expression = ("JSON.stringify(QBCharts.annotationMarkPoints("
                       "{}, ['Jan'], [1]))")
-        assert json.loads(_run(
-            page, "fr", ("function _buildAnnotationMarkPoints(payload",), expression
-        )) == []
+        assert json.loads(_run(page, "fr", expression)) == []
 
     @pytest.mark.parametrize("page", PAGES)
     def test_a_period_the_chart_does_not_plot_is_skipped(self, page):
@@ -180,11 +216,9 @@ class TestTheAnnotationLabelIsDrawnInTheReadersLanguage:
         # wrong bar.
         payload = {"annotations": {"biggest_period_drop":
                                    {"period": "Dec", "pct_change": -5.0}}}
-        expression = ("JSON.stringify(_buildAnnotationMarkPoints("
+        expression = ("JSON.stringify(QBCharts.annotationMarkPoints("
                       f"{json.dumps(payload)}, ['Jan','Feb'], [1,2]))")
-        assert json.loads(_run(
-            page, "fr", ("function _buildAnnotationMarkPoints(payload",), expression
-        )) == []
+        assert json.loads(_run(page, "fr", expression)) == []
 
 
 class TestTheColumnLabelFallbackIsTranslated:
@@ -192,11 +226,9 @@ class TestTheColumnLabelFallbackIsTranslated:
 
     def _label(self, page, lang, col, fallback=None):
         arg = "null" if fallback is None else json.dumps(fallback)
-        expression = (f"_chartColumnLabel({{}}, {json.dumps(col)}, "
+        expression = (f"QBCharts.columnLabel({{}}, {json.dumps(col)}, "
                       f"{arg} === null ? undefined : {arg})")
-        return _run(page, lang,
-                    ("function _chartNormKey(", "function _chartColumnLabel(payload"),
-                    expression)
+        return _run(page, lang, expression)
 
     @pytest.mark.parametrize("page", PAGES)
     def test_a_missing_column_falls_back_to_the_french_word(self, page):
@@ -289,6 +321,8 @@ class TestTheCatalogueCoversTheChartWords:
         # is why only these two are here.
         "ui.chart.box.max",
         "ui.chart.box.min",
+        # The caption under a donut's centre figure: "Total" in both.
+        "ui.chart.total",
     }
 
     def test_every_chart_id_has_a_distinct_french_form(self):
@@ -312,11 +346,11 @@ class TestTheCatalogueCoversTheChartWords:
         # itself onto the chart -- "ui.chart.drop" drawn on a canvas.
         import re
         asked = set()
-        for page in PAGES:
-            asked.update(re.findall(r"t\(\s*'(ui\.chart\.[a-z_.]+)'", _page(page)))
-            asked.update(re.findall(r"'(ui\.chart\.[a-z_.]+)'\s*:", _page(page)))
-            asked.update(re.findall(r"\?\s*'(ui\.chart\.[a-z_.]+)'", _page(page)))
-            asked.update(re.findall(r":\s*'(ui\.chart\.[a-z_.]+)'", _page(page)))
+        for source in [_page(page) for page in PAGES] + [RENDERER.read_text(encoding="utf-8")]:
+            asked.update(re.findall(r"t\(\s*'(ui\.chart\.[a-z_.]+)'", source))
+            asked.update(re.findall(r"'(ui\.chart\.[a-z_.]+)'\s*:", source))
+            asked.update(re.findall(r"\?\s*'(ui\.chart\.[a-z_.]+)'", source))
+            asked.update(re.findall(r":\s*'(ui\.chart\.[a-z_.]+)'", source))
         assert asked, "no chart ids are asked for by either page"
         missing = sorted(asked - set(i18n.MESSAGES))
         assert not missing, missing
@@ -333,15 +367,15 @@ class TestTheCatalogueCoversTheChartWords:
 # that runs instead of the code that is easy to reach, and it caught a fallback
 # that a scan for English words would have had to name a literal to find.
 
-_ECHARTS_STUB = """
-var echarts = { graphic: { LinearGradient: function (x, y, x2, y2, stops) {
-  this.type = 'linear'; this.colorStops = stops;
-} } };
+# The theme is a DOM boundary (getComputedStyle on the document root), not the
+# code under test. Stubbed with the keys the real one returns.
+_THEME_STUB = """
 window.QB_CHART_THEME = function () {
   return {axis:'#888', split:'#eee', axisLine:'#ccc', tooltipBg:'#fff',
-          tooltipText:'#000', surface:'#fff'};
+          tooltipText:'#000', surface:'#fff', ink2:'#444', good:'#070',
+          bad:'#a00', font:'sans-serif'};
 };
-window.QB_HEATMAP_RAMP = ['#fff', '#000'];
+window.QB_SEQUENTIAL = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
 """
 
 _PALETTES_JS = (ROOT / "static" / "js" / "chart-palettes.js").read_text(encoding="utf-8")
@@ -354,67 +388,16 @@ def _palette_literal(name: str) -> str:
     return block[block.index("{"):]
 
 
-# The functions each page's option builder closes over, in dependency order.
-_BUILDER_DEPS = {
-    "portal_chat.html": (
-        "function escHtml(str)",
-        "function _qbMoney(body, symbol)",
-        "function _fmtNum(v)",
-        "function _chartNormKey(v)",
-        "function _chartFormatFor(payload, col)",
-        "function _chartColumnLabel(payload, col, fallback)",
-        "function _fmtChartValue(v, fmt, compact",
-        "function _chartNumber(v)",
-        "function _buildAnnotationMarkPoints(payload",
-        "function buildChartOption(payload)",
-    ),
-    "portal_dashboard.html": (
-        # Two of these were missing, and it was invisible: every payload the
-        # file happened to build for the dashboard took the pie or funnel
-        # branch, which does not reach them. A bar or a line raised
-        # "ReferenceError: isTemporalLabel is not defined" -- so the promise in
-        # this module's docstring, that every assertion runs against BOTH
-        # pages, held only for the branches nobody had written a cartesian
-        # test for. TestBothPagesCanDrawACartesianChart below is the guard.
-        "function isTemporalLabel(v)",
-        "function truncateLabel(l, n=16)",
-        "function escHtmlDash(value)",
-        "function _fmtNum(v)",
-        "function _qbMoney(body, symbol)",
-        "function _chartNormKey(v)",
-        "function _chartFormatFor(payload, col)",
-        "function _chartColumnLabel(payload, col, fallback)",
-        "function _chartEscHtml(value)",
-        "function _fmtChartValue(v, fmt, compact",
-        "function _chartNumber(v)",
-        "function renderChartWarnings(payload)",
-        "function _buildAnnotationMarkPoints(payload",
-        "function buildDashboardOption(payload)",
-    ),
-}
-_BUILDER_ENTRY = {
-    "portal_chat.html": "buildChartOption",
-    "portal_dashboard.html": "buildDashboardOption",
-}
-
-
 def _build(page: str, lang: str, payload: dict, expression: str):
-    """Build a real chart option for `payload`, then evaluate `expression`."""
-    src = _page(page)
+    """Build the real chart option `page` would draw for `payload`, then
+    evaluate `expression` against it (bound as `opt`)."""
     body = "\n".join([
         _shell_preamble(lang),
-        lift(src, "function t(id, vars)"),
         _STATUS_STUB,
-        _ECHARTS_STUB,
+        _THEME_STUB,
         "window.QB_PALETTES = " + _palette_literal("QB_PALETTES") + ";",
-        "window.QB_PALETTE_GRADIENTS = "
-        + _palette_literal("QB_PALETTE_GRADIENTS") + ";",
-        "var _PALETTES = window.QB_PALETTES;",
-        "var _PAL_GRAD = window.QB_PALETTE_GRADIENTS;",
-        # The dashboard binds the theme accessor to a module-level name.
-        "var chartThemeTokens = window.QB_CHART_THEME;",
-        *[lift(src, sig) for sig in _BUILDER_DEPS[page]],
-        f"var opt = {_BUILDER_ENTRY[page]}({json.dumps(payload)});",
+        _renderer_for(page),
+        f"var opt = QBCharts.buildOption({json.dumps(payload)});",
         expression,
     ])
     return dukpy.evaljs(body)
@@ -434,19 +417,18 @@ BAR = {"rows": [{"WHS_NM": "Halifax", "REVENUE_AMT": 10.0},
 class TestBothPagesCanDrawACartesianChartAtAll:
     """The guard for this module's own promise.
 
-    Its docstring says every assertion here runs against BOTH pages. That held
-    only for the branches the fixtures happened to reach: every payload in the
-    file was a pie, a funnel or an annotation set, and none of those touches
-    the dashboard's cartesian code. Two helpers it needs were missing from
-    _BUILDER_DEPS, so a bar or a line raised
+    Its docstring says every assertion here runs against BOTH pages. When the
+    pages carried their own builders that held only for the branches the
+    fixtures happened to reach: two helpers the dashboard's cartesian code
+    needed were missing from the harness, so a bar or a line raised
 
         ReferenceError: isTemporalLabel is not defined
 
     -- and nothing failed, because nothing asked. A harness gap does not
     announce itself; it just quietly narrows what the suite covers.
 
-    These two tests are cheap and they fail loudly the moment either page's
-    cartesian branch stops being executable here.
+    These two tests are cheap and they fail loudly the moment either page
+    stops drawing a cartesian chart through the shared renderer.
     """
 
     @pytest.mark.parametrize("page", PAGES)
@@ -593,7 +575,8 @@ class TestNoChartLabelGoesBackToEnglishNotation:
     def test_no_percentage_is_written_with_tofixed(self, page):
         offenders = [
             f"{n}: {line.strip()[:90]}"
-            for n, line in enumerate(_page(page).splitlines(), 1)
+            for n, line in enumerate(
+                (_page(page) + "\n" + _renderer_for(page)).splitlines(), 1)
             if "toFixed" in line and "%" in line
         ]
         assert not offenders, (
@@ -651,7 +634,9 @@ class TestTheCaptionAndTheLegendDoNotOverlap:
         )
 
     def test_the_caption_stays_at_the_top_when_there_is_no_legend(self):
-        assert _build("portal_chat.html", "en", _wide(), "String(opt.title.top)") == "2"
+        # At the top edge, not pushed down to make room for a legend that is
+        # not there. Pinned to a pixel before, which only restated one layout.
+        assert int(_build("portal_chat.html", "en", _wide(), "String(opt.title.top)")) <= 4
 
     def test_the_plot_area_clears_both(self):
         # The grid has to start below whatever is stacked above it, or the

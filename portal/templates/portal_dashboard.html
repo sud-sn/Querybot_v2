@@ -5,8 +5,9 @@
 {{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
 {% endblock %}
 {% block head %}
-<script src="/static/vendor/echarts.min.js"></script>
-<script src="/static/js/chart-palettes.js?v=20260819-1"></script>
+<script src="/static/vendor/echarts.min.js?v=6.1.0"></script>
+<script src="/static/js/chart-palettes.js?v=20260925-1"></script>
+<script src="/static/js/qb-charts.js?v=20260925-1"></script>
 <link rel="stylesheet" href="/static/vendor/gridstack.min.css">
 <script src="/static/vendor/gridstack-all.js"></script>
 <link rel="stylesheet" href="/static/css/dashboard.css?v=20260905-1">
@@ -275,8 +276,9 @@
 
 <script>
 // The message catalogue for this user's language. Same shape and same t() as
-// portal_chat.html, so the two pages resolve an id identically -- _fmtNum and
-// the stage labels have both already drifted by each page keeping its own copy.
+// portal_chat.html, so the two pages resolve an id identically -- the chart
+// number formatter and the stage labels had both drifted by each page keeping
+// its own copy.
 // Aliased from the one copy portal_base.html injects for the whole
 // document -- three copies of the same catalogue in one page is exactly
 // the drift the comment above warns about, in payload form.
@@ -336,96 +338,13 @@ function sortDashboardTable(button, columnIndex){
 // Palettes live in /static/js/chart-palettes.js so this page and the
 // chat cannot drift apart.
 const _PALETTES = window.QB_PALETTES;
-const _PAL_GRAD = window.QB_PALETTE_GRADIENTS;
 
-// Kept byte-identical to portal_chat.html's copy. The two had drifted: this one
-// still rendered Infinity as "InfinityB", 1.2e12 as "1200B" (which reads as a
-// mistake on an axis) and every rate below 0.01 as "0", so an axis of
-// conversion fractions drew as a column of zeros. Same payload, same product,
-// two different numbers depending on which page you were looking at.
-function _fmtNum(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return String(v ?? '');
-  const abs = Math.abs(n);
-  // Was `x.toFixed(1)` plus a hardcoded 'T'/'B'/'M'/'K', which bypassed
-  // window.qbNum entirely and carried two defects on a French page.
-  //
-  // The decimal mark: toFixed writes 1.2 where French writes 1,2.
-  //
-  // The suffix, and this one is not cosmetic: 'B' is a billion in English and
-  // a THOUSAND TIMES more than that in the French long scale, where the
-  // abbreviation is 'Md'. core/i18n.py has carried ui.num.compact.* with that
-  // exact comment since the server's _compact_number was fixed; this copy, and
-  // the identical one on the other page, never asked for it. A French reader
-  // saw "1.2B" for 1.2 billion, which reads as 1.2 x 10^12.
-  const tier = (unit, id) => window.qbNum(n / unit, {max: 1}) + t('ui.num.compact.' + id);
-  if (abs >= 1e12) return tier(1e12, 'trillion');
-  if (abs >= 1e9)  return tier(1e9,  'billion');
-  if (abs >= 1e6)  return tier(1e6,  'million');
-  if (abs >= 1e3)  return tier(1e3,  'thousand');
-  if (n === 0) return '0';
-  // toString() writes an English decimal point whatever the page's language,
-  // so a French axis of conversion rates read "0.004" beside a "1,2 M" from
-  // the tier above it. The digits are chosen by toPrecision, then written by
-  // qbNum, which knows the locale.
-  if (abs < 0.01) {
-    const kept = Number(n.toPrecision(2));
-    const places = (String(kept).split('.')[1] || '').length;
-    return window.qbNum(kept, {min: places, max: places, grouping: false});
-  }
-  return window.qbNum(n, {max: 2});
-}
-// Mirrors portal_chat.html: French writes the symbol after the amount with a
-// no-break space, English in front with nothing between. Both read
-// window.QB_NUM, which portal_base.html fills from core/i18n.py.
-function _qbMoney(body, symbol) {
-  const sym = String(symbol || '$').trim();
-  return window.QB_NUM.currency_after
-    ? body + window.QB_NUM.currency_gap + sym
-    : sym + body;
-}
-function _chartNormKey(v){ return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
-function _chartFormatFor(payload, col){
-  const key = _chartNormKey(col);
-  const explicit = payload?.column_formats || {};
-  for (const [raw, fmt] of Object.entries(explicit)) {
-    if (_chartNormKey(raw) === key) return String(fmt || 'number').toLowerCase();
-  }
-  const roles = payload?.column_roles || payload?.chart_spec?.column_roles || {};
-  for (const [raw, meta] of Object.entries(roles)) {
-    if (_chartNormKey(raw) === key && meta?.format) return String(meta.format).toLowerCase();
-  }
-  if (/percent|percentage|pct|rate|ratio|share/i.test(String(col))) return 'percentage';
-  if (/revenue|sales|amount|amt|charge|cost|cogs|price|profit|salary|usd|balance/i.test(String(col))) return 'currency';
-  return 'number';
-}
-// `fallback` is display copy and is returned verbatim; only a real column
-// name goes through the identifier prettifier. See the chat page's copy.
-function _chartColumnLabel(payload, col, fallback){
-  const key = _chartNormKey(col);
-  const roles = payload?.column_roles || payload?.chart_spec?.column_roles || {};
-  for (const [raw, meta] of Object.entries(roles)) {
-    if (_chartNormKey(raw) === key && meta?.label) return String(meta.label);
-  }
-  if (!col) return fallback == null ? t('ui.chart.value') : String(fallback);
-  return String(col).replace(/[_-]+/g,' ').replace(/\b\w/g,ch=>ch.toUpperCase());
-}
-function _chartEscHtml(value){
-  return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-}
-function _fmtChartValue(v, fmt, compact=false){
-  if (v === null || v === undefined || v === '') return '—';
-  const n = Number(v);
-  if (isNaN(n)) return String(v ?? '');
-  if (fmt === 'currency') return _qbMoney(compact ? _fmtNum(n) : window.qbNum(n, {min:2, max:2}), '$');
-  if (fmt === 'percentage') return window.qbNum(n, {max:2}) + window.QB_NUM.percent_gap + '%';
-  return compact ? _fmtNum(n) : window.qbNum(n, {max:4});
-}
-function _chartNumber(v){
-  if (v === null || v === undefined || v === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
+// Every chart on this page is drawn by /static/js/qb-charts.js (window.QBCharts),
+// the renderer the chat uses too. This page used to carry its own copy of the
+// option builder, "kept byte-identical" to the chat's by a comment, and the two
+// drifted: this one never learned the heatmap, the waterfall or the forecast
+// band, drew gradient bars with 10px rounded ends, and guessed whether an axis
+// was time from a label regex.
 function renderChartWarnings(payload){
   const warnings = Array.isArray(payload?.chart_warnings) ? payload.chart_warnings : [];
   if (!warnings.length) return '';
@@ -433,231 +352,6 @@ function renderChartWarnings(payload){
     `<div class="chart-warning">${String(w ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}</div>`).join('')}</div>`;
 }
 
-
-function _buildAnnotationMarkPoints(payload, labels, values){
-  const annotations = payload?.annotations;
-  if (!annotations) return [];
-  const points = [];
-  const add = (entry, kind) => {
-    if (!entry) return;
-    const idx = labels.indexOf(String(entry.period ?? ''));
-    if (idx < 0 || values[idx] == null) return;
-    const isDrop = kind === 'drop';
-    const status = window.QB_CHART_STATUS();
-    const statusColor = status.color[kind];
-    const labelColor = status.label[kind];
-    const labelBackground = status.background[kind];
-    const labelBorder = status.border[kind];
-    const pct = Number(entry.pct_change);
-    const pctLabel = Number.isFinite(pct) ? `${pct > 0 ? '+' : ''}${window.qbPct(pct, 1)}` : '';
-    points.push({
-      name:t(isDrop?'ui.chat.chart.biggest_drop':'ui.chat.chart.biggest_gain'),
-      coord:[idx,values[idx]], value:pctLabel,
-      symbol:'circle', symbolSize:15,
-      symbolOffset:[0,isDrop?3:-3],
-      itemStyle:{
-        color:statusColor,
-        borderColor:status.ring,
-        borderWidth:3,
-        shadowBlur:6,
-        shadowColor:status.shadow[kind],
-      },
-      emphasis:{scale:1.12},
-      label:{
-        show:true, position:isDrop?'bottom':'top', distance:9,
-        formatter:`${isDrop?'↓':'↑'} ${pctLabel} ${t(isDrop?'ui.chart.drop':'ui.chart.gain')}`,
-        fontSize:10, fontWeight:800, lineHeight:16,
-        color:labelColor, backgroundColor:labelBackground,
-        borderColor:labelBorder, borderWidth:1, borderRadius:6, padding:[4,7],
-      },
-    });
-  };
-  add(annotations.biggest_period_drop,'drop');
-  add(annotations.biggest_period_gain,'gain');
-  return points;
-}
-
-// Shared with the chat page so both draw their charts in the same neutrals.
-const chartThemeTokens = window.QB_CHART_THEME;
-
-function isTemporalLabel(v){
-  return /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|q[1-4]|week|month|year|date|day|\d{4}[-/]\d{1,2})/.test(String(v||'').toLowerCase());
-}
-function truncateLabel(l, n=16){ const s=String(l??''); return s.length>n?s.slice(0,n-1)+'…':s; }
-
-function _offeredChartTypes(payload, everyType) {
-  // Which type buttons a reader may press. renderable_types is what the spec
-  // says this RESULT can honestly be drawn as; allowed_types is the older,
-  // wider list; and with neither we fall back to offering everything.
-  //
-  // Named rather than left inline because it is an invariant worth testing:
-  // offering a type the data cannot support ships a button that draws an empty
-  // chart. The test for it used to be assertIn("filter", <the page source>),
-  // which is true of any page containing the word.
-  const p = payload || {};
-  const allowed = Array.isArray(p.renderable_types) && p.renderable_types.length
-    ? p.renderable_types
-    : (Array.isArray(p.allowed_types) ? p.allowed_types : everyType);
-  return everyType.filter(kind => allowed.includes(kind));
-}
-
-function buildDashboardOption(payload){
-  const rows     = payload.rows || [];
-  const xKey     = payload.x_key;
-  const yKeys    = payload.y_keys || [];
-  const yKey     = yKeys[0];
-  const palName  = payload.color_palette || 'default';
-  const theme    = chartThemeTokens();
-  const palette  = _PALETTES[palName] || _PALETTES.default;
-  const colors   = palette;
-  const gradPair = _PAL_GRAD[palName]  || _PAL_GRAD.default;
-  const reqType  = (payload.chart_type || 'bar').toLowerCase();
-  const formatFor = col => _chartFormatFor(payload, col);
-  const valueFmt  = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
-  const xLabel     = _chartColumnLabel(payload, xKey, t('ui.chart.category'));
-  const yLabel     = _chartColumnLabel(payload, yKey, t('ui.chart.value'));
-
-  const ttBase = {
-    backgroundColor: theme.tooltipBg, borderColor: theme.axisLine,
-    borderRadius: 8, padding:[8,12],
-    textStyle: { color: theme.tooltipText, fontSize:12 },
-    extraCssText: 'box-shadow:0 4px 24px rgba(0,0,0,.14)',
-  };
-
-  // ── Scatter ────────────────────────────────────────────────────────────────
-  if (reqType === 'scatter' && yKeys.length >= 2) {
-    return {
-      color: colors,
-      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${_chartEscHtml(xLabel)}: ${_chartEscHtml(String(p.value?.[2]??t('ui.chart.unspecified')))}</strong><br/>${_chartEscHtml(_chartColumnLabel(payload,yKeys[0]))}: <strong>${valueFmt(p.value?.[0], yKeys[0])}</strong><br/>${_chartEscHtml(_chartColumnLabel(payload,yKeys[1]))}: <strong>${valueFmt(p.value?.[1], yKeys[1])}</strong>` },
-      xAxis: { type:'value', name:yKeys[0], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKeys[0],true)}, splitLine:{lineStyle:{color:theme.split}} },
-      yAxis: { type:'value', name:yKeys[1], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKeys[1],true)}, splitLine:{lineStyle:{color:theme.split}} },
-      series: [{ type:'scatter', symbolSize:12, itemStyle:{color:colors[0],opacity:.85}, data:rows.map(r=>[r[yKeys[0]],r[yKeys[1]],r[xKey]]) }],
-    };
-  }
-
-  // ── Pie / Donut ────────────────────────────────────────────────────────────
-  if (reqType === 'pie' || reqType === 'donut') {
-    // One slice per category. Built with rows.map, a result grouped by two
-    // things -- a warehouse and a month -- drew the same category several
-    // times, and the legend's name-keyed Map then reported whichever row came
-    // LAST as that category's whole share. On an uneven grid that does not
-    // merely understate a leader, it can invert the ranking: Halifax at
-    // 100/200/600 and Calgary at 400/300/100 make Halifax the true leader at
-    // 900 to 800, while the legend reads Halifax 33% and Calgary 6%.
-    //
-    // This is the pie fix that the chat page received as C4 and this page did
-    // not -- the same defect, in the copy of the renderer nobody looked at.
-    // The rule is deliberately identical to portal_chat.html's, down to the
-    // summing: whether the measure may be summed at all decides whether a PIE
-    // is the right chart, and that choice is made upstream in
-    // core/chart_spec.py. Drawing one category twice is wrong either way, and
-    // this is the renderer.
-    const pieAgg = new Map();
-    rows.forEach(r => {
-      const name = String((xKey && r?.[xKey]) ?? t('ui.chart.unspecified'));
-      pieAgg.set(name, (pieAgg.get(name) || 0)
-        + (_chartNumber(yKey ? r?.[yKey] : null) || 0));
-    });
-    const pieData = Array.from(pieAgg, ([name, value]) => ({ name, value }));
-    const pieTotal = pieData.reduce((sum,item)=>sum+(Number(item.value)||0),0);
-    const pieShare = value => pieTotal>0 ? ((Number(value)||0)/pieTotal*100) : 0;
-    const pieLegend = new Map(pieData.map(item=>[item.name,pieShare(item.value)]));
-    const compactPie = window.innerWidth<=900;
-    const innerR  = reqType === 'donut' ? '40%' : '0%';
-    return {
-      color: colors,
-      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${_chartEscHtml(xLabel)}: ${_chartEscHtml(p.name||t('ui.chart.unspecified'))}</strong><br/>${_chartEscHtml(yLabel)}: <strong>${valueFmt(p.value, yKey)}</strong><br/><span style="opacity:.7">${_chartEscHtml(t('ui.chart.share_of_total'))}: ${window.qbPct(Number(p.percent??pieShare(p.value)), 1)}</span>` },
-      legend: { orient:compactPie?'horizontal':'vertical', ...(compactPie?{left:'center',bottom:0}:{right:8,top:'middle'}), textStyle:{color:theme.axis,fontSize:11}, formatter:n=>`${n.length>16?n.slice(0,15)+'…':n} · ${window.qbPct(pieLegend.get(n)||0, 1)}` },
-      series: [{ type:'pie', radius:[innerR,compactPie?'56%':'68%'], center:compactPie?['50%','40%']:['40%','50%'], data:pieData,
-        label:{show:pieData.length<=8,formatter:p=>`${String(p.name||t('ui.chart.unspecified')).slice(0,16)}\n${window.qbPct(Number(p.percent??pieShare(p.value)), 1)}`,color:theme.axis,fontSize:11},
-        itemStyle:{borderRadius:5,borderColor:theme.surface,borderWidth:2},
-        emphasis:{itemStyle:{shadowBlur:12,shadowColor:'rgba(0,0,0,.18)'},scale:true,scaleSize:5},
-      }],
-    };
-  }
-
-  // ── Cartesian (bar / line / area) ──────────────────────────────────────────
-  const labels    = rows.map(r => String(r[xKey]??''));
-  const values    = rows.map(r => _chartNumber(r[yKey]));
-  const maxLLen   = labels.reduce((m,s)=>Math.max(m,s.length),0);
-  const temporal  = labels.some(isTemporalLabel);
-  const horizontal= reqType==='bar' && (maxLLen>=14 || (labels.length>7 && !temporal));
-  const rotation  = (!horizontal && maxLLen>10) ? 24 : 0;
-  const interval  = horizontal ? 0 : (labels.length>10 ? Math.ceil(labels.length/6)-1 : 0);
-  const shortLbl  = labels.map(l=>truncateLabel(l, horizontal?22:16));
-  const isLine    = reqType==='line' || reqType==='area' || (reqType!=='bar' && temporal);
-  const isArea    = reqType==='area';
-
-  const gradColor = new echarts.graphic.LinearGradient(
-    ...(horizontal?[1,0,0,0]:[0,0,0,1]),
-    [{offset:0,color:gradPair[0]},{offset:1,color:gradPair[1]}]
-  );
-  const areaColor = new echarts.graphic.LinearGradient(0,0,0,1,[
-    {offset:0,color:colors[0]+(isArea?'50':'22')},
-    {offset:1,color:colors[0]+'05'},
-  ]);
-  const multiTT = (params) => {
-    const arr = Array.isArray(params)?params:[params];
-    const lbl = arr[0]?.axisValueLabel||arr[0]?.name||'';
-    return `<div style="font-weight:700;margin-bottom:4px">${_chartEscHtml(xLabel)}: ${_chartEscHtml(lbl)}</div>`
-      + arr.map(p=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>${_chartEscHtml(_chartColumnLabel(payload,p.seriesName))}: <strong>${valueFmt(p.value, p.seriesName)}</strong>`).join('<br>');
-  };
-  const singleTT = (params) => {
-    const p = Array.isArray(params) ? params[0] : params;
-    const lbl = p?.axisValueLabel || p?.name || '';
-    return `<div style="font-weight:700;margin-bottom:4px">${_chartEscHtml(xLabel)}: ${_chartEscHtml(lbl)}</div>${_chartEscHtml(yLabel)}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
-  };
-  const hasAnnotations = Boolean(
-    payload?.annotations?.biggest_period_drop || payload?.annotations?.biggest_period_gain
-  );
-
-  return {
-    color: colors,
-    grid: horizontal
-      ? {left:56,right:18,top:24,bottom:12,containLabel:true}
-      : {
-          left:48,
-          right:18,
-          top:hasAnnotations?(yKeys.length>1?68:58):(yKeys.length>1?44:24),
-          bottom:rotation?72:(hasAnnotations?56:42),
-          containLabel:true,
-        },
-    // 'axis' whenever there is more than one series, not only for lines. With
-    // 'item' the reader hovering a grouped bar gets the one segment under the
-    // cursor, and multiTT then renders a one-row "comparison" -- on a chart
-    // whose entire purpose is comparing the series side by side. The chat page
-    // has always used 'axis' here; this is the two copies agreeing again.
-    tooltip: { ...ttBase, trigger:(isLine||yKeys.length>1)?'axis':'item', formatter: yKeys.length>1?multiTT:singleTT },
-    xAxis: horizontal
-      ? {type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKey,true)}}
-      : {type:'category',data:shortLbl,axisTick:{show:false},axisLine:{lineStyle:{color:theme.axisLine}},axisLabel:{color:theme.axis,interval,rotate:rotation,formatter:(v,i)=>shortLbl[i]}},
-    yAxis: horizontal
-      ? {type:'category',data:shortLbl,axisTick:{show:false},axisLine:{show:false},axisLabel:{color:theme.axis}}
-      : {type:'value',splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKey,true)}},
-    legend: yKeys.length>1?{top:4,textStyle:{color:theme.axis,fontSize:11},data:yKeys,icon:'roundRect'}:undefined,
-    series: yKeys.length>1
-      ? yKeys.map((k,i)=>({
-          name:k, type:isLine?'line':'bar', smooth:isLine,
-          data:rows.map(r=>_chartNumber(r[k])),
-          showSymbol:isLine&&rows.length<=20,
-          lineStyle:{width:2.5,color:colors[i%colors.length]},
-          itemStyle:{color:colors[i%colors.length],borderRadius:isLine?0:(horizontal?[0,6,6,0]:[6,6,0,0])},
-          barMaxWidth:horizontal?18:28,
-          areaStyle:isArea?{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors[i%colors.length]+'44'},{offset:1,color:colors[i%colors.length]+'05'}])}:undefined,
-          markPoint:(i===0&&!horizontal)?{silent:true,data:_buildAnnotationMarkPoints(payload,labels,rows.map(r=>_chartNumber(r[k])))}:undefined,
-        }))
-      : [{
-          name:yKey||t('ui.chart.value'), type:isLine?'line':'bar', smooth:isLine,
-          data:values,
-          showSymbol:isLine&&values.length<=20,
-          barMaxWidth:horizontal?26:44,
-          lineStyle:{width:3,color:colors[0]},
-          itemStyle:{color:isLine?colors[0]:gradColor, borderRadius:isLine?0:(horizontal?[0,10,10,0]:[10,10,0,0])},
-          areaStyle:isLine?{color:areaColor}:undefined,
-          markPoint:!horizontal?{silent:true,data:_buildAnnotationMarkPoints(payload,labels,values)}:undefined,
-        }],
-  };
-}
 
 // ── Dashboard chart init ──────────────────────────────────────────────────────
 // Live payload registry — mirrors what's rendered for each chart node
@@ -677,17 +371,9 @@ function initDashboardChart(node) {
   if (warningHtml) node.insertAdjacentHTML('afterend', warningHtml);
   // Clear the loading skeleton before ECharts mounts its canvas.
   node.querySelector('[data-chart-skeleton]')?.remove();
-  const existing = echarts.getInstanceByDom(node);
-  if (existing) existing.dispose();
-  const themeKey = null;
-  const chart = echarts.init(node, themeKey, { renderer: 'canvas' });
-  chart.setOption(buildDashboardOption(payload));
-  if (window.ResizeObserver) {
-    if (node._qbRO) node._qbRO.disconnect();
-    const ro = new ResizeObserver(() => { try { chart.resize(); } catch {} });
-    ro.observe(node); node._qbRO = ro;
-  }
-  return chart;
+  // A dashboard card has the size its owner gave it on the grid, so the chart
+  // fits the card rather than growing it.
+  return window.QBCharts.render(node, payload, {grow: false});
 }
 function renderDashboardCharts() {
   requestAnimationFrame(() => {
@@ -806,7 +492,7 @@ function mountDashChartControls(ctrlRow) {
   if (!payload) return;
   const ct  = payload.chart_type || 'bar';
   const pal = payload.color_palette || 'default';
-  const visibleTypes = _offeredChartTypes(payload, DASH_TYPES);
+  const visibleTypes = window.QBCharts.offeredTypes(payload, DASH_TYPES);
 
   // `kind`, not `t`: t is the translator on this page now, and an arrow
   // parameter named t would shadow it inside the template literal below.
@@ -832,7 +518,7 @@ function mountDashChartControls(ctrlRow) {
       const node = document.getElementById(`dashboard-chart-${chartId}`);
       if (node) {
         const inst = echarts.getInstanceByDom(node);
-        if (inst) inst.setOption(buildDashboardOption(updated), true);
+        if (inst) inst.setOption(window.QBCharts.buildOption(updated), true);
       }
       const badge = document.getElementById(`chart-type-badge-${chartId}`);
       if (badge) badge.textContent = newType.toUpperCase();
@@ -848,7 +534,7 @@ function mountDashChartControls(ctrlRow) {
       const node = document.getElementById(`dashboard-chart-${chartId}`);
       if (node) {
         const inst = echarts.getInstanceByDom(node);
-        if (inst) inst.setOption(buildDashboardOption(updated), true);
+        if (inst) inst.setOption(window.QBCharts.buildOption(updated), true);
       }
       _updateChart(chartId, { color_palette: newPal });
     });
@@ -923,7 +609,7 @@ function openChartModal(cardEl) {
   const ctrlEl = document.getElementById('chart-modal-ctrl');
   const ct  = payload.chart_type  || 'bar';
   const pal = payload.color_palette || 'default';
-  const modalTypes = _offeredChartTypes(payload, DASH_TYPES);
+  const modalTypes = window.QBCharts.offeredTypes(payload, DASH_TYPES);
   ctrlEl.innerHTML = modalTypes.map(kind =>
     `<button class="dctt-btn${ct===kind?' dctt-active':''}" data-type="${kind}">${escHtmlDash(t('ui.enum.charttype.' + kind))}</button>`
   ).join('')
@@ -935,16 +621,8 @@ function openChartModal(cardEl) {
   }).join('');
 
   const canvas = document.getElementById('chart-modal-canvas');
-  const existing = echarts.getInstanceByDom(canvas);
-  if (existing) existing.dispose();
-  const themeKey = null;
-  const mc = echarts.init(canvas, themeKey, { renderer: 'canvas' });
-  mc.setOption(buildDashboardOption(payload));
+  const mc = window.QBCharts.render(canvas, payload, {grow: false});
   requestAnimationFrame(() => { try { mc.resize(); } catch {} });
-  if (window.ResizeObserver) {
-    const ro = new ResizeObserver(() => { try { mc.resize(); } catch {} });
-    ro.observe(canvas); canvas._qbRO = ro;
-  }
   modal._modalChart = mc;
   modal._modalPayload = Object.assign({}, payload);
 
@@ -954,7 +632,7 @@ function openChartModal(cardEl) {
       const newType = btn.dataset.type;
       modal._modalPayload = Object.assign({}, modal._modalPayload, { chart_type: newType });
       ctrlEl.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
-      mc.setOption(buildDashboardOption(modal._modalPayload), true);
+      mc.setOption(window.QBCharts.buildOption(modal._modalPayload), true);
       // Sync back to card
       if (chartId) {
         window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId]||{}, { chart_type: newType });
@@ -970,11 +648,11 @@ function openChartModal(cardEl) {
       const newPal = btn.dataset.palette;
       modal._modalPayload = Object.assign({}, modal._modalPayload, { color_palette: newPal });
       ctrlEl.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
-      mc.setOption(buildDashboardOption(modal._modalPayload), true);
+      mc.setOption(window.QBCharts.buildOption(modal._modalPayload), true);
       if (chartId) {
         window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId]||{}, { color_palette: newPal });
         const cardNode = document.getElementById(`dashboard-chart-${chartId}`);
-        if (cardNode) { const i=echarts.getInstanceByDom(cardNode); i?.setOption(buildDashboardOption(window._dashPayloads[chartId]),true); }
+        if (cardNode) { const i=echarts.getInstanceByDom(cardNode); i?.setOption(window.QBCharts.buildOption(window._dashPayloads[chartId]),true); }
         const cardCtrl = document.querySelector(`.dash-ctrl-row[data-chart-id="${chartId}"]`);
         cardCtrl?.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
         _updateChart(chartId, { color_palette: newPal });

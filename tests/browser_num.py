@@ -29,8 +29,8 @@ def preamble(lang: str = "en") -> str:
 var window = window || {{}};
 window.QB_LANG = {json.dumps(lang)};
 window.QB_I18N = {json.dumps(i18n.catalogue_for(lang))};
-// Both pages define `t` over window.QB_I18N and _fmtNum reads the compact
-// magnitude suffixes through it -- 'B' is a billion in English and a thousand
+// Both pages define `t` over window.QB_I18N and the chart renderer's compact
+// number formatter reads the magnitude suffixes through the catalogue -- 'B' is a billion in English and a thousand
 // times more in the French long scale, so the suffix is catalogue copy like
 // any other. A harness without `t` in scope raises rather than formatting,
 // which is the harness being wrong and not the page.
