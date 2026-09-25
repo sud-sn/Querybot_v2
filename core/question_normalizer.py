@@ -234,6 +234,23 @@ _LEXICON: dict[str, str] = {
     "croissance": "growth",
     "taux de croissance": "growth rate",
     "moyenne": "average",
+    # The adjective agrees with its noun: "coût moyen", "prix moyens", "ventes
+    # moyennes". Only the feminine singular was here, so an average cost came
+    # through as "cost moyen" and matched no measure.
+    "moyennes": "average",
+    "moyens": "average",
+    "moyen": "average",
+    "annuelles": "annual",
+    "annuelle": "annual",
+    "annuels": "annual",
+    "annuel": "annual",
+    "brutes": "gross",
+    "brute": "gross",
+    "bruts": "gross",
+    "brut": "gross",
+    # "valeurs aberrantes" (above) is read first, as a phrase.
+    "valeurs": "values",
+    "valeur": "value",
     # A phrase, not two words: "superieur" alone would also fire inside
     # "chiffre superieur a 100", where "above average" would be a lie.
     "superieur a la moyenne": "above average",
@@ -365,6 +382,10 @@ _LEXICON: dict[str, str] = {
     "plus petit": "smallest",
     "premiers": "top",
     "premieres": "top",
+    # "les 10 principaux fournisseurs" is a ranking as surely as "les 10
+    # premiers". Plural only: "le fournisseur principal" is the main one.
+    "principaux": "top",
+    "principales": "top",
     "derniers": "bottom",
 
     # ── Naming a date ROLE ───────────────────────────────────────────────────
@@ -763,7 +784,8 @@ _NUMERIC_RULES: tuple[tuple[re.Pattern[str], object], ...] = (
     # gate downstream is written for "top 3", so a perfectly ordinary follow-up
     # ("montre-moi les 3 premiers") reached none of them.
     (re.compile(
-        rf"\b([lc]es?\s+)?({_COUNT_ALT})\s+premi[e]re?s?\b(?!\s+(?:{_UNIT_ALT})\b)"),
+        rf"\b([lc]es?\s+)?({_COUNT_ALT})\s+(?:premi[e]re?s?|principa(?:ux|les))\b"
+        rf"(?!\s+(?:{_UNIT_ALT})\b)"),
      lambda m: f"top {_count(m.group(2))}"),
     # "les cinq meilleurs clients" -> "les 5 meilleurs clients", which the
     # lexicon then finishes into "the 5 best customers". Only the COUNT is

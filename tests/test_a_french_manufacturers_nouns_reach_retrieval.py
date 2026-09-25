@@ -121,7 +121,7 @@ class TestThePackContract(unittest.TestCase):
         self.assertEqual(vocab.french_terms["centre de charge"], "work centre")
 
     def test_a_pack_without_terms_adds_none(self):
-        vocab = with_pack("wholesale_distribution")
+        vocab = with_pack("construction_products")
         self.assertEqual(vocab.french_terms, {})
 
     def test_every_term_maps_to_english_the_lexicon_leaves_alone(self):
@@ -130,10 +130,11 @@ class TestThePackContract(unittest.TestCase):
         would be translated a second time -- so each target is run through the
         canonicaliser on its own, with no pack active, and must come back as
         it went in."""
-        for french, english in load_pack(MANUFACTURING)["terms_fr"].items():
-            with self.subTest(french=french):
-                self.assertEqual(canonicalise(english), english)
-                self.assertNotEqual(french.strip().lower(), english.strip().lower())
+        for pack_id in (MANUFACTURING, "wholesale_distribution"):
+            for french, english in load_pack(pack_id)["terms_fr"].items():
+                with self.subTest(pack=pack_id, french=french):
+                    self.assertEqual(canonicalise(english), english)
+                    self.assertNotEqual(french.strip().lower(), english.strip().lower())
 
 
 if __name__ == "__main__":  # pragma: no cover
