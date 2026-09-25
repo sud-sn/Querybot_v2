@@ -851,7 +851,19 @@ def build_evidence(
         return AnalysisEvidence(row_count=0, labels_included=include_labels)
 
     numeric_cols, label_cols = classify_columns(rows)
-    temporal_col = find_temporal_column(rows, label_cols)
+    # A period written as a number -- 202401, 2025 -- parses as one, so it was
+    # a measure here: a monthly result was summarised as "Prd Key and On Hand
+    # Qty rise and fall together" and "Prd Key is unusually uniform, close to
+    # 202,403.50", and its trend was never computed because the axis was not a
+    # label. The answer card already moves periods to the labels; the same
+    # rule, from the same place (imported here: core.response_builder imports
+    # this module).
+    from core.response_builder import _measure_and_label_cols
+
+    numeric_cols, label_cols, period_cols = _measure_and_label_cols(
+        rows, numeric_cols, label_cols)
+    temporal_col = (period_cols[0] if period_cols
+                    else find_temporal_column(rows, label_cols))
 
     # Bounded on purpose. A 40-column result would otherwise produce hundreds
     # of findings for the ranker to discard, and the columns that matter are

@@ -161,6 +161,14 @@ def compute_signals(rows: list[dict]) -> list[dict]:
         return []
 
     numeric_cols, text_cols = _classify_columns(rows)
+    # A period written as a number is the time axis, not a measure: the same
+    # rule as the answer card and core.analysis_evidence, from the same place.
+    # Without it a monthly result offered "Why are Period Key values so
+    # uniform across all rows?" and never the trend.
+    from core.response_builder import _measure_and_label_cols
+
+    numeric_cols, text_cols, period_cols = _measure_and_label_cols(
+        rows, numeric_cols, text_cols)
     signals: list[dict] = []
 
     # ── Per-numeric-column signals ────────────────────────────────────────────
@@ -313,7 +321,7 @@ def compute_signals(rows: list[dict]) -> list[dict]:
                     })
 
         # Temporal column
-        if _is_temporal_col(label_col, rows):
+        if label_col in period_cols or _is_temporal_col(label_col, rows):
             # ── The series, in period order, or not at all ────────────────────
             # first→last was read straight off the rows in arrival order, and
             # with no check that a period appears once. So "revenue by

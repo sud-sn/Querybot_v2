@@ -476,9 +476,10 @@ class TestFormatting(unittest.TestCase):
         self.assertEqual(format_number_for("value", 6200.0, "en"), "6,200")
 
     def test_a_column_name_is_made_readable_without_losing_the_real_one(self):
-        self.assertEqual(humanise_column("NET_REVENUE_AMT"), "Net Revenue Amt")
+        # The business name every other label uses, abbreviations spelled out.
+        self.assertEqual(humanise_column("NET_REVENUE_AMT"), "Net Revenue Amount")
         self.assertEqual(humanise_column("net_revenue"), "Net Revenue")
-        self.assertEqual(humanise_column("NetRevenue"), "NetRevenue")
+        self.assertEqual(humanise_column("NetRevenue"), "Net Revenue")
         self.assertEqual(humanise_column(""), "")
         # The finding keeps the real name for the trace and the proof pack.
         finding = build_evidence(LEADER_ROWS).of_kind(CONCENTRATION_LEADER)[0]

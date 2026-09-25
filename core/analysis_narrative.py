@@ -178,13 +178,16 @@ def humanise_column(name: str) -> str:
     identifier and undoes the work of writing prose at all. This is
     presentation only — the finding keeps the real name, so the trace and the
     proof pack still say which column was measured.
+
+    The business name, from core.schema_enrichment.display_label -- the one
+    every other reader-facing label uses, with the tenant's vocabulary behind
+    it. This was the plain underscore-to-title transform display_label was
+    written to replace, so the summary under an answer said "On Hnd Qty rose"
+    while the follow-up questions beside it said "On Hnd Quantity".
     """
-    cleaned = re.sub(r"[_]+", " ", str(name or "")).strip()
-    if not cleaned:
-        return ""
-    if cleaned.isupper() or cleaned.islower():
-        return cleaned.title()
-    return cleaned
+    from core.schema_enrichment import display_label
+
+    return display_label(str(name or "").strip())
 
 
 def placeholders_for(finding: Finding, lang: str | None, *, labels_available: bool) -> dict[str, str]:
