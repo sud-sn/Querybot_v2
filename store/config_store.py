@@ -2921,7 +2921,9 @@ def _json_list(text: object) -> list:
     return value if isinstance(value, list) else []
 
 
-def save_business_meanings(account_id: str, proposals: list[dict]) -> dict[str, int]:
+def save_business_meanings(
+    account_id: str, proposals: list[dict], *, rule: str | None = None,
+) -> dict[str, int]:
     """Store what discovery proposes a tenant's codes mean.
 
     A proposal found again is refreshed -- its reading, evidence, places and
@@ -2929,7 +2931,8 @@ def save_business_meanings(account_id: str, proposals: list[dict]) -> dict[str, 
     suggestion no longer proposed is dropped: the warehouse changed. A
     decision is the admin's and is kept apart from the proposal: a confirmed
     meaning keeps the reading the admin confirmed, and a rejected one is never
-    proposed again. Returns counts: kept, dropped.
+    proposed again. With `rule`, the proposals are that rule's alone, and only
+    its suggestions are dropped. Returns counts: kept, dropped.
     """
     found = {(str(p["scope"]), str(p["subject"]).upper()) for p in proposals}
     with get_db() as conn:
@@ -2958,8 +2961,8 @@ def save_business_meanings(account_id: str, proposals: list[dict]) -> dict[str, 
         stale = [
             (row["scope"], row["subject"]) for row in conn.execute(
                 "SELECT scope, subject FROM business_meaning "
-                "WHERE account_id=? AND status='suggested'",
-                (account_id,),
+                "WHERE account_id=? AND status='suggested' AND (? IS NULL OR rule=?)",
+                (account_id, rule, rule),
             ).fetchall()
             if (row["scope"], row["subject"]) not in found
         ]

@@ -522,6 +522,89 @@ def _party_proposals(wh: _Warehouse) -> list[Proposal]:
     return proposals
 
 
+# ── Two columns under one name ───────────────────────────────────────────────
+
+# A column that ends in one of these joins the table the rest of its name
+# spells: PDC_GRP_DMS_KEY joins PDC_GRP_DMS.
+_KEY_SUFFIXES = ("_KEY", "_ID", "_SK")
+
+
+def _shown_as(column: str, wh: _Warehouse) -> str:
+    """What a reader is shown for a column today: its reading under the
+    tenant's vocabulary, as core/schema_enrichment.display_label reads it (a
+    whole-name dictionary entry first). A platform field reads with its own
+    name in it, so no two of them read alike."""
+    from core.schema_enrichment import _expand_column, drop_repeated_unit
+
+    try:
+        expanded, _ = _expand_column(column, vocab=wh.vocab)
+    except Exception as exc:  # noqa: BLE001 - one unreadable name is not a collision
+        log.warning("Business meanings: could not read %s: %s", column, exc)
+        return ""
+    return " ".join(drop_repeated_unit(expanded or "").lower().split())
+
+
+def _joins_a_table(column: str, wh: _Warehouse) -> str:
+    upper = column.upper()
+    for suffix in _KEY_SUFFIXES:
+        if upper.endswith(suffix) and upper[: -len(suffix)] in wh.tables:
+            return upper[: -len(suffix)]
+    return ""
+
+
+def _codes_read_alike(table: str, columns: list[str], wh: _Warehouse) -> tuple[list[str], str]:
+    """The codes that make columns of one length read alike -- PDC and PRU in
+    PDC_GRP_DMS_KEY and PRU_GRP_DMS_KEY -- and the word they share."""
+    spelled = [wh.tokens[(table, column)] for column in columns]
+    if len({len(tokens) for tokens in spelled}) != 1:
+        return [], ""
+    for position in range(len(spelled[0])):
+        codes = sorted({tokens[position] for tokens in spelled})
+        if len(codes) > 1:
+            return codes, wh.lexicon.get(codes[0], "")
+    return [], ""
+
+
+def _collision_proposals(wh: _Warehouse) -> list[Proposal]:
+    """Columns of one table a reader is shown under one name.
+
+    PDC_GRP_DMS_KEY and PRU_GRP_DMS_KEY both read "product group dimension
+    key", since PDC and PRU both read "product": no label tells them apart, and
+    neither does the planner. Where some of them join a table their name
+    spells, those are what the name says and the others need a meaning;
+    otherwise each does. Across tables a shared name is expected -- an item's
+    name is an item's name wherever it is kept.
+    """
+    proposals = []
+    for table, columns in sorted(wh.tables.items()):
+        alike: dict[str, list[str]] = defaultdict(list)
+        for column, _ in columns:
+            shown = _shown_as(column, wh)
+            if shown:
+                alike[" ".join(_SAME_WORD.get(w, w) for w in shown.split())].append(column)
+        for shown, group in sorted(alike.items()):
+            if len(group) < 2:
+                continue
+            anchored = {column: _joins_a_table(column, wh) for column in group if _joins_a_table(column, wh)}
+            flagged = [c for c in group if c not in anchored] if len(anchored) < len(group) else group
+            codes, word = _codes_read_alike(table, group, wh)
+            each = "both" if len(group) == 2 else "all"
+            for column in flagged:
+                others = [c for c in group if c != column]
+                evidence = [f"{column} and {', '.join(others)} on {table} are {each} shown as \"{shown}\""]
+                if codes and word:
+                    evidence.append(
+                        f"{' and '.join(codes)} {'both' if len(codes) == 2 else 'all'} read \"{word}\"")
+                evidence.extend(
+                    f"{key} joins {target}, so it is the {shown}" for key, target in anchored.items()
+                )
+                proposals.append(Proposal(
+                    COLUMN, column.upper(), "", "collision", 0, evidence=evidence[:3],
+                    where=[f"{table}.{c}" for c in [column, *others]],
+                ))
+    return proposals
+
+
 # Spellings of one word. A pack that reads CTR as "centre" agrees with a rule
 # that reads it "center"; neither is a correction of the other.
 _SAME_WORD = {"centre": "center", "colour": "color", "catalogue": "catalog"}
@@ -618,6 +701,14 @@ def propose_meanings(
 
     for proposal in _party_proposals(wh):
         add(proposal)
+    # A column already proposed a reading keeps it: the collision is one more
+    # thing its evidence says, not a weaker proposal in its place.
+    for proposal in _collision_proposals(wh):
+        held = by_subject.get((proposal.scope, proposal.subject))
+        if held is None:
+            add(proposal)
+        elif proposal.evidence[0] not in held.evidence:
+            held.evidence.append(proposal.evidence[0])
     return list(by_subject.values())
 
 
@@ -662,7 +753,8 @@ def propose_for_account(account_id: str, *, base_dir: str = "clients") -> dict[s
     first and which holds only what its privacy gates let it keep (masked,
     sensitive and, for a regulated tenant, uncleared columns are never in
     it); nothing is read from the warehouse here. The tenant's own name is
-    not a code. Returns counts: proposed, of them unread, kept, dropped.
+    not a code. Returns counts: proposed, of them unread and alike (columns
+    shown under one name), kept, dropped.
     """
     import store
     from core.value_index import sample_values_by_column
@@ -672,7 +764,7 @@ def propose_for_account(account_id: str, *, base_dir: str = "clients") -> dict[s
     tables = _discovered_tables(str(state.get("schema_dir") or ""))
     if not tables:
         log.info("Business meanings for %s: no discovered schema", account_id)
-        return {"proposed": 0, "unread": 0, "kept": 0, "dropped": 0}
+        return {"proposed": 0, "unread": 0, "alike": 0, "kept": 0, "dropped": 0}
     values = {
         f"{row['table_fqn']}.{row['column']}": row["values"]
         for row in sample_values_by_column(
@@ -688,9 +780,34 @@ def propose_for_account(account_id: str, *, base_dir: str = "clients") -> dict[s
     saved = store.save_business_meanings(account_id, [p.as_dict() for p in proposals])
     return {
         "proposed": len(proposals),
-        "unread": sum(1 for p in proposals if not p.reading),
+        "unread": sum(1 for p in proposals if p.rule == "unread"),
+        "alike": sum(1 for p in proposals if p.rule == "collision"),
         **saved,
     }
+
+
+def refresh_collisions(account_id: str) -> dict[str, int]:
+    """After an admin's decision: which columns are still shown under one name,
+    with the tenant's vocabulary as it now stands. A collision the decision
+    resolved -- the other column's reading confirmed, or a code's -- leaves
+    the queue; discovery's other proposals are left as they are, and a
+    subject proposed under another rule keeps that proposal."""
+    import store
+    from core.vocab_packs import vocab_for_account
+
+    state = store.get_client_state(account_id) or {}
+    tables = _discovered_tables(str(state.get("schema_dir") or ""))
+    if not tables:
+        return {"kept": 0, "dropped": 0}
+    other_rules = {
+        (m["scope"], m["subject"]) for m in store.list_business_meanings(account_id)
+        if m["rule"] != "collision"
+    }
+    proposals = [
+        p.as_dict() for p in _collision_proposals(_Warehouse(tables, vocab_for_account(account_id), None, ()))
+        if (p.scope, p.subject) not in other_rules
+    ]
+    return store.save_business_meanings(account_id, proposals, rule="collision")
 
 
 # ── Once the admin confirms ──────────────────────────────────────────────────

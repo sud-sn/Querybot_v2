@@ -8194,7 +8194,9 @@ async def meanings_page(request: Request, account_id: str):
     return _resp(request, "client_meanings.html", {
         "client": client,
         "to_review": to_review,
-        "to_write": [m for m in meanings if m["status"] == "suggested" and not m["reading"]],
+        "to_write": [m for m in meanings if m["status"] == "suggested" and not m["reading"]
+                     and m["rule"] != "collision"],
+        "alike": [m for m in meanings if m["status"] == "suggested" and m["rule"] == "collision"],
         "confirmed": [m for m in meanings if m["status"] == "confirmed"],
         "rejected": [m for m in meanings if m["status"] == "rejected"],
         "strong": _STRONG_MEANING,
@@ -8206,10 +8208,16 @@ async def meanings_page(request: Request, account_id: str):
 
 def _meanings_changed(account_id: str, trigger: str) -> None:
     """A decision changes the tenant's vocabulary: the cached one is dropped
-    (its key does not see the store), and what depends on it recompiles."""
+    (its key does not see the store), the columns still shown under one name
+    are found again, and what depends on it recompiles."""
+    from core.business_meaning import refresh_collisions
     from core.vocab_packs import forget_account_vocab
 
     forget_account_vocab(account_id)
+    try:
+        refresh_collisions(account_id)
+    except Exception:  # noqa: BLE001 - the decision is saved; the queue catches up at discovery
+        log.warning("Collision refresh after %s failed for %s", trigger, account_id, exc_info=True)
     try:
         _after_semantic_approval(account_id, trigger)
     except Exception:  # noqa: BLE001 - the decision is saved; a recompile is best effort

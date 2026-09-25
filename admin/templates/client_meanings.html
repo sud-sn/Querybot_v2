@@ -65,7 +65,7 @@
   </div>
 </div>
 
-{% if not (to_review or to_write or confirmed or rejected) %}
+{% if not (to_review or to_write or alike or confirmed or rejected) %}
 <div class="alert alert-warning">
   Nothing proposed yet. Meanings are proposed when the schema is discovered — run
   discovery from Setup.
@@ -133,6 +133,39 @@
       </div>
     </div>
     <div>{{ found_in(m) }}</div>
+  </div>
+</form>
+{% endfor %}
+{% endif %}
+
+{% if alike %}
+<h3 style="margin:1.25rem 0 .5rem">Columns shown under one name ({{ alike | length }})</h3>
+<p class="hint" style="font-size:var(--font-sm)">These columns of one table read the same, so no label or
+  question can tell them apart. Write what each one is, or leave it as it reads.</p>
+{% for m in alike %}
+<form class="meaning" method="post" action="/admin/clients/{{ client.account_id }}/meanings/decide">
+  <input type="hidden" name="scope" value="{{ m.scope }}">
+  <input type="hidden" name="subject" value="{{ m.subject }}">
+  <div class="meaning-head">
+    <span class="meaning-subject">{{ m.subject }}</span>
+    <span class="meaning-scope">column</span>
+  </div>
+  <div class="meaning-body">
+    <div>
+      <label for="a-{{ loop.index }}">Reading</label>
+      <input type="text" id="a-{{ loop.index }}" name="reading" value="" required>
+      <label for="as-{{ loop.index }}">Synonyms <span class="hint">(comma separated)</span></label>
+      <input type="text" id="as-{{ loop.index }}" name="synonyms" value="">
+      <div class="meaning-actions">
+        <button type="submit" name="action" value="confirm" class="btn btn-primary btn-sm">Confirm</button>
+        <button type="submit" name="action" value="reject" class="btn btn-secondary btn-sm" formnovalidate>Leave as it reads</button>
+      </div>
+    </div>
+    <div>
+      <label>Evidence</label>
+      <ul class="evidence">{% for line in m.evidence %}<li>{{ line }}</li>{% endfor %}</ul>
+      {{ found_in(m) }}
+    </div>
   </div>
 </form>
 {% endfor %}
