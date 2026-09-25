@@ -451,6 +451,29 @@ def _singular(word: str) -> str:
     return lowered
 
 
+def _metric_counts_this_event(question: str, metrics: Iterable[dict[str, Any]], event: str) -> str:
+    """The registered metric the question names, when that metric is the count.
+
+    "What is our total Order lines?" names the metric "Order lines", and the
+    metric's approved formula is the governed answer to it. Read as a bare
+    business-event count instead, it waited on an approved identifier for one
+    order and was refused -- and that sentence is the suggested question the
+    product offers for every such metric.
+
+    By the metric's name or synonyms only, never its category: a metric filed
+    under "Orders" does not make "how many orders" a question about it.
+    """
+    lowered = str(question or "").casefold()
+    for metric in metrics:
+        phrases = _catalog_phrases({key: metric.get(key) for key in ("name", "synonyms", "aliases")})
+        for phrase in phrases:
+            if len(phrase) < 2 or not re.search(r"\b" + re.escape(phrase.casefold()) + r"\b", lowered):
+                continue
+            if any(_singular(word) == event for word in re.findall(r"[A-Za-z]+", phrase)):
+                return str(metric.get("name") or phrase)
+    return ""
+
+
 def _is_plural(word: str) -> bool:
     lowered = str(word or "").casefold()
     return lowered in _PLURAL_EXCEPTIONS or (
@@ -673,6 +696,8 @@ def plan_analytical_intent(
     concept_match = _BUSINESS_CONCEPT_RE.search(text)
     business_concepts = [concept_match.group(1).lower()] if concept_match else []
     counted_entity = detect_business_event_count(text)
+    if counted_entity and _metric_counts_this_event(text, metrics, counted_entity):
+        counted_entity = ""
     # Advisory, not governing: a population entity only becomes the
     # counted entity once the semantic layer resolves it to a master
     # table, so an unresolvable noun costs nothing.
