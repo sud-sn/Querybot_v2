@@ -292,6 +292,42 @@ def _aliases_for_column(column: str, vocab=None) -> set[str]:
     return {a for a in aliases if a}
 
 
+# What is left of a dimension's column name after its entity, when that alone
+# says nothing: ITM_NM on the item table is its name, and a bare "name" would
+# answer every question that uses the word.
+_GENERIC_REMAINDERS = frozenset({
+    "name", "code", "description", "number", "date", "type", "status", "flag",
+    "indicator", "value", "amount", "quantity", "identifier",
+})
+
+
+def _aliases_within_entity(table: str, column: str, vocab=None) -> set[str]:
+    """ITM_GRS_WT on the item table is the item's gross weight, and a reader
+    asking about items says "gross weight" -- "average gross weight by item",
+    "poids brut par article". The column answered only to "item gross weight",
+    its whole name read out.
+
+    A column whose name begins with its own dimension's entity (ITM on
+    ITM_DMS) also answers to the rest of its name, when the rest is read with
+    confidence and says something on its own: not one generic word (ITM_NM is
+    not "name"), and never for a key, which joins rather than answers.
+    """
+    bare = _table_bare(table)
+    entity = next((bare[: -len(s)] for s in ("_DMS", "_DIM") if bare.endswith(s)), "")
+    col = (column or "").upper()
+    if not entity or not col.startswith(f"{entity}_") or _is_key_column(col):
+        return set()
+    try:
+        from core.identifier_intelligence import analyze_identifier
+        analysis = analyze_identifier(col[len(entity) + 1:], vocab=_planner_vocab(vocab))
+    except Exception:
+        return set()
+    words = [w for w in analysis.expanded_name.split() if w not in {"dimension", "key"}]
+    if analysis.confidence < 70 or not words or (len(words) == 1 and words[0] in _GENERIC_REMAINDERS):
+        return set()
+    return {_norm(" ".join(words))}
+
+
 def _role_for_column(column: str, col_type: str = "", vocab=None) -> str:
     col = (column or "").upper()
     ctype = (col_type or "").upper()
@@ -485,7 +521,8 @@ def _find_candidates(
             col_u = str(col).upper()
             # Preserve the original casing for camel/Pascal tokenization while
             # the emitted physical column remains canonical uppercase.
-            aliases = _aliases_for_column(str(col), vocab=vocab)
+            aliases = _aliases_for_column(str(col), vocab=vocab) | _aliases_within_entity(
+                table_u, str(col), vocab=vocab)
             matched, term = _column_matches_question(col_u, aliases, qn, qc)
             if not matched:
                 continue
