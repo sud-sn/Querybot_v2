@@ -92,5 +92,7 @@ statsmodels>=0.14.0
 # is a suite that proves nothing.
 dukpy>=0.3.0
 
-# Golden-question evaluation files
-pyyaml>=6.0
+# Golden-question evaluation files. At least 6.0.3 because presidio-analyzer,
+# the optional name scrubbing above, requires it: with the lock at 6.0.1, a
+# server that had it installed saw pip report a conflict on every deploy.
+pyyaml>=6.0.3
