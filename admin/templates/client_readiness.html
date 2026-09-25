@@ -40,6 +40,22 @@
   font-weight:700;background:var(--surface-2);color:var(--text-muted);
   border:1px solid var(--border);margin-bottom:.25rem}
 .rd-hint{font-size:var(--font-xs);color:var(--text-muted)}
+.rd-gate{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);box-shadow:var(--shadow);margin-bottom:1.1rem;
+  border-left:4px solid var(--warning,#D97706)}
+.rd-gate.is-ready{border-left-color:var(--success,#16A34A)}
+.rd-gate h2{font-size:17px;font-weight:900;margin:0}
+.rd-gate p{font-size:var(--font-sm);color:var(--text-muted);margin:.35rem 0 0;max-width:760px}
+.rd-checks{display:flex;gap:.5rem 1.1rem;flex-wrap:wrap;margin:.75rem 0 0;padding:0;list-style:none}
+.rd-check{font-size:var(--font-sm);font-weight:700}
+.rd-check.ok{color:var(--success,#16A34A)}
+.rd-check.no{color:var(--warning,#D97706)}
+.rd-blockers{margin:.8rem 0 0}
+.rd-blocker{display:flex;gap:.75rem;align-items:flex-start;padding:.55rem 0;
+  border-top:1px solid var(--border)}
+.rd-blocker-body{flex:1;min-width:0}
+.rd-blocker-problem{font-size:var(--font-sm);font-weight:700;overflow-wrap:anywhere}
+.rd-blocker-remedy{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px}
 </style>
 {% endblock %}
 {% block content %}
@@ -49,6 +65,50 @@
   The readiness report could not be built: {{ error }}
 </div>
 {% endif %}
+
+{% set check_labels = {
+    "model": "Facts in the model",
+    "time_axis": "Checked time axes",
+    "joins": "Checked joins",
+    "date_roles": "No ambiguous dates",
+    "metrics": "Certified metrics",
+} %}
+<div class="rd-gate{% if gate.ready %} is-ready{% endif %}" id="readiness-gate">
+  {% if gate.ready %}
+  <h2>Ready for questions</h2>
+  <p>Every fact in the model has a checked time axis, its joins are checked or
+    confirmed, no business date is ambiguous and every live metric is
+    certified.</p>
+  {% else %}
+  <h2>Not ready: {{ gate.blockers | length }} thing{{ '' if gate.blockers | length == 1 else 's' }} to settle</h2>
+  <p>Questions are still answered. Until these are settled, some answers may
+    rest on a join nobody checked, a date nobody chose or a metric nobody
+    certified.</p>
+  {% endif %}
+  <ul class="rd-checks">
+    {% for check in gate_checks %}
+    {% set blocked = gate.by_check()[check] %}
+    <li class="rd-check {{ 'ok' if not blocked else 'no' }}">
+      {{ '✓' if not blocked else '✗' }} {{ check_labels[check] }}{% if blocked %} ({{ blocked | length }}){% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if gate.blockers %}
+  <div class="rd-blockers">
+    {% for check in gate_checks %}{% for blocker in gate.by_check()[check] %}
+    <div class="rd-blocker" data-check="{{ blocker.check }}">
+      <div class="rd-blocker-body">
+        <div class="rd-blocker-problem">{{ blocker.problem }}</div>
+        <div class="rd-blocker-remedy">{{ blocker.remedy }}</div>
+      </div>
+      {% if gate_pages.get(blocker.where) %}
+      <a class="btn btn-sm" href="{{ gate_pages[blocker.where] }}">Fix</a>
+      {% endif %}
+    </div>
+    {% endfor %}{% endfor %}
+  </div>
+  {% endif %}
+</div>
 
 <div class="rd-hero">
   <h1>What to model next</h1>

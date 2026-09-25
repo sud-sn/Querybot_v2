@@ -3248,6 +3248,7 @@ async def readiness_page(request: Request, account_id: str):
         return RedirectResponse("/admin/clients", status_code=303)
 
     from core.model_readiness import build_report
+    from core.readiness_gate import CHECKS, check_readiness
 
     try:
         report = build_report(account_id)
@@ -3259,6 +3260,16 @@ async def readiness_page(request: Request, account_id: str):
     return _resp(request, "client_readiness.html", {
         "client": client,
         "report": report,
+        # Whether the workspace is ready for its readers' questions, and what
+        # blocks it -- each blocker one click from where it is fixed.
+        "gate": check_readiness(account_id),
+        "gate_checks": CHECKS,
+        "gate_pages": {
+            "date_roles": f"/admin/clients/{account_id}/date-roles",
+            "graph": f"/admin/clients/{account_id}/graph",
+            "metrics": f"/admin/clients/{account_id}/metrics",
+            "setup": f"/admin/clients/{account_id}/setup",
+        },
         # Where each remedy is applied, so a row is one click from being
         # fixed. Keyed on core.model_readiness._KIND_WEIGHT, and a test walks
         # that mapping rather than this list: a row that says what to fix and
@@ -3369,9 +3380,21 @@ async def model_readiness_api(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     from core.model_readiness import build_report
+    from core.readiness_gate import CHECKS, check_readiness
 
     report = build_report(account_id)
+    gate = check_readiness(account_id)
     return JSONResponse({
+        "gate": {
+            "ready": gate.ready,
+            "facts": list(gate.facts),
+            "checks": {check: gate.passed(check) for check in CHECKS},
+            "blockers": [
+                {"check": b.check, "subject": b.subject, "problem": b.problem,
+                 "remedy": b.remedy, "where": b.where}
+                for b in gate.blockers
+            ],
+        },
         "metadata_version": report.metadata_version,
         "tables_described": report.tables_described,
         "tables_total": report.tables_total,
