@@ -786,6 +786,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             data_brief=confidence_context.get("data_brief") if confidence_context else None,
             semantic_plan=confidence_context.get("semantic_plan") if confidence_context else None,
             contract_version=contract_version,
+            rows_truncated=bool((confidence_context or {}).get("rows_truncated")),
         )
 
     table_text = _rows_to_table(rows, column_formats)

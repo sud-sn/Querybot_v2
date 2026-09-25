@@ -32,15 +32,19 @@ log = logging.getLogger("querybot.investigation_planner")
 
 _MAX_TOKENS = 500
 _MAX_SYNTHESIS_CHARS = 900
-_PLAN_KEYS = {"action", "question", "reason", "synthesis"}
+_PLAN_KEYS = {"action", "question", "reason", "synthesis", "tool", "inputs"}
 
 
 @dataclass(frozen=True)
 class PlannerDecision:
-    """What the planner chose to do next, or "" action on a parse failure."""
+    """What the planner chose to do next, or "" action on a parse failure.
+    "query" asks a question; "tool" calls one of core.investigation_tools by
+    name with its inputs; "finish" ends with a synthesis."""
     action: str = ""
     question: str = ""
     synthesis: str = ""
+    tool: str = ""
+    inputs: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -81,29 +85,40 @@ def build_planner_prompt(
     """The system and user halves of "what next, given what we know so far"."""
     from core.i18n import prompt_language_rule
 
+    from core.investigation_tools import describe_tools
+
     system = (
         "You are QueryBot's investigation planner. An objective needs more than "
-        "one governed question to answer well; you decide, one step at a time, "
-        "what the next question should be, using only the figures and labels "
-        "each earlier step actually found -- never invent a figure, a table, "
-        "or a column name.\n\n"
+        "one governed question or analysis to answer well; you decide, one step "
+        "at a time, what the next step should be, using only the figures, labels "
+        "and columns each earlier step actually found -- never invent a figure, a "
+        "table, or a column name.\n\n"
         + prompt_language_rule(lang, shape="prose") +
         "Return exactly one JSON object and no markdown. Allowed top-level keys: "
-        'action, question, reason, synthesis. action is "query" or "finish". '
-        "For \"query\", question is the next business question to ask -- plain "
-        "language, no SQL, preserving any time range or filter the objective "
-        "named -- and reason is one short sentence on why it helps. For "
-        '"finish", synthesis is two to four sentences answering the objective '
-        "from what the steps found, citing figures exactly as given and naming "
-        "which step each comes from when it helps the reader judge it. If the "
-        f"steps so far already answer the objective, finish. {steps_left} more "
-        "question(s) may be asked after this decision; finish immediately if "
-        "that number is 0."
+        'action, question, tool, inputs, reason, synthesis. action is "query", '
+        '"tool" or "finish". For "query", question is the next business question '
+        "to ask -- plain language, no SQL, preserving any time range or filter "
+        'the objective named. For "tool", tool is one of the tools below and '
+        "inputs is an object of its inputs (those marked ? may be left out); a "
+        "tool that reads an earlier step takes that step's number and computes on "
+        "what the step found without asking the warehouse again, so prefer it to "
+        "a new question when a step already holds the data. reason is one short "
+        'sentence on why the step helps. For "finish", synthesis is two to four '
+        "sentences answering the objective from what the steps found, citing "
+        "figures exactly as given and naming which step each comes from when it "
+        "helps the reader judge it. If the steps so far already answer the "
+        f"objective, finish. {steps_left} more step(s) may be taken after this "
+        "decision; finish immediately if that number is 0.\n\n"
+        "Tools:\n" + describe_tools(lang)
     )
     lines = [f"Objective: {objective}"]
     for step in steps:
         if step.result.ok:
-            lines.append(f"Step {step.index} asked: {step.question}\nFound: {step.result.brief}")
+            columns = ", ".join(step.result.columns)
+            lines.append(
+                f"Step {step.index} asked: {step.question}\nFound: {step.result.brief}"
+                + (f"\nIts result's columns: {columns}" if columns else "")
+            )
         else:
             lines.append(f"Step {step.index} asked: {step.question}\nCould not be answered: {step.result.error}")
     return system, "\n\n".join(lines)
@@ -135,6 +150,17 @@ def parse_planner_decision(raw_response: str) -> PlannerDecision:
     if plan is None or set(plan) - _PLAN_KEYS:
         return PlannerDecision()
     action = str(plan.get("action") or "").strip().lower()
+    if action == "tool":
+        from core.investigation_tools import REGISTRY
+
+        tool = str(plan.get("tool") or "").strip().lower()
+        inputs = plan.get("inputs") if plan.get("inputs") is not None else {}
+        if tool not in REGISTRY or not isinstance(inputs, dict):
+            return PlannerDecision()
+        if tool == "query":
+            question = _clip(inputs.get("question"), 400)
+            return PlannerDecision(action="query", question=question) if question else PlannerDecision()
+        return PlannerDecision(action="tool", tool=tool, inputs=dict(inputs))
     if action == "query":
         question = _clip(plan.get("question"), 400)
         if not question:
@@ -239,6 +265,7 @@ async def run_investigation(
     real answer was already found in.
     """
     from core.investigation import result_llm_features_allowed_for_investigation, run_query_tool
+    from core.investigation_tools import run_tool
 
     objective = _clip(objective, 400)
     max_steps = max(1, int(max_steps))
@@ -256,12 +283,20 @@ async def run_investigation(
         return InvestigationOutcome(objective=objective, refused=_t("investigation.regulated_refusal", lang=lang))
 
     steps: list[InvestigationStep] = []
-    question = objective
+    decision = PlannerDecision(action="query", question=objective)
     while True:
-        result = await run_query_tool(
-            account_id=account_id, portal_user=portal_user, run_id=run_id, question=question,
-        )
-        step = InvestigationStep(index=len(steps) + 1, question=question, result=result)
+        if decision.action == "tool":
+            result = await run_tool(
+                decision.tool, decision.inputs, account_id=account_id, portal_user=portal_user,
+                run_id=run_id, steps=steps, lang=lang,
+            )
+        else:
+            result = await run_query_tool(
+                account_id=account_id, portal_user=portal_user, run_id=run_id,
+                question=decision.question,
+            )
+        step = InvestigationStep(index=len(steps) + 1, question=result.question or decision.question,
+                                 result=result)
         steps.append(step)
         if on_step is not None:
             try:
@@ -289,10 +324,9 @@ async def run_investigation(
                 )
             log.warning("Investigation synthesis rejected (%s); using the template", why)
             break
-        if decision.action != "query":
+        if decision.action not in {"query", "tool"}:
             log.warning("Investigation planner returned no usable decision after step %d", len(steps))
             break
-        question = decision.question
 
     return InvestigationOutcome(
         objective=objective, steps=steps,

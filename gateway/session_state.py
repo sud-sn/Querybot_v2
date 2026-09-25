@@ -107,6 +107,7 @@ class GovernedChannelSessionMixin:
         data_brief: dict | None = None,
         semantic_plan: dict | None = None,
         contract_version: str = "",
+        rows_truncated: bool = False,
     ) -> None:
         if not self.session_id:
             log.warning("Skipped result cache for unbound %s adapter", getattr(self, "platform_type", "channel"))
@@ -153,6 +154,10 @@ class GovernedChannelSessionMixin:
                     # looks exactly like "no governed date" to the caller.
                     "db_config_id": int((db_cfg or {}).get("id") or 0),
                     "semantic_plan": dict(semantic_plan or {}),
+                    # The fetch stopped at its row cap: these rows are the
+                    # head of a larger result, and nothing computed from
+                    # them is a figure for the whole of it.
+                    "rows_truncated": bool(rows_truncated),
                 },
             )
             self.last_result_id = cached_result_id or None

@@ -73,7 +73,8 @@ class TestThePlannerPrompt:
 
     def test_the_remaining_budget_is_told_plainly(self):
         system, _user = build_planner_prompt(OBJECTIVE, [], steps_left=0)
-        assert "0 more question" in system
+        # A step is a question or a tool now: the budget counts steps.
+        assert "0 more step" in system
         assert "finish immediately" in system
 
     def test_a_french_reader_gets_the_french_rule(self):

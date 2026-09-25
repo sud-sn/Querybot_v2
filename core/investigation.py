@@ -55,6 +55,8 @@ class ToolResult:
     result_id: str = ""
     row_count: int = 0
     error: str = ""
+    # The result's columns, so a planner can name one to a tool that reads it.
+    columns: tuple[str, ...] = ()
 
 
 def result_llm_features_allowed_for_investigation(account_id: str) -> bool:
@@ -69,6 +71,27 @@ def result_llm_features_allowed_for_investigation(account_id: str) -> bool:
     from core.compliance.policy_engine import result_llm_features_allowed
 
     return result_llm_features_allowed(account_id)
+
+
+def _investigation_adapter(account_id: str, portal_user: dict, run_id: str):
+    """The disposable adapter a run's questions go through, scoped to the run's
+    own result-cache session -- which the result tools read as well
+    (core.investigation_tools), so both must build it the same way."""
+    from unittest.mock import AsyncMock
+
+    from gateway.web_adapter import WebAdapter
+
+    user_id = str((portal_user or {}).get("id") or "").strip()
+    return WebAdapter(
+        AsyncMock(), account_id, user_id or "0",
+        thread_id=f"investigation-{run_id}",
+        portal_user_id=(portal_user or {}).get("id"),
+    )
+
+
+def investigation_session_id(account_id: str, portal_user: dict, run_id: str) -> str:
+    """The result-cache session a run's questions and tools share."""
+    return _investigation_adapter(account_id, portal_user, run_id).session_id
 
 
 async def run_query_tool(
@@ -95,24 +118,17 @@ async def run_query_tool(
     nothing the investigation reads.
     """
     from fastapi import BackgroundTasks
-    from unittest.mock import AsyncMock
 
     from core.agent_runtime import activate_agent_run
     from core.dispatcher import dispatch
     from core.result_cache import result_cache
-    from gateway.web_adapter import WebAdapter
 
     question = str(question or "").strip()
     if not question:
         return ToolResult(ok=False, kind="query", question=question,
                           error="No question was given to ask.")
 
-    user_id = str(portal_user.get("id") or "").strip()
-    adapter = WebAdapter(
-        AsyncMock(), account_id, user_id or "0",
-        thread_id=f"investigation-{run_id}",
-        portal_user_id=portal_user.get("id"),
-    )
+    adapter = _investigation_adapter(account_id, portal_user, run_id)
     sent_texts: list[str] = []
 
     async def _capture_send_message(_event, text):
@@ -156,6 +172,7 @@ async def run_query_tool(
         return ToolResult(
             ok=True, kind="query", question=question, brief=brief,
             result_id=after_id, row_count=len(rows),
+            columns=tuple(str(name) for name in (rows[0].keys() if rows else [])),
         )
 
     reason = sent_texts[-1].strip() if sent_texts else ""

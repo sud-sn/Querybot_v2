@@ -1537,6 +1537,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Asking: {question}",
         "fr": "Question posée : {question}",
     },
+    "investigation.stage.tool_detail": {
+        "en": "Analysing: {question}",
+        "fr": "Analyse : {question}",
+    },
     "investigation.regulated_refusal": {
         "en": "This workspace's compliance posture does not allow an investigation to run: no step's findings may reach a planning model. Ask one governed question at a time instead.",
         "fr": "La posture de conformité de cet espace de travail ne permet pas de lancer une investigation : les résultats d'aucune étape ne peuvent être transmis à un modèle de planification. Posez plutôt vos questions gouvernées une par une.",
@@ -1552,6 +1556,306 @@ MESSAGES: dict[str, dict[str, str]] = {
     "investigation.template.step_failed": {
         "en": "Step {index} asked: {question}\nCould not be answered: {error}",
         "fr": "Étape {index} — question posée : {question}\nSans réponse : {error}",
+    },
+    "investigation.tool.summary.query": {
+        "en": "Ask a business question through the governed pipeline.",
+        "fr": "Pose une question métier par le pipeline gouverné.",
+    },
+    "investigation.tool.summary.drill": {
+        "en": "Ask a step's question again, broken down by one more dimension.",
+        "fr": "Repose la question d'une étape, ventilée par une dimension de plus.",
+    },
+    "investigation.tool.summary.compare": {
+        "en": "Compare two steps' results label by label: each value and the change.",
+        "fr": "Compare les résultats de deux étapes, libellé par libellé : chaque valeur et l'écart.",
+    },
+    "investigation.tool.summary.forecast": {
+        "en": "Project a step's series forward, with its range, where the series supports a forecast.",
+        "fr": "Prolonge la série d'une étape, avec sa fourchette, lorsque la série permet une prévision.",
+    },
+    "investigation.tool.summary.anomalies": {
+        "en": "Find the values in a step's result that stand out from the rest.",
+        "fr": "Repère les valeurs du résultat d'une étape qui se démarquent des autres.",
+    },
+    "investigation.tool.summary.correlate": {
+        "en": "Measure how two numeric columns of a step's result move together.",
+        "fr": "Mesure comment deux colonnes numériques du résultat d'une étape évoluent ensemble.",
+    },
+    "investigation.tool.summary.distribution": {
+        "en": "Show how a step's values are spread, in ranges.",
+        "fr": "Montre la répartition des valeurs d'une étape, par tranches.",
+    },
+    "investigation.tool.summary.cohort": {
+        "en": "Build a cohort matrix from a step's result (cohort, period, value).",
+        "fr": "Construit une matrice de cohortes à partir du résultat d'une étape (cohorte, période, valeur).",
+    },
+    "investigation.tool.summary.funnel": {
+        "en": "Read a step's result as a funnel: conversion from stage to stage.",
+        "fr": "Lit le résultat d'une étape comme un entonnoir : la conversion d'une étape à l'autre.",
+    },
+    "investigation.tool.summary.contribution": {
+        "en": "Each item's share of a step's total, largest first.",
+        "fr": "La part de chaque élément dans le total d'une étape, de la plus grande à la plus petite.",
+    },
+    "investigation.tool.input.question": {
+        "en": "the question, in plain language",
+        "fr": "la question, en langage courant",
+    },
+    "investigation.tool.input.step": {
+        "en": "the number of the step whose result it reads",
+        "fr": "le numéro de l'étape dont il lit le résultat",
+    },
+    "investigation.tool.input.other_step": {
+        "en": "the number of the other step",
+        "fr": "le numéro de l'autre étape",
+    },
+    "investigation.tool.input.dimension": {
+        "en": "the dimension to break it down by",
+        "fr": "la dimension de ventilation",
+    },
+    "investigation.tool.input.column": {
+        "en": "a column of that step's result; inferred when left out",
+        "fr": "une colonne du résultat de cette étape ; déduite si elle est omise",
+    },
+    "investigation.tool.input.other_column": {
+        "en": "a second column of that step's result",
+        "fr": "une deuxième colonne du résultat de cette étape",
+    },
+    "investigation.tool.input.periods": {
+        "en": "how many periods ahead, 1 to 12; 3 when left out",
+        "fr": "combien de périodes à venir, de 1 à 12 ; 3 si omis",
+    },
+    "investigation.tool.label.drill": {
+        "en": "Step {step} broken down by {dimension}",
+        "fr": "L'étape {step} ventilée par {dimension}",
+    },
+    "investigation.tool.label.compare": {
+        "en": "Step {step} compared with step {other_step}",
+        "fr": "L'étape {step} comparée à l'étape {other_step}",
+    },
+    "investigation.tool.label.forecast": {
+        "en": "Forecast of step {step}, {periods} period(s) ahead",
+        "fr": "Prévision de l'étape {step}, {periods} période(s) à venir",
+    },
+    "investigation.tool.label.anomalies": {
+        "en": "Values that stand out in step {step}",
+        "fr": "Valeurs qui se démarquent à l'étape {step}",
+    },
+    "investigation.tool.label.correlate": {
+        "en": "Correlation in step {step}",
+        "fr": "Corrélation à l'étape {step}",
+    },
+    "investigation.tool.label.distribution": {
+        "en": "Distribution of step {step}",
+        "fr": "Répartition de l'étape {step}",
+    },
+    "investigation.tool.label.cohort": {
+        "en": "Cohorts in step {step}",
+        "fr": "Cohortes de l'étape {step}",
+    },
+    "investigation.tool.label.funnel": {
+        "en": "Funnel of step {step}",
+        "fr": "Entonnoir de l'étape {step}",
+    },
+    "investigation.tool.label.contribution": {
+        "en": "Shares of the total in step {step}",
+        "fr": "Parts du total à l'étape {step}",
+    },
+    "investigation.tool.brief.compare": {
+        "en": "{value}, step {first} against step {second}: {items}",
+        "fr": "{value}, étape {first} contre étape {second} : {items}",
+    },
+    "investigation.tool.brief.compare_item": {
+        "en": "{label}: {first} then {second} (change {change}, {pct})",
+        "fr": "{label} : {first} puis {second} (écart {change}, {pct})",
+    },
+    "investigation.tool.brief.forecast": {
+        "en": "{value} by {period}, projected with the {model} model (R² {r2}): {points}",
+        "fr": "{value} par {period}, projetée avec le modèle {model} (R² {r2}) : {points}",
+    },
+    "investigation.tool.brief.forecast_point": {
+        "en": "{period}: {value} (between {low} and {high})",
+        "fr": "{period} : {value} (entre {low} et {high})",
+    },
+    "investigation.tool.brief.item": {
+        "en": "{label}: {value}",
+        "fr": "{label} : {value}",
+    },
+    "investigation.tool.brief.none": {
+        "en": "none",
+        "fr": "aucune",
+    },
+    "investigation.tool.brief.anomalies": {
+        "en": "{flagged} of {total} values of {value} stand out ({method}): {items}",
+        "fr": "{flagged} valeurs de {value} sur {total} se démarquent ({method}) : {items}",
+    },
+    "investigation.tool.brief.correlate": {
+        "en": "{x} and {y}: r = {r}, {strength}, over {n} pairs",
+        "fr": "{x} et {y} : r = {r}, {strength}, sur {n} paires",
+    },
+    "investigation.tool.brief.distribution": {
+        "en": "{value} over {n} rows: {items}",
+        "fr": "{value} sur {n} lignes : {items}",
+    },
+    "investigation.tool.brief.bin": {
+        "en": "{bin}: {count} ({pct})",
+        "fr": "{bin} : {count} ({pct})",
+    },
+    "investigation.tool.brief.cohort": {
+        "en": "{cohorts} cohorts over {periods} periods; average retention {retention}; best cohort {best}, weakest {worst}",
+        "fr": "{cohorts} cohortes sur {periods} périodes ; rétention moyenne {retention} ; meilleure cohorte {best}, plus faible {worst}",
+    },
+    "investigation.tool.brief.funnel": {
+        "en": "{stages} stages: {top} at the top, {bottom} at the bottom, {overall} overall; the biggest drop is at {stage} ({drop})",
+        "fr": "{stages} étapes : {top} en haut, {bottom} en bas, {overall} au total ; la plus forte baisse est à {stage} ({drop})",
+    },
+    "investigation.tool.brief.share": {
+        "en": "{label}: {value} ({pct})",
+        "fr": "{label} : {value} ({pct})",
+    },
+    "investigation.tool.brief.contribution": {
+        "en": "{value} by {label}: {items}; the top 3 hold {top}",
+        "fr": "{value} par {label} : {items} ; les 3 premiers en détiennent {top}",
+    },
+    "investigation.tool.correlation.strong_positive": {
+        "en": "strong and positive",
+        "fr": "forte et positive",
+    },
+    "investigation.tool.correlation.strong_negative": {
+        "en": "strong and negative",
+        "fr": "forte et négative",
+    },
+    "investigation.tool.correlation.moderate_positive": {
+        "en": "moderate and positive",
+        "fr": "modérée et positive",
+    },
+    "investigation.tool.correlation.moderate_negative": {
+        "en": "moderate and negative",
+        "fr": "modérée et négative",
+    },
+    "investigation.tool.correlation.weak_positive": {
+        "en": "weak and positive",
+        "fr": "faible et positive",
+    },
+    "investigation.tool.correlation.weak_negative": {
+        "en": "weak and negative",
+        "fr": "faible et négative",
+    },
+    "investigation.tool.correlation.negligible": {
+        "en": "negligible",
+        "fr": "négligeable",
+    },
+    "investigation.tool.correlation.insufficient_data": {
+        "en": "not enough data",
+        "fr": "données insuffisantes",
+    },
+    "investigation.tool.error.unknown_tool": {
+        "en": "There is no tool named {name}.",
+        "fr": "Aucun outil ne s'appelle {name}.",
+    },
+    "investigation.tool.error.unknown_input": {
+        "en": "That tool has no input named {name}.",
+        "fr": "Cet outil n'a pas d'entrée nommée {name}.",
+    },
+    "investigation.tool.error.missing_input": {
+        "en": "That tool needs {name}.",
+        "fr": "Cet outil a besoin de {name}.",
+    },
+    "investigation.tool.error.count_range": {
+        "en": "{name} must be between {low} and {high}.",
+        "fr": "{name} doit être compris entre {low} et {high}.",
+    },
+    "investigation.tool.error.no_such_step": {
+        "en": "This investigation has no step {step}.",
+        "fr": "Cette investigation n'a pas d'étape {step}.",
+    },
+    "investigation.tool.error.step_found_nothing": {
+        "en": "Step {step} found nothing to work on.",
+        "fr": "L'étape {step} n'a rien trouvé sur quoi travailler.",
+    },
+    "investigation.tool.error.truncated": {
+        "en": "Step {step}'s result stopped at the row limit, so it is not the whole answer; ask a narrower question first.",
+        "fr": "Le résultat de l'étape {step} s'est arrêté à la limite de lignes : ce n'est pas la réponse complète ; posez d'abord une question plus ciblée.",
+    },
+    "investigation.tool.error.too_few_for_anomalies": {
+        "en": "There are too few values to tell which ones stand out.",
+        "fr": "Il y a trop peu de valeurs pour dire lesquelles se démarquent.",
+    },
+    "investigation.tool.method.zscore": {
+        "en": "{threshold} standard deviations or more from the average",
+        "fr": "à {threshold} écarts-types ou plus de la moyenne",
+    },
+    "investigation.tool.method.iqr": {
+        "en": "outside the interquartile range",
+        "fr": "hors de l'écart interquartile",
+    },
+    "investigation.tool.error.not_one_row_per_label": {
+        "en": "Step {step} has more than one row per {label}, so its rows cannot be matched one to one.",
+        "fr": "L'étape {step} a plus d'une ligne par {label} : ses lignes ne peuvent pas être appariées une à une.",
+    },
+    "investigation.tool.error.no_label": {
+        "en": "Step {step}'s result has more than one column that could name its items, so its shares would be a guess.",
+        "fr": "Le résultat de l'étape {step} a plus d'une colonne pouvant nommer ses éléments : ses parts seraient une supposition.",
+    },
+    "investigation.tool.error.no_shares": {
+        "en": "Shares of a total cannot be given for {value}: it does not add up across these rows, or its total is zero.",
+        "fr": "Les parts du total ne peuvent pas être données pour {value} : cette mesure ne s'additionne pas sur ces lignes, ou son total est nul.",
+    },
+    "investigation.tool.model.ols": {
+        "en": "straight-line trend",
+        "fr": "de tendance linéaire",
+    },
+    "investigation.tool.model.ets": {
+        "en": "exponential smoothing",
+        "fr": "de lissage exponentiel",
+    },
+    "investigation.tool.model.sarimax": {
+        "en": "seasonal",
+        "fr": "saisonnier",
+    },
+    "investigation.tool.error.expired": {
+        "en": "Step {step}'s result is no longer held; ask it again.",
+        "fr": "Le résultat de l'étape {step} n'est plus conservé ; reposez la question.",
+    },
+    "investigation.tool.error.no_column": {
+        "en": "Step {step}'s result has no column {column}.",
+        "fr": "Le résultat de l'étape {step} n'a pas de colonne {column}.",
+    },
+    "investigation.tool.error.nothing_to_compare": {
+        "en": "Those two results share no labels to compare.",
+        "fr": "Ces deux résultats n'ont aucun libellé commun à comparer.",
+    },
+    "investigation.tool.error.forecast_refused": {
+        "en": "This series cannot carry a reliable forecast ({reason}).",
+        "fr": "Cette série ne permet pas une prévision fiable ({reason}).",
+    },
+    "investigation.tool.error.no_value_column": {
+        "en": "That result has no numeric column to work on.",
+        "fr": "Ce résultat n'a pas de colonne numérique à exploiter.",
+    },
+    "investigation.tool.error.two_columns": {
+        "en": "A correlation needs two different numeric columns.",
+        "fr": "Une corrélation nécessite deux colonnes numériques différentes.",
+    },
+    "investigation.tool.error.too_few_pairs": {
+        "en": "There are too few pairs of values to measure a correlation.",
+        "fr": "Il y a trop peu de paires de valeurs pour mesurer une corrélation.",
+    },
+    "investigation.tool.error.too_few_values": {
+        "en": "There are too few values to show how they are spread.",
+        "fr": "Il y a trop peu de valeurs pour en montrer la répartition.",
+    },
+    "investigation.tool.error.not_a_cohort": {
+        "en": "That result does not have a cohort, a period and a value.",
+        "fr": "Ce résultat n'a pas de cohorte, de période et de valeur.",
+    },
+    "investigation.tool.error.not_a_funnel": {
+        "en": "That result does not have stages and counts.",
+        "fr": "Ce résultat n'a pas d'étapes et de comptages.",
+    },
+    "investigation.tool.error.failed": {
+        "en": "That analysis could not be run.",
+        "fr": "Cette analyse n'a pas pu être exécutée.",
     },
     "fail.generic.next_step_technical": {
         "en": "Try rephrasing the question; if it keeps failing, share the technical details with your administrator.",

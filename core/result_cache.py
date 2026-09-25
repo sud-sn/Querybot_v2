@@ -490,7 +490,10 @@ class ResultCache:
             # values and is required to keep actions on derived snapshots
             # bound to the same database and semantic contract as their
             # source. Never inherit arbitrary metadata here.
-            for key in ("db_config_id", "semantic_plan", "contract_version"):
+            # Whether the source stopped at its row cap is inherited as well:
+            # whatever is derived from the head of a result is no more
+            # complete than that head.
+            for key in ("db_config_id", "semantic_plan", "contract_version", "rows_truncated"):
                 if key not in resolved_metadata and source.metadata.get(key) is not None:
                     value = source.metadata[key]
                     resolved_metadata[key] = dict(value) if isinstance(value, dict) else value

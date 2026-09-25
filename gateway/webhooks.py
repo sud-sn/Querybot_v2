@@ -1176,9 +1176,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             if agent_run:
                 for step in outcome.steps:
                     if step.index > 1:
+                        # A question is query_data, as ever; a tool is itself.
+                        asked = step.result.kind == "query"
                         agent_run.next_step(
-                            "query_data", _t("investigation.stage.label"),
-                            _t("investigation.stage.detail", question=step.question[:160]),
+                            "query_data" if asked else step.result.kind,
+                            _t("investigation.stage.label"),
+                            _t("investigation.stage.detail" if asked else "investigation.stage.tool_detail",
+                               question=step.question[:160]),
                         )
                     agent_run.complete_step("completed" if step.result.ok else "failed")
                 agent_run.record_assistant_message(
