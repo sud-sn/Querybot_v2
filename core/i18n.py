@@ -1569,6 +1569,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Compare two steps' results label by label: each value and the change.",
         "fr": "Compare les résultats de deux étapes, libellé par libellé : chaque valeur et l'écart.",
     },
+    "investigation.tool.summary.bridge": {
+        "en": "Bridge one step's total to another's: each member's move and the rest together, landing exactly on the second total. For why a total moved between two results of the same breakdown.",
+        "fr": "Relie le total d'une étape à celui d'une autre : l'écart de chaque membre et le reste ensemble, jusqu'au second total exactement. Pour comprendre pourquoi un total a bougé entre deux résultats de la même ventilation.",
+    },
+    "investigation.tool.summary.price_volume_mix": {
+        "en": "Split the move between two steps into volume, mix and price, for a value that is a quantity times a price; both steps need the quantity beside the value.",
+        "fr": "Décompose l'écart entre deux étapes en volume, mix et prix, pour une valeur égale à une quantité fois un prix ; les deux étapes doivent porter la quantité à côté de la valeur.",
+    },
     "investigation.tool.summary.forecast": {
         "en": "Project a step's series forward, with its range, where the series supports a forecast.",
         "fr": "Prolonge la série d'une étape, avec sa fourchette, lorsque la série permet une prévision.",
@@ -1617,6 +1625,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "a column of that step's result; inferred when left out",
         "fr": "une colonne du résultat de cette étape ; déduite si elle est omise",
     },
+    "investigation.tool.input.quantity": {
+        "en": "the quantity column (units, pieces) of that step's result",
+        "fr": "la colonne de quantité (unités, pièces) du résultat de cette étape",
+    },
     "investigation.tool.input.other_column": {
         "en": "a second column of that step's result",
         "fr": "une deuxième colonne du résultat de cette étape",
@@ -1628,6 +1640,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "investigation.tool.label.drill": {
         "en": "Step {step} broken down by {dimension}",
         "fr": "L'étape {step} ventilée par {dimension}",
+    },
+    "investigation.tool.label.bridge": {
+        "en": "From step {step}'s total to step {other_step}'s",
+        "fr": "Du total de l'étape {step} à celui de l'étape {other_step}",
+    },
+    "investigation.tool.label.price_volume_mix": {
+        "en": "Volume, mix and price from step {step} to step {other_step}",
+        "fr": "Volume, mix et prix de l'étape {step} à l'étape {other_step}",
     },
     "investigation.tool.label.compare": {
         "en": "Step {step} compared with step {other_step}",
@@ -1661,6 +1681,43 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Shares of the total in step {step}",
         "fr": "Parts du total à l'étape {step}",
     },
+    "investigation.tool.brief.bridge": {
+        "en": "{value} went from {start} at step {first} to {end} at step {second}, {change}: {items}{rest}. The members named account for {share} of the movement.",
+        "fr": "{value} est passé de {start} à l'étape {first} à {end} à l'étape {second}, {change} : {items}{rest}. Les membres cités représentent {share} du mouvement.",
+    },
+    "investigation.tool.brief.bridge_item": {
+        "en": "{label} {change}",
+        "fr": "{label} {change}",
+    },
+    "investigation.tool.brief.bridge_rest": {
+        "en": "; the other {count} together {change}",
+        "fr": " ; les {count} autres ensemble {change}",
+    },
+    "investigation.tool.brief.price_volume_mix": {
+        "en": "{value} went from {start} at step {first} to {end} at step {second}, {change}. Volume {volume}, mix {mix}, price {price}, new members {new}, lost members {lost}, other {other}. The price moved most at {price_drivers}; the mix shifted most at {mix_drivers}.",
+        "fr": "{value} est passé de {start} à l'étape {first} à {end} à l'étape {second}, {change}. Effet volume {volume}, effet mix {mix}, effet prix {price}, nouveaux membres {new}, membres perdus {lost}, autre {other}. Le prix a le plus bougé pour {price_drivers} ; le mix s'est le plus déplacé pour {mix_drivers}.",
+    },
+    "investigation.tool.move.up": {"en": "up {amount}", "fr": "en hausse de {amount}"},
+    "investigation.tool.move.down": {"en": "down {amount}", "fr": "en baisse de {amount}"},
+    "investigation.tool.move.none": {"en": "unchanged", "fr": "inchangé"},
+    "investigation.tool.bridge.start": {
+        "en": "Total at step {step}",
+        "fr": "Total à l'étape {step}",
+    },
+    "investigation.tool.bridge.rest": {
+        "en": "The other {count}",
+        "fr": "Les {count} autres",
+    },
+    "investigation.tool.bridge.end": {
+        "en": "Total at step {step}",
+        "fr": "Total à l'étape {step}",
+    },
+    "investigation.tool.pvm.volume": {"en": "Volume", "fr": "Effet volume"},
+    "investigation.tool.pvm.mix": {"en": "Mix", "fr": "Effet mix"},
+    "investigation.tool.pvm.price": {"en": "Price", "fr": "Effet prix"},
+    "investigation.tool.pvm.new": {"en": "New members", "fr": "Nouveaux membres"},
+    "investigation.tool.pvm.lost": {"en": "Lost members", "fr": "Membres perdus"},
+    "investigation.tool.pvm.other": {"en": "Other", "fr": "Autre"},
     "investigation.tool.brief.compare": {
         "en": "{value}, step {first} against step {second}: {items}",
         "fr": "{value}, étape {first} contre étape {second} : {items}",
@@ -1820,6 +1877,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "investigation.tool.error.no_column": {
         "en": "Step {step}'s result has no column {column}.",
         "fr": "Le résultat de l'étape {step} n'a pas de colonne {column}.",
+    },
+    "investigation.tool.error.bridge_non_additive": {
+        "en": "{column} does not add up across members (a percentage, an average or a unit price), so no bridge sums to its total.",
+        "fr": "{column} ne s'additionne pas entre membres (un pourcentage, une moyenne ou un prix unitaire) : aucun pont ne retombe sur son total.",
+    },
+    "investigation.tool.error.no_priced_members": {
+        "en": "No member has a {quantity} above zero in both steps, so there is no price to compare.",
+        "fr": "Aucun membre n'a de {quantity} supérieure à zéro dans les deux étapes : il n'y a pas de prix à comparer.",
     },
     "investigation.tool.error.nothing_to_compare": {
         "en": "Those two results share no labels to compare.",

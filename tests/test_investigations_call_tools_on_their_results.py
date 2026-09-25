@@ -746,5 +746,6 @@ class TestTheTrail:
 
 
 def test_the_registry_offers_exactly_these_tools():
-    assert sorted(REGISTRY) == sorted(["query", "drill", "compare", "forecast", "anomalies", "correlate",
-                                       "distribution", "cohort", "funnel", "contribution"])
+    assert sorted(REGISTRY) == sorted(["query", "drill", "compare", "bridge", "price_volume_mix", "forecast",
+                                       "anomalies", "correlate", "distribution", "cohort", "funnel",
+                                       "contribution"])

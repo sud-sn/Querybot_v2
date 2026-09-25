@@ -260,6 +260,130 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _move(value: float, lang: str | None) -> str:
+    """A move as prose states one: its size, and its direction in words.
+
+    Not as a signed figure. A summary says "sales fell 13", and the synthesis
+    check (core.investigation_planner.verify_synthesis) looks for each figure
+    the summary gives in the evidence: a brief that recorded -13 made the
+    correct sentence read as an invented figure.
+    """
+    if abs(value) < 1e-9:
+        return _t("investigation.tool.move.none", lang)
+    key = "investigation.tool.move.up" if value > 0 else "investigation.tool.move.down"
+    return _t(key, lang, amount=_fmt(abs(value), lang))
+
+
+def _two_steps(call: ToolCall, *, besides: str = "") -> tuple[list[dict], list[dict], str, str, str] | None:
+    """Both steps' rows, the member column, and the value column on each side.
+
+    The second step's rows come back keyed by the first step's member column,
+    so a member named REGION in one result and REGION_NM in the other is still
+    one member. `besides` is a column the value is not: the quantity, for a
+    price-volume-mix split, which would otherwise be inferred as the value.
+    """
+    from core.contribution_analysis import infer_numeric_col
+
+    def infer(rows: list[dict]) -> str:
+        return infer_numeric_col([{k: v for k, v in row.items() if k != besides} for row in rows])
+
+    first, second = _rows(call, "step"), _rows(call, "other_step")
+    value = call.values.get("column") or infer(first)
+    label = _label_column(first, value)
+    other_value = _column(second, value) or infer(second)
+    other_label = _column(second, label) or _label_column(second, other_value)
+    if not (value and label and other_value and other_label):
+        return None
+    if other_label != label:
+        second = [{**row, label: row.get(other_label)} for row in second]
+    return first, second, label, value, other_value
+
+
+def _bridge_refusal(call: ToolCall, refused: Any, label: str) -> ToolResult:
+    if refused.reason == "not_one_row_per_member":
+        return _failed(call, _t("investigation.tool.error.not_one_row_per_label", call.lang,
+                                step=call.values["step"], label=label))
+    if refused.reason == "non_additive":
+        return _failed(call, _t("investigation.tool.error.bridge_non_additive", call.lang,
+                                column=refused.detail.get("column", "")))
+    if refused.reason == "no_priced_members":
+        return _failed(call, _t("investigation.tool.error.no_priced_members", call.lang,
+                                quantity=refused.detail.get("quantity", "")))
+    return _failed(call, _t("investigation.tool.error.nothing_to_compare", call.lang))
+
+
+async def _bridge(call: ToolCall) -> ToolResult:
+    """From one step's total to the other's: each member's move, and the rest."""
+    from core.variance_bridge import BridgeRefused, variance_bridge
+
+    found_steps = _two_steps(call)
+    if found_steps is None:
+        return _failed(call, _t("investigation.tool.error.nothing_to_compare", call.lang))
+    first, second, label, value, other_value = found_steps
+    try:
+        found = variance_bridge(first, second, member=label, value=value, other_value=other_value)
+    except BridgeRefused as refused:
+        return _bridge_refusal(call, refused, label)
+    step, other = call.values["step"], call.values["other_step"]
+    rows: list[dict[str, Any]] = [
+        {label: _t("investigation.tool.bridge.start", call.lang, step=step), "kind": "start", "amount": found.start}]
+    rows += [{label: member, "kind": "member", "amount": move} for member, move in found.steps]
+    if found.rest_members:
+        rows.append({label: _t("investigation.tool.bridge.rest", call.lang, count=found.rest_members),
+                     "kind": "rest", "amount": found.rest})
+    rows.append({label: _t("investigation.tool.bridge.end", call.lang, step=other), "kind": "end", "amount": found.end})
+    items = "; ".join(
+        _t("investigation.tool.brief.bridge_item", call.lang, label=member, change=_move(move, call.lang))
+        for member, move in found.steps
+    ) or _t("investigation.tool.brief.none", call.lang)
+    rest = (_t("investigation.tool.brief.bridge_rest", call.lang, count=found.rest_members,
+               change=_move(found.rest, call.lang)) if found.rest_members else "")
+    share = found.explained_share
+    brief = _t("investigation.tool.brief.bridge", call.lang, value=value, first=step, second=other,
+               start=_fmt(found.start, call.lang), end=_fmt(found.end, call.lang),
+               change=_move(found.change, call.lang), items=items, rest=rest,
+               share=_pct(share * 100.0 if share is not None else None, call.lang))
+    return _ok(call, brief, rows, _keep(call, rows))
+
+
+async def _price_volume_mix(call: ToolCall) -> ToolResult:
+    """The move between two steps split into volume, mix, price, new and lost."""
+    from core.variance_bridge import BridgeRefused, price_volume_mix
+
+    quantity = call.values["quantity"]
+    found_steps = _two_steps(call, besides=quantity)
+    if found_steps is None:
+        return _failed(call, _t("investigation.tool.error.nothing_to_compare", call.lang))
+    first, second, label, value, other_value = found_steps
+    other_quantity = _column(second, quantity)
+    if not other_quantity:
+        return _failed(call, _t("investigation.tool.error.no_column", call.lang, column=quantity,
+                                step=call.values["other_step"]))
+    if other_value != value or other_quantity != quantity:
+        second = [{**row, value: row.get(other_value), quantity: row.get(other_quantity)} for row in second]
+    try:
+        found = price_volume_mix(first, second, member=label, quantity=quantity, value=value)
+    except BridgeRefused as refused:
+        return _bridge_refusal(call, refused, label)
+    parts = found.parts()
+    rows: list[dict[str, Any]] = [
+        {"part": _t(f"investigation.tool.pvm.{name}", call.lang), "kind": name, "amount": amount}
+        for name, amount in parts.items() if name in {"volume", "mix", "price"} or amount
+    ]
+
+    def drivers(pairs: tuple[tuple[str, float], ...]) -> str:
+        return ", ".join(f"{member} ({_move(effect, call.lang)})" for member, effect in pairs[:3]) \
+            or _t("investigation.tool.brief.none", call.lang)
+
+    brief = _t("investigation.tool.brief.price_volume_mix", call.lang, value=value, quantity=quantity,
+               first=call.values["step"], second=call.values["other_step"],
+               start=_fmt(found.start, call.lang), end=_fmt(found.end, call.lang),
+               change=_move(found.change, call.lang),
+               **{name: _move(amount, call.lang) for name, amount in parts.items()},
+               price_drivers=drivers(found.price_drivers), mix_drivers=drivers(found.mix_drivers))
+    return _ok(call, brief, rows, _keep(call, rows))
+
+
 async def _forecast(call: ToolCall) -> ToolResult:
     from core.chart_policy import aggregate_only_gate_passes
     from core.forecast import compute_forecast
@@ -443,6 +567,16 @@ REGISTRY: dict[str, Tool] = {tool.name: tool for tool in (
          (_step("investigation.tool.input.step"),
           ToolInput("other_step", "step", "investigation.tool.input.other_step"),
           ToolInput("column", "column", "investigation.tool.input.column", required=False)), _compare),
+    Tool("bridge", "investigation.tool.summary.bridge",
+         (_step("investigation.tool.input.step"),
+          ToolInput("other_step", "step", "investigation.tool.input.other_step"),
+          ToolInput("column", "column", "investigation.tool.input.column", required=False)), _bridge),
+    Tool("price_volume_mix", "investigation.tool.summary.price_volume_mix",
+         (_step("investigation.tool.input.step"),
+          ToolInput("other_step", "step", "investigation.tool.input.other_step"),
+          ToolInput("quantity", "column", "investigation.tool.input.quantity"),
+          ToolInput("column", "column", "investigation.tool.input.column", required=False)),
+         _price_volume_mix),
     Tool("forecast", "investigation.tool.summary.forecast",
          (_step("investigation.tool.input.step"),
           ToolInput("periods", "count", "investigation.tool.input.periods", required=False,

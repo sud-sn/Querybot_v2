@@ -201,6 +201,9 @@ class TestTheCatalogueIsWellFormed:
         # profil". Both languages happen to put the count first, and it is an
         # entry so that a language which does not can change it.
         "reply.analysis.short_value",
+        # The same kind of rule: a member and its move ("North up 100" /
+        # "North en hausse de 100"); the move's words are their own entries.
+        "investigation.tool.brief.bridge_item",
         "reply.analysis.op.python",     # the language's own name
         # "table" is the same word in French, singular and plural, and these
         # three are the count phrase, the schema entry and the table line it
