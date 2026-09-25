@@ -112,6 +112,34 @@ def validate_relationship(
 
 _PROFILE_GIVE_UP_AFTER = 3
 
+# Confirmed by the data: at least this share of the probed keys found their
+# dimension row, and none found two.
+_CONFIRMED_MATCH_RATE = 99.0
+
+
+def data_confirms(rel: dict) -> bool:
+    """Whether the warehouse's own rows vouch for this join.
+
+    The line an admin can accept without reading every join: the profile ran
+    against the data (not only the schema), nearly every key found its row,
+    no key found two, and the dimension repeats no key. Name-based confidence
+    ("Accept all >= 85%") says the columns are spelled alike; this says the
+    rows agree.
+    """
+    def number(key: str) -> float:
+        try:
+            value = rel.get(key)
+            return float(value) if value is not None else -1.0
+        except (TypeError, ValueError):
+            return -1.0
+
+    return (
+        str(rel.get("validation_status") or "") == STATUS_VALID
+        and str(rel.get("join_multiplicity") or "") == "one_to_one_or_many_to_one"
+        and number("match_rate") >= _CONFIRMED_MATCH_RATE
+        and 0.0 <= number("fanout_ratio") <= 1.01
+    )
+
 
 def profile_suggested_relationships(
     account_id: str, *, limit: int = 100, timeout_seconds: int = 20,
@@ -284,47 +312,86 @@ def build_probe_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict) -> st
     return f"SELECT COUNT(*) AS row_count FROM {left_table} l {join_type} JOIN {right_table} r ON {on_sql}"
 
 
-def build_profile_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict) -> str:
+# A join is profiled on a bounded slice of its many side. The probe used to
+# read the whole fact table eight times over -- EXISTS, NOT EXISTS and a full
+# join among them -- so on a warehouse-sized fact it ran past its timeout,
+# three timeouts ended the profiling run, and every join stayed "untested":
+# the resolver had no evidence to rank on and the admin none to approve on.
+# The dimension side (its rows, distinct and duplicate keys) is still read
+# whole: it is the small side, and a duplicate key anywhere in it fans every
+# total out.
+PROFILE_SAMPLE_ROWS = 100_000
+
+
+def build_profile_sql(
+    db_type: str, rel: dict, from_ent: dict, to_ent: dict,
+    *, sample_rows: int | None = None,
+) -> str:
     """Build a read-only join quality profile for one relationship.
 
     The probe measures source-key nulls, matched source rows, orphans, and
     join fanout. These signals let the resolver avoid technically valid but
     operationally poor join paths.
+
+    One pass over the first `sample_rows` rows of the source table, joined to
+    the target's keys grouped once: the counts come from the same rows, which
+    a query reading the sample once per count could not promise.
     """
     left_table = _quote_table(from_ent.get("schema_name", ""), from_ent.get("table_name", ""), db_type)
     right_table = _quote_table(to_ent.get("schema_name", ""), to_ent.get("table_name", ""), db_type)
     pairs = _join_pairs(rel)
+    count_fn = "COUNT_BIG(1)" if db_type == "azure_sql" else "COUNT(*)"
+    left_keys = ", ".join(f"{_quote_col(left, db_type)} AS k{i}" for i, (left, _) in enumerate(pairs))
+    right_keys = ", ".join(_quote_col(right, db_type) for _, right in pairs)
+    right_named = ", ".join(f"{_quote_col(right, db_type)} AS k{i}" for i, (_, right) in enumerate(pairs))
+    rows = int(sample_rows or PROFILE_SAMPLE_ROWS)
+    if db_type == "azure_sql":
+        sample = f"SELECT TOP ({rows}) {left_keys} FROM {left_table}"
+    elif db_type == "snowflake":
+        sample = f"SELECT {left_keys} FROM {left_table} LIMIT {rows}"
+    else:
+        sample = f"SELECT {left_keys} FROM {left_table} FETCH FIRST {rows} ROWS ONLY"
+    on_sql = " AND ".join(f"s.k{i} = t.k{i}" for i in range(len(pairs)))
+    non_null_sql = " AND ".join(f"s.k{i} IS NOT NULL" for i in range(len(pairs)))
+    # The target's statistics sit outside the aggregate on purpose: Oracle
+    # refuses a scalar subquery beside an aggregate without a GROUP BY.
+    return f"""
+WITH s AS (
+  {sample}
+), t AS (
+  SELECT {right_named}, {count_fn} AS n FROM {right_table} GROUP BY {right_keys}
+), p AS (
+  SELECT
+    {count_fn} AS left_rows,
+    SUM(CASE WHEN {non_null_sql} THEN 1 ELSE 0 END) AS non_null_fk_rows,
+    SUM(CASE WHEN t.n IS NOT NULL THEN 1 ELSE 0 END) AS matched_left_rows,
+    SUM(CASE WHEN {non_null_sql} AND t.n IS NULL THEN 1 ELSE 0 END) AS orphan_rows,
+    SUM(COALESCE(t.n, 0)) AS join_rows
+  FROM s LEFT JOIN t ON {on_sql}
+)
+SELECT
+  p.left_rows, p.non_null_fk_rows, p.matched_left_rows, p.orphan_rows, p.join_rows,
+  (SELECT {count_fn} FROM {right_table}) AS target_rows,
+  (SELECT {count_fn} FROM t) AS target_distinct_keys,
+  (SELECT {count_fn} FROM t WHERE t.n > 1) AS target_duplicate_keys
+FROM p
+""".strip()
+
+
+def build_match_exists_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict) -> str:
+    """Does ANY source row match? Stops at the first one that does."""
+    left_table = _quote_table(from_ent.get("schema_name", ""), from_ent.get("table_name", ""), db_type)
+    right_table = _quote_table(to_ent.get("schema_name", ""), to_ent.get("table_name", ""), db_type)
     on_sql = " AND ".join(
         f"l.{_quote_col(left, db_type)} = r.{_quote_col(right, db_type)}"
-        for left, right in pairs
+        for left, right in _join_pairs(rel)
     )
-    non_null_sql = " AND ".join(
-        f"l.{_quote_col(left, db_type)} IS NOT NULL" for left, _ in pairs
-    )
-    count_fn = "COUNT_BIG(1)" if db_type == "azure_sql" else "COUNT(*)"
-    right_keys = ", ".join(f"r.{_quote_col(right, db_type)}" for _, right in pairs)
-    return f"""
-SELECT
-  (SELECT {count_fn} FROM {left_table} l) AS left_rows,
-  (SELECT {count_fn} FROM {left_table} l WHERE {non_null_sql}) AS non_null_fk_rows,
-  (SELECT {count_fn} FROM {left_table} l
-    WHERE {non_null_sql} AND EXISTS (
-      SELECT 1 FROM {right_table} r WHERE {on_sql}
-    )) AS matched_left_rows,
-  (SELECT {count_fn} FROM {left_table} l
-    WHERE {non_null_sql} AND NOT EXISTS (
-      SELECT 1 FROM {right_table} r WHERE {on_sql}
-    )) AS orphan_rows,
-  (SELECT {count_fn} FROM {left_table} l
-    INNER JOIN {right_table} r ON {on_sql}) AS join_rows,
-  (SELECT {count_fn} FROM {right_table} r) AS target_rows,
-  (SELECT {count_fn} FROM (
-     SELECT {right_keys} FROM {right_table} r GROUP BY {right_keys}
-   ) distinct_target_keys) AS target_distinct_keys,
-  (SELECT {count_fn} FROM (
-     SELECT {right_keys} FROM {right_table} r GROUP BY {right_keys} HAVING {count_fn} > 1
-   ) duplicate_target_keys) AS target_duplicate_keys
-""".strip()
+    exists = f"EXISTS (SELECT 1 FROM {right_table} r WHERE {on_sql})"
+    if db_type == "azure_sql":
+        return f"SELECT TOP (1) 1 FROM {left_table} l WHERE {exists}"
+    if db_type == "snowflake":
+        return f"SELECT 1 FROM {left_table} l WHERE {exists} LIMIT 1"
+    return f"SELECT 1 FROM {left_table} l WHERE {exists} FETCH FIRST 1 ROWS ONLY"
 
 
 def run_probe(
@@ -393,6 +460,24 @@ def _execute_probe(
         tuple(int(value or 0) for value in rows[0][:8]) if rows else (0,) * 8
     )
 
+    # None of the sampled rows matched, and the sample did not reach the end
+    # of the table. That is a verdict about those rows only, while "matches
+    # nothing" keeps the resolver off a join for good -- so the whole table is
+    # asked first, with a query that stops at its first match: quick exactly
+    # when the join is sound.
+    if matched_rows <= 0 and left_rows >= PROFILE_SAMPLE_ROWS:
+        found = run_probe(db_type, raw_cfg, build_match_exists_sql(db_type, rel, from_ent, to_ent),
+                          timeout_seconds=timeout_seconds, max_rows=1)
+        if found:
+            return RelationshipValidationResult(
+                int(rel.get("id") or 0),
+                STATUS_UNTESTED,
+                f"None of the first {PROFILE_SAMPLE_ROWS:,} rows matched, but rows further "
+                "in do: those rows are not representative, so the join is left for review.",
+                checked_by="db",
+                probe_sql=sql,
+            )
+
     match_rate = round((matched_rows / non_null_rows) * 100.0, 2) if non_null_rows else 0.0
     orphan_rate = round((orphan_rows / non_null_rows) * 100.0, 2) if non_null_rows else 0.0
     null_fk_rate = round(((left_rows - non_null_rows) / left_rows) * 100.0, 2) if left_rows else 0.0
@@ -427,6 +512,8 @@ def _execute_probe(
         f"orphans {orphan_rate:.2f}%, null keys {null_fk_rate:.2f}%, "
         f"fanout {fanout_ratio:.3f}x; target duplicate keys {target_duplicate_keys}."
     )
+    if left_rows >= PROFILE_SAMPLE_ROWS:
+        quality_note += f" Measured on the first {left_rows:,} source rows."
 
     return RelationshipValidationResult(
         int(rel.get("id") or 0),

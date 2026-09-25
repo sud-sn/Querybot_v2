@@ -4177,6 +4177,52 @@ def _compute_schema_drift(old: dict, new: dict) -> dict:
 # Entity Graph — admin routes
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _with_join_evidence(relationships: list) -> list:
+    """Each join marked with whether the warehouse's rows vouch for it.
+
+    Computed here, from core.relationship_validator.data_confirms, so the
+    review list's badge and "Accept joins the data confirms" read one rule.
+    """
+    from core.relationship_validator import data_confirms
+
+    for rel in relationships or []:
+        if isinstance(rel, dict):
+            rel["data_confirmed"] = data_confirms(rel)
+    return relationships
+
+
+async def _profile_suggested_joins(account_id: str, when: str) -> dict:
+    """Check the suggested joins not yet checked against the warehouse's rows.
+
+    After discovery, and after the KB build's graph sync: that sync adds
+    joins too, and the build did not profile them, so every join it added
+    stayed "untested" until an admin profiled it by hand. Never raises -- a
+    probe is evidence for the resolver, not a step the build depends on.
+    """
+    try:
+        from core.relationship_validator import profile_suggested_relationships
+        summary = await asyncio.to_thread(profile_suggested_relationships, account_id)
+        log.info("Suggested joins profiled %s for %s: %s", when, account_id, summary)
+        return summary
+    except Exception as exc:
+        log.warning("Join profiling %s failed for %s: %s", when, account_id, exc)
+        return {}
+
+
+async def _sync_graph_after_build(account_id: str, schema_dir: str, kb_dir: str) -> dict:
+    """The KB build's graph sync, then the joins it added checked against the data.
+
+    The sync is plain blocking work over the schema, the KB and the store, and
+    it ran on the event loop; it runs in a worker thread now, as the profiling
+    after it does.
+    """
+    from core.graph_autopopulate import sync_graph_after_kb_build
+
+    summary = await asyncio.to_thread(sync_graph_after_kb_build, account_id, schema_dir, kb_dir)
+    summary["joins_profiled"] = await _profile_suggested_joins(account_id, "after the KB build")
+    return summary
+
+
 def _auto_populate_entity_graph(account_id: str, schema_dir: str) -> tuple[int, int]:
     """
     Insert auto-detected entities/relationships with status='suggested'.
@@ -4235,7 +4281,7 @@ async def graph_page(request: Request, account_id: str):
     return _resp(request, "client_graph.html", {
         "client":         client,
         "entities":       entities,
-        "relationships":  relationships,
+        "relationships":  _with_join_evidence(relationships),
         "health":         health,
         "pending_count":  pending_count,
         "entity_columns": entity_columns,
@@ -4371,6 +4417,7 @@ async def graph_json_api(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     graph = store.get_full_graph(account_id)
+    _with_join_evidence(graph.get("relationships"))
     return JSONResponse(graph)
 
 
@@ -4596,6 +4643,25 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
         log.warning("patch_relationship (api_upsert) skipped: %s", _sm_exc)
     _after_semantic_approval(account_id, f"relationship {_api_from_entity}->{_api_to_entity} saved (canvas)")
     return JSONResponse({"status": "ok", "id": rid})
+
+
+@router.post("/clients/{account_id}/graph/api/relationships/profile")
+async def graph_api_rel_profile(request: Request, account_id: str):
+    """Check the suggested joins not yet checked against the warehouse's rows.
+
+    The graph page's "Check joins against the data". One join at a time, on a
+    bounded slice of each fact, and three probes that cannot run end the run
+    -- unlike validate-all, which fires every probe at once.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    if not store.get_client(account_id):
+        raise HTTPException(status_code=404)
+    from core.relationship_validator import profile_suggested_relationships
+
+    summary = await asyncio.to_thread(profile_suggested_relationships, account_id)
+    log.info("Suggested joins profiled on request for %s: %s", account_id, summary)
+    return JSONResponse({"status": "ok", **summary})
 
 
 @router.post("/clients/{account_id}/graph/api/relationships/validate-all")
@@ -5981,6 +6047,13 @@ async def graph_bulk_review(request: Request, account_id: str):
     kinds = {str(k) for k in (data.get("kinds") or allowed_kinds)} & allowed_kinds
     min_conf = max(0, min(100, int(data.get("min_confidence", 0))))
     entity_filter = str(data.get("entity_name") or "").strip()
+    # "data": only the joins the warehouse's rows vouch for, whatever their
+    # name-based confidence (core.relationship_validator.data_confirms).
+    by_data = str(data.get("evidence") or "") == "data"
+    if by_data:
+        if action != "accept":
+            raise HTTPException(status_code=400, detail="evidence=data accepts only")
+        kinds &= {"rel"}
     counts = {"entities": 0, "relationships": 0, "properties": 0}
 
     with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
@@ -6006,11 +6079,16 @@ async def graph_bulk_review(request: Request, account_id: str):
                 counts["entities"] = len(rows)
         if "rel" in kinds:
             rows = conn.execute(
-                "SELECT id, status, validation_status FROM entity_relationships WHERE account_id=? "
+                "SELECT id, status, validation_status, join_multiplicity, match_rate, fanout_ratio "
+                "FROM entity_relationships WHERE account_id=? "
                 "AND (status='suggested' OR validation_status='needs_review') "
                 "AND COALESCE(confidence_score,0)>=?",
                 (account_id, min_conf),
             ).fetchall()
+            if by_data:
+                from core.relationship_validator import data_confirms
+                rows = [row for row in rows
+                        if row["status"] == "suggested" and data_confirms(dict(row))]
             if rows:
                 for row in rows:
                     if action == "accept":
@@ -9473,8 +9551,7 @@ async def admin_accept_kb_validation(
             graph_summary: dict = {}
             schema_dir = state_data.get("schema_dir", "")
             try:
-                from core.graph_autopopulate import sync_graph_after_kb_build
-                graph_summary = sync_graph_after_kb_build(account_id, schema_dir, kb_dir)
+                graph_summary = await _sync_graph_after_build(account_id, schema_dir, kb_dir)
             except Exception as graph_error:
                 log.warning("Entity graph sync after validation override failed for %s: %s", account_id, graph_error)
 
@@ -10662,12 +10739,7 @@ async def admin_discover_schema(
             except Exception as _gex:
                 log.warning("Entity graph auto-populate failed for %s: %s", account_id, _gex)
             # ── Every suggested join, checked against the data ────────────
-            try:
-                from core.relationship_validator import profile_suggested_relationships
-                _profiled = await asyncio.to_thread(profile_suggested_relationships, account_id)
-                log.info("Suggested joins profiled for %s: %s", account_id, _profiled)
-            except Exception as _pex:
-                log.warning("Join profiling after discovery failed for %s: %s", account_id, _pex)
+            await _profile_suggested_joins(account_id, "after discovery")
             # ── Each dimension's "no value" / "no match" members ──────────
             try:
                 from core.unknown_members import detect_unknown_members
@@ -11287,8 +11359,7 @@ async def admin_build_kb(
             # model is pre-built and laid out, ready for admin review.
             _graph_summary: dict = {}
             try:
-                from core.graph_autopopulate import sync_graph_after_kb_build
-                _graph_summary = sync_graph_after_kb_build(account_id, schema_dir, kb_dir)
+                _graph_summary = await _sync_graph_after_build(account_id, schema_dir, kb_dir)
                 log.info(
                     "Entity graph synced after KB build for %s: +%d entities, "
                     "+%d joins, %d descriptions, %d properties enriched",

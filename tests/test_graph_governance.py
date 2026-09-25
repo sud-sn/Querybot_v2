@@ -439,14 +439,34 @@ class TestConstraintImport(unittest.TestCase):
         }
         fact = {"schema_name": "dbo", "table_name": "FACT_SALES"}
         dim = {"schema_name": "dbo", "table_name": "DIM_PRODUCT"}
-        sql = build_profile_sql("azure_sql", rel, fact, dim)
-        self.assertIn("EXISTS", sql)
-        self.assertIn("[PRODUCT_ID]", sql)
-        self.assertIn("[COMPANY_ID]", sql)
-        self.assertIn("orphan_rows", sql)
-        self.assertIn("target_distinct_keys", sql)
-        self.assertIn("target_duplicate_keys", sql)
-        self.assertIn("HAVING COUNT_BIG(1) > 1", sql)
+        # Run, not read: a SQLite warehouse where product 1 exists for company
+        # 10 only, so a row for (1, 20) matches on one column and not the pair.
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("ATTACH DATABASE ':memory:' AS dbo")
+        conn.executescript("""
+            CREATE TABLE dbo.FACT_SALES (PRODUCT_ID INT, COMPANY_ID INT);
+            CREATE TABLE dbo.DIM_PRODUCT (PRODUCT_ID INT, COMPANY_ID INT);
+            INSERT INTO dbo.FACT_SALES VALUES (1, 10), (1, 10), (1, 20), (2, 10), (NULL, 10);
+            INSERT INTO dbo.DIM_PRODUCT VALUES (1, 10), (2, 10), (2, 10), (3, 30);
+        """)
+        row = conn.execute(build_profile_sql("snowflake", rel, fact, dim)).fetchone()
+        self.assertEqual(row, (
+            5,  # source rows
+            4,  # with the whole key present
+            3,  # matching on both columns: (1,10) twice and (2,10)
+            1,  # (1,20): product 1 exists, not for company 20
+            4,  # joined rows: (2,10) is in the dimension twice
+            4,  # dimension rows
+            3,  # distinct dimension keys
+            1,  # keys the dimension repeats
+        ))
+        # The warehouse dialect keeps both columns in the match and bounds the
+        # source side.
+        azure = build_profile_sql("azure_sql", rel, fact, dim)
+        self.assertIn("s.k0 = t.k0 AND s.k1 = t.k1", azure)
+        self.assertIn("SELECT TOP (100000) [PRODUCT_ID] AS k0, [COMPANY_ID] AS k1", azure)
 
     def test_kb_join_map_keeps_composite_constraint_atomic(self):
         master = {

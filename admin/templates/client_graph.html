@@ -210,6 +210,9 @@
 .rv-chip.src-kb{color:var(--entity-fact);border-color:var(--entity-fact-line);background:var(--entity-fact-soft)}
 .rv-chip.conf-high{color:var(--success);border-color:var(--success-soft);background:var(--success-soft)}
 .rv-chip.conf-low{color:var(--entity-fact);border-color:var(--entity-fact-line);background:var(--entity-fact-soft)}
+.rv-evidence{font-size:var(--font-xs);line-height:1.35;margin:.1rem 0 .3rem;color:var(--text-muted)}
+.rv-evidence.ev-ok{color:var(--success)}
+.rv-evidence.ev-warn,.rv-evidence.ev-bad{color:var(--entity-fact)}
 .rv-reason{font-size:var(--font-xs);color:var(--text-muted);line-height:1.35;margin:.15rem 0 .35rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rv-actions{display:flex;gap:.35rem}
 .rv-actions .tb-btn.sm{flex:none}
@@ -531,6 +534,14 @@
     <div id="rv-bulk-row">
       <button class="tb-btn sm rv-accept" id="rv-accept-visible" onclick="bulkReviewVisible('accept')">Accept visible</button>
       <button class="tb-btn sm rv-reject" id="rv-reject-visible" onclick="bulkReviewVisible('reject')">Reject visible</button>
+      <button class="tb-btn sm" id="rv-profile-btn" onclick="profileJoins()"
+              title="Run each join not yet checked against a slice of the warehouse's rows: does every key find its row, does any find two?">
+        ⟳ Check joins against the data
+      </button>
+      <button class="tb-btn sm rv-accept" id="rv-data-btn" onclick="acceptDataConfirmedJoins()"
+              title="Confirm every suggested join the warehouse's rows vouch for: 99% or more of its keys find their row, and none finds two">
+        ✓ Accept joins the data confirms
+      </button>
       <button class="tb-btn sm rv-accept" id="rv-bulk-btn" onclick="bulkAcceptHighConf()"
               title="Confirm every suggested entity and join with confidence ≥ 85% in one click">
         ✓ Accept all ≥ 85%
@@ -1906,6 +1917,7 @@ function _rvItemHtml(item, idx) {
   }
   const reason = r.reason
     ? `<div class="rv-reason" title="${_esc(r.reason)}">${_esc(r.reason)}</div>` : '';
+  const evidence = item.kind === 'rel' ? _joinEvidenceHtml(r) : '';
   // Correction-flagged joins: still confirmed and live in SQL — the queue
   // asks the admin to re-examine, not to re-approve from scratch.
   const flagChip = item.flagged
@@ -1916,6 +1928,7 @@ function _rvItemHtml(item, idx) {
     <div class="rv-item" data-idx="${idx}" onclick="focusReviewItem(${idx})">
       <div class="rv-item-title"><span class="rv-chip" style="margin-right:.3rem">${kindLabel}</span>${title}</div>
       <div class="rv-chips">${_srcChip(r.generated_by)}${_confChip(item.conf)}${flagChip}</div>
+      ${evidence}
       ${reason}
       <div class="rv-actions" onclick="event.stopPropagation()">
         <button class="tb-btn sm rv-accept" onclick="reviewDecide(${idx}, 'accept')">${acceptLabel}</button>
@@ -1924,6 +1937,73 @@ function _rvItemHtml(item, idx) {
         <button class="tb-btn sm rv-reject" onclick="reviewDecide(${idx}, 'reject')">✕ Reject</button>
       </div>
     </div>`;
+}
+
+// What the warehouse's rows said about a join when it was last profiled.
+// Whether they vouch for it is the server's call (data_confirmed, from
+// core.relationship_validator.data_confirms) -- the same rule "Accept joins
+// the data confirms" applies -- so the badge and the button cannot disagree.
+function _joinEvidenceHtml(r) {
+  const rate = v => (v === null || v === undefined || Number(v) < 0) ? null : Number(v);
+  const match = rate(r.match_rate), orphan = rate(r.orphan_rate),
+        empty = rate(r.null_fk_rate), fanout = rate(r.fanout_ratio);
+  const status = r.validation_status || 'untested';
+  let cls = 'ev-none', text = 'Data: not checked yet';
+  if (status === 'broken') {
+    cls = 'ev-bad'; text = '✕ Data: this join does not work against the warehouse';
+  } else if (status !== 'untested' && match !== null) {
+    const parts = [`${match.toFixed(1)}% of keys find their row`];
+    if (orphan) parts.push(`${orphan.toFixed(1)}% find none`);
+    if (empty) parts.push(`${empty.toFixed(1)}% empty`);
+    if (fanout !== null && fanout > 1.01) parts.push(`fans out ${fanout.toFixed(2)}×`);
+    cls = r.data_confirmed ? 'ev-ok' : 'ev-warn';
+    text = (r.data_confirmed ? '✓ Data confirms: ' : '⚠ Data: ') + parts.join(' · ');
+  }
+  return `<div class="rv-evidence ${cls}">${_esc(text)}</div>`;
+}
+
+async function profileJoins() {
+  const btn = document.getElementById('rv-profile-btn');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '⟳ Checking…';
+  try {
+    const resp = await fetch(`${API_BASE}/relationships/profile`, {method: 'POST'});
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const s = await resp.json();
+    await _reloadGraphData();
+    const checked = (s.valid || 0) + (s.warning || 0) + (s.broken || 0);
+    const notRun = (s.not_profiled || 0) + (s.untested || 0);
+    qbToast.success(`Checked ${checked} join${checked === 1 ? '' : 's'}: ${s.valid || 0} sound, `
+      + `${s.warning || 0} with warnings, ${s.broken || 0} broken`
+      + (s.made_left ? `; ${s.made_left} made LEFT to keep rows with no match` : '')
+      + (notRun ? `; ${notRun} could not be checked` : '') + '.');
+  } catch (e) {
+    qbToast.error('Checking joins failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+async function acceptDataConfirmedJoins() {
+  const btn = document.getElementById('rv-data-btn');
+  const label = btn.textContent;
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`${API_BASE}/review/bulk`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'accept', kinds: ['rel'], evidence: 'data'}),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    await _reloadGraphData();
+    btn.textContent = `✓ Accepted ${data.relationships}`;
+    setTimeout(() => { btn.textContent = label; }, 2500);
+  } catch (e) {
+    qbToast.error('Accepting joins failed: ' + e.message);
+    btn.textContent = label;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 let _rvItems = [];
