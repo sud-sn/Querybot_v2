@@ -231,10 +231,31 @@ def _business_source_label(table: dict[str, Any], vocab=None) -> str:
         "",
     )
     if entity:
-        label = " ".join(part for part in (cadence, entity) if part)
+        # The model's entity is the table's own name cut at the underscores
+        # ("Itm Bal Dly"), and it went on the reader's choice card as it was.
+        # Read through the tenant's vocabulary it is words ("Item Balance
+        # Dly"), and a code an admin confirms on the Business Meanings page
+        # joins them ("Item Balance Daily").
+        spelled = _expanded_identifier(_without_table_kind(bare), vocab=vocab) or entity
+        if cadence and cadence.lower() in spelled.lower().split():
+            cadence = ""
+        label = " ".join(part for part in (cadence, spelled) if part)
         return label.strip().title()
     expanded = _expanded_identifier(bare, vocab=vocab)
     return (expanded or bare.replace("_", " ")).strip().title()
+
+
+def _without_table_kind(bare: str) -> str:
+    """ITM_BAL_DLY_FCT -> ITM_BAL_DLY: the kind of table is not its name."""
+    name = str(bare or "")
+    upper = name.upper()
+    for suffix in ("_FCT", "_FACT", "_DMS", "_DIM"):
+        if upper.endswith(suffix):
+            return name[: -len(suffix)]
+    for prefix in ("FACT_", "FCT_", "DIM_"):
+        if upper.startswith(prefix):
+            return name[len(prefix):]
+    return name
 
 
 def resolve_source_scope(
