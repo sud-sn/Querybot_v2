@@ -850,6 +850,24 @@ async def azure_deployments_api(request: Request):
     }, status_code=400)
 
 
+def _azure_refusal(resp) -> str:
+    """The key or the network refused the request -- the same for every deployment."""
+    if resp.status_code == 401:
+        return "API key rejected (401) — check your Azure OpenAI key."
+    if resp.status_code == 403:
+        return ("Permission denied (403) — key accepted but access blocked. "
+                "Check the resource firewall (Azure Portal → Networking) or RBAC role.")
+    return ""
+
+
+def _azure_http_error(resp) -> str:
+    try:
+        detail = resp.json().get("error", {}).get("message", resp.text[:150])
+    except Exception:
+        detail = resp.text[:150]
+    return f"HTTP {resp.status_code}: {detail}"
+
+
 @router.get("/system/test-connection")
 async def test_llm_connection(request: Request, provider: str = ""):
     """Quick liveness check for each LLM provider using saved credentials.
@@ -930,7 +948,6 @@ async def test_llm_connection(request: Request, provider: str = ""):
         endpoint   = (cfg.get("azure_openai_endpoint")    or "").strip().rstrip("/")
         api_key    = (cfg.get("azure_openai_api_key")     or "").strip()
         api_version = (cfg.get("azure_openai_api_version") or "2024-02-01").strip()
-        deployment  = (cfg.get("azure_query_deployment_name") or "").strip()
 
         if not endpoint:
             return JSONResponse({"ok": False, "error": "No endpoint saved — fill in the Endpoint URL and save."})
@@ -941,68 +958,92 @@ async def test_llm_connection(request: Request, provider: str = ""):
         # button tests is the URL the product will actually call. Keeping a
         # private copy here is what let a saved endpoint ending in /openai pass
         # the test and then 404 on every question.
-        from core.llm import normalize_azure_endpoint
+        from core.llm import azure_deployment_name, normalize_azure_endpoint
         endpoint = normalize_azure_endpoint(endpoint)
 
         is_foundry = "services.ai.azure.com" in endpoint
 
+        # The deployment each purpose will really call, by the resolver the
+        # runtime uses. Testing only the query field left the knowledge-base
+        # deployment untested until the first build -- and a blank KB field
+        # falls back to the saved model name ("gpt-4o"), which is a deployment
+        # only if one happens to be called that.
+        purposes = []
+        for purpose, own_key, title in (("query", "azure_query_deployment_name", "Queries"),
+                                         ("kb", "azure_kb_deployment_name", "Knowledge base")):
+            try:
+                name = azure_deployment_name(cfg, {}, purpose)
+            except RuntimeError:
+                name = ""
+            purposes.append((purpose, own_key, title, name))
+
         try:
             async with httpx.AsyncClient(timeout=12) as client:
-                if deployment:
-                    if is_foundry:
-                        # Azure AI Foundry endpoints use the v1 inference API:
-                        # no api-version query param, no deployment in URL — model in body.
-                        url = f"{endpoint}/openai/v1/chat/completions"
-                        resp = await client.post(
-                            url,
-                            headers={"api-key": api_key, "content-type": "application/json"},
-                            json={"model": deployment, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
-                        )
-                    else:
-                        # Classic Azure OpenAI: deployment in URL, api-version in query
-                        url = (f"{endpoint}/openai/deployments/{deployment}"
-                               f"/chat/completions?api-version={api_version}")
-                        resp = await client.post(
-                            url,
-                            headers={"api-key": api_key, "content-type": "application/json"},
-                            json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
-                        )
-                else:
+                if not any(name for *_, name in purposes):
                     # No deployment name yet — verify key + endpoint are accepted
                     check_url = (f"{endpoint}/openai/v1/models" if is_foundry
                                  else f"{endpoint}/openai/deployments?api-version={api_version}")
                     resp = await client.get(check_url, headers={"api-key": api_key})
+                    refused = _azure_refusal(resp)
+                    if refused:
+                        return JSONResponse({"ok": False, "error": refused})
+                    if resp.status_code == 404:
+                        return JSONResponse({"ok": False, "error": (
+                            "Azure did not expose a deployment listing endpoint, so the credentials "
+                            "could not be fully verified. Enter an exact deployment name, save it, "
+                            "then run the deployment test."
+                        )})
+                    if resp.is_success:
+                        return JSONResponse({"ok": True, "verification": "credentials",
+                                             "model": "endpoint reachable"})
+                    return JSONResponse({"ok": False, "error": _azure_http_error(resp)})
 
-            if resp.status_code == 401:
-                return JSONResponse({"ok": False, "error": "API key rejected (401) — check your Azure OpenAI key."})
-            if resp.status_code == 403:
-                return JSONResponse({"ok": False, "error": (
-                    "Permission denied (403) — key accepted but access blocked. "
-                    "Check the resource firewall (Azure Portal → Networking) or RBAC role."
-                )})
-            if resp.status_code == 404 and not deployment:
-                return JSONResponse({"ok": False, "error": (
-                    "Azure did not expose a deployment listing endpoint, so the credentials "
-                    "could not be fully verified. Enter an exact deployment name, save it, "
-                    "then run the deployment test."
-                )})
-            if resp.is_success:
-                label = f"deployment: {deployment}" if deployment else "endpoint reachable"
-                return JSONResponse({
-                    "ok": True,
-                    "verification": "model" if deployment else "credentials",
-                    "model": label,
-                })
-            try:
-                detail = resp.json().get("error", {}).get("message", resp.text[:150])
-            except Exception:
-                detail = resp.text[:150]
-            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}: {detail}"})
+                # One request per distinct deployment: the two purposes often share one.
+                answers = {}
+                for name in dict.fromkeys(name for *_, name in purposes if name):
+                    if is_foundry:
+                        # Azure AI Foundry endpoints use the v1 inference API:
+                        # no api-version query param, no deployment in URL — model in body.
+                        resp = await client.post(
+                            f"{endpoint}/openai/v1/chat/completions",
+                            headers={"api-key": api_key, "content-type": "application/json"},
+                            json={"model": name, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                        )
+                    else:
+                        # Classic Azure OpenAI: deployment in URL, api-version in query
+                        resp = await client.post(
+                            f"{endpoint}/openai/deployments/{name}/chat/completions?api-version={api_version}",
+                            headers={"api-key": api_key, "content-type": "application/json"},
+                            json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                        )
+                    refused = _azure_refusal(resp)
+                    if refused:
+                        # The key or the network, not a deployment: the same for both.
+                        return JSONResponse({"ok": False, "error": refused})
+                    answers[name] = "" if resp.is_success else _azure_http_error(resp)
 
         except httpx.TimeoutException:
             return JSONResponse({"ok": False, "error": "Request timed out — check the endpoint URL."})
         except Exception as exc:
             return JSONResponse({"ok": False, "error": f"Could not reach Azure: {exc}"})
+
+        own = {key: (cfg.get(key) or "").strip() for _, key, _, _ in purposes}
+        checks = []
+        for purpose, own_key, title, name in purposes:
+            if own[own_key]:
+                label = f"{title}: {name}"
+            elif name in own.values():
+                label = f"{title}: {name} (no deployment set for it; it uses the other one)"
+            else:
+                label = f"{title}: {name} (no deployment set for it; it calls the saved model name)"
+            error = answers[name]
+            checks.append({"purpose": purpose, "deployment": name, "ok": not error,
+                           "label": label, "error": error})
+        body = {"ok": all(check["ok"] for check in checks), "verification": "model",
+                "model": "; ".join(check["label"] for check in checks), "checks": checks}
+        if not body["ok"]:
+            body["error"] = "; ".join(f"{c['label']} — {c['error']}" for c in checks if not c["ok"])
+        return JSONResponse(body)
 
     return JSONResponse({"ok": False, "error": f"Unknown provider '{provider}'."})
 
