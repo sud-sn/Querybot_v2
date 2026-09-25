@@ -66,6 +66,7 @@ TERMINAL_KEYS = {
     "terminal.semantic_conflict": ("conflicts",),
     "terminal.temporal_contract_uncompilable": (),
     "terminal.ai_error": ("detail",),
+    "terminal.ai_content_filtered": (),
 }
 
 

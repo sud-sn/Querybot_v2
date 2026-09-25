@@ -1997,6 +1997,18 @@ def _is_temperature_rejection(exc: Exception) -> bool:
     )
 
 
+# How a refusal by a content filter reads in the provider's own text: the
+# finish reason, Azure's error code and inner code, and its message.
+_CONTENT_FILTER_WORDS = ("content_filter", "content filter", "responsibleaipolicy",
+                         "content management policy")
+
+
+def is_content_filter_rejection(exc: BaseException) -> bool:
+    """Did a content filter refuse this prompt or its completion?"""
+    blob = f"{type(exc).__name__} {exc}".lower()
+    return any(word in blob for word in _CONTENT_FILTER_WORDS)
+
+
 def is_single_request_rejection(exc: BaseException) -> bool:
     """Is this error about THIS request, or about the configuration behind it?
 
@@ -2032,12 +2044,10 @@ def is_single_request_rejection(exc: BaseException) -> bool:
     negative costs nothing new, because the error then propagates exactly as it
     did before this existed.
     """
-    blob = f"{type(exc).__name__} {exc}".lower()
-
-    if any(word in blob for word in
-           ("content_filter", "content filter", "responsibleaipolicy",
-            "content management policy")):
+    if is_content_filter_rejection(exc):
         return True
+
+    blob = f"{type(exc).__name__} {exc}".lower()
 
     if "max_tokens" in blob or "max_completion_tokens" in blob:
         # "must be less than or equal to 4096", "is too large", "exceeds the
@@ -2580,6 +2590,20 @@ async def _local_complete(system, user, model, api_key, max_tokens, base_url, te
     return _read_chat_completion("Local model", model, max_tokens, resp)
 
 
+def _is_configuration_error(exc: BaseException) -> bool:
+    """Would checking the endpoint, the key and the deployment fix this? A
+    rejected key, a deployment or path that does not exist, an endpoint that
+    cannot be reached -- not a rate limit, a timeout, or a request refused
+    for what it asked."""
+    import openai
+
+    if isinstance(exc, openai.APITimeoutError):
+        return False
+    if isinstance(exc, openai.APIConnectionError):
+        return True
+    return getattr(exc, "status_code", None) in (401, 403, 404)
+
+
 async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpoint, api_version, temperature=0.0):
     if not endpoint:
         raise RuntimeError(
@@ -2596,10 +2620,18 @@ async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpo
         )
     except Exception as e:
         log.error("Azure OpenAI error: %s", e)
-        raise RuntimeError(
-            f"Azure OpenAI error: {e}\n\n"
-            "Check your endpoint URL, API key, and deployment name in Admin → System."
-        ) from e
+        if is_content_filter_rejection(e):
+            # The prompt itself was refused. Nothing about the endpoint, the
+            # key or the deployment is wrong, and saying so sent an admin
+            # looking in the wrong place; the audit records it as filtered.
+            raise LLMContentFilteredError(
+                f"Azure OpenAI's content filter refused the prompt for {model}: {e}"
+            ) from e
+        hint = (
+            "\n\nCheck your endpoint URL, API key, and deployment name in Admin → System."
+            if _is_configuration_error(e) else ""
+        )
+        raise RuntimeError(f"Azure OpenAI error: {e}{hint}") from e
 
     return _read_chat_completion("Azure OpenAI", model, max_tokens, resp)
 

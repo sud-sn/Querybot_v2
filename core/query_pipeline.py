@@ -23,7 +23,7 @@ from core.i18n import (
     plural as _t_plural, t as _t,
 )
 from datetime import date as _dt_date
-from core.llm import llm_complete, build_sql_system_prompt, resolve_provider
+from core.llm import LLMContentFilteredError, llm_complete, build_sql_system_prompt, resolve_provider
 from core.prompt_cache import prompt_cache_enabled
 from core.kb_preload import preload_account_kb
 from core.examples import retrieve_similar_examples, format_examples_for_prompt
@@ -5927,7 +5927,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id, error_code="llm_error")
         _trace_finish(trace_id, status="error", answer_type="error", error_message=f"AI error: {e}")
-        await adapter.send_message(event, _t("terminal.ai_error", lang=(portal_user or {}).get("lang") or "en", detail=e))
+        if isinstance(e, LLMContentFilteredError):
+            # The provider's policy, not a fault: say what stopped it, in the
+            # reader's language, rather than the provider's raw error.
+            await adapter.send_message(event, _t(
+                "terminal.ai_content_filtered", lang=(portal_user or {}).get("lang") or "en"))
+        else:
+            await adapter.send_message(event, _t(
+                "terminal.ai_error", lang=(portal_user or {}).get("lang") or "en", detail=e))
         return
 
     # Fence stripping, the DISTINCT safety net for list-entity questions

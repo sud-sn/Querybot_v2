@@ -3522,6 +3522,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": 'I retained your requested time period, but could not compile it into the selected business-date contract. I did not run an unbounded query. Please retry the request; if it persists, ask an administrator to review the applicable Date Role.',
         "fr": "J'ai conservé la période demandée, mais je n'ai pas pu la compiler dans le contrat de date métier retenu. Aucune requête non bornée n'a été exécutée. Réessayez ; si le problème persiste, demandez à un administrateur de vérifier le rôle de date applicable.",
     },
+    'terminal.ai_content_filtered': {
+        'en': "⚠️ The AI service's content filter blocked this request, so it could not be answered. "
+              "Try rephrasing the question; if it keeps happening, an administrator can review the "
+              "content filter on the AI deployment.",
+        'fr': "⚠️ Le filtre de contenu du service d'IA a bloqué cette demande : elle n'a pas pu "
+              "recevoir de réponse. Reformulez la question ; si cela se reproduit, un administrateur "
+              "peut vérifier le filtre de contenu du déploiement d'IA.",
+    },
     'terminal.ai_error': {
         "en": '⚠️ AI error: {detail}',
         "fr": '⚠️ Erreur du modèle : {detail}',
