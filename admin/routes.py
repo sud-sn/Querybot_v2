@@ -3903,6 +3903,40 @@ async def group_delete(request: Request, account_id: str, group_id: int):
 # Users management
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── A new password is shown once ─────────────────────────────────────────────
+# It used to ride in the redirect's query string (temp_pw=...), so every new or
+# reset password -- one the admin chose included -- was written to the access
+# log and the browser's history, and came back on every reload of a page that
+# said it would not be shown again. The redirect now carries a single-use
+# token: the page takes the password by it once, for its own workspace, within
+# minutes. Held in memory, as the service runs one worker; a reveal that misses
+# shows no password, and the admin resets it again.
+_REVEAL_TTL_SECONDS = 600
+_reveals: dict[str, tuple[float, str, dict]] = {}
+_reveals_lock = threading.Lock()
+
+
+def _stash_reveal(account_id: str, shown: dict) -> str:
+    token = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+    now = time.monotonic()
+    with _reveals_lock:
+        for stale in [key for key, (expires, _, _) in _reveals.items() if expires < now]:
+            del _reveals[stale]
+        _reveals[token] = (now + _REVEAL_TTL_SECONDS, account_id, dict(shown))
+    return token
+
+
+def _take_reveal(account_id: str, token: str | None) -> dict:
+    if not token:
+        return {}
+    with _reveals_lock:
+        held = _reveals.pop(token, None)
+    if held is None:
+        return {}
+    expires, owner, shown = held
+    return shown if owner == account_id and expires >= time.monotonic() else {}
+
+
 @router.get("/clients/{account_id}/users", response_class=HTMLResponse)
 async def users_page(request: Request, account_id: str):
     if not _is_auth(request):
@@ -3912,6 +3946,7 @@ async def users_page(request: Request, account_id: str):
         return RedirectResponse("/admin/clients", status_code=303)
     users  = store.list_users(account_id)
     groups = store.list_groups(account_id)
+    shown  = _take_reveal(account_id, request.query_params.get("reveal"))
     return _resp(request, "client_users.html", {
         "client":    client,
         "users":     users,
@@ -3921,8 +3956,10 @@ async def users_page(request: Request, account_id: str):
         # pending signups were invisible until you already knew to go look.
         "pending_count": store.get_pending_user_count(account_id),
         "saved":     request.query_params.get("saved"),
-        "new_user":  request.query_params.get("new_user"),
-        "temp_pw":   request.query_params.get("temp_pw"),
+        "new_user":  shown.get("name", ""),
+        "temp_pw":   shown.get("password", ""),
+        "is_temp":   "1" if shown.get("is_temp", True) else "0",
+        "reveal_kind": shown.get("kind", ""),
         "error":     request.query_params.get("error"),
     })
 
@@ -3964,13 +4001,12 @@ async def user_create(
             account_id, name.strip(), email.strip(), gid, role,
             password=explicit_pw or None,
         )
-        from urllib.parse import quote
-        # is_temp: if no explicit password was provided a temp one was generated
-        is_temp = "0" if explicit_pw else "1"
+        # Without an explicit password a temporary one was generated.
+        token = _stash_reveal(account_id, {
+            "name": name.strip(), "password": plain_pw, "is_temp": not explicit_pw, "kind": "created",
+        })
         return RedirectResponse(
-            f"/admin/clients/{account_id}/users?saved=1&new_user={quote(name)}"
-            f"&temp_pw={quote(plain_pw)}&is_temp={is_temp}",
-            status_code=303)
+            f"/admin/clients/{account_id}/users?saved=1&reveal={token}", status_code=303)
     except Exception as e:
         from urllib.parse import quote
         return RedirectResponse(
@@ -4006,11 +4042,11 @@ async def user_reset_password(request: Request, account_id: str, user_id: int):
         return RedirectResponse("/admin/login", status_code=303)
     temp_pw = store.reset_user_password(user_id)
     user    = store.get_user(user_id)
-    from urllib.parse import quote
+    token = _stash_reveal(account_id, {
+        "name": user["name"] if user else "", "password": temp_pw, "is_temp": True, "kind": "reset",
+    })
     return RedirectResponse(
-        f"/admin/clients/{account_id}/users?saved=1"
-        f"&new_user={user['name'] if user else ''}&temp_pw={quote(temp_pw)}",
-        status_code=303)
+        f"/admin/clients/{account_id}/users?saved=1&reveal={token}", status_code=303)
 
 
 @router.post("/clients/{account_id}/users/{user_id}/delete")

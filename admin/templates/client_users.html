@@ -29,7 +29,7 @@
   <div class="temp-pw-header">
     <span class="temp-pw-icon">{{ ic("check-circle", 16) }}</span>
     <div>
-      <div class="temp-pw-title">User created — {{ new_user }}</div>
+      <div class="temp-pw-title">{% if reveal_kind == "reset" %}Password reset{% else %}User created{% endif %} — {{ new_user }}</div>
       {% if is_temp == "0" %}
       <div class="temp-pw-sub">Password set by you. User can log in immediately.</div>
       {% else %}
