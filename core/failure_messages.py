@@ -448,6 +448,7 @@ _VALIDATION_REASONS: dict[str, str] = {
     "period_rows_mixed": "fail.v.period_rows_mixed.reason",
     "unknown_members_ranked": "fail.v.unknown_members_ranked.reason",
     "units_mixed": "fail.v.units_mixed.reason",
+    "label_language": "fail.v.label_language.reason",
     "select_star": "fail.v.select_star.reason",
 }
 
@@ -468,6 +469,7 @@ _VALIDATION_NEXT_STEPS: dict[str, str] = {
     "period_rows_mixed": "fail.v.period_rows_mixed.next_step",
     "unknown_members_ranked": "fail.v.unknown_members_ranked.next_step",
     "units_mixed": "fail.v.units_mixed.next_step",
+    "label_language": "fail.v.label_language.next_step",
     "temporal_anchor_missing": "fail.v.temporal_anchor_missing.next_step",
     "temporal_anchor_mismatch": "fail.v.temporal_anchor_mismatch.next_step",
     "temporal_role_mismatch": "fail.v.temporal_role_mismatch.next_step",

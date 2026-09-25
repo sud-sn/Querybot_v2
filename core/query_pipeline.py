@@ -141,6 +141,7 @@ from core.conversation_state import conversation_state_store
 from core.semantic_plan_utils import required_semantic_tables
 from core.period_rows import attach_period_row_policies
 from core.unknown_members import attach_unknown_member_policies
+from core.label_language import attach_label_policies
 from core.units_of_measure import attach_unit_policies
 
 log = logging.getLogger("querybot")
@@ -5543,6 +5544,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
     except Exception as _unit_exc:
         log.warning("Unit-of-measure policies unavailable for %s: %s", account_id, _unit_exc)
+    # A label the warehouse keeps in two languages is shown in the reader's --
+    # the one the question names, or else the reader's own -- value by value.
+    try:
+        attach_label_policies(
+            _semantic_plan, account_id, (portal_user or {}).get("lang") or "en",
+            _reader_plan_question, _semantic_plan_question,
+        )
+    except Exception as _label_exc:
+        log.warning("Label-language policies unavailable for %s: %s", account_id, _label_exc)
     _generation_semantic_context = {
         "intent": query_intent,
         "top_n": top_n_intent.to_dict() if top_n_intent else None,
@@ -6801,6 +6811,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "join its table if the query does not read it yet -- so the answer has one "
                     "total per unit. Or keep to one unit, or group by item.\n"
                     "- Keep everything else: the measure, the grouping you had, the period.\n"
+                )
+            elif last_code == "label_language":
+                validation_repair_note = (
+                    "\nLABEL-LANGUAGE REPAIR REQUIRED:\n"
+                    "- The warehouse keeps this label in two languages, and the reader reads "
+                    "one of them.\n"
+                    "- Replace the label named above with the expression given -- the label in "
+                    "the reader's language where it is filled, the other where it is blank -- in "
+                    "the SELECT list and the GROUP BY alike.\n"
+                    "- Keep everything else: the measure, the grouping, the period.\n"
                 )
             elif last_code == "unknown_members_ranked":
                 validation_repair_note = (

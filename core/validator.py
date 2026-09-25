@@ -78,7 +78,7 @@ ALL_REASON_CODES = frozenset({
     "composition_shape", "date_key_format", "ddl", "derived_measure_mismatch",
     "dialect_mismatch", "fanout_aggregate", "field_plan_join_missing",
     "field_plan_mismatch", "graph_join_missing", "graph_join_type_mismatch",
-    "graph_plan_mismatch", "join_plan_unresolved", "locking_select",
+    "graph_plan_mismatch", "join_plan_unresolved", "label_language", "locking_select",
     "metric_formula_mismatch", "missing_join_condition", "multi_fact_cte_contract",
     "multi_fact_missing_subplan", "multi_fact_not_aggregated",
     "multi_fact_not_isolated", "multi_fact_shared_cte", "multi_statement",
@@ -2591,6 +2591,34 @@ def _unit_mix_errors(tree, policies: list[dict], db_type: str = "azure_sql") -> 
     return errors
 
 
+def _label_language_errors(tree, policies: list[dict], language: str, db_type: str = "azure_sql") -> list[dict]:
+    """A label the warehouse keeps in two languages is shown in the reader's
+    (core/label_language.py): the reader's where it is filled, the other
+    where it is blank -- never the other language alone."""
+    if not policies or not language:
+        return []
+    from core.label_language import label_mismatches
+
+    errors = []
+    for mismatch in label_mismatches(tree, policies, language, db_type):
+        if mismatch["clause"] == "GROUP BY":
+            message = (
+                f"{mismatch['column']} is shown through {mismatch['required']}, which the query "
+                "does not group by. Group by that expression as well as selecting it."
+            )
+        else:
+            message = (
+                f"{mismatch['column']} shows a label in a language the reader does not read; "
+                f"its twin is {mismatch['twin']}. Show {mismatch['required']} instead, in the "
+                "SELECT list and the GROUP BY alike."
+            )
+        errors.append({
+            "code": "label_language", "message": message,
+            "column": mismatch["column"], "required_column": mismatch["required"],
+        })
+    return errors
+
+
 def _unknown_member_errors(tree, policies: list[dict], db_type: str = "azure_sql") -> list[dict]:
     """A ranking or a count of a dimension's members leaves its unknown
     members out (core/unknown_members.py): "NULL value provided" is not a top
@@ -3247,6 +3275,21 @@ def validate_sql_detailed(
             ),
             "units_mixed",
             unit_errors,
+        )
+
+    label_errors = _label_language_errors(
+        tree, list(field_plan.get("label_policies") or []),
+        str(field_plan.get("label_language") or ""), db_type,
+    )
+    if label_errors:
+        return SqlValidationResult(
+            False,
+            (
+                "Generated SQL shows a label in a language the reader does not read. "
+                + " ".join(error["message"] for error in label_errors[:3])
+            ),
+            "label_language",
+            label_errors,
         )
 
     select_aliases: set[str] = set()

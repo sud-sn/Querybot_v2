@@ -1421,6 +1421,24 @@ def build_sql_system_prompt(
         )
         if unit_text:
             base = base + "\n\n" + unit_text
+    # A label kept in two languages is shown in the reader's, value by value
+    # (core/label_language.py).
+    if semantic_plan and semantic_plan.get("label_policies"):
+        from core.label_language import format_label_rules
+        from core.label_language import policies_in_scope as label_policies_in_scope
+
+        label_text = format_label_rules(
+            label_policies_in_scope(
+                semantic_plan.get("label_policies"),
+                table_context,
+                str(semantic_plan.get("required_tables") or ""),
+                str(semantic_plan.get("fields") or ""),
+            ),
+            str(semantic_plan.get("label_language") or "en"),
+            db_type,
+        )
+        if label_text:
+            base = base + "\n\n" + label_text
     # The preloaded knowledge base goes on the front LAST, after the rule
     # filter has finished with the prompt. The filter locates rules by
     # searching for their opening words and deletes from there to the next

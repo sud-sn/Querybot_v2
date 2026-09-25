@@ -1008,6 +1008,20 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         if totals_per_unit(sql, _unit_policies, db_cfg.get("db_type", "azure_sql")):
             coverage_caveats.append(_t("caveat.units"))
 
+    # A label shown through its twin in the reader's language falls back to the
+    # other language where the warehouse left it blank (core/label_language.py):
+    # say so, or a column of mixed languages reads as a mistake.
+    _plan_for_labels = confidence_context.get("semantic_plan") or {}
+    _label_policies = _plan_for_labels.get("label_policies") or []
+    if _label_policies and sql:
+        from core.label_language import labels_fall_back
+
+        _label_language = str(_plan_for_labels.get("label_language") or "")
+        if labels_fall_back(sql, _label_policies, _label_language, db_cfg.get("db_type", "azure_sql")):
+            coverage_caveats.append(_t(
+                "caveat.labels.french_first" if _label_language == "fr" else "caveat.labels.english_first"
+            ))
+
     _graph_edges = confidence_context.get("graph_edges") or []
     if _graph_edges:
         try:

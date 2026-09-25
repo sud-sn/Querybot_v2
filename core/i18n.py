@@ -1894,6 +1894,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The generated query added up quantities counted in different units of measure (each, feet, metres), which would have given a number that measures nothing.",
         "fr": "La requête générée additionnait des quantités exprimées dans des unités de mesure différentes (unité, pied, mètre), ce qui aurait donné un nombre qui ne mesure rien.",
     },
+    "fail.v.label_language.reason": {
+        "en": "The generated query showed labels in the other language, where the warehouse keeps them in both English and French.",
+        "fr": "La requête générée affichait les libellés dans l'autre langue, alors que l'entrepôt les conserve en anglais et en français.",
+    },
     "fail.v.unknown_members_ranked.reason": {
         "en": "The generated query ranked or counted members with the placeholder members for empty and unmatched values among them, so \"NULL value provided\" could have been ranked or counted as a real member.",
         "fr": "La requête générée classait ou comptait des membres en y incluant les membres de remplacement des valeurs vides ou sans correspondance, si bien que « NULL value provided » aurait pu être classé ou compté comme un vrai membre.",
@@ -1958,6 +1962,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "fail.v.units_mixed.next_step": {
         "en": "Ask for the quantity by unit of measure, or for one unit (for example, in eaches).",
         "fr": "Demandez la quantité par unité de mesure, ou pour une seule unité (par exemple, à l'unité).",
+    },
+    "fail.v.label_language.next_step": {
+        "en": "Ask again. To see the labels in the other language, say so in the question (for example, \"in French\").",
+        "fr": "Reposez la question. Pour voir les libellés dans l'autre langue, précisez-le dans la question (par exemple, « en anglais »).",
     },
     "fail.v.unknown_members_ranked.next_step": {
         "en": "Ask again: rankings and counts leave the placeholder members out. To see them, ask about the unspecified or unmatched values directly.",
@@ -2877,6 +2885,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "caveat.unknown_members.labelled": {
         "en": "“Not specified”, “Unmatched” and “Unknown” are the warehouse's placeholders for a value that was empty or matched nothing.",
         "fr": "« Non renseigné », « Sans correspondance » et « Inconnu » sont les membres de remplacement de l'entrepôt pour une valeur vide ou sans correspondance.",
+    },
+    "caveat.labels.french_first": {
+        "en": "Labels are shown in French where the warehouse has a French label, and in English where it has none.",
+        "fr": "Les libellés sont affichés en français lorsque l'entrepôt en fournit un, et en anglais sinon.",
+    },
+    "caveat.labels.english_first": {
+        "en": "Labels are shown in English where the warehouse has an English label, and in French where it has none.",
+        "fr": "Les libellés sont affichés en anglais lorsque l'entrepôt en fournit un, et en français sinon.",
     },
     "caveat.units": {
         "en": "Quantities are totalled per unit of measure: quantities counted in different units (each, feet, metres) do not add up.",
