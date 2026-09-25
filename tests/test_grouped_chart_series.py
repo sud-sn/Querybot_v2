@@ -106,14 +106,31 @@ class TestTheGroupingColumnIsFound(unittest.TestCase):
                 for p in PERIODS for w, v in WAREHOUSES]
         self.assertEqual(self.series_of(rows), "PERIOD")
 
-    def test_more_groups_than_the_palette_is_refused(self):
+    def test_more_groups_than_the_palette_is_never_the_series(self):
         # Nine periods against the eight-colour validated palette. A ninth
         # series either repeats a colour or is silently dropped by one page and
-        # not the other.
+        # not the other -- so the periods are never the series. The grid turns
+        # instead: the three warehouses become the series of a nine-month axis,
+        # which draws every cell with three colours.
         nine = [f"2026-{m:02d}" for m in range(1, 10)]
         rows = [{"WHS_NM": w, "PERIOD": p, "REVENUE_AMT": v}
                 for p in nine for w, v in WAREHOUSES]
-        self.assertIsNone(self.series_of(rows))
+        spec = infer_chart_spec(rows, question=GROUPED_Q)
+        self.assertEqual(spec["series"]["column"], "WHS_NM")
+        self.assertEqual(spec["x"]["column"], "PERIOD")
+        self.assertEqual(spec["recommended_type"], "line")
+
+    def test_a_grid_too_wide_either_way_is_not_charted(self):
+        # Nine periods by nine warehouses: neither side fits the palette, and
+        # one series walking between rows of different groups is the jagged
+        # line this module exists to prevent. The table carries it.
+        nine = [f"2026-{m:02d}" for m in range(1, 10)]
+        rows = [{"WHS_NM": f"W{w}", "PERIOD": p, "REVENUE_AMT": 10.0 + w}
+                for p in nine for w in range(9)]
+        spec = infer_chart_spec(rows, question=GROUPED_Q)
+        self.assertIsNone(spec["series"])
+        self.assertEqual(spec["recommended_type"], "table")
+        self.assertIsNone(build_chart_payload(rows, None, question=GROUPED_Q))
 
     def test_eight_groups_is_still_drawn(self):
         # Guards the guard: an off-by-one at the cap would silently withdraw

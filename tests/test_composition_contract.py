@@ -258,9 +258,12 @@ def test_small_composition_with_postprocessed_share_defaults_to_pie():
 
 
 def test_negative_composition_values_fall_back_to_bar():
+    # Three regions: with two, the chart is a bar before the sign is looked at
+    # at all, because a two-slice pie is never drawn.
     rows = [
         {"REGION": "North", "NET_PROFIT": 100.0},
         {"REGION": "South", "NET_PROFIT": -25.0},
+        {"REGION": "West", "NET_PROFIT": 40.0},
     ]
     spec = infer_chart_spec(rows, "distribution of profit by region")
     assert spec["recommended_type"] == "bar"

@@ -1210,6 +1210,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "{measure} cannot be totalled across the repeated categories, so a share of the whole would be misleading; showing a bar chart instead.",
         "fr": "{measure} ne peut pas être totalisé sur les catégories répétées : une part du total serait trompeuse. Un graphique à barres est affiché à la place.",
     },
+    "ui.chart.warn.pie_not_a_whole": {
+        "en": "{measure} is a rate or an average, so its values do not add up to a whole; showing a bar chart instead.",
+        "fr": "{measure} est un taux ou une moyenne : ses valeurs ne forment pas un tout. Un graphique à barres est affiché à la place.",
+    },
     "ui.chart.warn.technical_identifier": {
         "en": "{column} looks like a technical identifier; prefer a semantic display column when available.",
         "fr": "{column} ressemble à un identifiant technique : préférez une colonne d'affichage métier lorsqu'elle existe.",

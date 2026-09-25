@@ -9,14 +9,17 @@ calls, and no dependence on raw schema metadata.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from core.i18n import enum_label, t as _t
 from core.schema_enrichment import display_label
+from core.temporal_columns import is_calendar_period_column, names_a_measure
 
 
 _ID_SUFFIX_RE = re.compile(
-    r"(?i)(^|_)(id|key|code|num|no|nbr|nr|ref|pk|fk|seq|idx|index|rank|number)$"
+    r"(?i)(^|_)(id|key|code|cd|num|no|nbr|nr|ref|pk|fk|seq|idx|index|rank|number)$"
 )
 # Temporal detection by NAME matches whole tokens, not substrings — plain
 # substring matching classified CONSOLIDATED_SALES ("date"), WIDTH ("dt") and
@@ -28,42 +31,82 @@ _TEMPORAL_NAME_TOKENS = frozenset({
 # Temporal detection by VALUE requires the whole value to look like a date —
 # substring matching flipped dimension columns to temporal whenever any single
 # value contained a month fragment (MARtin, NOVak, DECker, JANssen ...).
+#
+# A year-first value must start with a plausible year and a real month. Written
+# as \d{4}[-/.]\d{1,2}, the first pattern read a stock value of 5000.5 as the
+# fifth month of the year 5000 -- and a measure sniffed as a date is a measure
+# the chart no longer has.
 _DATEISH_VALUE_RES = [
-    re.compile(r"^\d{4}[-/.]\d{1,2}([-/.]\d{1,2})?([T ].+)?$"),   # 2026-01[-05][ 10:30]
+    re.compile(r"^(19|20)\d{2}[-/.](0?[1-9]|1[0-2])([-/.]\d{1,2})?([T ].+)?$"),  # 2026-01[-05][ 10:30]
     re.compile(r"^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$"),             # 05/01/2026
     re.compile(r"^(19|20)\d{2}$"),                                # bare year
     re.compile(r"^(19|20)\d{6}$"),                                # YYYYMMDD key
     re.compile(r"(?i)^q[1-4]([ \-/]*\d{2,4})?$"),                 # Q1, Q1 2026
     re.compile(r"(?i)^\d{4}[ \-]?q[1-4]$"),                       # 2026-Q1
+    re.compile(r"(?i)^(19|20)\d{2}[ \-]?w(0?[1-9]|[1-4]\d|5[0-3])$"),     # 2026-W05
+    re.compile(r"(?i)^w(0?[1-9]|[1-4]\d|5[0-3])[ \-/]*((19|20)?\d{2})?$"),  # W05, W05 2026
+    re.compile(r"(?i)^fy ?\d{2,4}[ \-/]*p(0?[1-9]|1[0-3])$"),   # FY25 P03
+    re.compile(r"(?i)^p(0?[1-9]|1[0-3])[ \-/]*fy ?\d{2,4}$"),   # P03 FY25
     re.compile(                                                    # Jan, March 2026, Aug-26
         r"(?i)^(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|"
         r"aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)"
         r"([ ,\-/']*\d{1,4})?$"
     ),
 ]
+# A NUMBER is a date only as an integer calendar code: a bare year or a
+# YYYYMMDD key. The string patterns above never apply to it.
+_DATEISH_NUMBER_RE = re.compile(r"^((19|20)\d{2}|(19|20)\d{6})$")
+
+# A weekday is a position in a cycle, not a point on a timeline: Monday..Sunday
+# is a profile of the week, and a trend line drawn through it -- and implicitly
+# from Sunday back to Monday -- claims a direction nothing moved in. Months are
+# not treated this way: "Jan".."Dec" is nearly always one year's months, which
+# is a timeline. Names in the two languages the product answers in.
+_WEEKDAY_NAMES = frozenset({
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+    "lun", "mar", "mer", "jeu", "ven", "sam", "dim",
+})
 _CURRENCY_RE = re.compile(
     r"(?i)(revenue|sales|amount|amt|charge|cost|cogs|price|margin|profit|usd|value|balance|total)"
 )
 _PERCENT_RE = re.compile(r"(?i)(percent|percentage|pct|rate|ratio|share|margin_pct)")
 _COUNT_RE = re.compile(r"(?i)(count|cnt|rows|quantity|qty|volume|units)")
 
+# The question reaches this module in the reader's own words, so each of these
+# carries the French for what it detects. English alone meant a French reader's
+# "évolution mensuelle" or "répartition par canal" chose a chart as if the
+# question had said nothing at all.
 _TREND_RE = re.compile(
-    r"\b(trend|over time|monthly|weekly|daily|yearly|by month|by week|by year|"
-    r"by quarter|evolution|progression|growth|history|timeline|mom|yoy)\b",
+    r"\b(trend|over time|monthly|weekly|daily|yearly|quarterly|by month|by week|by year|"
+    r"by quarter|by day|by period|per month|per week|per day|per period|each month|"
+    r"month by month|evolution|progression|growth|history|timeline|mom|yoy|"
+    r"tendance|tendances|évolution|au fil du temps|dans le temps|historique|"
+    r"mensuel|mensuelle|mensuels|mensuelles|hebdomadaire|hebdomadaires|"
+    r"quotidien|quotidienne|quotidiens|quotidiennes|annuel|annuelle|annuels|annuelles|"
+    r"trimestriel|trimestrielle|par mois|par semaine|par jour|par an|par année|"
+    r"par trimestre|par période|chaque mois|mois par mois|croissance)\b",
     re.IGNORECASE,
 )
 _SHARE_RE = re.compile(
     r"\b(share|proportion|breakdown|distribution|percent|percentage|contribution|"
-    r"split|composition|mix|part of total|of total)\b",
+    r"split|composition|mix|part of total|of total|"
+    r"la part|quelle part|part des|part du|parts des|répartition|repartition|"
+    r"pourcentage|ventilation|du total|sur le total)\b",
     re.IGNORECASE,
 )
 _SCATTER_RE = re.compile(
     r"\b(correlat|vs\.?|versus|scatter|relationship between|compare .{1,30} with|"
-    r"related to|association between|show .{1,30} vs|x vs y)\b",
+    r"related to|association between|show .{1,30} vs|x vs y|"
+    r"corrélation|correlation|relation entre|lien entre)\b",
     re.IGNORECASE,
 )
 _RANKING_RE = re.compile(
-    r"\b(top|bottom|highest|lowest|rank|ranking|largest|smallest|best|worst|leader)\b",
+    r"\b(top|bottom|highest|lowest|rank|ranking|largest|smallest|best|worst|leader|"
+    r"classement|meilleur|meilleure|meilleurs|meilleures|pire|pires|"
+    r"plus élevé|plus élevée|plus élevés|plus élevées|plus haut|plus bas|"
+    r"plus grand|plus grande|plus grands|plus grandes|premiers|premières)\b",
     re.IGNORECASE,
 )
 _DERIVED_METRIC_RE = re.compile(
@@ -146,6 +189,15 @@ def _is_temporal_name(col: str) -> bool:
 
 
 def _value_is_dateish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (date, datetime)):
+        return True
+    if isinstance(value, (int, float, Decimal)):
+        number = float(value)
+        if not number.is_integer():
+            return False
+        return bool(_DATEISH_NUMBER_RE.match(str(int(number))))
     s = str(value).strip()
     if not s:
         return False
@@ -174,13 +226,45 @@ def _looks_temporal_values(values: list[Any]) -> bool:
     return all(19000101 <= int(v) <= 21001231 for v in numeric)
 
 
+def _named_like_a_measure(col: str) -> bool:
+    """Whether the column's NAME says it holds a quantity to plot.
+
+    The chart's own three patterns spell words out -- revenue, price, quantity --
+    and a warehouse mart abbreviates them. ON_HND_VAL (the value of stock on
+    hand) and UNIT_PRC matched none of them, so a result of whole-dollar stock
+    values read as a list of item codes and got no chart at all, and a unit
+    price was demoted to an identifier on a "price versus quantity" question.
+
+    The rest of the product already knows these spellings, so this asks the
+    rules it uses rather than growing a fourth list: the additivity classifier
+    (a balance, a unit price, a flow, a count of events), the period rule's
+    measure tokens (AMT, QTY, VAL, PCT ...) and the naming convention's
+    suffixes (_CST, _PFT, _REV, _BAL ...).
+    """
+    name = str(col or "")
+    if _CURRENCY_RE.search(name) or _PERCENT_RE.search(name) or _COUNT_RE.search(name):
+        return True
+    from core.analysis_contract import measure_additivity
+    from core.naming_convention import match_column_suffix
+    from core.temporal_columns import names_a_measure
+
+    if names_a_measure(name) or measure_additivity(name)[0] != "unknown":
+        return True
+    rule = match_column_suffix(name)
+    return bool(rule and rule.role in {"measure", "ratio", "semi_additive"})
+
+
 def _looks_identifier(rows: list[dict], col: str) -> bool:
-    # Business metric names should never be demoted to identifiers just because
-    # a small demo result happens to contain unique whole numbers.
-    if _CURRENCY_RE.search(col or "") or _PERCENT_RE.search(col or "") or _COUNT_RE.search(col or ""):
-        return False
+    # A key or code suffix is the name saying what the column is, and it
+    # outranks a measure word found inside it: ACCOUNT_NO holds "count" and is
+    # an account number. It used to be checked second, so every numeric
+    # account, discount or amount code became a measure and was drawn.
     if _ID_SUFFIX_RE.search(col or ""):
         return True
+    # Business metric names should never be demoted to identifiers just because
+    # a small demo result happens to contain unique whole numbers.
+    if _named_like_a_measure(col):
+        return False
     numeric = _numeric_values(rows, col)
     vals = _values(rows, col)
     if len(numeric) < 2 or len(numeric) != len(vals):
@@ -299,7 +383,7 @@ def _composition_measures(measures: list[str]) -> list[str]:
     return primary or measures
 
 
-def _pie_incompatibility(rows: list[dict], measure: str | None) -> str:
+def _pie_incompatibility(rows: list[dict], measure: str | None, fmt: str = "") -> str:
     """Return why a pie is misleading, or an empty string when it is safe."""
     if not measure:
         return _t("ui.chart.warn.pie_needs_measure")
@@ -310,7 +394,25 @@ def _pie_incompatibility(rows: list[dict], measure: str | None) -> str:
         return _t("ui.chart.warn.pie_negative")
     if sum(values) <= 0:
         return _t("ui.chart.warn.pie_nonpositive_total")
+    # A pie says its slices make up a whole. Rates, averages and unit prices
+    # make up nothing: "gross margin percent by region" drew a pie whose slices
+    # were 31%, 28% and 22%, presented as shares of a total that does not
+    # exist. Such a measure is a pie only when it IS the shares -- its values
+    # already add up to 100 (or to 1).
+    from core.analysis_contract import measure_class_for_column
+
+    if fmt == "percentage" or measure_class_for_column(measure) == "non_additive":
+        total = sum(values)
+        if not (abs(total - 100.0) <= 1.5 or abs(total - 1.0) <= 0.015):
+            return _t("ui.chart.warn.pie_not_a_whole", measure=display_label(measure))
     return ""
+
+
+def _weekday_profile(rows: list[dict], col: str | None) -> bool:
+    """Whether every label of this column is a weekday name."""
+    labels = [label.strip().rstrip(".").lower() for label in _labels_of(rows, col or "")
+              if label.strip()] if col else []
+    return bool(labels) and all(label in _WEEKDAY_NAMES for label in labels)
 
 
 def _primary_dimension(dimensions: list[str], roles: dict[str, dict]) -> str | None:
@@ -428,15 +530,22 @@ def _column_roles(rows: list[dict], column_formats: dict | None = None) -> dict[
         # temporal; a column NAMED like a measure (revenue/profit/count/...)
         # is never value-sniffed into temporal either — only an explicit date
         # format or a temporal name token can make it one.
-        looks_measure_name = bool(
-            _CURRENCY_RE.search(col or "")
-            or _PERCENT_RE.search(col or "")
-            or _COUNT_RE.search(col or "")
-        )
+        looks_measure_name = _named_like_a_measure(col)
+        # A calendar period stored as a number -- PRD_KEY holding 202401, IVC_YR
+        # holding 2024 -- is the time axis. The rule is the one the answer card
+        # and the summary already use (core/temporal_columns.py): the name and
+        # the values must agree, and a measure token vetoes both. Before it, a
+        # month key read as an identifier, so "stock on hand by period" drew one
+        # bar per month code, captioned "Period Key looks like a technical
+        # identifier", instead of a line through the months.
+        #
+        # A temporal NAME token stays evidence on its own, except beside a
+        # measure token: YR_TO_DT_AMT and DLV_DAY_CNT are an amount and a count.
         temporal = (
             explicit_format == "date"
             or (not explicit_measure and (
-                _is_temporal_name(col)
+                is_calendar_period_column(col, vals)
+                or (_is_temporal_name(col) and not names_a_measure(col))
                 or (not looks_measure_name and _looks_temporal_values(vals))
             ))
         )
@@ -574,7 +683,12 @@ def infer_chart_spec(
         return None
 
     roles = _column_roles(rows, column_formats)
-    measures = [c for c in headers if roles[c]["role"] == "measure"]
+    # A post-processor's renderer columns (a histogram's bin edges, a funnel's
+    # percentages) are not the reader's measures, on this path as on the
+    # structural one -- BIN_MIN reads as a measure name, and would otherwise be
+    # offered as the axis of a scatter.
+    measures = [c for c in headers if roles[c]["role"] == "measure"
+                and c not in _STRUCTURAL_META_COLUMNS]
     measures = _rank_measures_for_question(measures, question or title)
     composition_measures = _composition_measures(measures)
     temporals = [c for c in headers if roles[c]["role"] == "temporal"]
@@ -582,7 +696,14 @@ def infer_chart_spec(
 
     q = question or ""
     trend_q = bool(_TREND_RE.search(q))
-    share_q = bool(_SHARE_RE.search(q))
+    # "Gross margin PERCENT by region" names the measure's unit, not a share of
+    # a whole. With a percentage measure on the result, the unit words stop
+    # counting as share wording -- or every rate question was steered towards
+    # a pie and then argued out of it.
+    share_words = q
+    if any(roles[c].get("format") == "percentage" for c in measures):
+        share_words = re.sub(r"(?i)\b(percent|percentage|pourcentage)\b", " ", q)
+    share_q = bool(_SHARE_RE.search(share_words))
     scatter_q = bool(_SCATTER_RE.search(q))
     ranking_q = bool(_RANKING_RE.search(q))
 
@@ -614,10 +735,14 @@ def infer_chart_spec(
         allowed = ["line", "area", "bar", "table"]
         x_col = _first(temporals)
         y_cols = measures[:4]
-    elif share_q and composition_measures and dimensions and len(rows) <= 6 and len(composition_measures) == 1:
+    elif (share_q and composition_measures and dimensions and 3 <= len(rows) <= 6
+          and len(composition_measures) == 1):
+        # Three slices at least: a two-slice pie is one number and its
+        # complement, which a bar -- or the sentence above it -- says better.
         x_col = _primary_dimension(dimensions, roles)
         y_cols = composition_measures[:1]
-        pie_problem = _pie_incompatibility(rows, y_cols[0])
+        pie_problem = _pie_incompatibility(
+            rows, y_cols[0], roles[y_cols[0]].get("format", ""))
         if pie_problem:
             intent = "breakdown"
             recommended = "bar"
@@ -632,10 +757,12 @@ def infer_chart_spec(
         recommended = "bar"
         allowed = ["bar", "table"]
         if (
-            len(rows) <= 10
+            3 <= len(rows) <= 10
             and share_q
             and len(composition_measures) == 1
-            and not _pie_incompatibility(rows, composition_measures[0])
+            and not _pie_incompatibility(
+                rows, composition_measures[0],
+                roles[composition_measures[0]].get("format", ""))
         ):
             allowed[1:1] = ["pie", "donut"]
         if len(measures) >= 2:
@@ -666,7 +793,9 @@ def infer_chart_spec(
     if requested_type and measures:
         if requested_type in {"pie", "donut"} and x_col:
             requested_measure = _first(composition_measures)
-            pie_problem = _pie_incompatibility(rows, requested_measure)
+            pie_problem = _pie_incompatibility(
+                rows, requested_measure,
+                (roles.get(requested_measure or "") or {}).get("format", ""))
             if pie_problem:
                 warnings.append(pie_problem)
             else:
@@ -704,6 +833,38 @@ def infer_chart_spec(
     # chart type in hand, so it is where the choice belongs.
     if recommended in {"bar", "line", "area"} and x_col:
         series_col = _series_dimension(rows, x_col, roles, headers)
+        x_labels = _labels_of(rows, x_col)
+        if not series_col and len(set(x_labels)) * 2 <= len(x_labels):
+            # The axis repeats because the result is a grid, and the column
+            # that would split it has more members than the palette -- ten
+            # warehouses by six months, or two years by twelve months. The same
+            # grid turned the other way round fits: six months as the series of
+            # a warehouse axis, two years as the series of a month axis. Only a
+            # clean two-dimensional result is turned; a third dimension, or two
+            # candidates, stays the ambiguity _series_dimension refuses.
+            others = [c for c in headers if c != x_col
+                      and roles[c]["role"] in {"dimension", "identifier", "temporal"}
+                      and len(set(_labels_of(rows, c))) > 1]
+            if (len(others) == 1
+                    and len(set(_labels_of(rows, others[0]))) > _SERIES_CAP
+                    and _series_dimension(rows, others[0], roles, headers) == x_col):
+                x_col, series_col = others[0], x_col
+                if (roles[x_col]["role"] != "temporal" and recommended in {"line", "area"}
+                        and requested_type not in {"line", "area"}):
+                    intent = "breakdown"
+                    recommended = "bar"
+                    allowed = ["bar", "table"]
+                elif roles[x_col]["role"] == "temporal" and recommended == "bar" and not requested_type:
+                    intent = "trend"
+                    recommended = "line"
+                    allowed = ["line", "area", "bar", "table"]
+            else:
+                # Every x label drawn once per member of something the chart has
+                # no slot for: one jagged series that is really several flat
+                # ones interleaved. The table says it; a chart would misstate it.
+                intent = "table"
+                recommended = "table"
+                allowed = ["table"]
         if series_col:
             # The series slot now belongs to the group, so only one measure can
             # be drawn: two dimensions of variation cannot share it.
@@ -745,6 +906,23 @@ def infer_chart_spec(
                 ))
                 if "table" not in allowed:
                     allowed.append("table")
+
+    # ── The form, once the series are known ─────────────────────────────────
+    # An area is a wash under ONE line. Several of them overlap into a muddle
+    # where each fill tints the others, so a grouped or multi-measure trend is
+    # drawn as lines. And a week profile is compared bar by bar in calendar
+    # order, not read as a trend. A type the reader named is left alone.
+    named_by_reader = bool(requested_type) and recommended == requested_type
+    if (not named_by_reader and x_col
+            and roles.get(x_col, {}).get("role") == "temporal"
+            and recommended in {"line", "area"}):
+        if _weekday_profile(rows, x_col):
+            intent = "profile"
+            recommended = "bar"
+            allowed = ["bar", "line"] + [t for t in allowed
+                                         if t not in {"bar", "line", "area"}]
+        elif recommended == "area" and (series_col or len(y_cols) > 1):
+            recommended = "line"
 
     if x_col and roles.get(x_col, {}).get("is_technical_id"):
         warnings.append(_t("ui.chart.warn.technical_identifier",

@@ -334,6 +334,15 @@ def is_calendar_period_column(col_name: Any, values: list[Any]) -> bool:
     return False
 
 
+def names_a_measure(col_name: Any) -> bool:
+    """Whether a column's name carries a measure token: AMT, QTY, VAL, PCT ...
+
+    The veto is_calendar_period_column applies, for a caller that reads a period
+    from the NAME alone: YR_TO_DT_AMT carries a date token and is an amount.
+    """
+    return bool(_MEASURE_NAME_RE.search(str(col_name or "")))
+
+
 def period_columns(rows: list[dict], candidates: list[str]) -> list[str]:
     """Which of these columns are calendar periods, in the order given."""
     if not rows:
