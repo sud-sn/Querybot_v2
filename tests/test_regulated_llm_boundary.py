@@ -113,6 +113,8 @@ class ResultLlmFeaturesAllowedTests(unittest.TestCase):
 
 class WhyInsightRegulatedGateTests(unittest.TestCase):
     def test_skips_llm_call_for_regulated_tenant(self):
+        """No model call; the summary the reader gets is computed locally.
+        It used to be silence, which read as the feature being broken."""
         from core.query_pipeline import _send_why_insight
 
         adapter = MagicMock()
@@ -129,15 +131,70 @@ class WhyInsightRegulatedGateTests(unittest.TestCase):
                 "core.response_builder.generate_analysis_response",
                 new_callable=AsyncMock,
             ) as mock_gen,
+            patch("core.query_pipeline.resolve_provider") as mock_provider,
         ):
             _arun(_send_why_insight(
                 adapter, event,
+                question="why did revenue drop",
+                rows=[{"REGION": "North", "NET_AMOUNT": 620.0},
+                      {"REGION": "South", "NET_AMOUNT": 240.0},
+                      {"REGION": "East", "NET_AMOUNT": 110.0}],
+                sql="SELECT 1", client={}, account_id="acct-rx", db_cfg={},
+            ))
+        mock_gen.assert_not_called()
+        mock_provider.assert_not_called()
+        adapter.send_message.assert_not_called()
+        adapter.send_analysis_response.assert_called_once()
+        summary = adapter.send_analysis_response.call_args.args[1]
+        self.assertTrue(summary["computed"])
+        self.assertEqual(summary["rows_sent_to_llm"], 0)
+
+    def test_regulated_tenant_with_nothing_to_say_gets_no_apology(self):
+        """A computed summary with no findings is not sent: after every
+        answer, a paragraph explaining why there is none would be noise."""
+        from core.query_pipeline import _send_why_insight
+
+        adapter = MagicMock()
+        adapter.send_message = AsyncMock()
+        adapter.send_analysis_response = AsyncMock()
+        with (
+            patch(
+                "core.compliance.policy_engine.store.get_compliance_profile",
+                return_value={"mode": "regulated"},
+            ),
+            patch(
+                "core.response_builder._regulated_analysis_fallback",
+                return_value={"type": "assistant_analysis", "computed": False, "body": "no analysis"},
+            ),
+        ):
+            _arun(_send_why_insight(
+                adapter, MagicMock(),
                 question="why did revenue drop", rows=[{"a": 1}], sql="SELECT 1",
                 client={}, account_id="acct-rx", db_cfg={},
             ))
-        mock_gen.assert_not_called()
-        adapter.send_message.assert_not_called()
         adapter.send_analysis_response.assert_not_called()
+        adapter.send_message.assert_not_called()
+
+    def test_a_one_number_answer_gets_no_empty_summary(self):
+        """"What is our total stock?" answers with one number. The computed
+        summary of one number is "nothing stands out" -- true, and not worth
+        a card after every such answer."""
+        from core.query_pipeline import _send_why_insight
+
+        adapter = MagicMock()
+        adapter.send_message = AsyncMock()
+        adapter.send_analysis_response = AsyncMock()
+        with patch(
+            "core.compliance.policy_engine.store.get_compliance_profile",
+            return_value={"mode": "regulated"},
+        ):
+            _arun(_send_why_insight(
+                adapter, MagicMock(),
+                question="what is our total stock", rows=[{"TOTAL_STOCK": 5234.0}],
+                sql="SELECT 1", client={}, account_id="acct-rx", db_cfg={},
+            ))
+        adapter.send_analysis_response.assert_not_called()
+        adapter.send_message.assert_not_called()
 
     def test_still_calls_llm_for_standard_tenant(self):
         from core.query_pipeline import _send_why_insight
@@ -179,17 +236,79 @@ class WhyInsightRegulatedGateTests(unittest.TestCase):
 
 
 class FollowUpSuggestionsRegulatedGateTests(unittest.TestCase):
-    def test_gate_wired_into_generate_followup_suggestions(self):
-        # Moved from the _send_results call site into the shared function
-        # itself (matching generate_analysis_response's pattern) so the
-        # block gets audit coverage from the function's own llm_audit_scope.
-        src = _src("core/insight.py")
-        start = src.index("async def generate_followup_suggestions(")
-        fn = src[start:start + 2000]
-        gate_pos = fn.index("result_llm_features_allowed(account_id)")
-        brief_check_pos = fn.index('if not brief:')
-        self.assertLess(gate_pos, brief_check_pos, "gate must run before anything else")
-        self.assertIn("record_llm_blocked(", fn[:brief_check_pos])
+    def _suggest(self, mode: str, signals: list[dict]):
+        """The real generate_followup_suggestions with the model replaced by
+        one that records being asked; returns (chips, model calls, refusals)."""
+        from core import insight
+
+        asked, refused = [], []
+
+        async def _model(*args, **kwargs):
+            asked.append(args)
+            return '["Show the top 3 regions"]', 1, 1
+
+        brief = {
+            "row_count": 3,
+            "columns": {"REGION": "text", "NET_AMOUNT": "numeric"},
+            "category_breakdown": {"label_column": "REGION", "top_5": [{"label": "North"}]},
+        }
+        with (
+            patch(
+                "core.compliance.policy_engine.store.get_compliance_profile",
+                return_value={"mode": mode},
+            ),
+            patch("core.llm.llm_complete", side_effect=_model),
+            patch("core.llm.resolve_provider", return_value=("azure_openai", "gpt-4o", "key", {})),
+            patch("store.get_client", return_value={}),
+            patch("core.llm_audit.record_llm_blocked",
+                  side_effect=lambda component, reason: refused.append(component)),
+        ):
+            chips = _arun(insight.generate_followup_suggestions(
+                brief=brief, question="net amount by region", result_scope={},
+                db_cfg={"db_type": "azure_sql"}, account_id="acct-fu",
+                audit_enabled=True, audit_request_id="rq", signals=signals,
+            ))
+        return chips, asked, refused
+
+    def test_regulated_tenant_gets_the_statistical_questions_without_the_model(self):
+        from core.stat_signals import compute_signals
+
+        signals = compute_signals([
+            {"REGION": "North", "NET_AMOUNT": 620.0},
+            {"REGION": "South", "NET_AMOUNT": 240.0},
+            {"REGION": "East", "NET_AMOUNT": 110.0},
+        ])
+        chips, asked, refused = self._suggest("regulated", signals)
+        self.assertEqual(asked, [])
+        self.assertTrue(chips)
+        self.assertTrue(all(chip.get("question") for chip in chips))
+
+    def test_regulated_tenant_keeps_a_lone_statistical_question(self):
+        """Fewer than three statistical questions is where the model would
+        fill the gap. Refusing the model must not throw away the one the
+        statistics already found."""
+        from core.stat_signals import compute_signals
+
+        [pareto] = [signal for signal in compute_signals([
+            {"REGION": "North", "NET_AMOUNT": 620.0},
+            {"REGION": "South", "NET_AMOUNT": 240.0},
+            {"REGION": "East", "NET_AMOUNT": 110.0},
+        ]) if signal["type"] == "pareto"]
+        chips, asked, refused = self._suggest("regulated", [pareto])
+        self.assertEqual(asked, [])
+        self.assertEqual(len(chips), 1)
+        self.assertIn("Region", chips[0]["question"])
+        self.assertEqual(refused, ["followup_suggestions"])
+
+    def test_regulated_tenant_the_model_tier_is_refused_and_audited(self):
+        chips, asked, refused = self._suggest("regulated", [])
+        self.assertEqual((chips, asked), ([], []))
+        self.assertEqual(refused, ["followup_suggestions"])
+
+    def test_standard_tenant_still_asks_the_model_to_fill_the_gap(self):
+        chips, asked, refused = self._suggest("standard", [])
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(refused, [])
 
     def test_send_results_no_longer_duplicates_the_gate(self):
         src = _src("core/result_renderer.py")

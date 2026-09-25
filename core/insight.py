@@ -2072,25 +2072,15 @@ async def generate_followup_suggestions(
     Reads category_breakdown and numeric_summaries from brief — raw rows never
     reach this function (PII boundary).
     Returns [] on any failure — follow-ups are a UX enhancement, not critical.
-    Regulated tenants get [] unconditionally (see result_llm_features_allowed)
-    with a proof-of-refusal audit row instead of ever building a prompt.
+    Regulated tenants -- and a workspace with no compliance profile, which
+    counts as one (see result_llm_features_allowed) -- get the statistical
+    tier only: its questions are templates filled from the signals, with no
+    model call. The model tier is refused with a proof-of-refusal audit row,
+    before any prompt is built. They used to get [] outright, so a new
+    workspace showed no follow-up questions after any answer.
     """
     from core.compliance.policy_engine import result_llm_features_allowed
-    if not result_llm_features_allowed(account_id):
-        from core.llm_audit import llm_audit_scope, record_llm_blocked
-        with llm_audit_scope(
-            account_id=account_id,
-            question=question,
-            enabled=audit_enabled,
-            request_id=audit_request_id,
-            question_id=audit_request_id,
-            component="followup_suggestions",
-        ):
-            record_llm_blocked(
-                "followup_suggestions",
-                "follow-up suggestions blocked — regulated tenant, LLM never received result rows.",
-            )
-        return []
+    model_allowed = result_llm_features_allowed(account_id)
 
     if not brief:
         return []
@@ -2150,6 +2140,23 @@ async def generate_followup_suggestions(
 
     if len(suggestions) >= 3:
         return suggestions[:3]
+
+    if not model_allowed:
+        from core.llm_audit import llm_audit_scope, record_llm_blocked
+        with llm_audit_scope(
+            account_id=account_id,
+            question=question,
+            enabled=audit_enabled,
+            request_id=audit_request_id,
+            question_id=audit_request_id,
+            component="followup_suggestions",
+        ):
+            record_llm_blocked(
+                "followup_suggestions",
+                "follow-up suggestions from the model blocked — regulated tenant, LLM "
+                "never received result rows; the statistical suggestions were kept.",
+            )
+        return suggestions
 
     # ── Tier 2: LLM gap-fill with signal context only (no raw rows) ──────────
     needed = 3 - len(suggestions)

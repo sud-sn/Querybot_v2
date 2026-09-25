@@ -15,7 +15,9 @@ Covers:
      right component name: generate_analysis_response ("analysis"),
      generate_period_comparison ("compare_prior"),
      generate_followup_suggestions ("followup_suggestions"),
-     _send_why_insight (silent to the user, but still audited).
+     _send_why_insight (the model is never asked, and the refusal is
+     audited; the reader gets the summary computed without it, when it has
+     something to say).
   3. get_recent_llm_calls' any_blocked grouping flag, against a real DB.
   4. Admin template renders a distinct BLOCKED badge (not the red ERROR
      one) and lists the new component names in the filter/glossary.
@@ -227,7 +229,7 @@ class GenerateFollowupSuggestionsBlockedAuditTests(unittest.TestCase):
 
 
 class SendWhyInsightBlockedAuditTests(unittest.TestCase):
-    def test_regulated_stays_silent_but_writes_blocked_audit_row(self):
+    def test_regulated_with_nothing_to_say_stays_silent_but_is_audited(self):
         from core.query_pipeline import _send_why_insight
 
         adapter = MagicMock()

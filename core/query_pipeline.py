@@ -601,11 +601,26 @@ async def _send_why_insight(
     Best-effort: the factual answer is already on the wire, so any failure
     here is logged and swallowed — never surfaced as a user-facing error."""
     from core.compliance.policy_engine import result_llm_features_allowed
+
+    async def _deliver(insight: dict) -> None:
+        _send_analysis = getattr(adapter, "send_analysis_response", None)
+        if callable(_send_analysis):
+            await _send_analysis(event, insight)
+            return
+        text = _format_insight_markdown(insight)
+        if text:
+            await adapter.send_message(event, text)
+
     if not result_llm_features_allowed(account_id):
-        # Silent skip (matches this function's own failure-swallowing
-        # contract) — but still leave a proof-of-refusal audit row, since
-        # this is an auto-triggered second message the user never asked
-        # for, not an action button click that deserves a visible reply.
+        # The model never sees these rows: a regulated workspace, or one whose
+        # compliance profile was never chosen, which counts as regulated. That
+        # used to mean no summary at all and nothing to say why -- a new
+        # workspace answered every question with a card and then silence. The
+        # summary is computed here instead, from the rows on screen, with no
+        # model call and no row leaving the process: the one this tenant's
+        # analysis buttons already get
+        # (core.response_builder._regulated_analysis_fallback). The refusal
+        # still leaves its audit row.
         with llm_audit_scope(
             account_id=account_id,
             question=f"{action}: {question}"[:500],
@@ -618,8 +633,19 @@ async def _send_why_insight(
             record_llm_blocked(
                 "analysis",
                 f"{action}-insight blocked — regulated tenant, LLM never "
-                "received result rows.",
+                "received result rows; the summary was computed locally.",
             )
+        try:
+            from core.response_builder import _regulated_analysis_fallback
+            computed = _regulated_analysis_fallback(action, rows)
+            # Only a summary with a finding in it. After a one-number answer
+            # the computed text is "nothing stands out", and after any answer
+            # the uncomputed one explains why there is no summary: sent after
+            # every question, either would be noise.
+            if computed.get("computed") and computed.get("finding_kinds"):
+                await _deliver(computed)
+        except Exception as exc:
+            log.warning("Computed summary after factual answer failed (answer already sent): %s", exc)
         return
     try:
         from core.response_builder import generate_analysis_response
@@ -649,13 +675,7 @@ async def _send_why_insight(
                 grounding=grounding,
                 **az_kwargs,
             )
-        _send_analysis = getattr(adapter, "send_analysis_response", None)
-        if callable(_send_analysis):
-            await _send_analysis(event, insight)
-            return
-        text = _format_insight_markdown(insight)
-        if text:
-            await adapter.send_message(event, text)
+        await _deliver(insight)
     except Exception as exc:
         log.warning("%s-insight after factual answer failed (answer already sent): %s",
                     action, exc)

@@ -227,13 +227,19 @@ class TestARegulatedTenantIsStillRefused:
     def test_the_refusal_names_the_action_that_was_blocked(self, monkeypatch):
         """The audit row said "why-insight blocked" whatever ran. An audit
         trail that cannot tell you which analysis was refused is a record of
-        the wrong event."""
+        the wrong event. The model is still never asked; the reader gets the
+        summary computed without it (the old contract was silence)."""
         import core.compliance.policy_engine as pe
+        import core.llm as llm
         import core.llm_audit as audit
         import core.query_pipeline as qp
 
+        async def _no_model(*args, **kwargs):
+            raise AssertionError("the model was asked")
+
         recorded = []
         monkeypatch.setattr(pe, "result_llm_features_allowed", lambda _a: False)
+        monkeypatch.setattr(llm, "llm_complete", _no_model)
         monkeypatch.setattr(
             audit, "record_llm_blocked",
             lambda component, reason: recorded.append((component, reason)))
@@ -247,5 +253,8 @@ class TestARegulatedTenantIsStillRefused:
             client={}, account_id="acct_reg", db_cfg={},
             question_id="q1",
         ))
-        assert adapter.analyses == [] and adapter.messages == []
         assert recorded and "analyze-insight blocked" in recorded[0][1]
+        assert adapter.messages == []
+        [summary] = adapter.analyses
+        assert summary["computed"] is True and summary["rows_sent_to_llm"] == 0
+        assert "North" in summary["body"]
