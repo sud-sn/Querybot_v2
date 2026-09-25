@@ -295,7 +295,7 @@
   }
 
   // ── The option ────────────────────────────────────────────────────────────
-  function buildOption(payload) {
+  function buildOption(payload, layout) {
     let rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
     const xKey = payload && payload.x_key;
     let yKeys = Array.isArray(payload && payload.y_keys) ? payload.y_keys.slice() : [];
@@ -307,9 +307,11 @@
 
     // A series past the palette's length would repeat a colour -- two series
     // drawn identically, a legend with duplicate swatches. They are dropped
-    // and the chart says so.
+    // and the chart says so. A heatmap's columns are cells on one ramp, not
+    // series: every one is drawn.
     let droppedSeries = 0;
-    if (yKeys.length > colors.length) {
+    const cells = String((payload && payload.chart_type) || '').toLowerCase() === 'heatmap';
+    if (!cells && yKeys.length > colors.length) {
       droppedSeries = yKeys.length - colors.length;
       yKeys = yKeys.slice(0, colors.length);
     }
@@ -511,7 +513,17 @@
       const lo = values.length ? Math.min(...values) : 0;
       const hi = values.length ? Math.max(...values) : 1;
       const ramp = sequentialRamp();
-      const showCells = colKeys.length <= 12 && rows.length <= 16;
+      const periodHeads = periodAxisFormatter(colKeys.map(String), null);
+      const periodRows = rowLabels.length > 0 && rowLabels.every(v => periodParts(v));
+      const rowHead = i => (periodRows ? periodLabel(rowLabels[i], true) : (rowLabels[i] || ''));
+      // A value is written in a cell only where it fits: about 34px by 16px.
+      // A chart that may grow gets 22px a row (render()); a fixed tile gets
+      // what it has, and there the colour and the tooltip carry the value.
+      const longest = Math.max(0, ...rowLabels.map(v => (periodRows ? periodLabel(v) : v).length));
+      const cellW = (((layout && layout.width) || 600) - Math.min(150, longest * 6.5) - 30)
+        / Math.max(1, colKeys.length);
+      const cellH = layout && layout.height ? (layout.height - 80) / Math.max(1, rows.length) : 22;
+      const showCells = colKeys.length <= 12 && rows.length <= 16 && cellW >= 34 && cellH >= 16;
       const data = [];
       rows.forEach((r, yi) => colKeys.forEach((k, xi) => {
         const v = num(r[k]);
@@ -525,21 +537,23 @@
             const cell = cellOf(p);
             const col = colKeys[cell.x];
             const abs = rows[cell.y] ? rows[cell.y]['__abs_' + col] : null;
-            return tipHeader(`${rowLabels[cell.y] || ''} · ${temporal || !measure ? periodLabel(col, true) : col}`, c)
+            return tipHeader(`${rowHead(cell.y)} · ${periodParts(col) ? periodLabel(col, true) : col}`, c)
               + tipRow(p.color, measure ? columnLabel(payload, measure) : t('ui.chart.retention'),
                        cell.v == null ? t('ui.chart.not_available') : cellFmt(cell.v), c, 'swatch')
               + (abs != null ? tipRow('transparent', t('ui.chart.users'), global.qbNum(abs, {max: 0}), c, 'swatch') : '');
           },
         }),
-        grid: {left: 8, right: 8, top: 8, bottom: 44, containLabel: true},
+        grid: {left: 16, right: 8, top: 8, bottom: 44, containLabel: true},
         xAxis: {
           type: 'category', data: colKeys, position: 'top',
-          axisLabel: {color: c.muted, fontSize: 11, formatter: v => labelFmt(periodParts(v) ? periodLabel(v) : v), hideOverlap: true},
+          axisLabel: {color: c.muted, fontSize: 11, lineHeight: 14, interval: 0, hideOverlap: true,
+                      formatter: periodHeads || (v => labelFmt(periodParts(v) ? periodLabel(v) : v))},
           axisLine: {show: false}, axisTick: {show: false}, splitArea: {show: false},
         },
         yAxis: {
           type: 'category', data: rowLabels, inverse: true,
-          axisLabel: {color: c.muted, fontSize: 11, formatter: labelFmt},
+          axisLabel: {color: c.muted, fontSize: 11, width: 150, overflow: 'truncate', ellipsis: '…',
+                      formatter: periodRows ? v => periodLabel(v) : labelFmt},
           axisLine: {show: false}, axisTick: {show: false}, splitArea: {show: false},
         },
         visualMap: {
@@ -924,7 +938,97 @@
       series: [],
     });
 
-    const multiTip = params => {
+    // ── Small multiples ──────────────────────────────────────────────────
+    // Measures in different units (core/chart_spec.py::_unit_facets) get a
+    // panel each, sharing the categories: stacked for columns and lines,
+    // side by side for a horizontal ranking. Never one axis for both, and
+    // never two axes on one plot.
+    const facets = Array.isArray(payload && payload.facets)
+      ? payload.facets.map(group => group.filter(k => yKeys.includes(k))).filter(group => group.length)
+      : [];
+    if (facets.length >= 2 && (type === 'bar' || type === 'line' || type === 'area')) {
+      return facetOption();
+    }
+
+    function facetOption() {
+      const n = facets.length;
+      const named = group => group.map(k => columnLabel(payload, k)).join(' · ');
+      const colourOf = k => colors[yKeys.indexOf(k) % colors.length];
+      const panelTitle = {color: c.ink2, fontSize: 11, fontWeight: 600, fontFamily: c.font};
+      const legendNeeded = facets.some(group => group.length > 1);
+      const head = (legendNeeded ? 8 : 0) + (capParts.length ? 6 : 0) + 9;
+      const width = (layout && layout.width) || 600;
+      const grids = [], xAxes = [], yAxes = [], series = [];
+      // Every panel's plot starts the same distance from the edge, so a
+      // category sits at the same place in each: the labels are drawn in a
+      // fixed margin rather than measured into each panel.
+      const labelW = Math.max(72, Math.min(180, Math.round(width * 0.3)));
+      const across = (100 - (labelW + 14) / width * 100 - 3 - 7 * (n - 1)) / n;
+      const down = (100 - head - 12 - 11 * (n - 1)) / n;
+      facets.forEach((group, i) => {
+        const valueLabels = Object.assign({}, valueAxis.axisLabel, {hideOverlap: true,
+                                                                   formatter: v => valueFmt(v, group[0], true)});
+        if (horizontal) {
+          // Side by side, the category names once, down the left.
+          grids.push({left: `${(labelW + 14) / width * 100 + i * (across + 7)}%`, width: `${across}%`,
+                      top: `${head + 8}%`, bottom: 8, containLabel: false});
+          yAxes.push(Object.assign({}, categoryAxis, {gridIndex: i, inverse: true,
+            axisLabel: Object.assign({}, categoryAxis.axisLabel, {show: i === 0, rotate: 0, interval: 0,
+              hideOverlap: false, width: labelW, overflow: 'truncate', ellipsis: '…',
+              formatter: v => String(v == null ? '' : v)})}));
+          xAxes.push(Object.assign({}, valueAxis, {gridIndex: i, position: 'top', splitNumber: 3,
+            name: named(group), nameLocation: 'middle', nameGap: 26, nameTextStyle: panelTitle,
+            nameTruncate: {maxWidth: Math.max(60, across / 100 * width - 8), ellipsis: '…'},
+            axisLabel: Object.assign({}, valueLabels, {alignMinLabel: 'left', alignMaxLabel: 'right'})}));
+        } else {
+          // Stacked, the categories named once, under the last panel.
+          grids.push({left: 64, right: 16, top: `${head + i * (down + 11)}%`, height: `${down}%`,
+                      containLabel: false});
+          xAxes.push(Object.assign({}, categoryAxis, {gridIndex: i,
+            axisLabel: Object.assign({}, categoryAxis.axisLabel, {show: i === n - 1})}));
+          yAxes.push(Object.assign({}, valueAxis, {gridIndex: i, splitNumber: 3,
+            name: named(group), nameLocation: 'end', nameGap: 10,
+            nameTextStyle: Object.assign({}, panelTitle, {align: 'left'}),
+            axisLabel: valueLabels}));
+        }
+        group.forEach(k => {
+          const color = colourOf(k);
+          const values = rows.map(r => num(r && r[k]));
+          series.push(type === 'bar' ? {
+            name: k, type: 'bar', xAxisIndex: i, yAxisIndex: i, barMaxWidth: 24, barGap: '12%',
+            itemStyle: {color, borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]},
+            data: values,
+          } : {
+            name: k, type: 'line', xAxisIndex: i, yAxisIndex: i, data: values, smooth: false,
+            showSymbol: rows.length <= MARKER_MAX_POINTS, symbol: 'circle', symbolSize: 8,
+            lineStyle: {width: 2, color, cap: 'round', join: 'round'},
+            itemStyle: {color, borderColor: c.surface, borderWidth: 2},
+            areaStyle: type === 'area' ? {color, opacity: 0.10} : undefined,
+          });
+        });
+      });
+      const link = horizontal ? [{yAxisIndex: 'all'}] : [{xAxisIndex: 'all'}];
+      return Object.assign(base, {
+        title: capTitle(legendNeeded ? 24 : 0),
+        grid: grids,
+        xAxis: xAxes,
+        yAxis: yAxes,
+        legend: legendNeeded
+          ? Object.assign(legendBase(yKeys, type === 'line'), {formatter: name => columnLabel(payload, name)})
+          : undefined,
+        axisPointer: {link},
+        tooltip: Object.assign(tooltipBase(c), {
+          trigger: 'axis',
+          axisPointer: type === 'bar'
+            ? {type: 'shadow', shadowStyle: {color: 'rgba(22,30,26,0.05)'}}
+            : {type: 'line', lineStyle: {color: c.axis, width: 1}},
+          formatter: multiTip,
+        }),
+        series,
+      });
+    }
+
+    function multiTip(params) {
       const arr = Array.isArray(params) ? params : [params];
       const head = arr[0] ? (arr[0].axisValue != null ? arr[0].axisValue : arr[0].name) : '';
       return tipHeader(shownLabel(head), c)
@@ -1029,19 +1133,27 @@
     const echarts = global.echarts;
     const existing = echarts.getInstanceByDom(el);
     if (existing) existing.dispose();
-    const option = buildOption(payload);
+    const fixed = Boolean(opts && opts.grow === false);
+    const option = buildOption(payload, {width: el.clientWidth || 0, height: fixed ? el.clientHeight || 0 : 0});
     // A horizontal ranking needs a readable row per category. In a fixed-height
     // card twenty categories got 12px each against an 11px label, and the
     // axis hid every other name. The chart grows to fit instead -- a chart
     // whose labels are missing is not a chart of those categories. Where it
     // may not grow, the axis names every other category rather than
     // overprinting them.
-    const yAxis = option.yAxis;
-    if (yAxis && !Array.isArray(yAxis) && yAxis.type === 'category' && yAxis.inverse && Array.isArray(yAxis.data)) {
-      const need = yAxis.data.length * 22 + 72;
-      if (opts && opts.grow === false) {
-        if (el.clientHeight && need > el.clientHeight) yAxis.axisLabel.interval = 'auto';
-      } else if (el.clientHeight && need > el.clientHeight) {
+    const yAxes = [].concat(option.yAxis || []);
+    const yAxis = yAxes[0];
+    let need = 0;
+    if (yAxis && yAxis.type === 'category' && yAxis.inverse && Array.isArray(yAxis.data)) {
+      need = yAxis.data.length * 22 + 72 + (yAxes.length > 1 ? 24 : 0);
+    } else if (Array.isArray(option.grid) && option.grid.length > 2) {
+      // Three stacked panels need more than one chart's height to be read.
+      need = option.grid.length * 130 + 70;
+    }
+    if (need && el.clientHeight && need > el.clientHeight) {
+      if (fixed) {
+        yAxes.forEach(axis => { if (axis.type === 'category' && axis.axisLabel) axis.axisLabel.interval = 'auto'; });
+      } else {
         el.style.height = need + 'px';
       }
     }

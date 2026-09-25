@@ -684,24 +684,36 @@ class TestTheChartsBrowserSideLabels:
         assert json.loads(_build("portal_chat.html", "en", payload,
                                  "JSON.stringify(opt.xAxis.name)")) in drawn
 
+    # Two amounts: one unit, so one axis and a legend naming both.
+    SAME_UNIT = [{"WHS_NM": "Dallas", "BAL_VAL_AMT": 13_557_410.0, "ORD_AMT": 9_200_000.0},
+                 {"WHS_NM": "Chennai", "BAL_VAL_AMT": 9_100_000.0, "ORD_AMT": 7_050_000.0}]
+
+    def legend(self, chart_type, question):
+        from core.chart import build_chart_payload
+
+        payload = build_chart_payload(self.SAME_UNIT, chart_type, question=question)
+        return json.loads(_build(
+            "portal_chat.html", "en", payload,
+            "JSON.stringify((opt.legend && opt.legend.data || []).map(function (n) "
+            "{ return opt.legend.formatter(n) }))"))
+
     def test_the_legend_is_drawn_in_business_terms(self):
-        drawn = self.option(
-            "bar",
-            "(opt.legend && opt.legend.data || []).map(function (n) "
-            "{ return opt.legend.formatter(n) })",
-            "balance and quantity by warehouse")
-        assert drawn == ["Order Quantity", "Balance Value Amount"], drawn
+        drawn = self.legend("bar", "balance and order amount by warehouse")
+        assert sorted(drawn) == ["Balance Value Amount", "Order Amount"], drawn
 
     def test_the_line_charts_legend_too(self):
-        # A separate legend object a few hundred lines up. The two are edited
-        # together and drift apart; asserting only the bar's would have let a
-        # half-applied fix through.
-        drawn = self.option(
-            "line",
-            "(opt.legend && opt.legend.data || []).map(function (n) "
-            "{ return opt.legend.formatter(n) })",
-            "balance and quantity by warehouse over time")
-        assert drawn == ["Order Quantity", "Balance Value Amount"], drawn
+        # A separate legend object in the builder. The two are edited together
+        # and drift apart; asserting only the bar's would let a half-applied fix
+        # through.
+        drawn = self.legend("line", "balance and order amount by warehouse over time")
+        assert sorted(drawn) == ["Balance Value Amount", "Order Amount"], drawn
+
+    def test_a_panel_per_unit_is_titled_in_business_terms(self):
+        # A balance and a quantity cannot share an axis, so each gets a panel,
+        # and the panel's title is what names it.
+        titles = self.option("bar", "opt.yAxis.map(function (a) { return a.name })",
+                             "balance and quantity by warehouse")
+        assert titles == ["Order Quantity", "Balance Value Amount"], titles
 
     def test_but_the_series_keep_their_raw_identity(self):
         # ECharts keys colour, selection and tooltip lookup on the series name.

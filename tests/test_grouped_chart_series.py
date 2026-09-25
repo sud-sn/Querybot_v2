@@ -120,17 +120,33 @@ class TestTheGroupingColumnIsFound(unittest.TestCase):
         self.assertEqual(spec["x"]["column"], "PERIOD")
         self.assertEqual(spec["recommended_type"], "line")
 
-    def test_a_grid_too_wide_either_way_is_not_charted(self):
-        # Nine periods by nine warehouses: neither side fits the palette, and
-        # one series walking between rows of different groups is the jagged
-        # line this module exists to prevent. The table carries it.
+    def test_a_grid_too_wide_either_way_is_a_heatmap(self):
+        # Nine periods by nine warehouses: neither side fits the palette as a
+        # series, and one series walking between rows of different groups is
+        # the jagged line this module exists to prevent. A heatmap draws every
+        # cell: a row per warehouse, a column per period.
         nine = [f"2026-{m:02d}" for m in range(1, 10)]
         rows = [{"WHS_NM": f"W{w}", "PERIOD": p, "REVENUE_AMT": 10.0 + w}
                 for p in nine for w in range(9)]
-        spec = infer_chart_spec(rows, question=GROUPED_Q)
-        self.assertIsNone(spec["series"])
-        self.assertEqual(spec["recommended_type"], "table")
-        self.assertIsNone(build_chart_payload(rows, None, question=GROUPED_Q))
+        built = build_chart_payload(rows, None, question=GROUPED_Q)
+        self.assertEqual(built["chart_type"], "heatmap")
+        self.assertEqual(built["x_key"], "WHS_NM")
+        self.assertEqual(built["y_keys"], nine)
+        self.assertEqual(built["grouped_measure"], "REVENUE_AMT")
+
+    def test_a_grid_too_big_even_for_a_heatmap_is_left_to_the_table(self):
+        periods = [f"20{y:02d}-{m:02d}" for y in (24, 25, 26) for m in range(1, 13)]
+        rows = [{"WHS_NM": f"W{w}", "PERIOD": p, "REVENUE_AMT": 10.0 + w}
+                for p in periods for w in range(9)]
+        self.assertEqual(infer_chart_spec(rows, question=GROUPED_Q)["recommended_type"], "table")
+
+    def test_a_grid_of_signed_values_is_left_to_the_table(self):
+        # One hue light to dark says "more"; a loss on it would read as a
+        # small gain.
+        nine = [f"2026-{m:02d}" for m in range(1, 10)]
+        rows = [{"WHS_NM": f"W{w}", "PERIOD": p, "REVENUE_AMT": float(w - 4)}
+                for p in nine for w in range(9)]
+        self.assertEqual(infer_chart_spec(rows, question=GROUPED_Q)["recommended_type"], "table")
 
     def test_eight_groups_is_still_drawn(self):
         # Guards the guard: an off-by-one at the cap would silently withdraw

@@ -502,6 +502,92 @@ def _series_dimension(
     return qualifying[0] if len(qualifying) == 1 else None
 
 
+# Small multiples: at most this many panels, and a same-unit pair split into
+# two once one is this many times the other.
+_FACET_CAP = 3
+_SCALE_GAP = 50.0
+
+
+def _unit_facets(rows: list[dict], measures: list[str],
+                 roles: dict[str, dict]) -> list[list[str]] | None:
+    """Measures that cannot share one value axis, grouped into a panel each.
+
+    One axis for a money column and a rate is the dual-axis problem without
+    the second axis: on a scale of millions the rate is a flat line along the
+    bottom -- "net sales and margin % by region" drew the margins as bars no
+    one could see. A second axis is no fix either: two scales on one plot
+    invent a correlation that is not in the data. Small multiples are: a
+    panel per unit, the categories shared. Two measures in the same unit
+    share a panel unless one is fifty times the other, when the smaller would
+    still draw as zero.
+
+    None when every measure fits one axis, which is the ordinary case.
+    """
+    groups: list[tuple[str, float, list[str]]] = []
+    for col in measures:
+        fmt = (roles.get(col) or {}).get("format") or "number"
+        peak = max((abs(v) for v in _numeric_values(rows, col)), default=0.0)
+        for index, (group_fmt, group_peak, members) in enumerate(groups):
+            if group_fmt != fmt:
+                continue
+            low, high = sorted((group_peak, peak))
+            if low == 0 or high / low <= _SCALE_GAP:
+                members.append(col)
+                groups[index] = (group_fmt, max(group_peak, peak), members)
+                break
+        else:
+            groups.append((fmt, peak, [col]))
+    if len(groups) < 2:
+        return None
+    return [members for _, _, members in groups[:_FACET_CAP]]
+
+
+# A heatmap stays readable to about this many rows and columns.
+_MATRIX_ROWS = 40
+_MATRIX_COLUMNS = 24
+
+
+def _matrix_axes(rows: list[dict], x_col: str, other: str, roles: dict[str, dict],
+                 measure: str | None) -> tuple[str, str] | None:
+    """(row column, column column) for a grid a heatmap can draw, or None.
+
+    The grid a series cannot carry -- fifteen warehouses by twelve months --
+    is exactly what a heatmap is for: a row per member of one dimension, a
+    column per member of the other, the measure as depth of colour. It has to
+    be a real grid (one cell per pair, at least half of them filled), small
+    enough to read, and a measure that does not change sign -- one hue light
+    to dark says "more", and a negative value on it would read as a small one.
+    Time runs along the top when one of the two is time.
+    """
+    if not measure:
+        return None
+    values = _numeric_values(rows, measure)
+    if not values or any(value < 0 for value in values):
+        return None
+    x_labels, o_labels = _labels_of(rows, x_col), _labels_of(rows, other)
+    if len(set(zip(x_labels, o_labels))) != len(rows):
+        return None
+    # The column members become row keys in the pivot, as a series' members
+    # do, so one named like a column of the result is refused here too.
+    header_names = {str(h) for h in rows[0].keys()}
+    if (set(x_labels) | set(o_labels)) & header_names:
+        return None
+    n_x, n_o = len(set(x_labels)), len(set(o_labels))
+    if n_x * n_o > 2 * len(rows):
+        return None
+    if roles.get(x_col, {}).get("role") == "temporal":
+        row_col, column_col = other, x_col
+    elif roles.get(other, {}).get("role") == "temporal":
+        row_col, column_col = x_col, other
+    else:
+        row_col, column_col = (x_col, other) if n_x >= n_o else (other, x_col)
+    n_rows = len(set(_labels_of(rows, row_col)))
+    n_columns = len(set(_labels_of(rows, column_col)))
+    if n_rows > _MATRIX_ROWS or n_columns > _MATRIX_COLUMNS:
+        return None
+    return row_col, column_col
+
+
 def _format_for_column(col: str, explicit_formats: dict[str, str]) -> str:
     key = _norm(col)
     explicit = explicit_formats.get(key)
@@ -859,12 +945,23 @@ def infer_chart_spec(
                     recommended = "line"
                     allowed = ["line", "area", "bar", "table"]
             else:
-                # Every x label drawn once per member of something the chart has
-                # no slot for: one jagged series that is really several flat
-                # ones interleaved. The table says it; a chart would misstate it.
-                intent = "table"
-                recommended = "table"
-                allowed = ["table"]
+                matrix = (_matrix_axes(rows, x_col, others[0], roles, _first(y_cols))
+                          if len(others) == 1 and requested_type is None else None)
+                if matrix:
+                    # Too wide for a series either way: a heatmap draws every
+                    # cell.
+                    x_col, series_col = matrix
+                    intent = "matrix"
+                    recommended = "heatmap"
+                    allowed = ["heatmap", "table"]
+                else:
+                    # Every x label drawn once per member of something the
+                    # chart has no slot for: one jagged series that is really
+                    # several flat ones interleaved. The table says it; a
+                    # chart would misstate it.
+                    intent = "table"
+                    recommended = "table"
+                    allowed = ["table"]
         if series_col:
             # The series slot now belongs to the group, so only one measure can
             # be drawn: two dimensions of variation cannot share it.
@@ -924,6 +1021,18 @@ def infer_chart_spec(
         elif recommended == "area" and (series_col or len(y_cols) > 1):
             recommended = "line"
 
+    # ── Measures in different units get a panel each ──────────────────────
+    facets = None
+    if recommended in {"bar", "line", "area"} and not series_col and len(y_cols) >= 2:
+        facets = _unit_facets(rows, y_cols, roles)
+        if facets:
+            drawn = [col for group in facets for col in group]
+            left_out = [col for col in y_cols if col not in drawn]
+            if left_out:
+                warnings.append(_t("ui.chart.warn.panels_left_out",
+                                   left_out=", ".join(roles[col]["label"] for col in left_out)))
+            y_cols = drawn
+
     if x_col and roles.get(x_col, {}).get("is_technical_id"):
         warnings.append(_t("ui.chart.warn.technical_identifier",
                             column=display_label(x_col)))
@@ -948,6 +1057,7 @@ def infer_chart_spec(
         "x": roles.get(x_col) if x_col else None,
         "y": [roles[c] for c in y_cols],
         "series": roles.get(series_col) if series_col else None,
+        "facets": facets,
         "column_roles": roles,
         "warnings": warnings,
         "confidence": round(max(0.0, min(confidence, 1.0)), 2),

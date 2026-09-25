@@ -554,7 +554,7 @@ def build_chart_payload(
     grouped_by = None
     grouped_measure = None
     if (series_col and series_col != x_key and len(y_keys) == 1
-            and effective_type in {"bar", "line", "area"}):
+            and effective_type in {"bar", "line", "area", "heatmap"}):
         grouped_measure = y_keys[0]
         rows, y_keys = _pivot_by_series(rows, x_key, series_col, grouped_measure)
         grouped_by = series_col
@@ -629,6 +629,16 @@ def build_chart_payload(
         "chart_confidence": spec.get("confidence"),
         "column_formats": column_formats or {},
     }
+
+    # Measures in different units, a panel each (core/chart_spec.py::
+    # _unit_facets). Only for the types that draw one, and only for the
+    # measures actually sent.
+    facets = spec.get("facets") or []
+    if facets and not grouped_by and effective_type in {"bar", "line", "area"}:
+        panels = [[col for col in group if col in y_keys] for group in facets]
+        panels = [panel for panel in panels if panel]
+        if len(panels) >= 2:
+            payload["facets"] = panels
 
     if annotations and effective_type in _ANNOTATABLE_TYPES and not grouped_by:
         known_periods = {str(r.get(x_key, "")) for r in clean_rows}

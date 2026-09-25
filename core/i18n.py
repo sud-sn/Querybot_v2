@@ -1206,6 +1206,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Grouped by {series}, so only {drawn} is drawn; the other measures stay in the table.",
         "fr": "Regroupé par {series} : seul {drawn} est tracé ; les autres mesures restent dans le tableau.",
     },
+    "ui.chart.warn.panels_left_out": {
+        "en": "A panel per unit, three at most: the table also has {left_out}.",
+        "fr": "Un panneau par unité, trois au plus : le tableau contient aussi {left_out}.",
+    },
     "ui.chart.warn.not_totallable": {
         "en": "{measure} cannot be totalled across the repeated categories, so a share of the whole would be misleading; showing a bar chart instead.",
         "fr": "{measure} ne peut pas être totalisé sur les catégories répétées : une part du total serait trompeuse. Un graphique à barres est affiché à la place.",
