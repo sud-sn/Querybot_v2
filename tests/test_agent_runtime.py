@@ -5,9 +5,18 @@ from pathlib import Path
 
 import pytest
 
-import store
-import store.agent_store as agent_store
+import core.agent_runtime as _runtime
 from core.agent_runtime import AgentRunSession, activate_agent_run, get_active_agent_run
+
+# The store object core.agent_runtime holds, not whichever one the name
+# "store" reaches now: other modules in the suite replace sys.modules["store"]
+# during collection, and a module imported before this one can load the
+# runtime first. Patching the newer copy by name then left the one the runtime
+# calls untouched, and these tests passed alone and failed in the full suite
+# with FOREIGN KEY errors: the writes went to the store's own database, not
+# the fixture's.
+store = _runtime.store
+agent_store = store.agent_store
 from store.db import _ensure_agent_runtime_tables, _ensure_answer_trace_tables
 
 

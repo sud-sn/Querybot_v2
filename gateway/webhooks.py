@@ -378,6 +378,24 @@ _INVESTIGATION_INTENT_RE = re.compile(
     r"root[\s-]cause\s+(?:analysis\s+)?(?:on|of|into))\s+\S",
     re.IGNORECASE,
 )
+# The same asks in French. "Enquête" is also a survey ("l'enquête sur la
+# satisfaction") and "creuse" an adjective ("période creuse"), so a verb counts
+# only where a request starts -- the message or a sentence, after an optional
+# "peux-tu", "pouvez-vous", "merci de" or "s'il vous plaît". A phrase no
+# ordinary question contains ("analyse approfondie de", "cause profonde de")
+# counts anywhere. As in English, something has to follow.
+_INVESTIGATION_INTENT_FR_RE = re.compile(
+    r"(?:^|[.!?]\s+)\s*"
+    r"(?:(?:peux|pourrais)[-\s]tu\s+|(?:pouvez|pourriez)[-\s]vous\s+|merci\s+de\s+|"
+    r"s['’]il\s+(?:te|vous)\s+pla[iî]t,?\s+)?"
+    r"(?:enqu[êe]te(?:r|z)?\s+sur|investigue(?:r|z)?|creuse(?:r|z)?|approfondi(?:s|r|ssez)|"
+    r"(?:(?:se\s+)?pencher|penche[-\s]toi|penchez[-\s]vous)\s+sur|"
+    r"(?:fais|faites|faire|m[èe]ne|menez|mener|lance|lancez|lancer)(?:[-\s](?:moi|nous))?\s+une\s+"
+    r"(?:enqu[êe]te\s+sur|analyse\s+approfondie\s+(?:de|du|des|d['’]|sur)))\s*\S"
+    r"|\b(?:analyse\s+approfondie|analyse\s+des\s+causes(?:\s+(?:profondes|racines))?|"
+    r"causes?\s+(?:profondes?|racines?))\s+(?:de|du|des|d['’]|sur)\s*\S",
+    re.IGNORECASE,
+)
 # The number of governed questions core.investigation_planner may ask
 # (the objective itself, always step one, plus a model's own choices).
 _INVESTIGATION_MAX_STEPS = 4
@@ -5107,7 +5125,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # a reader would not type by accident, so it is checked before
             # every other route including the deep-analysis one just below
             # (which operates on rows a question has ALREADY returned).
-            if _INVESTIGATION_INTENT_RE.search(text):
+            if _INVESTIGATION_INTENT_RE.search(text) or _INVESTIGATION_INTENT_FR_RE.search(text):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
                 current_query_task = asyncio.create_task(
