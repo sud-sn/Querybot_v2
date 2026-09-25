@@ -8170,6 +8170,107 @@ async def domains_route_preview(request: Request, account_id: str):
     })
 
 
+# ── What the warehouse's codes mean ─────────────────────────────────────────
+# Discovery proposes a reading for each code it can read from the warehouse's
+# own evidence, and lists the codes it cannot (core/business_meaning.py).
+# Nothing takes effect until an admin confirms a reading here; a confirmed one
+# joins the tenant's vocabulary (core/vocab_packs.py), so labels, the knowledge
+# base and the planner all read it.
+
+# A reading the evidence gives with at least this confidence can be confirmed
+# with the others in one click; the rest are confirmed one by one.
+_STRONG_MEANING = 80
+
+
+@router.get("/clients/{account_id}/meanings", response_class=HTMLResponse)
+async def meanings_page(request: Request, account_id: str):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    meanings = store.list_business_meanings(account_id)
+    to_review = [m for m in meanings if m["status"] == "suggested" and m["reading"]]
+    return _resp(request, "client_meanings.html", {
+        "client": client,
+        "to_review": to_review,
+        "to_write": [m for m in meanings if m["status"] == "suggested" and not m["reading"]],
+        "confirmed": [m for m in meanings if m["status"] == "confirmed"],
+        "rejected": [m for m in meanings if m["status"] == "rejected"],
+        "strong": _STRONG_MEANING,
+        "strong_count": sum(1 for m in to_review if m["confidence"] >= _STRONG_MEANING),
+        "saved": request.query_params.get("saved"),
+        "error": request.query_params.get("error"),
+    })
+
+
+def _meanings_changed(account_id: str, trigger: str) -> None:
+    """A decision changes the tenant's vocabulary: the cached one is dropped
+    (its key does not see the store), and what depends on it recompiles."""
+    from core.vocab_packs import forget_account_vocab
+
+    forget_account_vocab(account_id)
+    try:
+        _after_semantic_approval(account_id, trigger)
+    except Exception:  # noqa: BLE001 - the decision is saved; a recompile is best effort
+        log.warning("Recompile after %s failed for %s", trigger, account_id, exc_info=True)
+
+
+@router.post("/clients/{account_id}/meanings/decide")
+async def meanings_decide(
+    request: Request,
+    account_id: str,
+    scope: str = Form(...),
+    subject: str = Form(...),
+    action: str = Form(...),
+    reading: str = Form(""),
+    synonyms: str = Form(""),
+):
+    """Confirm (with the reading and synonyms as the admin left them), reject,
+    or put back to review one proposed meaning."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from urllib.parse import quote
+
+    back = f"/admin/clients/{account_id}/meanings"
+    status = {"confirm": "confirmed", "reject": "rejected", "reset": "suggested"}.get(action)
+    if status is None:
+        return RedirectResponse(f"{back}?error={quote('Unknown action')}", status_code=303)
+    words = [w.strip() for w in synonyms.split(",") if w.strip()]
+    try:
+        found = store.decide_business_meaning(
+            account_id, scope, subject, status,
+            reading=reading, synonyms=words if status == "confirmed" else None,
+        )
+    except ValueError as exc:
+        return RedirectResponse(f"{back}?error={quote(str(exc)[:160])}", status_code=303)
+    if not found:
+        return RedirectResponse(
+            f"{back}?error={quote(f'{subject} is not a proposed meaning')}", status_code=303)
+    _meanings_changed(account_id, f"business meaning {status}: {subject}")
+    log.info("Business meaning %s %s %s for %s", scope, subject, status, account_id)
+    return RedirectResponse(f"{back}?saved={quote(status)}", status_code=303)
+
+
+@router.post("/clients/{account_id}/meanings/confirm-strong")
+async def meanings_confirm_strong(request: Request, account_id: str):
+    """Confirm, as proposed, every reading the evidence gives with confidence."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from urllib.parse import quote
+
+    confirmed = 0
+    for meaning in store.list_business_meanings(account_id, statuses={"suggested"}):
+        if meaning["reading"] and meaning["confidence"] >= _STRONG_MEANING:
+            store.decide_business_meaning(account_id, meaning["scope"], meaning["subject"], "confirmed")
+            confirmed += 1
+    if confirmed:
+        _meanings_changed(account_id, f"business meanings confirmed: {confirmed}")
+    log.info("%d strong business meanings confirmed for %s", confirmed, account_id)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/meanings?saved={quote(f'{confirmed} confirmed')}", status_code=303)
+
+
 @router.get("/clients/{account_id}/glossary", response_class=HTMLResponse)
 async def glossary_page(request: Request, account_id: str):
     if not _is_auth(request):

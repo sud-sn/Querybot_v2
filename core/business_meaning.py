@@ -579,9 +579,12 @@ def propose_meanings(
 
     def by_column(place: _Place, reading: _Reading, note: str = "") -> None:
         scope, subject = (COLUMN, place.column.upper()) if place.column else (TABLE, place.table)
+        # What a column holds is what a reader asks for it by: "stock by
+        # country", not "by profit center country".
+        synonyms = [reading.word] if scope == COLUMN and reading.rule in {"values", "address"} else []
         add(Proposal(
             scope, subject, _column_reading(place.table, place.column, wh),
-            reading.rule, reading.confidence,
+            reading.rule, reading.confidence, synonyms=synonyms,
             evidence=[e for e in (reading.evidence, note) if e], where=[place.label],
         ))
 
@@ -689,3 +692,86 @@ def propose_for_account(account_id: str, *, base_dir: str = "clients") -> dict[s
         **saved,
     }
 
+
+# ── Once the admin confirms ──────────────────────────────────────────────────
+
+# A column that shows its entity: SLR_NM is the supplier as a reader sees it.
+# Not a code or a key column -- aliasing SLR_CD to "supplier" as well would make
+# every name-and-code pair ambiguous (core/semantic_planner.py draws the same
+# line for the entity noun).
+_ENTITY_SUFFIXES = frozenset({"NM", "NAME", "DSC", "DESC", "DESCRIPTION"})
+
+
+def _shows_entity(tokens: list[str], code: str) -> bool:
+    """SLR_NM (the code, then a display suffix) or PC_CTY (the code last: the
+    column holds the thing itself)."""
+    if code not in tokens:
+        return False
+    if tokens[-1] == code:
+        return True
+    return len(tokens) >= 2 and tokens[-2] == code and tokens[-1] in _ENTITY_SUFFIXES
+
+
+def confirmed_vocabulary(meanings: list[dict], vocab=None) -> dict[str, Any]:
+    """The admin's confirmed meanings as a vocabulary layer, in the shape a
+    pack has, for core.vocab_packs to merge over the tenant's packs.
+
+    A code's reading becomes an abbreviation, so every column it appears in
+    reads it -- in labels, the knowledge base and the planner alike. A
+    column's reading becomes that column's dictionary entry, its synonyms the
+    words it answers to; a table's reading becomes its label, the rest of the
+    table's entry kept. A code's synonyms reach the questions: each column it
+    appears in answers to its own reading with a synonym in the code's place
+    ("vendor name"), and a column that shows the code's entity (SLR_NM,
+    PC_CTY) answers to the reading and its synonyms alone.
+    """
+    from core.vocab_packs import get_active_vocab
+
+    base = vocab if vocab is not None else get_active_vocab()
+    confirmed = [
+        m for m in meanings or []
+        if m.get("status") == "confirmed" and str(m.get("decided_reading") or "").strip()
+    ]
+    codes = {
+        str(m["subject"]).upper(): str(m["decided_reading"]).strip().lower()
+        for m in confirmed if m.get("scope") == CODE
+    }
+    lexicon = {**_expansion_lexicon(base), **codes}
+    layer: dict[str, Any] = {
+        "abbreviations": dict(codes), "column_dict": {}, "table_dict": {}, "direct_aliases": {},
+    }
+    aliases: dict[str, set[str]] = defaultdict(set)
+    for meaning in confirmed:
+        subject = str(meaning["subject"]).upper()
+        reading = str(meaning["decided_reading"]).strip().lower()
+        synonyms = [
+            str(s).strip().lower() for s in meaning.get("decided_synonyms") or [] if str(s).strip()
+        ]
+        scope = meaning.get("scope")
+        if scope == COLUMN:
+            # Keyed as the column dictionary is read: the compact code, the way
+            # core.identifier_intelligence.resolve_governed_column_code finds
+            # ORNO and PC_CO alike (PCCO).
+            layer["column_dict"][re.sub(r"[^A-Za-z0-9]", "", subject)] = {
+                "label": reading, "synonyms": synonyms,
+            }
+        elif scope == TABLE:
+            entry = dict(base.table_dict.get(subject) or {})
+            entry["label"] = reading
+            layer["table_dict"][subject] = entry
+        elif scope == CODE:
+            for place in meaning.get("found_in") or []:
+                if "." not in str(place):
+                    continue
+                column = str(place).rsplit(".", 1)[1].upper()
+                tokens = tokenize_identifier(column, vocab=base)
+                words = [lexicon.get(t, t.lower()) for t in tokens]
+                for synonym in synonyms:
+                    aliases[column].add(" ".join(
+                        synonym if token == subject else word for token, word in zip(tokens, words)
+                    ))
+                if _shows_entity(tokens, subject):
+                    aliases[column].update([reading, *synonyms])
+    for column, phrases in aliases.items():
+        layer["direct_aliases"][column] = sorted(phrases | set(base.direct_aliases.get(column) or ()))
+    return layer

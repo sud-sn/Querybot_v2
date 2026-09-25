@@ -1,0 +1,168 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% block title %}Business Meanings — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Business Meanings", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.meaning{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.75rem;
+  background:var(--surface);overflow:hidden}
+.meaning-head{padding:.6rem 1rem;background:var(--surface-2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.meaning-subject{font-family:var(--font-mono,monospace);font-weight:800;font-size:14px;color:var(--text)}
+.meaning-scope{font-size:var(--font-2xs);font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text-muted)}
+.meaning-body{padding:.75rem 1rem;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1rem}
+@media (max-width:760px){.meaning-body{grid-template-columns:1fr}}
+.meaning-body label{display:block;font-size:var(--font-sm);font-weight:700;margin:.4rem 0 .2rem}
+.meaning-body input[type=text]{width:100%}
+.evidence{margin:0;padding-left:1.1rem;font-size:var(--font-sm);color:var(--text)}
+.evidence li{margin-bottom:.2rem}
+.found-in{font-size:var(--font-xs);color:var(--text-muted);font-family:var(--font-mono,monospace);
+  margin-top:.4rem;word-break:break-word}
+.confidence{display:inline-block;padding:2px 8px;border-radius:var(--radius-pill);font-size:var(--font-2xs);
+  font-weight:700;margin-left:auto}
+.confidence-strong{background:var(--green-light);color:var(--green)}
+.confidence-fair{background:var(--amber-light);color:var(--amber)}
+.confidence-weak{background:var(--surface-3);color:var(--text-muted)}
+.meaning-actions{display:flex;gap:.5rem;margin-top:.75rem;flex-wrap:wrap}
+.decided td{font-size:var(--font-sm);vertical-align:top;padding:.35rem .5rem}
+.hint{font-size:var(--font-xs);color:var(--text-muted);margin-top:.2rem}
+</style>
+{% endblock %}
+{% block content %}
+
+{% if saved %}<div class="alert alert-success">{% if saved == 'confirmed' %}Confirmed — questions, labels and the knowledge base now read it.{% elif saved == 'rejected' %}Rejected — it will not be proposed again.{% elif saved == 'suggested' %}Back in review.{% else %}{{ saved }}.{% endif %}</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>Business meanings</h2></div>
+  <div class="card-body">
+    <p class="hint" style="font-size:var(--font-sm)">
+      What this warehouse's codes mean, read from the warehouse itself: where a
+      code stands (QR in a calendar is a quarter), what stands beside it (CTY
+      next to an address line is a city), what its column holds (a column of
+      country codes is a country) and who the party is to the business (a
+      seller you pay is a supplier). Each reading shows its evidence.
+    </p>
+    <p class="hint" style="font-size:var(--font-sm)">
+      Nothing here is used until you confirm it. A confirmed reading is how
+      every column with that code is labelled, described in the knowledge base
+      and matched to a reader's question; its synonyms are further words a
+      question can use. Rebuild the knowledge base to rewrite its pages.
+    </p>
+    {% if strong_count %}
+    <form method="post" action="/admin/clients/{{ client.account_id }}/meanings/confirm-strong" style="margin-top:.5rem">
+      <button type="submit" class="btn btn-primary btn-sm">Confirm the {{ strong_count }} reading{{ '' if strong_count == 1 else 's' }} with confidence {{ strong }} or more</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if not (to_review or to_write or confirmed or rejected) %}
+<div class="alert alert-warning">
+  Nothing proposed yet. Meanings are proposed when the schema is discovered — run
+  discovery from Setup.
+</div>
+{% endif %}
+
+{% macro found_in(m) %}
+  {% set places = m.found_in or [] %}
+  <div class="found-in">Found in {{ places[:4] | join(", ") }}{% if places | length > 4 %} and {{ places | length - 4 }} more{% endif %}</div>
+{% endmacro %}
+
+{% if to_review %}
+<h3 style="margin:1.25rem 0 .5rem">To review ({{ to_review | length }})</h3>
+{% for m in to_review %}
+<form class="meaning" method="post" action="/admin/clients/{{ client.account_id }}/meanings/decide">
+  <input type="hidden" name="scope" value="{{ m.scope }}">
+  <input type="hidden" name="subject" value="{{ m.subject }}">
+  <div class="meaning-head">
+    <span class="meaning-subject">{{ m.subject }}</span>
+    <span class="meaning-scope">{% if m.scope == 'code' %}code, in every column{% elif m.scope == 'column' %}column{% else %}table name{% endif %}</span>
+    <span class="confidence {% if m.confidence >= strong %}confidence-strong{% elif m.confidence >= 60 %}confidence-fair{% else %}confidence-weak{% endif %}">confidence {{ m.confidence }}</span>
+  </div>
+  <div class="meaning-body">
+    <div>
+      <label for="r-{{ loop.index }}">Reading</label>
+      <input type="text" id="r-{{ loop.index }}" name="reading" value="{{ m.reading }}">
+      <label for="s-{{ loop.index }}">Synonyms <span class="hint">(comma separated)</span></label>
+      <input type="text" id="s-{{ loop.index }}" name="synonyms" value="{{ m.synonyms | join(', ') }}">
+      <div class="meaning-actions">
+        <button type="submit" name="action" value="confirm" class="btn btn-primary btn-sm">Confirm</button>
+        <button type="submit" name="action" value="reject" class="btn btn-secondary btn-sm">Reject</button>
+      </div>
+    </div>
+    <div>
+      <label>Evidence</label>
+      <ul class="evidence">{% for line in m.evidence %}<li>{{ line }}</li>{% endfor %}</ul>
+      {{ found_in(m) }}
+    </div>
+  </div>
+</form>
+{% endfor %}
+{% endif %}
+
+{% if to_write %}
+<h3 style="margin:1.25rem 0 .5rem">Codes nothing reads ({{ to_write | length }})</h3>
+<p class="hint" style="font-size:var(--font-sm)">No rule could read these from the warehouse. Write what each means,
+  or reject it to leave it as spelled.</p>
+{% for m in to_write %}
+<form class="meaning" method="post" action="/admin/clients/{{ client.account_id }}/meanings/decide">
+  <input type="hidden" name="scope" value="{{ m.scope }}">
+  <input type="hidden" name="subject" value="{{ m.subject }}">
+  <div class="meaning-head">
+    <span class="meaning-subject">{{ m.subject }}</span>
+    <span class="meaning-scope">code, in every column</span>
+  </div>
+  <div class="meaning-body">
+    <div>
+      <label for="w-{{ loop.index }}">Reading</label>
+      <input type="text" id="w-{{ loop.index }}" name="reading" value="" required>
+      <label for="ws-{{ loop.index }}">Synonyms <span class="hint">(comma separated)</span></label>
+      <input type="text" id="ws-{{ loop.index }}" name="synonyms" value="">
+      <div class="meaning-actions">
+        <button type="submit" name="action" value="confirm" class="btn btn-primary btn-sm">Confirm</button>
+        <button type="submit" name="action" value="reject" class="btn btn-secondary btn-sm" formnovalidate>Leave as spelled</button>
+      </div>
+    </div>
+    <div>{{ found_in(m) }}</div>
+  </div>
+</form>
+{% endfor %}
+{% endif %}
+
+{% for title, rows, verb in [("Confirmed", confirmed, "Undo"), ("Rejected", rejected, "Review again")] %}
+{% if rows %}
+<h3 style="margin:1.25rem 0 .5rem">{{ title }} ({{ rows | length }})</h3>
+<div class="card"><div class="card-body" style="overflow-x:auto">
+<table class="decided" style="width:100%">
+  <thead><tr><th scope="col">Code or name</th><th scope="col">Reading</th><th scope="col">Synonyms</th><th scope="col"></th></tr></thead>
+  <tbody>
+  {% for m in rows %}
+  <tr>
+    <td><span class="meaning-subject">{{ m.subject }}</span> <span class="meaning-scope">{{ m.scope }}</span></td>
+    <td>{{ m.decided_reading if m.status == 'confirmed' else m.reading }}</td>
+    <td>{{ (m.decided_synonyms if m.status == 'confirmed' else m.synonyms) | join(', ') }}</td>
+    <td>
+      <form method="post" action="/admin/clients/{{ client.account_id }}/meanings/decide">
+        <input type="hidden" name="scope" value="{{ m.scope }}">
+        <input type="hidden" name="subject" value="{{ m.subject }}">
+        <button type="submit" name="action" value="reset" class="btn btn-sm">{{ verb }}</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div></div>
+{% endif %}
+{% endfor %}
+
+{% endblock %}

@@ -445,6 +445,22 @@ def vocab_for_account(account_id: str) -> MergedVocab:
         except Exception as exc:
             log.warning("Client vocab overlay for %s is invalid: %s", account_id, exc)
 
+    # Meanings an admin confirmed on the Business Meanings page: what the
+    # warehouse's own evidence said its codes mean (core/business_meaning.py).
+    # Over the packs and the file overlay, because each is a decision about
+    # THIS warehouse's names; under the column terms, which are the admin's
+    # own words. Like those, not part of cache_key: a decision invalidates the
+    # cache explicitly (forget_account_vocab).
+    try:
+        from core.business_meaning import confirmed_vocabulary
+        from store import list_business_meanings
+
+        confirmed = list_business_meanings(account_id, statuses={"confirmed"})
+        if confirmed:
+            _merge_pack(vocab, confirmed_vocabulary(confirmed, vocab), f"business_meaning/{account_id}")
+    except Exception as exc:
+        log.warning("Confirmed business meanings for %s could not be merged: %s", account_id, exc)
+
     # Column terms an admin typed on the setup page, merged last so they are
     # the final authority for this tenant -- the same precedence the file
     # overlay above already has, and for the same reason.
