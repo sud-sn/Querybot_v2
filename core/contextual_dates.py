@@ -706,6 +706,32 @@ def _role_as_binding(role: dict, *, source: str) -> dict:
     }
 
 
+_MOMENT_WORDS = frozenset({"timestamp", "time", "datetime"})
+
+
+def _stamps_a_moment(role: dict) -> bool:
+    """A date the warehouse types as a moment and whose name says so: BAL_TS,
+    POSTED_TIME. A day kept in a DATETIME column is named like a day
+    (SNAPSHOT_DT) and is not one of these."""
+    if normalize_date_key_type(str(role.get("date_key_type") or "")) != "timestamp":
+        return False
+    from core.identifier_intelligence import analyze_identifier
+
+    column = str(role.get("fact_column") or "").split(".")[-1].strip('[]"`')
+    return bool(set(analyze_identifier(column).expanded_name.lower().split()) & _MOMENT_WORDS)
+
+
+def _facts_with_a_period_key(date_roles: list[dict] | None) -> set[str]:
+    """The facts that carry a yyyymm period key an admin has not rejected."""
+    return {
+        _table_identity(role.get("fact_table"))[0]
+        for role in date_roles or []
+        if normalize_date_key_type(str(role.get("date_key_type") or "")) == "yyyymm_integer"
+        and str(role.get("status") or "").casefold() != "rejected"
+        and role.get("fact_table")
+    }
+
+
 def _relevant_discovered_date_roles(
     question: str,
     *,
@@ -742,6 +768,7 @@ def _relevant_discovered_date_roles(
         if metric.get("default_time_column")
     }
     q_tokens = set(normalize_date_role_text(question).split())
+    period_facts = _facts_with_a_period_key(date_roles)
     ranked: list[tuple[int, str, str, dict]] = []
     seen: set[tuple[str, str]] = set()
     for role in date_roles or []:
@@ -752,6 +779,20 @@ def _relevant_discovered_date_roles(
             continue
         role_table = _table_identity(role.get("fact_table"))[0]
         if not any(_same_table(role_table, table) for table in fact_scope):
+            continue
+        # A fact keyed by a yyyymm period holds one row per member and period;
+        # a timestamp on it says when each row was written, not which period
+        # it belongs to. Offered as the fact's date it won every "latest"
+        # question -- the finest grain wins a snapshot -- and "latest" became
+        # the day the newest rows were written: December's rows and the year's
+        # own rows, written together, one sum. Discovery names such a column
+        # like a business date ("Balance Date" for BAL_TS), so only an admin's
+        # approval, or the reader naming it, makes it one.
+        if (
+            status != "approved"
+            and _stamps_a_moment(role)
+            and any(_same_table(role_table, fact) for fact in period_facts)
+        ):
             continue
         role_column = str(role.get("fact_column") or "").strip().upper()
         identity = (role_table, role_column)
@@ -2114,13 +2155,26 @@ def format_required_anchor(policy: dict, db_type: str = "azure_sql") -> str:
     """
     fact_table = str(policy.get("anchor_table") or policy.get("fact_table") or "")
     fact_column = str(policy.get("anchor_column") or policy.get("fact_column") or "")
+    # The fact keeps a whole-year row beside its months (core/period_rows.py),
+    # and every SELECT that reads it must leave that row out -- this one too.
+    # Without it the prompt carried two REQUIRED rules no SQL could satisfy
+    # together: copy this subquery exactly, and filter every subquery to month
+    # rows. The model copied it, the validator refused it, and each repair
+    # asked again for the same copy.
+    month_rows = ""
+    month_rows_column = str(policy.get("month_rows_column") or "")
+    if month_rows_column and fact_table:
+        from core.period_rows import month_rows_predicate
+
+        month_rows = " WHERE " + month_rows_predicate(f"{fact_table}.{month_rows_column}", db_type)
     if str(policy.get("date_key_type") or "") != "surrogate_fk":
         date_table = str(policy.get("date_table") or fact_table)
         date_column = str(policy.get("date_column") or fact_column)
         date_expression = format_date_value_expression(
             "", date_column, str(policy.get("date_key_type") or ""), db_type
         )
-        return f"(SELECT MAX({date_expression}) FROM {date_table})"
+        where = month_rows if date_table == fact_table else ""
+        return f"(SELECT MAX({date_expression}) FROM {date_table}{where})"
 
     dimension_table = str(policy.get("dimension_table") or policy.get("date_table") or "")
     dimension_key = str(policy.get("dimension_key") or "")
@@ -2131,11 +2185,13 @@ def format_required_anchor(policy: dict, db_type: str = "azure_sql") -> str:
         # missing/blank anchor as "nothing to render."
         date_table = dimension_table or fact_table
         date_column = date_value_column or fact_column
-        return f"(SELECT MAX({date_column}) FROM {date_table})" if date_table and date_column else ""
+        where = month_rows if date_table == fact_table else ""
+        return f"(SELECT MAX({date_column}) FROM {date_table}{where})" if date_table and date_column else ""
 
     return (
         f"(SELECT MAX({dimension_table}.{date_value_column}) FROM {dimension_table} "
-        f"JOIN {fact_table} ON {fact_table}.{fact_column} = {dimension_table}.{dimension_key})"
+        f"JOIN {fact_table} ON {fact_table}.{fact_column} = {dimension_table}.{dimension_key}"
+        f"{month_rows})"
     )
 
 

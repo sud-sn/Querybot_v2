@@ -1445,6 +1445,17 @@ def _format_date_field_repair_line(field: dict[str, Any], semantic_plan: dict[st
     if dimension_key:
         from core.contextual_dates import format_required_anchor
 
+        # The same anchor the prompt gave, month-row rule included when the
+        # fact keeps year rows (core.period_rows._mark_anchors_on_period_facts).
+        month_rows_column = next(
+            (
+                str(policy.get("month_rows_column"))
+                for policy in ((semantic_plan or {}).get("temporal_policies") or [])
+                if isinstance(policy, dict) and policy.get("month_rows_column")
+                and str(policy.get("fact_column") or "").upper() == str(source_key).upper()
+            ),
+            "",
+        )
         anchor_text = format_required_anchor({
             "anchor_table": source_table,
             "anchor_column": source_key,
@@ -1452,6 +1463,7 @@ def _format_date_field_repair_line(field: dict[str, Any], semantic_plan: dict[st
             "dimension_key": dimension_key,
             "date_column": column,
             "date_key_type": field.get("date_key_type") or "surrogate_fk",
+            "month_rows_column": month_rows_column,
         })
 
     # Spelled out as three separate, mechanical directives (join / filter
@@ -2143,7 +2155,11 @@ def build_runtime_semantic_context(
 # A surrogate/business key never carries a measure. Universal warehouse naming,
 # not tenant vocabulary -- the same suffix set the label and role helpers use.
 _KEY_SUFFIX_RE = re.compile(r"(?:^|_)(?:SK|KEY|ID|FK|CODE|CD|NO|NUM|NBR)$", re.I)
-_DIMENSION_ROLES = {"dimension", "display_dimension", "date_dimension"}
+# "contextual_date" is the date a question was bound to (core.contextual_dates).
+# Without it a native date on the chosen fact -- a column with no key suffix --
+# passed for the measure: "total stock on hand" on a period fact compiled with
+# "Measures: BAL_TS", and the plan's own measure gate let it through.
+_DIMENSION_ROLES = {"dimension", "display_dimension", "date_dimension", "contextual_date"}
 
 
 def _is_measure_binding(field: dict[str, Any]) -> bool:

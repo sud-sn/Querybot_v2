@@ -131,7 +131,31 @@ def attach_period_row_policies(
     policies = period_row_policies(model, db_type=db_type)
     if policies:
         semantic_plan["period_row_policies"] = policies
+        _mark_anchors_on_period_facts(semantic_plan, policies)
     return policies
+
+
+def _mark_anchors_on_period_facts(semantic_plan: dict, policies: list[dict]) -> None:
+    """Tell each date anchor on a period fact which key keeps it to month rows.
+
+    The anchor is a subquery the prompt hands the model to copy, and the probe
+    that resolves it reads the fact too; both are SELECTs over the fact, so
+    both keep month rows (core.contextual_dates.format_required_anchor,
+    core.date_anchor.build_anchor_probe_sql). The period key's own anchor
+    needs no mark: it is the decoded key, which is NULL on a year row.
+    """
+    for temporal in semantic_plan.get("temporal_policies") or []:
+        if not isinstance(temporal, dict):
+            continue
+        fact = _bare(str(temporal.get("anchor_table") or temporal.get("fact_table") or ""))
+        column = _bare(str(temporal.get("anchor_column") or temporal.get("fact_column") or ""))
+        for policy in policies:
+            if _bare(str(policy.get("fact_table") or "")) != fact or not fact:
+                continue
+            if _bare(str(policy.get("fact_column") or "")) == column:
+                break
+            temporal["month_rows_column"] = str(policy["fact_column"])
+            break
 
 
 def policies_in_scope(policies: list[dict] | None, *texts: str) -> list[dict]:

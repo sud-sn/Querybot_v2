@@ -184,6 +184,17 @@ def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> s
         return ""
 
     fact_sql = _quote_table(fact, db_type)
+    # A date on a period fact other than its period key: the fact's year rows
+    # are not rows of any month, so the newest date is read from month rows
+    # (core.period_rows._mark_anchors_on_period_facts sets the key).
+    month_rows_column = str(policy.get("month_rows_column") or "")
+    month_rows = ""
+    if month_rows_column:
+        from core.period_rows import month_rows_predicate
+
+        month_rows = month_rows_predicate(
+            f"anchor_fact.{_quote_column(month_rows_column, db_type)}", db_type,
+        )
     if dimension and dimension_key and fact_key:
         return (
             f"SELECT MAX(anchor_date.{_quote_column(date_column, db_type)}) "
@@ -193,7 +204,8 @@ def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> s
             f"    SELECT 1 FROM {_table_alias(fact_sql, 'anchor_fact', db_type)}\n"
             f"    WHERE anchor_fact.{_quote_column(fact_key, db_type)} = "
             f"anchor_date.{_quote_column(dimension_key, db_type)}\n"
-            f")"
+            + (f"    AND {month_rows}\n" if month_rows else "")
+            + ")"
         )
     probe = (
         f"SELECT MAX(anchor_fact.{_quote_column(date_column, db_type)}) "
@@ -209,6 +221,8 @@ def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> s
         probe += "\nWHERE " + month_rows_predicate(
             f"anchor_fact.{_quote_column(date_column, db_type)}", db_type,
         )
+    elif month_rows:
+        probe += "\nWHERE " + month_rows
     return probe
 
 
@@ -273,12 +287,21 @@ def build_cheap_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql"
     date_column = str(policy.get("date_column") or "")
     if not (fact and fact_key and dimension and dimension_key and date_column):
         return ""
+    month_rows_column = str(policy.get("month_rows_column") or "")
+    month_rows = []
+    if month_rows_column:
+        from core.period_rows import month_rows_predicate
+
+        month_rows = ["    WHERE " + month_rows_predicate(
+            f"anchor_fact.{_quote_column(month_rows_column, db_type)}", db_type,
+        )]
     return "\n".join([
         f"SELECT MAX(anchor_date.{_quote_column(date_column, db_type)}) AS max_business_date",
         f"FROM {_table_alias(_quote_table(dimension, db_type), 'anchor_date', db_type)}",
         f"WHERE anchor_date.{_quote_column(dimension_key, db_type)} = (",
         f"    SELECT MAX(anchor_fact.{_quote_column(fact_key, db_type)})",
         f"    FROM {_table_alias(_quote_table(fact, db_type), 'anchor_fact', db_type)}",
+        *month_rows,
         ")",
     ])
 
