@@ -1161,6 +1161,116 @@ def _single_candidate_verdict(role: dict) -> tuple[str, str]:
     return ("", "")
 
 
+def _one_date_per_measure_table(
+    tables: list[str],
+    *,
+    metrics: list[dict],
+    roles: list[dict],
+    explicit: list[dict],
+    candidates: list[dict],
+    requested_grain: str,
+    confirmed: dict | None,
+    remembered: dict | None,
+) -> dict:
+    """A date for each table the question's measures are summed from.
+
+    "Net revenue and returns last 6 months" sums two tables, and each needs
+    its own date. Only a question every table of which had a settled default
+    got one; a date settled any other way settled one table and left the
+    other unfiltered -- six months of revenue beside returns over all time:
+    a date named for one measure ("... returns by return date"), a metric's
+    own default date, the reader's answer to "which date?", a date remembered
+    from the thread. And two metrics each with a default date were offered
+    as alternatives, "which date should I use?".
+
+    Each table's date is, in order: the one the reader confirmed for it, the
+    ones the question names on it, the one remembered for it in this thread,
+    its measure's default date, a default date context on it, its default
+    date. Two where one is needed is asked about that table alone. A table
+    with none is refused by name rather than answered unfiltered.
+    """
+    bindings: list[dict] = []
+    undated: list[str] = []
+
+    def ask(table: str, reason: str, options: list[dict]) -> dict:
+        return {"status": "ambiguous", "reason": f"{table} {reason}", "options": options}
+
+    for table in tables:
+        def on_table(item: dict | None) -> bool:
+            return bool(item) and _same_table((item or {}).get("fact_table"), table)
+
+        named = [role for role in explicit if on_table(role)]
+        chosen: list[dict] = []
+        if confirmed and on_table(confirmed):
+            chosen = [dict(confirmed, resolution_source="user_confirmed_date_role")
+                      if confirmed.get("context_name")
+                      else _role_as_binding(confirmed, source="user_confirmed_date_role")]
+        elif named:
+            equivalent = _preferred_equivalent_explicit_role(named) if len(named) > 1 else named[0]
+            if equivalent is not None:
+                named = [equivalent]
+            elif len({str(role.get("fact_column") or "").upper() for role in named}) < len(named) or \
+                    len({str(role.get("_matched_phrase") or "") for role in named}) < len(named):
+                return ask(table, "has more than one date matching the question",
+                           [_role_as_binding(role, source="explicit_date_role") for role in named])
+            chosen = [
+                _role_as_binding(role, source=(
+                    "explicit_date_role" if role.get("_selection_status") == "approved"
+                    else "explicit_generated_date_role"))
+                for role in named
+            ]
+        elif remembered and on_table(remembered):
+            chosen = [dict(remembered, resolution_source="thread_date_preference")]
+        else:
+            own_metrics = [metric for metric in metrics
+                           if _same_table(metric.get("base_table"), table)]
+            metric_defaults = _metric_default_time_role_bindings(
+                matched_metrics=own_metrics, date_roles=roles, fact_scope={table})
+            context_defaults = [dict(item, resolution_source="metric_default")
+                                for item in candidates
+                                if on_table(item) and int(item.get("is_default") or 0)]
+            table_defaults = [_role_as_binding(role, source="fact_default_date_role")
+                              for role in roles
+                              if on_table(role) and str(role.get("status") or "") == "approved"
+                              and bool(role.get("is_default"))]
+            for found, reason in ((metric_defaults, "has measures with different default dates"),
+                                  (context_defaults, "has more than one default date context"),
+                                  (table_defaults, "has more than one default date role")):
+                if len(found) > 1:
+                    return ask(table, reason, found)
+                if found:
+                    chosen = found
+                    break
+        if not chosen:
+            undated.append(table)
+            continue
+        for binding in chosen:
+            grain = _role_temporal_grain(binding)
+            if not _grain_is_compatible(grain, requested_grain):
+                return {
+                    "status": "unsupported_grain",
+                    "reason": "a measure's business date is coarser than the requested period",
+                    "requested_grain": requested_grain,
+                    "available_grain": grain,
+                    "options": [binding],
+                }
+        bindings.extend(chosen)
+
+    if undated:
+        return {
+            "status": "undated_fact_in_scope",
+            "reason": "these data sources have no approved default business date: " + ", ".join(undated),
+            "undated_facts": undated,
+            "dated_facts": sorted({_table_identity(item.get("fact_table"))[0] for item in bindings}),
+            "options": bindings,
+        }
+    return {
+        "status": "selected_many",
+        "bindings": bindings,
+        "reason": "each measure's table filtered on its own date",
+    }
+
+
 def resolve_contextual_date_binding(
     question: str,
     *,
@@ -1238,7 +1348,13 @@ def resolve_contextual_date_binding(
     # contract and copied onto the retry event by the dispatcher.  Preserve
     # that exact physical identity instead of trying to rediscover it from the
     # option label (which can collide across facts).
-    if confirmed_date_role and _role_is_complete(confirmed_date_role):
+    metrics = matched_metrics or []
+    metric_tables = {
+        _table_identity(metric.get("base_table"))[0]
+        for metric in metrics if metric.get("base_table")
+    }
+    confirmed = confirmed_date_role if confirmed_date_role and _role_is_complete(confirmed_date_role) else None
+    if confirmed and len(metric_tables) < 2:
         if confirmed_date_role.get("context_name"):
             selected = dict(confirmed_date_role)
             selected["resolution_source"] = "user_confirmed_date_role"
@@ -1253,11 +1369,6 @@ def resolve_contextual_date_binding(
             "reason": "date role confirmed by the user",
         }
 
-    metrics = matched_metrics or []
-    metric_tables = {
-        _table_identity(metric.get("base_table"))[0]
-        for metric in metrics if metric.get("base_table")
-    }
     fact_scope = {
         _table_identity(table)[0]
         for table in (required_fact_tables or set()) if table
@@ -1279,6 +1390,12 @@ def resolve_contextual_date_binding(
         if not scoped:
             return _named_date_not_on_measure(question, explicit, metrics, roles, named_scope)
         explicit = scoped
+    if len(metric_tables) > 1 and (explicit or confirmed or not _question_requests_unbounded_available_scope(question)):
+        return _one_date_per_measure_table(
+            sorted(metric_tables), metrics=metrics, roles=roles, explicit=explicit,
+            candidates=candidates, requested_grain=requested_grain, confirmed=confirmed,
+            remembered=remembered_date_role if remembered_date_role and _role_is_complete(remembered_date_role) else None,
+        )
     if len(explicit) == 1:
         explicit_grain = _role_temporal_grain(explicit[0])
         if not _grain_is_compatible(explicit_grain, requested_grain):
