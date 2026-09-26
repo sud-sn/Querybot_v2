@@ -213,15 +213,15 @@
     const theme = (global.QB_CHART_THEME ? global.QB_CHART_THEME() : {}) || {};
     return {
       font: theme.font || "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
-      surface: theme.surface || '#F5F8F6',
-      raised: theme.tooltipBg || '#FAFCFB',
-      ink: theme.tooltipText || theme.ink || '#161E1A',
-      ink2: theme.ink2 || '#45504A',
-      muted: theme.axis || '#5A665F',
-      grid: theme.split || '#D4DDD8',
-      axis: theme.axisLine || '#B9C6C0',
-      good: theme.good || '#337438',
-      bad: theme.bad || '#A73832',
+      surface: theme.surface || '#FCFDFE',
+      raised: theme.tooltipBg || '#FFFFFF',
+      ink: theme.tooltipText || theme.ink || '#0B1424',
+      ink2: theme.ink2 || '#3A475C',
+      muted: theme.axis || '#526077',
+      grid: theme.split || '#DCE3EC',
+      axis: theme.axisLine || '#C3CDDB',
+      good: theme.good || '#067647',
+      bad: theme.bad || '#B42318',
     };
   }
   function sequentialRamp() {

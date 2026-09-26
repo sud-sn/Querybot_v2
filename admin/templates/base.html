@@ -7,16 +7,16 @@
 <title>{% block title %}QueryBot Admin{% endblock %}</title>
 <!-- The reduced mark: at 16px the full mark's three bars are 1.36px wide
      separated by 0.60px, which is sub-pixel. These two are 2.0 by 1.0. -->
-<link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260904-reduced-1">
+<link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260926-navy-1">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-lucide-1">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-lucide-1">
-<link rel="stylesheet" href="/static/css/admin.css?v=20260926-lucide-1">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/admin.css?v=20260926-brand-1">
 <script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-lucide-1">
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-brand-1">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
@@ -42,8 +42,11 @@
   <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
 
     <div class="sidebar-brand">
-      <div class="sidebar-brand-text">Query<span>Bot</span></div>
-      <div class="sidebar-brand-sub">Admin Panel</div>
+      <img src="/static/img/logo-mark.svg?v=20260926-navy-1" alt="" class="sidebar-brand-mark" width="30" height="30">
+      <div>
+        <div class="sidebar-brand-text">Query<span>Bot</span></div>
+        <div class="sidebar-brand-sub">Admin Panel</div>
+      </div>
     </div>
 
     <nav class="sidebar-section" role="navigation">

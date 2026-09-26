@@ -170,8 +170,8 @@
 .welcome-banner-title { font-size: var(--font-xl); font-weight: var(--weight-bold); margin-bottom: var(--space-1); }
 
 .metric-progress { height: 6px; border-radius: var(--radius-pill); background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; margin-top: var(--space-2); }
-.metric-progress span { display: block; height: 100%; border-radius: var(--radius-pill); background: linear-gradient(90deg, var(--success), var(--primary)); }
-.metric-progress.warning span { background: linear-gradient(90deg, var(--warning), var(--primary)); }
+.metric-progress span { display: block; height: 100%; border-radius: var(--radius-pill); background: var(--brand-gradient); }
+.metric-progress.warning span { background: var(--warning); }
 .metric-progress.blocked span { background: var(--danger); }
 
 @media (max-width: 640px) {

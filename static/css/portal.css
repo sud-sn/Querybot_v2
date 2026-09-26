@@ -194,7 +194,7 @@ body:has(.portal-app-shell) {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--primary), var(--blue-soft));
+  background: var(--brand-gradient);
   display: flex;
   align-items: center;
   justify-content: center;

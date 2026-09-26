@@ -30,10 +30,15 @@ body {
 }
 /* Brand */
 .sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
   padding: 1.2rem 1rem 1rem;
   border-bottom: 1px solid color-mix(in srgb, white 10%, transparent);
   flex-shrink: 0;
 }
+/* The same mark the portal carries, so both consoles read as one product. */
+.sidebar-brand-mark { flex: 0 0 30px; border-radius: 7px; }
 .sidebar-brand-text {
   font-size: var(--font-md);
   font-weight: var(--weight-bold);

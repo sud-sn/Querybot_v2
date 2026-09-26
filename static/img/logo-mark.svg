@@ -36,12 +36,12 @@
   -->
   <defs>
     <linearGradient id="qbTile" x1="0" y1="0" x2="0" y2="40" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#16332B"/>
-      <stop offset="1" stop-color="#0B1A15"/>
+      <stop offset="0" stop-color="#17335F"/>
+      <stop offset="1" stop-color="#0B1F3A"/>
     </linearGradient>
     <linearGradient id="qbGlyph" x1="9" y1="8" x2="33" y2="34" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3FDCBD"/>
-      <stop offset="1" stop-color="#10A088"/>
+      <stop offset="0" stop-color="#8FD0FF"/>
+      <stop offset="1" stop-color="#4C84F5"/>
     </linearGradient>
   </defs>
 

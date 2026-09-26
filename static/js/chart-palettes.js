@@ -96,8 +96,8 @@ window.QB_CHART_STATUS = function () {
       : [0, 0, 0];
   };
 
-  const good = token('--success', '#15803d');
-  const bad = token('--danger', '#dc2626');
+  const good = token('--success', '#067647');
+  const bad = token('--danger', '#B42318');
   const alpha = (value, a) => 'rgba(' + channels(value).join(',') + ',' + a + ')';
 
   return {
@@ -106,7 +106,7 @@ window.QB_CHART_STATUS = function () {
     background: { gain: alpha(good, 0.09), drop: alpha(bad, 0.09) },
     border:     { gain: alpha(good, 0.25), drop: alpha(bad, 0.25) },
     shadow:     { gain: alpha(good, 0.22), drop: alpha(bad, 0.24) },
-    ring:       token('--surface', '#FCFDFC'),
+    ring:       token('--surface', '#FCFDFE'),
   };
 };
 
@@ -124,12 +124,12 @@ window.QB_CHART_THEME = function () {
   const root = getComputedStyle(document.documentElement);
   const token = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
 
-  const muted = token('--text-muted', '#5A665F');
-  const line = token('--line', '#B9C6C0');
-  const gridline = token('--line-subtle', '#D4DDD8');
-  const surface = token('--surface', '#F5F8F6');
-  const raised = token('--surface-raised', '#FAFCFB');
-  const strong = token('--text-strong', '#161E1A');
+  const muted = token('--text-muted', '#526077');
+  const line = token('--line', '#C3CDDB');
+  const gridline = token('--line-subtle', '#DCE3EC');
+  const surface = token('--surface', '#FCFDFE');
+  const raised = token('--surface-raised', '#FFFFFF');
+  const strong = token('--text-strong', '#0B1424');
 
   return {
     // Retained and always false: callers that still pass it through to ECharts'
@@ -150,11 +150,11 @@ window.QB_CHART_THEME = function () {
     tooltipBg:   raised,
     tooltipText: strong,
     // Secondary ink: legend entries, data labels, tooltip row names.
-    ink2:        token('--text-secondary', '#45504A'),
+    ink2:        token('--text-secondary', '#3A475C'),
     // The product's delta colours: a variance going up or down, always with a
     // sign beside it, never colour alone.
-    good:        token('--success', '#337438'),
-    bad:         token('--danger', '#A73832'),
+    good:        token('--success', '#067647'),
+    bad:         token('--danger', '#B42318'),
     font:        token('--font-ui', "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif"),
   };
 };

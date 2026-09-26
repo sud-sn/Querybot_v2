@@ -30,20 +30,20 @@
    --------------------------------------------------------------------------- */
 .qb-brand-motion {
   --qb-mark-size: 32px;
-  --qb-mark-glyph: var(--primary, #0E7C6B);
+  --qb-mark-glyph: var(--primary, #2151CA);
   --qb-mark-accent: var(--accent-400, #6187EF);
   --qb-mark-status: var(--qb-mark-glyph);
   /* The colour the bars cut through to. On anything that is not the page
      surface (a tinted hero, a dark panel), set this to the actual ground. */
-  --qb-mark-cut: var(--surface, #FFFFFF);
+  --qb-mark-cut: var(--surface, #FCFDFE);
   /* Retained: callers and the error state still set these. */
-  --qb-mark-primary: var(--primary, #0E7C6B);
-  --qb-mark-secondary: var(--primary-hover, #0A6154);
+  --qb-mark-primary: var(--primary, #2151CA);
+  --qb-mark-secondary: var(--primary-hover, #1E43A9);
   display: inline-flex;
   align-items: center;
   gap: .65rem;
   min-width: 0;
-  color: var(--text, #101C18);
+  color: var(--text, #1A2536);
 }
 
 .qb-brand-motion--xs { --qb-mark-size: 22px; }
@@ -89,13 +89,13 @@
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
   line-height: 1.35;
-  color: var(--text-muted, #5E706A);
+  color: var(--text-muted, #526077);
 }
 
 .qb-brand-motion__subtext {
   display: block;
   margin-top: 2px;
-  color: var(--text-muted, #5E706A);
+  color: var(--text-muted, #526077);
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
 }
@@ -154,8 +154,8 @@
 
 /* ── Terminal states ──────────────────────────────────────────────────────── */
 .qb-brand-motion[data-state="success"] {
-  --qb-mark-glyph: var(--success, #2F7D4F);
-  --qb-mark-status: var(--success, #2F7D4F);
+  --qb-mark-glyph: var(--success, #067647);
+  --qb-mark-status: var(--success, #067647);
 }
 .qb-brand-motion[data-state="success"] .qb-brand-motion__dot {
   /* The answer landed: the bars stand back up, with a little pride. */
@@ -165,10 +165,10 @@
 .qb-brand-motion[data-state="success"] .qb-brand-motion__dot:nth-child(3) { animation-delay: .14s; }
 
 .qb-brand-motion[data-state="error"] {
-  --qb-mark-glyph: var(--danger, #B3402E);
-  --qb-mark-accent: var(--danger, #B3402E);
-  --qb-mark-status: var(--danger, #B3402E);
-  --qb-mark-primary: var(--danger, #B3402E);
+  --qb-mark-glyph: var(--danger, #B42318);
+  --qb-mark-accent: var(--danger, #B42318);
+  --qb-mark-status: var(--danger, #B42318);
+  --qb-mark-primary: var(--danger, #B42318);
 }
 .qb-brand-motion[data-state="error"] .qb-brand-motion__bowl {
   animation: qb-bubble-shake .5s ease-out 1 both;
@@ -197,7 +197,7 @@
   justify-content: center;
   min-height: 96px;
   padding: 1.25rem;
-  color: var(--text-muted, #5E706A);
+  color: var(--text-muted, #526077);
   text-align: center;
 }
 .qb-brand-loader-block .qb-brand-motion { margin-inline: auto; }

@@ -7,17 +7,17 @@
 <title>{% block title %}{{ t('ui.title.suffix') }}{% endblock %}</title>
 <!-- The reduced mark: at 16px the full mark's three bars are 1.36px wide
      separated by 0.60px, which is sub-pixel. These two are 2.0 by 1.0. -->
-<link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260904-reduced-1">
+<link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260926-navy-1">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-lucide-1">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-lucide-1">
-<link rel="stylesheet" href="/static/css/portal.css?v=20260926-lucide-1">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/portal.css?v=20260926-brand-1">
 <script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
 {# Prevent flash of unstyled content #}
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-lucide-1">
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-brand-1">
 </head>
 <body>
 
@@ -214,7 +214,7 @@ window.qbEnumLabel = function (group, value) {
   <aside class="portal-sidebar" id="portalSidebar" aria-label="{{ t('ui.shell.nav_label') }}">
     <div class="portal-sidebar-head">
       <a href="/portal/dashboard" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
-        <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></span>
+        <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg?v=20260926-navy-1" alt="" class="qb-logo-mark"></span>
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <button type="button" class="portal-sidebar-toggle" onclick="window.__qbToggleSidebar()" aria-label="{{ t('ui.shell.collapse') }}" title="{{ t('ui.shell.collapse') }}">
@@ -291,7 +291,7 @@ window.qbEnumLabel = function (group, value) {
         {{ ic("menu", 20) }}
       </button>
       <a href="/portal/dashboard" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
-        <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg?v=20260824-bubblebars-1" alt="" class="qb-logo-mark"></span>
+        <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg?v=20260926-navy-1" alt="" class="qb-logo-mark"></span>
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <div class="portal-mobile-actions">
