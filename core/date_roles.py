@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import unicodedata
 
 
 @dataclass(frozen=True)
@@ -422,7 +423,15 @@ def date_key_temporal_grain(date_key_type: str) -> str:
 
 
 def normalize_date_role_text(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    """Lowercase words with the accents folded off, on both sides of a match.
+
+    Accented letters used to be separators: "date d'expédition" became
+    "date d exp dition", so a French name or synonym never met the question
+    that used it, accents typed or not.
+    """
+    decomposed = unicodedata.normalize("NFD", (text or "").lower())
+    folded = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    return re.sub(r"[^a-z0-9]+", " ", folded).strip()
 
 
 def question_has_temporal_intent(question: str) -> bool:

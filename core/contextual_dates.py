@@ -483,6 +483,80 @@ def _phrase_span(text: str, phrase: str) -> tuple[int, int] | None:
     return (match.start(), match.end()) if match else None
 
 
+# A few event nouns whose verb is not a suffix away.
+_IRREGULAR_EVENT_ROOTS = {"receipt": "receive"}
+_IRREGULAR_PAST = {"pay": "paid"}
+
+
+def _plural(word: str) -> str:
+    if word.endswith("y") and len(word) > 1 and word[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    if word.endswith(("s", "x", "ch", "sh")):
+        return word + "es"
+    return word + "s"
+
+
+def _past_and_progressive(root: str) -> set[str]:
+    if root in _IRREGULAR_PAST:
+        return {_IRREGULAR_PAST[root], root + "ing"}
+    if root.endswith("e"):
+        return {root + "d", root[:-1] + "ing"}
+    if root.endswith("y") and len(root) > 1 and root[-2] not in "aeiou":
+        return {root[:-1] + "ied", root + "ing"}
+    if re.fullmatch(r"[^aeiou]*[aeiou][bdgklmnprt]", root):
+        # One short syllable ending vowel-consonant doubles it: ship -> shipped.
+        return {root + root[-1] + "ed", root + root[-1] + "ing"}
+    return {root + "ed", root + "ing"}
+
+
+# How strongly a phrase in the question names a date role. A named date
+# ("booked month") outranks the event's verb ("shipped"), which outranks the
+# event's noun ("orders"): in "orders delivered last month" the orders are what
+# is counted and the delivery is when.
+_NAMED, _EVENT_VERB, _EVENT_NOUN = 3, 2, 1
+
+
+def _event_word_forms(stem: str) -> dict[str, int]:
+    """The words a reader uses for a date's event, from the date's own name,
+    each with how strongly it names the date.
+
+    "order" -> orders, ordered, ordering; "shipment" -> ship, shipped,
+    shipping, shipments; "delivery" -> deliveries, delivered; "receipt" ->
+    received. Only the stem was matched, with "ed", "d" and "ing" glued on:
+    "shiped", "shipmented", and never "shipped", "orders" or "deliveries".
+    A phrase of several words is matched as written and with its last word
+    in the plural ("cancelled orders").
+    """
+    if not stem:
+        return {}
+    if " " in stem:
+        head, last = stem.rsplit(" ", 1)
+        return {stem: _EVENT_NOUN, f"{head} {_plural(last)}": _EVENT_NOUN}
+    verb_like = stem.endswith(("ed", "ing"))
+    forms = {stem: _EVENT_VERB if verb_like else _EVENT_NOUN}
+    if not verb_like:
+        forms[_plural(stem)] = _EVENT_NOUN
+    roots = {stem}
+    if stem in _IRREGULAR_EVENT_ROOTS:
+        roots.add(_IRREGULAR_EVENT_ROOTS[stem])
+    if stem.endswith("ment") and len(stem) > 6:
+        roots.add(stem[:-4])                      # shipment -> ship
+    if stem.endswith("ery") and len(stem) > 5:
+        roots.add(stem[:-1])                      # delivery -> deliver
+    if stem.endswith("ing") and len(stem) > 5:
+        root = stem[:-3]                          # billing -> bill
+        roots.add(root)
+        if root[-1] == root[-2]:
+            roots.add(root[:-1])                  # shipping -> ship
+    for root in roots - {stem}:
+        forms.setdefault(root, _EVENT_NOUN)
+        forms.setdefault(_plural(root), _EVENT_NOUN)
+    for root in roots if not verb_like else roots - {stem}:
+        for form in _past_and_progressive(root):
+            forms[form] = _EVENT_VERB
+    return forms
+
+
 def _role_is_complete(role: dict) -> bool:
     """Return whether a discovered date role is safe enough to compile."""
     if not role.get("fact_table") or not role.get("fact_column"):
@@ -496,6 +570,14 @@ def _role_is_complete(role: dict) -> bool:
     )
 
 
+def _measure_phrases(metrics: list[dict] | None) -> list[str]:
+    """Each matched measure's name and synonyms."""
+    phrases: list[str] = []
+    for metric in metrics or []:
+        phrases += _terms([metric.get("name", ""), *_terms(metric.get("synonyms", []))])
+    return phrases
+
+
 def _explicit_role_matches(
     question: str,
     date_roles: list[dict],
@@ -503,9 +585,18 @@ def _explicit_role_matches(
     statuses: set[str] | None = None,
     minimum_confidence: int = 0,
     require_complete: bool = False,
+    measure_phrases: list[str] | None = None,
 ) -> list[dict]:
     q = normalize_date_role_text(question)
     allowed_statuses = {item.casefold() for item in (statuses or {"approved"})}
+    # A measure's own name says what is measured, not when: in "net revenue
+    # and returns last 6 months" the Returns measure is summed, and "returns"
+    # there is not the Return Date's event. Event wording is read with the
+    # matched measures' names blanked out; a date named outright still counts.
+    event_text = q
+    for measure in measure_phrases or []:
+        event_text = re.sub(rf"(?<!\w){re.escape(measure)}(?!\w)",
+                            lambda found: " " * len(found.group()), event_text)
     matches: list[tuple[int, int, str, dict]] = []
     for role in date_roles or []:
         if str(role.get("status") or "").casefold() not in allowed_statuses:
@@ -519,8 +610,9 @@ def _explicit_role_matches(
             str(role.get("business_role") or "").replace("_", " "),
             *_terms(role.get("synonyms", [])),
         ])
-        # quality 2 = the role/grain was named explicitly ("booked month");
-        # quality 1 = event wording only ("ordered revenue", "fill count").
+        # _NAMED = the role/grain was named explicitly ("booked month");
+        # _EVENT_VERB / _EVENT_NOUN = event wording only ("ordered revenue",
+        # "fill count").
         # Event wording is useful when it is the only date-role signal, but it
         # must not add a second role beside an explicit role merely because a
         # fact/entity noun appears elsewhere in the question.
@@ -528,7 +620,7 @@ def _explicit_role_matches(
         for phrase in phrases:
             span = _phrase_span(q, phrase)
             if span:
-                role_matches.append((span[0], span[1], phrase, 2))
+                role_matches.append((span[0], span[1], phrase, _NAMED))
                 continue
 
             # Business users commonly replace the word "date" with the
@@ -542,23 +634,27 @@ def _explicit_role_matches(
                 stem = " ".join(tokens[:-1]).strip()
                 if stem:
                     for grain in ("date", "day", "month", "week", "quarter", "year"):
-                        variant = f"{stem} {grain}"
-                        span = _phrase_span(q, variant)
-                        if span:
-                            role_matches.append((span[0], span[1], variant, 2))
+                        # "billing month", and French word order as the
+                        # canonical question carries it: "mois de facturation"
+                        # is "month of billing", "mois de commande" is "month
+                        # of orders", and "semaine d'expédition", its "de"
+                        # elided, is "week shipment".
+                        for variant in (f"{stem} {grain}", f"{grain} of {stem}",
+                                        f"{grain} of {_plural(stem)}", f"{grain} {stem}"):
+                            span = _phrase_span(q, variant)
+                            if span:
+                                role_matches.append((span[0], span[1], variant, _NAMED))
                     # Event wording often names the business date implicitly:
-                    # "ordered revenue", "booked sales", "invoiced amount".
-                    # Keep this word-boundary based so "order" does not match
-                    # unrelated text such as "reorder".
-                    event_variants = {stem}
-                    if " " not in stem:
-                        event_variants.update({f"{stem}ed", f"{stem}d", f"{stem}ing"})
+                    # "ordered revenue", "booked sales", "invoiced amount",
+                    # "orders by month", "shipped last week". Keep this
+                    # word-boundary based so "order" does not match unrelated
+                    # text such as "reorder".
+                    event_variants = _event_word_forms(stem)
                     for variant in sorted(event_variants, key=len, reverse=True):
-                        event_match = re.search(rf"\b{re.escape(variant)}\b", q)
+                        event_match = re.search(rf"\b{re.escape(variant)}\b", event_text)
                         if event_match:
-                            role_matches.append(
-                                (event_match.start(), event_match.end(), variant, 1)
-                            )
+                            role_matches.append((event_match.start(), event_match.end(),
+                                                 variant, event_variants[variant]))
         if role_matches:
             start, end, phrase, quality = max(
                 role_matches,
@@ -572,8 +668,10 @@ def _explicit_role_matches(
     # example: "completed-fill net revenue by booked month" explicitly asks
     # for Booked Date; the noun "fill" describes the metric population and
     # must not also require Fill Date.
-    if any(quality == 2 for _start, _end, _phrase, quality, _role in matches):
-        matches = [item for item in matches if item[3] == 2]
+    # And an event's verb outranks its noun: "orders delivered last month" is
+    # the Delivery Date, not the Order Date as well.
+    strongest = max(quality for _start, _end, _phrase, quality, _role in matches)
+    matches = [item for item in matches if item[3] == strongest]
 
     # "cancelled order date" also contains "order date". Keep the most
     # specific role for overlapping text, while preserving separate phrases
@@ -590,7 +688,7 @@ def _explicit_role_matches(
 
 
 def _governed_explicit_role_matches(
-    question: str, date_roles: list[dict]
+    question: str, date_roles: list[dict], measure_phrases: list[str] | None = None,
 ) -> list[dict]:
     """Resolve explicit roles with approval-first governance.
 
@@ -602,6 +700,7 @@ def _governed_explicit_role_matches(
         question,
         date_roles,
         statuses={"approved"},
+        measure_phrases=measure_phrases,
     )
     if approved:
         return [{**role, "_selection_status": "approved"} for role in approved]
@@ -611,6 +710,7 @@ def _governed_explicit_role_matches(
         statuses={"generated"},
         minimum_confidence=95,
         require_complete=True,
+        measure_phrases=measure_phrases,
     )
     return [{**role, "_selection_status": "generated"} for role in generated]
 
@@ -1078,7 +1178,7 @@ def resolve_contextual_date_binding(
     it can ask the user to choose.
     """
     roles = list(date_roles or [])
-    explicit = _governed_explicit_role_matches(question, roles)
+    explicit = _governed_explicit_role_matches(question, roles, _measure_phrases(matched_metrics))
 
     # An approved business synonym is temporal intent even when the phrase is
     # abbreviated (for example, "inv dt") and contains none of the generic

@@ -244,6 +244,26 @@ _LEXICON: dict[str, str] = {
     "annuelle": "annual",
     "annuels": "annual",
     "annuel": "annual",
+    # The other periods had no adjective at all: "ventes mensuelles" reached
+    # the grain reader as "sales mensuelles", with no month in it.
+    "mensuelles": "monthly",
+    "mensuelle": "monthly",
+    "mensuels": "monthly",
+    "mensuel": "monthly",
+    "hebdomadaires": "weekly",
+    "hebdomadaire": "weekly",
+    "trimestrielles": "quarterly",
+    "trimestrielle": "quarterly",
+    "trimestriels": "quarterly",
+    "trimestriel": "quarterly",
+    "quotidiennes": "daily",
+    "quotidienne": "daily",
+    "quotidiens": "daily",
+    "quotidien": "daily",
+    "journalieres": "daily",
+    "journaliere": "daily",
+    "journaliers": "daily",
+    "journalier": "daily",
     "brutes": "gross",
     "brute": "gross",
     "bruts": "gross",
@@ -433,6 +453,27 @@ _LEXICON: dict[str, str] = {
     "expeditions": "shipments",
     "livraison": "delivery",
     "livraisons": "deliveries",
+    # The events as participles: "ventes expédiées en mars", "commandes
+    # livrées le mois dernier". They reached the date matcher as "expediees"
+    # and "livrees" and named no date. Only forms that are nothing else when
+    # folded: "livre" and "livres" are also a book and a pound, "facture" and
+    # "factures" the invoice nouns above, "paye" the payroll.
+    "expedie": "shipped",
+    "expediee": "shipped",
+    "expedies": "shipped",
+    "expediees": "shipped",
+    "livree": "delivered",
+    "livrees": "delivered",
+    "facturee": "invoiced",
+    "facturees": "invoiced",
+    "commandee": "ordered",
+    "commandees": "ordered",
+    "commandes passees": "orders placed",
+    "recue": "received",
+    "recues": "received",
+    "recus": "received",
+    "payee": "paid",
+    "payees": "paid",
 
     # ── Time ─────────────────────────────────────────────────────────────────
     #
