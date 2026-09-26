@@ -341,6 +341,7 @@ class EnrichedColumn:
     nullable: str = ""
     join_equivalents: list[str] = field(default_factory=list)
     date_role: str = ""
+    comment: str = ""
 
 
 def _clean_identifier(name: str) -> str:
@@ -646,29 +647,59 @@ def _confidence(column: str, role: str, evidence: list[str], expanded_name: str,
     return max(10, min(score, 95))
 
 
+_HEADER_KEYS = {
+    "type": "type", "data type": "type",
+    "nullable": "nullable",
+    "notes": "comment", "comment": "comment", "description": "comment",
+    "distinct values": "distinct_values", "sample values": "distinct_values",
+}
+
+
+def _markdown_cells(row: str) -> list[str]:
+    """A table row's cells. Discovery writes a pipe inside a comment as \\|,
+    which is text, not a cell boundary."""
+    inner = row.strip()
+    inner = inner[1:] if inner.startswith("|") else inner
+    inner = inner[:-1] if inner.endswith("|") and not inner.endswith("\\|") else inner
+    return [cell.replace("\\|", "|").strip() for cell in re.split(r"(?<!\\)\|", inner)]
+
+
 def parse_schema_markdown(schema_md: str) -> dict[str, dict[str, str]]:
     """
-    Parse the schema markdown table emitted by schema discovery.
+    Parse the column table schema discovery writes, by its header:
 
-    Expected row shape:
-    | `COLUMN` | type | nullable | distinct values |
+    | Column | Type | Nullable | Notes | Distinct Values |
+
+    Discovery added the Notes column -- the comment the database carries for
+    the column -- and this parser, written for a four-cell row, went on
+    reading cells by position: every documented column had its comment taken
+    for its distinct values and its real values ignored, and the role rules
+    that read those values read prose. A row is read under the header of the
+    table it is in, and only a table whose header names a Type is the columns
+    table: the column statistics table later in the file (Null %, Min, Max)
+    is not a second description of the same columns.
     """
     columns: dict[str, dict[str, str]] = {}
+    positions: dict[str, int] | None = None
     for line in (schema_md or "").splitlines():
         stripped = line.strip()
-        if not stripped.startswith("| `") or "---" in stripped:
+        if not stripped.startswith("|"):
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if not cells:
+        if re.fullmatch(r"\|[\s:|-]+\|?", stripped):
             continue
-        match = re.match(r"`([^`]+)`", cells[0])
+        cells = _markdown_cells(stripped)
+        match = re.match(r"`([^`]+)`", cells[0]) if cells else None
         if not match:
+            labels = [cell.lower() for cell in cells]
+            positions = ({_HEADER_KEYS[label]: i for i, label in enumerate(labels) if label in _HEADER_KEYS}
+                         if "type" in labels or "data type" in labels else None)
+            continue
+        if positions is None:
             continue
         column = _clean_identifier(match.group(1))
         columns[column] = {
-            "type": cells[1] if len(cells) > 1 else "",
-            "nullable": cells[2] if len(cells) > 2 else "",
-            "distinct_values": cells[3] if len(cells) > 3 else "",
+            key: (cells[positions[key]] if key in positions and positions[key] < len(cells) else "")
+            for key in ("type", "nullable", "comment", "distinct_values")
         }
     return columns
 
@@ -710,6 +741,7 @@ def enrich_columns(
                 nullable=meta.get("nullable", ""),
                 join_equivalents=join_equivalents,
                 date_role=date_role.label if date_role else "",
+                comment=meta.get("comment", ""),
             )
         )
     return enriched

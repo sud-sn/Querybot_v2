@@ -105,6 +105,14 @@ def build_semantic_layer_tables(
         )
         for field in fields:
             key = (fqn.upper(), field["column"].upper())
+            # The database's own description of the column outranks the KB's
+            # generated prose, and an admin's approval or override outranks
+            # both (below). It was read at discovery and shown nowhere.
+            if field.get("db_comment"):
+                field["meaning"] = field["db_comment"]
+                field["needs_context"] = False
+                field["confidence"] = max(int(field.get("confidence") or 0), 90)
+                field["source"] = "database_comment"
             approved = approved_feedback.get(key)
             if approved:
                 field["meaning"] = approved.get("suggested_meaning") or field["meaning"]
@@ -417,6 +425,7 @@ def _schema_fields_for_table(schema_map: dict, fqn: str) -> list[dict]:
             "meaning": _fallback_meaning(str(name)),
             "use_case": _default_use_case(str(name)),
             "distinct_values": "",
+            "db_comment": " ".join(str(col.get("comment") or col.get("COMMENT") or "").split()),
             "needs_context": False,
             "confidence": 62,
         })
@@ -454,6 +463,7 @@ def _merge_schema_details(fields: list[dict], schema_fields: list[dict]) -> list
                 result["type"] = sch_field.get("type", "")
             if not result.get("nullable"):
                 result["nullable"] = sch_field.get("nullable", "")
+            result["db_comment"] = sch_field.get("db_comment", "")
         else:
             # Schema column with no KB meaning — show as "needs context"
             result = dict(sch_field)

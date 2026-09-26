@@ -340,6 +340,15 @@ def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[st
 _SNAPSHOT_FACT_TYPES = {"periodic_snapshot", "accumulating_snapshot"}
 
 
+def _column_comment(meta: dict[str, Any], column: str) -> str:
+    """The comment the database itself carries for a column (Snowflake and
+    Oracle COMMENT, SQL Server MS_Description), as discovery recorded it."""
+    for col in meta.get("columns") or []:
+        if isinstance(col, dict) and str(col.get("name") or col.get("COLUMN_NAME") or "").upper() == column.upper():
+            return " ".join(str(col.get("comment") or col.get("COMMENT") or "").split())
+    return ""
+
+
 def _field_entry(
     item: EnrichedColumn,
     meta: dict[str, Any],
@@ -371,8 +380,14 @@ def _field_entry(
         aggregation, _basis = grained_aggregation(
             item.column, aggregation, snapshot_fact=snapshot_fact,
         )
+    # A DBA's description of the column, read from the database at discovery.
+    # It was in _schema.json and nothing read it: the model, the prompt and
+    # the Semantic Layer described every column from its name alone.
+    description = _column_comment(meta, item.column)
     return {
         "column": item.column,
+        "description": description,
+        "description_source": "database comment" if description else "",
         "data_type": item.data_type or _field_type(meta, item.column),
         "nullable": item.nullable,
         "role": item.role,
@@ -919,6 +934,7 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
             "table": table,
             "qualified_name": _qualified_name(fqn, meta),
             "entity": _entity_name(table),
+            "description": " ".join(str(meta.get("comment") or "").split()),
             "type": table_type,
             "grain": grain,
             "grain_status": grain_status,
@@ -2091,6 +2107,22 @@ def build_runtime_semantic_context(
                 score + 6,
                 f"- Approved field: use {qname}.{column} for {meaning or use_case} "
                 "(authoritative — supersedes other similarly described columns)",
+            ))
+
+        # What the database says a column is, for the columns the question
+        # touches. Guidance, below an admin's approval: a comment can be old.
+        for field in table.get("fields", []) or []:
+            description = str(field.get("description") or "")
+            if not description or str(field.get("status") or "") == "approved":
+                continue
+            column = str(field.get("column") or "")
+            score = _runtime_match_score(q_terms, [column, description])
+            if score <= 0:
+                continue
+            scored_lines.append((
+                score + 3,
+                f"- Documented field: {qname}.{column} is described in the database as "
+                f"\"{description[:160]}\"",
             ))
 
         for date_role in table.get("date_roles", []) or []:

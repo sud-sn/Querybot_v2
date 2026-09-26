@@ -262,7 +262,7 @@
             </div>
             <div class="kb-field-content">
               <div class="kb-field-block">
-                <div class="kb-field-label">Business meaning</div>
+                <div class="kb-field-label">Business meaning{% if field.source == 'database_comment' %} <span class="badge badge-info">From the database</span>{% endif %}</div>
                 <div class="kb-field-text">{{ field.meaning or "No business meaning has been defined." }}</div>
               </div>
               <div class="kb-field-block">

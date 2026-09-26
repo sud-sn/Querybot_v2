@@ -158,7 +158,8 @@
                 {% if field.distinct_values %}<div class="values">{{ t('ui.kb.values', values=field.distinct_values) }}</div>{% endif %}
                 <div class="status-badges">
                   {% if field.pending %}<span class="badge badge-warning mini-badge pending">{{ t('ui.kb.badge.pending') }}</span>{% endif %}
-                  {% if field.approved %}<span class="badge badge-success mini-badge approved">{{ t('ui.kb.badge.approved') }}</span>{% endif %}
+                  {% if field.approved %}<span class="badge badge-success mini-badge approved">{{ t('ui.kb.badge.approved') }}</span>
+                  {% elif field.source == 'database_comment' %}<span class="badge badge-info mini-badge">{{ t('ui.kb.badge.database') }}</span>{% endif %}
                   {% if field.needs_context %}<span class="badge badge-warning mini-badge pending">{{ t('ui.kb.badge.needs_context') }}</span>{% endif %}
                 </div>
               </td>

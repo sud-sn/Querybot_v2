@@ -4909,6 +4909,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.kb.badge.pending": {"en": "pending review", "fr": "en attente de validation"},
     "ui.kb.badge.approved": {"en": "admin approved", "fr": "validé par l'administrateur"},
     "ui.kb.badge.needs_context": {"en": "needs context", "fr": "contexte manquant"},
+    "ui.kb.badge.database": {"en": "from the database", "fr": "issu de la base de données"},
     "ui.kb.no_terms": {"en": "No business terms yet", "fr": "Aucun terme métier pour l'instant"},
 
     # The correction form.

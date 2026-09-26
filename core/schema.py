@@ -2592,6 +2592,30 @@ def _az_connect(cfg: dict, max_retries: int = 4):
     raise RuntimeError("Azure SQL connection failed — no error captured")
 
 
+def _az_table_description(cur, schema: str, name: str) -> str:
+    """The table's own MS_Description, when a DBA wrote one.
+
+    It is the same extended property as a column's, with minor_id 0 for the
+    table itself -- which the column query cannot see, because it joins on
+    sys.columns. Discovery wrote an empty table comment for every Azure SQL
+    table. Best-effort, like the column read.
+    """
+    try:
+        cur.execute("""
+            SELECT CAST(p.value AS NVARCHAR(MAX)) AS description
+            FROM   sys.extended_properties p
+            JOIN   sys.tables   t ON t.object_id = p.major_id
+            JOIN   sys.schemas  s ON s.schema_id = t.schema_id
+            WHERE  p.class = 1 AND p.minor_id = 0 AND p.name = 'MS_Description'
+              AND  s.name = ? AND t.name = ?
+        """, schema, name)
+        row = cur.fetchone()
+    except Exception as exc:
+        log.debug("AzSQL: table description unavailable for %s.%s (%s)", schema, name, exc)
+        return ""
+    return " ".join(str(row[0] or "").split()) if row else ""
+
+
 def _az_column_descriptions(cur, schema: str, name: str) -> dict[str, str]:
     """Column descriptions a DBA wrote on the SQL Server table itself.
 
@@ -2739,6 +2763,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 if _descriptions:
                     for _col in columns:
                         _col["COMMENT"] = _descriptions.get(_col["COLUMN_NAME"], "")
+                _table_description = _az_table_description(cur, schema, name)
 
                 # ── Masking resolution ────────────────────────────────────
                 _fqn     = f"{db_upper}.{schema}.{name}".upper()
@@ -2846,7 +2871,8 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
 
                 _pk_cols = pk_map.get(name.upper(), [])
                 tbl_meta = {"TABLE_SCHEMA": schema, "TABLE_NAME": name,
-                            "TABLE_TYPE": "BASE TABLE", "TABLE_CATALOG": db_upper}
+                            "TABLE_TYPE": "BASE TABLE", "TABLE_CATALOG": db_upper,
+                            "COMMENT": _table_description}
                 (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                     _az_md(name, tbl_meta, columns, sample, schema,
                            distinct_map, database=db_upper,
@@ -2861,7 +2887,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                                 for c in columns],
                     "pk_columns":          _pk_cols,
                     "row_count":           row_count,
-                    "comment":             "",
+                    "comment":             _table_description,
                     "schema":              schema,
                     "database":            db_upper,
                     # Columns whose DISTINCT VALUES were read and sent, as opposed
@@ -2969,6 +2995,8 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
         header = f"# [{schema}].[{name}]"
 
     lines = [header]
+    if meta.get("COMMENT"):
+        lines.append(f"\n{meta['COMMENT']}")
     lines.append(
         f"\n**Type:** {meta.get('TABLE_TYPE','TABLE')}  "
         f"**Schema:** {schema}"
