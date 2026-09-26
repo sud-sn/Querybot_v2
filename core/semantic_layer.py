@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Iterable
+
+log = logging.getLogger("querybot.semantic_layer")
 
 
 def table_name_variants(name: str) -> set[str]:
@@ -33,12 +36,19 @@ def build_semantic_layer_tables(
     approved_feedback: dict[tuple[str, str], dict] | None = None,
     pending_feedback: set[tuple[str, str]] | None = None,
     field_overrides: dict | None = None,
+    account_id: str = "",
 ) -> list[dict]:
     """
     Build table/field metadata for the user portal.
 
-    It intentionally does not expose the full KB markdown. Approved feedback can
-    override displayed metadata, while pending feedback is only marked.
+    It intentionally does not expose the full KB markdown. Each field's
+    meaning, use and terms are resolved by core.meaning from every store that
+    holds one -- an admin's override, an approved suggestion, the semantic
+    model's approvals, the join graph's confirmed properties, confirmed
+    business meanings, the table's column terms, the database's comment and
+    the knowledge base's prose -- and carry where they came from. Pending
+    feedback is only marked. ``account_id`` reads the stores kept in the
+    database; without it the page resolves from the files alone.
     """
     root = Path(kb_dir) if kb_dir else None
     if not root or not root.exists():
@@ -49,6 +59,7 @@ def build_semantic_layer_tables(
     approved_feedback = approved_feedback or {}
     pending_feedback = pending_feedback or set()
     field_overrides = field_overrides or {}
+    stores = _account_stores(account_id, root)
 
     tables: list[dict] = []
     for kb_file in sorted(root.glob("*_kb.md")):
@@ -103,47 +114,13 @@ def build_semantic_layer_tables(
             table_name,
             kb_file.stem.replace("_kb", ""),
         )
-        for field in fields:
-            key = (fqn.upper(), field["column"].upper())
-            # The database's own description of the column outranks the KB's
-            # generated prose, and an admin's approval or override outranks
-            # both (below). It was read at discovery and shown nowhere.
-            if field.get("db_comment"):
-                field["meaning"] = field["db_comment"]
-                field["needs_context"] = False
-                field["confidence"] = max(int(field.get("confidence") or 0), 90)
-                field["source"] = "database_comment"
-            approved = approved_feedback.get(key)
-            if approved:
-                field["meaning"] = approved.get("suggested_meaning") or field["meaning"]
-                field["use_case"] = approved.get("suggested_use_case") or field["use_case"]
-                if approved.get("suggested_synonyms"):
-                    from core.field_overrides import parse_synonyms
-                    field["synonyms"] = parse_synonyms(approved["suggested_synonyms"])
-                field["confidence"] = 100
-                field["approved"] = True
-            else:
-                field["approved"] = False
-            field["pending"] = key in pending_feedback
-            override = table_field_overrides.get(field["column"].upper())
-            if override:
-                field["meaning"] = override.get("meaning") or field["meaning"]
-                field["use_case"] = override.get("use_case") or field["use_case"]
-                field["synonyms"] = override.get("synonyms") or field.get("synonyms") or []
-                field["admin_note"] = override.get("admin_note") or ""
-                field["updated_at"] = override.get("updated_at") or ""
-                field["confidence"] = 100
-                field["approved"] = True
-                field["needs_context"] = False
-                field["source"] = "admin_override"
-            else:
-                # No admin override — fall back to whatever _parse_kb_columns
-                # already found in the KB's Business Synonyms table, so every
-                # field shows its terms, not just ones with an override.
-                field.setdefault("synonyms", [])
-                field.setdefault("admin_note", "")
-                field.setdefault("updated_at", "")
-                field.setdefault("source", "generated")
+        fields = [
+            _resolved_field(field, fqn, table_name, stores,
+                            approved_feedback.get((fqn.upper(), field["column"].upper())),
+                            table_field_overrides.get(field["column"].upper()),
+                            (fqn.upper(), field["column"].upper()) in pending_feedback)
+            for field in fields
+        ]
 
         avg_conf = round(sum(f["confidence"] for f in fields) / len(fields)) if fields else 0
         tables.append({
@@ -160,6 +137,108 @@ def build_semantic_layer_tables(
         })
 
     return tables
+
+
+# How a resolved description's evidence is named on the page (field["source"]).
+_SOURCE_CODE = {
+    "admin override": "admin_override",
+    "approved edit in the knowledge base": "admin_override",
+    "approved suggestion": "approved_feedback",
+    "approved in the semantic model": "semantic_model",
+    "database comment": "database_comment",
+    "knowledge base (generated)": "generated",
+}
+
+
+def _account_stores(account_id: str, kb_root: Path) -> dict:
+    """What the database-held stores say, read once per page: the join
+    graph's column properties by table, the tables' column terms, column
+    meanings by compact code, and the semantic model's fields by table.
+    Which of them count (confirmed, approved) is core.meaning's decision."""
+    stores: dict = {"properties": {}, "column_terms": {}, "meanings": {}, "model_fields": {}}
+    try:
+        from core.semantic_model import load_semantic_model
+
+        for table in (load_semantic_model(str(kb_root)) or {}).get("tables") or []:
+            key = str(table.get("table") or "").upper()
+            stores["model_fields"][key] = {str(f.get("column") or "").upper(): f for f in table.get("fields") or []}
+    except Exception as exc:
+        log.warning("Semantic Layer: the model's approvals could not be read: %s", exc)
+    if not account_id:
+        return stores
+    import store
+
+    try:
+        tables = {str(e.get("entity_name") or ""): str(e.get("table_name") or "").upper()
+                  for e in store.list_entities(account_id, active_only=False)}
+        for prop in store.list_all_entity_properties(account_id):
+            table = tables.get(str(prop.get("entity_name") or ""), "")
+            if table:
+                stores["properties"].setdefault(table, {})[str(prop.get("column_name") or "").upper()] = prop
+    except Exception as exc:
+        log.warning("Semantic Layer: the join graph's properties could not be read for %s: %s", account_id, exc)
+    try:
+        for name, row in store.list_table_descriptions(account_id).items():
+            stores["column_terms"][str(name).split(".")[-1].upper()] = dict(row.get("column_synonym_map") or {})
+    except Exception as exc:
+        log.warning("Semantic Layer: column terms could not be read for %s: %s", account_id, exc)
+    try:
+        # Every status: core.meaning is where only a confirmed meaning counts.
+        for meaning in store.list_business_meanings(account_id):
+            if str(meaning.get("scope") or "") == "column":
+                stores["meanings"][re.sub(r"[^A-Za-z0-9]", "", str(meaning.get("subject") or "")).upper()] = meaning
+    except Exception as exc:
+        log.warning("Semantic Layer: business meanings could not be read for %s: %s", account_id, exc)
+    return stores
+
+
+def _resolved_field(field: dict, fqn: str, table_name: str, stores: dict,
+                    approved: dict | None, override: dict | None, pending: bool) -> dict:
+    """One field of the page, its meaning resolved by core.meaning."""
+    from core.meaning import CONFIDENCE, column_meaning
+
+    column = field["column"].upper()
+    table_key = str(table_name or fqn.split(".")[-1]).upper()
+    # What the knowledge base says, without the placeholders the parsers fill
+    # in for a column it does not describe.
+    kb_meaning = str(field.get("meaning") or "")
+    if kb_meaning in (_fallback_meaning(field["column"]), _NO_MEANING):
+        kb_meaning = ""
+    kb_use_case = str(field.get("use_case") or "")
+    if kb_use_case == _default_use_case(field["column"]):
+        kb_use_case = ""
+    resolved = column_meaning(
+        column=column,
+        override=override,
+        approved_feedback=approved,
+        model_field=stores["model_fields"].get(table_key, {}).get(column),
+        graph_property=stores["properties"].get(table_key, {}).get(column),
+        business_meaning=stores["meanings"].get(re.sub(r"[^A-Za-z0-9]", "", column)),
+        column_terms=stores["column_terms"].get(table_key, {}).get(column),
+        db_comment=field.get("db_comment") or "",
+        kb_field={"meaning": kb_meaning, "use_case": kb_use_case, "synonyms": field.get("synonyms") or [],
+                  "approved": bool(field.get("approved"))},
+    )
+    out = dict(field)
+    description = resolved.get("description")
+    out["meaning"] = description.value if description else _fallback_meaning(field["column"])
+    out["use_case"] = resolved["use_case"].value if "use_case" in resolved else _default_use_case(field["column"])
+    out["synonyms"] = list(resolved["synonyms"].value) if "synonyms" in resolved else []
+    out["label"] = resolved["label"].value if "label" in resolved else ""
+    out["approved"] = bool(description and description.confirmed)
+    out["pending"] = pending
+    # Nothing describes it, or only the knowledge base does and it said the
+    # column needs context.
+    out["needs_context"] = description is None or (description.source == "ai" and bool(field.get("needs_context")))
+    out["source"] = _SOURCE_CODE.get(description.evidence, "generated") if description else "generated"
+    out["meaning_evidence"] = description.evidence if description else ""
+    if description is None:
+        out["confidence"] = 45
+    elif description.source != "ai":
+        out["confidence"] = CONFIDENCE[description.source]
+    out["admin_note"] = (override or {}).get("admin_note") or ""
+    out["updated_at"] = (override or {}).get("updated_at") or ""
+    return out
 
 
 def find_semantic_field(tables: list[dict], table_fqn: str, column_name: str) -> tuple[dict, dict] | None:
@@ -299,11 +378,16 @@ def _parse_column_table_row(line: str, next_line: str = "") -> dict | None:
     if len(cells) > 4 and cells[4].strip():
         base["meaning"] = cells[4].strip()
         base["use_case"] = cells[5].strip() if len(cells) > 5 else ""
-        base["confidence"] = _parse_confidence_value(cells[6] if len(cells) > 6 else "100")
+        confidence_cell = cells[6] if len(cells) > 6 else ""
+        base["confidence"] = _parse_confidence_value(confidence_cell or "100")
+        # Approved when the row says so -- the approval patcher's source
+        # marker, or a confidence written as 100% -- and not because a
+        # generated row has no confidence cell: that read the knowledge base's
+        # own prose as an admin's decision.
         base["approved"] = (
-            len(cells) > 7
-            and "admin-approved semantic layer edit" in cells[7].lower()
-        ) or base["confidence"] >= 100
+            (len(cells) > 7 and "admin-approved semantic layer edit" in cells[7].lower())
+            or (bool(re.search(r"\d", confidence_cell)) and base["confidence"] >= 100)
+        )
         base["needs_context"] = False
     # If the next line contains an admin approval comment, use that meaning
     if next_line and "<!-- Approved:" in next_line:
@@ -358,9 +442,12 @@ def _parse_key_metrics(content: str) -> dict[str, list[str]]:
     return result
 
 
+_NO_MEANING = "Needs business review."
+
+
 def _clean_meaning(text: str) -> str:
     text = re.sub(r"\bvalues are\b.*$", "", text, flags=re.IGNORECASE).strip()
-    return text.rstrip(". ") or "Needs business review."
+    return text.rstrip(". ") or _NO_MEANING
 
 
 def _extract_values(text: str) -> str:

@@ -2573,6 +2573,7 @@ async def kb_list(request: Request, account_id: str):
                 approved_feedback=approved_feedback,
                 pending_feedback=pending_feedback,
                 field_overrides=field_overrides,
+                account_id=account_id,
             )
         except Exception as exc:
             log.warning("Could not build admin field editor for %s: %s", account_id, exc)
@@ -5129,27 +5130,11 @@ async def graph_api_prop_save(request: Request, account_id: str):
         synonyms     = data.get("synonyms", ""),
     )
     # Sync to semantic layer business terms
-    if data.get("display_name") and column_name:
-        try:
-            _entity = store.get_entity(account_id, entity_name)
-            _table = ""
-            if _entity:
-                _sn = (_entity.get("schema_name") or "").strip()
-                _tn = (_entity.get("table_name") or "").strip()
-                _table = f"{_sn}.{_tn}" if _sn else _tn
-            store.save_term(
-                account_id      = account_id,
-                term            = data["display_name"].strip(),
-                canonical_expression = column_name.strip(),
-                tables_involved = _table,
-                # business_term.source has a CHECK constraint allowing only
-                # manual/kb_extracted/metric_registry — "entity_graph" was
-                # never a legal value, so this call raised on every prior
-                # invocation regardless of the (also wrong) kwargs above.
-                source          = "manual",
-            )
-        except Exception as _term_exc:
-            log.warning("save_term (entity property sync) skipped: %s", _term_exc)
+    try:
+        store.sync_property_term(account_id, entity_name, column_name, role=data.get("role", "dimension"),
+                                 display_name=data.get("display_name", ""), synonyms=data.get("synonyms", ""))
+    except Exception as _term_exc:
+        log.warning("save_term (entity property sync) skipped: %s", _term_exc)
     _after_semantic_approval(account_id, f"entity property '{entity_name}.{column_name}' saved")
     return JSONResponse({"status": "ok"})
 

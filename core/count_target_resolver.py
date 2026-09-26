@@ -115,6 +115,12 @@ def _field_text(field: dict[str, Any]) -> str:
 
 
 def _business_label(field: dict[str, Any], entity: str) -> str:
+    """What the reader is told is being counted, resolved by core.meaning: a
+    meaning an admin approved for the field before what the naming rules read
+    from its name. The expansion came first, so an admin's "Invoice number"
+    was offered as the machine's "Document Number"."""
+    from core.meaning import column_meaning
+
     expanded = str(
         field.get("business_name")
         or field.get("display_name")
@@ -126,13 +132,14 @@ def _business_label(field: dict[str, Any], entity: str) -> str:
         expanded_words & {"sk", "fk"}
         or (expanded_words & {"key"} and not expanded_words & {"number", "reference", "identifier"})
     )
-    if expanded and not re.fullmatch(r"[A-Z0-9_]+", expanded) and not physical_key_label:
-        return expanded
-    meaning = str(field.get("approved_meaning") or "").strip()
-    if meaning:
-        first = re.split(r"[.;]", meaning, maxsplit=1)[0].strip()
-        if first:
-            return first[:90]
+    readable = expanded and not re.fullmatch(r"[A-Z0-9_]+", expanded) and not physical_key_label
+    label = column_meaning(
+        column=str(field.get("column") or ""),
+        model_field=field,
+        expansion=(expanded, "rule") if readable else None,
+    ).get("label")
+    if label:
+        return str(label.value)
     return f"{str(entity or 'Business event').strip().title()} identifier"
 
 

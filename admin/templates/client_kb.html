@@ -46,6 +46,7 @@
 .kb-field-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow)}
 .kb-field-top{display:flex;justify-content:space-between;gap:.75rem;align-items:flex-start}
 .kb-field-name{font-family:var(--font-mono);font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text);word-break:break-word}
+.kb-field-business-name{font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text);margin-top:.15rem}
 .kb-field-type{font-size:var(--font-2xs);color:var(--text-muted);margin-top:.2rem}
 .kb-field-badges{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.45rem}
 .kb-field-content{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-top:.75rem}
@@ -240,6 +241,7 @@
             <div class="kb-field-top">
               <div>
                 <div class="kb-field-name">{{ field.column }}</div>
+                {% if field.label %}<div class="kb-field-business-name">{{ field.label }}</div>{% endif %}
                 <div class="kb-field-type">{{ field.type or "type unknown" }}{% if field.nullable %} · nullable {{ field.nullable }}{% endif %}</div>
                 <div class="kb-field-badges">
                   {% if field.needs_context %}<span class="badge badge-amber">Needs context</span>{% endif %}
@@ -271,7 +273,7 @@
               </div>
             </div>
             {% if field.distinct_values %}<div class="kb-field-values"><strong>Known values:</strong> {{ field.distinct_values }}</div>{% endif %}
-            {% if field.synonyms %}<div class="kb-field-values"><strong>Admin synonyms:</strong> {{ field.synonyms|join(", ") }}</div>{% endif %}
+            {% if field.synonyms %}<div class="kb-field-values"><strong>Synonyms:</strong> {{ field.synonyms|join(", ") }}</div>{% endif %}
             {% if field.admin_note %}<div class="kb-field-note"><strong>Admin note:</strong> {{ field.admin_note }}</div>{% endif %}
           </article>
           {% endfor %}

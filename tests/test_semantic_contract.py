@@ -194,19 +194,33 @@ class EntityPropertyTermSyncTests(unittest.TestCase):
     call and was silently swallowed. Verify the corrected call actually
     succeeds and produces a listable term."""
 
-    def test_route_uses_real_save_term_kwargs(self):
-        src = _src("admin/routes.py")
-        body = src[src.index("async def graph_api_prop_save("):]
-        body = body[:body.index("\n@router.")]
-        self.assertNotIn("column_name  = data[", body)
-        self.assertNotIn("table_hint", body)
-        self.assertIn("canonical_expression", body)
-        self.assertIn("tables_involved", body)
-        # "entity_graph" is not a legal business_term.source (CHECK
-        # constraint allows only manual/kb_extracted/metric_registry) —
-        # the route must use one of the real allowed values.
-        self.assertNotIn('source          = "entity_graph"', body)
-        self.assertIn('source          = "manual"', body)
+    def test_the_route_writes_a_listable_term(self):
+        """Through the route itself: the arguments it passes are ones the
+        glossary takes and its source is a legal one, or no term is listed."""
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        import store
+        import admin.routes as routes
+
+        store.init_db()
+        account_id = f"acct-prop-route-{os.urandom(4).hex()}"
+        store.upsert_client(account_id, "portal")
+        store.save_entity(account_id=account_id, entity_name="CUSTOMER", table_name="DIM_CUSTOMER",
+                          schema_name="ERP", pos_x=0.0, pos_y=0.0)
+        request = MagicMock()
+
+        async def _json():
+            return {"entity_name": "CUSTOMER", "column_name": "REGION_CD", "role": "dimension",
+                    "display_name": "Customer Region"}
+
+        request.json = _json
+        with patch.object(routes, "_is_auth", return_value=True):
+            asyncio.run(routes.graph_api_prop_save(request, account_id))
+        self.assertEqual(
+            [(t["canonical_expression"], t["tables_involved"], t["source"])
+             for t in store.list_terms(account_id) if t["term"] == "customer region"],
+            [("REGION_CD", "ERP.DIM_CUSTOMER", "manual")])
 
     def test_corrected_save_term_call_succeeds_and_is_listable(self):
         from store.semantic_store import save_term, list_terms

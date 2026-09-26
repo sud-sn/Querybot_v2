@@ -32,6 +32,7 @@
 .field-table td{padding:.8rem .75rem;border-bottom:1px solid var(--border);vertical-align:top;font-size:var(--font-sm);line-height:1.55;color:var(--text-soft)}
 .field-table tr:last-child td{border-bottom:none}
 .field-col{font-family:var(--font-mono);font-weight:var(--weight-bold);color:var(--text);white-space:nowrap}
+.field-business-name{font-weight:var(--weight-semibold);color:var(--text);margin-top:.1rem}
 .field-type{font-size:var(--font-xs);color:var(--text-muted);margin-top:.15rem}
 .values{font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem;max-width:360px}
 .status-badges{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem}
@@ -154,6 +155,7 @@
             <tr class="semantic-field-row" data-table-fqn="{{ table.fqn }}" data-column-name="{{ field.column }}">
               <td>
                 <div class="field-col">{{ field.column }}</div>
+                {% if field.label %}<div class="field-business-name">{{ field.label }}</div>{% endif %}
                 <div class="field-type">{{ field.type or t('ui.kb.type_unknown') }}{% if field.nullable %} · {{ t('ui.kb.nullable', value=field.nullable) }}{% endif %}</div>
                 {% if field.distinct_values %}<div class="values">{{ t('ui.kb.values', values=field.distinct_values) }}</div>{% endif %}
                 <div class="status-badges">

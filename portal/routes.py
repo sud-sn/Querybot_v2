@@ -2150,6 +2150,7 @@ async def portal_kb(request: Request):
         approved_feedback=approved_feedback,
         pending_feedback=pending_feedback,
         field_overrides=load_field_overrides(user["account_id"]),
+        account_id=user["account_id"],
     )
     schemas = sorted({t["schema"] or "DEFAULT" for t in semantic_tables})
     selected_schema = (request.query_params.get("schema") or "").upper()

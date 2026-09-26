@@ -2874,6 +2874,49 @@ def save_entity_property(
 
 
 
+# The glossary kind a column's role in the join graph names. Every term this
+# sync wrote was a 'metric': two confirmed dimensions named in one question
+# were offered back as two metrics to choose between, and the SQL prompt
+# listed a customer's name as a metric.
+_TERM_KIND_BY_ROLE = {"metric": "metric", "dimension": "dimension", "date": "dimension",
+                      "filter": "filter", "identifier": "dimension"}
+
+
+def sync_property_term(
+    account_id: str,
+    entity_name: str,
+    column_name: str,
+    *,
+    role: str,
+    display_name: str,
+    synonyms: str = "",
+) -> None:
+    """The glossary term an admin's name for a column in the join graph makes:
+    the display name, of the kind the column's role says, answering to its
+    synonyms. A column the admin set to be ignored makes none. Raises if the
+    glossary refuses the write; callers log it."""
+    role = str(role or "dimension").strip().lower()
+    if role == "ignore" or not str(display_name or "").strip() or not str(column_name or "").strip():
+        return
+    # Deferred import: semantic_store imports from this module.
+    from store.semantic_store import save_term
+
+    entity = get_entity(account_id, entity_name) or {}
+    schema_name = (entity.get("schema_name") or "").strip()
+    table_name = (entity.get("table_name") or "").strip()
+    save_term(
+        account_id           = account_id,
+        term                 = display_name.strip(),
+        kind                 = _TERM_KIND_BY_ROLE.get(role, "dimension"),
+        canonical_expression = column_name.strip(),
+        tables_involved      = (f"{schema_name}.{table_name}" if schema_name else table_name) or entity_name,
+        aliases              = str(synonyms or ""),
+        # business_term.source has a CHECK constraint allowing only
+        # manual / kb_extracted / metric_registry.
+        source               = "manual",
+    )
+
+
 def confirm_entity_property(
     account_id: str,
     entity_name: str,
@@ -2882,11 +2925,14 @@ def confirm_entity_property(
 ) -> None:
     """
     Admin confirms a field role — sets status='confirmed', confidence_score=100,
-    and writes an 'approved' row into semantic_field_feedback so the semantic
-    layer immediately reflects the admin-verified meaning.
-    This short-circuits the user-portal feedback loop: instead of waiting
-    for a user to notice a wrong synonym and submit feedback, the admin
-    resolves it here before any user query runs.
+    and names the column in the glossary (sync_property_term).
+
+    The Semantic Layer reads the confirmed property itself: its display name
+    is the column's business label and its synonyms are the column's terms
+    (core.meaning). This used to write an 'approved' Semantic Layer
+    suggestion instead, with the synonyms in its meaning, so the page showed
+    "net revenue, sales" as what the column means -- and a new copy of that
+    row on every confirm.
     """
     with get_db() as conn:
         conn.execute("""
@@ -2895,7 +2941,6 @@ def confirm_entity_property(
                    reviewed_by=?, reviewed_at=datetime('now')
              WHERE account_id=? AND entity_name=? AND column_name=?
         """, (reviewed_by, account_id, entity_name, column_name))
-        # Read the current property to get display_name / synonyms for sync
         row = conn.execute("""
             SELECT * FROM entity_properties
              WHERE account_id=? AND entity_name=? AND column_name=?
@@ -2904,80 +2949,17 @@ def confirm_entity_property(
     if not row:
         return
     prop = dict(row)
-
-    # Sync to semantic layer: upsert business_term
-    if prop.get("display_name"):
-        try:
-            # Deferred import: semantic_store imports from this module, so a
-            # top-level import is a cycle. It was missing entirely, so this
-            # raised NameError on EVERY call and the bare except below swallowed
-            # it -- the documented sync never once happened, and nothing said
-            # so. That is the shape this codebase keeps producing: a fail-open
-            # handler with nothing in it to log.
-            from store.semantic_store import save_term
-
-            # The SAME correction admin/routes.py::graph_api_prop_save
-            # received, applied to the sibling that was missed. column_name,
-            # table_hint and is_active are not parameters of save_term, and
-            # "entity_graph" is not a legal business_term.source -- the CHECK
-            # constraint allows manual / kb_extracted / metric_registry only.
-            # So even with the import present this call raised TypeError, and
-            # would then have raised again on the source value.
-            entity = get_entity(account_id, entity_name)
-            schema_name = (entity or {}).get("schema_name") or ""
-            table_name = (entity or {}).get("table_name") or ""
-            table_fqn = (f"{schema_name}.{table_name}".strip(".")
-                         if table_name else entity_name)
-            save_term(
-                account_id           = account_id,
-                term                 = prop["display_name"].strip(),
-                canonical_expression = column_name.strip(),
-                tables_involved      = table_fqn,
-                source               = "manual",
-            )
-        except Exception as exc:
-            # Loud, because "always broken" and "working perfectly" were
-            # indistinguishable from outside for exactly as long as this was
-            # silent.
-            log.error(
-                "Semantic-layer sync FAILED for %s.%s on %s (%s) — the "
-                "confirmed field will not be searchable by its business name",
-                entity_name, column_name, account_id, exc, exc_info=True,
-            )
-
-    # Write to semantic_field_feedback as admin-approved at 100%
-    # This makes the field show as 100% confirmed in the user portal too
     try:
-        with get_db() as conn:
-            # Get entity table name for table_fqn
-            ent_row = conn.execute(
-                "SELECT table_name, schema_name FROM entity_graph "
-                "WHERE account_id=? AND entity_name=?",
-                (account_id, entity_name)
-            ).fetchone()
-            if ent_row:
-                ent = dict(ent_row)
-                tbl_fqn = (
-                    f"{ent['schema_name']}.{ent['table_name']}"
-                    if ent.get("schema_name")
-                    else ent["table_name"]
-                )
-                conn.execute("""
-                    INSERT INTO semantic_field_feedback
-                        (account_id, table_fqn, table_name, schema_name,
-                         column_name, current_meaning, suggested_meaning,
-                         confidence_score, status, reviewed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 100, 'approved', datetime('now'))
-                    ON CONFLICT DO NOTHING
-                """, (
-                    account_id, tbl_fqn,
-                    ent["table_name"], ent.get("schema_name",""),
-                    column_name,
-                    prop.get("display_name",""),
-                    prop.get("synonyms",""),
-                ))
-    except Exception:
-        pass  # semantic_field_feedback sync is best-effort
+        sync_property_term(account_id, entity_name, column_name, role=prop.get("role") or "",
+                           display_name=prop.get("display_name") or "", synonyms=prop.get("synonyms") or "")
+    except Exception as exc:
+        # Loud: a fail-open handler with nothing in it to log hid this sync's
+        # failure on every call for as long as it existed.
+        log.error(
+            "Semantic-layer sync FAILED for %s.%s on %s (%s) — the "
+            "confirmed field will not be searchable by its business name",
+            entity_name, column_name, account_id, exc, exc_info=True,
+        )
 
 
 def reject_entity_property(
