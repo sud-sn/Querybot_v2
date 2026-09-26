@@ -2477,7 +2477,7 @@ def save_relationship(
     to_column: str,
     relationship_type: str = "many_to_one",
     confidence_score: int = 100,
-    status: str = "confirmed",
+    status: str | None = None,
     join_type: str = "INNER",
     label: str = "",
     rel_id: int = 0,
@@ -2490,6 +2490,10 @@ def save_relationship(
     generated_by/reason: provenance evidence ('manual' | 'heuristic' | 'llm') and a
     human-readable explanation (e.g. "Shared column CUSTOMER_ID"). Written on
     INSERT only — edits never overwrite the original provenance.
+    status: a new edge is 'confirmed' unless given. An update changes the
+    status only when one is given -- an administrator saving an edited
+    suggestion confirms it; the update used to leave it 'suggested' while the
+    semantic model recorded it approved.
     """
     import json as _json
     jc_json = _json.dumps(join_conditions or [])
@@ -2500,6 +2504,8 @@ def save_relationship(
                     from_entity=?, to_entity=?, from_column=?, to_column=?,
                     relationship_type=?, join_type=?, label=?, join_conditions=?,
                     where_clause=?,
+                    status=COALESCE(?, status),
+                    confidence_score=CASE WHEN ?='confirmed' THEN 100 ELSE confidence_score END,
                     validation_status='untested',
                     validated_at='',
                     row_count_estimate=-1,
@@ -2507,7 +2513,7 @@ def save_relationship(
                 WHERE id=? AND account_id=?
             """, (from_entity, to_entity, from_column, to_column,
                   relationship_type, join_type, label, jc_json,
-                  where_clause, rel_id, account_id))
+                  where_clause, status, status, rel_id, account_id))
             return rel_id
         conn.execute("""
             INSERT INTO entity_relationships
@@ -2517,7 +2523,7 @@ def save_relationship(
                  generated_by, reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
         """, (account_id, from_entity, to_entity, from_column, to_column,
-              relationship_type, join_type, label, confidence_score, status,
+              relationship_type, join_type, label, confidence_score, status or "confirmed",
               jc_json, where_clause, generated_by, reason))
         row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
     return row["id"] if row else -1

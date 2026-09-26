@@ -4536,7 +4536,7 @@ async def graph_rel_create(request: Request, account_id: str):
 async def graph_rel_delete(request: Request, account_id: str, rel_id: int):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
-    store.delete_relationship(account_id, rel_id)
+    _delete_relationship_keeping_a_snapshot(account_id, rel_id)
     _after_semantic_approval(account_id, "relationship deleted")
     return RedirectResponse(f"/admin/clients/{account_id}/graph?saved=1", status_code=303)
 
@@ -4591,20 +4591,29 @@ async def graph_api_entity_upsert(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     data = await request.json()
+    # A field the request does not carry keeps its stored value. The table
+    # dialog sends no position and no row filter, and each save put the table
+    # back at (120, 120) and dropped its filter -- the WHERE clause every
+    # query through it depends on.
+    existing = store.get_entity(account_id, str(data.get("entity_name", "")).strip()) or {}
+
+    def _kept(key: str, default):
+        return data[key] if key in data else existing.get(key, default)
+
     eid = store.save_entity(
         account_id    = account_id,
         entity_name   = data.get("entity_name", "").strip(),
-        table_name    = data.get("table_name", "").strip(),
-        schema_name   = data.get("schema_name", "").strip(),
-        pk_column     = data.get("pk_column", "").strip(),
-        display_name  = data.get("display_name", "").strip(),
-        description   = data.get("description", "").strip(),
-        entity_type   = data.get("entity_type", "dimension"),
-        is_active     = int(data.get("is_active", 1)),
-        pos_x         = float(data.get("pos_x", 120)),
-        pos_y         = float(data.get("pos_y", 120)),
-        color         = data.get("color", "#4F86C6"),
-        entity_filter = data.get("entity_filter", "").strip(),
+        table_name    = str(_kept("table_name", "")).strip(),
+        schema_name   = str(_kept("schema_name", "")).strip(),
+        pk_column     = str(_kept("pk_column", "")).strip(),
+        display_name  = str(_kept("display_name", "")).strip(),
+        description   = str(_kept("description", "")).strip(),
+        entity_type   = _kept("entity_type", "dimension"),
+        is_active     = int(_kept("is_active", 1)),
+        pos_x         = float(_kept("pos_x", 120)),
+        pos_y         = float(_kept("pos_y", 120)),
+        color         = _kept("color", "#4F86C6"),
+        entity_filter = str(_kept("entity_filter", "") or "").strip(),
     )
     _after_semantic_approval(account_id, f"entity '{data.get('entity_name', '')}' saved (canvas)")
     return JSONResponse({"status": "ok", "id": eid})
@@ -4701,6 +4710,74 @@ def _join_check(account_id: str, relationship: dict):
     return check_join(relationship, entities, schema_columns)
 
 
+def _allowed_join_type(value) -> str:
+    """LEFT or INNER, the two joins the planner builds. The editor also offered
+    "OUTER", which is written in front of JOIN as it stands -- valid in no
+    dialect."""
+    return "INNER" if str(value or "").strip().upper() == "INNER" else "LEFT"
+
+
+def _relationship_conditions(rel: dict) -> list[dict]:
+    raw = rel.get("join_conditions") or []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = []
+    return [c for c in raw if isinstance(c, dict)]
+
+
+def _entity_table(account_id: str, entity_name: str) -> str:
+    entity = store.get_entity(account_id, entity_name) or {}
+    schema = str(entity.get("schema_name") or "").strip()
+    table = str(entity.get("table_name") or "").strip()
+    return f"{schema}.{table}" if schema else table
+
+
+def _sync_relationship_to_model(account_id: str, rel: dict, *, remove: bool = False) -> None:
+    """Put a confirmed join into the structured semantic model (S2-2), or take
+    a deleted one out of it. The runtime plans joins from the model as well as
+    the graph, so a join confirmed only in the graph was never planned from
+    it, and a deleted one went on being planned."""
+    try:
+        from core.semantic_model import patch_relationship, remove_relationship
+
+        kb_dir = (store.get_client_state(account_id) or {}).get("kb_dir") or ""
+        from_table = _entity_table(account_id, str(rel.get("from_entity") or ""))
+        to_table = _entity_table(account_id, str(rel.get("to_entity") or ""))
+        if not (kb_dir and from_table and to_table):
+            return
+        conditions = _relationship_conditions(rel)
+        from_column = str(conditions[0].get("from_col") if conditions else rel.get("from_column") or "")
+        to_column = str(conditions[0].get("to_col") if conditions else rel.get("to_column") or "")
+        if remove:
+            remove_relationship(kb_dir=kb_dir, from_table=from_table, to_table=to_table,
+                                from_column=from_column, to_column=to_column)
+            return
+        patch_relationship(
+            kb_dir=kb_dir, from_table=from_table, to_table=to_table,
+            from_column=from_column, to_column=to_column,
+            join_type=_allowed_join_type(rel.get("join_type")),
+            display_column=str(rel.get("label") or ""), status="approved",
+        )
+    except Exception as exc:
+        log.warning("Semantic model not updated for a join of %s: %s", account_id, exc)
+
+
+def _delete_relationship_keeping_a_snapshot(account_id: str, rel_id: int) -> None:
+    """Delete a join after snapshotting the graph, so the delete can be undone
+    from Versions like a restore or an import can."""
+    rel = store.get_relationship(account_id, rel_id)
+    if not rel:
+        return
+    store.save_graph_version(
+        account_id,
+        label=f"before deleting the join {rel.get('from_entity')} -> {rel.get('to_entity')}"[:80],
+    )
+    store.delete_relationship(account_id, rel_id)
+    _sync_relationship_to_model(account_id, rel, remove=True)
+
+
 def _flag_unverified_join(account_id: str, rel_id: int, verdict) -> None:
     """Mark a stored-but-unverified join so a reader can find it.
 
@@ -4731,7 +4808,7 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
     _api_to_entity   = data.get("to_entity", "").strip()
     _api_from_col    = data.get("from_column", "").strip()
     _api_to_col      = data.get("to_column", "").strip()
-    _api_join_type   = data.get("join_type", "LEFT")
+    _api_join_type   = _allowed_join_type(data.get("join_type"))
     _api_label       = data.get("label", "").strip()
 
     _verdict = _join_check(account_id, {
@@ -4758,36 +4835,16 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
         join_conditions   = join_conditions,
         where_clause      = data.get("where_clause", "").strip(),
         rel_id            = int(data.get("rel_id") or 0),
+        # Saving is the administrator's decision on the join, a suggestion
+        # included: the semantic model below records it approved.
+        status            = "confirmed",
     )
     _flag_unverified_join(account_id, rid, _verdict)
-    # Sync confirmed relationship into the structured semantic model (S2-2).
-    try:
-        from core.semantic_model import patch_relationship
-        _sm_state  = store.get_client_state(account_id)
-        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
-        if _sm_kb_dir and _api_from_entity and _api_to_entity:
-            _fe = store.get_entity(account_id, _api_from_entity)
-            _te = store.get_entity(account_id, _api_to_entity)
-            if _fe and _te:
-                def _qtable(e: dict) -> str:
-                    sn = (e.get("schema_name") or "").strip()
-                    tn = (e.get("table_name") or "").strip()
-                    return f"{sn}.{tn}" if sn else tn
-                # Use first join_condition pair if available, else top-level columns.
-                _jc_from = join_conditions[0]["from_col"] if join_conditions else _api_from_col
-                _jc_to   = join_conditions[0]["to_col"]   if join_conditions else _api_to_col
-                patch_relationship(
-                    kb_dir=_sm_kb_dir,
-                    from_table=_qtable(_fe),
-                    to_table=_qtable(_te),
-                    from_column=_jc_from,
-                    to_column=_jc_to,
-                    join_type=_api_join_type,
-                    display_column=_api_label,
-                    status="approved",
-                )
-    except Exception as _sm_exc:
-        log.warning("patch_relationship (api_upsert) skipped: %s", _sm_exc)
+    _sync_relationship_to_model(account_id, {
+        "from_entity": _api_from_entity, "to_entity": _api_to_entity,
+        "from_column": _api_from_col, "to_column": _api_to_col,
+        "join_conditions": join_conditions, "join_type": _api_join_type, "label": _api_label,
+    })
     _after_semantic_approval(account_id, f"relationship {_api_from_entity}->{_api_to_entity} saved (canvas)")
     return JSONResponse({"status": "ok", "id": rid})
 
@@ -4917,7 +4974,7 @@ async def graph_api_rel_validate(request: Request, account_id: str, rel_id: int)
 async def graph_api_rel_delete(request: Request, account_id: str, rel_id: int):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
-    store.delete_relationship(account_id, rel_id)
+    _delete_relationship_keeping_a_snapshot(account_id, rel_id)
     _after_semantic_approval(account_id, "relationship deleted (canvas)")
     return JSONResponse({"status": "ok"})
 
@@ -4938,9 +4995,14 @@ async def graph_api_rel_bulk(request: Request, account_id: str):
     updates = data.get("updates", [])
     deletes = data.get("deletes", [])
 
+    if deletes:
+        store.save_graph_version(account_id, label=f"before deleting {len(deletes)} joins in bulk")
     for rel_id in deletes:
         try:
+            deleted = store.get_relationship(account_id, int(rel_id))
             store.delete_relationship(account_id, int(rel_id))
+            if deleted:
+                _sync_relationship_to_model(account_id, deleted, remove=True)
         except Exception:
             pass
 
@@ -5909,15 +5971,32 @@ async def graph_confirm_property(request: Request, account_id: str):
 
 @router.post("/clients/{account_id}/graph/api/confirm/relationship/{rel_id}")
 async def graph_confirm_rel(request: Request, account_id: str, rel_id: int):
-    """Confirm an LLM-suggested relationship."""
+    """Confirm an LLM-suggested relationship.
+
+    The same check a saved join gets. Confirming skipped it, so a suggested
+    fact-to-fact join became a confirmed one with one click -- and confirmed
+    means discovery never touches it again. Nor did it reach the semantic
+    model, which the runtime plans joins from too.
+    """
     if not _is_auth(request):
         raise HTTPException(status_code=401)
+    rel = store.get_relationship(account_id, rel_id)
+    if not rel:
+        raise HTTPException(status_code=404)
+    verdict = _join_check(account_id, {**rel, "join_conditions": _relationship_conditions(rel)})
+    if verdict.refuses:
+        return JSONResponse(
+            {"status": "invalid", "code": verdict.code, "message": verdict.reason},
+            status_code=422,
+        )
     with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
         conn.execute(
             "UPDATE entity_relationships SET status='confirmed', confidence_score=100 "
             "WHERE id=? AND account_id=?",
             (rel_id, account_id)
         )
+    _flag_unverified_join(account_id, rel_id, verdict)
+    _sync_relationship_to_model(account_id, rel)
     _after_semantic_approval(account_id, "relationship confirmed")
     return JSONResponse({"status": "ok"})
 

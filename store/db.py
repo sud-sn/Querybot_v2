@@ -1427,6 +1427,7 @@ def _run_migrations() -> None:
         _ensure_semantic_compiler_tables(conn)
         _ensure_user_account_event_table(conn)
         _ensure_sign_in_attempt_table(conn)
+        _ensure_join_types_are_sql(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1548,6 +1549,19 @@ def _ensure_graph_change_proposal_table(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
             ON graph_change_proposal(account_id, status, created_at);
         """
+    )
+
+
+def _ensure_join_types_are_sql(conn: sqlite3.Connection) -> None:
+    """No stored join is "OUTER".
+
+    The graph editor offered OUTER JOIN beside LEFT and INNER, and the join
+    planner writes the stored type in front of JOIN -- "OUTER JOIN" is valid in
+    no dialect, so every question through such an edge failed. Keeping the
+    unmatched rows is what it was chosen for, and that is LEFT.
+    """
+    conn.execute(
+        "UPDATE entity_relationships SET join_type='LEFT' WHERE UPPER(join_type)='OUTER'"
     )
 
 

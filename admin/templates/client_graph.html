@@ -1194,7 +1194,6 @@ function _buildJoinEditForm(r, jc) {
           <select class="jc-select" id="jcjt-${r.id}">
             <option value="LEFT"  ${jt==='LEFT'?'selected':''}>LEFT JOIN</option>
             <option value="INNER" ${jt==='INNER'?'selected':''}>INNER JOIN</option>
-            <option value="OUTER" ${jt==='OUTER'?'selected':''}>OUTER JOIN</option>
           </select>
         </div>
         <div class="je-arrow">──→</div>
@@ -1313,7 +1312,11 @@ async function saveJoinEdit(relId) {
   const resp = await fetch(`${API_BASE}/relationships`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
   });
-  if (!resp.ok) { qbToast.error('Save failed'); return; }
+  if (!resp.ok) {
+    const problem = await resp.json().catch(() => ({}));
+    qbToast.error(problem.message || 'Save failed');
+    return;
+  }
 
   // Update local state
   const idx = graphData.relationships.findIndex(x => x.id === relId);
@@ -1671,7 +1674,13 @@ async function saveEntity() {
 }
 
 // ── Add Join modal ─────────────────────────────────────────────────────────────
+// The join the Add Join dialog is editing, when it was opened on one (the
+// review queue's Edit). Saving then updates that row: posting without its id
+// added a second join beside the suggestion, which stayed in the queue.
+let _ajmEditingId = 0;
+
 function openAddJoinModal(preFrom, prefill) {
+  _ajmEditingId = (prefill && prefill.id) || 0;
   const opts = graphData.entities.map(e =>
     `<option value="${_esc(e.entity_name)}"${e.entity_name===preFrom?' selected':''}>${_esc(e.display_name||e.entity_name)}</option>`
   ).join('');
@@ -1694,7 +1703,21 @@ function openAddJoinModal(preFrom, prefill) {
   }
   document.getElementById('add-join-modal').style.display='flex';
 }
-function closeAddJoinModal() { document.getElementById('add-join-modal').style.display='none'; }
+function closeAddJoinModal() {
+  _ajmEditingId = 0;
+  document.getElementById('add-join-modal').style.display='none';
+}
+
+// What the Add Join dialog posts. With the id of the join it was opened on,
+// the save updates that join rather than adding another beside it.
+function joinSavePayload(fields, editingId) {
+  const {from_entity, to_entity, from_column, to_column, join_type, relationship_type} = fields;
+  const join_conditions = from_column && to_column ? [{from_col: from_column, to_col: to_column}] : [];
+  const payload = {from_entity, to_entity, from_column, to_column, join_type, relationship_type,
+                   join_conditions, status: 'confirmed'};
+  if (editingId) payload.rel_id = editingId;
+  return payload;
+}
 
 async function saveNewJoin() {
   const from_entity       = document.getElementById('ajm-from').value;
@@ -1706,15 +1729,26 @@ async function saveNewJoin() {
 
   if (from_entity === to_entity) { qbToast.warning('Cannot join a table to itself.'); return; }
 
-  const join_conditions = from_column && to_column ? [{from_col:from_column, to_col:to_column}] : [];
-  const payload = {from_entity, to_entity, from_column, to_column, join_type, relationship_type, join_conditions, status:'confirmed'};
+  const editingId = _ajmEditingId;
+  const payload = joinSavePayload(
+    {from_entity, to_entity, from_column, to_column, join_type, relationship_type}, editingId);
+  const join_conditions = payload.join_conditions;
 
   const r = await fetch(`${API_BASE}/relationships`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
   });
-  if (!r.ok) { qbToast.error('Save failed'); return; }
+  if (!r.ok) {
+    const problem = await r.json().catch(() => ({}));
+    qbToast.error(problem.message || 'Save failed');
+    return;
+  }
   const saved = await r.json();
   const rel   = {...payload, id:saved.id||saved.rel_id, validation_status:'untested', join_conditions: JSON.stringify(join_conditions)};
+  if (editingId) {
+    graphData.relationships = graphData.relationships.filter(x => x.id !== editingId);
+    const oldEdge = cy.getElementById(`rel-${editingId}`);
+    if (oldEdge && oldEdge.length) oldEdge.remove();
+  }
   graphData.relationships.push(rel);
 
   const edgeLabel = from_column && to_column ? `${from_column} = ${to_column}` : '';
