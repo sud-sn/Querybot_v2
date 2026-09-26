@@ -45,9 +45,6 @@
 .evidence-item{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 7px}
 .correct-sql-form{margin-top:.75rem}
 .correct-sql-label{font-size:var(--font-xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:.35rem}
-.correct-sql-input{width:100%;min-height:80px;font-family:var(--font-mono);font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.5rem .65rem;background:var(--surface);color:var(--text);resize:vertical}
-.correct-sql-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(13,115,119,.1)}
-.reviewer-note-input{width:100%;font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.4rem .65rem;background:var(--surface);color:var(--text)}
 .lq-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:var(--font-md)}
 .lq-stats{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem}
 .lq-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
@@ -266,10 +263,10 @@
             </span>
           </div>
           <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/correct-sql">
-            <textarea class="correct-sql-input" name="corrected_sql"
+            <textarea class="form-input form-input-mono" name="corrected_sql"
               placeholder="SELECT ... (leave blank to skip)">{% if c.corrected_sql %}{{ c.corrected_sql }}{% endif %}</textarea>
             <div style="display:flex;gap:.5rem;margin-top:.45rem;align-items:center">
-              <input class="reviewer-note-input" style="flex:1" type="text"
+              <input class="form-input form-input-sm" style="flex:1" type="text"
                 name="reviewer_note" placeholder="Reviewer note (optional)"
                 value="{{ c.reviewer_note or '' }}">
               <button type="submit" class="btn btn-secondary btn-xs">Save corrected SQL</button>

@@ -48,7 +48,7 @@ def _tokens() -> dict[str, str]:
 def _button_block() -> str:
     css = (CSS / "base.css").read_text(encoding="utf-8")
     start = css.index("/* ── Buttons")
-    return css[start:css.index("/* ── Forms ── */", start)]
+    return css[start:css.index("\n/* ── ", start)]   # to the next section
 
 
 def _rules(block: str) -> dict[str, dict[str, str]]:

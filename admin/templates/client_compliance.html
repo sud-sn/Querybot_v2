@@ -156,9 +156,9 @@
           </label>
           {% endfor %}
         </td>
-        <td><select data-field="sensitivity"><option>{{ item.sensitivity }}</option>{% for v in ['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'] %}{% if v != item.sensitivity %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
-        <td><select data-field="identifiability"><option>{{ item.identifiability }}</option>{% for v in ['NONE','INDIRECT','DIRECT'] %}{% if v != item.identifiability %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
-        <td><select data-field="mask_strategy" title="Safe aliases preserve analytical grouping without exposing the original value">
+        <td><select class="form-input form-input-sm" data-field="sensitivity"><option>{{ item.sensitivity }}</option>{% for v in ['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'] %}{% if v != item.sensitivity %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
+        <td><select class="form-input form-input-sm" data-field="identifiability"><option>{{ item.identifiability }}</option>{% for v in ['NONE','INDIRECT','DIRECT'] %}{% if v != item.identifiability %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
+        <td><select class="form-input form-input-sm" data-field="mask_strategy" title="Safe aliases preserve analytical grouping without exposing the original value">
           {% for value,label in [('redact','Strict redaction'),('smart_alias','Safe alias (auto type)'),('safe_alias_name','Safe person alias'),('safe_alias_identifier','Safe identifier alias'),('partial','Show last 4'),('partial_original','Show first character'),('tokenize','Opaque token'),('null','Return null')] %}
           <option value="{{ value }}" {% if item.mask_strategy == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}

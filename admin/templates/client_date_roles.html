@@ -77,10 +77,6 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   border:1px solid var(--border);border-radius:var(--radius-sm)}
 .dr-edit-form .row{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem}
 .dr-edit-form label{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-muted);display:block;margin-bottom:2px}
-.dr-edit-form input{width:100%;padding:4px 7px;font-size:var(--font-sm);font-family:var(--font-mono);
-  border:1px solid var(--border);border-radius:4px;background:var(--surface);
-  color:var(--text);box-sizing:border-box}
-.dr-edit-form input:focus{outline:none;border-color:var(--primary)}
 .dr-edit-form .dr-role-phrases{margin-top:.4rem}
 .dr-edit-form .dr-field-help{display:block;margin-top:3px;font-size:var(--font-2xs);line-height:1.35;
   color:var(--text-muted);font-weight:var(--weight-medium)}
@@ -93,9 +89,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 .dr-panel-head{padding:.75rem .9rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
 .dr-panel-head h2{font-size:var(--font-md);margin:0 0 .15rem}.dr-panel-head p{font-size:var(--font-xs);color:var(--text-muted);margin:0;line-height:1.45}
 .dr-panel-body{padding:.85rem}.dr-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.65rem}
-.dr-field label{display:block;font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft);margin-bottom:.25rem}
-.dr-field input,.dr-field select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:.5rem .6rem;font-size:var(--font-sm)}
-.dr-field input:focus,.dr-field select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.dr-form-grid > .form-group{margin:0}
 .dr-span-2{grid-column:span 2}.dr-check{display:flex;align-items:center;gap:.5rem;font-size:var(--font-sm);color:var(--text-soft)}
 .dr-check input{width:16px;height:16px;accent-color:var(--primary)}
 .dr-binding{padding:.65rem .75rem;border:1px solid var(--border);border-radius:7px;margin-bottom:.55rem;background:var(--surface)}
@@ -219,22 +213,22 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
       <div class="dr-panel-body">
         {% if metrics and (date_roles | selectattr("status","eq","approved") | list) %}
         <form method="post" action="/admin/clients/{{ client.account_id }}/date-contexts/save" class="dr-form-grid">
-          <div class="dr-field">
+          <div class="form-group dr-field">
             <label>Metric</label>
             <select name="metric_id" required data-qb-select>
               <option value="">Select metric</option>
               {% for metric in metrics %}<option value="{{ metric.id }}">{{ metric.name }}</option>{% endfor %}
             </select>
           </div>
-          <div class="dr-field">
+          <div class="form-group dr-field">
             <label>Business context</label>
             <input name="context_name" required placeholder="e.g. Inventory Sales">
           </div>
-          <div class="dr-field dr-span-2">
+          <div class="form-group dr-field dr-span-2">
             <label>Context aliases</label>
             <input name="aliases" placeholder="inventory revenue, stock sales, inventory movement">
           </div>
-          <div class="dr-field dr-span-2">
+          <div class="form-group dr-field dr-span-2">
             <label>Approved date role</label>
             <select name="role_identity" required data-qb-select>
               <option value="">Select date role</option>
@@ -275,21 +269,21 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
       </div>
       <div class="dr-panel-body">
         <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/add" class="dr-form-grid" id="dateRoleAddForm">
-          <div class="dr-field dr-span-2"><label>Source table</label><select name="fact_table" id="drFactTable" required data-qb-select><option value="">Select table</option>{% for table in semantic_tables %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
-          <div class="dr-field dr-span-2"><label>Date column or surrogate key</label><select name="fact_column" id="drFactColumn" required data-qb-select><option value="">Select source table first</option></select></div>
-          <div class="dr-field dr-span-2"><label>Storage type</label><select name="date_key_type" id="drDateKeyType"><option value="surrogate_fk" selected>Surrogate key (join to date dimension)</option><option value="yyyymmdd_integer">YYYYMMDD integer on source table</option><option value="yyyymm_integer">YYYYMM integer (month grain) on source table</option><option value="native_date">Native date on source table</option><option value="timestamp">Date/time on source table</option></select></div>
+          <div class="form-group dr-field dr-span-2"><label>Source table</label><select name="fact_table" id="drFactTable" required data-qb-select><option value="">Select table</option>{% for table in semantic_tables %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="form-group dr-field dr-span-2"><label>Date column or surrogate key</label><select name="fact_column" id="drFactColumn" required data-qb-select><option value="">Select source table first</option></select></div>
+          <div class="form-group dr-field dr-span-2"><label>Storage type</label><select name="date_key_type" id="drDateKeyType"><option value="surrogate_fk" selected>Surrogate key (join to date dimension)</option><option value="yyyymmdd_integer">YYYYMMDD integer on source table</option><option value="yyyymm_integer">YYYYMM integer (month grain) on source table</option><option value="native_date">Native date on source table</option><option value="timestamp">Date/time on source table</option></select></div>
           <p class="dr-mode-help" id="drModeHelp">Choose the date dimension that translates this source key into a calendar date.</p>
           {# A date dimension that the model did not TYPE as a dimension is still the
    table this key joins to. Listing only type == 'dimension' meant a mart whose
    DT_DMS came back untyped could not be selected at all, which is the one
    selection this form exists to make. #}
           {% set date_dimension_names = (date_key_bindings or {}).get('date_dimensions') or [] %}
-          <div class="dr-field dr-span-2 dr-surrogate-only"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable" data-qb-select><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' or table.qualified_name in date_dimension_names %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
-          <div class="dr-field dr-surrogate-only"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey" data-qb-select><option value="">Select dimension</option></select></div>
-          <div class="dr-field dr-surrogate-only"><label>Calendar date value</label><select name="date_value_column" id="drDateValue" data-qb-select><option value="">Select dimension</option></select></div>
-          <div class="dr-field"><label>Role key</label><input name="business_role" required placeholder="e.g. inventory_sales_date"></div>
-          <div class="dr-field"><label>Display name</label><input name="name" placeholder="e.g. Inventory Sales Date"></div>
-          <div class="dr-field dr-span-2"><label>Role phrases</label><input name="synonyms" placeholder="inventory sales date, stock movement date"></div>
+          <div class="form-group dr-field dr-span-2 dr-surrogate-only"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable" data-qb-select><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' or table.qualified_name in date_dimension_names %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="form-group dr-field dr-surrogate-only"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey" data-qb-select><option value="">Select dimension</option></select></div>
+          <div class="form-group dr-field dr-surrogate-only"><label>Calendar date value</label><select name="date_value_column" id="drDateValue" data-qb-select><option value="">Select dimension</option></select></div>
+          <div class="form-group dr-field"><label>Role key</label><input name="business_role" required placeholder="e.g. inventory_sales_date"></div>
+          <div class="form-group dr-field"><label>Display name</label><input name="name" placeholder="e.g. Inventory Sales Date"></div>
+          <div class="form-group dr-field dr-span-2"><label>Role phrases</label><input name="synonyms" placeholder="inventory sales date, stock movement date"></div>
           <div class="dr-span-2"><button class="btn btn-primary" type="submit">Add and approve role</button></div>
         </form>
       </div>
@@ -368,32 +362,32 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                 <div class="row dr-surrogate-edit">
                   <div>
                     <label>Dimension table</label>
-                    <input name="dimension_table" value="{{ dr.dimension_table }}">
+                    <input class="form-input form-input-sm form-input-mono" name="dimension_table" value="{{ dr.dimension_table }}">
                   </div>
                   <div>
                     <label>Dimension key</label>
-                    <input name="dimension_key"   value="{{ dr.dimension_key }}">
+                    <input class="form-input form-input-sm form-input-mono" name="dimension_key"   value="{{ dr.dimension_key }}">
                   </div>
                 </div>
                 <div class="row">
                   <div>
                     <label>Business role key</label>
-                    <input name="business_role"   value="{{ dr.business_role }}">
+                    <input class="form-input form-input-sm form-input-mono" name="business_role"   value="{{ dr.business_role }}">
                   </div>
                   <div class="dr-surrogate-edit">
                     <label>Date value column</label>
-                    <input name="date_value_column" value="{{ dr.date_value_column or '' }}">
+                    <input class="form-input form-input-sm form-input-mono" name="date_value_column" value="{{ dr.date_value_column or '' }}">
                   </div>
                 </div>
                 <label>Physical key type</label>
-                <select name="date_key_type" class="dr-key-type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="yyyymm_integer" {% if dr.date_key_type == 'yyyymm_integer' %}selected{% endif %}>YYYYMM integer (month grain)</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
+                <select name="date_key_type" class="dr-key-type form-input form-input-sm"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="yyyymm_integer" {% if dr.date_key_type == 'yyyymm_integer' %}selected{% endif %}>YYYYMM integer (month grain)</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
                 <input type="hidden" name="name" value="{{ dr.name }}">
                 <div class="dr-role-phrases">
                   <label for="synonyms-approved-{{ loop.index }}">Role phrases</label>
-                  <input id="synonyms-approved-{{ loop.index }}" name="synonyms"
+                  <input id="synonyms-approved-{{ loop.index }}" class="form-input form-input-sm" name="synonyms"
                          value="{{ (dr.synonyms or []) | join(', ') }}"
                          placeholder="invoice date, invoice month, inv dt">
-                  <span class="dr-field-help">Comma-separated phrases users may use for this date role.</span>
+                  <span class="form-group dr-field-help">Comma-separated phrases users may use for this date role.</span>
                 </div>
                 <button type="submit" class="btn btn-success btn-sm" style="margin-top:.35rem">Save edits</button>
               </form>
@@ -408,32 +402,32 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                 <div class="row dr-surrogate-edit">
                   <div>
                     <label>Dimension table</label>
-                    <input name="dimension_table" value="{{ dr.dimension_table }}">
+                    <input class="form-input form-input-sm form-input-mono" name="dimension_table" value="{{ dr.dimension_table }}">
                   </div>
                   <div>
                     <label>Dimension key</label>
-                    <input name="dimension_key"   value="{{ dr.dimension_key }}">
+                    <input class="form-input form-input-sm form-input-mono" name="dimension_key"   value="{{ dr.dimension_key }}">
                   </div>
                 </div>
                 <div class="row">
                   <div>
                     <label>Business role key</label>
-                    <input name="business_role"   value="{{ dr.business_role }}">
+                    <input class="form-input form-input-sm form-input-mono" name="business_role"   value="{{ dr.business_role }}">
                   </div>
                   <div class="dr-surrogate-edit">
                     <label>Date value column</label>
-                    <input name="date_value_column" value="{{ dr.date_value_column or '' }}">
+                    <input class="form-input form-input-sm form-input-mono" name="date_value_column" value="{{ dr.date_value_column or '' }}">
                   </div>
                 </div>
                 <label>Physical key type</label>
-                <select name="date_key_type" class="dr-key-type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="yyyymm_integer" {% if dr.date_key_type == 'yyyymm_integer' %}selected{% endif %}>YYYYMM integer (month grain)</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
+                <select name="date_key_type" class="dr-key-type form-input form-input-sm"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="yyyymm_integer" {% if dr.date_key_type == 'yyyymm_integer' %}selected{% endif %}>YYYYMM integer (month grain)</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
                 <input type="hidden" name="name" value="{{ dr.name }}">
                 <div class="dr-role-phrases">
                   <label for="synonyms-generated-{{ loop.index }}">Role phrases</label>
-                  <input id="synonyms-generated-{{ loop.index }}" name="synonyms"
+                  <input id="synonyms-generated-{{ loop.index }}" class="form-input form-input-sm" name="synonyms"
                          value="{{ (dr.synonyms or []) | join(', ') }}"
                          placeholder="invoice date, invoice month, inv dt">
-                  <span class="dr-field-help">Comma-separated phrases users may use for this date role.</span>
+                  <span class="form-group dr-field-help">Comma-separated phrases users may use for this date role.</span>
                 </div>
                 <button type="submit" class="btn btn-success btn-sm" style="margin-top:.35rem">Approve</button>
               </form>

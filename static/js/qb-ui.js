@@ -50,6 +50,9 @@
      puts the choice back. Options a script replaces, a value it
      sets and the select's disabled state are followed.
 
+   <button data-qb-reveal="id [id]"> shows or hides those password
+   fields (.input-reveal-wrap in base.css).
+
    Submitting a form (both consoles, every form but
    data-no-loading) marks the pressed button aria-busy, which .btn
    draws as a spinner, and holds a second submit until the page
@@ -598,6 +601,24 @@
   }
 
   global.qbSelect = qbSelect;
+
+  /* ── Show a password ───────────────────────────────────── */
+  // <button data-qb-reveal="id [id]"> shows or hides the named password
+  // fields together (a new password and its confirmation), and says which.
+  doc.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest ? e.target.closest('[data-qb-reveal]') : null;
+    if (!btn) return;
+    var inputs = String(btn.getAttribute('data-qb-reveal') || '').split(/[\s,]+/)
+      .map(function (id) { return id ? doc.getElementById(id) : null; })
+      .filter(function (input) { return input; });
+    if (!inputs.length) return;
+    var show = inputs[0].type === 'password';
+    inputs.forEach(function (input) { input.type = show ? 'text' : 'password'; });
+    btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+    btn.setAttribute('aria-label', show ? label('ui.auth.hide_password', 'Hide password')
+                                        : label('ui.auth.show_password', 'Show password'));
+    btn.innerHTML = icon(show ? 'eye-off' : 'eye', 16);
+  });
 
   /* ── A submitted form's button says it is working ─────────── */
   var BUSY_MS = 15000;

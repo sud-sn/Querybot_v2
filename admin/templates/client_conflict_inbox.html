@@ -34,8 +34,7 @@
 .ci-questions{margin:0;padding-left:1.1rem;font-size:var(--font-sm);color:var(--text-soft)}
 .ci-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.7rem 1rem;
   border-top:1px solid var(--border);background:var(--surface-2)}
-.ci-actions input[type=text]{flex:1;min-width:180px;padding:5px 9px;border:1px solid var(--border);
-  border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-sm)}
+.ci-actions .form-input{flex:1;min-width:180px;width:auto}
 </style>
 {% endblock %}
 {% block content %}
@@ -146,7 +145,7 @@
     </div>
     {% if status == 'open' %}
     <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/conflicts/{{ c.conflict_id }}/resolve" class="ci-actions">
-      <input type="text" name="note" placeholder="Optional note (why you're resolving this)">
+      <input type="text" class="form-input form-input-sm" name="note" placeholder="Optional note (why you're resolving this)">
       <button type="submit" name="action" value="acknowledge" class="btn btn-secondary btn-xs">Acknowledge</button>
       <button type="submit" name="action" value="resolve" class="btn btn-primary btn-xs">Mark resolved</button>
       <button type="submit" name="action" value="dismiss" class="btn btn-ghost btn-xs">Dismiss</button>

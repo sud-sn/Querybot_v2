@@ -198,7 +198,7 @@
               <form method="post"
                     action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
                     class="inline-form" data-no-loading>
-                <select name="group_id" class="select-xs" onchange="this.form.submit()">
+                <select name="group_id" class="form-input form-input-sm select-xs" onchange="this.form.submit()">
                   <option value="">no group</option>
                   {% for g in groups %}
                   <option value="{{ g.id }}" {% if g.id == u.group_id %}selected{% endif %}>{{ g.name }}</option>
@@ -391,17 +391,7 @@
 }
 /* ── Tiny inline select ── */
 .inline-form { display: inline-flex; }
-.select-xs {
-  font-size: var(--font-xs);
-  padding: 3px 6px;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-  max-width: 120px;
-}
-.select-xs:focus { border-color: var(--primary); outline: none; }
+.select-xs { width: auto; }
 /* ── Form divider ── */
 .form-divider {
   display: flex;

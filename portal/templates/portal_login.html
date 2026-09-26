@@ -33,7 +33,7 @@
           <div class="input-reveal-wrap">
             <input id="login-password" type="password" name="password" required autocomplete="current-password"
               placeholder="••••••••">
-            <button type="button" class="input-reveal-btn" id="login-pw-reveal"
+            <button type="button" class="input-reveal-btn" id="login-pw-reveal" data-qb-reveal="login-password" aria-pressed="false"
               aria-label="{{ t('ui.auth.show_password') }}" title="{{ t('ui.auth.toggle_password') }}">
               {{ ic("eye", 15) }}
             </button>
@@ -57,27 +57,6 @@
 .login-mono-input{font-family:var(--font-mono);letter-spacing:.02em;font-size:var(--font-base)}
 .login-submit{width:100%;justify-content:center;padding:10px;margin-top:.25rem}
 .login-footer{text-align:center;font-size:var(--font-sm);color:var(--text-muted);margin-top:1rem}
-/* Password reveal */
-.input-reveal-wrap{position:relative}
-.input-reveal-wrap input{padding-right:38px}
-.input-reveal-btn{position:absolute;right:1px;top:1px;bottom:1px;width:36px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:0 var(--radius) var(--radius) 0;transition:color .15s,background .15s}
-.input-reveal-btn:hover{color:var(--text);background:var(--surface-2)}
 </style>
 
-<script>
-(function(){
-  const btn   = document.getElementById('login-pw-reveal');
-  const input = document.getElementById('login-password');
-  if (!btn || !input) return;
-  const EYE = qbIcon('eye', 15);
-  const EYE_OFF = qbIcon('eye-off', 15);
-  btn.addEventListener('click', function(){
-    const show = input.type === 'password';
-    input.type  = show ? 'text' : 'password';
-    btn.innerHTML = show ? EYE_OFF : EYE;
-    btn.setAttribute('aria-label',
-      window.qbT(show ? 'ui.auth.hide_password' : 'ui.auth.show_password'));
-  });
-})();
-</script>
 {% endblock %}

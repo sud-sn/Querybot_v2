@@ -48,30 +48,23 @@
 .review-row.open{display:table-row}
 .review-panel{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;padding:.9rem}
 .review-panel label{display:block;font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft);margin-bottom:.35rem}
-.review-panel textarea{width:100%;min-height:84px;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);padding:.7rem;resize:vertical}
-.review-panel textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(13,115,119,.12);outline:none}
 .review-full{grid-column:1/-1}
 .review-actions{grid-column:1/-1;display:flex;justify-content:space-between;gap:.8rem;align-items:center;flex-wrap:wrap}
 .review-note{font-size:var(--font-xs);color:var(--text-muted)}
 .term-chips{display:flex;flex-wrap:wrap;gap:.3rem;max-width:220px}
 .term-chip{display:inline-flex;border-radius:999px;padding:3px 9px;font-size:var(--font-xs);font-weight:var(--weight-bold);background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);color:var(--primary);white-space:nowrap}
 .term-chips-empty{font-size:var(--font-xs);color:var(--text-muted);font-style:italic}
-.review-panel input[type="text"]{width:100%;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);padding:.7rem}
-.review-panel input[type="text"]:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(13,115,119,.12);outline:none}
 .review-panel .review-hint{font-size:var(--font-2xs);color:var(--text-muted);margin-top:.3rem}
 @media(max-width:900px){.semantic-hero{flex-direction:column}.semantic-grid{grid-template-columns:1fr}.table-list{position:static}.review-panel{grid-template-columns:1fr}.field-table{display:block;overflow-x:auto}}
 /* ── Semantic layer search ── */
 .sl-search-wrap{position:relative;margin-bottom:1rem}
-.sl-search-wrap svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none;flex-shrink:0}
-.sl-search{width:100%;padding:.65rem .85rem .65rem 2.25rem;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:var(--font-base);font-weight:var(--weight-medium);transition:border-color .15s,box-shadow .15s}
-.sl-search:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(13,115,119,.12);outline:none}
-.sl-search::placeholder{color:var(--text-muted)}
+.sl-search{font-size:var(--font-base)}
 .sl-search-meta{display:flex;align-items:center;gap:.7rem;margin-bottom:.75rem;min-height:20px}
 .sl-count{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-muted)}
 .sl-count.has-results{color:var(--primary)}
 .sl-no-results{display:none;padding:3rem;text-align:center;color:var(--text-muted);font-size:var(--font-base)}
 .sl-no-results.visible{display:block}
-.sl-match mark{background:rgba(13,115,119,.18);color:var(--text);border-radius:2px;padding:0 2px}
+.sl-match mark{background:var(--state-selected);color:var(--text);border-radius:2px;padding:0 2px}
 </style>
 {% endblock %}
 {% block content %}
@@ -109,9 +102,9 @@
   {% endfor %}
 </nav>
 
-<div class="sl-search-wrap">
+<div class="sl-search-wrap input-icon-wrap">
   {{ ic("search", 15) }}
-  <input type="search" id="slSearch" class="sl-search" placeholder="{{ t('ui.kb.search') }}" autocomplete="off" spellcheck="false">
+  <input type="search" id="slSearch" class="form-input sl-search" placeholder="{{ t('ui.kb.search') }}" autocomplete="off" spellcheck="false">
 </div>
 <div class="sl-search-meta">
   <span class="sl-count" id="slCount"></span>
@@ -199,20 +192,20 @@
                   <input type="hidden" name="column_name" value="{{ field.column }}">
                   <div>
                     <label>{{ t('ui.kb.suggested_meaning') }}</label>
-                    <textarea name="suggested_meaning" placeholder="{{ t('ui.kb.suggested_meaning_placeholder') }}">{{ field.meaning }}</textarea>
+                    <textarea class="form-input" name="suggested_meaning" placeholder="{{ t('ui.kb.suggested_meaning_placeholder') }}">{{ field.meaning }}</textarea>
                   </div>
                   <div>
                     <label>{{ t('ui.kb.suggested_use') }}</label>
-                    <textarea name="suggested_use_case" placeholder="{{ t('ui.kb.suggested_use_placeholder') }}">{{ field.use_case }}</textarea>
+                    <textarea class="form-input" name="suggested_use_case" placeholder="{{ t('ui.kb.suggested_use_placeholder') }}">{{ field.use_case }}</textarea>
                   </div>
                   <div class="review-full">
                     <label>{{ t('ui.kb.col.terms') }}</label>
-                    <input type="text" name="suggested_synonyms" placeholder="{{ t('ui.kb.terms_placeholder') }}" value="{{ field.synonyms|join(', ') if field.synonyms else '' }}">
+                    <input type="text" class="form-input" name="suggested_synonyms" placeholder="{{ t('ui.kb.terms_placeholder') }}" value="{{ field.synonyms|join(', ') if field.synonyms else '' }}">
                     <div class="review-hint">{{ t('ui.kb.terms_hint') }}</div>
                   </div>
                   <div class="review-full">
                     <label>{{ t('ui.kb.comment') }}</label>
-                    <textarea name="user_comment" placeholder="{{ t('ui.kb.comment_placeholder') }}"></textarea>
+                    <textarea class="form-input" name="user_comment" placeholder="{{ t('ui.kb.comment_placeholder') }}"></textarea>
                   </div>
                   <div class="review-actions">
                     <span class="review-note">{{ t('ui.kb.approval_note') }}</span>

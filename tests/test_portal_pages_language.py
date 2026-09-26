@@ -12,6 +12,7 @@ small pages is not a bad translation -- it is one page nobody remembered.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -90,10 +91,29 @@ class TestTheSignInPage:
 
     def test_the_reveal_button_relabels_itself_in_french(self):
         """The label is swapped in JavaScript, so translating the markup alone
-        leaves it English the moment anyone clicks it."""
+        leaves it English the moment anyone clicks it. The French page's own
+        button, pressed through the shared reveal (static/js/qb-ui.js) with
+        the page's French catalogue, says "Masquer"."""
+        import json
+
+        import dukpy
+
+        from tests.js_fakedom import FAKE_DOM
+
         markup = _page("portal_login.html", "fr")
-        assert "window.qbT(show ? 'ui.auth.hide_password' : 'ui.auth.show_password')" in markup
-        assert i18n.t("ui.auth.hide_password", lang="fr") == "Masquer le mot de passe"
+        button = re.search(r'<button[^>]*data-qb-reveal="([^"]+)"[^>]*aria-label="([^"]*)"', markup)
+        assert button, "no reveal button on the sign-in page"
+        names, label_before = button.group(1), button.group(2)
+        catalogue = {k: i18n.t(k, lang="fr") for k in ("ui.auth.show_password", "ui.auth.hide_password")}
+        ui = (Path(__file__).resolve().parents[1] / "static" / "js" / "qb-ui.js").read_text(encoding="utf-8")
+        after = json.loads(dukpy.evaljs(
+            FAKE_DOM + f"window.qbT = function (k) {{ return {json.dumps(catalogue)}[k] || k; }};\n" + ui + f"""
+            {json.dumps(names.split())}.forEach(function (id) {{ make('input', {{'id': id}}).type = 'password'; }});
+            var btn = make('button', {{'data-qb-reveal': {json.dumps(names)}}});
+            (docListeners.click || []).forEach(function (f) {{ f({{target: btn}}); }});
+            JSON.stringify(btn.getAttribute('aria-label'));"""))
+        assert label_before == "Afficher le mot de passe"
+        assert after == "Masquer le mot de passe"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

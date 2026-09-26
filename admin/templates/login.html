@@ -29,8 +29,8 @@
             <input type="password" id="password" name="password"
                    autofocus required placeholder="Enter your admin password"
                    autocomplete="current-password">
-            <button type="button" class="input-reveal-btn" aria-label="Show password"
-                    onclick="togglePwd(this)">{{ ic("eye", 16) }}</button>
+            <button type="button" class="input-reveal-btn" data-qb-reveal="password" aria-pressed="false"
+                    aria-label="Show password">{{ ic("eye", 16) }}</button>
           </div>
         </div>
         <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">
@@ -40,19 +40,6 @@
     </div>
   </div>
 </div>
-
-<script>
-function togglePwd(btn){
-  var inp = document.getElementById('password');
-  var isText = inp.type === 'text';
-  inp.type = isText ? 'password' : 'text';
-  btn.setAttribute('aria-label', isText ? 'Show password' : 'Hide password');
-  /* swap icon inline */
-  btn.innerHTML = isText
-    ? qbIcon('eye', 16)
-    : qbIcon('eye-off', 16);
-}
-</script>
 
 <style>
 .auth-card-wrap {
@@ -113,29 +100,5 @@ function togglePwd(btn){
   color: var(--text-soft);
 }
 
-/* Password reveal wrapper */
-.input-reveal-wrap {
-  position: relative;
-}
-.input-reveal-wrap input {
-  padding-right: 38px;
-}
-.input-reveal-btn {
-  position: absolute;
-  right: 1px;
-  top: 1px;
-  bottom: 1px;
-  width: 36px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  transition: color .15s, background .15s;
-}
-.input-reveal-btn:hover { color: var(--text); background: var(--surface-2); }
 </style>
 {% endblock %}

@@ -33,10 +33,7 @@
 .approve-section{border-left:3px solid color-mix(in srgb, var(--success) 40%, transparent);padding-left:.75rem}
 .reject-section{border-left:3px solid color-mix(in srgb, var(--danger) 40%, transparent);padding-left:.75rem}
 .detail-section-label{font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem}
-.group-select{font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.4rem}
-.group-select:focus{outline:none;border-color:var(--blue,#0d7377);box-shadow:0 0 0 3px rgba(13,115,119,.08)}
-.detail-note-input{font-size:var(--font-sm);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.5rem}
-.detail-note-input:focus{outline:none;border-color:var(--blue,#0d7377);box-shadow:0 0 0 3px rgba(13,115,119,.08)}
+.group-select,.detail-note-input{margin-bottom:.45rem}
 .field-label{font-size:var(--font-xs);color:var(--text-muted);display:block;margin-bottom:.25rem}
 </style>
 {% endblock %}
@@ -134,14 +131,14 @@
               <label class="field-label">
                 Assign to group <span style="color:var(--danger)" aria-hidden="true">*</span>
               </label>
-              <select name="group_id" class="group-select" required>
+              <select name="group_id" class="form-input form-input-sm group-select" required>
                 <option value="">— select group —</option>
                 {% for g in groups %}
                 <option value="{{ g.id }}">{{ g.name }}</option>
                 {% endfor %}
               </select>
               <label class="field-label">Note (optional)</label>
-              <input type="text" name="reviewer_note" class="detail-note-input"
+              <input type="text" name="reviewer_note" class="form-input form-input-sm detail-note-input"
                 placeholder="e.g. Sales team member">
               <button type="submit" class="btn btn-soft-success btn-xs">Approve access</button>
             </form>
@@ -153,7 +150,7 @@
             <form method="post"
               action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/reject">
               <label class="field-label">Reason (optional — sent to user)</label>
-              <input type="text" name="reviewer_note" class="detail-note-input"
+              <input type="text" name="reviewer_note" class="form-input form-input-sm detail-note-input"
                 placeholder="e.g. Not an active employee">
               <button type="submit" class="btn btn-soft-danger btn-xs">Reject request</button>
             </form>
@@ -200,7 +197,7 @@
           <div style="display:flex;gap:0.5rem">
             <!-- Allow re-approving a rejected user -->
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/approve" style="display:flex;gap:0.5rem">
-              <select name="group_id" class="group-select" required style="margin:0;min-width:140px">
+              <select name="group_id" class="form-input form-input-sm group-select" required style="margin:0;min-width:140px">
                 <option value="">— select group —</option>
                 {% for g in groups %}
                 <option value="{{ g.id }}">{{ g.name }}</option>

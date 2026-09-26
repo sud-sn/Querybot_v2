@@ -154,7 +154,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
       <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/compiler/mode"
             id="compiler-mode-form" style="margin-top:1rem;padding-top:.85rem;border-top:1px solid var(--border);display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
         <label for="compiler-mode-select" style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-muted)">Enforcement mode</label>
-        <select name="mode" id="compiler-mode-select" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-sm)">
+        <select name="mode" id="compiler-mode-select" class="form-input form-input-sm" style="width:auto">
           <option value="off" {% if compiler_state.mode == 'off' %}selected{% endif %}>Off — record only, no compiler checks surfaced</option>
           <option value="shadow" {% if not compiler_state.mode or compiler_state.mode == 'shadow' %}selected{% endif %}>Shadow — record conflicts, always publish anyway (default)</option>
           <option value="enforce" {% if compiler_state.mode == 'enforce' %}selected{% endif %}>Enforce — reject a compile with any open ERROR conflict</option>

@@ -23,9 +23,9 @@
 {# ── Search + filter bar ── #}
 <form method="get" action="/admin/clients" id="clientSearchForm" data-no-loading>
   <div class="clients-search-bar">
-    <div class="clients-search-input-wrap">
-      <span class="clients-search-icon">{{ ic("search", 16) }}</span>
-      <input type="text" name="q" id="clientSearch" value="{{ search }}"
+    <div class="clients-search-input-wrap input-icon-wrap">
+      {{ ic("search", 16) }}
+      <input type="text" class="form-input" name="q" id="clientSearch" value="{{ search }}"
              placeholder="Search by name or account ID…"
              autocomplete="off" spellcheck="false">
       {% if search %}
@@ -150,34 +150,8 @@
   align-items: center;
   margin-bottom: .5rem;
 }
-.clients-search-input-wrap {
-  flex: 1;
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.clients-search-icon {
-  position: absolute;
-  left: 10px;
-  color: var(--text-muted);
-  pointer-events: none;
-  display: flex;
-}
-.clients-search-input-wrap input {
-  width: 100%;
-  padding: 8px 36px 8px 34px;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius);
-  font-size: var(--font-base);
-  color: var(--text);
-  background: var(--surface);
-  outline: none;
-  transition: border-color .15s, box-shadow .15s;
-}
-.clients-search-input-wrap input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
-}
+.clients-search-input-wrap { flex: 1; }
+.clients-search-input-wrap > .form-input { padding-right: 36px; font-size: var(--font-base); }
 .clients-search-clear {
   position: absolute;
   right: 8px;

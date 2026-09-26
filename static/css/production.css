@@ -31,14 +31,6 @@ body { background: var(--bg); letter-spacing: 0; }
 .chart-card-header { background: var(--surface); }
 
 
-.form-group input:not([type="checkbox"]):not([type="radio"]),
-.form-group select,
-.form-group textarea,
-.input-compact,
-.select-compact { border-width: 1px; }
-.form-group input:not([type="checkbox"]):not([type="radio"]),
-.form-group select { min-height: 40px; }
-.form-group label { letter-spacing: 0; }
 
 .alert { border-radius: var(--radius); box-shadow: none; }
 .badge,

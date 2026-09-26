@@ -21,7 +21,7 @@
 .cv-version{font-family:var(--font-mono);font-size:var(--font-sm)}
 .cv-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow)}
 .cv-diff-bar{display:flex;align-items:center;gap:.6rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);flex-wrap:wrap}
-.cv-diff-bar select{padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-sm)}
+.cv-diff-bar .form-input{width:auto}
 .cv-diff-body{padding:.85rem 1rem}
 .cv-diff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.6rem}
 .cv-diff-cell{border:1px solid var(--border);border-radius:8px;padding:.6rem .7rem}
@@ -44,11 +44,11 @@
   <div class="cv-card">
     <div class="cv-diff-bar">
       <strong style="font-size:var(--font-base)">Diff two versions</strong>
-      <select id="cv-base">
+      <select id="cv-base" class="form-input form-input-sm">
         {% for v in versions %}<option value="{{ v.version }}" {{ 'selected' if loop.index0 == 1 else '' }}>{{ v.version }} ({{ v.status }})</option>{% endfor %}
       </select>
       <span style="color:var(--text-muted);font-size:var(--font-sm)">vs</span>
-      <select id="cv-compare">
+      <select id="cv-compare" class="form-input form-input-sm">
         {% for v in versions %}<option value="{{ v.version }}" {{ 'selected' if loop.first else '' }}>{{ v.version }} ({{ v.status }})</option>{% endfor %}
       </select>
       <button type="button" id="cv-diff-run" class="btn btn-primary btn-xs">Compare</button>
