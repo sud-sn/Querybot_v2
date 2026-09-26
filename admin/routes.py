@@ -4766,7 +4766,7 @@ def _sync_relationship_to_model(account_id: str, rel: dict, *, remove: bool = Fa
             kb_dir=kb_dir, from_table=from_table, to_table=to_table,
             from_column=from_column, to_column=to_column,
             join_type=_allowed_join_type(rel.get("join_type")),
-            display_column=str(rel.get("label") or ""), status="approved",
+            label=str(rel.get("label") or ""), status="approved",
         )
     except Exception as exc:
         log.warning("Semantic model not updated for a join of %s: %s", account_id, exc)
@@ -6102,7 +6102,7 @@ async def graph_accept_change_proposal(
                         from_column=str(payload.get("from_column") or ""),
                         to_column=str(payload.get("to_column") or ""),
                         join_type=str(payload.get("join_type") or "LEFT"),
-                        display_column=str(payload.get("label") or ""),
+                        label=str(payload.get("label") or ""),
                         status="approved",
                     )
         except Exception as exc:

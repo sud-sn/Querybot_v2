@@ -1278,9 +1278,12 @@ def preserve_approvals(
         old_r = old_rels.get(rel_id)
         if not old_r or old_r.get("status") != "approved":
             continue
-        for k in ("status", "confidence", "join_type", "display_column", "code_column"):
+        for k in ("status", "confidence", "join_type", "code_column"):
             if k in old_r:
                 new_r[k] = old_r[k]
+        kept_display = relationship_display_column(new_model, old_r)
+        if kept_display:
+            new_r["display_column"] = kept_display
 
     # Top-level date roles are a projection of the per-table records. Rebuild
     # it after the approval overlay so edited and manually-added roles survive.
@@ -2130,8 +2133,9 @@ def build_runtime_semantic_context(
         if not condition_text:
             continue
         line = f"- Relationship '{rel.get('business_role')}': {rel.get('join_type') or 'LEFT'} JOIN {to_table} ON {condition_text}"
-        if rel.get("display_column"):
-            line += f"; prefer display {to_table}.{rel.get('display_column')}"
+        display = relationship_display_column(model, rel)
+        if display:
+            line += f"; prefer display {to_table}.{display}"
         scored_lines.append((score + 5, line))
 
     if not scored_lines:
@@ -3967,6 +3971,33 @@ def patch_metric_approval(
     return True
 
 
+def _model_table_columns(model: dict, table_ref: str) -> set[str]:
+    """Upper-case column names of the model table ``table_ref`` names, matched
+    on its bare name -- relationships spell tables with and without schema."""
+    bare = str(table_ref or "").split(".")[-1].strip('[]"`').upper()
+    for table in model.get("tables") or []:
+        if str(table.get("table") or "").strip('[]"`').upper() == bare:
+            return {str(field.get("column") or "").upper() for field in table.get("fields") or []}
+    return set()
+
+
+def relationship_display_column(model: dict, rel: dict) -> str:
+    """The relationship's display column if it is a column of the table it
+    joins to, else "".
+
+    The join graph's label for a relationship -- a verb, "places", "bought by",
+    a date role's name -- was written into display_column whenever an admin
+    confirmed the join, kept through every rebuild, and printed into the SQL
+    prompt as "prefer display CUSTOMER_DIM.bought by": a column that does not
+    exist, handed to the model as a governed instruction. Read through this,
+    a value that names no column of the joined table is not one.
+    """
+    column = str(rel.get("display_column") or "").strip()
+    if column and column.upper() in _model_table_columns(model, str(rel.get("to_table") or "")):
+        return column
+    return ""
+
+
 def patch_relationship(
     *,
     kb_dir: str,
@@ -3977,6 +4008,7 @@ def patch_relationship(
     join_type: str = "LEFT",
     display_column: str = "",
     status: str = "approved",
+    label: str = "",
 ) -> bool:
     """Patch or insert an approved relationship into the structured semantic model.
 
@@ -3984,6 +4016,10 @@ def patch_relationship(
     Finds the matching relationship by *from_table + to_table + from_column +
     to_column* and updates its ``join_type``, ``display_column``, ``status``,
     and ``confidence`` to reflect admin intent.
+
+    ``label`` is the graph's name for the join -- a verb or a role, never a
+    column -- and becomes one of the phrases the join is used for.
+    ``display_column`` is kept only when it is a column of ``to_table``.
 
     If no matching relationship is found, a new entry is inserted so the model
     tracks relationships the admin has explicitly confirmed even when the
@@ -4003,6 +4039,10 @@ def patch_relationship(
     if not from_table_u or not to_table_u:
         return False
 
+    if display_column and display_column.upper() not in _model_table_columns(model, to_table):
+        display_column = ""
+    phrases = [phrase for phrase in (str(label or "").strip(), display_column) if phrase]
+
     changed = False
     for rel in model.get("relationships", []) or []:
         if str(rel.get("from_table") or "").upper() != from_table_u:
@@ -4021,8 +4061,11 @@ def patch_relationship(
         rel["join_type"] = join_type or rel.get("join_type", "LEFT")
         if display_column:
             rel["display_column"] = display_column
-            if display_column not in (rel.get("use_when") or []):
-                rel.setdefault("use_when", []).append(display_column)
+        elif not relationship_display_column(model, rel):
+            rel["display_column"] = ""
+        for phrase in phrases:
+            if phrase not in (rel.get("use_when") or []):
+                rel.setdefault("use_when", []).append(phrase)
         rel["status"] = status
         rel["confidence"] = 100 if status == "approved" else rel.get("confidence", 80)
         changed = True
@@ -4041,7 +4084,7 @@ def patch_relationship(
             "conditions": [{"from_column": from_column, "to_column": to_column}],
             "display_column": display_column,
             "code_column": "",
-            "use_when": [w for w in [role.replace("_", " "), display_column] if w],
+            "use_when": [w for w in [role.replace("_", " "), *phrases] if w],
             "status": status,
             "confidence": 100 if status == "approved" else 80,
         })
