@@ -115,21 +115,21 @@ def test_the_neutral_ramp_steps_evenly(tok):
     )
 
 
-def test_the_neutral_ramp_keeps_its_green_cast_at_every_step(tok):
-    """'Green-cast, not slate' is the identity argument. Without a test it is a
-    comment in a CSS file, and the first person to add a grey will reach for
-    slate."""
+def test_the_neutral_ramp_keeps_its_cool_cast_at_every_step(tok):
+    """The greys carry the navy's cast -- blue over green over red -- at every
+    step. Without a test it is a comment in a CSS file, and the first person to
+    add a grey will reach for a warm or a green one."""
     for n in (50, 100, 200, 300, 400, 500, 600, 700, 800, 900):
         r, g, b = _rgb(tok[f"--gray-{n}"])
-        assert g >= r and g >= b, (
-            f"--gray-{n} has lost the green cast (r={r} g={g} b={b})"
+        assert b >= g >= r, (
+            f"--gray-{n} has lost the cool cast (r={r} g={g} b={b})"
         )
 
 
 def test_the_brand_ramp_has_no_chroma_break(tok):
-    """Chroma jumped 50.6 to 77.8 between teal-400 and teal-500, which reads as
-    two ramps stitched together."""
-    ramp = [tok[f"--teal-{n}"] for n in (50, 100, 200, 300, 400, 500, 600, 700, 800, 900)]
+    """Chroma once jumped 50.6 to 77.8 between two adjacent brand steps, which
+    reads as two ramps stitched together."""
+    ramp = [tok[f"--accent-{n}"] for n in (50, 100, 200, 300, 400, 500, 600, 700, 800, 900)]
     sats = [_hls(h)[2] * 100 for h in ramp]
     jumps = [abs(a - b) for a, b in zip(sats, sats[1:])]
     assert max(jumps) < 30, (
@@ -138,12 +138,12 @@ def test_the_brand_ramp_has_no_chroma_break(tok):
 
 
 def test_the_brand_ramp_is_brand_all_the_way_down(tok):
-    """--teal-800 and --teal-900 used to be near-neutral darks: they existed to
-    serve the dark theme, not the brand."""
+    """The dark end of the brand ramp once held near-neutral darks that existed
+    to serve a dark theme, not the brand."""
     for n in (700, 800, 900):
-        sat = _hls(tok[f"--teal-{n}"])[2] * 100
+        sat = _hls(tok[f"--accent-{n}"])[2] * 100
         assert sat > 25, (
-            f"--teal-{n} has saturation {sat:.1f} and is a neutral, not a brand step"
+            f"--accent-{n} has saturation {sat:.1f} and is a neutral, not a brand step"
         )
 
 
@@ -189,7 +189,7 @@ def test_no_dark_surface_survives_in_a_light_only_product(tok):
               "--text-strong", "--text", "--text-secondary", "--text-muted",
               "--text-faint", "--line-control", "--border-strong"}
     for name, value in tok.items():
-        if name in CHROME or name.startswith(("--gray-", "--teal-", "--syntax-",
+        if name in CHROME or name.startswith(("--gray-", "--accent-", "--syntax-",
                                               "--entity-", "--primary", "--blue",
                                               "--success", "--danger", "--warning",
                                               "--info", "--green", "--red",

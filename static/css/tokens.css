@@ -1,60 +1,40 @@
 /* ============================================================
    QueryBot — Design Tokens
    ------------------------------------------------------------
-   Identity: verdigris on green-grey paper, IBM Plex Sans/Mono.
+   Identity: navy and azure, on cool blue-grey paper.
 
-   WHY NOT THE OLD PALETTE. Every value in the previous file was
-   a stock Tailwind default — #2563EB (blue-600), #3B82F6
-   (blue-500), #DBEAFE (blue-100), #EFF6FF (blue-50), #6D28D9
-   (violet-700), and the slate grey ramp verbatim. That set is
-   what code-generating tools emit by default, so it is the
-   single most common look in AI-era software; a product wearing
-   it cannot read as its own thing. The --teal-* ramp also held
-   blue values under a comment calling it "Indigo", so the names
-   were wrong twice over.
+   The approved direction ("A · Navy"): a deep navy navigation
+   shell, azure blue for actions and links, and one blue-to-cyan
+   gradient reserved for the brand mark and the primary action.
+   Colour in the content area belongs to the data -- chart
+   series, status, deltas -- so the chrome stays in navy, blue
+   and cool greys.
 
-   WHY VERDIGRIS (#0E7C6B). The lanes in data tooling are taken:
-   blue by every default and by Metabase/Snowflake, purple by
-   Datadog and now by all of AI, mint-neon by Supabase and Neon,
-   yellow by ClickHouse and Power BI, orange-red by dbt/Grafana/
-   Databricks, terracotta by Claude. Deep blue-green is open, it
-   reads as instrument and ledger rather than as startup, and it
-   is dark enough to hold 4.5:1 on paper. It is deliberately not
-   the mint-green of database infra: much darker, much less
-   saturated.
-
-   Note on green: red and green are reserved for negative and
-   positive deltas, so the brand hue is kept clearly teal (hue
-   ~175) while the positive delta sits at hue ~145, and deltas
-   always carry a sign and an arrow rather than leaning on hue
-   alone.
-
-   NEUTRALS are biased a few points toward green rather than
-   left pure or taken from slate — slate's blue cast is itself a
-   tell. They are also kept greyer and cooler than a warm ivory
-   paper, which is Anthropic's territory.
+   Every name the product already used is kept, so re-skinning
+   happens here and nowhere else. The one rename: the brand ramp
+   is --accent-50..900 (it was --teal-*, which had stopped
+   describing it). The structure is tested, not the taste
+   (tests/test_palette_structure.py): the grounds are ordered,
+   body ink clears 7:1 and secondary ink 4.5:1 on every ground,
+   a control edge clears 3:1, the ramps step evenly, and hover
+   and selection are told apart by chroma, not only brightness.
    ============================================================ */
 
 :root {
   /* ── One theme ──────────────────────────────────────────────
-     The product is light only. This declaration is not cosmetic:
-     without it a visitor whose OS is set to dark gets dark
-     scrollbars, dark form controls and a dark autofill wash on a
-     light page, because the browser still believes it may render
-     UA widgets either way. Pinning it here is what makes the
-     removal of the dark theme complete rather than partial. */
+     The product is light only. Without this a visitor whose OS
+     is set to dark gets dark scrollbars, form controls and an
+     autofill wash on a light page. The values below are solved
+     so a dark theme can be derived from the same names later. */
   color-scheme: light;
 
   /* ── Type families ──────────────────────────────────────────
-     These are the tokens the old file was missing entirely,
-     which is why seven different mono stacks had accumulated
-     across the stylesheets. See fonts.css for the @font-face
-     rules and why the previous 'Inter' declaration never loaded. */
+     Unchanged here; the typeface moves to Inter in its own step. */
   --font-ui:      'Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-display: 'Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
   --font-mono:    'Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
-  /* Spacing */
+  /* Spacing: a 4px scale. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -63,19 +43,11 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  /* ── Type scale ─────────────────────────────────────────────
-     Re-keyed to what the product actually uses. 13px was the
-     most common size in the stylesheets and was not a token at
-     all, so most declarations had no token to reach for and
-     went raw. --font-xl was 20px and consumed by nothing. */
-  /* The caption tier: badges, eyebrows, table meta. Used ~124 times in the
-     templates with no token to reach for, which is why those declarations
-     went raw and why a sweep to the scale could not start -- without this
-     rung, "snap to the nearest token" meant enlarging every caption. */
+  /* ── Type scale ── (retuned with the typeface) */
   --font-2xs:  10px;
   --font-xs:   11px;
   --font-sm:   12px;
-  --font-base: 13px;   /* de-facto body size */
+  --font-base: 13px;
   --font-md:   14px;
   --font-lg:   16px;
   --font-xl:   18px;
@@ -85,221 +57,183 @@
   --line-normal:  1.5;
   --line-relaxed: 1.7;
 
-  /* ── Radii ──────────────────────────────────────────────────
-     Squarer than before (was 7/5/9). A uniform generous radius
-     on every surface is the other half of the generated-UI look;
-     a tighter radius reads as instrument. */
-  --radius:    5px;
-  --radius-sm: 3px;
-  --radius-lg: 8px;
+  /* ── Radii ── */
+  --radius:    6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
   --radius-pill: 999px;
 
   /* ── Brand ramp ─────────────────────────────────────────────
-     Ten rungs on the verdigris hue. The --teal-* names are the
-     public API and stay; what changed is that the ramp is now a
-     ramp. The shipped one broke twice: chroma jumped 50.6 to 77.8
-     between 400 and 500, and --teal-800/900 were near-neutral
-     darks that were not teal at all — they existed to serve a
-     dark theme that no longer exists. */
-  --teal-50:  #E7F7F3;
-  --teal-100: #D8F3EC;
-  --teal-200: #BAE8DC;
-  --teal-300: #8ED5C4;
-  --teal-400: #53B9A5;
-  --teal-500: #289A86;
-  --teal-600: #0E7C6B;
-  --teal-700: #16584C;
-  --teal-800: #0D3D34;
-  --teal-900: #031D18;
+     Azure, hue ~224. 600 is the primary.
+     Saturation eases down the dark end instead of dropping to a
+     neutral, so 700-900 are still brand. */
+  --accent-50:  #EEF2FE;
+  --accent-100: #DBE4FD;
+  --accent-200: #BDCDFA;
+  --accent-300: #93ADF6;
+  --accent-400: #6187EF;
+  --accent-500: #3766E6;
+  --accent-600: #2151CA;
+  --accent-700: #1E43A9;
+  --accent-800: #1B3383;
+  --accent-900: #16245A;
+
+  /* The gradient. --brand-gradient is for the mark, which carries
+     no text; its cyan end is too light for white text (3.0:1).
+     --action-gradient is for a filled primary action: white text
+     clears 6:1 at both ends. */
+  --brand-gradient:  linear-gradient(135deg, #2151CA 0%, #0B9ED9 100%);
+  --action-gradient: linear-gradient(135deg, #2151CA 0%, #0B67A0 100%);
 
   /* ── Primary aliases — the whole product routes through these,
         so editing this block re-skins every surface. ────────── */
-  --blue:       #0E7C6B;
-  --blue-mid:   #16584C;
-  --blue-soft:  #289A86;
-  --blue-light: #D8F3EC;
+  --blue:       #2151CA;
+  --blue-mid:   #1E43A9;
+  --blue-soft:  #3766E6;
+  --blue-light: #DBE4FD;
 
-  --primary:       #0E7C6B;
-  --primary-hover: #16584C;
-  --primary-soft:  #E7F7F3;
-  /* Filled controls hand-wrote #fff in ~49 places because there
-     was no token for text on a brand fill. 5.10:1 on --primary. */
+  --primary:       #2151CA;
+  --primary-hover: #1E43A9;
+  --primary-soft:  #EEF2FE;
+  /* Text on a primary fill: 6.8:1 on --primary. */
   --on-primary:    #FFFFFF;
-  /* Brand as ink rather than as fill: link text and headings need
-     7:1, and --primary reaches only 4.47 on paper. */
-  --primary-ink:   #16584C;
+  /* Brand as ink rather than as fill: link text and headings that
+     must clear 7:1 on every ground. */
+  --primary-ink:   #1E43A9;
 
   /* ── Neutral ramp ───────────────────────────────────────────
-     One hue (158deg, held off the brand so verdigris still reads
-     as a colour), one interval, one chroma envelope. Every step
-     is exactly 9.5 lightness apart by construction. The shipped
-     ramp stepped 2.8/4.9/9.0/19.4/18.3/10.6/9.4/8.6/6.7 and its
-     chroma dipped then rose, which made the mid-greys the most
-     brand-tinted objects on screen — the actual source of the
-     muddiness, not the paper. Chroma now peaks mid-ramp and eases
-     to a floor at both ends: enough that the near-whites keep the
-     cast, never enough to go mint. */
-  --gray-50:  #F9F9F9;
-  --gray-100: #DFE3E1;
-  --gray-200: #C4CDCA;
-  --gray-300: #A9B8B3;
-  --gray-400: #8EA39B;
-  --gray-500: #738E84;
-  --gray-600: #5E726B;
-  --gray-700: #4A5752;
-  --gray-800: #353B39;
-  --gray-900: #1F2120;
+     One hue (218deg, a cool navy cast held off the brand's 224),
+     lightness in even 9.5-point steps, saturation easing to the
+     middle so the mid-greys are grey and the ends keep the cast. */
+  --gray-50:  #F6F8FB;
+  --gray-100: #D7DEEA;
+  --gray-200: #BBC5D5;
+  --gray-300: #A0ACC0;
+  --gray-400: #8693A9;
+  --gray-500: #6B7A94;
+  --gray-600: #55627A;
+  --gray-700: #3E4A60;
+  --gray-800: #263247;
+  --gray-900: #121B2B;
 
   /* ── Grounds ────────────────────────────────────────────────
      Six, ordered dark to light, so elevation is carried by the
-     ground itself rather than by a shadow. The shipped set was
-     not ordered at all: --bg sat ABOVE --surface-2, and the four
-     layers separated by 1.06-1.08, which is why nothing on the
-     page looked like it sat on anything. */
-  --paper-recessed: #DBE3DE;   /* table header bands, toolbars, rails   */
-  --paper-sunken:   #E4EAE7;   /* code wells, inset read-only blocks    */
-  --paper:          #ECF1EE;   /* the app page                          */
-  --surface-alt:    #F0F5F2;   /* zebra rows, nested blocks in a card   */
-  --surface:        #F5F8F6;   /* cards, panels, table bodies           */
-  --surface-raised: #FAFCFB;   /* menus, popovers, modals, inputs       */
+     ground itself. Cards sit a step above the page and read as
+     white; menus and dialogs are white. */
+  --paper-recessed: #E4E9F1;   /* table header bands, toolbars, rails   */
+  --paper-sunken:   #EBEFF5;   /* code wells, inset read-only blocks    */
+  --paper:          #F2F5F9;   /* the app page                          */
+  --surface-alt:    #F7F9FC;   /* zebra rows, nested blocks in a card   */
+  --surface:        #FCFDFE;   /* cards, panels, table bodies           */
+  --surface-raised: #FFFFFF;   /* menus, popovers, modals, inputs       */
 
   /* Legacy ground names, kept as the public API. */
-  --bg:        #ECF1EE;
-  --bg-soft:   #E4EAE7;
-  --bg-muted:  #DBE3DE;
-  --surface-2: #F0F5F2;
-  --surface-3: #E4EAE7;
-  --navy:      #16221E;
+  --bg:        #F2F5F9;
+  --bg-soft:   #EBEFF5;
+  --bg-muted:  #E4E9F1;
+  --surface-2: #F7F9FC;
+  --surface-3: #EBEFF5;
+  --navy:      #0B1F3A;
 
   /* ── Lines ──────────────────────────────────────────────────
-     Split by obligation. --border measured 1.30:1 against the
-     surface, so every card edge and every input outline in the
-     product was below the 3:1 floor WCAG sets for a graphic —
-     the boundary was decorative whether or not it was meant to
-     be. --line-control is the one that carries a control edge and
-     is solved to 3.37 against the darkest ground it sits on. It
-     will read heavier than the current fashion. That is what a
-     real 3:1 border on light paper looks like. */
-  --line-subtle: #D4DDD8;      /* gridlines, list separators          */
-  --line:        #B9C6C0;      /* card edge, panel divider            */
-  --line-control:#6F7B74;      /* inputs, selects, checkboxes, radios */
+     Split by obligation: --line-control carries a control edge
+     and clears 3:1 on the darkest ground (3.5); the others are
+     separators. */
+  --line-subtle: #DCE3EC;      /* gridlines, list separators          */
+  --line:        #C3CDDB;      /* card edge, panel divider            */
+  --line-control:#6E7B91;      /* inputs, selects, checkboxes, radios */
 
-  --border:        #B9C6C0;
-  --border-strong: #6F7B74;
+  --border:        #C3CDDB;
+  --border-strong: #6E7B91;
 
   /* ── Ink ────────────────────────────────────────────────────
-     Five steps. Body clears 7:1 on every one of the six grounds,
-     not just the lightest — a floor solved against the brightest
-     ground is not a floor. */
-  --text-strong:    #161E1A;
-  --text:           #2D3731;
-  --text-secondary: #45504A;
-  --text-muted:     #5A665F;
-  --text-faint:     #78837D;   /* disabled labels only, never body    */
-  --text-inverse:   #E6EDE9;
-  --text-soft:      #45504A;
+     Body clears 12:1 and secondary 7:1 on every ground; muted
+     clears 5.2:1 on the darkest. */
+  --text-strong:    #0B1424;
+  --text:           #1A2536;
+  --text-secondary: #3A475C;
+  --text-muted:     #526077;
+  --text-faint:     #7E8AA0;   /* disabled labels only, never body    */
+  --text-inverse:   #E6EDF8;
+  --text-soft:      #3A475C;
 
   /* ── Semantic colours ───────────────────────────────────────
-     Four families, each with ink / pressed / tint / edge, all
-     landing on shared lightness rungs so a success chip and a
-     warning chip have the same optical weight.
+     Four families, each with ink / pressed / tint / edge. Every
+     ink clears 4.5:1 on its tint and on every ground, and white
+     clears 5.6:1 on every ink. Info is a sea blue, not the
+     primary: a notice is not an action. */
+  --success:        #067647;  --success-strong: #05603A;
+  --success-soft:   #E7F6EE;  --success-line:   #6FB892;
+  --danger:         #B42318;  --danger-strong:  #8F1D14;
+  --danger-soft:    #FDECEA;  --danger-line:    #E39A93;
+  --warning:        #A6490C;  --warning-strong: #7A350A;
+  --warning-soft:   #FDF1E3;  --warning-line:   #E0A56A;
+  --info:           #0B6AA2;  --info-strong:    #084F79;
+  --info-soft:      #E5F2FA;  --info-line:      #7DB6DA;
 
-     --danger moves from #B3402E to #A73832, which is a deliberate
-     change to a stated identity anchor rather than a slip: the
-     old value sat at hue 31 with high chroma, squarely in the
-     terracotta lane Claude occupies, and it is the one semantic
-     that appears beside the brand most often. */
-  --success:        #337438;  --success-strong: #204E23;
-  --success-soft:   #E2F1E2;  --success-line:   #548356;
-  --danger:         #A73832;  --danger-strong:  #72241F;
-  --danger-soft:    #FCE6E3;  --danger-line:    #A7665F;
-  --warning:        #7D5D25;  --warning-strong: #553E16;
-  --warning-soft:   #F5EADA;  --warning-line:   #907344;
-  --info:           #406788;  --info-strong:    #29455D;
-  --info-soft:      #DFEEFC;  --info-line:      #497CA6;
-
-  --green:  #337438;  --green-light:  #E2F1E2;
-  --red:    #A73832;  --red-light:    #FCE6E3;
-  --amber:  #7D5D25;  --amber-light:  #F5EADA;
-  --violet: #6B4FA8;  --violet-light: #ECE6F7;
+  --green:  #067647;  --green-light:  #E7F6EE;
+  --red:    #B42318;  --red-light:    #FDECEA;
+  --amber:  #A6490C;  --amber-light:  #FDF1E3;
+  --violet: #6941C6;  --violet-light: #F1ECFD;
 
   /* ── Interaction states ─────────────────────────────────────
-     Ground-aware, and this is not fussiness. A single hover value
-     against six grounds is arithmetically impossible: the one
-     that shipped measured 1.004 against --paper — invisible — and
-     was LIGHTER than --paper-recessed and --paper-sunken, so a
-     hovered row in a table header band would have brightened
-     instead of darkening. Row hover is the most-used interaction
-     in a product whose main output is a table. */
-  --hover-on-surface:  #EAF1ED;  --active-on-surface:  #E1EAE5;
-  --hover-on-alt:      #E6EDE9;  --active-on-alt:      #DDE6E1;
-  --hover-on-paper:    #E3EAE6;  --active-on-paper:    #DAE3DE;
-  --hover-on-recessed: #D2DCD6;  --active-on-recessed: #C9D4CE;
-  --row-hover:         #EAF1ED;
+     Ground-aware: each hover darkens its own ground by at least
+     1.07:1, so a hovered row never brightens or vanishes. */
+  --hover-on-surface:  #F0F3F8;  --active-on-surface:  #E7ECF3;
+  --hover-on-alt:      #EDF1F6;  --active-on-alt:      #E4E9F1;
+  --hover-on-paper:    #E9EDF4;  --active-on-paper:    #E0E6EE;
+  --hover-on-recessed: #DAE1EB;  --active-on-recessed: #D0D8E4;
+  --row-hover:         #F0F3F8;
 
   /* Selection is separated from hover by chroma, not by another
-     step of grey — otherwise "hovered" and "selected" are the same
-     gesture at two brightnesses and neither reads. */
-  --state-selected:       #DAF9F1;
-  --state-selected-hover: #CCF3E9;
-  --state-selected-line:  #0E7C6B;
-  --state-disabled:       #E4EBE7;
+     step of grey. */
+  --state-selected:       #E4EBFD;
+  --state-selected-hover: #D8E2FC;
+  --state-selected-line:  #2151CA;
+  --state-disabled:       #EBEFF5;
 
   /* ── Focus ──────────────────────────────────────────────────
-     The offset exists so a ring on a brand-filled button is still
-     visible: ring against offset is 4.95:1. */
-  --focus-ring-color:  #0E7C6B;
-  --focus-ring-offset: #FAFCFB;
+     The offset exists so a ring on a primary fill still shows. */
+  --focus-ring-color:  #2151CA;
+  --focus-ring-offset: #FFFFFF;
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 26%, transparent);
 
   /* ── Navigation shell ───────────────────────────────────────
-     The rail keeps its dark slab. It is chrome, not content: it
-     frames the light page rather than competing with it, and a
-     light-only product does not mean every pixel is pale. */
-  --shell:          #16221E;
-  --shell-surface:  #212F2A;
-  --shell-line:     #31403A;
-  --shell-text:     #E6EDE9;
-  --shell-muted:    #97A49C;
-  --shell-selected: #1A3C35;
-  --shell-accent:   #53B9A5;
+     The deep navy rail: chrome framing the light page. Text
+     clears 14:1, muted 7.5:1, the accent 7.5:1 on it. */
+  --shell:          #0B1F3A;
+  --shell-surface:  #12294A;
+  --shell-line:     #223F66;
+  --shell-text:     #E6EDF8;
+  --shell-muted:    #9DB0CB;
+  --shell-selected: #1C3A63;
+  --shell-accent:   #93ADF6;
 
-  --sidebar-bg:      #16221E;
-  --sidebar-surface: #212F2A;
-  --sidebar-border:  #31403A;
-  --sidebar-text:    #E6EDE9;
-  --sidebar-muted:   #97A49C;
-  --sidebar-hover:   rgba(255, 255, 255, .06);
-  --sidebar-active:  #1A3C35;
-  --sidebar-accent:  #53B9A5;
+  --sidebar-bg:      #0B1F3A;
+  --sidebar-surface: #12294A;
+  --sidebar-border:  #223F66;
+  --sidebar-text:    #E6EDF8;
+  --sidebar-muted:   #9DB0CB;
+  --sidebar-hover:   rgba(255, 255, 255, .07);
+  --sidebar-active:  #1C3A63;
+  --sidebar-accent:  #93ADF6;
 
   /* ── Code and data surfaces ─────────────────────────────────
-     The code well goes light. It was #12211D — a near-black slab
-     in six places — which is the last dark surface in a product
-     that no longer has a dark theme, and the SQL syntax colours
-     are tuned for a light ground. */
-  --code-bg:   #E4EAE7;
-  --code-text: #2D3731;
-  --grid-line: #D4DDD8;
+     A light code well: the syntax colours are solved on it. */
+  --code-bg:   #EDF1F6;
+  --code-text: #1A2536;
+  --grid-line: #DCE3EC;
 
   /* ── Entity taxonomy ───────────────────────────────────────
-     A categorical palette, not a semantic one. A fact table is
-     not a warning and a dimension is not a link, so these are
-     held apart from --warning/--primary rather than borrowed
-     from them: mapping the taxonomy onto status colours is a
-     lie that happens to compile. */
+     A categorical palette, not a semantic one: a fact table is
+     not a warning and a dimension is not a link. */
   --entity-fact:      #8A5A12;  --entity-fact-soft:  #F7EFDF;  --entity-fact-line:  #E0C99B;
-  --entity-dim:       #2D4B8E;  --entity-dim-soft:   #E6ECF7;  --entity-dim-line:   #B9C8E5;
-  --entity-bridge:    #6B4FA8;  --entity-bridge-soft:#ECE6F7;  --entity-bridge-line:#C7B8E5;
+  --entity-dim:       #2A5CB8;  --entity-dim-soft:   #E7EEFA;  --entity-dim-line:   #B6C9EC;
+  --entity-bridge:    #6941C6;  --entity-bridge-soft:#F1ECFD;  --entity-bridge-line:#CDBEF2;
 
   /* ── SQL syntax highlighting ────────────────────────────────
-     Also categorical: the hues exist to tell token kinds apart,
-     so they are deliberately not the brand colour. Solved against
-     the code well (#E4EAE7), the darkest ground they appear on,
-     rather than against the brightest — every one clears 5.0
-     there and 5.35-6.03 elsewhere, closest pair 59 units apart.
-     The operator takes --text-muted: it is punctuation, not a
-     category. */
+     Categorical hues, deliberately not the brand colour; every
+     one clears 5.4:1 on the code well. */
   --syntax-kw:   #4751D4;
   --syntax-fn:   #9A32AC;
   --syntax-col:  #0E6F54;
@@ -307,18 +241,14 @@
   --syntax-num:  #15688E;
 
   /* ── Shadows ────────────────────────────────────────────────
-     Tinted, never black. A neutral-black shadow over a green-cast
-     paper greys the surface under it; the tint keeps the shade in
-     the same family as the ground. Restrained by design:
-     elevation is carried by the ground ladder above, with shadow
-     reserved for things that genuinely float. */
-  --shadow-tint: #0B1F18;
-  --shadow-sm: 0 1px 2px rgba(11, 31, 24, .05);
-  --shadow:    0 1px 2px rgba(11, 31, 24, .06);
-  --shadow-md: 0 6px 16px rgba(11, 31, 24, .09), 0 1px 3px rgba(11, 31, 24, .05);
-  --shadow-lg: 0 16px 36px rgba(11, 31, 24, .14), 0 3px 8px rgba(11, 31, 24, .08);
-  --scrim: rgba(6, 21, 15, .42);
-
+     Tinted navy, never black, and restrained: elevation is the
+     ground ladder's job; shadow is for what genuinely floats. */
+  --shadow-tint: #0F1B2D;
+  --shadow-sm: 0 1px 2px rgba(15, 27, 45, .05);
+  --shadow:    0 1px 2px rgba(15, 27, 45, .06), 0 1px 1px rgba(15, 27, 45, .03);
+  --shadow-md: 0 6px 16px rgba(15, 27, 45, .08), 0 1px 3px rgba(15, 27, 45, .05);
+  --shadow-lg: 0 16px 36px rgba(15, 27, 45, .14), 0 3px 8px rgba(15, 27, 45, .08);
+  --scrim: rgba(8, 18, 34, .45);
 
   /* ── Z-index ── */
   --z-base:     1;
@@ -329,18 +259,12 @@
   --z-toast:    9000;
 
   /* ── Skeleton shimmer surfaces ── */
-  --skeleton-base:  #E4EAE7;
-  --skeleton-shine: #F5F8F6;
+  --skeleton-base:  #E4E9F1;
+  --skeleton-shine: #F7F9FC;
 
   /* ── Motion ── */
   --ease-out: cubic-bezier(.4, 0, .2, 1);
   --t-fast:   .12s;
   --t-med:    .22s;
   --t-slow:   .35s;
-
-
 }
-
-/* ── Dark mode overrides ──────────────────────────────────────
-   The brand hue lifts to its bright twin so it still carries on
-   ink; the neutrals keep the same green bias so the two themes

@@ -31,7 +31,7 @@
 .qb-brand-motion {
   --qb-mark-size: 32px;
   --qb-mark-glyph: var(--primary, #0E7C6B);
-  --qb-mark-accent: var(--teal-400, #3FC0A9);
+  --qb-mark-accent: var(--accent-400, #6187EF);
   --qb-mark-status: var(--qb-mark-glyph);
   /* The colour the bars cut through to. On anything that is not the page
      surface (a tinted hero, a dark panel), set this to the actual ground. */

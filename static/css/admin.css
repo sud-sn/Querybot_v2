@@ -40,7 +40,7 @@ body {
   color: #fff;
   letter-spacing: -.02em;
 }
-.sidebar-brand-text span { color: var(--teal-300); }
+.sidebar-brand-text span { color: var(--accent-300); }
 .sidebar-brand-sub {
   font-size: 10px;
   font-weight: 700;
@@ -83,7 +83,7 @@ body {
   text-decoration: none;
 }
 .sidebar-link.active {
-  background: color-mix(in srgb, var(--teal-400) 18%, transparent);
+  background: color-mix(in srgb, var(--accent-400) 18%, transparent);
   color: #fff;
   font-weight: 700;
 }
@@ -95,7 +95,7 @@ body {
   top: 20%;
   bottom: 20%;
   width: 3px;
-  background: var(--teal-300);
+  background: var(--accent-300);
   border-radius: 0 2px 2px 0;
 }
 .sidebar-link-icon {
@@ -481,8 +481,8 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 .cs-item.active {
   color: #fff;
   font-weight: 700;
-  background: color-mix(in srgb, var(--teal-400) 15%, transparent);
-  border-left-color: var(--teal-300);
+  background: color-mix(in srgb, var(--accent-400) 15%, transparent);
+  border-left-color: var(--accent-300);
 }
 /* ── Pending badge ── */
 .cs-badge {

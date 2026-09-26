@@ -849,7 +849,7 @@ textarea:focus-visible, a:focus-visible {
   font-weight: 800;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--teal-400);
+  color: var(--accent-400);
   opacity: .6;
   padding: 1.1rem 1rem .35rem;
   display: block;
