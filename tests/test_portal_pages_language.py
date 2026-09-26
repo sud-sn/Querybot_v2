@@ -357,7 +357,10 @@ class TestNoPageWasMissed:
         def body(lang):
             markup = visible(_page(name, lang))
             start = markup.index('<div class="main">')
-            end = markup.index('<div id="qbDialogBackdrop"')
+            # Nothing the reader sees follows the page's own content: the
+            # shell's dialog and toasts are built by static/js/qb-ui.js when
+            # they are needed, and scripts are not visible text.
+            end = markup.index('</body>')
             return markup[start:end]
 
         assert body("fr") != body("en"), name

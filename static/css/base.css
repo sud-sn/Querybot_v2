@@ -749,52 +749,115 @@ textarea:focus-visible, a:focus-visible {
 .metric-progress-fill.danger  { background: var(--danger); }
 
 /* ── Confirm / prompt modal ── */
-.qb-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9990;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0,0,0,.46);
-  backdrop-filter: blur(3px);
-  animation: qb-fadeIn .15s ease;
-}
+/* ── The dialog (qb-ui.js qbConfirm) ─────────────────────────
+   A native <dialog> shown modally: the browser traps focus, Esc
+   cancels, and the ::backdrop dims the page. */
 .qb-dialog {
-  background: var(--surface);
+  /* The reset at the top of this file zeroes every margin, and a modal
+     <dialog> is centred by margin:auto -- without this it opens top left. */
+  margin: auto;
+  width: min(440px, calc(100vw - 32px));
+  padding: 0;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  width: 100%;
-  max-width: 420px;
-  margin: 1rem;
-  animation: qb-modalIn .18s ease;
-  overflow: hidden;
-}
-.qb-dialog-header {
-  padding: 1.25rem 1.25rem .75rem;
-}
-.qb-dialog-title {
-  font-size: var(--font-md);
-  font-weight: var(--weight-bold);
+  background: var(--surface-raised);
   color: var(--text);
-  margin-bottom: .35rem;
-  line-height: 1.3;
+  box-shadow: var(--shadow-lg);
+  animation: qb-modalIn .18s ease;
+}
+.qb-dialog::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
+.qb-dialog-form { display: flex; flex-direction: column; }
+.qb-dialog-title {
+  margin: 0;
+  padding: 1.25rem 1.25rem 0;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  line-height: var(--line-tight);
 }
 .qb-dialog-body {
-  font-size: var(--font-sm);
-  color: var(--text-muted);
-  line-height: var(--line-relaxed);
+  margin: .5rem 0 0;
+  padding: 0 1.25rem;
+  font-size: var(--font-base);
+  color: var(--text-secondary);
+  line-height: var(--line-normal);
   white-space: pre-line;
 }
+.qb-dialog-input { margin: .9rem 1.25rem 0; width: auto; }
 .qb-dialog-footer {
   display: flex;
-  align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
+  margin-top: 1.25rem;
   padding: .85rem 1.25rem;
   border-top: 1px solid var(--border);
-  background: linear-gradient(180deg,var(--surface-2),color-mix(in srgb,var(--surface-2) 72%,var(--surface)));
+  background: var(--surface-2);
+}
+
+/* ── Toasts (qb-ui.js qbToast) ──────────────────────────────
+   One stack, bottom right, for both consoles. The tone is the
+   icon and a rule on the left; the text stays in the text inks. */
+.qb-toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+.qb-toast {
+  --qb-toast-tone: var(--primary);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: min(380px, calc(100vw - 40px));
+  padding: .75rem .85rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--qb-toast-tone);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+.qb-toast.is-in { opacity: 1; transform: translateY(0); }
+.qb-toast--success { --qb-toast-tone: var(--success); }
+.qb-toast--warning { --qb-toast-tone: var(--warning); }
+.qb-toast--danger  { --qb-toast-tone: var(--danger); }
+.qb-toast-icon { color: var(--qb-toast-tone); line-height: 0; margin-top: 2px; }
+.qb-toast-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--font-base); line-height: var(--line-normal); }
+.qb-toast-title { font-weight: var(--weight-semibold); }
+.qb-toast-body { color: var(--text-secondary); overflow-wrap: anywhere; }
+.qb-toast-action {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+.qb-toast-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.qb-toast-close:hover { color: var(--text); background: var(--surface-2); }
+@media (prefers-reduced-motion: reduce) {
+  .qb-toast { transition: none; }
+  .qb-dialog { animation: none; }
 }
 
 /* ── Typography utilities ── */

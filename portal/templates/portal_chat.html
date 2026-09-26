@@ -7,7 +7,7 @@
 <script src="/static/vendor/echarts.min.js?v=6.1.0"></script>
 <script src="/static/js/chart-palettes.js?v=20260926-brand-1"></script>
 <script src="/static/js/qb-charts.js?v=20260926-brand-1"></script>
-<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260926-ui-1">
 <style>
 /* Full-viewport constraints — chat page only */
 html,body{height:100%;overflow:hidden}
@@ -504,8 +504,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stop-icon{width:11px;height:11px;border-radius:3px;background:#fff;display:block}
 .composer-footer{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.65rem;flex-wrap:wrap}.composer-hint{font-size:var(--font-xs);color:var(--text-muted)}
 .composer-actions{display:flex;gap:.45rem;flex-wrap:wrap}
-.toast{position:fixed;right:20px;bottom:20px;padding:.75rem .95rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);font-size:var(--font-sm);color:var(--text);opacity:0;transform:translateY(8px);pointer-events:none;transition:all .18s;z-index:var(--z-toast)}
-.toast.show{opacity:1;transform:translateY(0)}
 .dashboard-picker-backdrop{position:fixed;inset:0;z-index:var(--z-modal);background:var(--scrim);display:none;align-items:center;justify-content:center;padding:var(--space-4);backdrop-filter:blur(3px)}
 .dashboard-picker-backdrop.open{display:flex;animation:qb-fadeIn var(--t-fast) var(--ease-out)}
 .dashboard-picker{width:min(560px,100%);max-height:min(720px,92dvh);overflow:hidden;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);animation:qb-modalIn var(--t-med) var(--ease-out)}
@@ -857,7 +855,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
     </aside>
   </div>
 </div>
-<div class="toast" id="toast"></div>
 <div class="dashboard-picker-backdrop" id="dashboardPickerBackdrop" onclick="if(event.target===this)closeDashboardPicker()">
   <!-- role/aria live on the panel, not the backdrop. On the backdrop the
        dialog's accessible bounds included the full-screen scrim, so a screen
@@ -1029,8 +1026,9 @@ function hideWelcome(opts = {}){
   if (el) el.style.display = 'none';
   if (suggestions && !opts.keepSuggestions) suggestions.style.display = 'none';
 }
-function toast(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 1400); }
-function toastLong(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 5200); }
+// Short confirmations and longer notices, through the shared toast (qb-ui.js).
+function toast(msg){ window.qbToast.notify({body: msg, tone: 'success', duration: 4000}); }
+function toastLong(msg){ window.qbToast.notify({body: msg, tone: 'info', duration: 7000}); }
 let _dashboardAddContext = null;
 let _dashboardPickerItems = [];
 let _dashboardPickerMode = 'existing';

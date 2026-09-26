@@ -10,13 +10,14 @@
 <link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260926-navy-1">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-brand-1">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-brand-1">
-<link rel="stylesheet" href="/static/css/admin.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-ui-1">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-ui-1">
+<link rel="stylesheet" href="/static/css/admin.css?v=20260926-ui-1">
 <script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
+<script src="/static/js/qb-ui.js?v=20260926-ui-1"></script>
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-brand-1">
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-ui-1">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-ui-1">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
@@ -115,127 +116,6 @@
 </div>
 {# ── end shell ── #}
 
-{# ── Confirm / alert dialog ── #}
-<div id="qbDialogBackdrop" class="qb-dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="qbDialogTitle">
-  <div class="qb-dialog">
-    <div class="qb-dialog-header">
-      <div class="qb-dialog-title" id="qbDialogTitle"></div>
-      <div class="qb-dialog-body"  id="qbDialogBody"></div>
-      <input type="text" id="qbDialogInput" class="form-input" style="display:none;margin-top:.7rem">
-    </div>
-    <div class="qb-dialog-footer">
-      <button type="button" class="btn btn-secondary btn-sm" id="qbDialogCancel">Cancel</button>
-      <button type="button" class="btn btn-danger    btn-sm" id="qbDialogConfirm">Confirm</button>
-    </div>
-  </div>
-</div>
-<script>
-(function(){
-  var _onConfirm = null;
-  var backdrop   = document.getElementById('qbDialogBackdrop');
-  var titleEl    = document.getElementById('qbDialogTitle');
-  var bodyEl     = document.getElementById('qbDialogBody');
-  var inputEl    = document.getElementById('qbDialogInput');
-  var cancelBtn  = document.getElementById('qbDialogCancel');
-  var confirmBtn = document.getElementById('qbDialogConfirm');
-
-  function close(){
-    backdrop.style.display = 'none';
-    _onConfirm = null;
-  }
-
-  cancelBtn.addEventListener('click', close);
-  backdrop.addEventListener('click', function(e){ if(e.target === backdrop) close(); });
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
-  confirmBtn.addEventListener('click', function(){
-    var cb    = _onConfirm;   // save reference BEFORE close() nullifies it
-    var value = inputEl.style.display === 'none' ? undefined : inputEl.value;
-    close();
-    if(cb) cb(value);
-  });
-  /* Enter submits when the dialog is collecting a value, the way a prompt did. */
-  inputEl.addEventListener('keydown', function(e){
-    if(e.key === 'Enter'){ e.preventDefault(); confirmBtn.click(); }
-  });
-
-  /*
-   * qbConfirm({ title, body, confirm, cancel, variant, input, onConfirm })
-   *
-   * input: {placeholder, value} renders a single text field and passes its
-   *        contents to onConfirm(value). This exists so the console never has
-   *        to fall back to a browser prompt() for a one-line answer.
-   *
-   * variant: 'danger' (default) | 'primary' | 'warning'
-   *
-   * Replaces all native confirm() calls. Example:
-   *   qbConfirm({
-   *     title: 'Delete this metric?',
-   *     body:  'This cannot be undone.',
-   *     onConfirm: () => form.submit()
-   *   });
-   */
-  window.qbConfirm = function(opts){
-    opts = opts || {};
-    titleEl.textContent  = opts.title   || 'Are you sure?';
-    bodyEl.textContent   = opts.body    || '';
-    cancelBtn.textContent  = opts.cancel  || 'Cancel';
-    confirmBtn.textContent = opts.confirm || 'Confirm';
-
-    var variant = opts.variant || 'danger';
-    confirmBtn.className = 'btn btn-' + variant + ' btn-sm';
-
-    if(opts.input){
-      inputEl.style.display = '';
-      inputEl.placeholder = opts.input.placeholder || '';
-      inputEl.value = opts.input.value || '';
-    } else {
-      inputEl.style.display = 'none';
-      inputEl.value = '';
-    }
-
-    _onConfirm = opts.onConfirm || null;
-    backdrop.style.display = 'flex';
-    /* Focus confirm so keyboard users can press Enter immediately */
-    setTimeout(function(){
-      if(opts.input){ inputEl.focus(); inputEl.select(); }
-      else { confirmBtn.focus(); }
-    }, 30);
-  };
-
-  /*
-   * <button type="submit" data-confirm="Delete Ada?"
-   *         data-confirm-title="…" data-confirm-label="…" data-confirm-variant="…">
-   *
-   * Asks with qbConfirm before the button does what it does. The message is
-   * an attribute the page escapes, so a name with a quote in it stays text:
-   * these messages used to be written inside onclick="qbConfirm({body:'…'})",
-   * where a user's display name could close the string and run as script.
-   * On "confirm" the button is clicked again, so it submits exactly as it
-   * would have -- its form, its formaction, its name and value.
-   */
-  document.addEventListener('click', function(e){
-    var el = e.target && e.target.closest ? e.target.closest('[data-confirm]') : null;
-    if(!el) return;
-    if(el.dataset.confirmed === '1'){ delete el.dataset.confirmed; return; }
-    e.preventDefault();
-    e.stopPropagation();
-    window.qbConfirm({
-      title: el.dataset.confirmTitle,
-      body: el.dataset.confirm,
-      confirm: el.dataset.confirmLabel,
-      variant: el.dataset.confirmVariant,
-      onConfirm: function(){ el.dataset.confirmed = '1'; el.click(); }
-    });
-  }, true);
-})();
-</script>
-
-{# ── Notification toast ── #}
-<div class="admin-live-toast" id="semanticPendingToast" role="status" aria-live="polite">
-  <div class="admin-live-toast-title" id="semanticPendingToastTitle">New Semantic Layer request</div>
-  <div class="admin-live-toast-body" id="semanticPendingToastBody"></div>
-</div>
-
 {# ── Mobile sidebar JS ── #}
 <script>
 function openSidebar(){
@@ -264,78 +144,10 @@ function closeSidebar(){
 })();
 </script>
 
-{# ── Toast system (global, replaces ad-hoc toast) ── #}
-<div id="qbToastContainer" style="position:fixed;bottom:20px;right:20px;z-index:9500;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none"></div>
-<script>
-window.qbToast = (function(){
-  var container = null;
-  var icons = {
-    success: qbIcon('check-circle', 16),
-    error:   qbIcon('x-circle', 16),
-    warning: qbIcon('alert-triangle', 16),
-    info:    qbIcon('info', 16)
-  };
-  // Read from the design tokens rather than held privately. These were stock
-  // Tailwind hexes with light-only backgrounds and near-black text, so every
-  // toast in the console rendered as a bright chip on the dark shell and
-  // ignored the brand entirely. Tokens already carry dark-mode values, so the
-  // toast now follows the theme like everything else.
-  var colors = {
-    success: { bar: 'var(--success)', bg: 'var(--success-soft)', text: 'var(--text)' },
-    error:   { bar: 'var(--danger)',  bg: 'var(--danger-soft)',  text: 'var(--text)' },
-    warning: { bar: 'var(--warning)', bg: 'var(--warning-soft)', text: 'var(--text)' },
-    info:    { bar: 'var(--primary)', bg: 'var(--primary-soft)', text: 'var(--text)' }
-  };
-
-  function show(message, type, duration){
-    if(!container) container = document.getElementById('qbToastContainer');
-    if(!container) return;
-    type = type || 'info';
-    duration = duration != null ? duration : (type === 'error' ? 8000 : type === 'success' ? 4000 : 5000);
-    var c = colors[type] || colors.info;
-    var toast = document.createElement('div');
-    toast.style.cssText = [
-      'max-width:360px','background:'+c.bg,'border:1px solid var(--border)',
-      'border-left:4px solid '+c.bar,'border-radius:10px',
-      'box-shadow:var(--shadow-md)','padding:10px 14px',
-      'display:flex','align-items:flex-start','gap:10px','color:'+c.text,
-      'font-size:var(--font-base)','font-weight:var(--weight-semibold)','line-height:1.45',
-      'pointer-events:auto','opacity:0','transform:translateX(12px)',
-      'transition:opacity .18s,transform .18s'
-    ].join(';');
-    toast.innerHTML = '<span style="flex-shrink:0;margin-top:1px;color:'+c.bar+'">'+(icons[type]||'')+
-      '</span><span style="flex:1">'+message+'</span>'+
-      '<button onclick="this.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:'+c.text+';opacity:.5;font-size:var(--font-lg);line-height:1;padding:0 0 0 6px;flex-shrink:0" aria-label="Dismiss">'+qbIcon('x', 14)+'</button>';
-    container.appendChild(toast);
-    requestAnimationFrame(function(){ toast.style.opacity='1'; toast.style.transform='translateX(0)'; });
-    if(duration > 0){
-      var timer = setTimeout(function(){
-        toast.style.opacity='0'; toast.style.transform='translateX(12px)';
-        setTimeout(function(){ toast.remove(); }, 200);
-      }, duration);
-      toast.addEventListener('mouseenter', function(){ clearTimeout(timer); });
-      toast.addEventListener('mouseleave', function(){
-        timer = setTimeout(function(){
-          toast.style.opacity='0'; toast.style.transform='translateX(12px)';
-          setTimeout(function(){ toast.remove(); }, 200);
-        }, 2000);
-      });
-    }
-    return toast;
-  }
-  return { show: show,
-    success: function(m,d){ return show(m,'success',d); },
-    error:   function(m,d){ return show(m,'error',d); },
-    warning: function(m,d){ return show(m,'warning',d); },
-    info:    function(m,d){ return show(m,'info',d); }
-  };
-})();
-</script>
-
 {# ── Live notifications WebSocket ── #}
 <script>
 (function(){
-  var lastTotal=null,reconnectMs=1000,socket=null,toastTimer=null;
+  var lastTotal=null,reconnectMs=1000,socket=null;
 
   function ready(fn){
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else fn();
@@ -375,44 +187,30 @@ window.qbToast = (function(){
   }
 
   function showToast(s,meta){
-    var toast=document.getElementById('semanticPendingToast');
-    var title=document.getElementById('semanticPendingToastTitle');
-    var body=document.getElementById('semanticPendingToastBody');
-    if(!toast||!body) return;
     var row=clientPending(s,meta&&meta.account_id)||clients(s)[0];
     if(!row) return;
     var accountId=row.account_id||(meta&&meta.account_id)||'';
-    var clientName=row.client_name||(meta&&meta.client_name)||accountId||'Client';
     var count=Number(row.pending||1);
-    if(title) title.textContent='New Semantic Layer request';
-    var link=document.createElement('a');
-    link.href='/admin/clients/'+encodeURIComponent(accountId)+'/kb#semantic-feedback';
-    link.textContent=count+' request'+(count===1?'':'s')+' pending review';
-    body.textContent=clientName+': ';
-    body.appendChild(link);
-    toast.classList.add('show');
-    window.clearTimeout(toastTimer);
-    toastTimer=window.setTimeout(function(){toast.classList.remove('show');},7000);
+    window.qbToast.notify({
+      title:'New Semantic Layer request',
+      body:(row.client_name||(meta&&meta.client_name)||accountId||'Client')+'.',
+      action:{label:count+' request'+(count===1?'':'s')+' pending review',
+              href:'/admin/clients/'+encodeURIComponent(accountId)+'/kb#semantic-feedback'},
+      duration:7000
+    });
   }
 
   function showGraphReadyToast(msg){
-    var toast=document.getElementById('semanticPendingToast');
-    var title=document.getElementById('semanticPendingToastTitle');
-    var body=document.getElementById('semanticPendingToastBody');
-    if(!toast||!body) return;
     var s=msg.summary||{};
     var pending=Number(s.pending_review||0);
-    var ents=Number(s.entities_total||0);
-    var rels=Number(s.relationships_total||0);
-    if(title) title.textContent='Semantic model ready for review';
-    var link=document.createElement('a');
-    link.href='/admin/clients/'+encodeURIComponent(msg.account_id||'')+'/graph';
-    link.textContent=pending>0?(pending+' suggestion'+(pending===1?'':'s')+' to review'):'Open the entity graph';
-    body.textContent=(msg.client_name||'Client')+': '+ents+' entities, '+rels+' joins. ';
-    body.appendChild(link);
-    toast.classList.add('show');
-    window.clearTimeout(toastTimer);
-    toastTimer=window.setTimeout(function(){toast.classList.remove('show');},9000);
+    window.qbToast.notify({
+      title:'Semantic model ready for review',
+      body:(msg.client_name||'Client')+': '+Number(s.entities_total||0)+' entities, '+Number(s.relationships_total||0)+' joins.',
+      action:{label:pending>0?(pending+' suggestion'+(pending===1?'':'s')+' to review'):'Open the entity graph',
+              href:'/admin/clients/'+encodeURIComponent(msg.account_id||'')+'/graph'},
+      tone:'success',
+      duration:9000
+    });
   }
 
   function applySummary(s,meta){

@@ -405,49 +405,39 @@ class TestTheNotificationsDeleteButtons:
 
 # ── The listener that asks before a data-confirm button acts ────────────────
 
-_HARNESS = """
-var listeners = {};
-var els = {};
-function El(id) { this.id = id; this.style = {display: 'none'}; this.textContent = '';
-                  this.className = ''; this.value = ''; this.handlers = {}; }
-El.prototype.addEventListener = function(type, fn) { this.handlers[type] = fn; };
-El.prototype.focus = function() {};
-El.prototype.select = function() {};
-var document = {
-  getElementById: function(id) { return els[id] || (els[id] = new El(id)); },
-  addEventListener: function(type, fn) { (listeners[type] = listeners[type] || []).push(fn); }
-};
-var window = this;
-window.qbT = function(key) { return key; };
-var setTimeout = function(fn) { fn(); };
-
-new Function(dukpy['script'])();
-
-// A button on the page. Clicking it dispatches a click through the document's
-// listeners; unless one prevents it, the browser submits the button's form.
-function Button(data) { this.dataset = data; this.submitted = 0; }
+# A button on the page. Clicking it dispatches a click through the document's
+# listeners; unless one prevents it, the browser submits the button's form.
+_BUTTONS = """
+function Button(data) { El.call(this, 'button'); this.dataset = data; this.submitted = 0; }
+Button.prototype = Object.create(El.prototype);
 Button.prototype.closest = function() { return 'confirm' in this.dataset ? this : null; };
 Button.prototype.click = function() { press(this); };
 function press(button) {
   var ev = {target: button, prevented: false,
             preventDefault: function() { this.prevented = true; }, stopPropagation: function() {}};
-  (listeners.click || []).forEach(function(fn) { fn(ev); });
+  (docListeners.click || []).forEach(function(fn) { fn(ev); });
   if (!ev.prevented) button.submitted += 1;
 }
+window.qbT = function(key) { return key; };
+"""
 
+_SCENARIO = """
+function submit(d) { return d.find(function(e) { return e.getAttribute('type') === 'submit'; }); }
+function cancel(d) { return d.byClass('qb-dialog-footer').children[0]; }
 var asked = new Button({confirm: dukpy['body'], confirmTitle: 'Delete user?', confirmLabel: 'Delete user'});
 press(asked);
-var shown = [els.qbDialogTitle.textContent, els.qbDialogBody.textContent,
-             els.qbDialogConfirm.textContent, els.qbDialogBackdrop.style.display];
+var d = dialogNow();
+var shown = [d.byClass('qb-dialog-title').textContent, d.byClass('qb-dialog-body').textContent,
+             submit(d).textContent, d.open];
 var before = asked.submitted;
-els.qbDialogConfirm.handlers.click();
+d.byClass('qb-dialog-form').fire('submit');
 var after = asked.submitted;
 press(asked);
-var again = [asked.submitted, els.qbDialogBackdrop.style.display];
-els.qbDialogCancel.handlers.click();
+var again = [asked.submitted, !!dialogNow() && dialogNow().open];
+cancel(dialogNow()).fire('click');
 var cancelled = new Button({confirm: 'Delete Bob?'});
 press(cancelled);
-els.qbDialogCancel.handlers.click();
+cancel(dialogNow()).fire('click');
 var plain = new Button({});
 press(plain);
 ({shown: shown, before: before, after: after, again: again, cancelled: cancelled.submitted,
@@ -456,9 +446,14 @@ press(plain);
 
 
 def _confirm_behaviour(page):
+    from tests.js_fakedom import FAKE_DOM
+
     dukpy = pytest.importorskip("dukpy", reason="dukpy runs the layout's own JavaScript")
-    script = next(s for s in page.scripts if "qbConfirm = function" in s)
-    return dukpy.evaljs(_HARNESS, script=script, body=HOSTILE[0])
+    # The layout loads the shared component; run that file, as the page does.
+    src = next(attrs["src"] for tag, attrs in page.elements
+               if tag == "script" and attrs.get("src", "").startswith("/static/js/qb-ui.js"))
+    component = (Path(__file__).resolve().parents[1] / src.split("?")[0].lstrip("/")).read_text(encoding="utf-8")
+    return dukpy.evaljs(FAKE_DOM + _BUTTONS + component + _SCENARIO, body=HOSTILE[0])
 
 
 class TestTheConfirmListener:
@@ -466,10 +461,10 @@ class TestTheConfirmListener:
     stand-in DOM: without the listener these buttons would act on first click."""
 
     EXPECTED = {
-        "shown": ["Delete user?", HOSTILE[0], "Delete user", "flex"],
+        "shown": ["Delete user?", HOSTILE[0], "Delete user", True],
         "before": 0,      # the first click only asks
         "after": 1,       # confirming submits, once
-        "again": [1, "flex"],  # and the next click asks again
+        "again": [1, True],  # and the next click asks again
         "cancelled": 0,   # cancelling never submits
         "plain": 1,       # a button without data-confirm is left alone
     }

@@ -10,14 +10,15 @@
 <link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260926-navy-1">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-brand-1">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-brand-1">
-<link rel="stylesheet" href="/static/css/portal.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-ui-1">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-ui-1">
+<link rel="stylesheet" href="/static/css/portal.css?v=20260926-ui-1">
 <script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
+<script src="/static/js/qb-ui.js?v=20260926-ui-1"></script>
 {# Prevent flash of unstyled content #}
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-brand-1">
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-ui-1">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-ui-1">
 </head>
 <body>
 
@@ -327,7 +328,6 @@ window.qbEnumLabel = function (group, value) {
   {% block content %}{% endblock %}
 </div>
 
-{# ── Confirm / alert dialog ── #}
 {% if user %}
   </div>
 </div>
@@ -401,77 +401,6 @@ window.qbEnumLabel = function (group, value) {
 </script>
 {% endif %}
 
-<div id="qbDialogBackdrop" class="qb-dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="qbDialogTitle">
-  <div class="qb-dialog">
-    <div class="qb-dialog-header">
-      <div class="qb-dialog-title" id="qbDialogTitle"></div>
-      <div class="qb-dialog-body"  id="qbDialogBody"></div>
-    </div>
-    <div class="qb-dialog-footer">
-      <button type="button" class="btn btn-secondary btn-sm" id="qbDialogCancel">{{ t('ui.shell.cancel') }}</button>
-      <button type="button" class="btn btn-danger    btn-sm" id="qbDialogConfirm">{{ t('ui.shell.confirm') }}</button>
-    </div>
-  </div>
-</div>
-<script>
-(function(){
-  var _onConfirm = null;
-  var backdrop   = document.getElementById('qbDialogBackdrop');
-  var titleEl    = document.getElementById('qbDialogTitle');
-  var bodyEl     = document.getElementById('qbDialogBody');
-  var cancelBtn  = document.getElementById('qbDialogCancel');
-  var confirmBtn = document.getElementById('qbDialogConfirm');
-
-  function close(){
-    backdrop.style.display = 'none';
-    _onConfirm = null;
-  }
-
-  cancelBtn.addEventListener('click', close);
-  backdrop.addEventListener('click', function(e){ if(e.target === backdrop) close(); });
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
-  confirmBtn.addEventListener('click', function(){
-    var callback = _onConfirm;
-    close();
-    if(callback) callback();
-  });
-
-  window.qbConfirm = function(opts){
-    opts = opts || {};
-    titleEl.textContent    = opts.title   || window.qbT('ui.shell.confirm_title');
-    bodyEl.textContent     = opts.body    || '';
-    cancelBtn.textContent  = opts.cancel  || window.qbT('ui.shell.cancel');
-    confirmBtn.textContent = opts.confirm || window.qbT('ui.shell.confirm');
-    var variant = opts.variant || 'danger';
-    confirmBtn.className = 'btn btn-' + variant + ' btn-sm';
-    _onConfirm = opts.onConfirm || null;
-    backdrop.style.display = 'flex';
-    setTimeout(function(){ confirmBtn.focus(); }, 30);
-  };
-
-  /*
-   * <button type="submit" data-confirm="…" data-confirm-title="…" data-confirm-label="…">
-   *
-   * Asks with qbConfirm before the button does what it does, as in the admin
-   * layout. The text is an attribute the page escapes, never part of a
-   * handler; on "confirm" the button is clicked again and submits its form.
-   */
-  document.addEventListener('click', function(e){
-    var el = e.target && e.target.closest ? e.target.closest('[data-confirm]') : null;
-    if(!el) return;
-    if(el.dataset.confirmed === '1'){ delete el.dataset.confirmed; return; }
-    e.preventDefault();
-    e.stopPropagation();
-    window.qbConfirm({
-      title: el.dataset.confirmTitle,
-      body: el.dataset.confirm,
-      confirm: el.dataset.confirmLabel,
-      variant: el.dataset.confirmVariant,
-      onConfirm: function(){ el.dataset.confirmed = '1'; el.click(); }
-    });
-  }, true);
-})();
-</script>
 
 <script>
 // Button loading states — any <form data-loading> shows a spinner on its
@@ -497,13 +426,9 @@ window.qbEnumLabel = function (group, value) {
 </script>
 
 {% if user %}
-<div class="portal-live-toast" id="portalLiveToast" role="status" aria-live="polite">
-  <div class="portal-live-toast-title" id="portalLiveToastTitle">{{ t('ui.shell.toast_semantic') }}</div>
-  <div class="portal-live-toast-body"  id="portalLiveToastBody"></div>
-</div>
 <script>
 (function(){
-  var socket=null,reconnectMs=1000,toastTimer=null;
+  var socket=null,reconnectMs=1000;
   var seenKey='qb-portal-reviewed-feedback';
   var queryLimitSeenKey='qb-portal-query-limit:'+{{ (user.account_id or '')|tojson }};
 
@@ -512,17 +437,8 @@ window.qbEnumLabel = function (group, value) {
   function isSeen(key){return seenSet().has(key);}
 
   function showPortalToast(title,body,level){
-    var toast=document.getElementById('portalLiveToast');
-    var titleEl=document.getElementById('portalLiveToastTitle');
-    var bodyEl=document.getElementById('portalLiveToastBody');
-    if(!toast||!titleEl||!bodyEl) return;
-    titleEl.textContent=title;
-    bodyEl.textContent=body;
-    toast.classList.toggle('warning',level==='warning');
-    toast.classList.toggle('blocked',level==='blocked');
-    toast.classList.add('show');
-    window.clearTimeout(toastTimer);
-    toastTimer=window.setTimeout(function(){toast.classList.remove('show');},7000);
+    window.qbToast.notify({title:title, body:body,
+      tone:level==='blocked'?'danger':(level==='warning'?'warning':'info'), duration:7000});
   }
 
   function handleSemanticMessage(msg,fromPoll){

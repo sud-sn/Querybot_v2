@@ -320,29 +320,6 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 }
 .admin-live-badge.show { display: inline-flex; animation: qb-pop .3s ease; }
 
-/* ── Toast ── */
-.admin-live-toast {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  max-width: 360px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-left: 4px solid var(--amber);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
-  padding: .85rem 1rem;
-  z-index: 2500;
-  opacity: 0;
-  transform: translateY(10px);
-  pointer-events: none;
-  transition: opacity .18s, transform .18s;
-}
-.admin-live-toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.admin-live-toast-title { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text); margin-bottom: 3px; }
-.admin-live-toast-body  { font-size: var(--font-xs); color: var(--text-muted); line-height: 1.45; }
-.admin-live-toast a     { font-weight: var(--weight-bold); color: var(--amber); }
-
 /* ── Responsive: collapse sidebar ── */
 @media (max-width: 860px) {
   .sidebar {

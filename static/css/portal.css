@@ -227,30 +227,6 @@ body:has(.portal-app-shell) .main { height: 100%; }
   margin-bottom: 1.5rem;
 }
 
-/* ── Live toast ── */
-.portal-live-toast {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  max-width: 360px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-left: 4px solid var(--success);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
-  padding: .85rem 1rem;
-  z-index: 2500;
-  opacity: 0;
-  transform: translateY(10px);
-  pointer-events: none;
-  transition: opacity .18s, transform .18s;
-}
-.portal-live-toast.show    { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.portal-live-toast.warning { border-left-color: var(--warning); }
-.portal-live-toast.blocked { border-left-color: var(--danger);  }
-.portal-live-toast-title { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text); margin-bottom: 3px; }
-.portal-live-toast-body  { font-size: var(--font-xs); color: var(--text-muted); line-height: 1.45; }
-
 /* ── Bottom navigation (mobile only) ── */
 .portal-bottom-nav {
   display: none;

@@ -465,6 +465,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Vous n'êtes pas encore affecté à un groupe. Contactez votre "
               "administrateur pour obtenir l'accès aux tables.",
     },
+    "ui.dash.chart_removed": {"en": "Chart removed from the dashboard.",
+                              "fr": "Graphique retiré du tableau de bord."},
     "ui.dash.limit_reached": {
         "en": "Monthly query limit reached: {used} / {limit} used. Ask your "
               "administrator to increase the workspace limit.",
@@ -534,6 +536,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.confirm_title": {"en": "Are you sure?", "fr": "Confirmer l'action ?"},
     "ui.shell.cancel": {"en": "Cancel", "fr": "Annuler"},
     "ui.shell.confirm": {"en": "Confirm", "fr": "Confirmer"},
+    "ui.shell.dismiss": {"en": "Dismiss", "fr": "Fermer"},
+    "ui.shell.undo": {"en": "Undo", "fr": "Annuler"},
     # The live toast. The status sentence was assembled by concatenation --
     # `(column || 'Field') + ' was ' + statusText + ' by admin.'` -- which
     # cannot be translated as fragments: French puts the participle after the

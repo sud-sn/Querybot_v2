@@ -750,10 +750,15 @@ class TestTheDesignSystemIsUsed:
 
     def test_the_toast_outranks_the_modal(self):
         """The toast sat at z-index 1200 under a backdrop at 8000, so a toasted
-        message from inside this dialog was painted underneath it."""
-        src = TEMPLATE.read_text(encoding="utf-8")
-        toast = src[src.index(".toast{"):src.index("}", src.index(".toast{"))]
-        assert "var(--z-toast)" in toast
+        message from inside this dialog was painted underneath it. The chat's
+        toasts are the shared ones now (static/js/qb-ui.js), on the toast
+        layer, which the tokens put above the modal layer this dialog uses."""
+        base = (TEMPLATE.parents[2] / "static" / "css" / "base.css").read_text(encoding="utf-8")
+        region = base[base.index(".qb-toasts {"):base.index("}", base.index(".qb-toasts {"))]
+        assert "z-index: var(--z-toast)" in region
+        tokens = (TEMPLATE.parents[2] / "static" / "css" / "tokens.css").read_text(encoding="utf-8")
+        layer = dict(re.findall(r"(--z-[a-z]+):\s*(\d+);", tokens))
+        assert int(layer["--z-toast"]) > int(layer["--z-modal"])
 
     def test_motion_respects_the_reduced_motion_preference(self):
         css = self._picker_css()

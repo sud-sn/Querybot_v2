@@ -11,7 +11,7 @@
 <script src="/static/js/qb-charts.js?v=20260926-brand-1"></script>
 <link rel="stylesheet" href="/static/vendor/gridstack.min.css">
 <script src="/static/vendor/gridstack-all.js"></script>
-<link rel="stylesheet" href="/static/css/dashboard.css?v=20260926-brand-1">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=20260926-ui-1">
 {% endblock %}
 {% block content %}
 {% macro workspace_usage(user, charts, monthly_count, query_status,
@@ -47,7 +47,7 @@
 {% if query_status.blocked %}
 {{ alert(t('ui.dash.limit_reached', used=query_status.used_label, limit=query_status.limit_label), 'error', 'x-circle') }}
 {% elif query_status.warning %}
-{{ alert(t('ui.dash.limit_warning', used=query_status.used_label, limit=query_status.limit_label), 'amber', 'exclamation-triangle') }}
+{{ alert(t('ui.dash.limit_warning', used=query_status.used_label, limit=query_status.limit_label), 'amber', 'alert-triangle') }}
 {% endif %}
 
 {% if allowed_tables %}
@@ -683,62 +683,38 @@ function closeChartModal() {
   modal.style.display = 'none';
 }
 
-// ── Unpin with undo toast ─────────────────────────────────────────────────────
-let _unpinTimer = null;
-let _unpinCardEl = null;
-let _unpinFormId = null;
+// ── Unpin with undo ───────────────────────────────────────────────────────────
+// The chart fades and the shared toast offers Undo for five seconds; when the
+// toast leaves without an undo, the chart's unpin form is submitted. Unpinning
+// a second chart first takes the first one back, as before.
+let _unpinPending = null;
+
+function _restoreUnpinnedCard(cardEl) {
+  cardEl.style.opacity = '';
+  cardEl.style.transform = '';
+  cardEl.style.pointerEvents = '';
+}
 
 function unpinChart(chartId, cardEl) {
-  // Cancel any in-flight unpin
-  if (_unpinTimer) { clearTimeout(_unpinTimer); _unpinTimer = null; }
+  if (_unpinPending) { _unpinPending.undone = true; _unpinPending.toast.dismiss(); }
 
-  // Restore previously fading card (if user unpins a different chart quickly)
-  if (_unpinCardEl && _unpinCardEl !== cardEl) {
-    _unpinCardEl.style.opacity = '';
-    _unpinCardEl.style.transform = '';
-    _unpinCardEl.style.pointerEvents = '';
-  }
-
-  _unpinCardEl = cardEl;
-  _unpinFormId = 'unpin-' + chartId;
   cardEl.style.transition = 'opacity .25s, transform .25s';
   cardEl.style.opacity = '0.25';
   cardEl.style.transform = 'scale(.97)';
   cardEl.style.pointerEvents = 'none';
 
-  _showUnpinToast();
-  _unpinTimer = setTimeout(_commitUnpin, 5000);
-}
-
-function _commitUnpin() {
-  _hideUnpinToast();
-  if (_unpinFormId) document.getElementById(_unpinFormId)?.submit();
-  _unpinCardEl = null; _unpinFormId = null; _unpinTimer = null;
-}
-
-function _undoUnpin() {
-  if (_unpinTimer) { clearTimeout(_unpinTimer); _unpinTimer = null; }
-  _hideUnpinToast();
-  if (_unpinCardEl) {
-    _unpinCardEl.style.opacity = '';
-    _unpinCardEl.style.transform = '';
-    _unpinCardEl.style.pointerEvents = '';
-    _unpinCardEl = null;
-  }
-  _unpinFormId = null;
-}
-
-function _showUnpinToast() {
-  const t = document.getElementById('unpin-toast');
-  if (!t) return;
-  t.style.display = 'flex';
-  requestAnimationFrame(() => t.classList.add('visible'));
-}
-function _hideUnpinToast() {
-  const t = document.getElementById('unpin-toast');
-  if (!t) return;
-  t.classList.remove('visible');
-  setTimeout(() => { t.style.display = 'none'; }, 200);
+  const pending = {cardEl: cardEl, formId: 'unpin-' + chartId, undone: false};
+  pending.toast = window.qbToast.notify({
+    body: window.qbT('ui.dash.chart_removed'),
+    action: {label: window.qbT('ui.shell.undo'), onClick: () => { pending.undone = true; }},
+    duration: 5000,
+    onDismiss: () => {
+      if (_unpinPending === pending) _unpinPending = null;
+      if (pending.undone) _restoreUnpinnedCard(pending.cardEl);
+      else document.getElementById(pending.formId)?.submit();
+    },
+  });
+  _unpinPending = pending;
 }
 
 // ── Fallback drag-to-reorder dashboard charts for browsers where Gridstack did
@@ -805,11 +781,6 @@ function initFallbackDashboardDrag(grid) {
 }
 </script>
 
-<div id="unpin-toast" role="status" aria-live="polite" style="display:none">
-  <span>Chart removed from dashboard</span>
-  <button type="button" class="unpin-toast-undo" onclick="_undoUnpin()">Undo</button>
-  <button type="button" class="unpin-toast-close" onclick="_commitUnpin()" aria-label="Dismiss">{{ ic("x", 14) }}</button>
-</div>
 
 
 {% endblock %}

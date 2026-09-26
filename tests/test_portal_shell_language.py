@@ -302,7 +302,6 @@ def _run(script: str, *, lang="en", collapsed=False) -> dict:
         _function(SOURCE, "function syncToggleLabel()"),
         _function(SOURCE, "function handleSemanticMessage(msg,fromPoll)"),
         _function(SOURCE, "function handleSystemMessage(msg)"),
-        _function(SOURCE, "window.qbConfirm = function(opts)"),
     ))
     harness = f"""
 const _log = {{toasts: [], events: []}};
@@ -322,11 +321,7 @@ function _el(id) {{
   }};
 }}
 const _toggleButton = _el('toggle');
-const _nodes = {{}};
-for (const id of ['qbDialogBackdrop','qbDialogTitle','qbDialogBody',
-                  'qbDialogCancel','qbDialogConfirm'])
-  _nodes[id] = _el(id);
-var document = {{getElementById: id => _nodes[id] || null}};
+var document = {{getElementById: id => null}};
 var window = {{
   QB_I18N: {json.dumps(i18n.catalogue_for(lang))},
   dispatchEvent(e) {{ _log.events.push(e); }},
@@ -341,13 +336,6 @@ var sidebar = {{querySelector: () => _toggleButton}};
 function markSeen() {{}}
 function isSeen() {{ return false; }}
 function showPortalToast(title, body, level) {{ _log.toasts.push({{title, body, level}}); }}
-const backdrop = _nodes.qbDialogBackdrop;
-const titleEl = _nodes.qbDialogTitle;
-const bodyEl = _nodes.qbDialogBody;
-const cancelBtn = _nodes.qbDialogCancel;
-const confirmBtn = _nodes.qbDialogConfirm;
-var _onConfirm = null;
-function close() {{ backdrop.style.display = 'none'; _onConfirm = null; }}
 
 {lifted}
 
@@ -356,8 +344,6 @@ function close() {{ backdrop.style.display = 'none'; _onConfirm = null; }}
 JSON.stringify({{
   log: _log,
   toggle: _toggleButton._attrs,
-  dialog: {{title: titleEl.textContent, body: bodyEl.textContent,
-            cancel: cancelBtn.textContent, confirm: confirmBtn.textContent}},
 }});
 """
     return json.loads(dukpy.evaljs(harness))
@@ -405,22 +391,36 @@ class TestTheSidebarToggleLabel:
 
 
 class TestTheConfirmDialogDefaults:
+    """The shared dialog (static/js/qb-ui.js) reads its labels through the
+    shell's own qbT and the real catalogue."""
+
+    @staticmethod
+    def _dialog(call: str, lang: str) -> dict:
+        from tests.js_fakedom import FAKE_DOM
+
+        component = (Path(__file__).resolve().parents[1] / "static" / "js" / "qb-ui.js").read_text(encoding="utf-8")
+        translator = _function(SOURCE, "window.qbT = function (id, vars)")
+        return json.loads(dukpy.evaljs(
+            FAKE_DOM + f"\nwindow.QB_I18N = {json.dumps(i18n.catalogue_for(lang))};\n" + translator + ";\n"
+            + component + "\n" + call + """
+            var d = dialogNow(); var body = d.byClass('qb-dialog-body');
+            JSON.stringify({title: d.byClass('qb-dialog-title').textContent, body: body ? body.textContent : '',
+                            cancel: d.byClass('qb-dialog-footer').children[0].textContent,
+                            confirm: d.byClass('qb-dialog-footer').children[1].textContent});"""))
 
     def test_the_defaults_are_translated(self):
         """These are set in JavaScript, so translating the markup alone leaves
         every caller that omits them in English."""
-        out = _run("window.qbConfirm({});", lang="fr")
-        assert out["dialog"] == {
+        assert self._dialog("window.qbConfirm({});", "fr") == {
             "title": "Confirmer l'action ?", "body": "",
             "cancel": "Annuler", "confirm": "Confirmer",
         }
 
     def test_a_caller_supplied_label_still_wins(self):
-        out = _run("window.qbConfirm({title: 'Supprimer ?', confirm: 'Supprimer'});",
-                   lang="fr")
-        assert out["dialog"]["title"] == "Supprimer ?"
-        assert out["dialog"]["confirm"] == "Supprimer"
-        assert out["dialog"]["cancel"] == "Annuler"
+        out = self._dialog("window.qbConfirm({title: 'Supprimer ?', confirm: 'Supprimer'});", "fr")
+        assert out["title"] == "Supprimer ?"
+        assert out["confirm"] == "Supprimer"
+        assert out["cancel"] == "Annuler"
 
 
 class TestTheLiveToast:

@@ -550,12 +550,15 @@ def test_status_colours_in_admin_come_from_tokens():
 
 def test_the_toast_reads_the_theme():
     """qbToast held a private stock-Tailwind palette with light-only
-    backgrounds, so every toast in the console ignored dark mode."""
-    base = _read("admin/templates/base.html")
-    block = base.split("var colors = {", 1)[1].split("};", 1)[0]
-    assert "#" not in block, f"qbToast still hardcodes colour: {block.strip()[:120]}"
-    for token in ("--success", "--danger", "--warning", "--primary"):
-        assert token in block, f"qbToast does not use {token}"
+    backgrounds. The shared toast (static/js/qb-ui.js) is styled in base.css,
+    and each tone is its status token."""
+    css = re.sub(r"/\*[\s\S]*?\*/", "", _read("static/css/base.css"))
+    rules = dict(re.findall(r"(\.qb-toast[\w-]*[^{]*)\{([^}]*)\}", css))
+    assert rules, "base.css has no toast rules"
+    assert not [sel for sel, body in rules.items() if re.search(r"#[0-9a-fA-F]{3,8}\b", body)]
+    for tone, token in (("success", "--success"), ("warning", "--warning"), ("danger", "--danger")):
+        body = next(b for sel, b in rules.items() if sel.strip() == f".qb-toast--{tone}")
+        assert f"--qb-toast-tone: var({token})" in body, tone
 
 
 def test_no_white_text_on_a_token_fill():
