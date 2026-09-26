@@ -226,7 +226,8 @@ class ClientReportsTemplateTests(unittest.TestCase):
         )
         self.assertIn("Daily Ops", rendered_full)
         self.assertIn("Revenue", rendered_full)
-        self.assertIn("default-badge", rendered_full)
+        # The default report is marked as such (a brand badge reading "default").
+        self.assertIn('<span class="badge badge-brand">default</span>', rendered_full)
 
 
 if __name__ == "__main__":

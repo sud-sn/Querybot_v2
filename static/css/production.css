@@ -33,8 +33,6 @@ body { background: var(--bg); letter-spacing: 0; }
 
 
 .alert { border-radius: var(--radius); box-shadow: none; }
-.badge,
-.status-pill,
 .ui-chip { letter-spacing: 0; }
 
 .qb-table-wrap { box-shadow: none; }

@@ -527,64 +527,62 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   border-color: color-mix(in srgb, var(--warning) 26%, transparent);
 }
 
-/* ── Badges ── */
-.badge {
-  display: inline-block;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
-  padding: 3px 8px;
-  border-radius: 999px;
-  letter-spacing: .03em;
-}
-.badge-green { background: var(--green-light);   color: var(--green);   }
-.badge-blue  { background: var(--primary-soft);  color: var(--primary); }
-.badge-amber { background: var(--amber-light);   color: var(--amber);   }
-.badge-red   { background: var(--red-light);     color: var(--red);     }
-.badge-gray  { background: var(--surface-2);     color: var(--text-soft); }
-
+/* ── Badges and status ─────────────────────────────────────
+   A badge names a state or a kind in a word or two; a status pill
+   is the same with a dot. One set of tones, from tokens, for both:
+     neutral   (.badge-neutral, .badge-gray)
+     brand     (.badge-brand, .badge-blue)       a kind, not a state
+     info      (.badge-info)
+     success   (.badge-success, .badge-green; .status-pill.ok/.success)
+     warning   (.badge-warning, .badge-amber; .status-pill.warning)
+     danger    (.badge-danger, .badge-red; .status-pill.danger/.error)
+     accent    (.badge-accent, .badge-violet, .badge-indigo)
+   A tone sets only --badge-*; each label reads at 4.5:1 on its fill,
+   and the word, not the colour, carries the meaning. */
+.badge,
 .status-pill {
+  --badge-bg: var(--surface-alt); --badge-ink: var(--text-secondary);
+  --badge-line: var(--line);      --badge-dot: var(--text-muted);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 24px;
-  padding: 4px 9px;
+  gap: 5px;
+  border: 1px solid var(--badge-line);
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text-soft);
+  background: var(--badge-bg);
+  color: var(--badge-ink);
   font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
   white-space: nowrap;
 }
+.badge { padding: 2px 8px; }
+.status-pill { min-height: 24px; padding: 3px 9px; }
 .status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--text-muted);
+  background: var(--badge-dot, var(--text-muted));
   flex-shrink: 0;
 }
-.status-pill.ok,
-.status-pill.success {
-  background: color-mix(in srgb, var(--success-soft) 72%, var(--surface));
-  border-color: color-mix(in srgb, var(--success) 28%, transparent);
-  color: var(--success);
+.badge-brand, .badge-blue, .status-pill.brand {
+  --badge-bg: var(--primary-soft); --badge-ink: var(--primary-ink); --badge-line: var(--accent-200); --badge-dot: var(--primary);
 }
-.status-pill.ok .status-dot,
-.status-pill.success .status-dot { background: var(--success); }
-.status-pill.warning {
-  background: color-mix(in srgb, var(--warning-soft) 72%, var(--surface));
-  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
-  color: var(--warning);
+.badge-info, .status-pill.info {
+  --badge-bg: var(--info-soft); --badge-ink: var(--info-strong); --badge-line: var(--info-line); --badge-dot: var(--info);
 }
-.status-pill.warning .status-dot { background: var(--warning); }
-.status-pill.danger,
-.status-pill.error {
-  background: color-mix(in srgb, var(--danger-soft) 72%, var(--surface));
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-  color: var(--danger);
+.badge-success, .badge-green, .status-pill.ok, .status-pill.success {
+  --badge-bg: var(--success-soft); --badge-ink: var(--success-strong); --badge-line: var(--success-line); --badge-dot: var(--success);
 }
-.status-pill.danger .status-dot,
-.status-pill.error .status-dot { background: var(--danger); }
+.badge-warning, .badge-amber, .status-pill.warning {
+  --badge-bg: var(--warning-soft); --badge-ink: var(--warning-strong); --badge-line: var(--warning-line); --badge-dot: var(--warning);
+}
+.badge-danger, .badge-red, .status-pill.danger, .status-pill.error {
+  --badge-bg: var(--danger-soft); --badge-ink: var(--danger-strong); --badge-line: var(--danger-line); --badge-dot: var(--danger);
+}
+.badge-accent, .badge-violet, .badge-indigo, .status-pill.accent {
+  --badge-bg: var(--violet-light); --badge-ink: var(--violet); --badge-line: var(--violet-line); --badge-dot: var(--violet);
+}
+.badge-neutral, .badge-gray, .status-pill.neutral { /* the defaults */ }
 
 .chip-row,
 .toolbar-row {

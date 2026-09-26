@@ -18,10 +18,6 @@
   padding:.625rem .875rem;max-height:140px;overflow-y:auto;line-height:1.8;}
 .status-badge{font-size:var(--font-xs);font-weight:var(--weight-bold);padding:3px 10px;border-radius:999px;
   font-family:var(--font-mono);letter-spacing:.04em;}
-.badge-ready{background:var(--green-light);color:var(--green);}
-.badge-building{background:var(--amber-light);color:var(--amber);}
-.badge-new{background:var(--surface-2);color:var(--text-muted);}
-.badge-schema{background:var(--blue-light);color:var(--blue);}
 .scope-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
 .scope-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);background:var(--surface)}
 .scope-title{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text-soft)}
@@ -160,11 +156,11 @@
     <p>Discover database tables and generate the Knowledge Base entirely from the admin panel.</p>
   </div>
   <div class="page-header-actions">
-    <span class="status-badge
-      {% if state == 'READY' %}badge-ready
-      {% elif state == 'KB_BUILDING' %}badge-building
-      {% elif state == 'SCHEMA_READY' %}badge-schema
-      {% else %}badge-new{% endif %}">
+    <span class="status-badge badge
+      {% if state == 'READY' %}badge-success
+      {% elif state == 'KB_BUILDING' %}badge-warning
+      {% elif state == 'SCHEMA_READY' %}badge-info
+      {% else %}badge-neutral{% endif %}">
       {{ state }}
     </span>
     {% if db_cfg %}

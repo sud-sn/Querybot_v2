@@ -19,11 +19,6 @@
 .report-card-body{padding:1rem}
 .report-title{font-size:var(--font-md);font-weight:var(--weight-bold);color:var(--text)}
 .report-sub{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px}
-.default-badge{display:inline-block;padding:2px 8px;border-radius:999px;
-  font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.03em;
-  background:var(--blue-light);color:var(--blue)}
-.inactive-badge{display:inline-block;padding:2px 8px;border-radius:999px;
-  font-size:var(--font-2xs);font-weight:var(--weight-bold);background:var(--red-light);color:var(--red)}
 .report-metric-row{display:flex;align-items:center;justify-content:space-between;
   gap:.5rem;padding:.5rem .625rem;border:1px solid var(--border);border-radius:var(--radius-sm);
   background:var(--surface-2);margin-bottom:.4rem;font-size:var(--font-sm)}
@@ -97,8 +92,8 @@ details[open].edit-panel summary{background:var(--gray-100)}
       <div class="report-card-header">
         <div>
           <span class="report-title">{{ r.name }}</span>
-          {% if r.is_default %}<span class="default-badge">default</span>{% endif %}
-          {% if not r.is_active %}<span class="inactive-badge">inactive</span>{% endif %}
+          {% if r.is_default %}<span class="badge badge-brand">default</span>{% endif %}
+          {% if not r.is_active %}<span class="badge badge-danger">inactive</span>{% endif %}
           <div class="report-sub">Created by {{ r.creator_label }}</div>
           {% if r.description %}<div class="report-sub">{{ r.description }}</div>{% endif %}
         </div>

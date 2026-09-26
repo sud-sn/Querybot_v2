@@ -62,9 +62,6 @@ table.dr-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   padding:1px 5px;white-space:nowrap}
 .status-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
   border-radius:999px;font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase}
-.status-approved{background:var(--green-light);color:var(--green)}
-.status-generated{background:var(--blue-light);color:var(--blue)}
-.status-needs_review{background:var(--amber-light);color:var(--amber)}
 .conf-bar{display:inline-block;width:60px;height:6px;border-radius:3px;
   background:var(--border);vertical-align:middle;margin-left:4px;overflow:hidden}
 .conf-fill{height:100%;border-radius:3px;background:var(--green)}
@@ -186,7 +183,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   <div class="dr-table-wrap">
     <div class="dr-table-header">
       <div><h2>Date-like columns needing review</h2><span style="font-size:var(--font-xs);color:var(--text-muted)">Schema metadata found these candidates but did not guess a business date role.</span></div>
-      <span class="status-pill status-needs_review">{{ date_role_coverage.review_candidate_count }} review</span>
+      <span class="status-pill warning">{{ date_role_coverage.review_candidate_count }} review</span>
     </div>
     <table class="dr-tbl">
       <thead><tr><th>Source Table</th><th>Column</th><th>Data Type</th><th>Why it is not automatic</th></tr></thead>
@@ -251,7 +248,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           {% for binding in context_bindings %}
           <div class="dr-binding">
             <div class="dr-binding-top">
-              <div><strong>{{ binding.metric_name }} / {{ binding.context_name }}</strong>{% if binding.is_default %} <span class="status-pill status-approved">default</span>{% endif %}</div>
+              <div><strong>{{ binding.metric_name }} / {{ binding.context_name }}</strong>{% if binding.is_default %} <span class="status-pill success">default</span>{% endif %}</div>
               <form method="post" action="/admin/clients/{{ client.account_id }}/date-contexts/{{ binding.id }}/delete"><button class="dr-danger" type="submit">Remove</button></form>
             </div>
             <div class="dr-binding-meta">{{ binding.date_role | replace('_',' ') | title }} via <span class="mono">{{ binding.fact_table }}.{{ binding.fact_column }}</span><br>{{ binding.aliases or 'No aliases' }}</div>
@@ -326,7 +323,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           <td><span class="mono">{{ dr.date_value_column or dr.fact_column or "Review required" }}</span></td>
           <td><span class="status-pill">{{ (dr.date_key_type or "surrogate_fk") | replace('_',' ') }}</span></td>
           <td>
-            <span class="status-pill status-{{ dr.status }}">{{ dr.status }}</span>
+            <span class="status-pill {{ {'approved': 'success', 'generated': 'info', 'needs_review': 'warning'}.get(dr.status, 'neutral') }}">{{ dr.status }}</span>
           </td>
           <td>
             <span style="font-size:var(--font-sm);font-weight:var(--weight-bold)">{{ dr.confidence }}%</span>
@@ -336,12 +333,12 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
             {% if dr.status == "approved" %}
             <span class="badge badge-green">{{ ic("check", 12, "qb-icon-lead") }}Approved</span>
             {% if dr.is_default %}
-            <span class="status-pill status-approved" title="Used for generic date questions on this fact table that don't name a specific date">Default</span>
+            <span class="status-pill success" title="Used for generic date questions on this fact table that don't name a specific date">Default</span>
             <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/set-default" style="display:inline">
               <input type="hidden" name="fact_table" value="{{ dr.fact_table }}">
               <input type="hidden" name="fact_column" value="{{ dr.fact_column }}">
               <input type="hidden" name="make_default" value="0">
-              <button type="submit" class="status-pill" style="cursor:pointer;border:1px solid var(--border);background:var(--surface)"
+              <button type="submit" class="btn btn-secondary btn-xs"
                       title="Remove this default without changing the role's approved status">Unset default</button>
             </form>
             {% else %}
@@ -349,7 +346,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
               <input type="hidden" name="fact_table"  value="{{ dr.fact_table }}">
               <input type="hidden" name="fact_column" value="{{ dr.fact_column }}">
               <input type="hidden" name="make_default" value="1">
-              <button type="submit" class="status-pill" style="cursor:pointer;border:none"
+              <button type="submit" class="btn btn-ghost btn-xs"
                       title="Use this date for generic 'for 2026'-style questions on this fact table that don't name a specific date">Set as default</button>
             </form>
             {% endif %}

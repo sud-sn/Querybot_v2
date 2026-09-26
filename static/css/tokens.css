@@ -190,7 +190,7 @@
   --green:  #067647;  --green-light:  #E7F6EE;
   --red:    #B42318;  --red-light:    #FDECEA;
   --amber:  #A6490C;  --amber-light:  #FDF1E3;
-  --violet: #6941C6;  --violet-light: #F1ECFD;
+  --violet: #6941C6;  --violet-light: #F1ECFD;  --violet-line: #CDBEF2;
 
   /* ── Interaction states ─────────────────────────────────────
      Ground-aware: each hover darkens its own ground by at least

@@ -23,10 +23,6 @@
 .table-link:hover{text-decoration:none;background:var(--surface-2)}
 .table-name{font-family:var(--font-mono);font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text)}
 .table-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:3px}
-.confidence-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;font-size:var(--font-xs);font-weight:var(--weight-bold);background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);white-space:nowrap}
-.confidence-pill.high{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 28%,transparent);color:var(--success)}
-.confidence-pill.med{background:var(--warning-soft);border-color:color-mix(in srgb,var(--warning) 28%,transparent);color:var(--warning)}
-.confidence-pill.low{background:var(--danger-soft);border-color:color-mix(in srgb,var(--danger) 28%,transparent);color:var(--danger)}
 .semantic-table-card{scroll-margin-top:84px}
 .table-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}
 .table-head h2{font-size:var(--font-md);font-weight:var(--weight-bold);color:var(--text)}
@@ -39,9 +35,6 @@
 .field-type{font-size:var(--font-xs);color:var(--text-muted);margin-top:.15rem}
 .values{font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem;max-width:360px}
 .status-badges{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem}
-.mini-badge{display:inline-flex;border-radius:999px;padding:3px 7px;font-size:var(--font-2xs);font-weight:var(--weight-bold);background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
-.mini-badge.pending{background:var(--warning-soft);border-color:color-mix(in srgb,var(--warning) 28%,transparent);color:var(--warning)}
-.mini-badge.approved{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 28%,transparent);color:var(--success)}
 .review-toggle{border:1px solid var(--border);background:var(--surface);color:var(--primary);border-radius:999px;padding:7px 10px;font-size:var(--font-xs);font-weight:var(--weight-bold);cursor:pointer;white-space:nowrap}
 .review-toggle:hover{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 28%,transparent)}
 .review-row{display:none;background:color-mix(in srgb,var(--surface-2) 70%,transparent)}
@@ -74,7 +67,7 @@
     <p>{{ t('ui.kb.intro') }}</p>
   </div>
   <div class="semantic-actions">
-    <span class="confidence-pill {% if pending_count %}med{% else %}high{% endif %}">
+    <span class="status-pill {% if pending_count %}warning{% else %}success{% endif %}">
       {{ plural('ui.kb.pending', pending_count) }}
     </span>
     <a href="/portal/chat" class="btn btn-secondary btn-sm">{{ t('ui.kb.back_to_chat') }}</a>
@@ -126,7 +119,7 @@
           <span class="table-name">{{ table.table }}</span>
           <span class="table-meta">{{ plural('ui.kb.field_count', table.field_count) }} · {{ table.fqn }}</span>
         </span>
-        <span class="confidence-pill {% if table.confidence >= 85 %}high{% elif table.confidence >= 65 %}med{% else %}low{% endif %}">{{ table.confidence }}%</span>
+        <span class="status-pill {% if table.confidence >= 85 %}success{% elif table.confidence >= 65 %}warning{% else %}danger{% endif %}">{{ table.confidence }}%</span>
       </a>
       {% endfor %}
     </div>
@@ -141,7 +134,7 @@
           <h2>{{ table.schema }}.{{ table.table }}</h2>
           <p>{{ table.overview or t('ui.kb.default_overview') }}</p>
         </div>
-        <span class="confidence-pill {% if table.confidence >= 85 %}high{% elif table.confidence >= 65 %}med{% else %}low{% endif %}">{{ t('ui.kb.pass', score=table.confidence) }}</span>
+        <span class="status-pill {% if table.confidence >= 85 %}success{% elif table.confidence >= 65 %}warning{% else %}danger{% endif %}">{{ t('ui.kb.pass', score=table.confidence) }}</span>
       </div>
       <div style="overflow:auto">
         <table class="field-table">
@@ -164,9 +157,9 @@
                 <div class="field-type">{{ field.type or t('ui.kb.type_unknown') }}{% if field.nullable %} · {{ t('ui.kb.nullable', value=field.nullable) }}{% endif %}</div>
                 {% if field.distinct_values %}<div class="values">{{ t('ui.kb.values', values=field.distinct_values) }}</div>{% endif %}
                 <div class="status-badges">
-                  {% if field.pending %}<span class="mini-badge pending">{{ t('ui.kb.badge.pending') }}</span>{% endif %}
-                  {% if field.approved %}<span class="mini-badge approved">{{ t('ui.kb.badge.approved') }}</span>{% endif %}
-                  {% if field.needs_context %}<span class="mini-badge pending">{{ t('ui.kb.badge.needs_context') }}</span>{% endif %}
+                  {% if field.pending %}<span class="badge badge-warning mini-badge pending">{{ t('ui.kb.badge.pending') }}</span>{% endif %}
+                  {% if field.approved %}<span class="badge badge-success mini-badge approved">{{ t('ui.kb.badge.approved') }}</span>{% endif %}
+                  {% if field.needs_context %}<span class="badge badge-warning mini-badge pending">{{ t('ui.kb.badge.needs_context') }}</span>{% endif %}
                 </div>
               </td>
               <td class="field-meaning">{{ field.meaning }}</td>
@@ -181,7 +174,7 @@
                 {% endif %}
               </td>
               <td>
-                <span class="confidence-pill field-confidence {% if field.confidence >= 85 %}high{% elif field.confidence >= 65 %}med{% else %}low{% endif %}">{{ field.confidence }}%</span>
+                <span class="status-pill field-confidence {% if field.confidence >= 85 %}success{% elif field.confidence >= 65 %}warning{% else %}danger{% endif %}">{{ field.confidence }}%</span>
               </td>
               <td><button type="button" class="review-toggle" data-review-target="{{ row_id }}" aria-expanded="false" onclick="toggleReview(this.dataset.reviewTarget, this)">{{ t('ui.kb.suggest_edit') }}</button></td>
             </tr>
@@ -389,7 +382,7 @@ window.addEventListener('qb-semantic-feedback-reviewed', function(event){
       _setConfidenceClass(row.querySelector('.field-confidence'), 100);
       if(badges && !badges.querySelector('.mini-badge.approved')){
         const badge = document.createElement('span');
-        badge.className = 'mini-badge approved';
+        badge.className = 'badge badge-success mini-badge approved';
         badge.textContent = window.qbT('ui.kb.badge.approved');
         badges.appendChild(badge);
       }

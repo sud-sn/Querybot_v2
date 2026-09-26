@@ -30,7 +30,6 @@
 .type-positive{color:var(--success);font-weight:var(--weight-bold)}
 .type-review{color:var(--warning);font-weight:var(--weight-bold)}
 .type-negative{color:var(--danger);font-weight:var(--weight-bold)}
-.source-pill{display:inline-block;padding:1px 6px;border-radius:4px;font-size:var(--font-2xs);font-weight:var(--weight-bold);background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
 .votes-up{color:var(--success);font-weight:var(--weight-bold)}
 .votes-down{color:var(--danger);font-weight:var(--weight-bold)}
 .question-cell{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-weight:var(--weight-semibold)}
@@ -194,7 +193,7 @@
         <span class="vote-stat down" title="Negative votes">{{ ic("arrow-down", 12) }}{{ c.negative_vote_count or 0 }}</span>
       </div>
     </td>
-    <td><span class="source-pill">{{ c.source }}</span></td>
+    <td><span class="badge badge-neutral">{{ c.source }}</span></td>
     <td>
       <span class="badge
         {%- if c.status == 'approved'        %} badge-green

@@ -26,10 +26,6 @@
 .kind-dimension{background:var(--green-light);color:var(--green)}
 .kind-filter{background:var(--amber-light);color:var(--amber)}
 .kind-entity{background:var(--violet-light);color:var(--violet)}
-.source-badge{display:inline-block;padding:2px 8px;border-radius:999px;
-  font-size:var(--font-2xs);font-weight:var(--weight-bold);background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
-.source-manual{background:var(--green-light);color:var(--green)}
-.source-kb_extracted{background:var(--blue-light);color:var(--blue)}
 .expr-preview{font-family:var(--font-mono);font-size:var(--font-xs);background:var(--surface-2);
   border:1px solid var(--border);border-radius:var(--radius-sm);padding:.625rem .875rem;
   white-space:pre-wrap;word-break:break-all;color:var(--text-soft);margin-top:.5rem}
@@ -201,12 +197,12 @@ details[open].edit-panel summary{background:var(--gray-100)}
         <div>
           <span class="term-title">{{ t.term }}</span>
           <span class="kind-badge kind-{{ t.kind }}">{{ t.kind }}</span>
-          <span class="source-badge source-{{ t.source }}">{{ t.source }}</span>
+          <span class="badge {{ {'manual': 'badge-success', 'kb_extracted': 'badge-brand'}.get(t.source, 'badge-neutral') }}">{{ t.source }}</span>
           {% if not t.is_active %}
-            <span class="source-badge" style="background:var(--red-light);color:var(--red)">inactive</span>
+            <span class="badge badge-danger">inactive</span>
           {% endif %}
           {% if t.requires_clarification %}
-            <span class="source-badge" style="background:var(--amber-light);color:var(--amber)">
+            <span class="badge badge-warning">
               needs clarification
             </span>
           {% endif %}

@@ -63,7 +63,6 @@
 .audit-comp code{font-size:var(--font-xs);font-family:var(--font-mono);background:var(--surface);border:1px solid var(--border);padding:2px 5px;border-radius:var(--radius-sm);color:var(--text-soft);white-space:nowrap}
 .audit-model{font-size:var(--font-xs);color:var(--gray-500);white-space:nowrap}
 .audit-chars{font-size:var(--font-xs);color:var(--gray-500);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.call-count-badge{display:inline-flex;align-items:center;gap:3px;font-size:var(--font-2xs);font-weight:var(--weight-bold);background:var(--blue-light);color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 22%,transparent);border-radius:999px;padding:2px 8px;white-space:nowrap}
 
 /* ── Client readiness / health score widget ─────────────────────── */
 .health-score-card{grid-column:1/-1}
@@ -694,7 +693,7 @@
           </td>
           <td class="audit-time">{{ group.first_call[5:16] }}</td>
           <td>
-            <span class="call-count-badge">
+            <span class="badge badge-brand">
               {{ group.call_count }} call{{ "s" if group.call_count != 1 else "" }}
             </span>
           </td>
