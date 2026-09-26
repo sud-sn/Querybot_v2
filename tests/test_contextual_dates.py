@@ -424,8 +424,11 @@ class ContextualDateResolutionTests(unittest.TestCase):
         )
 
     def test_current_month_does_not_explicitly_match_ent_date(self):
+        # The metric reads the invoice fact: a metric's default date is taken
+        # from its own table, not from whatever fact the question touches.
         metric = {
             **self.metric,
+            "base_table": "EMDW_DMART.CUS_ORD_IVC_FCT",
             "default_time_column": "CUS_IVC_DT_DMS_KEY",
         }
         invoice_role = {

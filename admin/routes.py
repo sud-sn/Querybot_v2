@@ -6347,6 +6347,8 @@ async def metrics_page(request: Request, account_id: str):
         "proposals": proposals,
         "saved":   request.query_params.get("saved"),
         "error":   request.query_params.get("error"),
+        "notice":  request.query_params.get("notice"),
+        "date_warning": request.query_params.get("date_warning"),
         "db_type": db_type,
     })
 
@@ -7030,13 +7032,73 @@ async def metric_ai_import(request: Request, account_id: str):
     })
 
 
-def _apply_metric_create(account_id: str, metric: dict, *, db_type: str) -> int:
+def _put_default_date_in_force(account_id: str, metric: dict) -> dict:
+    """Approve the metric's default date role now, or find out why it can't be.
+
+    See core.semantic_model.approve_metric_default_date. The metric is already
+    saved when this runs, so a failure here is logged and reported to the page
+    ("error") rather than undoing the save.
+    """
+    column = str(metric.get("default_time_column") or "").strip()
+    base_table = str(metric.get("base_table") or "").strip()
+    if not column:
+        return {"outcome": ""}
+    try:
+        from core.semantic_model import approve_metric_default_date
+        kb_dir = (store.get_client_state(account_id) or {}).get("kb_dir") or ""
+        notes: list[str] = []
+        outcome = approve_metric_default_date(kb_dir, base_table, column, notes=notes)
+    except Exception as exc:
+        log.warning("Default date %s of metric %r not put in force for %s: %s",
+                    column, metric.get("name"), account_id, exc)
+        outcome, notes = {"outcome": "error"}, []
+    return {**outcome, "column": column, "base_table": base_table, "notes": notes}
+
+
+def _default_date_query(outcome: dict) -> str:
+    """The metrics page's notice or warning for a saved default date, as a query."""
+    kind = str(outcome.get("outcome") or "")
+    column = str(outcome.get("column") or "")
+    role = outcome.get("role") or {}
+    table = str(role.get("fact_table") or outcome.get("base_table") or "")
+    label = str(role.get("name") or column)
+    if kind == "approved":
+        notice = (f'The default date is in force: the date role "{label}" ({column} on {table}) '
+                  "was approved with this save, so other questions on that table can use it too.")
+        notes = outcome.get("notes") or []
+        if notes:
+            notice += " " + str(notes[0])
+        return "&notice=" + quote(notice[:400])
+    reason = {
+        "incomplete": f"{column} on {table} is a date key with no calendar table mapped. "
+                      "Map it on the Date Roles page.",
+        "rejected": f'the date role "{label}" ({column} on {table}) was rejected. '
+                    "Approve it on the Date Roles page if this metric should use it.",
+        "no_role": (f"{column} has no date role on {table}." if table else f"{column} has no date role.")
+                   + " Add it on the Date Roles page.",
+        "several_tables": f"{column} is a date on several tables "
+                          f"({', '.join(outcome.get('tables') or [])}). Set the metric's base table.",
+        "no_model": "the knowledge base has not been built, so there are no date roles yet.",
+        "error": "it could not be checked; the server log says why.",
+    }.get(kind)
+    if not reason:
+        return ""
+    return "&date_warning=" + quote(("Saved, but the default date is not in force: " + reason)[:400])
+
+
+def _apply_metric_create(account_id: str, metric: dict, *, db_type: str,
+                         default_date: dict | None = None) -> int:
     """Save a metric and bring the rest of the semantic layer with it.
 
     Three things have to happen together and in this order, and there are now
     two callers -- the admin form and the proposal-accept route. Duplicating the
     sequence is how they drift, and a drift here means a metric that exists in
     the registry but not in the compiled contract, or vice versa.
+
+    ``default_date``, when given, receives the outcome of putting the metric's
+    Default time column in force (_put_default_date_in_force) -- done before
+    the recompile so one contract carries both. Only the admin form passes it:
+    a proposal's date was chosen in chat, not by the administrator.
 
     Raises ValueError on a duplicate active name (from ``store.save_metric``);
     the caller decides whether that is a redirect or a 409.
@@ -7065,6 +7127,9 @@ def _apply_metric_create(account_id: str, metric: dict, *, db_type: str) -> int:
             )
     except Exception as _sm_exc:
         log.warning("patch_metric_approval (create) skipped for %s: %s", name, _sm_exc)
+
+    if default_date is not None:
+        default_date.update(_put_default_date_in_force(account_id, metric))
 
     # Recompiles the semantic contract synchronously and runs every conflict
     # detector. This is why no chat handler may call it: a metric is the
@@ -7316,6 +7381,7 @@ async def metric_create(
             f"/admin/clients/{account_id}/metrics?error={quote(_ref_errors[0])}",
             status_code=303)
 
+    default_date: dict = {}
     try:
         _apply_metric_create(account_id, {
             "name":                name.strip(),
@@ -7333,7 +7399,7 @@ async def metric_create(
             "default_time_column": default_time_column.strip(),
             "base_table":          base_table.strip(),
             "base_entity":         base_entity.strip(),
-        }, db_type=db_type)
+        }, db_type=db_type, default_date=default_date)
     except ValueError as dup_exc:
         from urllib.parse import quote
         return RedirectResponse(
@@ -7341,7 +7407,9 @@ async def metric_create(
             status_code=303,
         )
 
-    return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/metrics?saved=1{_default_date_query(default_date)}",
+        status_code=303)
 
 
 @router.post("/clients/{account_id}/metrics/{metric_id}/update")
@@ -7445,8 +7513,15 @@ async def metric_update(
     except Exception as _sm_exc:
         log.warning("patch_metric_approval (update) skipped for %s: %s", name, _sm_exc)
 
+    # A deactivated metric answers nothing, so its date approves nothing.
+    default_date = _put_default_date_in_force(account_id, {
+        "name": name.strip(), "base_table": base_table.strip(),
+        "default_time_column": default_time_column.strip(),
+    }) if int(is_active) else {}
     _after_semantic_approval(account_id, f"metric '{name.strip()}' updated")
-    return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/metrics?saved=1{_default_date_query(default_date)}",
+        status_code=303)
 
 
 @router.post("/clients/{account_id}/metrics/{metric_id}/deprecate")

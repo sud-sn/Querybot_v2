@@ -1,5 +1,8 @@
 {# save/error alerts and the metric request queue — moved verbatim from client_metrics.html by 7a -#}
-{% if saved %}<div class="alert alert-success">Saved successfully.</div>{% endif %}
+{% if saved and not date_warning %}<div class="alert alert-success">Saved successfully.</div>{% endif %}
+{% if notice %}<div class="alert alert-info" role="status">{{ notice }}</div>{% endif %}
+{% if date_warning %}<div class="alert alert-amber" role="alert">{{ date_warning }}
+  <a href="/admin/clients/{{ client.account_id }}/date-roles">Open Date Roles</a></div>{% endif %}
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 
 {# The admin inbox has always linked here. Until now #proposals resolved to

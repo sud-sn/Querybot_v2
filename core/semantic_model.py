@@ -52,6 +52,11 @@ _APPROVED_DATE_ROLE_KEYS = frozenset({
     "name", "business_role", "dimension_table", "dimension_key",
     "date_value_column", "date_key_type", "synonyms", "status", "confidence",
     "temporal_grain", "inference_source",
+    # The table's default date and a deliberate "no default": both are an
+    # admin's choice that only set_default_date_role / clear_default_date_role
+    # make, and a rebuild used to drop them, so generic questions ("revenue for
+    # 2026") went from the chosen date to a clarification after every KB build.
+    "is_default", "default_disabled",
 })
 
 
@@ -3751,6 +3756,71 @@ def clear_default_date_role(kb_dir: str, fact_table: str, fact_column: str) -> b
     (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
     (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
     return True
+
+
+def approve_metric_default_date(
+    kb_dir: str, base_table: str, column: str, notes: list[str] | None = None,
+) -> dict[str, Any]:
+    """Put a metric's Default time column in force, or say why it can't be.
+
+    The resolver (core.contextual_dates._metric_default_time_role_bindings)
+    reads that setting only through an approved, complete Date Role on the
+    metric's own table. A column picked on the metric form whose role nobody
+    had approved therefore did nothing, and the form said "Saved".
+
+    The administrator saving the metric is choosing that date for it. When the
+    role is complete -- a date the warehouse types as one, an encoding, or a
+    key with its calendar join declared -- that choice is the approval, made
+    in the same action and reported back. Otherwise nothing is approved and
+    the outcome says why: no role on that column, a key with no calendar
+    mapped, a role someone rejected, or (with no base table) the column being
+    a date on several tables.
+
+    Returns {"outcome": ..., "role": {...}, "tables": [...]}. outcome is ""
+    (no column), "no_model", "in_force", "approved", "incomplete",
+    "rejected", "no_role" or "several_tables".
+    """
+    from core.contextual_dates import _role_is_complete, same_date_fact
+
+    column_u = str(column or "").strip().strip("[]`").upper().split(".")[-1]
+    if not column_u:
+        return {"outcome": ""}
+    model = load_semantic_model(kb_dir) if kb_dir else None
+    if not model:
+        return {"outcome": "no_model"}
+
+    roles: dict[str, dict[str, Any]] = {}
+    for role in model.get("date_roles") or []:
+        if str(role.get("fact_column") or "").strip().upper().split(".")[-1] != column_u:
+            continue
+        if base_table and not same_date_fact(role.get("fact_table"), base_table):
+            continue
+        roles.setdefault(str(role.get("fact_table") or "").upper(), dict(role))
+    if not roles:
+        return {"outcome": "no_role"}
+    if len(roles) > 1:
+        return {"outcome": "several_tables",
+                "tables": sorted(str(role.get("fact_table") or "") for role in roles.values())}
+
+    role = next(iter(roles.values()))
+    status = str(role.get("status") or "").casefold()
+    if not _role_is_complete(role):
+        return {"outcome": "incomplete", "role": role}
+    if status == "approved":
+        return {"outcome": "in_force", "role": role}
+    if status == "rejected":
+        return {"outcome": "rejected", "role": role}
+    if not patch_date_role(
+        kb_dir=kb_dir,
+        fact_table=str(role.get("fact_table") or ""),
+        fact_column=str(role.get("fact_column") or ""),
+        date_value_column=str(role.get("date_value_column") or ""),
+        status="approved",
+        notes=notes,
+    ):
+        return {"outcome": "no_role"}
+    role["status"] = "approved"
+    return {"outcome": "approved", "role": role}
 
 
 def find_default_date_roles(

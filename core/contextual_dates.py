@@ -848,9 +848,12 @@ def _metric_default_time_role_bindings(
     the setting into a physical binding makes it part of the executable
     semantic plan and therefore visible to both generation and validation.
 
-    Only complete, approved roles qualify.  A column name that happens to
-    match an unreviewed discovery candidate must not silently become governed
-    merely because an administrator selected the column on a metric.
+    Only complete, approved roles on the metric's own table qualify.  A column
+    name that happens to match an unreviewed discovery candidate must not
+    silently become governed here. The approval happens where the
+    administrator chooses the date -- saving the metric form approves a
+    complete role and says so, or says why it can't
+    (core.semantic_model.approve_metric_default_date).
     """
     configured: list[tuple[str, str]] = []
     for metric in matched_metrics or []:
@@ -875,7 +878,10 @@ def _metric_default_time_role_bindings(
         for metric_table, configured_column in configured:
             if role_column != configured_column:
                 continue
-            table_scope = {table for table in (metric_table, *scoped_tables) if table}
+            # The metric's own table when it names one. Widening that to every
+            # fact the question touches let a same-named key on another fact
+            # -- approved there, not here -- become this metric's date.
+            table_scope = {metric_table} if metric_table else scoped_tables
             if table_scope and not any(_same_table(role_table, table) for table in table_scope):
                 continue
             identity = (_table_identity(role_table)[0], role_column)
