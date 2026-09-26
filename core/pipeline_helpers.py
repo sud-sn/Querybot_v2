@@ -789,6 +789,25 @@ def _graph_join_type(context: dict, left: str, right: str) -> str | None:
     return "JOIN"
 
 
+def _resolved_graph_joins(context: dict) -> list[dict]:
+    """The question's resolved entity-graph edges, in the plan's join shape.
+
+    The lexical planner builds joins only between the fields it bound, so a
+    dimension it bound on its own -- "which item has the most stock", where
+    the metric supplies the measure -- has no join in the plan at all. The
+    graph resolved the same question's edge from the fact, and it is the one
+    the validator holds the SQL to.
+    """
+    joins = []
+    for edge in ((context or {}).get("graph_context") or {}).get("resolved_edges") or []:
+        source = ".".join(p for p in (edge.get("from_schema"), edge.get("from_table")) if p)
+        target = ".".join(p for p in (edge.get("to_schema"), edge.get("to_table")) if p)
+        conditions = [list(pair) for pair in edge.get("conditions") or [] if len(pair) == 2]
+        if source and target and conditions:
+            joins.append({"from": source, "to": target, "conditions": conditions})
+    return joins
+
+
 def _required_join_path(
     source: str,
     target: str,
@@ -1002,12 +1021,20 @@ def _unwritten_display_fields(plan: dict, written: list[dict]) -> list[dict]:
     yet confirmed, and the compilers write required fields only: answered
     without it, "stock on hand by item" came back as one total per unit. A
     modifier the planner demoted as not the requested grain ("customer" in
-    "warehouses with the most customer orders") is not asked to be seen.
+    "warehouses with the most customer orders") is not asked to be seen, and
+    neither is the losing reading of a word another field already answers:
+    "product group" bound to the product-group table and, as a hint, to the
+    item-group table is one breakdown, written once.
     """
+    def term(field: dict) -> str:
+        return " ".join(str(field.get("term") or "").lower().split()).rstrip("s")
+
+    written_terms = {term(kept) for kept in written} - {""}
     return [
         field for field in (plan or {}).get("fields") or []
         if (field.get("display_required") or str(field.get("role") or "").lower() == "display_dimension")
         and not field.get("demotion_reason")
+        and term(field) not in written_terms
         and not any(
             _same_physical_table(field.get("table"), kept.get("table"))
             and str(field.get("column") or "").upper() == str(kept.get("column") or "").upper()
@@ -1224,12 +1251,13 @@ def _compile_governed_grouped_request_sql(
 
     all_source_facts = {str(table) for table in source_facts}
     joins = list(plan.get("joins") or [])
+    other_facts = {table for table in all_source_facts if not _same_physical_table(table, fact_table)}
     for target, preferred_alias in requested_targets:
         if alias_for(target):
             continue
-        path = _required_join_path(
-            fact_table, target, joins,
-            forbidden_facts={table for table in all_source_facts if not _same_physical_table(table, fact_table)},
+        path = (
+            _required_join_path(fact_table, target, joins, forbidden_facts=other_facts)
+            or _required_join_path(fact_table, target, _resolved_graph_joins(context), forbidden_facts=other_facts)
         )
         if not path:
             return ""

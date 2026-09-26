@@ -403,13 +403,26 @@ def ask(warehouse: Warehouse, question: str, lang: str = "en") -> dict:
     }
 
 
+_built: dict = {}
+
+
 @contextlib.contextmanager
 def tenant_in(root: Path):
-    """Build the tenant with the working directory at ``root`` and keep it
-    there while the tests ask their questions."""
+    """The tenant, with the working directory where its files live while the
+    tests ask their questions. It is built once per process, at the first
+    ``root``: its account is process-wide and the suite shares one store, so a
+    second build would lay a second graph and metric set over the first."""
     previous = Path.cwd()
-    os.chdir(root)
+    if "warehouse" not in _built:
+        os.chdir(root)
+        try:
+            _built["warehouse"] = build_tenant(root)
+        except BaseException:
+            os.chdir(previous)
+            raise
+        _built["root"] = root
+    os.chdir(_built["root"])
     try:
-        yield build_tenant(root)
+        yield _built["warehouse"]
     finally:
         os.chdir(previous)

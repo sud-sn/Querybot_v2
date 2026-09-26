@@ -422,6 +422,15 @@ def _score_candidate(
         for preferred in preferred_fact_tables
     ):
         score += 20
+    # The question's own fact holding the key outranks another fact holding
+    # the same one. "Which item has the most stock?" matched the item key on
+    # the daily and on the monthly fact equally, and the tie made the item a
+    # hint the compiler could not write.
+    if preferred_fact_tables and role == "dimension" and _is_key_column(column) and any(
+        _same_physical_table(table, preferred)
+        for preferred in preferred_fact_tables
+    ):
+        score += 1
     return score
 
 
