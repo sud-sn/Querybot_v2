@@ -91,7 +91,7 @@ def _ratio(a: str, b: str) -> float:
     ("portal.css", ".portal-nav a"),
     ("chat_workspace.css", ".portal-thread-workspace small"),
     ("chat_workspace.css", ".portal-thread-heading"),
-    ("admin.css", ".sidebar-section-label"),
+    ("base.css", ".sidebar-group-label"),
 ])
 def test_text_on_the_navy_shell_reads(sheet, selector):
     tokens = _tokens()

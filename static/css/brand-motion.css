@@ -92,14 +92,6 @@
   color: var(--text-muted);
 }
 
-.qb-brand-motion__subtext {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-}
-
 /* ── Interactive: the resting mark answers the hand ───────────────────────
    Scoped to idle so hover can never fight a working state's animation. */
 .qb-brand-motion[data-state="idle"]:hover .qb-brand-motion__mark {

@@ -60,14 +60,6 @@ body {
   padding: .5rem 0;
   overflow-y: auto;
 }
-.sidebar-section-label {
-  padding: .75rem 1rem .25rem;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  color: var(--shell-muted);
-}
 .sidebar-link {
   display: flex;
   align-items: center;
@@ -330,156 +322,6 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   transition: stroke-dasharray .8s cubic-bezier(.22,.61,.36,1), stroke .3s;
 }
 
-/* ════════════════════════════════════════════════════════════════════
-   Client Workspace Sidebar
-   ════════════════════════════════════════════════════════════════════ */
-.client-sidebar {
-  width: 210px;
-  flex-shrink: 0;
-  background: var(--sidebar-bg);
-  display: flex;
-  flex-direction: column;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
-  border-right: 1px solid var(--sidebar-border);
-  z-index: 200;
-}
-/* ── Client header ── */
-.cs-header {
-  padding: .9rem 1rem .8rem;
-  border-bottom: 1px solid var(--shell-line);
-  flex-shrink: 0;
-}
-.cs-back {
-  display: inline-flex;
-  align-items: center;
-  gap: .25rem;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  color: var(--shell-muted);
-  text-decoration: none;
-  margin-bottom: .5rem;
-  letter-spacing: .02em;
-}
-.cs-back:hover { color: var(--on-primary); text-decoration: none; }
-.cs-name {
-  font-size: var(--font-sm);
-  font-weight: var(--weight-bold);
-  color: var(--on-primary);
-  letter-spacing: -.01em;
-  line-height: 1.25;
-  word-break: break-word;
-}
-.cs-account-id {
-  font-size: var(--font-xs);
-  color: var(--shell-muted);
-  font-family: var(--font-mono);
-  margin-top: .35rem;
-}
-/* ── Nav container ── */
-.cs-nav {
-  flex: 1;
-  overflow-y: auto;
-  padding: .4rem 0 .5rem;
-  scrollbar-width: thin;
-}
-
-/* ── Collapsible group ── */
-.cs-group { margin: 0; }
-
-.cs-group-btn {
-  display: flex;
-  align-items: center;
-  gap: .4rem;
-  width: 100%;
-  padding: .45rem 1rem .4rem;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
-  text-transform: uppercase;
-  letter-spacing: .07em;
-  color: var(--shell-muted);
-  text-align: left;
-  transition: color .12s;
-}
-.cs-group-btn:hover { color: var(--shell-text); }
-/* Chevron SVG arrow */
-.cs-chevron {
-  width: 6px;
-  height: 10px;
-  flex-shrink: 0;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  transition: transform .18s ease;
-}
-.cs-group.open > .cs-group-btn .cs-chevron { transform: rotate(90deg); }
-
-/* Items container — CSS height animation */
-.cs-items {
-  overflow: hidden;
-  max-height: 0;
-  transition: max-height .22s ease;
-}
-.cs-group.open > .cs-items { max-height: 400px; }
-
-/* ── Nav item link ── */
-.cs-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: .38rem 1rem .38rem 1.6rem;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-medium);
-  color: var(--shell-muted);
-  text-decoration: none;
-  transition: background .1s, color .1s;
-  border-left: 2px solid transparent;
-}
-.cs-item:hover {
-  background: var(--sidebar-hover);
-  color: var(--on-primary);
-  text-decoration: none;
-}
-.cs-item.active {
-  color: var(--on-primary);
-  font-weight: var(--weight-bold);
-  background: color-mix(in srgb, var(--accent-400) 15%, transparent);
-  border-left-color: var(--accent-300);
-}
-/* ── Pending badge ── */
-.cs-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--danger-line);
-  color: var(--on-primary);
-  border-radius: 999px;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  flex-shrink: 0;
-}
-
-/* ── Mobile: client sidebar behaves like global sidebar ── */
-@media (max-width: 860px) {
-  .client-sidebar {
-    position: fixed;
-    left: -220px;
-    transition: left .25s;
-    z-index: 500;
-    height: 100%;
-  }
-  .client-sidebar.open { left: 0; }
-}
 /* Client workspace navigation: global admin shell remains stable while the
    second tier follows the client's data-model lifecycle. */
 .client-workspace-nav {
@@ -663,34 +505,20 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
    These rules came from the override layer that loaded after every
    page's own styles; they sit last in the sheet that owns them. */
 /* Admin shell */
-.sidebar,
-.client-sidebar {
+.sidebar {
   width: 232px;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--sidebar-border);
   box-shadow: none;
 }
-.sidebar-brand,
-.cs-header { border-bottom-color: var(--sidebar-border); }
-.sidebar-link,
-.cs-item { border-radius: var(--radius-sm); }
+.sidebar-brand { border-bottom-color: var(--sidebar-border); }
+.sidebar-link { border-radius: var(--radius-sm); }
 .sidebar-link.active {
   background: var(--sidebar-active);
   color: var(--on-primary);
 }
 .sidebar-link.active::before { background: var(--sidebar-accent); }
-.cs-item {
-  margin: 1px 8px;
-  padding: 7px 10px 7px 22px;
-  border-left: 0;
-}
-.cs-item.active {
-  color: var(--on-primary);
-  background: var(--sidebar-active);
-  box-shadow: inset 3px 0 0 var(--sidebar-accent);
-}
-.sidebar-link:hover,
-.cs-item:hover { background: var(--sidebar-hover); }
+.sidebar-link:hover { background: var(--sidebar-hover); }
 .shell-main { background: var(--bg); }
 .page {
   width: 100%;

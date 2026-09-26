@@ -200,8 +200,7 @@ SPECIAL_FIELDS = {
                      ".metric-builder textarea:focus", ".metrics-toolbar input[type=text]",
                      ".metrics-toolbar input[type=text]:focus", ".metrics-toolbar select", ".sql-hl-wrap textarea",
                      ".time-col-select", ".time-col-select:focus"},                       # metrics, phase 6
-    "chat_workspace.css": {".chat-conversation-rail .hp-search-wrap", ".chat-conversation-rail .hp-search-wrap:focus-within",
-                           ".chat-workspace-main .chat-input-bar", ".clarification-input-row textarea",
+    "chat_workspace.css": {".chat-workspace-main .chat-input-bar", ".clarification-input-row textarea",
                            ".clarification-input-row textarea:focus", ".portal-sidebar .hp-search-wrap",
                            ".portal-sidebar .hp-search-wrap:focus-within"},                 # chat composer, phase 6
     "portal_chat.html": {".chat-input", ".chat-input-bar", ".chat-input-bar:focus-within", ".chat-input-bar:hover",

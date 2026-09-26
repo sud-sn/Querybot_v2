@@ -39,7 +39,7 @@ def _tokens() -> dict[str, str]:
 def _block() -> str:
     css = (CSS / "base.css").read_text(encoding="utf-8")
     start = css.index("/* ── Badges")
-    return css[start:css.index(".chip-row,", start)]
+    return css[start:css.index(".chip-row {", start)]
 
 
 def _tone_rules() -> dict[str, dict[str, str]]:
@@ -147,7 +147,7 @@ def test_the_badge_macro_gives_a_defined_tone(console, colour):
 SPECIAL_BADGES = {
     "_styles.html": {"cat-badge", "filter-chip", "fn-db-badge", "format-preview-pill", "mc-fx-badge", "mc-mode-tag",
                      "mc-type-badge", "meta-pill", "mp-badge", "syn-pill"},                            # metrics, 6
-    "admin.css": {"admin-live-badge", "cs-badge", "inbox-chip", "inbox-chip-n", "semantic-review-chip"},  # shell, 2.6
+    "admin.css": {"admin-live-badge", "inbox-chip", "inbox-chip-n", "semantic-review-chip"},  # shell, 2.6
     "chat_workspace.css": {"hp-badge", "status-badge", "suggestion-chip"},                                # chat, 6
     "client_compliance.html": {"check-pill", "tag"},                                                     # 6
     "client_domains.html": {"chip"},                                                                     # 6

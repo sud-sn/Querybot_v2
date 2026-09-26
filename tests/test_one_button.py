@@ -168,8 +168,8 @@ def test_no_page_or_later_stylesheet_recolours_the_button():
 # added.
 SPECIAL_BUTTONS = {
     "_styles.html": {"fn-helper-btn", "formula-test-btn", "mr-del-btn"},        # metrics, phase 6
-    "admin.css": {"cs-group-btn", "mobile-menu-btn"},                           # admin shell, 2.6
-    "chat_workspace.css": {"chat-new-btn", "chat-rail-icon-btn", "send-btn"},   # chat, phase 6
+    "admin.css": {"mobile-menu-btn"},                                           # admin shell, 6
+    "chat_workspace.css": {"send-btn"},                                         # chat, phase 6
     "portal_chat.html": {"artifact-head-btn", "chart-btn", "ctt-btn", "dt-csv-btn", "feedback-btn", "hero-btn",
                          "hero-dismiss-btn", "hero-info-btn", "history-btn", "rc-csv-btn", "send-btn",
                          "sql-copy-btn"},                                        # chat, phase 6

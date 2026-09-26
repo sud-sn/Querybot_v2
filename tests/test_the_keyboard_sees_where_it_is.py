@@ -87,7 +87,7 @@ class TestTheRing:
         for ground in ("--surface-raised", "--surface", "--surface-alt", "--paper", "--paper-sunken", "--paper-recessed"):
             assert _ratio(tokens["--focus-ring-color"], tokens[ground]) >= 3, ground
 
-    @pytest.mark.parametrize("sidebar", [".sidebar", ".client-sidebar", ".portal-sidebar"])
+    @pytest.mark.parametrize("sidebar", [".sidebar", ".portal-sidebar"])
     def test_on_a_navy_sidebar_it_is_a_colour_that_reads_there(self, sidebar):
         tokens = _tokens()
         colours = [re.search(r"--focus-ring-color\s*:\s*var\((--[\w-]+)\)", body)
