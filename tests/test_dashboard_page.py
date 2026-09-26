@@ -861,9 +861,10 @@ class TestTheTranslatorIsNotShadowedInTheScript:
         script = source[source.index("<script>"):]
 
         calls = re.findall(r"\bt\('ui\.enum\.charttype\.' \+ (\w+)\)", script)
-        assert len(calls) == 2, (
+        assert len(calls) == 3, (
             f"expected the inline row and the modal row to label their "
-            f"buttons through the translator, found {calls}")
+            f"buttons, and the type badge its type, through the translator, "
+            f"found {calls}")
         assert "t" not in calls, (
             "the loop variable is named `t`, which shadows the page's "
             "translator inside the template literal that calls it")

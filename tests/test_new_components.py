@@ -958,7 +958,15 @@ class TestDashboardMaximizeModal(unittest.TestCase):
         self.assertIn("closeChartModal", src)
 
     def test_resize_after_open(self):
-        self.assertIn("mc.resize()", _src(DASH_TMPL))
+        # Executed: the page's own openChartModal sizes the expanded chart to
+        # the room it has once the modal is laid out. Was assertIn("mc.resize()"
+        # , <template>), which broke when the call learned to skip a box that
+        # had not changed.
+        import pytest
+        pytest.importorskip("dukpy")
+        from tests.test_charts_animate_where_they_are_seen import expanded_chart_resizes
+
+        self.assertEqual(expanded_chart_resizes(), 1)
 
     def test_dispose_on_close(self):
         src = _src(DASH_TMPL)

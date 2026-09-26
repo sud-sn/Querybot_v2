@@ -7,10 +7,10 @@
 {% block head %}
 <script src="/static/vendor/echarts.min.js?v=6.1.0"></script>
 <script src="/static/js/chart-palettes.js?v=20260925-1"></script>
-<script src="/static/js/qb-charts.js?v=20260925-2"></script>
+<script src="/static/js/qb-charts.js?v=20260926-1"></script>
 <link rel="stylesheet" href="/static/vendor/gridstack.min.css">
 <script src="/static/vendor/gridstack-all.js"></script>
-<link rel="stylesheet" href="/static/css/dashboard.css?v=20260905-1">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=20260926-1">
 {% endblock %}
 {% block content %}
 {% macro workspace_usage(user, charts, monthly_count, query_status,
@@ -357,6 +357,42 @@ function renderChartWarnings(payload){
 // Live payload registry — mirrors what's rendered for each chart node
 window._dashPayloads = window._dashPayloads || {};
 
+// A card's chart drawn again in place from its stored payload -- a new type or
+// palette, from the card's own controls or from the expanded view. The same
+// instance, so the marks ease into the new state; laid out for the card's own
+// box, as the first drawing was.
+function _redrawCard(chartId) {
+  const node = document.getElementById(`dashboard-chart-${chartId}`);
+  const inst = node && window.echarts ? echarts.getInstanceByDom(node) : null;
+  if (inst && window._dashPayloads[chartId]) {
+    window.QBCharts.update(inst, window._dashPayloads[chartId], {grow: false});
+  }
+}
+// The badge names the chart type the way the server first rendered it: the
+// translated label, upper-cased -- never the raw type code.
+function _setTypeBadge(chartId, type) {
+  const badge = document.getElementById(`chart-type-badge-${chartId}`);
+  if (badge) badge.textContent = t('ui.enum.charttype.' + type).toUpperCase();
+}
+// A type or palette chosen in the expanded view, carried back to the card
+// behind it: the stored payload, the card's chart, its buttons, its badge,
+// and the saved chart. The card's chart was left in the old type before.
+function _syncCardFromModal(chartId, fields) {
+  window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId] || {}, fields);
+  _redrawCard(chartId);
+  const cardCtrl = document.querySelector(`.dash-ctrl-row[data-chart-id="${chartId}"]`);
+  if (fields.chart_type) {
+    cardCtrl?.querySelectorAll('.dctt-btn')
+      .forEach(b => b.classList.toggle('dctt-active', b.dataset.type === fields.chart_type));
+    _setTypeBadge(chartId, fields.chart_type);
+  }
+  if (fields.color_palette) {
+    cardCtrl?.querySelectorAll('.dcpt-swatch')
+      .forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette === fields.color_palette));
+  }
+  _updateChart(chartId, fields);
+}
+
 function initDashboardChart(node) {
   const payload = JSON.parse(node.dataset.chart || '{}');
   if (!payload.rows || !payload.rows.length) return;
@@ -409,7 +445,7 @@ let layoutSaveTimer = null;
 
 function resizeDashboardCharts() {
   document.querySelectorAll('[data-chart]').forEach(n => {
-    try { echarts.getInstanceByDom(n)?.resize(); } catch {}
+    try { window.QBCharts.fit(echarts.getInstanceByDom(n)); } catch {}
   });
 }
 
@@ -515,13 +551,8 @@ function mountDashChartControls(ctrlRow) {
       const updated = Object.assign({}, window._dashPayloads[chartId], { chart_type: newType });
       window._dashPayloads[chartId] = updated;
       ctrlRow.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
-      const node = document.getElementById(`dashboard-chart-${chartId}`);
-      if (node) {
-        const inst = echarts.getInstanceByDom(node);
-        if (inst) inst.setOption(window.QBCharts.buildOption(updated), true);
-      }
-      const badge = document.getElementById(`chart-type-badge-${chartId}`);
-      if (badge) badge.textContent = newType.toUpperCase();
+      _redrawCard(chartId);
+      _setTypeBadge(chartId, newType);
       _updateChart(chartId, { chart_type: newType });
     });
   });
@@ -531,11 +562,7 @@ function mountDashChartControls(ctrlRow) {
       const updated = Object.assign({}, window._dashPayloads[chartId], { color_palette: newPal });
       window._dashPayloads[chartId] = updated;
       ctrlRow.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
-      const node = document.getElementById(`dashboard-chart-${chartId}`);
-      if (node) {
-        const inst = echarts.getInstanceByDom(node);
-        if (inst) inst.setOption(window.QBCharts.buildOption(updated), true);
-      }
+      _redrawCard(chartId);
       _updateChart(chartId, { color_palette: newPal });
     });
   });
@@ -622,7 +649,7 @@ function openChartModal(cardEl) {
 
   const canvas = document.getElementById('chart-modal-canvas');
   const mc = window.QBCharts.render(canvas, payload, {grow: false});
-  requestAnimationFrame(() => { try { mc.resize(); } catch {} });
+  requestAnimationFrame(() => { try { window.QBCharts.fit(mc); } catch {} });
   modal._modalChart = mc;
   modal._modalPayload = Object.assign({}, payload);
 
@@ -632,15 +659,8 @@ function openChartModal(cardEl) {
       const newType = btn.dataset.type;
       modal._modalPayload = Object.assign({}, modal._modalPayload, { chart_type: newType });
       ctrlEl.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
-      mc.setOption(window.QBCharts.buildOption(modal._modalPayload), true);
-      // Sync back to card
-      if (chartId) {
-        window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId]||{}, { chart_type: newType });
-        const cardCtrl = document.querySelector(`.dash-ctrl-row[data-chart-id="${chartId}"]`);
-        cardCtrl?.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
-        document.getElementById(`chart-type-badge-${chartId}`)?.setAttribute('data-text', newType.toUpperCase());
-        _updateChart(chartId, { chart_type: newType });
-      }
+      window.QBCharts.update(mc, modal._modalPayload, {grow: false});
+      if (chartId) _syncCardFromModal(chartId, { chart_type: newType });
     });
   });
   ctrlEl.querySelectorAll('.dcpt-swatch').forEach(btn => {
@@ -648,15 +668,8 @@ function openChartModal(cardEl) {
       const newPal = btn.dataset.palette;
       modal._modalPayload = Object.assign({}, modal._modalPayload, { color_palette: newPal });
       ctrlEl.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
-      mc.setOption(window.QBCharts.buildOption(modal._modalPayload), true);
-      if (chartId) {
-        window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId]||{}, { color_palette: newPal });
-        const cardNode = document.getElementById(`dashboard-chart-${chartId}`);
-        if (cardNode) { const i=echarts.getInstanceByDom(cardNode); i?.setOption(window.QBCharts.buildOption(window._dashPayloads[chartId]),true); }
-        const cardCtrl = document.querySelector(`.dash-ctrl-row[data-chart-id="${chartId}"]`);
-        cardCtrl?.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
-        _updateChart(chartId, { color_palette: newPal });
-      }
+      window.QBCharts.update(mc, modal._modalPayload, {grow: false});
+      if (chartId) _syncCardFromModal(chartId, { color_palette: newPal });
     });
   });
 
@@ -776,9 +789,7 @@ function initFallbackDashboardDrag(grid) {
       card.classList.remove('dragging');
       cards().forEach(c => c.classList.remove('drag-over'));
       saveOrder();
-      setTimeout(() => document.querySelectorAll('[data-chart]').forEach(n => {
-        try { echarts.getInstanceByDom(n)?.resize(); } catch (_) {}
-      }), 80);
+      setTimeout(resizeDashboardCharts, 80);
     });
   });
   grid.addEventListener('dragover', e => {

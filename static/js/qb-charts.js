@@ -39,6 +39,14 @@
   const CATEGORY_CAP = 20;
   const PIE_CAP = 12;
   const MARKER_MAX_POINTS = 24;
+  // Motion. The entrance is long enough to be seen and short enough not to be
+  // waited for; bars rise one after another, a beat apart, and the whole
+  // stagger never outlasts the entrance's first half. A redraw in place -- a
+  // new type or palette -- eases between the two states.
+  const ENTRANCE_MS = 600;
+  const UPDATE_MS = 300;
+  const STAGGER_MS = 30;
+  const STAGGER_CAP_MS = 300;
 
   // ── Shell helpers ─────────────────────────────────────────────────────────
   function t(id, vars) {
@@ -185,6 +193,18 @@
       return (!prev || prev.year !== p.year) ? `${head}\n${p.year}` : head;
     };
   }
+
+  // A reader who asked the system for less motion gets charts that simply
+  // appear. The product's own CSS already honours the setting; ECharts does
+  // not look at it.
+  function prefersReducedMotion() {
+    try {
+      return Boolean(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (e) {
+      return false;
+    }
+  }
+  const stagger = idx => Math.min(idx * STAGGER_MS, STAGGER_CAP_MS);
 
   // ── Theme tokens ──────────────────────────────────────────────────────────
   // ECharts paints concrete strings, never var(); chart-palettes.js resolves the
@@ -393,10 +413,19 @@
     const base = {
       color: colors,
       backgroundColor: 'transparent',
-      animationDuration: 300,
+      animation: !prefersReducedMotion(),
+      animationDuration: ENTRANCE_MS,
       animationEasing: 'cubicOut',
+      animationDurationUpdate: UPDATE_MS,
+      animationEasingUpdate: 'cubicInOut',
       textStyle: {fontFamily: c.font},
     };
+    // Where the page answers a click on a bar or a point with a breakdown
+    // (render(..., {drill: true})), the tooltip says so: a reader cannot use
+    // what nothing tells them is there.
+    const drillHint = layout && layout.drill
+      ? `<div style="color:${c.muted};font-size:11px;margin-top:6px">${escHtml(t('ui.chart.drill_hint'))}</div>`
+      : '';
     const legendBase = (names, line) => ({
       type: 'scroll', top: 0, left: 0, right: 0,
       icon: line ? 'path://M0 0h14v2.5H0z' : 'roundRect',
@@ -997,7 +1026,7 @@
           series.push(type === 'bar' ? {
             name: k, type: 'bar', xAxisIndex: i, yAxisIndex: i, barMaxWidth: 24, barGap: '12%',
             itemStyle: {color, borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]},
-            data: values,
+            data: values, animationDelay: stagger,
           } : {
             name: k, type: 'line', xAxisIndex: i, yAxisIndex: i, data: values, smooth: false,
             showSymbol: rows.length <= MARKER_MAX_POINTS, symbol: 'circle', symbolSize: 8,
@@ -1033,8 +1062,9 @@
       const head = arr[0] ? (arr[0].axisValue != null ? arr[0].axisValue : arr[0].name) : '';
       return tipHeader(shownLabel(head), c)
         + arr.map(p => tipRow(p.color, columnLabel(payload, p.seriesName || ''), valueFmt(p.value, p.seriesName), c,
-                              type === 'bar' ? 'swatch' : 'line')).join('');
-    };
+                              type === 'bar' ? 'swatch' : 'line')).join('')
+        + drillHint;
+    }
 
     // ── Line / area ────────────────────────────────────────────────────────
     if (type === 'line' || type === 'area') {
@@ -1076,7 +1106,7 @@
     option.tooltip = Object.assign(tooltipBase(c), multi
       ? {trigger: 'axis', axisPointer: {type: 'shadow', shadowStyle: {color: 'rgba(22,30,26,0.05)'}}, formatter: multiTip}
       : {trigger: 'item', formatter: p => tipHeader(`${xLabel}: ${shownLabel(p.name)}`, c)
-          + tipRow(p.color, yLabel, valueFmt(p.value, yKey), c, 'swatch')});
+          + tipRow(p.color, yLabel, valueFmt(p.value, yKey), c, 'swatch') + drillHint});
     // A variance or a change carries its direction in the product's delta
     // colours, and in a sign on its label; any other single measure keeps one
     // colour for every bar -- a hue per bar would encode the length twice.
@@ -1119,6 +1149,7 @@
           formatter: p => (delta && p.value > 0 ? '+' : '') + valueFmt(p.value, k, true),
         } : undefined,
         emphasis: {focus: multi ? 'series' : 'none', itemStyle: {opacity: 0.9}},
+        animationDelay: stagger,
         markPoint: (i === 0 && !horizontal) ? {silent: true, data: annotationMarkPoints(payload, labels, values)} : undefined,
       };
     });
@@ -1126,21 +1157,21 @@
   }
 
   // ── Mounting ──────────────────────────────────────────────────────────────
-  // opts.grow: false keeps the element's height -- a dashboard card has the
-  // size its owner gave it on the grid.
-  function render(el, payload, opts) {
-    if (!el || !payload || !global.echarts) return null;
-    const echarts = global.echarts;
-    const existing = echarts.getInstanceByDom(el);
-    if (existing) existing.dispose();
+  // What buildOption needs to know about the box it is drawn in. opts.grow:
+  // false keeps the element's height -- a dashboard card has the size its
+  // owner gave it on the grid. opts.drill: the page answers a click on a mark.
+  function layoutFor(el, opts) {
     const fixed = Boolean(opts && opts.grow === false);
-    const option = buildOption(payload, {width: el.clientWidth || 0, height: fixed ? el.clientHeight || 0 : 0});
-    // A horizontal ranking needs a readable row per category. In a fixed-height
-    // card twenty categories got 12px each against an 11px label, and the
-    // axis hid every other name. The chart grows to fit instead -- a chart
-    // whose labels are missing is not a chart of those categories. Where it
-    // may not grow, the axis names every other category rather than
-    // overprinting them.
+    return {width: el.clientWidth || 0, height: fixed ? el.clientHeight || 0 : 0,
+            drill: Boolean(opts && opts.drill)};
+  }
+
+  // A horizontal ranking needs a readable row per category. In a fixed-height
+  // card twenty categories got 12px each against an 11px label, and the axis
+  // hid every other name. The chart grows to fit instead -- a chart whose
+  // labels are missing is not a chart of those categories. Where it may not
+  // grow, the axis names every other category rather than overprinting them.
+  function fitToBox(option, el, opts) {
     const yAxes = [].concat(option.yAxis || []);
     const yAxis = yAxes[0];
     let need = 0;
@@ -1151,26 +1182,95 @@
       need = option.grid.length * 130 + 70;
     }
     if (need && el.clientHeight && need > el.clientHeight) {
-      if (fixed) {
+      if (opts && opts.grow === false) {
         yAxes.forEach(axis => { if (axis.type === 'category' && axis.axisLabel) axis.axisLabel.interval = 'auto'; });
       } else {
         el.style.height = need + 'px';
       }
     }
+  }
+
+  // A box that is still opening -- the answer pane slides in from nothing --
+  // played the entrance at width 0 and then snapped to its size: the reader
+  // saw the chart appear, never grow. The chart is drawn once its box has held
+  // one size, not zero, from one frame to the next; after a second it is drawn
+  // whatever the box is doing. Without frames (no browser) it is drawn now.
+  function whenSettled(el, draw) {
+    const frame = global.requestAnimationFrame;
+    if (typeof frame !== 'function') {
+      draw();
+      return;
+    }
+    let last = null, frames = 0;
+    const check = () => {
+      const size = `${el.clientWidth}x${el.clientHeight}`;
+      if ((el.clientWidth > 0 && el.clientHeight > 0 && size === last) || ++frames > 60) {
+        draw();
+        return;
+      }
+      last = size;
+      frame(check);
+    };
+    frame(check);
+  }
+
+  function render(el, payload, opts) {
+    if (!el || !payload || !global.echarts) return null;
+    const echarts = global.echarts;
+    const existing = echarts.getInstanceByDom(el);
+    if (existing) existing.dispose();
     const chart = echarts.init(el, null, {renderer: 'svg'});
-    chart.setOption(option, true);
+    const draw = () => {
+      // Drawn again before the box settled: this chart is gone.
+      if (chart.isDisposed && chart.isDisposed()) return;
+      const option = buildOption(payload, layoutFor(el, opts));
+      fitToBox(option, el, opts);
+      chart.resize();
+      chart.setOption(option, true);
+    };
+    // Redrawn in place -- a new type in the same card -- the box is already
+    // laid out, and waiting would only blank the chart for a frame.
+    if (existing) draw();
+    else whenSettled(el, draw);
     if (global.ResizeObserver) {
       if (el._qbRO) el._qbRO.disconnect();
-      const ro = new global.ResizeObserver(() => { try { chart.resize(); } catch (e) { /* disposed */ } });
+      const ro = new global.ResizeObserver(() => { try { fit(chart); } catch (e) { /* disposed */ } });
       ro.observe(el);
       el._qbRO = ro;
     }
     return chart;
   }
 
+  // A chart sized again to its box -- after a layout change, a tab shown, a
+  // card dragged -- only when the box really changed. resize() redraws
+  // without animation, and it was being called for boxes that had not
+  // changed: the observer fires for a fraction of a pixel, and the pages
+  // resize every chart after any layout event. Each cut an entrance short in
+  // its first frames.
+  function fit(chart) {
+    if (!chart || (chart.isDisposed && chart.isDisposed())) return;
+    const el = chart.getDom();
+    if (chart.getWidth() === el.clientWidth && chart.getHeight() === el.clientHeight) return;
+    chart.resize();
+  }
+
+  // A new type or palette on a chart already on screen: the same instance, so
+  // the marks ease from the old state to the new, laid out for its box
+  // exactly as render() lays out a new chart.
+  function update(chart, payload, opts) {
+    if (!chart || !payload) return chart;
+    const el = chart.getDom();
+    const option = buildOption(payload, layoutFor(el, opts));
+    fitToBox(option, el, opts);
+    chart.setOption(option, true);
+    return chart;
+  }
+
   global.QBCharts = {
     buildOption,
     render,
+    update,
+    fit,
     offeredTypes,
     formatFor,
     formatValue,

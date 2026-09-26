@@ -676,11 +676,45 @@ class ChartClickToDrillTests(unittest.TestCase):
         self.assertIn("prefillComposer(text)", src)
 
     def test_wire_click_handler_restricted_to_bar_line_area(self):
+        """Executed: the page's own _wireChartDrillClick, on a stub chart.
+
+        Was four assertIn checks on the page source, the literal type list
+        among them -- which broke when the test for a drillable chart moved
+        into a helper the tooltip's hint shares, while a click did exactly
+        what it did before.
+        """
+        import json
+
+        import pytest
+
+        dukpy = pytest.importorskip("dukpy")
+        from tests.js_lift import function as lift
+
         src = self._read()
-        self.assertIn("function _wireChartDrillClick(chart, payload)", src)
-        self.assertIn("['bar', 'line', 'area'].includes(drillType)", src)
-        self.assertIn("chart.on('click'", src)
-        self.assertIn("params.componentType !== 'series'", src)
+        script = (
+            "var sent = [];\n"
+            "function t(id, vars) { return 'Break this down for ' + vars.label; }\n"
+            "function sendChartDrill(text) { sent.push(text); }\n"
+            + lift(src, "function _chartDrillable(payload)") + "\n"
+            + lift(src, "function _wireChartDrillClick(chart, payload)") + "\n"
+            + """
+var out = {};
+['bar', 'line', 'area', 'pie', 'donut', 'scatter', 'heatmap'].forEach(function (type) {
+  var handlers = {};
+  _wireChartDrillClick({on: function (event, fn) { handlers[event] = fn; }}, {chart_type: type});
+  if (handlers.click) {
+    handlers.click({componentType: 'markPoint', name: 'North'});   // an annotation, not data
+    handlers.click({componentType: 'series', name: 'North'});
+  }
+  out[type] = sent.splice(0);
+});
+JSON.stringify(out);
+""")
+        out = json.loads(dukpy.evaljs(script))
+        for kind in ("bar", "line", "area"):
+            self.assertEqual(out[kind], ["Break this down for North"], kind)
+        for kind in ("pie", "donut", "scatter", "heatmap"):
+            self.assertEqual(out[kind], [], kind)
 
     def test_click_phrasing_matches_refinement_classifier_pattern(self):
         """Clicking a bar must refine the current result, not start a new one.

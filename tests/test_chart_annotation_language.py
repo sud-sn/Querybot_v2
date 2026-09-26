@@ -94,21 +94,30 @@ def mount_chart(page: str, options: str = "undefined") -> dict:
     ResizeObserver stubbed at the boundary. Reports which elements were
     observed, whether a box change reached the chart, and the renderer."""
     script = """
-var resized = 0, observed = [];
+var resized = 0, observed = [], boxChanged = null;
 window.echarts = {
   getInstanceByDom: function () { return null; },
   init: function (el, theme, opts) {
-    return {renderer: opts.renderer, setOption: function () {},
-            resize: function () { resized += 1; }, dispose: function () {}};
+    // The size the instance has drawn at, as ECharts reports it.
+    var size = [el.clientWidth, el.clientHeight];
+    return {renderer: opts.renderer, setOption: function () {}, getDom: function () { return el; },
+            getWidth: function () { return size[0]; }, getHeight: function () { return size[1]; },
+            resize: function () { resized += 1; size = [el.clientWidth, el.clientHeight]; },
+            dispose: function () {}};
   }
 };
 window.ResizeObserver = function (callback) {
-  this.observe = function (el) { observed.push(el.id); callback(); };
+  this.observe = function (el) { observed.push(el.id); boxChanged = callback; };
   this.disconnect = function () {};
 };
-var el = {id: 'chart-1', clientHeight: 320, style: {}};
+var el = {id: 'chart-1', clientWidth: 600, clientHeight: 320, style: {}};
 var chart = QBCharts.render(el, {rows: [{c: 'A', v: 1}, {c: 'B', v: 2}], x_key: 'c',
                                  y_keys: ['v'], chart_type: 'bar'}, OPTIONS);
+// Drawing sizes the chart to its box once; the question here is whether a
+// later change of the box reaches it.
+resized = 0;
+el.clientWidth = 480;
+if (boxChanged) boxChanged();
 JSON.stringify({observed: observed, resized: resized, renderer: chart.renderer});
 """.replace("OPTIONS", options)
     return json.loads(_run(page, "en", script))

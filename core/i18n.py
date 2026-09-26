@@ -4268,6 +4268,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.not_available": {"en": "N/A", "fr": "s.o."},
     # The caption under a donut's centre figure.
     "ui.chart.total": {"en": "Total", "fr": "Total"},
+    # Under a tooltip, where a click on the mark asks for its breakdown.
+    "ui.chart.drill_hint": {"en": "Click to break this down", "fr": "Cliquez pour ventiler"},
 
     # The artifact pane's own copy.
     "ui.chat.artifact.result": {"en": "Analysis result", "fr": "Résultat d'analyse"},

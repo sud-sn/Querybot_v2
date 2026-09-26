@@ -148,6 +148,11 @@
 .dctt-btn { padding: 3px 10px; font-size: var(--font-2xs); font-weight: 700; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); cursor: pointer; transition: border-color var(--t-fast), color var(--t-fast); white-space: nowrap; }
 .dctt-btn:hover { border-color: var(--primary); color: var(--primary); }
 .dctt-btn.dctt-active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+/* The grid's resize strip -- 10px along a card's bottom edge, given z-index
+   100 by gridstack -- lay across these buttons: a click on their lower half
+   started a resize instead of choosing a type or palette. They sit above it;
+   the strip stays usable around them. */
+.dctt-btn, .dcpt-swatch { position: relative; z-index: 101; }
 .dctt-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .dcpt-swatch { width: 26px; height: 13px; border-radius: var(--radius-sm); border: 2px solid transparent; cursor: pointer; transition: transform var(--t-fast), border-color var(--t-fast); flex-shrink: 0; }
 .dcpt-swatch:hover { transform: scale(1.15); }

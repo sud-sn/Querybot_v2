@@ -517,9 +517,16 @@ class TestDashboardMaximize(unittest.TestCase):
         self.assertIn("closeChartModal", tmpl)
 
     def test_modal_resize_on_open(self):
-        """Chart in modal must be resized after it paints at full size."""
-        tmpl = _read(DASH_TMPL)
-        self.assertIn("mc.resize()", tmpl)
+        """Chart in modal must be resized after it paints at full size.
+
+        Executed through the page's own openChartModal rather than found in
+        its source.
+        """
+        import pytest
+        pytest.importorskip("dukpy")
+        from tests.test_charts_animate_where_they_are_seen import expanded_chart_resizes
+
+        self.assertEqual(expanded_chart_resizes(), 1)
 
     def test_modal_disposes_chart_on_close(self):
         tmpl = _read(DASH_TMPL)

@@ -6,7 +6,7 @@
 {% block head %}
 <script src="/static/vendor/echarts.min.js?v=6.1.0"></script>
 <script src="/static/js/chart-palettes.js?v=20260925-1"></script>
-<script src="/static/js/qb-charts.js?v=20260925-2"></script>
+<script src="/static/js/qb-charts.js?v=20260926-1"></script>
 <link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260818-verdigris-1">
 <style>
 /* Full-viewport constraints — chat page only */
@@ -2012,16 +2012,21 @@ function renderChartWarnings(payload) {
 
 // Click-to-drill: bar/line/area only -- the chart types with a single
 // clicked category/period that "break this down for X" meaningfully
-// refers to. The click sends a real follow-up question through the
-// normal chat path, which core/conversation_state.py classifies as a
-// refinement against the still-active cached result (not a fresh,
-// unrelated question), so it drills into what was just shown rather
-// than starting a new analysis. Shared by the initial render and the
-// theme-change re-init, which creates a fresh chart instance needing its
-// own click binding.
+// refers to. One test for both the wiring below and the hint the tooltip
+// carries (QBCharts.render's opts.drill), so the hint is never shown where a
+// click does nothing.
+function _chartDrillable(payload) {
+  const type = String(payload?.chart_type || '').toLowerCase();
+  return ['bar', 'line', 'area'].includes(type);
+}
+// The click sends a real follow-up question through the normal chat path,
+// which core/conversation_state.py classifies as a refinement against the
+// still-active cached result (not a fresh, unrelated question), so it drills
+// into what was just shown rather than starting a new analysis. Shared by the
+// initial render and the theme-change re-init, which creates a fresh chart
+// instance needing its own click binding.
 function _wireChartDrillClick(chart, payload) {
-  const drillType = (payload?.chart_type || '').toLowerCase();
-  if (!['bar', 'line', 'area'].includes(drillType)) return;
+  if (!_chartDrillable(payload)) return;
   chart.on('click', (params) => {
     if (!params || params.componentType !== 'series') return;
     const label = String(params.name ?? '').trim();
@@ -2039,7 +2044,7 @@ function renderChartInto(chartEl, payload){
   try {
     // Drawn by the shared renderer, which also keeps the chart sized to its
     // box as the card reflows (a ResizeObserver on the element).
-    const chart = window.QBCharts.render(chartEl, payload);
+    const chart = window.QBCharts.render(chartEl, payload, {drill: _chartDrillable(payload)});
     if (!chart) throw new Error('chart renderer unavailable');
     _wireChartDrillClick(chart, payload);
     window.__qbCharts = window.__qbCharts || [];
@@ -2767,7 +2772,7 @@ function _activateArtifactTab(root, tabName){
   if (tabName === 'visual' && _activeArtifactChartId) {
     const node = document.getElementById(_activeArtifactChartId);
     const instance = node && window.echarts ? echarts.getInstanceByDom(node) : null;
-    setTimeout(() => instance?.resize(), 10);
+    setTimeout(() => window.QBCharts.fit(instance), 10);
   }
 }
 function renderArtifactPreview(msg){
