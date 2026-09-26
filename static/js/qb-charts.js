@@ -268,7 +268,7 @@
       : `<span style="display:inline-block;width:10px;height:2px;border-radius:1px;background:${color};vertical-align:middle"></span>`;
     return `<div style="display:flex;align-items:center;gap:8px;line-height:18px">${key}`
       + `<span style="color:${c.ink2};flex:1;white-space:nowrap">${escHtml(name)}</span>`
-      + `<span style="font-weight:600;color:${c.ink};font-variant-numeric:tabular-nums;margin-left:12px">${value}</span></div>`;
+      + `<span style="font-weight:600;color:${c.ink};font-variant-numeric:tabular-nums;margin-left:12px">${escHtml(value)}</span></div>`;
   }
 
   // ── Annotations ───────────────────────────────────────────────────────────

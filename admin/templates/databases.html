@@ -374,8 +374,18 @@ function dbScopeStatus(type, msg) {
   el.textContent = msg;
 }
 
+// Every character that can end an attribute or open a tag: schema and table
+// names from the warehouse, and a driver's error text, are written into this
+// page's markup.
 function dbScopeEsc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// A value handed to an inline handler: a JSON literal, escaped for the
+// attribute, which the browser decodes back to the literal before it runs.
+function dbScopeJsArg(v) {
+  return dbScopeEsc(JSON.stringify(v));
 }
 
 function dbScopeRef(db, schema, table) {
@@ -464,12 +474,12 @@ function dbScopeRender(tree) {
       const refs = tables.map(t => dbScopeRef(db, schema, t));
       const masterId = `dbscope-master-${dbi}-${si}`;
       const selected = refs.filter(r => dbScopeSelected.has(r)).length;
-      let html = `<div class="scope-row"><input type="checkbox" class="scope-check" id="${masterId}" ${selected && selected === refs.length ? 'checked' : ''} onchange='dbScopeToggleSchema(${JSON.stringify(refs)}, "${masterId}")'><span class="scope-schema-name">${dbScopeEsc(schema)}</span><span class="scope-count">${tables.length} tables${views.length ? ' | ' + views.length + ' views' : ''}</span></div><div class="scope-objects">`;
+      let html = `<div class="scope-row"><input type="checkbox" class="scope-check" id="${masterId}" ${selected && selected === refs.length ? 'checked' : ''} onchange="dbScopeToggleSchema(${dbScopeJsArg(refs)}, ${dbScopeJsArg(masterId)})"><span class="scope-schema-name">${dbScopeEsc(schema)}</span><span class="scope-count">${tables.length} tables${views.length ? ' | ' + views.length + ' views' : ''}</span></div><div class="scope-objects">`;
       if (tables.length) {
         html += `<div class="scope-section">Tables</div>`;
         tables.forEach(t => {
           const ref = dbScopeRef(db, schema, t);
-          html += `<label class="scope-object" for="${dbScopeId(ref)}"><input type="checkbox" class="scope-check" id="${dbScopeId(ref)}" ${dbScopeSelected.has(ref) ? 'checked' : ''} onchange='dbScopeCheck(${JSON.stringify(ref)}, this.checked)'><span>${dbScopeEsc(t)}</span></label>`;
+          html += `<label class="scope-object" for="${dbScopeId(ref)}"><input type="checkbox" class="scope-check" id="${dbScopeId(ref)}" ${dbScopeSelected.has(ref) ? 'checked' : ''} onchange="dbScopeCheck(${dbScopeJsArg(ref)}, this.checked)"><span>${dbScopeEsc(t)}</span></label>`;
         });
       }
       if (views.length) {
@@ -489,6 +499,67 @@ function dbScopeRender(tree) {
       }
     });
   });
+}
+
+// The diagnosis as markup. What the server sends is text (txt), including a
+// driver's error, which can quote a schema or a user name back; the labels
+// are this page's own.
+function diagnosisHtml(d) {
+  if (d.error && !d.local_egress_count && d.local_egress_count !== 0) {
+    return `<span style="color:var(--red)">Error: ${dbScopeEsc(d.error)}</span>`;
+  }
+
+  // Values from the server are text; the labels below are this page's own.
+  const txt = v => dbScopeEsc(v);
+  const ok  = v => `<span style="color:var(--green);font-weight:700">${v}</span>`;
+  const warn = v => `<span style="color:var(--amber);font-weight:700">${v}</span>`;
+  const bad  = v => `<span style="color:var(--red);font-weight:700">${v}</span>`;
+
+  let html = `<table style="width:100%;border-collapse:collapse;font-size:var(--font-sm)">`;
+  html += row('Local egress rows',   d.local_egress_count > 0 ? ok(txt(d.local_egress_count)) : warn(txt(d.local_egress_count)));
+  html += row('Local max id',        txt(d.local_egress_max_id));
+  html += row('External table exists', d.external_table_exists ? ok('Yes') : bad('No — run Provision first'));
+  if (d.external_table_exists) {
+    html += row('External egress rows',   txt(d.external_egress_count));
+    html += row('External max SOURCE_ID', txt(d.external_egress_max_id));
+    const extMax   = d.external_egress_max_id || 0;
+    const locMax   = d.local_egress_max_id || 0;
+    const newRows  = locMax - extMax;
+    let exportStatus;
+    if (newRows > 0)       exportStatus = ok(txt(newRows) + ' pending — click Sync logs now');
+    else if (newRows === 0) exportStatus = ok('All synced ✓');
+    else                   exportStatus = warn('External max (' + txt(extMax) + ') &gt; local max (' + txt(locMax) + ') — server was reinstalled. Use ↺ Reset egress to fix.');
+    html += row('Rows to export', exportStatus);
+    if (d.missing_columns && d.missing_columns.length > 0) {
+      html += row('Missing columns', bad(txt(d.missing_columns.join(', ')) + ' — run Provision to add them'));
+    } else {
+      html += row('Column schema', ok('All columns present'));
+    }
+  }
+  if (d.error) {
+    html += row('Error', bad(txt(d.error)));
+  }
+  html += `</table>`;
+
+  const extMax2 = d.external_egress_max_id || 0;
+  const locMax2 = d.local_egress_max_id || 0;
+  if (d.local_egress_count === 0) {
+    html += `<p style="margin-top:.75rem;color:var(--amber);font-size:var(--font-xs)">
+      ⚠ No egress rows in local DB yet. Run Schema Discovery or KB Build first —
+      masking config alone does not create egress rows.</p>`;
+  } else if (d.external_table_exists && extMax2 > locMax2) {
+    html += `<p style="margin-top:.75rem;color:var(--red);font-size:var(--font-xs)">
+      ⚠ <strong>External table has rows from a previous server installation</strong>
+      (SOURCE_ID ${txt(extMax2)} vs local max ${txt(locMax2)}).
+      Click <strong>↺ Reset egress</strong> to truncate the external table and
+      re-export all ${txt(d.local_egress_count)} current local rows cleanly.</p>`;
+  } else if (d.external_table_exists && d.missing_columns && d.missing_columns.length > 0) {
+    html += `<p style="margin-top:.75rem;color:var(--amber);font-size:var(--font-xs)">
+      ⚠ External table is missing columns. Click <strong>Provision log tables</strong>
+      to add them, then sync again.</p>`;
+  }
+
+  return html;
 }
 
 async function diagnoseLogs(dbId) {
@@ -516,64 +587,9 @@ async function diagnoseLogs(dbId) {
   try {
     const resp = await fetch(`/admin/databases/${dbId}/logs/diagnose`, {credentials:'same-origin'});
     const d = await resp.json();
-    const bodyEl = document.getElementById('diag-body');
-
-    if (d.error && !d.local_egress_count && d.local_egress_count !== 0) {
-      bodyEl.innerHTML = `<span style="color:var(--red)">Error: ${d.error}</span>`;
-      return;
-    }
-
-    const ok  = v => `<span style="color:var(--green);font-weight:700">${v}</span>`;
-    const warn = v => `<span style="color:var(--amber);font-weight:700">${v}</span>`;
-    const bad  = v => `<span style="color:var(--red);font-weight:700">${v}</span>`;
-
-    let html = `<table style="width:100%;border-collapse:collapse;font-size:var(--font-sm)">`;
-    html += row('Local egress rows',   d.local_egress_count > 0 ? ok(d.local_egress_count) : warn(d.local_egress_count));
-    html += row('Local max id',        d.local_egress_max_id);
-    html += row('External table exists', d.external_table_exists ? ok('Yes') : bad('No — run Provision first'));
-    if (d.external_table_exists) {
-      html += row('External egress rows',   d.external_egress_count);
-      html += row('External max SOURCE_ID', d.external_egress_max_id);
-      const extMax   = d.external_egress_max_id || 0;
-      const locMax   = d.local_egress_max_id || 0;
-      const newRows  = locMax - extMax;
-      let exportStatus;
-      if (newRows > 0)       exportStatus = ok(newRows + ' pending — click Sync logs now');
-      else if (newRows === 0) exportStatus = ok('All synced ✓');
-      else                   exportStatus = warn('External max (' + extMax + ') &gt; local max (' + locMax + ') — server was reinstalled. Use ↺ Reset egress to fix.');
-      html += row('Rows to export', exportStatus);
-      if (d.missing_columns && d.missing_columns.length > 0) {
-        html += row('Missing columns', bad(d.missing_columns.join(', ') + ' — run Provision to add them'));
-      } else {
-        html += row('Column schema', ok('All columns present'));
-      }
-    }
-    if (d.error) {
-      html += row('Error', bad(d.error));
-    }
-    html += `</table>`;
-
-    const extMax2 = d.external_egress_max_id || 0;
-    const locMax2 = d.local_egress_max_id || 0;
-    if (d.local_egress_count === 0) {
-      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:var(--font-xs)">
-        ⚠ No egress rows in local DB yet. Run Schema Discovery or KB Build first —
-        masking config alone does not create egress rows.</p>`;
-    } else if (d.external_table_exists && extMax2 > locMax2) {
-      html += `<p style="margin-top:.75rem;color:var(--red);font-size:var(--font-xs)">
-        ⚠ <strong>External table has rows from a previous server installation</strong>
-        (SOURCE_ID ${extMax2} vs local max ${locMax2}).
-        Click <strong>↺ Reset egress</strong> to truncate the external table and
-        re-export all ${d.local_egress_count} current local rows cleanly.</p>`;
-    } else if (d.external_table_exists && d.missing_columns && d.missing_columns.length > 0) {
-      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:var(--font-xs)">
-        ⚠ External table is missing columns. Click <strong>Provision log tables</strong>
-        to add them, then sync again.</p>`;
-    }
-
-    bodyEl.innerHTML = html;
+    document.getElementById('diag-body').innerHTML = diagnosisHtml(d);
   } catch(e) {
-    document.getElementById('diag-body').innerHTML = `<span style="color:var(--red)">Request failed: ${e.message}</span>`;
+    document.getElementById('diag-body').innerHTML = `<span style="color:var(--red)">Request failed: ${dbScopeEsc(e.message)}</span>`;
   }
 }
 

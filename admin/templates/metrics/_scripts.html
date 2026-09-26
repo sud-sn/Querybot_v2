@@ -261,7 +261,18 @@ function buildPopover(){
   });
 }
 
-function escHtml(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+// Every character that can end an attribute or open a tag. Column, table and
+// metric names reach this page's markup, and a metric's name can be text a
+// model wrote for someone in chat.
+function escHtml(s){
+  return (s == null ? "" : String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+// A value handed to an inline handler: a JSON literal, escaped for the
+// attribute, which the browser decodes back to the literal before it runs --
+// so the handler receives the name exactly, quotes and backslashes included.
+function escJsArg(v){ return escHtml(JSON.stringify(v)); }
 
 window.toggleBucket = function(head){
   head.parentElement.classList.toggle("open");
@@ -893,7 +904,7 @@ function _insertSuggestion(bareColName, tableName, isDup){
           if(vr){
             vr.className = "validate-result show warn multi-table-warn";
             vr.innerHTML = "⚠ Formula uses columns from multiple tables ("
-              + Array.from(tablesInFormula).join(", ")
+              + escHtml(Array.from(tablesInFormula).join(", "))
               + "). Test will run against the Base table only — use <strong>Validate</strong> for full checks, or write a subquery.";
           }
         }
@@ -1006,10 +1017,10 @@ function _showTagSuggestions(input, token){
   if(!matches.length){ if(el) el.style.display="none"; return; }
   _suggestTarget = input; _suggestIdx = -1;
   el.innerHTML = matches.map(function(c,i){
-    return '<div class="col-suggest-item" data-col="'+c.column+'" data-idx="'+i+'" data-tag="1">'
-      +'<span class="col-suggest-col">'+_displayLabel(c)+'</span>'
-      +'<span class="col-suggest-table">'+c.table+'</span>'
-      +'<span class="col-suggest-type">'+c.type+'</span></div>';
+    return '<div class="col-suggest-item" data-col="'+escHtml(c.column)+'" data-idx="'+i+'" data-tag="1">'
+      +'<span class="col-suggest-col">'+escHtml(_displayLabel(c))+'</span>'
+      +'<span class="col-suggest-table">'+escHtml(c.table)+'</span>'
+      +'<span class="col-suggest-type">'+escHtml(c.type)+'</span></div>';
   }).join("");
   _mountSuggestionTray(el, input);
   el.style.display="block";
@@ -1540,7 +1551,7 @@ async function _applyDateRoleJoins(form, opts){
       joins = joins.filter(function(j){ return keySet[String(j.from_column || "").toUpperCase()]; });
     }
     if(!joins.length){
-      if(opts.showAlerts) qbToast.warning("No matching date roles were detected for "+table+". Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      if(opts.showAlerts) qbToast.warning("No matching date roles were detected for "+escHtml(table)+". Rebuild the KB, check the Date Roles page, or enter joins manually.");
       else _setMetricJoinStatus(builder, "No matching date roles found yet", "warn");
       return false;
     }
@@ -1670,7 +1681,7 @@ window.insertDateRoleJoinTemplate = async function(btn){
     var data = await resp.json();
     var joins = data.joins || [];
     if(!joins.length){
-      qbToast.warning("No date roles were detected for "+table+" in the Knowledge Base. Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      qbToast.warning("No date roles were detected for "+escHtml(table)+" in the Knowledge Base. Rebuild the KB, check the Date Roles page, or enter joins manually.");
       return;
     }
     if(joinsEl.value.trim()){
@@ -2630,12 +2641,11 @@ window._buildMcFieldsList = function(columns){
       var tc  = _mcTypeCls(c.type);
       var til = _mcTypeIcon(tc);
       return '<div class="mc-field-item" data-col="'+escHtml(c.column)+'" data-tbl="'+escHtml(tbl)+'"'
-        // escHtml covers & < > " but not the apostrophe, which then closes this
-        // handler's string literal early: a column named O'BRIEN would yield
-        // insertColumnFromMcDialog('O'BRIEN') and the click throws "missing )
-        // after argument list", so the field silently refuses to insert. Escape
-        // for the JS context first, as the saved-metrics list below already does.
-        +' onclick="insertColumnFromMcDialog(\''+escHtml(c.column.replace(/'/g,"\\'"))+'\')"'
+        // The name travels as a JSON literal (escJsArg): a column named
+        // O'BRIEN once yielded insertColumnFromMcDialog('O'BRIEN') and the
+        // click threw, and escaping only the apostrophe left a backslash free
+        // to end the string instead.
+        +' onclick="insertColumnFromMcDialog('+escJsArg(c.column)+')"'
         +' title="'+escHtml(tbl+'.'+c.column+(c.type?' ('+c.type+')':''))+' — click to insert">'
         +'<span class="mc-type-badge '+tc+'">'+til+'</span>'
         +'<span class="mc-field-name">'+escHtml(c.column)+'</span>'
@@ -2684,7 +2694,7 @@ window._buildMcMetricsList = function(){
     var fmt = m.result_format || "number";
     var fmtLabel = {currency:"$",percentage:"%",number:"#",date:"date",text:"Aa"}[fmt] || "#";
     return '<div class="mc-metric-item" data-name="'+escHtml(m.name)+'"'
-      +' onclick="insertMetricRef(\''+escHtml(m.name.replace(/'/g,"\\'"))+'\')"'
+      +' onclick="insertMetricRef('+escJsArg(m.name)+')"'
       +' title="'+escHtml(m.name+(m.description?' — '+m.description:''))+' — click to insert ${'+escHtml(m.name)+'}">'
       +'<span class="mc-metric-fx">fx</span>'
       +'<span class="mc-metric-nm">'+escHtml(m.name)+'</span>'

@@ -773,7 +773,15 @@ let _filterColumns = [];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function _esc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+// A value handed to an inline handler: a JSON literal, escaped for the
+// attribute. The browser decodes the attribute back to that literal before
+// the handler runs, so an entity named with a quote -- a warehouse table, or a
+// name the graph chat proposed -- reaches the handler as itself.
+function _jsArg(v) {
+  return _esc(JSON.stringify(v));
 }
 function _parseJC(jc) {
   if (!jc) return [];
@@ -924,9 +932,9 @@ function buildSidebar() {
     row.className = 'sb-row' + (e.entity_name===_selectedEntity ? ' active' : '');
     row.dataset.ename = e.entity_name;
     row.innerHTML = `
-      <span class="sb-dot" style="background:${color}"></span>
+      <span class="sb-dot" style="background:${_esc(color)}"></span>
       <span class="sb-name">${_esc(e.display_name || e.entity_name)}</span>
-      <span class="sb-type-pill ${et}" onclick="event.stopPropagation();cycleEntityType('${e.entity_name}')" title="Click to change type">${TYPE_LABELS[et]||et}</span>
+      <span class="sb-type-pill ${_esc(et)}" onclick="event.stopPropagation();cycleEntityType(${_jsArg(e.entity_name)})" title="Click to change type">${_esc(TYPE_LABELS[et]||et)}</span>
       ${jc > 0 ? `<span class="sb-jbadge">${jc}</span>` : ''}
     `;
     row.onclick      = () => focusNode(e.entity_name);
@@ -1081,7 +1089,7 @@ function renderDetailsTab(e) {
       <div class="dt-field"><label>Physical Table</label><span><code>${_esc(tblFqn)}</code></span></div>
       <div class="dt-field"><label>Primary Key</label><span>${e.pk_column ? `<code>${_esc(e.pk_column)}</code>` : '<span style="color:var(--text-muted)">—</span>'}</span></div>
       <div class="dt-field"><label>Joins</label><span style="font-weight:700">${joins.length} relationship${joins.length!==1?'s':''}</span></div>
-      <div class="dt-field"><label>Status</label><span style="color:${e.status==='confirmed'?'var(--success)':'var(--entity-fact)'}">${(e.status||'confirmed').toUpperCase()}</span></div>
+      <div class="dt-field"><label>Status</label><span style="color:${e.status==='confirmed'?'var(--success)':'var(--entity-fact)'}">${_esc((e.status||'confirmed').toUpperCase())}</span></div>
     </div>
     ${e.description?`<div class="dt-desc">${_esc(e.description)}</div>`:''}
     <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
@@ -1102,14 +1110,14 @@ function renderJoinsTab(entityName, expandRelId=null) {
         <div style="font-size:var(--font-3xl);opacity:.2;margin-bottom:.4rem">◦—◦</div>
         No joins defined yet.
         <br>
-        <button class="tb-btn sm primary" style="margin-top:.5rem" onclick="openAddJoinModal('${entityName}')">+ Add first join</button>
+        <button class="tb-btn sm primary" style="margin-top:.5rem" onclick="openAddJoinModal(${_jsArg(entityName)})">+ Add first join</button>
       </div>`;
     return;
   }
   const cards = joins.map(r => renderJoinCard(r, entityName, r.id === expandRelId)).join('');
   content.innerHTML = `
     <div id="jc-list">${cards}</div>
-    <button class="tb-btn sm" style="margin-top:.35rem;width:100%;justify-content:center" onclick="openAddJoinModal('${entityName}')">+ Add join</button>
+    <button class="tb-btn sm" style="margin-top:.35rem;width:100%;justify-content:center" onclick="openAddJoinModal(${_jsArg(entityName)})">+ Add join</button>
   `;
   if (expandRelId) {
     const el = document.getElementById(`jc-${expandRelId}`);
@@ -1127,11 +1135,11 @@ function renderJoinCard(r, currentEntity, expanded=false) {
   const colSumm = pFrom && pTo ? `${pFrom} = ${pTo}` : (pFrom || pTo || '—');
 
   const body = expanded ? _buildJoinEditForm(r, jc) : '';
-  return `<div class="join-card${expanded?' expanded':''}" id="jc-${r.id}">
-    <div class="join-card-head" onclick="toggleJoinCard(${r.id})">
+  return `<div class="join-card${expanded?' expanded':''}" id="jc-${_esc(r.id)}">
+    <div class="join-card-head" onclick="toggleJoinCard(${_jsArg(r.id)})">
       <span class="join-dir">${isFrom?'→':'←'}</span>
-      <button class="join-partner" onclick="event.stopPropagation();focusNode('${_esc(partner)}')">${_esc(partner)}</button>
-      <span class="join-type-badge">${jt}</span>
+      <button class="join-partner" onclick="event.stopPropagation();focusNode(${_jsArg(partner)})">${_esc(partner)}</button>
+      <span class="join-type-badge">${_esc(jt)}</span>
       <span class="join-cols" title="${_esc(colSumm)}">${_esc(colSumm)}</span>
       <span class="join-expand">${expanded?'▲':'▼'}</span>
     </div>
@@ -1208,13 +1216,13 @@ function _buildJoinEditForm(r, jc) {
       <span>Source Column(s)</span><span></span><span>Destination Column(s)</span><span></span>
     </div>
     <div id="jc-conds-${r.id}">${condRows}</div>
-    <button class="jc-add-btn" onclick="addJoinCond(${r.id})">+ Add column condition</button>
+    <button class="jc-add-btn" onclick="addJoinCond(${_jsArg(r.id)})">+ Add column condition</button>
     <div class="jc-section-lbl" style="margin-top:.65rem">WHERE clause (applied to this join)</div>
     <textarea class="jc-where" id="jcwhere-${r.id}" placeholder="Optional: e.g. t.is_active = 1">${_esc(wc)}</textarea>
     <div class="jc-actions">
-      <button class="jc-del"    onclick="deleteRel(${r.id})">Delete</button>
-      <button class="jc-cancel" onclick="toggleJoinCard(${r.id})">Cancel</button>
-      <button class="jc-save"   onclick="saveJoinEdit(${r.id})">Save</button>
+      <button class="jc-del"    onclick="deleteRel(${_jsArg(r.id)})">Delete</button>
+      <button class="jc-cancel" onclick="toggleJoinCard(${_jsArg(r.id)})">Cancel</button>
+      <button class="jc-save"   onclick="saveJoinEdit(${_jsArg(r.id)})">Save</button>
     </div>
   `;
 }
@@ -1926,7 +1934,7 @@ function _rvItemHtml(item, idx) {
   const acceptLabel = item.flagged ? '✓ Keep join' : '✓ Accept';
   return `
     <div class="rv-item" data-idx="${idx}" onclick="focusReviewItem(${idx})">
-      <div class="rv-item-title"><span class="rv-chip" style="margin-right:.3rem">${kindLabel}</span>${title}</div>
+      <div class="rv-item-title"><span class="rv-chip" style="margin-right:.3rem">${_esc(kindLabel)}</span>${title}</div>
       <div class="rv-chips">${_srcChip(r.generated_by)}${_confChip(item.conf)}${flagChip}</div>
       ${evidence}
       ${reason}
@@ -2278,7 +2286,7 @@ async function loadVersions() {
           <strong>${_esc(v.label)}</strong><br>
           <code>v${v.id} · ${_esc(v.created_at)} · ${v.entity_count} entities · ${v.relationship_count} joins</code>
         </div>
-        <button class="tb-btn sm" onclick="restoreVersion(${v.id})">↩ Restore</button>
+        <button class="tb-btn sm" onclick="restoreVersion(${_jsArg(v.id)})">↩ Restore</button>
       </div>`).join('');
   } catch (e) {
     list.textContent = 'Failed to load versions: ' + e.message;

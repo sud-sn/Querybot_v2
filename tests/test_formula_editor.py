@@ -57,7 +57,7 @@ class TestDuplicateColumnDisplay(unittest.TestCase):
         """_insertSuggestion receives data-col which is always the bare column name."""
         tmpl = _tmpl()
         # data-col must be set to c.column (bare), not the display label
-        self.assertIn("data-col=\"'+c.column+'\"", tmpl)
+        self.assertIn("data-col=\"'+escHtml(c.column)+'\"", tmpl)
 
     def test_suggest_dropdown_uses_display_label(self):
         tmpl = _tmpl()

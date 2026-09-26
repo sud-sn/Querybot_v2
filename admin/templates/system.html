@@ -809,8 +809,8 @@
     deploys.forEach(function(d){
       const isQuery = _selectedQuery === d.name;
       const isKb    = _selectedKb    === d.name;
-      const statusBadge = '<span class="az-badge ' + d.status + '">' +
-        (d.status === 'succeeded' ? '● ' : '○ ') + d.status + '</span>';
+      const statusBadge = '<span class="az-badge ' + escHtml(d.status) + '">' +
+        (d.status === 'succeeded' ? '● ' : '○ ') + escHtml(d.status) + '</span>';
       const card = document.createElement('div');
       card.className = 'az-deploy-card' + (d.status==='succeeded'?' succeeded':'');
       card.innerHTML =
@@ -821,13 +821,13 @@
         '<div class="az-deploy-actions">' +
           '<button type="button" class="btn-use' + (isQuery?' selected':'') + '" ' +
             'id="btn-query-' + escHtml(d.name) + '" ' +
-            'onclick="selectDeployment(\'query\',\'' + escHtml(d.name) + '\')" ' +
+            'onclick="selectDeployment(\'query\',' + escHtml(JSON.stringify(d.name)) + ')" ' +
             (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
             (isQuery ? '✓ Query' : 'Use for Query') +
           '</button>' +
           '<button type="button" class="btn-use' + (isKb?' selected':'') + '" ' +
             'id="btn-kb-' + escHtml(d.name) + '" ' +
-            'onclick="selectDeployment(\'kb\',\'' + escHtml(d.name) + '\')" ' +
+            'onclick="selectDeployment(\'kb\',' + escHtml(JSON.stringify(d.name)) + ')" ' +
             (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
             (isKb ? '✓ KB' : 'Use for KB') +
           '</button>' +
@@ -870,8 +870,11 @@
       '</strong> &nbsp;·&nbsp; KB → <strong>' + escHtml(k) + '</strong>';
   };
 
+  // Complete, apostrophe included: a deployment's name is also handed to an
+  // inline handler (as a JSON literal the browser decodes before it runs).
   function escHtml(s){
-    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 })();
 
@@ -1008,22 +1011,28 @@ function refreshQdrantStatus() {
   meta.textContent = 'Checking…';
   btn.disabled   = true;
 
+  // What the status endpoint reports is text, never markup.
+  function text(s){
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
   fetch('/admin/system/qdrant-status')
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d.running) {
         dot.className = 'svc-dot up';
         meta.innerHTML = '<strong>Running</strong>'
-          + (d.version ? ' &nbsp;v' + d.version : '')
+          + (d.version ? ' &nbsp;v' + text(d.version) : '')
           + ' &nbsp;·&nbsp; port 6333'
-          + ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">' + d.manager_label + '</span>';
+          + ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">' + text(d.manager_label) + '</span>';
         btn.disabled = (d.manager === 'unknown');
       } else {
         dot.className = 'svc-dot down';
         meta.innerHTML = '<strong style="color:var(--danger)">Offline</strong>'
           + ' &nbsp;·&nbsp; port 6333 not responding'
           + (d.manager !== 'unknown'
-              ? ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">' + d.manager_label + '</span>'
+              ? ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">' + text(d.manager_label) + '</span>'
               : ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">Manager not detected</span>');
         btn.disabled = (d.manager === 'unknown');
         btn.textContent = d.running ? '⟳ Restart' : '▶ Start';

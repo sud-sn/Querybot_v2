@@ -1427,9 +1427,9 @@
       (piiCount ? ` &nbsp;·&nbsp; <span style="color:var(--amber)">${piiCount} PII</span>` : '') +
       `</span>` +
       (canMask && piiCount
-        ? `<button class="tbl-fields-btn" style="margin-left:auto;font-size:9px" onclick='_tblMaskPiiOnly(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})'>Mark PII only</button>` +
-          `<button class="tbl-fields-btn" style="font-size:9px" onclick='_tblMaskAll(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)}, ${JSON.stringify(cols.map(c=>c.name))})'>All</button>` +
-          `<button class="tbl-fields-btn" style="font-size:9px" onclick='_tblMaskNone(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})'>None</button>`
+        ? `<button class="tbl-fields-btn" style="margin-left:auto;font-size:9px" onclick="_tblMaskPiiOnly(${jsArg(fqn)}, ${jsArg(panel.id)})">Mark PII only</button>` +
+          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskAll(${jsArg(fqn)}, ${jsArg(panel.id)}, ${jsArg(cols.map(c=>c.name))})">All</button>` +
+          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskNone(${jsArg(fqn)}, ${jsArg(panel.id)})">None</button>`
         : '') +
       `</div>`;
 
@@ -1440,7 +1440,7 @@
       html +=
         `<div class="tbl-field-row">` +
         (canMask
-          ? `<input type="checkbox" class="scope-check" ${isMasked ? 'checked' : ''} onclick='_tblFieldMaskToggle(${JSON.stringify(fqn)},${JSON.stringify(col.name)},this.checked,${JSON.stringify(panel.id)})'>`
+          ? `<input type="checkbox" class="scope-check" ${isMasked ? 'checked' : ''} onclick="_tblFieldMaskToggle(${jsArg(fqn)},${jsArg(col.name)},this.checked,${jsArg(panel.id)})">`
           : '') +
         `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
         `<span style="font-size:var(--font-2xs);color:var(--text-muted);font-family:monospace;margin-right:.3rem">${esc(col.type||'')}</span>` +
@@ -1675,13 +1675,13 @@
       item.className = 'mask-item';
       item.dataset.fqn = fqn;
       item.innerHTML =
-        `<div class="mask-item-hd" onclick="_toggleMaskItem('${fqn}')">` +
+        `<div class="mask-item-hd" onclick="_toggleMaskItem(${jsArg(fqn)})">` +
           `<span class="mask-item-chev" id="mask-chev-${key}">▶</span>` +
           `<span style="font-size:var(--font-sm);flex-shrink:0">🗒</span>` +
           `<span class="mask-item-name">${esc(tableName)}</span>` +
           `<span class="mask-item-fqn">&nbsp;${esc(fqn)}</span>` +
           `<span class="mask-item-badge" id="mask-badge-${key}">No masking</span>` +
-          `<button class="btn-xs btn-ghost" id="mask-preview-btn-${key}" style="display:none;flex-shrink:0;font-size:var(--font-2xs);padding:2px 8px" onclick="event.stopPropagation();previewMasking('${fqn}')">👁 Preview</button>` +
+          `<button class="btn-xs btn-ghost" id="mask-preview-btn-${key}" style="display:none;flex-shrink:0;font-size:var(--font-2xs);padding:2px 8px" onclick="event.stopPropagation();previewMasking(${jsArg(fqn)})">👁 Preview</button>` +
         `</div>` +
         `<div class="mask-item-body" id="mask-body-${key}"></div>`;
       listEl.appendChild(item);
@@ -1757,7 +1757,7 @@
       `<div style="padding:.45rem 1rem;border-bottom:1px solid var(--border);background:var(--surface-2);display:flex;align-items:center;gap:1rem;font-size:var(--font-xs);color:var(--text-muted)">` +
       `<span><strong>${columns.length}</strong> fields total &nbsp;·&nbsp; <strong style="color:var(--amber)">${autoSet.size}</strong> PII auto-detected</span>` +
       `<label style="margin-left:auto;cursor:pointer;display:flex;align-items:center;gap:.35rem">` +
-        `<input type="checkbox" ${allSelected ? 'checked' : ''} onchange="_maskSelectAll('${fqn}',this.checked)"> Select all` +
+        `<input type="checkbox" ${allSelected ? 'checked' : ''} onchange="_maskSelectAll(${jsArg(fqn)},this.checked)"> Select all` +
       `</label>` +
       `</div>` +
       `<div style="padding:.35rem .85rem;max-height:240px;overflow-y:auto">`;
@@ -1771,7 +1771,7 @@
       html +=
         `<label class="mask-field-row">` +
         `<input type="checkbox" class="scope-check" ${checked ? 'checked' : ''} ` +
-          `onchange="_toggleMaskField2('${fqn}','${col.name}',this.checked)">` +
+          `onchange="_toggleMaskField2(${jsArg(fqn)},${jsArg(col.name)},this.checked)">` +
         `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
         `<span style="font-size:var(--font-2xs);color:var(--text-muted);margin-right:.3rem">${esc(col.type||'')}</span>` +
         (stratLbl ? `<span style="font-size:var(--font-2xs);color:var(--blue);font-style:italic;margin-right:.3rem;white-space:nowrap">${esc(stratLbl)}</span>` : '') +
@@ -2194,8 +2194,20 @@
     el.textContent = msg;
   }
 
+  // Every character that can end an attribute or open a tag: this page puts
+  // warehouse values -- table and column names, and in the masking preview
+  // real cell values -- into attributes as well as text.
   function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  // A value handed to an inline handler: a JSON literal, escaped for the
+  // attribute. The browser decodes the attribute back to that literal before
+  // the handler runs, so the handler receives the value exactly, whatever
+  // quotes or backslashes it holds.
+  function jsArg(v) {
+    return esc(JSON.stringify(v));
   }
 
   function ref(db, schema, table) {
@@ -2232,7 +2244,7 @@
     const hint = document.getElementById('discovery-scope-hint');
     if (hint) {
       const schemaText = Object.entries(schemaMap)
-        .map(([s, n]) => `<strong>${s}</strong> (${n} table${n !== 1 ? 's' : ''})`)
+        .map(([s, n]) => `<strong>${esc(s)}</strong> (${n} table${n !== 1 ? 's' : ''})`)
         .join(', ');
       hint.innerHTML = `Will discover <strong>${total}</strong> selected table${total !== 1 ? 's' : ''} only. `
         + (schemaText ? `Schemas included: ${schemaText}. ` : '')
@@ -2245,7 +2257,7 @@
       const sorted = [...(tables || [])].sort();
       fileList.innerHTML = sorted.map(fqn => {
         const bare = String(fqn).split('.').pop();
-        return `<span style="color:var(--amber)" title="Pending re-discovery">${bare}</span><br>`;
+        return `<span style="color:var(--amber)" title="Pending re-discovery">${esc(bare)}</span><br>`;
       }).join('');
     }
   }
@@ -2331,7 +2343,7 @@
         const refs = tables.map(t => ref(db, schema, t));
         const masterId = `setupscope-master-${dbi}-${si}`;
         const selectedCount = refs.filter(r => selected.has(r)).length;
-        let html = `<div class="scope-row"><input type="checkbox" class="scope-check" id="${masterId}" ${selectedCount && selectedCount === refs.length ? 'checked' : ''} onchange='setupScopeToggleSchema(${JSON.stringify(refs)}, "${masterId}")'><span class="scope-schema-name">${esc(schema)}</span><span class="scope-count">${tables.length} tables${views.length ? ' | ' + views.length + ' views' : ''}</span></div><div class="scope-objects">`;
+        let html = `<div class="scope-row"><input type="checkbox" class="scope-check" id="${masterId}" ${selectedCount && selectedCount === refs.length ? 'checked' : ''} onchange="setupScopeToggleSchema(${jsArg(refs)}, ${jsArg(masterId)})"><span class="scope-schema-name">${esc(schema)}</span><span class="scope-count">${tables.length} tables${views.length ? ' | ' + views.length + ' views' : ''}</span></div><div class="scope-objects">`;
         if (tables.length) {
           html += '<div class="scope-section">Tables</div>';
           tables.forEach(t => {
@@ -2340,10 +2352,10 @@
             html += `<div class="scope-object" data-table-name="${esc(t.toLowerCase())}" style="flex-direction:column;align-items:stretch;padding:.1rem .45rem">`
               + `<div style="display:flex;align-items:center;gap:.4rem;padding:.12rem 0">`
               + `<label style="display:flex;align-items:center;gap:.45rem;flex:1;cursor:pointer;min-width:0" for="${checkboxId(value)}">`
-              + `<input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange='setupScopeCheck(${JSON.stringify(value)}, this.checked)'>`
+              + `<input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange="setupScopeCheck(${jsArg(value)}, this.checked)">`
               + `<span style="flex:1;font-size:var(--font-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</span>`
               + `</label>`
-              + `<button class="tbl-fields-btn" onclick='event.stopPropagation();_toggleTableFields(${JSON.stringify(value)}, this)'>▶ Fields</button>`
+              + `<button class="tbl-fields-btn" onclick="event.stopPropagation();_toggleTableFields(${jsArg(value)}, this)">▶ Fields</button>`
               + `</div>`
               + `<div id="tblfld-${fldKey}" class="tbl-fields-body" style="display:none"></div>`
               + `</div>`;
