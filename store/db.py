@@ -1425,6 +1425,7 @@ def _run_migrations() -> None:
         _ensure_compliance_tables(conn)
         _ensure_business_date_anchor_scope(conn)
         _ensure_semantic_compiler_tables(conn)
+        _ensure_user_account_event_table(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1510,6 +1511,32 @@ def _ensure_graph_change_proposal_table(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
             ON graph_change_proposal(account_id, status, created_at);
+        """
+    )
+
+
+def _ensure_user_account_event_table(conn: sqlite3.Connection) -> None:
+    """Who changed which portal account, and when.
+
+    Password resets, new accounts, deactivations and deletions left no trace:
+    the admin console has one shared identity and nothing recorded what it
+    did. No foreign keys, so an event outlives the user it is about.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS user_account_event (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id  TEXT    NOT NULL,
+            user_id     INTEGER,
+            user_email  TEXT    NOT NULL DEFAULT '',
+            action      TEXT    NOT NULL,
+            detail      TEXT    NOT NULL DEFAULT '',
+            actor       TEXT    NOT NULL DEFAULT '',
+            actor_ip    TEXT    NOT NULL DEFAULT '',
+            created_at  TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_account_event_account
+            ON user_account_event(account_id, id);
         """
     )
 

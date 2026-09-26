@@ -150,12 +150,14 @@ def create_user(
     group_id: Optional[int] = None,
     role: str = "analyst",
     password: Optional[str] = None,
+    must_change: bool = False,
 ) -> tuple[int, str]:
     """
     Create a portal user.
 
-    If `password` is supplied: that password is set and is_temp_pw=0 — the
-    user lands directly on the chat page after login, no forced change.
+    If `password` is supplied: that password is set. With ``must_change`` it
+    is temporary like a generated one -- the user chooses their own at first
+    sign-in -- so the admin does not keep knowing it.
 
     If `password` is not supplied: a random temp password is generated,
     is_temp_pw=1 — the user must change it on first login.
@@ -165,7 +167,7 @@ def create_user(
     """
     if password and password.strip():
         plain   = password.strip()
-        is_temp = 0
+        is_temp = 1 if must_change else 0
     else:
         plain   = generate_temp_password()
         is_temp = 1
@@ -310,6 +312,66 @@ def verify_password(user: dict, password: str) -> bool:
 def delete_user(user_id: int) -> None:
     with get_db() as conn:
         conn.execute("DELETE FROM portal_user WHERE id=?", (user_id,))
+
+
+def user_email_exists(account_id: str, email: str) -> bool:
+    """Whether the workspace has a user with this email, active or not."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM portal_user WHERE account_id=? AND email=?",
+            (account_id, email.lower().strip()),
+        ).fetchone()
+    return row is not None
+
+
+# ── What was done to an account, by whom ─────────────────────────────────────
+
+USER_EVENT_LABELS = {
+    "created": "Account created",
+    "password_reset": "Password reset",
+    "password_changed": "Password changed by the user",
+    "deactivated": "Deactivated",
+    "reactivated": "Reactivated",
+    "deleted": "Deleted",
+    "role_changed": "Role changed",
+    "group_changed": "Group changed",
+    "renamed": "Renamed",
+}
+
+
+def record_user_event(
+    account_id: str,
+    user_id: Optional[int],
+    user_email: str,
+    action: str,
+    detail: str = "",
+    actor: str = "",
+    actor_ip: str = "",
+) -> None:
+    if action not in USER_EVENT_LABELS:
+        raise ValueError(f"Unknown user event: {action!r}")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO user_account_event "
+            "(account_id, user_id, user_email, action, detail, actor, actor_ip) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (account_id, user_id, user_email or "", action, detail or "",
+             (actor or "")[:80], (actor_ip or "")[:64]),
+        )
+
+
+def list_user_events(account_id: str, limit: int = 20) -> list[dict]:
+    """The workspace's most recent account changes, newest first."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM user_account_event WHERE account_id=? "
+            "ORDER BY id DESC LIMIT ?",
+            (account_id, int(limit)),
+        ).fetchall()
+    events = [dict(r) for r in rows]
+    for event in events:
+        event["action_label"] = USER_EVENT_LABELS.get(event["action"], event["action"])
+    return events
 
 
 # ── Individual table overrides ────────────────────────────────────────────────

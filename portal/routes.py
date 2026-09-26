@@ -1626,6 +1626,11 @@ async def change_pw_submit(
         return refuse("ui.auth.error.same_as_current")
 
     store.change_password(user["id"], new_pw, is_temp=False)
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", "") if client else ""
+    store.record_user_event(user["account_id"], user["id"], user.get("email", ""),
+                            "password_changed", actor="the user",
+                            actor_ip=host if isinstance(host, str) else "")
     # The change ended every session this user had, this one included; this
     # browser gets a new one, the others sign in again.
     resp = RedirectResponse("/portal/dashboard", status_code=303)

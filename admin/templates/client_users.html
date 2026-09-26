@@ -31,9 +31,13 @@
     <div>
       <div class="temp-pw-title">{% if reveal_kind == "reset" %}Password reset{% else %}User created{% endif %} — {{ new_user }}</div>
       {% if is_temp == "0" %}
-      <div class="temp-pw-sub">Password set by you. User can log in immediately.</div>
+      <div class="temp-pw-sub">Password set by you. The user can sign in with it straight away.</div>
       {% else %}
-      <div class="temp-pw-sub">Temporary password — share it now. <strong>It will not be shown again.</strong></div>
+      <div class="temp-pw-sub">Temporary password — share it now. <strong>It will not be shown again.</strong>
+        The user chooses their own at first sign-in; this one stops working after {{ temp_pw_hours }} hours.</div>
+      {% endif %}
+      {% if reveal_kind == "reset" %}
+      <div class="temp-pw-sub">Every session the user had open is signed out.</div>
       {% endif %}
     </div>
   </div>
@@ -48,8 +52,7 @@
       {{ ic("info", 12) }}
       Portal: <strong>{{ request.base_url }}portal/login</strong>
       &nbsp;·&nbsp; Account ID: <strong>{{ client.account_id }}</strong>
-      {% set shown_email = request.query_params.get('email', '') %}
-      {% if shown_email %}&nbsp;·&nbsp; Email: <strong>{{ shown_email }}</strong>{% endif %}
+      {% if reveal_email %}&nbsp;·&nbsp; Email: <strong>{{ reveal_email }}</strong>{% endif %}
     </div>
   </div>
 </div>
@@ -97,8 +100,8 @@
       <div class="info-banner" style="margin-bottom:.75rem">
         {{ ic("info", 14) }}
         <div>
-          <strong>Set a password now</strong> — user logs in immediately, no change step.<br>
-          <strong>Leave blank</strong> — temporary password auto-generated; user must change on first login.
+          <strong>Leave blank</strong> — a temporary password is generated; the user chooses their own at first sign-in.<br>
+          <strong>Set a password</strong> — tick the box below to have the user choose their own at first sign-in, so only they know it.
         </div>
       </div>
       <div class="form-grid">
@@ -124,6 +127,11 @@
           <p class="form-note" id="pwMatchMsg" style="display:none"></p>
         </div>
       </div>
+
+      <label class="checkbox-line" for="cu_must_change">
+        <input type="checkbox" id="cu_must_change" name="must_change" value="1" checked>
+        Ask them to choose their own password at first sign-in
+      </label>
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary" id="createUserBtn">Create user</button>
@@ -197,15 +205,12 @@
                   {% endfor %}
                 </select>
               </form>
-              {# Reset password #}
-              <form method="post"
-                    action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/reset-password"
-                    id="reset-pw-{{ u.id }}">
-                <button type="button" class="btn btn-ghost btn-xs qb-tip" data-tip="Reset password"
-                  onclick="qbConfirm({title:'Reset password?',body:'A new temporary password will be generated for {{ u.name }}. They must change it on next login.',confirm:'Reset',variant:'primary',onConfirm:()=>document.getElementById('reset-pw-{{ u.id }}').submit()})">
-                  {{ ic("refresh", 13) }}
-                </button>
-              </form>
+              {# Reset password: opens the reset dialog below. The name travels in a
+                 data attribute, never inside a script. #}
+              <button type="button" class="btn btn-ghost btn-xs qb-tip" data-tip="Reset password"
+                      data-reset-user="{{ u.id }}" data-user-name="{{ u.name }}" data-user-email="{{ u.email }}">
+                {{ ic("refresh", 13) }}
+              </button>
               {# Toggle active #}
               <form method="post"
                     action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
@@ -242,6 +247,59 @@
         title="No users yet",
         body="Create your first portal user using the form above."
     ) }}
+  </div>
+</div>
+{% endif %}
+
+{# ── Reset dialog ── #}
+<dialog id="resetDialog" class="reset-dialog" aria-labelledby="resetDialogTitle">
+  <form method="post" id="resetDialogForm">
+    <h3 id="resetDialogTitle">Reset password</h3>
+    <p class="text-sm text-muted" id="resetDialogWho"></p>
+    <fieldset class="reset-choice">
+      <label><input type="radio" name="mode" value="generate" checked> Generate a temporary password</label>
+      <label><input type="radio" name="mode" value="choose"> Choose the password</label>
+    </fieldset>
+    <div id="resetChoose" hidden>
+      <div class="form-group">
+        <label for="rd_pw">New password <span class="text-muted" style="font-weight:400">(min 8 chars)</span></label>
+        <input type="password" id="rd_pw" name="password" autocomplete="new-password" minlength="8">
+      </div>
+      <div class="form-group">
+        <label for="rd_pw2">Confirm password</label>
+        <input type="password" id="rd_pw2" name="confirm_password" autocomplete="new-password">
+      </div>
+      <label class="checkbox-line" for="rd_must_change">
+        <input type="checkbox" id="rd_must_change" name="must_change" value="1" checked>
+        Ask them to choose their own at next sign-in
+      </label>
+    </div>
+    <p class="form-note">Every session the user has open is signed out.</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" id="resetDialogCancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Reset password</button>
+    </div>
+  </form>
+</dialog>
+
+{# ── Recent account changes ── #}
+{% if events %}
+<div class="card">
+  <div class="card-header"><h2>Recent account changes</h2></div>
+  <div class="qb-table-wrap" style="border:none;border-radius:0">
+    <table class="qb-table">
+      <thead><tr><th>When (UTC)</th><th>User</th><th>Change</th><th>By</th></tr></thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td class="text-sm text-muted">{{ e.created_at }}</td>
+          <td class="text-sm">{{ e.user_email }}</td>
+          <td class="text-sm">{{ e.action_label }}{% if e.detail %} — {{ e.detail }}{% endif %}</td>
+          <td class="text-sm text-muted">{{ e.actor }}{% if e.actor_ip %} · {{ e.actor_ip }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
 {% endif %}
@@ -364,9 +422,44 @@
 }
 /* ── badge-indigo ── */
 .badge-indigo { background: color-mix(in srgb,var(--primary) 14%,transparent); color: var(--primary); }
+/* ── Must-change checkbox and the reset dialog ── */
+.checkbox-line { display: flex; align-items: center; gap: 8px; font-size: var(--font-sm); margin-top: .5rem; }
+.reset-dialog { border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; max-width: 440px; width: calc(100% - 32px); background: var(--surface-raised, var(--surface)); color: var(--text); }
+.reset-dialog::backdrop { background: rgba(15, 23, 42, .45); }
+.reset-dialog h3 { margin: 0 0 .25rem; }
+.reset-choice { border: 0; padding: 0; margin: .75rem 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
 </style>
 
 <script>
+/* The reset dialog: one form, pointed at the user whose button opened it. */
+(function () {
+  var accountId = {{ client.account_id|tojson }};
+  var dialog = document.getElementById('resetDialog');
+  var form = document.getElementById('resetDialogForm');
+  var choose = document.getElementById('resetChoose');
+  if (!dialog || !form) return;
+  function syncChoice() {
+    var chosen = form.querySelector('input[name="mode"]:checked');
+    var manual = Boolean(chosen && chosen.value === 'choose');
+    choose.hidden = !manual;
+    document.getElementById('rd_pw').required = manual;
+    document.getElementById('rd_pw2').required = manual;
+  }
+  form.addEventListener('change', syncChoice);
+  document.getElementById('resetDialogCancel').addEventListener('click', function () { dialog.close(); });
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest ? event.target.closest('[data-reset-user]') : null;
+    if (!button) return;
+    form.reset();
+    form.action = '/admin/clients/' + encodeURIComponent(accountId) + '/users/' +
+      encodeURIComponent(button.dataset.resetUser) + '/reset-password';
+    document.getElementById('resetDialogWho').textContent =
+      button.dataset.userName + ' · ' + button.dataset.userEmail;
+    syncChoice();
+    if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+  });
+})();
+
 /* Password match validation */
 function validatePwMatch() {
   var pw = document.getElementById('cu_pw').value;

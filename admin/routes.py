@@ -3955,6 +3955,7 @@ async def group_save_tables(
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    _workspace_group(account_id, group_id)
     form   = await request.form()
     tables = [v for k, v in form.multi_items() if k == "tables"]
     store.set_group_tables(group_id, account_id, tables)
@@ -3965,6 +3966,7 @@ async def group_save_tables(
 async def group_delete(request: Request, account_id: str, group_id: int):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    _workspace_group(account_id, group_id)
     store.delete_group(group_id)
     return RedirectResponse(f"/admin/clients/{account_id}/groups", status_code=303)
 
@@ -3972,6 +3974,46 @@ async def group_delete(request: Request, account_id: str, group_id: int):
 # ══════════════════════════════════════════════════════════════════════════════
 # Users management
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ── Every user and group action names its workspace ─────────────────────────
+# The workspace in the URL was never checked against the user or group in it:
+# a reset from tenant A's page could reset tenant B's user and show B's new
+# password to A. Now an id that does not belong to the workspace is a 404, the
+# same answer as an id that does not exist.
+
+def _workspace_user(account_id: str, user_id: int) -> dict:
+    user = store.get_user(int(user_id))
+    if not user or user.get("account_id") != account_id:
+        raise HTTPException(status_code=404, detail="No such user in this workspace")
+    return user
+
+
+def _workspace_group(account_id: str, group_id: int) -> dict:
+    group = store.get_group(int(group_id))
+    if not group or group.get("account_id") != account_id:
+        raise HTTPException(status_code=404, detail="No such group in this workspace")
+    return group
+
+
+def _admin_actor(request: Request) -> tuple[str, str]:
+    """Who did it, as far as the console knows: which admin session, from where.
+
+    The console has one shared identity, so a session fingerprint is the most
+    specific name available -- enough to tell two admins' sessions apart.
+    """
+    cookie = str(request.cookies.get(_COOKIE, "") or "")
+    session = hashlib.sha256(cookie.encode()).hexdigest()[:10] if cookie else "unknown"
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", "") if client else ""
+    return f"admin session {session}", host if isinstance(host, str) else ""
+
+
+def _record_user_event(request: Request, account_id: str, user: dict, action: str,
+                       detail: str = "") -> None:
+    actor, ip = _admin_actor(request)
+    store.record_user_event(account_id, user.get("id"), user.get("email", ""), action,
+                            detail=detail, actor=actor, actor_ip=ip)
+
 
 # ── A new password is shown once ─────────────────────────────────────────────
 # It used to ride in the redirect's query string (temp_pw=...), so every new or
@@ -4017,7 +4059,7 @@ async def users_page(request: Request, account_id: str):
     users  = store.list_users(account_id)
     groups = store.list_groups(account_id)
     shown  = _take_reveal(account_id, request.query_params.get("reveal"))
-    return _resp(request, "client_users.html", {
+    response = _resp(request, "client_users.html", {
         "client":    client,
         "users":     users,
         "groups":    groups,
@@ -4030,8 +4072,17 @@ async def users_page(request: Request, account_id: str):
         "temp_pw":   shown.get("password", ""),
         "is_temp":   "1" if shown.get("is_temp", True) else "0",
         "reveal_kind": shown.get("kind", ""),
+        # The sign-in email next to the password; the page read it from a
+        # query value nothing ever set.
+        "reveal_email": shown.get("email", ""),
+        "temp_pw_hours": store.TEMP_PASSWORD_HOURS,
+        "events":    store.list_user_events(account_id),
         "error":     request.query_params.get("error"),
     })
+    # The page can show a password: not for the browser's cache or Back button.
+    if hasattr(response, "headers"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.post("/clients/{account_id}/users/create")
@@ -4044,6 +4095,7 @@ async def user_create(
     role:       str = Form("analyst"),
     password:   str = Form(""),
     confirm_password: str = Form(""),
+    must_change: str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -4051,6 +4103,13 @@ async def user_create(
         return RedirectResponse(
             f"/admin/clients/{account_id}/users?error=Name+and+email+required",
             status_code=303)
+    if store.user_email_exists(account_id, email):
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/users?error="
+            + quote("A user with this email already exists in this workspace."),
+            status_code=303)
+    if group_id:
+        _workspace_group(account_id, int(group_id))
 
     # If admin supplied an explicit password, validate it matches and is strong enough
     explicit_pw = password.strip()
@@ -4064,24 +4123,33 @@ async def user_create(
                 f"/admin/clients/{account_id}/users?error=Password+must+be+at+least+8+characters",
                 status_code=303)
 
+    # A generated password is always temporary; a chosen one is when the admin
+    # asks the user to choose their own (the form's default), so the admin
+    # does not go on knowing it.
+    temporary = not explicit_pw or must_change == "1"
     try:
         gid  = int(group_id) if group_id else None
-        # Pass the explicit password if provided; None triggers a temp-pw flow
         uid, plain_pw = store.create_user(
             account_id, name.strip(), email.strip(), gid, role,
-            password=explicit_pw or None,
+            password=explicit_pw or None, must_change=temporary,
         )
-        # Without an explicit password a temporary one was generated.
-        token = _stash_reveal(account_id, {
-            "name": name.strip(), "password": plain_pw, "is_temp": not explicit_pw, "kind": "created",
-        })
-        return RedirectResponse(
-            f"/admin/clients/{account_id}/users?saved=1&reveal={token}", status_code=303)
     except Exception as e:
-        from urllib.parse import quote
+        # Logged, not shown: the text of a database error is not for the page.
+        log.error("Creating a portal user for %s failed: %s", account_id, e, exc_info=True)
         return RedirectResponse(
-            f"/admin/clients/{account_id}/users?error={quote(str(e))}",
+            f"/admin/clients/{account_id}/users?error=" + quote("The user could not be created."),
             status_code=303)
+    created = store.get_user(uid) or {"id": uid, "email": email.strip().lower()}
+    _record_user_event(request, account_id, created, "created", detail=(
+        "temporary password generated" if not explicit_pw
+        else "password chosen by the admin, to be changed at first sign-in" if temporary
+        else "password chosen by the admin"))
+    token = _stash_reveal(account_id, {
+        "name": name.strip(), "email": created.get("email", ""), "password": plain_pw,
+        "is_temp": temporary, "kind": "created",
+    })
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/users?saved=1&reveal={token}", status_code=303)
 
 
 @router.post("/clients/{account_id}/users/{user_id}/update")
@@ -4096,24 +4164,59 @@ async def user_update(
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    user = _workspace_user(account_id, user_id)
+    if group_id:
+        _workspace_group(account_id, int(group_id))
+    active = int(is_active) if is_active in ("0", "1") else None
     store.update_user(
         user_id,
         name     = name.strip() or None,
         group_id = int(group_id) if group_id else None,
         role     = role or None,
-        is_active= int(is_active) if is_active in ("0","1") else None,
+        is_active= active,
     )
+    if active is not None and active != int(user.get("is_active") or 0):
+        _record_user_event(request, account_id, user, "reactivated" if active else "deactivated")
+    if role and role != user.get("role"):
+        _record_user_event(request, account_id, user, "role_changed", detail=f"{user.get('role')} to {role}")
+    if group_id and int(group_id) != (user.get("group_id") or 0):
+        _record_user_event(request, account_id, user, "group_changed")
+    if name.strip() and name.strip() != user.get("name"):
+        _record_user_event(request, account_id, user, "renamed")
     return RedirectResponse(f"/admin/clients/{account_id}/users?saved=1", status_code=303)
 
 
 @router.post("/clients/{account_id}/users/{user_id}/reset-password")
-async def user_reset_password(request: Request, account_id: str, user_id: int):
+async def user_reset_password(
+    request: Request,
+    account_id: str,
+    user_id: int,
+    mode:             str = Form("generate"),
+    password:         str = Form(""),
+    confirm_password: str = Form(""),
+    must_change:      str = Form(""),
+):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
-    temp_pw = store.reset_user_password(user_id)
-    user    = store.get_user(user_id)
+    user = _workspace_user(account_id, user_id)
+    if mode == "choose":
+        chosen = password.strip()
+        problem = ("Passwords do not match" if chosen != confirm_password.strip()
+                   else "Password must be at least 8 characters" if len(chosen) < 8 else "")
+        if problem:
+            return RedirectResponse(
+                f"/admin/clients/{account_id}/users?error=" + quote(problem), status_code=303)
+        temporary = must_change == "1"
+        store.change_password(user_id, chosen, is_temp=temporary)
+        new_password, detail = chosen, ("password chosen by the admin, to be changed at next sign-in"
+                                        if temporary else "password chosen by the admin")
+    else:
+        temporary = True
+        new_password, detail = store.reset_user_password(user_id), "temporary password generated"
+    _record_user_event(request, account_id, user, "password_reset", detail=detail)
     token = _stash_reveal(account_id, {
-        "name": user["name"] if user else "", "password": temp_pw, "is_temp": True, "kind": "reset",
+        "name": user.get("name", ""), "email": user.get("email", ""), "password": new_password,
+        "is_temp": temporary, "kind": "reset",
     })
     return RedirectResponse(
         f"/admin/clients/{account_id}/users?saved=1&reveal={token}", status_code=303)
@@ -4123,7 +4226,9 @@ async def user_reset_password(request: Request, account_id: str, user_id: int):
 async def user_delete(request: Request, account_id: str, user_id: int):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    user = _workspace_user(account_id, user_id)
     store.delete_user(user_id)
+    _record_user_event(request, account_id, user, "deleted")
     return RedirectResponse(f"/admin/clients/{account_id}/users", status_code=303)
 
 
