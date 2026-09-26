@@ -75,7 +75,7 @@ def _reader():
     # egress rows at all, which would make "the egress is recorded" tests pass
     # for the wrong reason.
     store.update_client_meta(account_id, chat_ui_enabled=1, enable_llm_audit=1)
-    user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com")
+    user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
     return account_id, user_id
 
 

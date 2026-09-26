@@ -1376,6 +1376,10 @@ def _run_migrations() -> None:
         # databases too -- that is how last_active_at (v36) reaches a brand-new
         # DB -- and two definitions of one column drift.
         ("portal_user", "lang", "TEXT NOT NULL DEFAULT 'en'"),
+        # When a temporary password stops signing in (UTC, '%Y-%m-%d
+        # %H:%M:%S'). NULL for a password the user chose. Before this, a
+        # temporary password worked forever. Declared HERE ONLY, as above.
+        ("portal_user", "temp_pw_expires_at", "TEXT DEFAULT NULL"),
         # Egress posture: cloud | private | airgapped. See
         # core/compliance/egress.py. Empty rather than 'cloud' as the column
         # default, so "never chosen" stays distinguishable from "chose cloud"
@@ -1440,6 +1444,7 @@ def _run_migrations() -> None:
         # Post-migration indexes — created after column migrations so the
         # referenced columns are guaranteed to exist.
         _post_migration_indexes(conn)
+        _backfill_temporary_password_expiry(conn)
         # Seed llm_pricing from hardcoded defaults — only inserts rows that
         # don't already exist so admin edits are never overwritten on restart.
         try:
@@ -1452,6 +1457,31 @@ def _run_migrations() -> None:
                 )
         except Exception as e:
             log.debug("llm_pricing seed skipped: %s", e)
+
+
+def _backfill_temporary_password_expiry(conn) -> None:
+    """Give a temporary password issued before they expired the same allowance.
+
+    Counted from this upgrade: none would lock out a user who was handed one
+    yesterday, and forever is the behaviour being removed. Runs on every start
+    and touches only rows still without an expiry.
+    """
+    from store.user_store import TEMP_PASSWORD_HOURS, _expiry
+
+    try:
+        conn.execute("SAVEPOINT sp_temp_pw_expiry")
+        conn.execute(
+            "UPDATE portal_user SET temp_pw_expires_at = ? "
+            "WHERE is_temp_pw = 1 AND temp_pw_expires_at IS NULL",
+            (_expiry(TEMP_PASSWORD_HOURS),),
+        )
+        conn.execute("RELEASE SAVEPOINT sp_temp_pw_expiry")
+    except Exception as exc:
+        try:
+            conn.execute("ROLLBACK TO SAVEPOINT sp_temp_pw_expiry")
+        except Exception:
+            pass
+        log.error("Temporary password expiry backfill failed: %s", exc)
 
 
 def _ensure_graph_change_proposal_table(conn: sqlite3.Connection) -> None:

@@ -664,7 +664,7 @@ class TestThePublishEndpoint:
         client, pr, store = self._client()
         account_id = f"acct{os.urandom(4).hex()}"
         store.upsert_client(account_id, "T")
-        user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com")
+        user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
         client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
         return client, store, account_id, user_id
 
@@ -692,7 +692,7 @@ class TestThePublishEndpoint:
         wrong owner is a no-op rather than an error -- assert the no-op."""
         import os
         client, store, account_id, user_id = self._signed_in()
-        other_id, _ = store.create_user(account_id, "Bob", f"{os.urandom(4).hex()}@x.com")
+        other_id, _ = store.create_user(account_id, "Bob", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
         dashboard = store.create_dashboard(account_id, other_id, "t", "Theirs",
                                            visibility="team")
         client.post(f"/portal/dashboard/{int(dashboard['id'])}/publish",

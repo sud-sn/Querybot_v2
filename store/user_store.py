@@ -2,7 +2,7 @@
 store/user_store.py
 
 CRUD for portal users, groups, table access, registration tokens, and pinned charts.
-All password handling uses SHA-256 (same as admin panel).
+Passwords are PBKDF2-SHA256 with a per-password salt.
 """
 
 import hashlib
@@ -49,6 +49,20 @@ def _now() -> str:
 
 def _expiry(hours: int = 48) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# A temporary password -- one the admin generated, or chose with "must change"
+# -- stops signing in after this long. Until then it signs in only to the
+# change-password page.
+TEMP_PASSWORD_HOURS = 72
+
+
+def temporary_password_expired(user: dict, now: Optional[str] = None) -> bool:
+    """The user still has a temporary password, and its time is up."""
+    if not user.get("is_temp_pw"):
+        return False
+    expires = user.get("temp_pw_expires_at")
+    return bool(expires) and str(expires) <= (now or _now())
 
 
 def generate_temp_password() -> str:
@@ -156,12 +170,15 @@ def create_user(
         plain   = generate_temp_password()
         is_temp = 1
     pw_hash = _hash_pw(plain)
+    expires = _expiry(TEMP_PASSWORD_HOURS) if is_temp else None
     with get_db() as conn:
         cur = conn.execute("""
             INSERT INTO portal_user
-                (account_id, group_id, name, email, password_hash, role, is_temp_pw)
-            VALUES (?,?,?,?,?,?,?)
-        """, (account_id, group_id, name, email.lower().strip(), pw_hash, role, is_temp))
+                (account_id, group_id, name, email, password_hash, role, is_temp_pw,
+                 temp_pw_expires_at)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (account_id, group_id, name, email.lower().strip(), pw_hash, role, is_temp,
+              expires))
         uid = cur.lastrowid
     log.info("Created user '%s' (id=%d) for client %s (temp_pw=%s)",
              email, uid, account_id, bool(is_temp))
@@ -256,10 +273,12 @@ def update_user(
 
 
 def change_password(user_id: int, new_password: str, is_temp: bool = False) -> None:
+    expires = _expiry(TEMP_PASSWORD_HOURS) if is_temp else None
     with get_db() as conn:
         conn.execute(
-            "UPDATE portal_user SET password_hash=?, is_temp_pw=?, updated_at=datetime('now') WHERE id=?",
-            (_hash_pw(new_password), 1 if is_temp else 0, user_id)
+            "UPDATE portal_user SET password_hash=?, is_temp_pw=?, temp_pw_expires_at=?, "
+            "updated_at=datetime('now') WHERE id=?",
+            (_hash_pw(new_password), 1 if is_temp else 0, expires, user_id)
         )
 
 

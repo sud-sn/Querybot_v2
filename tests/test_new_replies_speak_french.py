@@ -56,7 +56,7 @@ def _reader(lang):
     account_id = f"acct{os.urandom(4).hex()}"
     store.upsert_client(account_id, "Test Ltd")
     store.update_client_meta(account_id, chat_ui_enabled=1)
-    user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com")
+    user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
     store.set_user_language(user_id, lang)
     return account_id, user_id
 

@@ -533,7 +533,7 @@ class TestThePinEndpointReturnsCodes:
         client, pr, store = self._client()
         account_id = f"acct{os.urandom(4).hex()}"
         store.upsert_client(account_id, "T")
-        user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com")
+        user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
         client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
         body = client.post("/portal/api/pin-chart", json={}).json()
         assert body["code"] == "missing_token"
@@ -542,7 +542,7 @@ class TestThePinEndpointReturnsCodes:
         client, pr, store = self._client()
         account_id = f"acct{os.urandom(4).hex()}"
         store.upsert_client(account_id, "T")
-        user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com")
+        user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
         client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
         response = client.post("/portal/api/pin-chart", json={"token": "nope"})
         assert response.status_code == 400

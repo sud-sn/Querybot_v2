@@ -4694,8 +4694,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Mettez à jour le mot de passe de votre compte.",
     },
     "ui.auth.temporary_password": {
-        "en": "Your account was created with a temporary password. Please set a new one now.",
-        "fr": "Votre compte a été créé avec un mot de passe temporaire. Veuillez en définir un nouveau maintenant.",
+        "en": "You signed in with a temporary password. Choose your own to continue.",
+        "fr": "Vous vous êtes connecté avec un mot de passe temporaire. Choisissez le vôtre pour continuer.",
     },
     "ui.auth.current_password": {"en": "Current password", "fr": "Mot de passe actuel"},
     "ui.auth.current_password_placeholder": {"en": "Your current password", "fr": "Votre mot de passe actuel"},
@@ -4703,6 +4703,26 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.auth.confirm_new_password": {"en": "Confirm new password", "fr": "Confirmez le nouveau mot de passe"},
     "ui.auth.repeat_new_password": {"en": "Repeat new password", "fr": "Répétez le nouveau mot de passe"},
     "ui.auth.set_password": {"en": "Set password", "fr": "Définir le mot de passe"},
+    "ui.auth.error.current_incorrect": {
+        "en": "Your current password is incorrect.",
+        "fr": "Votre mot de passe actuel est incorrect.",
+    },
+    "ui.auth.error.too_short": {
+        "en": "Your new password must be at least 8 characters.",
+        "fr": "Votre nouveau mot de passe doit contenir au moins 8 caractères.",
+    },
+    "ui.auth.error.mismatch": {
+        "en": "The two passwords don't match.",
+        "fr": "Les deux mots de passe ne correspondent pas.",
+    },
+    "ui.auth.error.same_as_current": {
+        "en": "Choose a password different from your current one.",
+        "fr": "Choisissez un mot de passe différent de l'actuel.",
+    },
+    "ui.auth.error.temporary_expired": {
+        "en": "This temporary password has expired. Ask your administrator for a new one.",
+        "fr": "Ce mot de passe temporaire a expiré. Demandez-en un nouveau à votre administrateur.",
+    },
 
     # ── Pinning a chart from a link ──────────────────────────────────────────
     "ui.pinpage.title": {"en": "Add chart to a dashboard", "fr": "Ajouter le graphique à un tableau de bord"},

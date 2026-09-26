@@ -57,7 +57,7 @@ def _user(lang=None):
     # backwards stores the email as the name and get_user_by_email then finds
     # nothing, which is exactly how this helper was wrong the first time.
     account_id = _account()
-    user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com")
+    user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
     if lang:
         store.set_user_language(user_id, lang)
     return user_id

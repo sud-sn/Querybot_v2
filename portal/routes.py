@@ -254,8 +254,9 @@ def _set_portal_cookie(resp: RedirectResponse, request: Request, user_id: int) -
     )
 
 
-def _get_portal_user(request: Request) -> dict | None:
-    """Return portal user from signed session cookie, or None.
+def _session_user(raw: str | None, *, pending_change_ok: bool = False) -> dict | None:
+    """The user a portal session cookie signs in, or None. Every portal
+    surface -- pages, APIs, the notification and chat sockets -- asks here.
 
     Re-checks is_active on every call rather than trusting the session was
     valid when it was issued -- an admin's "Temporarily Stop Access" toggle
@@ -264,8 +265,14 @@ def _get_portal_user(request: Request) -> dict | None:
     the toggle kept resolving successfully via the unfiltered store.get_user
     lookup, so a deactivated user's already-open browser tab kept working
     until the cookie itself expired.
+
+    A user who signed in with a temporary password has a session that reaches
+    only the change-password page (``pending_change_ok``) until they choose
+    their own. The redirect to that page used to be the whole enforcement: the
+    session was already complete, so the chat, the dashboards and every API
+    worked with the temporary password in place. An expired temporary password
+    signs in nowhere.
     """
-    raw = request.cookies.get(_COOKIE)
     if not raw:
         return None
     user_id = _read_session_value(raw)
@@ -277,32 +284,32 @@ def _get_portal_user(request: Request) -> dict | None:
         return None
     if not user or not user.get("is_active"):
         return None
+    if user.get("is_temp_pw"):
+        if not pending_change_ok or store.temporary_password_expired(user):
+            return None
     return user
+
+
+def _get_portal_user(request: Request, *, pending_change_ok: bool = False) -> dict | None:
+    """Return portal user from signed session cookie, or None (see _session_user)."""
+    return _session_user(request.cookies.get(_COOKIE), pending_change_ok=pending_change_ok)
 
 
 def _resp(request, name, ctx=None):
     return templates.TemplateResponse(request=request, name=name, context=ctx or {})
 
 
-def _login_redirect():
+def _login_redirect(request: Request | None = None):
+    """Where a page sends a reader it cannot serve: to the password change when
+    they signed in with a temporary password, to the sign-in page otherwise."""
+    if request is not None and _get_portal_user(request, pending_change_ok=True):
+        return RedirectResponse("/portal/change-password", status_code=303)
     return RedirectResponse("/portal/login", status_code=303)
 
 
 def _get_portal_user_from_socket(websocket: WebSocket) -> dict | None:
-    # Same is_active re-check as _get_portal_user above, same rationale.
-    raw = websocket.cookies.get(_COOKIE)
-    if not raw:
-        return None
-    user_id = _read_session_value(raw)
-    if not user_id:
-        return None
-    try:
-        user = store.get_user(int(user_id))
-    except Exception:
-        return None
-    if not user or not user.get("is_active"):
-        return None
-    return user
+    # The same rules as a page: see _session_user.
+    return _session_user(websocket.cookies.get(_COOKIE))
 
 
 @router.websocket("/ws/notifications")
@@ -894,9 +901,14 @@ async def portal_login_submit(
         return _resp(request, "portal_login.html",
                      {"error": "Invalid email or password."})
 
-    # Temp password — force change
+    # A temporary password signs in to the password change and nothing else
+    # (_session_user), and not at all once it has expired.
     if user.get("is_temp_pw"):
-        resp = RedirectResponse("/portal/change-password?forced=1", status_code=303)
+        if store.temporary_password_expired(user):
+            return _resp(request, "portal_login.html", {
+                "error": i18n_t("ui.auth.error.temporary_expired", lang=_request_language(request)),
+            })
+        resp = RedirectResponse("/portal/change-password", status_code=303)
         _set_portal_cookie(resp, request, user["id"])
         _carry_language_through_login(resp, request, user)
         return resp
@@ -1096,7 +1108,7 @@ def _re_render_register(request, token, account_id, zoom_user_id, error):
 async def portal_dashboard(request: Request):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     # The template layer resolves the language on its own (see
     # _language_context), but everything this route formats in PYTHON --
@@ -1454,7 +1466,7 @@ async def portal_dashboard_rollback(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
     restored = store.rollback_dashboard(
         dashboard_id, user["id"], user["account_id"], version
     )
@@ -1484,7 +1496,7 @@ async def portal_dashboard_publish(request: Request, dashboard_id: int):
     """
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
     try:
         store.publish_dashboard(int(dashboard_id), user["id"], user["account_id"])
     except Exception as exc:
@@ -1503,7 +1515,7 @@ async def portal_dashboard_subscribe(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
     try:
         store.subscribe_dashboard(
             dashboard_id, user["id"], user["account_id"],
@@ -1520,7 +1532,7 @@ async def portal_dashboard_subscribe(
 async def portal_dashboard_unsubscribe(request: Request, dashboard_id: int):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
     store.unsubscribe_dashboard(dashboard_id, user["id"], user["account_id"])
     return RedirectResponse(
         f"/portal/dashboard?dashboard_id={dashboard_id}&unsubscribed=1", status_code=303
@@ -1533,10 +1545,12 @@ async def portal_dashboard_unsubscribe(request: Request, dashboard_id: int):
 
 @router.get("/change-password", response_class=HTMLResponse)
 async def change_pw_page(request: Request):
-    user = _get_portal_user(request)
+    user = _get_portal_user(request, pending_change_ok=True)
     if not user:
-        return _login_redirect()
-    forced = request.query_params.get("forced") == "1"
+        return _login_redirect(request)
+    # Forced by the stored flag, never by the address: ?forced=1 used to hide
+    # the current-password field from anyone.
+    forced = bool(user.get("is_temp_pw"))
     return _resp(request, "portal_change_password.html", {
         "user": user, "forced": forced, "error": "", "saved": False
     })
@@ -1549,29 +1563,31 @@ async def change_pw_submit(
     new_pw:     str = Form(...),
     confirm_pw: str = Form(...),
 ):
-    user = _get_portal_user(request)
+    user = _get_portal_user(request, pending_change_ok=True)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
-    forced = not bool(current_pw)  # forced = no current password required
+    # Forced only when the user holds a temporary password: they proved it
+    # moments ago to get this session. It used to be "forced = the form left
+    # the current password out", so any session could set a new password
+    # without knowing the old one.
+    forced = bool(user.get("is_temp_pw"))
+    lang = _request_language(request)
 
-    # If not forced, verify current password
+    def refuse(key: str):
+        return _resp(request, "portal_change_password.html", {
+            "user": user, "forced": forced,
+            "error": i18n_t(key, lang=lang), "saved": False,
+        })
+
     if not forced and not store.verify_password(user, current_pw):
-        return _resp(request, "portal_change_password.html", {
-            "user": user, "forced": False,
-            "error": "Current password is incorrect.", "saved": False
-        })
-
+        return refuse("ui.auth.error.current_incorrect")
     if len(new_pw) < 8:
-        return _resp(request, "portal_change_password.html", {
-            "user": user, "forced": forced,
-            "error": "New password must be at least 8 characters.", "saved": False
-        })
+        return refuse("ui.auth.error.too_short")
     if new_pw != confirm_pw:
-        return _resp(request, "portal_change_password.html", {
-            "user": user, "forced": forced,
-            "error": "Passwords do not match.", "saved": False
-        })
+        return refuse("ui.auth.error.mismatch")
+    if store.verify_password(user, new_pw):
+        return refuse("ui.auth.error.same_as_current")
 
     store.change_password(user["id"], new_pw, is_temp=False)
     return RedirectResponse("/portal/dashboard", status_code=303)
@@ -1585,7 +1601,7 @@ async def change_pw_submit(
 async def notifications_page(request: Request):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     from core.alert_engine import list_alerts
     from store import report_store
@@ -1615,7 +1631,7 @@ async def notifications_page(request: Request):
 async def notifications_delete_alert(request: Request, alert_id: str):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     from core.alert_engine import get_alert, delete_alert
 
@@ -1635,7 +1651,7 @@ async def notifications_subscribe(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     from store import report_store
 
@@ -1656,7 +1672,7 @@ async def notifications_subscribe(
 async def notifications_unsubscribe(request: Request, subscription_id: int = Form(...)):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     from store import report_store
 
@@ -1674,7 +1690,7 @@ async def notifications_unsubscribe(request: Request, subscription_id: int = For
 async def report_new_page(request: Request):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     account_id = user["account_id"]
     allowed = store.get_allowed_tables(user)  # None = admin, unrestricted
@@ -1700,7 +1716,7 @@ async def report_create(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     from urllib.parse import quote
     from store import report_store
@@ -1739,7 +1755,7 @@ async def report_update_own(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     from store import report_store
 
@@ -1753,7 +1769,7 @@ async def report_update_own(
 async def report_delete_own(request: Request, report_id: int):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     from store import report_store
 
@@ -1808,7 +1824,7 @@ def _consume_pin_token(token: str) -> dict | None:
 async def pin_confirm_page(request: Request, token: str = ""):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     if not token:
         return _resp(request, "portal_pin_confirm.html", {
@@ -1848,7 +1864,7 @@ async def pin_confirm_submit(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     pin_data = _peek_pin_token(token)
     if not pin_data or pin_data["user_id"] != user["id"]:
@@ -2129,7 +2145,7 @@ async def unpin_chart(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
     if dashboard_id:
         store.remove_chart_from_dashboard(
             dashboard_id, chart_id, user["id"], user["account_id"]
@@ -2149,7 +2165,7 @@ async def unpin_chart(
 async def portal_kb(request: Request):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     client     = store.get_client(user["account_id"]) or {}
     state_data = json.loads(client.get("state_data") or "{}")
@@ -2616,7 +2632,7 @@ async def portal_kb_feedback(
 ):
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     client     = store.get_client(user["account_id"]) or {}
     state_data = json.loads(client.get("state_data") or "{}")
@@ -2678,7 +2694,7 @@ async def portal_chat(request: Request):
     """Internal chat UI — enabled per client by admin."""
     user = _get_portal_user(request)
     if not user:
-        return _login_redirect()
+        return _login_redirect(request)
 
     import store as _store
     client = _store.get_client(user["account_id"]) or {}

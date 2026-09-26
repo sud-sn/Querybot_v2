@@ -62,7 +62,7 @@ def _signed_in(lang="en", group_tables=("DW.SALES",)):
     # sits in the middle, which is easy to get wrong and fails silently.
     store.set_group_tables(group_id, account_id, list(group_tables))
     user_id, _ = store.create_user(
-        account_id, "Ada", f"{os.urandom(4).hex()}@x.com", group_id=group_id)
+        account_id, "Ada", f"{os.urandom(4).hex()}@x.com", group_id=group_id, password="a-password-they-chose")
     if lang != "en":
         store.set_user_language(user_id, lang)
 

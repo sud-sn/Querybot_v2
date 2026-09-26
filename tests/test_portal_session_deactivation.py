@@ -43,7 +43,7 @@ class PortalSessionDeactivationTests(unittest.TestCase):
         self.account_id = f"acct-deactivate-{uuid.uuid4().hex[:8]}"
         store.upsert_client(self.account_id, "portal")
         self.user_id, _ = store.create_user(
-            self.account_id, "Test User", f"{uuid.uuid4().hex[:8]}@test.com",
+            self.account_id, "Test User", f"{uuid.uuid4().hex[:8]}@test.com", password="a-password-they-chose",
         )
 
     def tearDown(self):

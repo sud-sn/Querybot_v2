@@ -71,7 +71,7 @@ def _workspace(profile: str | None) -> tuple[str, int, str]:
     store.update_client_meta(account, chat_ui_enabled=1)
     if profile:
         store.save_compliance_profile(account, mode=profile, industry="standard")
-    user_id, _ = store.create_user(account, "Ada", f"{os.urandom(4).hex()}@x.com")
+    user_id, _ = store.create_user(account, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
     group_id = store.create_group(account, "Analysts")
     store.set_group_tables(group_id, account, ["MART.SLS_FCT", "MART.RGN_DMS"])
     store.update_user(user_id, group_id=group_id)

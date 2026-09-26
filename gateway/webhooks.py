@@ -791,7 +791,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     from fastapi import BackgroundTasks
 
     # Verify portal session from signed portal cookie
-    from portal.routes import _read_session_value
+    from portal.routes import _read_session_value, _session_user
 
     cookie = websocket.cookies.get("qb_portal_session")
     user_id = _read_session_value(cookie) if cookie else None
@@ -800,16 +800,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         await websocket.close(code=4001)
         return
 
-    portal_user = store.get_user(user_id)
-    if (
-        not portal_user
-        or portal_user.get("account_id") != account_id
-        or not portal_user.get("is_active")
-    ):
-        # is_active re-check: an admin's "Temporarily Stop Access" toggle
-        # only blocks fresh logins (store.get_user_by_email filters
-        # is_active=1) -- a cookie issued before the toggle would otherwise
-        # keep this chat socket open indefinitely.
+    # A genuine cookie for a user the portal would not serve: deactivated (an
+    # admin's "Temporarily Stop Access" only blocks fresh logins, so a cookie
+    # issued before it would otherwise keep this socket open), still holding a
+    # temporary password, or signed in to another workspace. _session_user is
+    # the one place those rules live.
+    portal_user = _session_user(cookie)
+    if not portal_user or portal_user.get("account_id") != account_id:
         await websocket.close(code=4003)
         return
 
