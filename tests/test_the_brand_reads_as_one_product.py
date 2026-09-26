@@ -126,7 +126,10 @@ def _fallbacks() -> list[tuple[str, str, str]]:
 def test_every_brand_and_chart_fallback_is_its_tokens_colour():
     tokens = _tokens()
     fallbacks = _fallbacks()
-    assert len(fallbacks) >= 25
+    # The chart scripts paint to a canvas, which cannot read a custom
+    # property, so they keep concrete fallbacks; stylesheets need none
+    # (tests/test_colour_comes_from_tokens.py).
+    assert len(fallbacks) >= 15
     stale = [f"{source}: {token} falls back to {colour}, the token is {tokens[token]}"
              for source, token, colour in fallbacks if token in tokens and colour.upper() != tokens[token]]
     assert not stale, stale

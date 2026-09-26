@@ -50,8 +50,8 @@
 .mask-item-body{max-height:0;overflow:hidden;border-top:1px solid transparent;transition:max-height .22s ease,border-top-color .22s}
 .mask-item-body.open{max-height:600px;border-top-color:var(--border)}
 /* ── Mask preview modal ── */
-.mask-preview-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:1rem}
-.mask-preview-modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.35)}
+.mask-preview-overlay{position:fixed;inset:0;background:color-mix(in srgb, var(--shadow-tint) 55%, transparent);z-index:900;display:flex;align-items:center;justify-content:center;padding:1rem}
+.mask-preview-modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 8px 40px color-mix(in srgb, var(--shadow-tint) 35%, transparent)}
 .mask-preview-head{display:flex;align-items:center;justify-content:space-between;padding:.875rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
 .mask-preview-title{font-size:var(--font-md);font-weight:var(--weight-bold)}
 .mask-preview-body{overflow:auto;padding:1rem 1.25rem;flex:1}
@@ -430,7 +430,7 @@
 <!-- Step 2.5: Field Masking -->
 <div class="setup-step" id="masking-section">
   <div class="step-head">
-    <div class="step-num" id="mask-step-num" style="background:color-mix(in srgb,var(--amber) 80%,#fff);font-size:var(--font-md)">🛡</div>
+    <div class="step-num" id="mask-step-num" style="background:color-mix(in srgb,var(--amber) 80%,var(--surface-raised));font-size:var(--font-md)">🛡</div>
     <div style="flex:1">
       <div class="step-title">
         Field Masking
@@ -769,8 +769,8 @@
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         #tableDescriptions .td-badge{font-size:var(--font-2xs);font-weight:var(--weight-semibold);letter-spacing:.02em;
           padding:.1rem .4rem;border-radius:999px;white-space:nowrap}
-        #tableDescriptions .td-badge--described{background:color-mix(in srgb,var(--green,#0e7c6b) 15%,transparent);color:var(--green,#0e7c6b)}
-        #tableDescriptions .td-badge--undescribed{background:var(--surface-2,#0001);color:var(--text-muted)}
+        #tableDescriptions .td-badge--described{background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)}
+        #tableDescriptions .td-badge--undescribed{background:var(--surface-2);color:var(--text-muted)}
         #tableDescriptions .td-badge--new{background:color-mix(in srgb,var(--amber) 20%,transparent);color:var(--amber)}
         #tableDescriptions .td-body{padding:.1rem .6rem .6rem;display:flex;flex-direction:column;gap:.3rem}
         #tableDescriptions .td-label{font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted)}

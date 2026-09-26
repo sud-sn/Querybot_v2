@@ -59,7 +59,7 @@
     {% if m.certified_at %}<span class="status-pill ok" title="Certified by {{ m.certified_by or 'admin' }} on {{ m.certified_at[:10] }}: its numbers were checked"><span class="status-dot"></span>Certified</span>{% endif %}
     {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
     {% if (m.usage_count or 0) > 0 %}<span class="mr-usage" title="Times this metric was used to answer questions">{{ m.usage_count }}× used</span>{% endif %}
-    {% if _errs %}<span style="font-size:var(--font-xs);color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% endif %}
+    {% if _errs %}<span style="font-size:var(--font-xs);color:var(--red);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% endif %}
     <span class="mr-sep">·</span>
     <span class="mr-formula-preview" title="{{ m.sql_template | e }}">{{ m.sql_template }}</span>
     {% if m.synonyms %}<span class="mr-sep">·</span><span class="mr-synonyms" title="Synonyms: {{ m.synonyms | e }}">{{ m.synonyms }}</span>{% endif %}

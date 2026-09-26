@@ -500,7 +500,7 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
     inset: 0 auto 0 0;
     width: min(86vw, 320px);
     transform: translateX(-101%);
-    box-shadow: 18px 0 48px rgba(15, 23, 42, .22);
+    box-shadow: 18px 0 48px color-mix(in srgb, var(--shadow-tint) 22%, transparent);
     transition: transform .2s ease;
   }
 
@@ -520,7 +520,7 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
     z-index: 65;
     display: block;
     border: 0;
-    background: rgba(15, 23, 42, .38);
+    background: color-mix(in srgb, var(--shadow-tint) 38%, transparent);
     cursor: default;
   }
   .chat-conversation-rail .hp-close { display: inline-flex; }
@@ -595,7 +595,7 @@ body:has(.chat-page) .portal-sidebar-context {
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  border-top: 1px solid rgba(148, 163, 184, .14);
+  border-top: 1px solid var(--shell-line);
   padding-top: 9px;
 }
 .portal-thread-heading {
@@ -605,7 +605,7 @@ body:has(.chat-page) .portal-sidebar-context {
   justify-content: space-between;
   gap: 8px;
   padding: 0 7px 5px 9px;
-  color: #94A3B8;
+  color: var(--shell-muted);
   font-size: var(--font-xs);
   font-weight: var(--weight-bold);
   letter-spacing: .07em;
@@ -620,7 +620,7 @@ body:has(.chat-page) .portal-sidebar-context {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #94A3B8;
+  color: var(--shell-muted);
   cursor: pointer;
 }
 .portal-thread-heading button:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }
@@ -660,7 +660,7 @@ body:has(.chat-page) .portal-sidebar-context {
 .portal-sidebar .hp-header { min-height: 24px; padding: 4px 8px; border: 0; background: transparent; }
 .portal-sidebar .hp-title { color: var(--sidebar-muted); font-size: var(--font-xs); letter-spacing: .04em; text-transform: uppercase; }
 .portal-sidebar .hp-close { display: none; color: var(--sidebar-muted); }
-.portal-sidebar .hp-list { min-height: 0; padding: 0 2px 6px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.28) transparent; }
+.portal-sidebar .hp-list { min-height: 0; padding: 0 2px 6px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--shell-muted) 28%, transparent) transparent; }
 .portal-sidebar .hp-group-label { padding: 8px 8px 4px; color: var(--sidebar-muted); font-size: var(--font-xs); }
 .portal-sidebar .hp-item {
   position: relative;
@@ -688,14 +688,14 @@ body:has(.chat-page) .portal-sidebar-context {
   gap: 8px;
   min-width: 0;
   padding: 8px;
-  border-top: 1px solid rgba(148, 163, 184, .14);
+  border-top: 1px solid var(--shell-line);
 }
-.portal-thread-workspace-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #34D399; }
+.portal-thread-workspace-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--success-line); }
 .portal-thread-workspace > span:last-child { min-width: 0; }
 .portal-thread-workspace small,
 .portal-thread-workspace strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.portal-thread-workspace small { color: #64748B; font-size: var(--font-xs); letter-spacing: .05em; text-transform: uppercase; }
-.portal-thread-workspace strong { margin-top: 1px; color: #CBD5E1; font-size: var(--font-xs); }
+.portal-thread-workspace small { color: var(--shell-muted); font-size: var(--font-xs); letter-spacing: .05em; text-transform: uppercase; }
+.portal-thread-workspace strong { margin-top: 1px; color: var(--shell-text); font-size: var(--font-xs); }
 
 body:has(.chat-page) .portal-app-shell.portal-sidebar-collapsed { grid-template-columns: 68px minmax(0, 1fr); }
 body:has(.chat-page) .portal-sidebar-collapsed .portal-sidebar { padding-inline: 9px; }
@@ -793,7 +793,7 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
   border: 1px solid var(--border-strong);
   border-radius: 9px;
   background: var(--surface);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-tint) 8%, transparent);
 }
 .chat-workspace-main .chat-input { min-height: 44px; max-height: 168px; padding-top: 11px; padding-bottom: 11px; }
 .send-btn { border-radius: 7px; background: var(--primary); box-shadow: none; }

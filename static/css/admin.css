@@ -34,7 +34,7 @@ body {
   align-items: center;
   gap: .65rem;
   padding: 1.2rem 1rem 1rem;
-  border-bottom: 1px solid color-mix(in srgb, white 10%, transparent);
+  border-bottom: 1px solid var(--shell-line);
   flex-shrink: 0;
 }
 /* The same mark the portal carries, so both consoles read as one product. */
@@ -42,7 +42,7 @@ body {
 .sidebar-brand-text {
   font-size: var(--font-md);
   font-weight: var(--weight-bold);
-  color: #fff;
+  color: var(--on-primary);
   letter-spacing: -.02em;
 }
 .sidebar-brand-text span { color: var(--accent-300); }
@@ -51,7 +51,7 @@ body {
   font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: .08em;
-  color: color-mix(in srgb, white 40%, transparent);
+  color: var(--shell-muted);
   margin-top: 3px;
 }
 /* Nav section */
@@ -66,7 +66,7 @@ body {
   font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: .1em;
-  color: color-mix(in srgb, white 35%, transparent);
+  color: var(--shell-muted);
 }
 .sidebar-link {
   display: flex;
@@ -76,20 +76,20 @@ body {
   margin: 1px 8px;
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
-  color: color-mix(in srgb, white 72%, transparent);
+  color: var(--shell-text);
   text-decoration: none;
   border-radius: var(--radius-sm);
   transition: background .15s, color .15s;
   position: relative;
 }
 .sidebar-link:hover {
-  background: color-mix(in srgb, white 9%, transparent);
-  color: #fff;
+  background: var(--sidebar-hover);
+  color: var(--on-primary);
   text-decoration: none;
 }
 .sidebar-link.active {
   background: color-mix(in srgb, var(--accent-400) 18%, transparent);
-  color: #fff;
+  color: var(--on-primary);
   font-weight: var(--weight-bold);
 }
 /* active indicator bar */
@@ -118,7 +118,7 @@ body {
 /* Sidebar footer */
 .sidebar-foot {
   padding: .75rem 8px;
-  border-top: 1px solid color-mix(in srgb, white 10%, transparent);
+  border-top: 1px solid var(--shell-line);
   display: flex;
   flex-direction: column;
   gap: .4rem;
@@ -191,7 +191,7 @@ body {
 .sidebar-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.42);
+  background: color-mix(in srgb, var(--shadow-tint) 42%, transparent);
   z-index: 199;
   opacity: 0;
   pointer-events: none;
@@ -281,7 +281,7 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   height: 20px;
   border-radius: 999px;
   background: var(--amber);
-  color: #fff;
+  color: var(--on-primary);
   font-size: var(--font-xs);
   font-weight: var(--weight-bold);
   padding: 0 6px;
@@ -298,7 +298,7 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   padding: 0 5px;
   border-radius: 999px;
   background: var(--amber);
-  color: #fff;
+  color: var(--on-primary);
   font-size: var(--font-xs);
   font-weight: var(--weight-bold);
   line-height: 18px;
@@ -349,7 +349,7 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 /* ── Client header ── */
 .cs-header {
   padding: .9rem 1rem .8rem;
-  border-bottom: 1px solid color-mix(in srgb, white 10%, transparent);
+  border-bottom: 1px solid var(--shell-line);
   flex-shrink: 0;
 }
 .cs-back {
@@ -358,23 +358,23 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   gap: .25rem;
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
-  color: color-mix(in srgb, white 45%, transparent);
+  color: var(--shell-muted);
   text-decoration: none;
   margin-bottom: .5rem;
   letter-spacing: .02em;
 }
-.cs-back:hover { color: #fff; text-decoration: none; }
+.cs-back:hover { color: var(--on-primary); text-decoration: none; }
 .cs-name {
   font-size: var(--font-sm);
   font-weight: var(--weight-bold);
-  color: #fff;
+  color: var(--on-primary);
   letter-spacing: -.01em;
   line-height: 1.25;
   word-break: break-word;
 }
 .cs-account-id {
   font-size: var(--font-xs);
-  color: color-mix(in srgb, white 35%, transparent);
+  color: var(--shell-muted);
   font-family: var(--font-mono);
   margin-top: .35rem;
 }
@@ -402,11 +402,11 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: .07em;
-  color: color-mix(in srgb, white 40%, transparent);
+  color: var(--shell-muted);
   text-align: left;
   transition: color .12s;
 }
-.cs-group-btn:hover { color: color-mix(in srgb, white 75%, transparent); }
+.cs-group-btn:hover { color: var(--shell-text); }
 /* Chevron SVG arrow */
 .cs-chevron {
   width: 6px;
@@ -437,18 +437,18 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   padding: .38rem 1rem .38rem 1.6rem;
   font-size: var(--font-xs);
   font-weight: var(--weight-medium);
-  color: color-mix(in srgb, white 55%, transparent);
+  color: var(--shell-muted);
   text-decoration: none;
   transition: background .1s, color .1s;
   border-left: 2px solid transparent;
 }
 .cs-item:hover {
-  background: color-mix(in srgb, white 6%, transparent);
-  color: #fff;
+  background: var(--sidebar-hover);
+  color: var(--on-primary);
   text-decoration: none;
 }
 .cs-item.active {
-  color: #fff;
+  color: var(--on-primary);
   font-weight: var(--weight-bold);
   background: color-mix(in srgb, var(--accent-400) 15%, transparent);
   border-left-color: var(--accent-300);
@@ -458,8 +458,8 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #ef4444;
-  color: #fff;
+  background: var(--danger-line);
+  color: var(--on-primary);
   border-radius: 999px;
   font-size: var(--font-xs);
   font-weight: var(--weight-bold);

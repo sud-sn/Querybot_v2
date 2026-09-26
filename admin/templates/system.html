@@ -53,12 +53,12 @@
 @keyframes spin{to{transform:rotate(360deg)}}
 
 #az-fetch-status{font-size:var(--font-sm);margin-top:.5rem}
-#az-fetch-status.ok{color:var(--green,#16a34a)}
-#az-fetch-status.err{color:var(--red,#dc2626)}
+#az-fetch-status.ok{color:var(--green)}
+#az-fetch-status.err{color:var(--red)}
 
 .az-deploy-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.65rem}
 .az-deploy-card{border:1.5px solid var(--border);border-radius:8px;padding:.65rem .875rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;background:var(--surface)}
-.az-deploy-card.succeeded{border-color:var(--green,#16a34a)}
+.az-deploy-card.succeeded{border-color:var(--green)}
 .az-deploy-info{display:flex;flex-direction:column;gap:2px}
 .az-deploy-name{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text)}
 .az-deploy-meta{font-size:var(--font-xs);color:var(--text-muted)}
@@ -127,8 +127,8 @@
 .db-restart-notice .btn{margin-left:auto;flex-shrink:0}
 .restart-strip{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;font-size:var(--font-sm);margin-top:.5rem}
 .restart-strip.inprogress{background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning)}
-.restart-strip.success{background:#dcfce7;border:1px solid #86efac;color:#166534}
-.restart-strip.error{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
+.restart-strip.success{background:var(--paper-recessed);border:1px solid var(--success-line);color:var(--success)}
+.restart-strip.error{background:var(--paper-sunken);border:1px solid var(--danger-line);color:var(--danger-strong)}
 @keyframes restart-spin{to{transform:rotate(360deg)}}
 .restart-spin{display:inline-block;animation:restart-spin .8s linear infinite;font-size:var(--font-md)}
 </style>
@@ -519,7 +519,7 @@
           Best for evaluation and single-user deployments.
         </p>
         <p class="form-note">File path: <code>data/querybot.db</code></p>
-        <p class="form-note" style="color:var(--warning,#b45309)">
+        <p class="form-note" style="color:var(--warning)">
           ⚠ SQLite serialises all writes — concurrent users will queue.
           Switch to PostgreSQL for production workloads with multiple simultaneous users.
         </p>
@@ -551,7 +551,7 @@
           </button>
           <span class="provider-test-result" id="pg-test-result"></span>
         </div>
-        <p class="form-note" style="color:var(--warning,#b45309);margin-top:.75rem">
+        <p class="form-note" style="color:var(--warning);margin-top:.75rem">
           ⚠ Existing SQLite data is <strong>not</strong> migrated automatically.
           Run <code>init_db()</code> against the new PostgreSQL database on first start to create the schema.
         </p>

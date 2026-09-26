@@ -415,7 +415,7 @@
 /* ── Must-change checkbox and the reset dialog ── */
 .checkbox-line { display: flex; align-items: center; gap: 8px; font-size: var(--font-sm); margin-top: .5rem; }
 .reset-dialog { border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; max-width: 440px; width: calc(100% - 32px); background: var(--surface-raised, var(--surface)); color: var(--text); }
-.reset-dialog::backdrop { background: rgba(15, 23, 42, .45); }
+.reset-dialog::backdrop { background: color-mix(in srgb, var(--shadow-tint) 45%, transparent); }
 .reset-dialog h3 { margin: 0 0 .25rem; }
 .reset-choice { border: 0; padding: 0; margin: .75rem 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
 </style>

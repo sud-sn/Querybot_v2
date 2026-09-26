@@ -99,12 +99,12 @@
   content:'▸';font-size:var(--font-xs);color:var(--text-muted);transition:transform .12s;
 }
 .sb-rolegroup[open]>summary::before{transform:rotate(90deg)}
-.sb-rolegroup>summary:hover{background:var(--surface-2,rgba(127,127,127,.08))}
+.sb-rolegroup>summary:hover{background:var(--surface-2)}
 .sb-rolegroup .sb-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sb-rolehint{
   font-size:var(--font-2xs);font-weight:var(--weight-semibold);letter-spacing:.03em;
   padding:.05rem .35rem;border-radius:999px;
-  background:var(--surface-2,rgba(127,127,127,.12));color:var(--text-muted);white-space:nowrap;
+  background:var(--surface-2);color:var(--text-muted);white-space:nowrap;
 }
 .sb-rolegroup .sb-row{padding-left:1.5rem;border-bottom:none}
 .sb-rolegroup[open]>summary{border-bottom:1px solid var(--border)}
@@ -172,11 +172,11 @@
 .review-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--entity-fact);color:var(--on-primary);font-size:var(--font-2xs);font-weight:var(--weight-bold);margin-left:2px}
 
 /* ── Review queue panel ─────────────────────────────────────────────────────── */
-#review-panel{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:85vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-6px 0 18px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(101%);transition:transform .2s ease;z-index:30}
+#review-panel{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:85vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-6px 0 18px color-mix(in srgb, var(--shadow-tint) 8%, transparent);display:flex;flex-direction:column;transform:translateX(101%);transition:transform .2s ease;z-index:30}
 #review-panel.open{transform:translateX(0)}
 
 /* ── Graph chat panel (slides from the left, mirrors #review-panel) ─────────── */
-#chat-panel{position:absolute;top:0;left:0;bottom:0;width:340px;max-width:85vw;background:var(--surface);border-right:1px solid var(--border);box-shadow:6px 0 18px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(-101%);transition:transform .2s ease;z-index:30}
+#chat-panel{position:absolute;top:0;left:0;bottom:0;width:340px;max-width:85vw;background:var(--surface);border-right:1px solid var(--border);box-shadow:6px 0 18px color-mix(in srgb, var(--shadow-tint) 8%, transparent);display:flex;flex-direction:column;transform:translateX(-101%);transition:transform .2s ease;z-index:30}
 #chat-panel.open{transform:translateX(0)}
 #chat-head{padding:.7rem .9rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 #chat-title{font-size:var(--font-base);font-weight:var(--weight-bold)}
@@ -245,7 +245,7 @@
   display:flex;align-items:center;gap:1px;
   background:var(--surface);border:1px solid var(--border);
   border-radius:8px;padding:3px 4px;z-index:10;
-  box-shadow:0 2px 10px rgba(0,0,0,.09);
+  box-shadow:0 2px 10px color-mix(in srgb, var(--shadow-tint) 9%, transparent);
 }
 #eg-zoom button{
   background:none;border:none;cursor:pointer;font-size:var(--font-md);
@@ -265,7 +265,7 @@
   height:44vh;min-height:260px;
   background:var(--surface);
   border-top:2px solid var(--border);
-  box-shadow:0 -4px 24px rgba(0,0,0,.12);
+  box-shadow:0 -4px 24px color-mix(in srgb, var(--shadow-tint) 12%, transparent);
   transform:translateY(100%);
   transition:transform .25s cubic-bezier(.4,0,.2,1);
   z-index:100;
@@ -343,7 +343,7 @@
 
 /* ── Joins tab ──────────────────────────────────────────────────────────────── */
 .join-card{border:1px solid var(--border);border-radius:7px;margin-bottom:.5rem;overflow:hidden;transition:box-shadow .12s}
-.join-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.join-card:hover{box-shadow:0 2px 8px color-mix(in srgb, var(--shadow-tint) 8%, transparent)}
 .join-card-head{
   display:flex;align-items:center;gap:.5rem;
   padding:.5rem .75rem;cursor:pointer;background:var(--surface);transition:background .1s;
@@ -430,8 +430,8 @@
 .filter-clear:hover{background:var(--surface-3,var(--border))}
 
 /* ── Modals ─────────────────────────────────────────────────────────────────── */
-.eg-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
-.eg-modal{background:var(--surface);border-radius:8px;width:520px;max-width:96vw;box-shadow:0 24px 64px rgba(0,0,0,.22);overflow:hidden}
+.eg-modal-overlay{position:fixed;inset:0;background:color-mix(in srgb, var(--shadow-tint) 45%, transparent);z-index:8000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+.eg-modal{background:var(--surface);border-radius:8px;width:520px;max-width:96vw;box-shadow:0 24px 64px color-mix(in srgb, var(--shadow-tint) 22%, transparent);overflow:hidden}
 .eg-modal-head{padding:.8rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);font-size:var(--font-md);font-weight:var(--weight-bold)}
 .eg-modal-close{background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted);padding:0 4px;line-height:1;transition:color .12s}
 .eg-modal-close:hover{color:var(--text)}

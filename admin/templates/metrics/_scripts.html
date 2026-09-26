@@ -969,7 +969,7 @@ document.addEventListener("keydown", function(e){
       _hideMcMetricSuggest();
     }
     else if(e.key === "Escape"){ _hideMcMetricSuggest(); return; }
-    mItems.forEach(function(it, i){ it.style.background = i===_mcMetricSuggestIdx ? "var(--blue-light,#EBF8FF)" : ""; });
+    mItems.forEach(function(it, i){ it.style.background = i===_mcMetricSuggestIdx ? "var(--blue-light)" : ""; });
   }
 });
 
@@ -2742,16 +2742,16 @@ function _showMcMetricSuggest(editor, metrics, partial){
   if(!_mcMetricSuggestEl){
     _mcMetricSuggestEl = document.createElement("div");
     _mcMetricSuggestEl.id = "mc-metric-suggest";
-    _mcMetricSuggestEl.style.cssText = "position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:7px;box-shadow:0 6px 24px rgba(0,0,0,.14);z-index:10999;min-width:220px;padding:3px 0;display:none";
+    _mcMetricSuggestEl.style.cssText = "position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:7px;box-shadow:var(--shadow-md);z-index:10999;min-width:220px;padding:3px 0;display:none";
     document.body.appendChild(_mcMetricSuggestEl);
   }
   if(!metrics.length){ _hideMcMetricSuggest(); return; }
   _mcMetricSuggestItems = metrics;
   _mcMetricSuggestIdx   = -1;
   _mcMetricSuggestEl.innerHTML = metrics.map(function(m, i){
-    var hl = '<mark style="background:none;color:var(--primary,#2B5CE6);font-weight:var(--weight-bold)">'+escHtml(m.name.slice(0, partial.length))+'</mark>'+escHtml(m.name.slice(partial.length));
+    var hl = '<mark style="background:none;color:var(--primary);font-weight:var(--weight-bold)">'+escHtml(m.name.slice(0, partial.length))+'</mark>'+escHtml(m.name.slice(partial.length));
     return '<div class="fcs-item" data-idx="'+i+'" onclick="_pickMetricSuggest('+i+')" style="padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:var(--font-xs)">'
-      +'<span style="font-family:var(--font-mono);background:var(--primary,#2B5CE6);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:var(--font-xs);font-weight:var(--weight-bold);flex-shrink:0">fx</span>'
+      +'<span style="font-family:var(--font-mono);background:var(--primary);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:var(--font-xs);font-weight:var(--weight-bold);flex-shrink:0">fx</span>'
       +'<span style="font-weight:var(--weight-bold);flex:1">'+hl+'</span>'
       +'<span style="font-size:var(--font-xs);color:var(--text-muted)">'+(m.result_format||"")+'</span>'
       +'</div>';

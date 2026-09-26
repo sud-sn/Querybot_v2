@@ -599,19 +599,19 @@
       <details style="font-size:var(--font-sm);color:var(--gray-600)">
         <summary style="cursor:pointer;font-weight:var(--weight-semibold);color:var(--gray-700)">What does each component mean?</summary>
         <div style="margin-top:.75rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:.4rem .75rem">
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">sql_generation</code> — initial SQL written from the user's question.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">sql_repair</code> — one-shot retry after a validator or execution failure.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">clarification_menu</code> — constrained-menu ambiguity check against the glossary.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">clarification_fallback</code> — plain CLEAR/AMBIGUOUS classifier when the glossary is sparse.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">analysis_narrative</code> — natural-language explain/compare/why on a result set.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">drilldown_planner</code> — deterministic next-step SQL templates after a result.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_business_vocab</code> — business-vocabulary document generated during KB build.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_table_doc</code> — per-table KB document (Stage 1) generated during KB build.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_query_examples</code> — per-table question→SQL examples (Stage 2).</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">followup_suggestions</code> — result-aware "ask next" suggestions.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">compare_prior</code> — prior-period comparison narrative.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">result_narration</code> — 1-sentence summary of a result-chat answer.</div>
-          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">duckdb_cache</code> — follow-up SQL against a previously cached result.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">sql_generation</code> — initial SQL written from the user's question.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">sql_repair</code> — one-shot retry after a validator or execution failure.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">clarification_menu</code> — constrained-menu ambiguity check against the glossary.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">clarification_fallback</code> — plain CLEAR/AMBIGUOUS classifier when the glossary is sparse.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">analysis_narrative</code> — natural-language explain/compare/why on a result set.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">drilldown_planner</code> — deterministic next-step SQL templates after a result.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">kb_business_vocab</code> — business-vocabulary document generated during KB build.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">kb_table_doc</code> — per-table KB document (Stage 1) generated during KB build.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">kb_query_examples</code> — per-table question→SQL examples (Stage 2).</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">followup_suggestions</code> — result-aware "ask next" suggestions.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">compare_prior</code> — prior-period comparison narrative.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">result_narration</code> — 1-sentence summary of a result-chat answer.</div>
+          <div><code style="background:var(--surface-3);padding:1px 5px;border-radius:3px">duckdb_cache</code> — follow-up SQL against a previously cached result.</div>
         </div>
         <div style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--border)">
           <span class="badge badge-blue">BLOCKED</span> — for regulated-industry workspaces, these four
@@ -622,7 +622,7 @@
     </div>
 
     <!-- Filter bar -->
-    <div class="card-body" style="padding-top:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--border);background:var(--surface-2,#fafafa)">
+    <div class="card-body" style="padding-top:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--border);background:var(--surface-2)">
       <form method="get" style="display:flex;gap:1rem;align-items:end;flex-wrap:wrap;margin:0">
         <div style="min-width:200px">
           <label style="display:block;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--gray-600);margin-bottom:3px">Component</label>
@@ -718,7 +718,7 @@
           <td class="audit-chars">{{ group.total_chars }}</td>
           <td style="font-size:var(--font-xs);color:var(--gray-600)">
             {% for comp in group.components.split(", ") %}
-            <code style="font-size:var(--font-2xs);font-family:var(--font-mono);background:var(--surface-3,#ebebec);padding:1px 4px;border-radius:3px;margin-right:2px;white-space:nowrap">{{ comp }}</code>
+            <code style="font-size:var(--font-2xs);font-family:var(--font-mono);background:var(--surface-3);padding:1px 4px;border-radius:3px;margin-right:2px;white-space:nowrap">{{ comp }}</code>
             {% endfor %}
           </td>
           <td style="font-size:var(--font-sm);color:var(--gray-800);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ group.question }}">
@@ -730,7 +730,7 @@
         <!-- ── Child rows (one per LLM call in this question) ── -->
         <tbody class="audit-child-section" id="children-{{ gid }}">
           <!-- child header -->
-          <tr class="audit-child-row" style="background:var(--surface-3,#f0f1f3)">
+          <tr class="audit-child-row" style="background:var(--surface-3)">
             <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem .4rem 2.5rem">Call</td>
             <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Component / Model</td>
             <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Status</td>
@@ -755,7 +755,7 @@
             </td>
             <td>
               {% if call.egress %}
-              <div style="margin-bottom:.45rem;padding:.4rem .55rem;border-radius:4px;background:var(--surface-3,#f0f1f3);font-size:var(--font-xs);line-height:1.5">
+              <div style="margin-bottom:.45rem;padding:.4rem .55rem;border-radius:4px;background:var(--surface-3);font-size:var(--font-xs);line-height:1.5">
                 <div style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);margin-bottom:2px">What was sent</div>
                 {% if call.egress.tables %}
                 <div><strong>{{ call.egress.tables|length }}</strong> table{{ "s" if call.egress.tables|length != 1 else "" }}<span style="color:var(--gray-600)" title="{{ call.egress.tables|join(', ') }}">: {{ call.egress.tables[:3]|join(', ') }}{% if call.egress.tables|length > 3 %} +{{ call.egress.tables|length - 3 }} more{% endif %}</span></div>
@@ -767,9 +767,9 @@
                 <div style="color:var(--gray-600)">Content: {{ call.egress.content|join(', ') }}</div>
                 {% endif %}
                 {% if call.egress.values_sent %}
-                <div style="margin-top:3px;color:var(--amber-700,#92400e);font-weight:var(--weight-semibold)">⚠ Real data values included — via {{ call.egress.value_sources|join(', ') }}</div>
+                <div style="margin-top:3px;color:var(--amber-700,var(--warning));font-weight:var(--weight-semibold)">⚠ Real data values included — via {{ call.egress.value_sources|join(', ') }}</div>
                 {% else %}
-                <div style="margin-top:3px;color:var(--green-700,#15803d);font-weight:var(--weight-semibold)">✓ 0 data values</div>
+                <div style="margin-top:3px;color:var(--green-700,var(--success));font-weight:var(--weight-semibold)">✓ 0 data values</div>
                 {% endif %}
               </div>
               {% endif %}

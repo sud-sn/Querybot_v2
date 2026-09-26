@@ -78,7 +78,7 @@ body { background: var(--bg); letter-spacing: 0; }
 .cs-item { border-radius: var(--radius-sm); }
 .sidebar-link.active {
   background: var(--sidebar-active);
-  color: #fff;
+  color: var(--on-primary);
 }
 .sidebar-link.active::before { background: var(--sidebar-accent); }
 .cs-item {
@@ -87,7 +87,7 @@ body { background: var(--bg); letter-spacing: 0; }
   border-left: 0;
 }
 .cs-item.active {
-  color: #fff;
+  color: var(--on-primary);
   background: var(--sidebar-active);
   box-shadow: inset 3px 0 0 var(--sidebar-accent);
 }
@@ -121,7 +121,7 @@ body { background: var(--bg); letter-spacing: 0; }
   border-color: transparent;
 }
 .portal-nav a.active {
-  color: #fff;
+  color: var(--on-primary);
   background: var(--sidebar-active);
   border-color: transparent;
   box-shadow: inset 3px 0 0 var(--sidebar-accent);
@@ -270,7 +270,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 }
 #bp {
   border-top: 1px solid var(--border);
-  box-shadow: 0 -10px 30px rgba(15, 23, 42, .08);
+  box-shadow: 0 -10px 30px color-mix(in srgb, var(--shadow-tint) 8%, transparent);
 }
 
 @media (max-width: 1100px) {

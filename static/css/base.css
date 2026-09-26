@@ -447,8 +447,8 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   content: "";
   width: 8px;
   height: 4px;
-  border-left: 2px solid #fff;
-  border-bottom: 2px solid #fff;
+  border-left: 2px solid var(--surface-raised);
+  border-bottom: 2px solid var(--surface-raised);
   transform: rotate(-45deg) translateY(-1px);
 }
 .choice-card-copy { display: block; min-width: 0; }
@@ -481,8 +481,8 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(15,23,42,.28);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-tint) 28%, transparent);
   transition: transform var(--t-med);
 }
 .form-switch input:checked + .form-switch-track { background: var(--primary); }
@@ -1256,8 +1256,8 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(15,23,42,.3);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-tint) 30%, transparent);
   transition: transform var(--t-med) var(--ease-out);
 }
 .qb-switch.on .qb-switch-track { background: var(--success); }

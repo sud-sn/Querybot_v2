@@ -11,7 +11,7 @@
 <script src="/static/js/qb-charts.js?v=20260926-brand-1"></script>
 <link rel="stylesheet" href="/static/vendor/gridstack.min.css">
 <script src="/static/vendor/gridstack-all.js"></script>
-<link rel="stylesheet" href="/static/css/dashboard.css?v=20260926-ui-7">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=20260926-ui-8">
 {% endblock %}
 {% block content %}
 {% macro workspace_usage(user, charts, monthly_count, query_status,
@@ -616,9 +616,9 @@ function openChartModal(cardEl) {
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'chart-modal';
-    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:var(--scrim);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
     modal.innerHTML = `
-      <div id="chart-modal-inner" style="background:var(--surface);border-radius:var(--radius);width:calc(100vw - 64px);height:calc(100vh - 80px);max-width:1400px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.28)">
+      <div id="chart-modal-inner" style="background:var(--surface);border-radius:var(--radius);width:calc(100vw - 64px);height:calc(100vh - 80px);max-width:1400px;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:.85rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0;gap:1rem">
           <span id="chart-modal-title" style="font-weight:var(--weight-bold);font-size:var(--font-md);flex:1"></span>
           <div id="chart-modal-ctrl" style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center"></div>
