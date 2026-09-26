@@ -10,7 +10,7 @@
     </p>
   </div>
   <div class="metrics-hero-actions">
-    <button type="button" class="btn btn-primary" onclick="openMetricDialog()"><span style="font-family:Consolas,monospace;font-weight:900;letter-spacing:-.02em">fx</span> New Metric</button>
+    <button type="button" class="btn btn-primary" onclick="openMetricDialog()"><span style="font-family:var(--font-mono);font-weight:var(--weight-bold);letter-spacing:-.02em">fx</span> New Metric</button>
     <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/harvest">
       <button type="submit" class="btn btn-secondary btn-sm">Refresh examples</button>
     </form>

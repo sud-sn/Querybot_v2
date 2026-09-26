@@ -14,17 +14,17 @@
       <form method="post" action="/portal/reports/create">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
           <div>
-            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">{{ t('ui.report.name') }}</label>
+            <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--gray-600)">{{ t('ui.report.name') }}</label>
             <input name="name" type="text" required placeholder="{{ t('ui.report.name_placeholder') }}" style="width:100%">
           </div>
           <div>
-            <label style="font-size:var(--font-sm);font-weight:600;color:var(--gray-600)">{{ t('ui.report.description') }}</label>
+            <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--gray-600)">{{ t('ui.report.description') }}</label>
             <input name="description" type="text" placeholder="{{ t('ui.report.description_placeholder') }}" style="width:100%">
           </div>
         </div>
 
         <div style="margin-top:1rem">
-          <div style="font-size:var(--font-xs);font-weight:700;color:var(--gray-500);
+          <div style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--gray-500);
             text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">
             {{ t('ui.report.metrics') }}
           </div>
@@ -33,8 +33,8 @@
               <label style="display:flex;align-items:center;gap:.5rem;padding:.4rem 0;
                 border-bottom:1px solid var(--border);font-size:var(--font-base)">
                 <input type="checkbox" name="metric_ids" value="{{ m.id }}">
-                <span style="font-weight:600">{{ m.name }}</span>
-                {% if m.base_table %}<span style="color:var(--gray-500);font-family:Consolas,monospace;
+                <span style="font-weight:var(--weight-semibold)">{{ m.name }}</span>
+                {% if m.base_table %}<span style="color:var(--gray-500);font-family:var(--font-mono);
                   font-size:var(--font-xs)"> — {{ m.base_table }}</span>{% endif %}
               </label>
             {% endfor %}

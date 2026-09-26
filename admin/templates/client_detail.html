@@ -13,7 +13,7 @@
 <style>
 .overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem}
 .overview-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow)}
-.overview-card h3{font-size:var(--font-xs);font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.75rem}
+.overview-card h3{font-size:var(--font-xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.75rem}
 .bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem}
 .bar-label{font-size:var(--font-sm);color:var(--text-soft);width:120px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
@@ -24,30 +24,30 @@
 .health-arc.amber{stroke:var(--warning)}
 .health-arc.red{stroke:var(--danger)}
 .sql-cell{display:flex;align-items:center;gap:.4rem;max-width:360px}
-.sql-cell code{flex:1;min-width:0;font-family:monospace;font-size:var(--font-xs);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);
+.sql-cell code{flex:1;min-width:0;font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .sql-hidden{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0}
 .copy-btn{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);
   padding:2px 7px;font-size:var(--font-xs);cursor:pointer;flex-shrink:0;line-height:1.4}
 .copy-btn:hover{background:var(--surface-2);color:var(--text)}
 .sql-full{display:none;margin-top:.5rem;padding:.6rem .75rem;background:var(--code-bg);color:var(--code-text);border:1px solid var(--border);
-  border-radius:var(--radius-sm);font-family:monospace;font-size:var(--font-xs);white-space:pre-wrap;word-break:break-word;
+  border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:var(--font-xs);white-space:pre-wrap;word-break:break-word;
   max-height:260px;overflow-y:auto}
 .sql-full.open{display:block}
-.error-code-badge{font-size:9px;cursor:pointer;border:none}
+.error-code-badge{font-size:var(--font-xs);cursor:pointer;border:none}
 .error-detail{display:none;margin-top:.4rem;padding:.5rem .65rem;background:var(--red-light);
   border:1px solid color-mix(in srgb,var(--red) 30%,var(--border));border-radius:var(--radius-sm);
   font-size:var(--font-xs);max-width:340px}
 .error-detail.open{display:block}
-.error-detail .most-likely{font-weight:700;color:var(--red);margin-bottom:2px}
+.error-detail .most-likely{font-weight:var(--weight-bold);color:var(--red);margin-bottom:2px}
 .error-detail .next-step{color:var(--text-soft)}
 .error-detail .tech{margin-top:.35rem;padding-top:.35rem;border-top:1px solid color-mix(in srgb,var(--red) 20%,transparent);
-  font-family:monospace;font-size:var(--font-2xs);color:var(--text-muted);white-space:pre-wrap;word-break:break-word}
-.audit-preview{max-width:680px;font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--text-soft);max-height:260px;overflow-y:auto;padding:4px 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm)}
+  font-family:var(--font-mono);font-size:var(--font-2xs);color:var(--text-muted);white-space:pre-wrap;word-break:break-word}
+.audit-preview{max-width:680px;font-family:var(--font-mono);font-size:var(--font-xs);line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--text-soft);max-height:260px;overflow-y:auto;padding:4px 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm)}
 
 /* ── Grouped audit table (one row per user question) ── */
 .audit-table{table-layout:fixed;width:100%;border-collapse:collapse}
-.audit-table thead th{position:sticky;top:0;z-index:2;background:var(--surface-2);font-size:var(--font-2xs);letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);font-weight:800;padding:.65rem .75rem;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap}
+.audit-table thead th{position:sticky;top:0;z-index:2;background:var(--surface-2);font-size:var(--font-2xs);letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);font-weight:var(--weight-bold);padding:.65rem .75rem;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap}
 /* Parent row — one per user question */
 .audit-group-row{background:var(--surface);cursor:pointer;border-bottom:1px solid var(--border)}
 .audit-group-row:hover{background:var(--row-hover)}
@@ -62,11 +62,11 @@
 .audit-child-row td{padding:.5rem .75rem .5rem 2.5rem;border-bottom:1px solid var(--border);font-size:var(--font-xs);vertical-align:top}
 .audit-child-row:last-child td{border-bottom:2px solid var(--border)}
 .audit-time{font-size:var(--font-xs);color:var(--gray-500);white-space:nowrap;font-variant-numeric:tabular-nums}
-.audit-req{font-size:var(--font-xs);font-family:'SFMono-Regular',Menlo,Consolas,monospace;color:var(--text-soft);white-space:nowrap}
-.audit-comp code{font-size:var(--font-xs);font-family:'SFMono-Regular',Menlo,Consolas,monospace;background:var(--surface);border:1px solid var(--border);padding:2px 5px;border-radius:var(--radius-sm);color:var(--text-soft);white-space:nowrap}
+.audit-req{font-size:var(--font-xs);font-family:var(--font-mono);color:var(--text-soft);white-space:nowrap}
+.audit-comp code{font-size:var(--font-xs);font-family:var(--font-mono);background:var(--surface);border:1px solid var(--border);padding:2px 5px;border-radius:var(--radius-sm);color:var(--text-soft);white-space:nowrap}
 .audit-model{font-size:var(--font-xs);color:var(--gray-500);white-space:nowrap}
 .audit-chars{font-size:var(--font-xs);color:var(--gray-500);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.call-count-badge{display:inline-flex;align-items:center;gap:3px;font-size:var(--font-2xs);font-weight:800;background:var(--blue-light);color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 22%,transparent);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.call-count-badge{display:inline-flex;align-items:center;gap:3px;font-size:var(--font-2xs);font-weight:var(--weight-bold);background:var(--blue-light);color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 22%,transparent);border-radius:999px;padding:2px 8px;white-space:nowrap}
 
 /* ── Client readiness / health score widget ─────────────────────── */
 .health-score-card{grid-column:1/-1}
@@ -74,8 +74,8 @@
 .health-donut-wrap{position:relative;width:110px;height:110px;flex-shrink:0}
 .health-donut-wrap svg{width:110px;height:110px;transform:rotate(-90deg)}
 .health-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:1px}
-.health-donut-score{font-size:var(--font-3xl);font-weight:900;line-height:1;letter-spacing:-.04em;color:var(--gray-800)}
-.health-donut-denom{font-size:var(--font-2xs);color:var(--gray-400);font-weight:600}
+.health-donut-score{font-size:var(--font-3xl);font-weight:var(--weight-bold);line-height:1;letter-spacing:-.04em;color:var(--gray-800)}
+.health-donut-denom{font-size:var(--font-2xs);color:var(--gray-400);font-weight:var(--weight-semibold)}
 .health-components{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.5rem}
 .health-comp{display:flex;align-items:center;gap:.6rem;padding:.55rem .7rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)}
 .health-comp-icon{width:9px;height:9px;border-radius:50%;flex-shrink:0;background:var(--gray-300)}
@@ -83,7 +83,7 @@
 .health-comp-icon.warn{background:var(--warning);box-shadow:0 0 0 3px color-mix(in srgb,var(--warning) 18%,transparent)}
 .health-comp-icon.fail{background:var(--danger);box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 18%,transparent)}
 .health-comp-body{flex:1;min-width:0}
-.health-comp-name{font-size:var(--font-xs);font-weight:700;color:var(--gray-700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.health-comp-name{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--gray-700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .health-comp-pts{font-size:var(--font-2xs);color:var(--gray-500);margin-top:1px}
 .health-refresh-btn{font-size:var(--font-2xs);padding:2px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface);cursor:pointer;color:var(--gray-600);margin-left:.35rem;transition:background .12s}
 .health-refresh-btn:hover{background:var(--gray-50);color:var(--gray-900)}
@@ -148,7 +148,7 @@
       <h3>Connection details</h3>
       <table style="width:100%;font-size:var(--font-base);border-collapse:collapse">
         <tr><td style="padding:5px 0;color:var(--gray-500);width:120px">Platform</td><td><span class="badge badge-blue">{{ client.platform_type }}</span></td></tr>
-        <tr><td style="padding:5px 0;color:var(--gray-500)">Database</td><td style="font-weight:600">{{ db_name }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-500)">Database</td><td style="font-weight:var(--weight-semibold)">{{ db_name }}</td></tr>
         <tr><td style="padding:5px 0;color:var(--gray-500)">LLM model</td><td>{{ client.llm_model or system_model }}</td></tr>
         <tr><td style="padding:5px 0;color:var(--gray-500)">Connected</td><td>{{ client.created_at[:10] }}</td></tr>
         <tr><td style="padding:5px 0;color:var(--gray-500)">Last active</td><td>{{ client.updated_at[:16] }}</td></tr>
@@ -170,7 +170,7 @@
         <div style="background:var(--gray-100);border-radius:4px;height:16px;overflow:hidden">
           <div style="width:{{ [limit_pct,100]|min }}%;height:100%;border-radius:4px;background:{% if limit_pct >= 80 %}var(--amber){% else %}var(--blue){% endif %}"></div>
         </div>
-        {% if limit_pct >= 80 %}<p style="font-size:var(--font-xs);color:var(--amber);margin-top:4px;font-weight:700">Approaching limit</p>{% endif %}
+        {% if limit_pct >= 80 %}<p style="font-size:var(--font-xs);color:var(--amber);margin-top:4px;font-weight:var(--weight-bold)">Approaching limit</p>{% endif %}
       </div>
       <h3>Top questions</h3>
       {% if top_questions %}
@@ -191,7 +191,7 @@
         <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           <div>
-        <div style="font-weight:700;font-size:var(--font-base)">{{ kb_file_count }} KB files ready</div>
+        <div style="font-weight:var(--weight-bold);font-size:var(--font-base)">{{ kb_file_count }} KB files ready</div>
         <div style="font-size:var(--font-xs);color:var(--gray-500)">{{ schema_file_count }} schema + {{ kb_file_count - schema_file_count }} enriched</div>
         <div id="semanticPendingInline" class="semantic-review-chip" {% if not semantic_pending_count %}hidden{% endif %}>
           <a href="/admin/clients/{{ client.account_id }}/kb#semantic-feedback" title="Open Semantic Layer review queue">
@@ -205,7 +205,7 @@
         <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 6v6h4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           <div>
-            <div style="font-weight:700;font-size:var(--font-base)">Schema ready — KB pending</div>
+            <div style="font-weight:var(--weight-bold);font-size:var(--font-base)">Schema ready — KB pending</div>
             <div style="font-size:var(--font-xs);color:var(--gray-500)">{{ schema_file_count }} tables discovered. Open the Setup page to generate the Knowledge Base.</div>
           </div>
         </div>
@@ -222,9 +222,9 @@
         <div style="border-left:3px solid var(--red);padding:.4rem .6rem;margin-bottom:.4rem;background:var(--red-light);border-radius:0 4px 4px 0">
           <div style="font-size:var(--font-xs);color:var(--gray-500);display:flex;align-items:center;gap:6px">
             <span>{{ q.created_at[5:16] }}</span>
-            {% if q.error_code %}<span class="badge badge-red" style="font-size:9px" title="Exact failure scenario">{{ q.error_code }}</span>{% endif %}
+            {% if q.error_code %}<span class="badge badge-red" style="font-size:var(--font-xs)" title="Exact failure scenario">{{ q.error_code }}</span>{% endif %}
           </div>
-          <div style="font-size:var(--font-sm);font-weight:600;color:var(--gray-700);margin-bottom:1px">{{ (q.question or "")[:55] }}{% if (q.question or "")|length > 55 %}…{% endif %}</div>
+          <div style="font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--gray-700);margin-bottom:1px">{{ (q.question or "")[:55] }}{% if (q.question or "")|length > 55 %}…{% endif %}</div>
           <div style="font-size:var(--font-xs);color:var(--red)" title="{{ q.error_msg }}">{{ q.rca.most_likely_reason if q.rca else (q.error_msg or "")[:75] }}</div>
         </div>
         {% endfor %}
@@ -328,7 +328,7 @@
         </div>
         {% if erp_packs_available %}
         <div class="form-group" style="margin-top:.25rem">
-          <label style="font-weight:600">ERP terminology packs</label>
+          <label style="font-weight:var(--weight-semibold)">ERP terminology packs</label>
           <p class="form-note">Vocabulary packs merge over QueryBot's built-in defaults for KB build and question matching. Leave all unchecked for the standard (Infor M3 / DMS) vocabulary. Re-run the KB build after changing packs.</p>
           <div class="choice-grid" style="margin-top:.7rem">
           {% for pack in erp_packs_available %}{% if pack.pack_kind != 'industry' %}
@@ -343,7 +343,7 @@
           </label>
           {% endif %}{% endfor %}
           </div>
-          <label style="font-weight:600;display:block;margin-top:1rem">Industry vocabulary</label>
+          <label style="font-weight:var(--weight-semibold);display:block;margin-top:1rem">Industry vocabulary</label>
           <p class="form-note">What the business calls things, rather than how the database spells it. Layers on top of the ERP pack above — select both.</p>
           <div class="choice-grid" style="margin-top:.7rem">
           {% for pack in erp_packs_available %}{% if pack.pack_kind == 'industry' %}
@@ -603,7 +603,7 @@
     <!-- Component glossary -->
     <div class="card-body" style="border-bottom:1px solid var(--border);padding-top:.75rem;padding-bottom:.75rem">
       <details style="font-size:var(--font-sm);color:var(--gray-600)">
-        <summary style="cursor:pointer;font-weight:600;color:var(--gray-700)">What does each component mean?</summary>
+        <summary style="cursor:pointer;font-weight:var(--weight-semibold);color:var(--gray-700)">What does each component mean?</summary>
         <div style="margin-top:.75rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:.4rem .75rem">
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">sql_generation</code> — initial SQL written from the user's question.</div>
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">sql_repair</code> — one-shot retry after a validator or execution failure.</div>
@@ -631,7 +631,7 @@
     <div class="card-body" style="padding-top:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--border);background:var(--surface-2,#fafafa)">
       <form method="get" style="display:flex;gap:1rem;align-items:end;flex-wrap:wrap;margin:0">
         <div style="min-width:200px">
-          <label style="display:block;font-size:var(--font-xs);font-weight:600;color:var(--gray-600);margin-bottom:3px">Component</label>
+          <label style="display:block;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--gray-600);margin-bottom:3px">Component</label>
           <select name="audit_component" onchange="this.form.submit()" style="width:100%">
             <option value="">All components</option>
             {% for c in ["sql_generation", "sql_repair", "clarification", "clarification_menu", "clarification_fallback", "analysis", "analysis_narrative", "drilldown_planner", "kb_build", "kb_business_vocab", "kb_table_doc", "kb_query_examples", "followup_suggestions", "compare_prior", "result_narration", "duckdb_cache"] %}
@@ -640,7 +640,7 @@
           </select>
         </div>
         <div style="min-width:140px">
-          <label style="display:block;font-size:var(--font-xs);font-weight:600;color:var(--gray-600);margin-bottom:3px">Status</label>
+          <label style="display:block;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--gray-600);margin-bottom:3px">Status</label>
           <select name="audit_status" onchange="this.form.submit()" style="width:100%">
             <option value="">All</option>
             <option value="success" {% if audit_status == "success" %}selected{% endif %}>Success</option>
@@ -724,7 +724,7 @@
           <td class="audit-chars">{{ group.total_chars }}</td>
           <td style="font-size:var(--font-xs);color:var(--gray-600)">
             {% for comp in group.components.split(", ") %}
-            <code style="font-size:var(--font-2xs);font-family:'SFMono-Regular',monospace;background:var(--surface-3,#ebebec);padding:1px 4px;border-radius:3px;margin-right:2px;white-space:nowrap">{{ comp }}</code>
+            <code style="font-size:var(--font-2xs);font-family:var(--font-mono);background:var(--surface-3,#ebebec);padding:1px 4px;border-radius:3px;margin-right:2px;white-space:nowrap">{{ comp }}</code>
             {% endfor %}
           </td>
           <td style="font-size:var(--font-sm);color:var(--gray-800);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ group.question }}">
@@ -737,16 +737,16 @@
         <tbody class="audit-child-section" id="children-{{ gid }}">
           <!-- child header -->
           <tr class="audit-child-row" style="background:var(--surface-3,#f0f1f3)">
-            <td colspan="2" style="font-size:var(--font-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem .4rem 2.5rem">Call</td>
-            <td colspan="2" style="font-size:var(--font-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Component / Model</td>
-            <td colspan="2" style="font-size:var(--font-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Status</td>
-            <td style="font-size:var(--font-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem">Sanitized prompt preview</td>
+            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem .4rem 2.5rem">Call</td>
+            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Component / Model</td>
+            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Status</td>
+            <td style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem">Sanitized prompt preview</td>
           </tr>
           {% for call in group.calls %}
           <tr class="audit-child-row">
             <td class="audit-time" colspan="2" style="padding-left:2.5rem">{{ call.created_at[5:16] }}</td>
             <td colspan="2">
-              <div><code class="audit-comp" style="font-size:10.5px">{{ call.component }}</code></div>
+              <div><code class="audit-comp" style="font-size:var(--font-xs)">{{ call.component }}</code></div>
               <div class="audit-model" style="margin-top:2px">{{ call.llm_model or "—" }}</div>
             </td>
             <td colspan="2">
@@ -762,7 +762,7 @@
             <td>
               {% if call.egress %}
               <div style="margin-bottom:.45rem;padding:.4rem .55rem;border-radius:4px;background:var(--surface-3,#f0f1f3);font-size:var(--font-xs);line-height:1.5">
-                <div style="font-size:var(--font-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);margin-bottom:2px">What was sent</div>
+                <div style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);margin-bottom:2px">What was sent</div>
                 {% if call.egress.tables %}
                 <div><strong>{{ call.egress.tables|length }}</strong> table{{ "s" if call.egress.tables|length != 1 else "" }}<span style="color:var(--gray-600)" title="{{ call.egress.tables|join(', ') }}">: {{ call.egress.tables[:3]|join(', ') }}{% if call.egress.tables|length > 3 %} +{{ call.egress.tables|length - 3 }} more{% endif %}</span></div>
                 {% endif %}
@@ -773,19 +773,19 @@
                 <div style="color:var(--gray-600)">Content: {{ call.egress.content|join(', ') }}</div>
                 {% endif %}
                 {% if call.egress.values_sent %}
-                <div style="margin-top:3px;color:var(--amber-700,#92400e);font-weight:600">⚠ Real data values included — via {{ call.egress.value_sources|join(', ') }}</div>
+                <div style="margin-top:3px;color:var(--amber-700,#92400e);font-weight:var(--weight-semibold)">⚠ Real data values included — via {{ call.egress.value_sources|join(', ') }}</div>
                 {% else %}
-                <div style="margin-top:3px;color:var(--green-700,#15803d);font-weight:600">✓ 0 data values</div>
+                <div style="margin-top:3px;color:var(--green-700,#15803d);font-weight:var(--weight-semibold)">✓ 0 data values</div>
                 {% endif %}
               </div>
               {% endif %}
               <div class="audit-preview">{{ call.payload_preview_sanitized or "—" }}</div>
               {% if call.response_preview_sanitized %}
-              <div style="margin-top:.4rem;font-size:var(--font-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500)">Sanitized response preview · {{ call.response_chars }} ch</div>
+              <div style="margin-top:.4rem;font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500)">Sanitized response preview · {{ call.response_chars }} ch</div>
               <div class="audit-preview" style="margin-top:2px">{{ call.response_preview_sanitized }}</div>
               {% endif %}
               {% if call.payload_hash or call.response_hash %}
-              <div style="margin-top:.35rem;font-size:var(--font-2xs);color:var(--gray-500);font-family:monospace" title="SHA-256 fingerprints of the exact prompt sent / response received — recompute to verify nothing else was exchanged">
+              <div style="margin-top:.35rem;font-size:var(--font-2xs);color:var(--gray-500);font-family:var(--font-mono)" title="SHA-256 fingerprints of the exact prompt sent / response received — recompute to verify nothing else was exchanged">
                 {% if call.payload_hash %}sent {{ call.payload_hash[:16] }}…{% endif %}
                 {% if call.response_hash %} · recv {{ call.response_hash[:16] }}…{% endif %}
               </div>
@@ -834,10 +834,10 @@
       <h3>SQL quality gate</h3>
       {% set _target = client.sql_accuracy_target_pct or 85 %}
       {% if latest_sql_pass_rate is not none %}
-      <div style="font-size:var(--font-3xl);font-weight:900;color:{% if latest_sql_pass_rate >= _target %}var(--success){% else %}var(--warning){% endif %}">{{ latest_sql_pass_rate }}%</div>
+      <div style="font-size:var(--font-3xl);font-weight:var(--weight-bold);color:{% if latest_sql_pass_rate >= _target %}var(--success){% else %}var(--warning){% endif %}">{{ latest_sql_pass_rate }}%</div>
       <p style="font-size:var(--font-sm);color:var(--text-muted);margin:.35rem 0">Latest golden evaluation · target {{ _target }}% · {{ latest_sql_eval.passed_cases }}/{{ latest_sql_eval.total_cases }} passed</p>
       {% else %}
-      <div style="font-size:var(--font-xl);font-weight:800;color:var(--warning)">Baseline required</div>
+      <div style="font-size:var(--font-xl);font-weight:var(--weight-bold);color:var(--warning)">Baseline required</div>
       <p style="font-size:var(--font-sm);color:var(--text-muted);margin:.35rem 0">No completed golden evaluation is available. SQL quality cannot be claimed until the workspace suite has run.</p>
       {% endif %}
       <a class="btn btn-secondary btn-sm" href="/admin/clients/{{ client.account_id }}/evals">Open evaluations</a>
@@ -881,7 +881,7 @@
             You will need to re-register the client from the Clients page. <strong>This cannot be undone.</strong>
           </p>
           <div class="form-group" style="margin-top:1rem;max-width:320px">
-            <label style="font-size:var(--font-sm);font-weight:600;color:var(--danger)">
+            <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--danger)">
               Type <code>{{ client.client_name or client.account_id }}</code> to confirm
             </label>
             <input type="text" id="dangerConfirmInput"

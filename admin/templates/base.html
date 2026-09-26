@@ -8,15 +8,14 @@
 <!-- The reduced mark: at 16px the full mark's three bars are 1.36px wide
      separated by 0.60px, which is sub-pixel. These two are 2.0 by 1.0. -->
 <link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260904-reduced-1">
-<link rel="preload" href="/static/fonts/plex-sans-var.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/static/fonts/plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/static/css/fonts.css?v=20260818-verdigris-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-navy-1">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-navy-1">
-<link rel="stylesheet" href="/static/css/admin.css?v=20260926-navy-1">
+<link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/admin.css?v=20260926-inter-1">
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-navy-1">
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-navy-1">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-inter-1">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
@@ -296,7 +295,7 @@ window.qbToast = (function(){
       'border-left:4px solid '+c.bar,'border-radius:10px',
       'box-shadow:var(--shadow-md)','padding:10px 14px',
       'display:flex','align-items:flex-start','gap:10px','color:'+c.text,
-      'font-size:var(--font-base)','font-weight:600','line-height:1.45',
+      'font-size:var(--font-base)','font-weight:var(--weight-semibold)','line-height:1.45',
       'pointer-events:auto','opacity:0','transform:translateX(12px)',
       'transition:opacity .18s,transform .18s'
     ].join(';');

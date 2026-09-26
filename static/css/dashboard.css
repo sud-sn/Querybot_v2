@@ -40,10 +40,10 @@
   border-radius: var(--radius);
 }
 .dash-header-kicker {
-  font-size: var(--font-xs); font-weight: 800; letter-spacing: .06em;
+  font-size: var(--font-xs); font-weight: var(--weight-bold); letter-spacing: .06em;
   text-transform: uppercase; color: var(--primary);
 }
-.dash-header h1 { font-size: var(--font-xl); font-weight: 800; margin: var(--space-1) 0; }
+.dash-header h1 { font-size: var(--font-xl); font-weight: var(--weight-bold); margin: var(--space-1) 0; }
 .dash-header-meta {
   display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   font-size: var(--font-sm); color: var(--text-muted);
@@ -54,7 +54,7 @@
 }
 .dash-status {
   display: inline-flex; align-items: center; gap: var(--space-1);
-  font-size: var(--font-xs); font-weight: 750; padding: 2px var(--space-2);
+  font-size: var(--font-xs); font-weight: var(--weight-bold); padding: 2px var(--space-2);
   border-radius: var(--radius-pill); border: 1px solid var(--border);
   background: var(--surface-2); color: var(--text-soft);
 }
@@ -82,18 +82,18 @@
 
 .dashboard-controls { display: flex; align-items: end; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-3) var(--space-4); margin: 0 0 var(--space-4); border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); }
 .dashboard-filter { display: grid; gap: var(--space-1); min-width: 170px; }
-.dashboard-filter label { font-size: var(--font-xs); font-weight: 750; color: var(--text-muted); }
+.dashboard-filter label { font-size: var(--font-xs); font-weight: var(--weight-bold); color: var(--text-muted); }
 .dashboard-filter input { height: 34px; border: 1px solid var(--line-control); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); padding: 0 var(--space-2); }
 .dashboard-filter input:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 
 .dashboard-tabs { display: flex; gap: var(--space-1); overflow: auto; margin: 0 0 var(--space-3); border-bottom: 1px solid var(--border); }
-.dashboard-tab { padding: var(--space-2) var(--space-3); border-bottom: 2px solid transparent; color: var(--text-muted); font-size: var(--font-sm); font-weight: 700; text-decoration: none; white-space: nowrap; }
+.dashboard-tab { padding: var(--space-2) var(--space-3); border-bottom: 2px solid transparent; color: var(--text-muted); font-size: var(--font-sm); font-weight: var(--weight-bold); text-decoration: none; white-space: nowrap; }
 .dashboard-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 .dashboard-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 
 .artifact-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-4); }
 .artifact-detail { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: var(--space-3) var(--space-4); }
-.artifact-detail summary { cursor: pointer; font-size: var(--font-sm); font-weight: 800; }
+.artifact-detail summary { cursor: pointer; font-size: var(--font-sm); font-weight: var(--weight-bold); }
 .artifact-detail summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .artifact-detail-list { display: grid; gap: var(--space-2); margin-top: var(--space-3); }
 .artifact-detail-row { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--font-sm); color: var(--text-muted); }
@@ -112,14 +112,14 @@
 .chart-card.drag-over { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
 .chart-card-header { border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .chart-card-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.chart-card-title { font-size: var(--font-md); font-weight: 800; color: var(--text); line-height: 1.4; }
+.chart-card-title { font-size: var(--font-md); font-weight: var(--weight-bold); color: var(--text); line-height: 1.4; }
 /* cursor:text was unconditional, so a read-only viewer's pointer said the title
    was editable when it is not. It follows the permission now. */
 .chart-card-title.is-editable { cursor: text; }
 .chart-card-title[contenteditable=true] { outline: none; border-bottom: 2px solid var(--primary); padding-bottom: 1px; }
 .chart-card-sub { font-size: var(--font-xs); color: var(--text-muted); margin-top: var(--space-1); }
 
-.chart-drag-handle { border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); border-radius: var(--radius); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: grab; font-weight: 900; line-height: 1; }
+.chart-drag-handle { border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); border-radius: var(--radius); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: grab; font-weight: var(--weight-bold); line-height: 1; }
 .chart-drag-handle:active { cursor: grabbing; }
 .chart-drag-handle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
@@ -139,13 +139,13 @@
 .dash-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
 /* Was style="all:unset", which also unset the focus outline -- and this is the
    only keyboard-reachable control inside a table tile. */
-.dash-th-sort { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; font-weight: 750; color: inherit; cursor: pointer; text-align: left; }
+.dash-th-sort { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; font-weight: var(--weight-bold); color: inherit; cursor: pointer; text-align: left; }
 .dash-th-sort:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm); }
 
 /* ── Dashboard chart controls ───────────────────────────────────────────── */
 .dash-ctrl-row { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); align-items: center; }
 .dash-ctrl-sep { width: 1px; height: 14px; background: var(--border); margin: 0 var(--space-1); flex-shrink: 0; }
-.dctt-btn { padding: 3px 10px; font-size: var(--font-2xs); font-weight: 700; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); cursor: pointer; transition: border-color var(--t-fast), color var(--t-fast); white-space: nowrap; }
+.dctt-btn { padding: 3px 10px; font-size: var(--font-2xs); font-weight: var(--weight-bold); border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); cursor: pointer; transition: border-color var(--t-fast), color var(--t-fast); white-space: nowrap; }
 .dctt-btn:hover { border-color: var(--primary); color: var(--primary); }
 .dctt-btn.dctt-active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 /* The grid's resize strip -- 10px along a card's bottom edge, given z-index
@@ -161,13 +161,13 @@
 
 .empty-state { text-align: center; padding: var(--space-8) var(--space-6); color: var(--text-muted); }
 .empty-state .icon { font-size: 48px; margin-bottom: var(--space-4); }
-.empty-state h3 { font-size: var(--font-lg); font-weight: 700; color: var(--text); margin-bottom: var(--space-2); }
+.empty-state h3 { font-size: var(--font-lg); font-weight: var(--weight-bold); color: var(--text); margin-bottom: var(--space-2); }
 
 #chart-modal { animation: qb-fadeIn var(--t-fast) var(--ease-out); }
 
-.table-pill { display: inline-block; background: var(--primary-soft); color: var(--primary); font-size: var(--font-2xs); font-weight: 700; padding: 2px var(--space-2); border-radius: var(--radius-pill); margin: 2px; font-family: var(--font-mono); }
+.table-pill { display: inline-block; background: var(--primary-soft); color: var(--primary); font-size: var(--font-2xs); font-weight: var(--weight-bold); padding: 2px var(--space-2); border-radius: var(--radius-pill); margin: 2px; font-family: var(--font-mono); }
 .welcome-banner { border-radius: var(--radius); padding: var(--space-6); color: var(--on-primary); margin-bottom: var(--space-6); display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); }
-.welcome-banner-title { font-size: var(--font-xl); font-weight: 800; margin-bottom: var(--space-1); }
+.welcome-banner-title { font-size: var(--font-xl); font-weight: var(--weight-bold); margin-bottom: var(--space-1); }
 
 .metric-progress { height: 6px; border-radius: var(--radius-pill); background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; margin-top: var(--space-2); }
 .metric-progress span { display: block; height: 100%; border-radius: var(--radius-pill); background: linear-gradient(90deg, var(--success), var(--primary)); }
@@ -206,7 +206,7 @@
   z-index: var(--z-toast);
   background: var(--shell); color: var(--on-primary);
   border-radius: var(--radius); padding: var(--space-3) var(--space-4);
-  font-size: var(--font-base); font-weight: 600;
+  font-size: var(--font-base); font-weight: var(--weight-semibold);
   display: flex; align-items: center; gap: var(--space-3);
   box-shadow: var(--shadow-lg);
   opacity: 0; transition: opacity var(--t-med), transform var(--t-med);
@@ -215,7 +215,7 @@
 #unpin-toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 .unpin-toast-undo {
   background: color-mix(in srgb, var(--on-primary) 15%, transparent);
-  border: none; color: inherit; cursor: pointer; font-weight: 800;
+  border: none; color: inherit; cursor: pointer; font-weight: var(--weight-bold);
   font-size: var(--font-sm); padding: 3px 10px; border-radius: var(--radius-pill);
   transition: background var(--t-fast);
 }

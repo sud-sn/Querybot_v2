@@ -12,7 +12,7 @@
 <style>
 .scope-panel{margin-top:1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
 .scope-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);background:var(--surface)}
-.scope-title{font-size:var(--font-base);font-weight:800;color:var(--text-soft)}
+.scope-title{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text-soft)}
 .scope-note{font-size:var(--font-sm);color:var(--text-muted);margin-top:.2rem}
 .scope-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 .scope-status{display:none;padding:.7rem 1rem;font-size:var(--font-sm);border-bottom:1px solid var(--border)}
@@ -21,14 +21,14 @@
 .scope-db,.scope-schema{margin-bottom:.45rem}
 .scope-row{display:flex;align-items:center;gap:.5rem;padding:.34rem .45rem;border-radius:var(--radius-sm);color:var(--text-soft)}
 .scope-row:hover{background:var(--row-hover)}
-.scope-name{font-weight:800;color:var(--text)}
-.scope-schema-name{font-weight:700;color:var(--text-soft)}
+.scope-name{font-weight:var(--weight-bold);color:var(--text)}
+.scope-schema-name{font-weight:var(--weight-bold);color:var(--text-soft)}
 .scope-count{margin-left:auto;font-size:var(--font-xs);color:var(--text-muted);white-space:nowrap}
 .scope-objects{margin-left:1.65rem}
 .scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:var(--font-sm);color:var(--text-soft)}
 .scope-object:hover{background:var(--row-hover)}
 .scope-check{width:14px;height:14px;accent-color:var(--blue)}
-.scope-section{font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
+.scope-section{font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
 .scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
 </style>
 {% endblock %}
@@ -76,7 +76,7 @@
         </div>
         <div class="form-grid">
           <div class="form-group">
-            <label>Database <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+            <label>Database <span style="font-weight:var(--weight-regular);color:var(--text-muted)">(optional)</span></label>
             <input type="text" name="sf_database" placeholder="MY_DATABASE (leave blank to discover all)">
             <p class="form-note">Leave blank to browse all accessible databases on this account.</p>
           </div>
@@ -126,7 +126,7 @@
           <input type="text" name="az_server" placeholder="myserver.database.windows.net"></div>
         <div class="form-grid">
           <div class="form-group">
-            <label>Database <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+            <label>Database <span style="font-weight:var(--weight-regular);color:var(--text-muted)">(optional)</span></label>
             <input type="text" name="az_database" placeholder="my_database (leave blank to discover all databases)">
             <p class="form-note">Leave blank to browse and select tables from all accessible databases on this server.</p>
           </div>
@@ -146,7 +146,7 @@
       </div>
 
       <div class="alert alert-info" style="margin-top:1rem;margin-bottom:0">
-        <label style="display:flex;align-items:flex-start;gap:.55rem;font-weight:700;color:var(--text-soft)">
+        <label style="display:flex;align-items:flex-start;gap:.55rem;font-weight:var(--weight-bold);color:var(--text-soft)">
           <input type="checkbox" name="log_export_enabled" value="1" style="width:auto;margin-top:2px">
           Store QueryBot logs in this database
         </label>
@@ -208,7 +208,7 @@
     <tr><th>Name</th><th>Type</th><th>Connection</th><th>KB scope</th><th>Log export</th><th>Created</th><th></th></tr>
     {% for d in dbs %}
     <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds='{{ d.edit_creds|tojson }}' data-db-log='{{ d.edit_log|tojson }}' data-db-scope='{{ d.selected_schema_tables|tojson }}'>
-      <td style="font-weight:600">{{ d.name }}</td>
+      <td style="font-weight:var(--weight-semibold)">{{ d.name }}</td>
       <td><span class="badge badge-blue">{{ d.label }}</span></td>
       <td style="font-size:var(--font-xs);color:var(--gray-500)">
         {% if d.db_type == "snowflake" %}
@@ -511,9 +511,9 @@ function diagnosisHtml(d) {
 
   // Values from the server are text; the labels below are this page's own.
   const txt = v => dbScopeEsc(v);
-  const ok  = v => `<span style="color:var(--green);font-weight:700">${v}</span>`;
-  const warn = v => `<span style="color:var(--amber);font-weight:700">${v}</span>`;
-  const bad  = v => `<span style="color:var(--red);font-weight:700">${v}</span>`;
+  const ok  = v => `<span style="color:var(--green);font-weight:var(--weight-bold)">${v}</span>`;
+  const warn = v => `<span style="color:var(--amber);font-weight:var(--weight-bold)">${v}</span>`;
+  const bad  = v => `<span style="color:var(--red);font-weight:var(--weight-bold)">${v}</span>`;
 
   let html = `<table style="width:100%;border-collapse:collapse;font-size:var(--font-sm)">`;
   html += row('Local egress rows',   d.local_egress_count > 0 ? ok(txt(d.local_egress_count)) : warn(txt(d.local_egress_count)));
@@ -596,7 +596,7 @@ async function diagnoseLogs(dbId) {
 function row(label, value) {
   return `<tr>
     <td style="padding:.3rem .5rem;color:var(--text-muted);white-space:nowrap">${label}</td>
-    <td style="padding:.3rem .5rem;font-weight:600">${value}</td>
+    <td style="padding:.3rem .5rem;font-weight:var(--weight-semibold)">${value}</td>
   </tr>`;
 }
 

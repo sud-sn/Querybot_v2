@@ -86,8 +86,8 @@
 
 .qb-brand-motion__label {
   min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
   line-height: 1.35;
   color: var(--text-muted, #5E706A);
 }
@@ -96,8 +96,8 @@
   display: block;
   margin-top: 2px;
   color: var(--text-muted, #5E706A);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
 }
 
 /* ── Interactive: the resting mark answers the hand ───────────────────────

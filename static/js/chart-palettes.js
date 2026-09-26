@@ -155,6 +155,6 @@ window.QB_CHART_THEME = function () {
     // sign beside it, never colour alone.
     good:        token('--success', '#337438'),
     bad:         token('--danger', '#A73832'),
-    font:        token('--font-ui', "'Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif"),
+    font:        token('--font-ui', "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif"),
   };
 };

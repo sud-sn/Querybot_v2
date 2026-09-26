@@ -149,10 +149,14 @@ class TheScaleHasACaptionRung(unittest.TestCase):
     def test_font_2xs_is_defined(self):
         self.assertIn("--font-2xs:", _read("static/css/tokens.css"))
 
-    def test_it_is_the_10px_tier_the_product_actually_uses(self):
-        match = re.search(r"--font-2xs:\s*(\d+)px", _read("static/css/tokens.css"))
-        self.assertIsNotNone(match)
-        self.assertEqual(int(match.group(1)), 10)
+    def test_it_is_the_smallest_rung_and_not_below_the_floor(self):
+        # It was 10px; nothing is set below 12px now (see
+        # tests/test_the_type_system_is_whole.py), so the caption rung is the
+        # floor itself rather than a size under it.
+        sizes = {name: int(px) for name, px in
+                 re.findall(r"(--font-[\w-]+):\s*(\d+)px", _read("static/css/tokens.css"))}
+        self.assertEqual(sizes["--font-2xs"], min(sizes.values()))
+        self.assertGreaterEqual(sizes["--font-2xs"], 12)
 
 
 if __name__ == "__main__":

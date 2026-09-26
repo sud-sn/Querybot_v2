@@ -212,7 +212,7 @@
   function chrome() {
     const theme = (global.QB_CHART_THEME ? global.QB_CHART_THEME() : {}) || {};
     return {
-      font: theme.font || "'Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif",
+      font: theme.font || "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
       surface: theme.surface || '#F5F8F6',
       raised: theme.tooltipBg || '#FAFCFB',
       ink: theme.tooltipText || theme.ink || '#161E1A',
@@ -260,7 +260,7 @@
     };
   }
   function tipHeader(text, c) {
-    return `<div style="color:${c.ink2};font-size:11px;margin-bottom:5px">${escHtml(text)}</div>`;
+    return `<div style="color:${c.ink2};font-size:12px;margin-bottom:5px">${escHtml(text)}</div>`;
   }
   function tipRow(color, name, value, c, shape) {
     const key = shape === 'swatch'
@@ -301,7 +301,7 @@
           position: isDrop ? 'bottom' : 'top',
           distance: 6,
           formatter: `${isDrop ? '↓' : '↑'} ${pctLabel} ${t(isDrop ? 'ui.chart.drop' : 'ui.chart.gain')}`,
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 600,
           color: status.label[kind] || (isDrop ? c.bad : c.good),
           textBorderColor: c.surface,
@@ -424,15 +424,15 @@
     // (render(..., {drill: true})), the tooltip says so: a reader cannot use
     // what nothing tells them is there.
     const drillHint = layout && layout.drill
-      ? `<div style="color:${c.muted};font-size:11px;margin-top:6px">${escHtml(t('ui.chart.drill_hint'))}</div>`
+      ? `<div style="color:${c.muted};font-size:12px;margin-top:6px">${escHtml(t('ui.chart.drill_hint'))}</div>`
       : '';
     const legendBase = (names, line) => ({
       type: 'scroll', top: 0, left: 0, right: 0,
       icon: line ? 'path://M0 0h14v2.5H0z' : 'roundRect',
       itemWidth: line ? 14 : 10, itemHeight: line ? 3 : 10, itemGap: 16,
-      textStyle: {color: c.ink2, fontSize: 11, fontFamily: c.font},
+      textStyle: {color: c.ink2, fontSize: 12, fontFamily: c.font},
       pageIconColor: c.ink2, pageIconInactiveColor: c.grid, pageIconSize: 9,
-      pageTextStyle: {color: c.muted, fontSize: 10},
+      pageTextStyle: {color: c.muted, fontSize: 12},
       // A series' surface-coloured marker ring would otherwise be inherited
       // by its legend key and swallow a 3px line whole.
       itemStyle: {borderWidth: 0},
@@ -442,7 +442,7 @@
     const capTitle = top => (capParts.length ? {
       text: '', subtext: capParts.join(' · '), left: 0, top,
       padding: 0, itemGap: 0,
-      subtextStyle: {color: c.muted, fontSize: 11, fontFamily: c.font},
+      subtextStyle: {color: c.muted, fontSize: 12, fontFamily: c.font},
     } : undefined);
     const capReserve = capParts.length ? 20 : 0;
 
@@ -489,7 +489,7 @@
           children: [
             {type: 'text', style: {text: valueFmt(total, yKey, true), fill: c.ink, fontSize: 18, fontWeight: 600,
               fontFamily: c.font, textAlign: 'center', textVerticalAlign: 'bottom'}},
-            {type: 'text', top: 4, style: {text: t('ui.chart.total'), fill: c.muted, fontSize: 11,
+            {type: 'text', top: 4, style: {text: t('ui.chart.total'), fill: c.muted, fontSize: 12,
               fontFamily: c.font, textAlign: 'center', textVerticalAlign: 'top'}},
           ],
         }] : undefined,
@@ -505,7 +505,7 @@
             show: labelled,
             formatter: p => `{name|${String(p.name || '').slice(0, 24)}}\n{pct|${global.qbPct(Number(p.percent != null ? p.percent : share(p.value)), 1)}}`,
             rich: {
-              name: {color: c.ink2, fontSize: 11, fontFamily: c.font, lineHeight: 15},
+              name: {color: c.ink2, fontSize: 12, fontFamily: c.font, lineHeight: 16},
               pct: {color: c.ink, fontSize: 12, fontWeight: 600, fontFamily: c.font, lineHeight: 16},
             },
           },
@@ -575,13 +575,13 @@
         grid: {left: 16, right: 8, top: 8, bottom: 44, containLabel: true},
         xAxis: {
           type: 'category', data: colKeys, position: 'top',
-          axisLabel: {color: c.muted, fontSize: 11, lineHeight: 14, interval: 0, hideOverlap: true,
+          axisLabel: {color: c.muted, fontSize: 12, lineHeight: 16, interval: 0, hideOverlap: true,
                       formatter: periodHeads || (v => labelFmt(periodParts(v) ? periodLabel(v) : v))},
           axisLine: {show: false}, axisTick: {show: false}, splitArea: {show: false},
         },
         yAxis: {
           type: 'category', data: rowLabels, inverse: true,
-          axisLabel: {color: c.muted, fontSize: 11, width: 150, overflow: 'truncate', ellipsis: '…',
+          axisLabel: {color: c.muted, fontSize: 12, width: 150, overflow: 'truncate', ellipsis: '…',
                       formatter: periodRows ? v => periodLabel(v) : labelFmt},
           axisLine: {show: false}, axisTick: {show: false}, splitArea: {show: false},
         },
@@ -590,12 +590,12 @@
           left: 'center', bottom: 0, itemWidth: 10, itemHeight: 160,
           inRange: {color: ramp}, text: [cellFmt(hi, true), cellFmt(lo, true)],
           formatter: v => cellFmt(v, true),
-          textStyle: {color: c.muted, fontSize: 10, fontFamily: c.font},
+          textStyle: {color: c.muted, fontSize: 12, fontFamily: c.font},
         },
         series: [{
           type: 'heatmap', data,
           itemStyle: {borderColor: c.surface, borderWidth: 2},
-          label: {show: showCells, fontSize: 10, fontFamily: c.font,
+          label: {show: showCells, fontSize: 12, fontFamily: c.font,
                   formatter: p => { const cell = cellOf(p); return cell.v == null ? '' : cellFmt(cell.v, true); }},
           emphasis: {itemStyle: {borderColor: c.ink, borderWidth: 1}},
         }],
@@ -625,12 +625,12 @@
         grid: {left: 8, right: 16, top: 20, bottom: 8, containLabel: true},
         xAxis: {
           type: 'category', data: labels,
-          axisLabel: {color: c.muted, fontSize: 11, formatter: labelFmt, hideOverlap: true, rotate: longLabels ? 30 : 0},
+          axisLabel: {color: c.muted, fontSize: 12, formatter: labelFmt, hideOverlap: true, rotate: longLabels ? 30 : 0},
           axisLine: {lineStyle: {color: c.axis}}, axisTick: {show: false},
         },
         yAxis: {
           type: 'value',
-          axisLabel: {color: c.muted, fontSize: 11, formatter: v => valueFmt(v, varKey, true)},
+          axisLabel: {color: c.muted, fontSize: 12, formatter: v => valueFmt(v, varKey, true)},
           splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false},
         },
         series: [
@@ -643,7 +643,7 @@
              label: {position: deltas[i] >= 0 ? 'top' : 'bottom'},
            })),
            label: {
-             show: rows.length <= 16, color: c.ink2, fontSize: 11, fontFamily: c.font,
+             show: rows.length <= 16, color: c.ink2, fontSize: 12, fontFamily: c.font,
              formatter: p => { const v = deltas[p.dataIndex]; return (v > 0 ? '+' : '') + valueFmt(v, varKey, true); },
            },
           },
@@ -738,7 +738,7 @@
       return Object.assign(base, {
         color: [colors[0], projColor],
         title: trendNote ? {text: '', subtext: trendNote, left: 0, top: 22, padding: 0,
-                            subtextStyle: {color: c.muted, fontSize: 11, fontFamily: c.font}} : undefined,
+                            subtextStyle: {color: c.muted, fontSize: 12, fontFamily: c.font}} : undefined,
         // Each key mirrors its mark: a solid line, a dashed one, a swatch for
         // the shaded interval.
         legend: legendBase([
@@ -764,14 +764,14 @@
         }),
         xAxis: {
           type: 'category', data: periods, boundaryGap: false,
-          axisLabel: {color: c.muted, fontSize: 11, hideOverlap: true, formatter: axisFmt || labelFmt},
+          axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true, formatter: axisFmt || labelFmt},
           axisLine: {lineStyle: {color: c.axis}}, axisTick: {show: false},
         },
         yAxis: {
           // A forecast's subject is a band a few percent wide; anchored at zero
           // it would draw as a flat line. The caption carries the honesty.
           type: 'value', scale: true,
-          axisLabel: {color: c.muted, fontSize: 11, formatter: v => valueFmt(v, metricKey, true)},
+          axisLabel: {color: c.muted, fontSize: 12, formatter: v => valueFmt(v, metricKey, true)},
           splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false},
         },
         series: [
@@ -809,10 +809,10 @@
         }),
         grid: {left: 8, right: 16, top: 16, bottom: 8, containLabel: true},
         xAxis: {type: 'category', data: bins,
-                axisLabel: {color: c.muted, fontSize: 11, hideOverlap: true, formatter: labelFmt},
+                axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true, formatter: labelFmt},
                 axisLine: {lineStyle: {color: c.axis}}, axisTick: {show: false}},
-        yAxis: {type: 'value', name: t('ui.chart.count'), nameTextStyle: {color: c.muted, fontSize: 11, align: 'left'},
-                axisLabel: {color: c.muted, fontSize: 11, formatter: v => compactNumber(v)},
+        yAxis: {type: 'value', name: t('ui.chart.count'), nameTextStyle: {color: c.muted, fontSize: 12, align: 'left'},
+                axisLabel: {color: c.muted, fontSize: 12, formatter: v => compactNumber(v)},
                 splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false}},
         series: [{type: 'bar', data: counts, barCategoryGap: 2,
                   itemStyle: {color: colors[0], borderRadius: [2, 2, 0, 0]}}],
@@ -843,9 +843,9 @@
         }),
         grid: {left: 8, right: 16, top: 16, bottom: 8, containLabel: true},
         xAxis: {type: 'category', data: groups,
-                axisLabel: {color: c.muted, fontSize: 11, formatter: labelFmt, hideOverlap: true},
+                axisLabel: {color: c.muted, fontSize: 12, formatter: labelFmt, hideOverlap: true},
                 axisLine: {lineStyle: {color: c.axis}}, axisTick: {show: false}},
-        yAxis: {type: 'value', axisLabel: {color: c.muted, fontSize: 11, formatter: v => valueFmt(v, yKey, true)},
+        yAxis: {type: 'value', axisLabel: {color: c.muted, fontSize: 12, formatter: v => valueFmt(v, yKey, true)},
                 splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false}},
         series: [
           {type: 'boxplot', data: boxes, boxWidth: [8, 24],
@@ -874,7 +874,7 @@
           type: 'treemap', data: tiles, width: '100%', height: '100%', roam: false, nodeClick: false,
           breadcrumb: {show: false},
           itemStyle: {color: colors[0], borderColor: c.surface, borderWidth: 2, gapWidth: 2},
-          label: {show: true, color: inkOn(colors[0], c), fontSize: 11, fontFamily: c.font, overflow: 'truncate',
+          label: {show: true, color: inkOn(colors[0], c), fontSize: 12, fontFamily: c.font, overflow: 'truncate',
                   formatter: p => `${p.name}\n${global.qbPct(total > 0 ? p.value / total * 100 : 0, 1)}`},
           emphasis: {itemStyle: {borderColor: c.ink, borderWidth: 1}},
         }],
@@ -895,8 +895,8 @@
       const valueAxis = (col, withName) => ({
         type: 'value', name: withName ? columnLabel(payload, col) : undefined,
         nameLocation: 'middle', nameGap: 28,
-        nameTextStyle: {color: c.ink2, fontSize: 11, fontFamily: c.font},
-        axisLabel: {color: c.muted, fontSize: 11, formatter: v => valueFmt(v, col, true)},
+        nameTextStyle: {color: c.ink2, fontSize: 12, fontFamily: c.font},
+        axisLabel: {color: c.muted, fontSize: 12, formatter: v => valueFmt(v, col, true)},
         splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false},
       });
       return Object.assign(base, {
@@ -910,7 +910,7 @@
         }),
         xAxis: valueAxis(yKey, true),
         yAxis: Object.assign(valueAxis(y2, true), {nameLocation: 'end', nameGap: 10,
-                                                   nameTextStyle: {color: c.ink2, fontSize: 11, align: 'left'}}),
+                                                   nameTextStyle: {color: c.ink2, fontSize: 12, align: 'left'}}),
         series: [{
           type: 'scatter', symbolSize: 9,
           data: rows.map(r => [num(r && r[yKey]), num(r && r[y2]), pointLabel(r)]),
@@ -925,7 +925,7 @@
       data: labels,
       boundaryGap: type === 'bar',
       axisLabel: {
-        color: c.muted, fontSize: 11, hideOverlap: true, lineHeight: 14,
+        color: c.muted, fontSize: 12, hideOverlap: true, lineHeight: 16,
         interval: (type === 'bar' && labels.length <= 16) || (!temporal && !manyLabels) ? 0 : 'auto',
         rotate: !horizontal && !temporal && longLabels ? 30 : 0,
         formatter: axisFmt || labelFmt,
@@ -935,7 +935,7 @@
     };
     const valueAxis = {
       type: 'value',
-      axisLabel: {color: c.muted, fontSize: 11, formatter: v => valueFmt(v, yKey, true)},
+      axisLabel: {color: c.muted, fontSize: 12, formatter: v => valueFmt(v, yKey, true)},
       splitLine: {lineStyle: {color: c.grid, width: 1, type: 'solid'}},
       axisLine: {show: false},
       axisTick: {show: false},
@@ -959,7 +959,7 @@
         {type: 'slider', height: 14, bottom: 4, borderColor: 'transparent', backgroundColor: c.grid,
          fillerColor: 'rgba(42,120,214,0.12)', dataBackground: {lineStyle: {color: c.axis}, areaStyle: {color: c.grid}},
          handleStyle: {color: c.raised, borderColor: c.axis}, moveHandleSize: 4,
-         textStyle: {color: c.muted, fontSize: 10}},
+         textStyle: {color: c.muted, fontSize: 12}},
       ] : undefined,
       legend: yKeys.length > 1
         ? Object.assign(legendBase(yKeys, type === 'line'), {formatter: name => columnLabel(payload, name)})
@@ -983,7 +983,7 @@
       const n = facets.length;
       const named = group => group.map(k => columnLabel(payload, k)).join(' · ');
       const colourOf = k => colors[yKeys.indexOf(k) % colors.length];
-      const panelTitle = {color: c.ink2, fontSize: 11, fontWeight: 600, fontFamily: c.font};
+      const panelTitle = {color: c.ink2, fontSize: 12, fontWeight: 600, fontFamily: c.font};
       const legendNeeded = facets.some(group => group.length > 1);
       const head = (legendNeeded ? 8 : 0) + (capParts.length ? 6 : 0) + 9;
       const width = (layout && layout.width) || 600;
@@ -1093,7 +1093,7 @@
           // lines it is fainter still, or the washes tint each other into mud.
           areaStyle: type === 'area' ? {color, opacity: single ? 0.10 : 0.06} : undefined,
           // A single line says its latest value at its end.
-          endLabel: single ? {show: true, color: c.ink2, fontSize: 11, fontFamily: c.font, distance: 6,
+          endLabel: single ? {show: true, color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 6,
                               formatter: p => valueFmt(p.value, k, true)} : undefined,
           markPoint: i === 0 ? {silent: true, data: annotationMarkPoints(payload, labels, values)} : undefined,
         };
@@ -1145,7 +1145,7 @@
         // zero carries its own position on the far side of the baseline.
         label: labelled ? {
           show: true, position: horizontal ? 'right' : 'top',
-          color: c.ink2, fontSize: 11, fontFamily: c.font, distance: 4,
+          color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 4,
           formatter: p => (delta && p.value > 0 ? '+' : '') + valueFmt(p.value, k, true),
         } : undefined,
         emphasis: {focus: multi ? 'series' : 'none', itemStyle: {opacity: 0.9}},

@@ -13,19 +13,19 @@
 {% block head %}
 <style>
 .cv-shell{display:flex;flex-direction:column;gap:1rem}
-.cv-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.cv-tbl{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
 .cv-tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);
   font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted)}
 .cv-tbl td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
 .cv-tbl tr:last-child td{border-bottom:none}
-.cv-version{font-family:Consolas,monospace;font-size:var(--font-sm)}
+.cv-version{font-family:var(--font-mono);font-size:var(--font-sm)}
 .cv-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow)}
 .cv-diff-bar{display:flex;align-items:center;gap:.6rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .cv-diff-bar select{padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-sm)}
 .cv-diff-body{padding:.85rem 1rem}
 .cv-diff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.6rem}
 .cv-diff-cell{border:1px solid var(--border);border-radius:8px;padding:.6rem .7rem}
-.cv-diff-cell h5{margin:0 0 6px;font-size:var(--font-xs);text-transform:uppercase;color:var(--text-muted);font-weight:800}
+.cv-diff-cell h5{margin:0 0 6px;font-size:var(--font-xs);text-transform:uppercase;color:var(--text-muted);font-weight:var(--weight-bold)}
 .cv-diff-num{font-size:var(--font-xs)}
 .cv-diff-num.added{color:var(--green)}
 .cv-diff-num.removed{color:var(--red)}

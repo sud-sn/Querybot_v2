@@ -389,10 +389,10 @@ function updateFormulaHints(editor){
         _metricRefs.forEach(function(ref){
           var nm = ref.slice(2,-1).trim();
           if(!_savedNames.has(nm.toLowerCase())){
-            notes.push("⚠ Metric reference <code style='font-family:Consolas,monospace'>"+escHtml(ref)+"</code> not found — save that metric first.");
+            notes.push("⚠ Metric reference <code style='font-family:var(--font-mono)'>"+escHtml(ref)+"</code> not found — save that metric first.");
             state = "danger";
           } else {
-            notes.push("✓ References saved metric <code style='font-family:Consolas,monospace'>"+escHtml(ref)+"</code> — will be expanded at query time.");
+            notes.push("✓ References saved metric <code style='font-family:var(--font-mono)'>"+escHtml(ref)+"</code> — will be expanded at query time.");
           }
         });
       }
@@ -417,7 +417,7 @@ function updateFormulaHints(editor){
       var _uniq = _unknown.filter(function(v,i,a){ return a.indexOf(v)===i; });
       if(_uniq.length){
         notes.push("⚠ Unknown identifier(s): "+_uniq.map(function(t){
-          return "<code style='font-family:Consolas,monospace'>"+escHtml(t)+"</code>";
+          return "<code style='font-family:var(--font-mono)'>"+escHtml(t)+"</code>";
         }).join(", ")+". Verify spelling or pick from the field browser.");
         state = state === "danger" ? "danger" : "warn";
       }
@@ -741,7 +741,7 @@ function _showSuggestions(editor, token, forceAll){
     _rows.push('<div class="fcs-group-hd">Functions</div>');
     fnMatches.forEach(function(fn){
       _rows.push('<div class="fcs-item fcs-fn" data-isfn="1" data-tpl="'+escHtml(fn.tpl)+'" data-idx="'+_gIdx+'" title="'+escHtml(fn.desc)+'">'
-        +'<span class="fcs-type fn" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0">ƒ</span>'
+        +'<span class="fcs-type fn" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:var(--font-xs);font-weight:var(--weight-bold);font-family:var(--font-mono);flex-shrink:0">ƒ</span>'
         +'<span class="fcs-col">'+_fcsHighlight(fn.fnName, token)+'</span>'
         +'<span class="fcs-tbl">'+escHtml(fn.bucket)+'</span>'
         +'<span class="fcs-type fn"></span>'
@@ -768,7 +768,7 @@ function _showSuggestions(editor, token, forceAll){
       var icon   = _fcsTypeIcon(cls);
       var label  = isDup ? escHtml(c.table)+'.'+highlighted : highlighted;
       _rows.push('<div class="fcs-item" data-col="'+escHtml(c.column)+'" data-table="'+escHtml(c.table)+'" data-dup="'+(isDup?"1":"0")+'" data-idx="'+_gIdx+'">'
-        +'<span class="fcs-type '+cls+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0">'+icon+'</span>'
+        +'<span class="fcs-type '+cls+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:var(--font-xs);font-weight:var(--weight-bold);font-family:var(--font-mono);flex-shrink:0">'+icon+'</span>'
         +'<span class="fcs-col">'+label+'</span>'
         +'<span class="fcs-tbl">'+(isDup||_multiTbl ? "" : escHtml(c.table))+'</span>'
         +'<span class="fcs-type '+cls+'">'+escHtml(c.type)+'</span>'
@@ -1885,7 +1885,7 @@ async function testFormula(btn){
     var data = await resp.json();
     if(data.status === "ok"){
       var resultLine = data.result !== undefined && data.result !== null
-        ? "<div style='font-family:Consolas,monospace;margin-top:4px;font-size:11px'>Result: "
+        ? "<div style='font-family:var(--font-mono);margin-top:4px;font-size:var(--font-xs)'>Result: "
           + escHtml(JSON.stringify(data.result)) + "</div>"
         : "";
       if(resultPanel){ resultPanel.className="validate-result show ok"; resultPanel.innerHTML="<div>✓ Test passed — formula executed against the database.</div>"+resultLine; }
@@ -2626,7 +2626,7 @@ window._buildMcFieldsList = function(columns){
   var status = document.getElementById("mc-col-status");
   if(!list) return;
   if(!columns || !columns.length){
-    list.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>';
+    list.innerHTML = '<div style="padding:10px;font-size:var(--font-xs);color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>';
     if(status) status.textContent = "";
     return;
   }
@@ -2685,7 +2685,7 @@ window._buildMcMetricsList = function(){
   if(!body) return;
   var metrics = (window._metricsData || []).filter(function(m){ return m.is_active !== 0; });
   if(!metrics.length){
-    body.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">No saved metrics yet.</div>';
+    body.innerHTML = '<div style="padding:8px 10px;font-size:var(--font-xs);color:var(--text-muted)">No saved metrics yet.</div>';
     if(counter) counter.textContent = "";
     return;
   }
@@ -2749,11 +2749,11 @@ function _showMcMetricSuggest(editor, metrics, partial){
   _mcMetricSuggestItems = metrics;
   _mcMetricSuggestIdx   = -1;
   _mcMetricSuggestEl.innerHTML = metrics.map(function(m, i){
-    var hl = '<mark style="background:none;color:var(--primary,#2B5CE6);font-weight:800">'+escHtml(m.name.slice(0, partial.length))+'</mark>'+escHtml(m.name.slice(partial.length));
-    return '<div class="fcs-item" data-idx="'+i+'" onclick="_pickMetricSuggest('+i+')" style="padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:12px">'
-      +'<span style="font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700;flex-shrink:0">fx</span>'
-      +'<span style="font-weight:700;flex:1">'+hl+'</span>'
-      +'<span style="font-size:9px;color:var(--text-muted)">'+(m.result_format||"")+'</span>'
+    var hl = '<mark style="background:none;color:var(--primary,#2B5CE6);font-weight:var(--weight-bold)">'+escHtml(m.name.slice(0, partial.length))+'</mark>'+escHtml(m.name.slice(partial.length));
+    return '<div class="fcs-item" data-idx="'+i+'" onclick="_pickMetricSuggest('+i+')" style="padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:var(--font-xs)">'
+      +'<span style="font-family:var(--font-mono);background:var(--primary,#2B5CE6);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:var(--font-xs);font-weight:var(--weight-bold);flex-shrink:0">fx</span>'
+      +'<span style="font-weight:var(--weight-bold);flex:1">'+hl+'</span>'
+      +'<span style="font-size:var(--font-xs);color:var(--text-muted)">'+(m.result_format||"")+'</span>'
       +'</div>';
   }).join("");
   var rect = editor.getBoundingClientRect();

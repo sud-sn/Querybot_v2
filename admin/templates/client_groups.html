@@ -15,7 +15,7 @@
 .table-check{display:flex;align-items:center;gap:.4rem;padding:5px 8px;
   background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer}
 .table-check input{cursor:pointer;accent-color:var(--blue)}
-.table-check label{font-size:var(--font-xs);font-family:monospace;cursor:pointer;color:var(--text-soft)}
+.table-check label{font-size:var(--font-xs);font-family:var(--font-mono);cursor:pointer;color:var(--text-soft)}
 .table-check:has(input:checked){background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 32%,transparent)}
 .group-card{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1rem;background:var(--surface);box-shadow:var(--shadow)}
 .group-card-header{padding:.75rem 1rem;background:var(--surface-2);border-bottom:1px solid var(--border);
@@ -27,7 +27,7 @@
 
 
 <div style="margin-bottom:1.25rem">
-  <h1 style="font-size:20px;font-weight:700">Groups &amp; Table Access</h1>
+  <h1 style="font-size:var(--font-xl);font-weight:var(--weight-bold)">Groups &amp; Table Access</h1>
   <p style="font-size:var(--font-base);color:var(--gray-500)">Create groups and assign which tables each group can query.</p>
 </div>
 
@@ -62,14 +62,14 @@
 
 <!-- Existing groups -->
 {% if groups %}
-<h2 style="font-size:var(--font-md);font-weight:700;margin-bottom:.875rem">
+<h2 style="font-size:var(--font-md);font-weight:var(--weight-bold);margin-bottom:.875rem">
   Groups ({{ groups|length }})
 </h2>
 {% for group in groups %}
 <div class="group-card">
   <div class="group-card-header">
     <div>
-      <span style="font-weight:700;font-size:var(--font-md)">{{ group.name }}</span>
+      <span style="font-weight:var(--weight-bold);font-size:var(--font-md)">{{ group.name }}</span>
       {% if group.description %}
       <span style="color:var(--gray-500);font-size:var(--font-sm);margin-left:.5rem">— {{ group.description }}</span>
       {% endif %}
@@ -84,7 +84,7 @@
   <div class="group-card-body">
     {% if all_tables %}
     <form method="post" action="/admin/clients/{{ client.account_id }}/groups/{{ group.id }}/tables">
-      <p style="font-size:var(--font-sm);font-weight:600;color:var(--gray-700);margin-bottom:.5rem">
+      <p style="font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--gray-700);margin-bottom:.5rem">
         Tick the tables this group can query:
       </p>
       <div class="table-grid">

@@ -108,7 +108,7 @@
             </button>
           </div>
           <div class="mc-row-subtoggle" style="display:none">
-            <label style="font-size:12px;font-weight:700;color:var(--text-soft)">Expression kind:</label>
+            <label style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft)">Expression kind:</label>
             <button type="button" class="ui-chip active" data-rowmode="0" onclick="selectMcRowMode(this)">Aggregate formula</button>
             <button type="button" class="ui-chip" data-rowmode="1" onclick="selectMcRowMode(this)">Per-row expression</button>
           </div>
@@ -161,7 +161,7 @@
                   <input type="text" class="metric-builder-measure" placeholder="SOP_CUS_IVC_LIN_AMT" autocomplete="off">
                 </div>
               </div>
-                <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
+                <label style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft)">Filters</label>
                 <div class="metric-filter-list"></div>
                 <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
               </div>
@@ -183,7 +183,7 @@
                     <input type="text" value="Per-row expression aggregated at query grain" disabled>
                   </div>
                 </div>
-                <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Row expression</label>
+                <label style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft)">Row expression</label>
                 <textarea class="metric-builder-row-expression" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
                 <p class="form-note">Enter one row-level SQL expression only. Do not include SELECT, FROM, JOIN, SUM, or AVG here.</p>
                 <div class="metric-builder-grid">
@@ -350,22 +350,22 @@
           <div class="mc-right-top">
             <h3>Syntax validator</h3>
             <div class="syntax-panel formula-status">Start writing a formula — the validator will highlight issues.</div>
-            <ul class="hint-list" style="margin:.45rem 0 0 1rem;font-size:11px">
+            <ul class="hint-list" style="margin:.45rem 0 0 1rem;font-size:var(--font-xs)">
               <li>Use <code>NULLIF(denom, 0)</code> when dividing.</li>
               <li>For percentages, use sums not row averages.</li>
             </ul>
-            <div class="formula-example" style="margin-top:.5rem;font-size:10px">
+            <div class="formula-example" style="margin-top:.5rem;font-size:var(--font-xs)">
 SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
             </div>
           </div>
           <!-- Saved metrics — click inserts ${MetricName} macro -->
           <div class="mc-metrics-section open" id="mc-metrics-section">
             <div class="mc-metrics-hd" onclick="this.parentElement.classList.toggle('open')">
-              <span>Saved metrics <span id="mc-metrics-count" style="font-weight:400;text-transform:none;letter-spacing:0"></span></span>
+              <span>Saved metrics <span id="mc-metrics-count" style="font-weight:var(--weight-regular);text-transform:none;letter-spacing:0"></span></span>
               <span class="mc-chev">▶</span>
             </div>
             <div class="mc-metrics-body" id="mc-metrics-body">
-              <div style="padding:8px 10px;font-size:11px;color:var(--text-muted)">No saved metrics yet.</div>
+              <div style="padding:8px 10px;font-size:var(--font-xs);color:var(--text-muted)">No saved metrics yet.</div>
             </div>
           </div>
 
@@ -376,7 +376,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
             </div>
             <input class="mc-fields-search" type="text" placeholder="Search fields…" oninput="filterMcFields(this.value)">
             <div class="mc-fields-list" id="mc-fields-list">
-              <div style="padding:10px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>
+              <div style="padding:10px;font-size:var(--font-xs);color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>
             </div>
           </div>
         </div><!-- /.mc-right -->

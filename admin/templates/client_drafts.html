@@ -13,28 +13,28 @@
 <style>
 .dq-hero{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);
   background:var(--surface);box-shadow:var(--shadow);margin-bottom:1.1rem}
-.dq-hero h1{font-size:20px;font-weight:900;margin:0}
+.dq-hero h1{font-size:var(--font-xl);font-weight:var(--weight-bold);margin:0}
 .dq-hero p{font-size:var(--font-base);color:var(--text-muted);line-height:1.6;
   margin:.4rem 0 0;max-width:780px}
 .dq-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.9rem;align-items:center}
 .dq-row{border:1px solid var(--border);border-radius:var(--radius);
   background:var(--surface);margin-bottom:.55rem;padding:.8rem 1rem}
 .dq-head{display:flex;gap:.75rem;align-items:baseline;flex-wrap:wrap}
-.dq-target{font-weight:800;font-size:var(--font-base)}
+.dq-target{font-weight:var(--weight-bold);font-size:var(--font-base)}
 .dq-kind{font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.04em;
-  font-weight:700;color:var(--text-muted)}
-.dq-conf{margin-left:auto;font-size:var(--font-xs);font-weight:700;color:var(--text-muted)}
+  font-weight:var(--weight-bold);color:var(--text-muted)}
+.dq-conf{margin-left:auto;font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-muted)}
 .dq-reason{font-size:var(--font-sm);color:var(--text-muted);margin:.35rem 0 .5rem;
   line-height:1.5}
 .dq-diff{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .dq-diff table{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
 .dq-diff th{text-align:left;font-size:var(--font-xs);text-transform:uppercase;
   letter-spacing:.04em;color:var(--text-muted);padding:.4rem .6rem;
-  background:var(--surface-2);font-weight:700}
+  background:var(--surface-2);font-weight:var(--weight-bold)}
 .dq-diff td{padding:.4rem .6rem;border-top:1px solid var(--border);
   vertical-align:top;word-break:break-word}
 .dq-was{color:var(--text-muted);text-decoration:line-through}
-.dq-now{font-weight:700}
+.dq-now{font-weight:var(--weight-bold)}
 .dq-empty-was{color:var(--text-muted);font-style:italic}
 .dq-buttons{display:flex;gap:.45rem;margin-top:.6rem}
 .dq-evidence{margin-top:.5rem;font-size:var(--font-xs);color:var(--text-muted)}
@@ -43,8 +43,8 @@
   border:1px solid var(--border);border-radius:var(--radius);
   background:var(--surface);margin-bottom:.5rem}
 .dq-count{flex:0 0 auto;min-width:44px;text-align:center}
-.dq-count-num{font-size:18px;font-weight:900;line-height:1.1}
-.dq-count-lab{font-size:var(--font-xs);color:var(--text-muted);font-weight:700}
+.dq-count-num{font-size:var(--font-xl);font-weight:var(--weight-bold);line-height:1.1}
+.dq-count-lab{font-size:var(--font-xs);color:var(--text-muted);font-weight:var(--weight-bold)}
 .dq-note{font-size:var(--font-sm);color:var(--text-muted);line-height:1.6}
 </style>
 {% endblock %}

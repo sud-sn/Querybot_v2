@@ -58,7 +58,7 @@
     {% if m.certified_at %}<span class="status-pill ok" title="Certified by {{ m.certified_by or 'admin' }} on {{ m.certified_at[:10] }}: its numbers were checked"><span class="status-dot"></span>Certified</span>{% endif %}
     {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
     {% if (m.usage_count or 0) > 0 %}<span class="mr-usage" title="Times this metric was used to answer questions">{{ m.usage_count }}× used</span>{% endif %}
-    {% if _errs %}<span style="font-size:10px;color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% endif %}
+    {% if _errs %}<span style="font-size:var(--font-xs);color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% endif %}
     <span class="mr-sep">·</span>
     <span class="mr-formula-preview" title="{{ m.sql_template | e }}">{{ m.sql_template }}</span>
     {% if m.synonyms %}<span class="mr-sep">·</span><span class="mr-synonyms" title="Synonyms: {{ m.synonyms | e }}">{{ m.synonyms }}</span>{% endif %}
@@ -172,7 +172,7 @@
               <input type="text" class="metric-builder-measure" placeholder="SOP_CUS_IVC_LIN_AMT" autocomplete="off">
             </div>
           </div>
-            <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
+            <label style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft)">Filters</label>
             <div class="metric-filter-list"></div>
             <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
           </div>
@@ -194,7 +194,7 @@
                 <input type="text" value="Per-row expression aggregated at query grain" disabled>
               </div>
             </div>
-            <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Row expression</label>
+            <label style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft)">Row expression</label>
             <textarea class="metric-builder-row-expression" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
             <p class="form-note">Enter one row-level SQL expression only. Do not include SELECT, FROM, JOIN, SUM, or AVG here.</p>
             <div class="metric-builder-grid">
@@ -284,7 +284,7 @@
           spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">{{ m.sql_template }}</textarea>
         <div class="validate-result"></div>
         <!-- Compact inline syntax hint bar — unblocks updateFormulaHints for edit forms -->
-        <div class="formula-status syntax-panel" style="font-size:11px;margin-top:.35rem;padding:.35rem .6rem;min-height:0;display:none"></div>
+        <div class="formula-status syntax-panel" style="font-size:var(--font-xs);margin-top:.35rem;padding:.35rem .6rem;min-height:0;display:none"></div>
       </div>
       <div class="mr-edit-sect">Metadata</div>
       <div class="metric-meta-grid two" style="margin-bottom:.75rem">
@@ -356,7 +356,7 @@
         <button type="button" class="btn btn-secondary btn-sm"
           onclick="cloneMetric({{ m.id|int }})" title="Copy into Add form">Clone</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="toggleMetricEdit({{ m.id|int }})">Cancel</button>
-        <label style="font-size:12px;margin-left:auto;display:flex;align-items:center;gap:.4rem">
+        <label style="font-size:var(--font-xs);margin-left:auto;display:flex;align-items:center;gap:.4rem">
           <input type="checkbox" name="is_active" value="1" {% if m.is_active %}checked{% endif %}> Active
         </label>
       </div>

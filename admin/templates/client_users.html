@@ -106,7 +106,7 @@
       </div>
       <div class="form-grid">
         <div class="form-group">
-          <label for="cu_pw">Password <span class="text-muted" style="font-weight:400">(optional, min 8 chars)</span></label>
+          <label for="cu_pw">Password <span class="text-muted" style="font-weight:var(--weight-regular)">(optional, min 8 chars)</span></label>
           <div class="input-reveal-wrap">
             <input type="password" id="cu_pw" name="password"
                    placeholder="Leave blank to auto-generate"
@@ -262,7 +262,7 @@
     </fieldset>
     <div id="resetChoose" hidden>
       <div class="form-group">
-        <label for="rd_pw">New password <span class="text-muted" style="font-weight:400">(min 8 chars)</span></label>
+        <label for="rd_pw">New password <span class="text-muted" style="font-weight:var(--weight-regular)">(min 8 chars)</span></label>
         <input type="password" id="rd_pw" name="password" autocomplete="new-password" minlength="8">
       </div>
       <div class="form-group">
@@ -339,7 +339,7 @@
   margin-bottom: .75rem;
 }
 .temp-pw-icon { color: var(--success); margin-top: 1px; }
-.temp-pw-title { font-weight: 700; font-size: 13.5px; color: var(--text); }
+.temp-pw-title { font-weight: var(--weight-bold); font-size: var(--font-sm); color: var(--text); }
 .temp-pw-sub { font-size: var(--font-sm); color: var(--text-muted); margin-top: 2px; }
 .temp-pw-body { display: flex; flex-direction: column; gap: .5rem; }
 .temp-pw-code-wrap {
@@ -349,8 +349,8 @@
 }
 .temp-pw-code {
   font-family: var(--font-mono, monospace);
-  font-size: 20px;
-  font-weight: 800;
+  font-size: var(--font-xl);
+  font-weight: var(--weight-bold);
   color: var(--success);
   letter-spacing: .06em;
   background: var(--surface);
@@ -362,7 +362,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: var(--font-xs);
   color: var(--text-muted);
   flex-wrap: wrap;
 }
@@ -409,7 +409,7 @@
   gap: .6rem;
   margin: 1.1rem 0 .75rem;
   font-size: var(--font-xs);
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: .07em;
   color: var(--text-muted);

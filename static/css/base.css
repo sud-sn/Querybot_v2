@@ -6,28 +6,34 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { min-height: 100%; }
 body {
-  /* Was 'Inter' with no @font-face anywhere in the repo, so this
-     resolved to Segoe UI / system-ui for every user and the graded
-     weights the stylesheets ask for had no variable axis to land on.
-     See fonts.css. */
+  /* Inter, self-hosted: see fonts.css. 14px body -- Inter's tall
+     x-height reads at 14 as other faces do at 15. */
   font-family: var(--font-ui);
   color: var(--text);
-  font-size: var(--font-md);
+  font-size: var(--font-base);
   line-height: var(--line-normal);
-  font-variant-numeric: tabular-nums;
+  /* No tabular figures here. Inter's tabular feature also swaps the
+     space, hyphen, comma, full stop and brackets for figure-width
+     glyphs, which spaced out every sentence ("Date - like"). They
+     are set on the elements that hold numbers: .num, .qb-num, KPI
+     values, numeric table cells. */
   transition: background .2s, color .2s;
 }
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-xs);
   background: var(--surface-2);
   color: var(--text-soft);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
 }
 button, input, select, textarea { font: inherit; }
+/* Browsers set these bolder than the weight scale: 700 for strong
+   and headings, which in Inter is darker than anything the scale
+   asks for. */
+b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: var(--weight-bold); }
 button:focus-visible, input:focus-visible, select:focus-visible,
 textarea:focus-visible, a:focus-visible {
   outline: none;
@@ -54,7 +60,7 @@ textarea:focus-visible, a:focus-visible {
   justify-content: space-between;
   background: linear-gradient(180deg, var(--surface-2), color-mix(in srgb, var(--surface-2) 72%, var(--surface)));
 }
-.card-header h2 { font-size: 13px; font-weight: 700; color: var(--text-soft); }
+.card-header h2 { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text-soft); }
 .card-body { padding: 1.25rem; }
 
 .surface-panel {
@@ -77,16 +83,16 @@ textarea:focus-visible, a:focus-visible {
 }
 .section-title h2,
 .section-title h3 {
-  font-size: 13px;
-  font-weight: 850;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-bold);
   color: var(--text);
   letter-spacing: 0;
 }
 .section-eyebrow {
   display: block;
   margin-bottom: 4px;
-  font-size: 10px;
-  font-weight: 850;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -99,8 +105,8 @@ textarea:focus-visible, a:focus-visible {
   gap: 6px;
   padding: 8px 14px;
   border-radius: var(--radius);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-bold);
   cursor: pointer;
   border: none;
   text-decoration: none;
@@ -156,15 +162,15 @@ textarea:focus-visible, a:focus-visible {
   color: var(--text);
   transform: translateY(-1px);
 }
-.btn-sm { padding: 5px 10px; font-size: 12px; }
-.btn-xs { padding: 4px 8px;  font-size: 11px; }
+.btn-sm { padding: 5px 10px; font-size: var(--font-xs); }
+.btn-xs { padding: 4px 8px;  font-size: var(--font-xs); }
 
 /* ── Forms ── */
 .form-group { margin-bottom: 1rem; }
 .form-group label {
   display: block;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   color: var(--text-soft);
   margin-bottom: 4px;
   letter-spacing: .01em;
@@ -178,7 +184,7 @@ textarea:focus-visible, a:focus-visible {
      click it is a boundary, and the decorative rung measures 1.3:1. */
   border: 1.5px solid var(--line-control);
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text);
   background: var(--surface);
   outline: none;
@@ -193,11 +199,11 @@ textarea:focus-visible, a:focus-visible {
 .form-group textarea {
   resize: vertical;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-xs);
   line-height: 1.5;
 }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
-.form-note  { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.form-note  { font-size: var(--font-xs); color: var(--text-muted); margin-top: 3px; }
 
 /* Choice controls must not inherit the full-width text-input treatment above. */
 .choice-grid {
@@ -251,8 +257,8 @@ textarea:focus-visible, a:focus-visible {
   transform: rotate(-45deg) translateY(-1px);
 }
 .choice-card-copy { display: block; min-width: 0; }
-.choice-card-title { display: block; color: var(--text); font-size: 12px; font-weight: 750; }
-.choice-card-description { display: block; margin-top: 4px; color: var(--text-muted); font-size: 11px; line-height: 1.45; font-weight: 500; }
+.choice-card-title { display: block; color: var(--text); font-size: var(--font-xs); font-weight: var(--weight-bold); }
+.choice-card-description { display: block; margin-top: 4px; color: var(--text-muted); font-size: var(--font-xs); line-height: 1.45; font-weight: var(--weight-medium); }
 
 .form-switch {
   display: flex !important;
@@ -288,8 +294,8 @@ textarea:focus-visible, a:focus-visible {
 .form-switch input:checked + .form-switch-track::after { transform: translateX(16px); }
 .form-switch input:focus-visible + .form-switch-track { box-shadow: var(--focus-ring); }
 .form-switch-copy { display: block; min-width: 0; }
-.form-switch-title { display: block; color: var(--text); font-size: 12px; font-weight: 750; }
-.form-switch-description { display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; line-height: 1.45; font-weight: 500; }
+.form-switch-title { display: block; color: var(--text); font-size: var(--font-xs); font-weight: var(--weight-bold); }
+.form-switch-description { display: block; margin-top: 3px; color: var(--text-muted); font-size: var(--font-xs); line-height: 1.45; font-weight: var(--weight-medium); }
 
 @media (max-width: 720px) {
   .choice-grid { grid-template-columns: 1fr; }
@@ -302,7 +308,7 @@ textarea:focus-visible, a:focus-visible {
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-xs);
   outline: none;
 }
 .input-compact:focus,
@@ -315,7 +321,7 @@ textarea:focus-visible, a:focus-visible {
 .alert {
   padding: .8rem 1rem;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: var(--font-sm);
   margin-bottom: 1rem;
   border: 1px solid transparent;
   display: flex;
@@ -346,8 +352,8 @@ textarea:focus-visible, a:focus-visible {
 /* ── Badges ── */
 .badge {
   display: inline-block;
-  font-size: 10px;
-  font-weight: 800;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   padding: 3px 8px;
   border-radius: 999px;
   letter-spacing: .03em;
@@ -368,8 +374,8 @@ textarea:focus-visible, a:focus-visible {
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-soft);
-  font-size: 11px;
-  font-weight: 800;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   white-space: nowrap;
 }
 .status-dot {
@@ -425,8 +431,8 @@ textarea:focus-visible, a:focus-visible {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-soft);
-  font-size: 11px;
-  font-weight: 800;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   white-space: nowrap;
 }
 .ui-chip.active {
@@ -450,8 +456,8 @@ textarea:focus-visible, a:focus-visible {
 }
 .empty-state-title {
   color: var(--text-soft);
-  font-size: 14px;
-  font-weight: 850;
+  font-size: var(--font-base);
+  font-weight: var(--weight-bold);
 }
 .code-panel {
   overflow: auto;
@@ -462,7 +468,7 @@ textarea:focus-visible, a:focus-visible {
   background: var(--code-bg);
   color: var(--code-text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-xs);
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -479,15 +485,15 @@ textarea:focus-visible, a:focus-visible {
 }
 .detail-label {
   margin-bottom: 4px;
-  font-size: 10px;
-  font-weight: 850;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
 .detail-value {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-sm);
   line-height: var(--line-normal);
   word-break: break-word;
 }
@@ -507,27 +513,27 @@ textarea:focus-visible, a:focus-visible {
   box-shadow: var(--shadow);
 }
 .metric-label {
-  font-size: 11px;
-  font-weight: 800;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: .05em;
   color: var(--text-muted);
   margin-bottom: 6px;
 }
 .metric-value {
-  font-size: 24px;
-  font-weight: 800;
+  font-size: var(--font-2xl);
+  font-weight: var(--weight-bold);
   letter-spacing: -.02em;
   color: var(--text);
 }
 
 /* ── Data table ── */
-.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
 .table th {
   padding: .6rem 1rem;
   text-align: left;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: .05em;
   color: var(--text-muted);
@@ -544,23 +550,23 @@ textarea:focus-visible, a:focus-visible {
 
 /* ── Page header ── */
 .page-header { margin-bottom: 1.4rem; }
-.page-header h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin-bottom: 4px; }
-.page-header p  { color: var(--text-muted); font-size: 13px; }
+.page-header h1 { font-size: var(--font-2xl); font-weight: var(--weight-bold); letter-spacing: -.02em; margin-bottom: 4px; }
+.page-header p  { color: var(--text-muted); font-size: var(--font-sm); }
 
 /* ── Breadcrumb ── */
 .breadcrumb {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-xs);
   color: var(--text-muted);
   margin-bottom: 1rem;
   flex-wrap: wrap;
 }
-.breadcrumb a { color: var(--text-muted); font-weight: 600; }
+.breadcrumb a { color: var(--text-muted); font-weight: var(--weight-semibold); }
 .breadcrumb a:hover { color: var(--primary); text-decoration: none; }
 .breadcrumb-sep { color: var(--border-strong); user-select: none; }
-.breadcrumb-current { color: var(--text-soft); font-weight: 700; }
+.breadcrumb-current { color: var(--text-soft); font-weight: var(--weight-bold); }
 
 /* ══════════════════════════════════════════════════════════
    Animation system  (Sprint 6)
@@ -647,14 +653,14 @@ textarea:focus-visible, a:focus-visible {
 .page-header-body { flex: 1; min-width: 0; }
 .page-header h1,
 .page-header-body h1 {
-  font-size: 22px;
-  font-weight: 800;
+  font-size: var(--font-2xl);
+  font-weight: var(--weight-bold);
   letter-spacing: -.02em;
   margin-bottom: 4px;
   color: var(--text);
 }
 .page-header p,
-.page-header-body p { color: var(--text-muted); font-size: 13px; }
+.page-header-body p { color: var(--text-muted); font-size: var(--font-sm); }
 .page-header-actions {
   display: flex;
   align-items: center;
@@ -666,8 +672,8 @@ textarea:focus-visible, a:focus-visible {
 /* ── Alert structured variant ── */
 .alert-icon   { flex-shrink: 0; display: flex; align-items: flex-start; margin-top: 1px; }
 .alert-body   { flex: 1; min-width: 0; }
-.alert-title  { display: block; font-weight: 700; line-height: 1.4; margin-bottom: 2px; }
-.alert-text   { display: block; font-size: 12px; opacity: .85; line-height: 1.55; }
+.alert-title  { display: block; font-weight: var(--weight-bold); line-height: 1.4; margin-bottom: 2px; }
+.alert-text   { display: block; font-size: var(--font-xs); opacity: .85; line-height: 1.55; }
 .alert-action { flex-shrink: 0; align-self: center; }
 
 /* ── Empty state ── */
@@ -688,13 +694,13 @@ textarea:focus-visible, a:focus-visible {
   color: var(--text-muted);
 }
 .empty-state-title {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: var(--font-md);
+  font-weight: var(--weight-bold);
   color: var(--text-soft);
   margin-bottom: var(--space-2);
 }
 .empty-state-body {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-muted);
   max-width: 400px;
   margin: 0 auto var(--space-4);
@@ -713,8 +719,8 @@ textarea:focus-visible, a:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   margin-top: var(--space-1);
 }
 .metric-delta.up   { color: var(--success); }
@@ -764,14 +770,14 @@ textarea:focus-visible, a:focus-visible {
   padding: 1.25rem 1.25rem .75rem;
 }
 .qb-dialog-title {
-  font-size: 15px;
-  font-weight: 800;
+  font-size: var(--font-md);
+  font-weight: var(--weight-bold);
   color: var(--text);
   margin-bottom: .35rem;
   line-height: 1.3;
 }
 .qb-dialog-body {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-muted);
   line-height: var(--line-relaxed);
   white-space: pre-line;
@@ -797,8 +803,8 @@ textarea:focus-visible, a:focus-visible {
 .text-danger { color: var(--danger); }
 .text-warning{ color: var(--warning); }
 .text-mono   { font-family: var(--font-mono); }
-.font-bold   { font-weight: 700; }
-.font-heavy  { font-weight: 800; }
+.font-bold   { font-weight: var(--weight-bold); }
+.font-heavy  { font-weight: var(--weight-bold); }
 .truncate    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nowrap      { white-space: nowrap; }
 
@@ -845,8 +851,8 @@ textarea:focus-visible, a:focus-visible {
 
 /* ── Sidebar section labels ── */
 .sidebar-group-label {
-  font-size: 9.5px;
-  font-weight: 800;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--accent-400);
@@ -912,7 +918,7 @@ textarea:focus-visible, a:focus-visible {
 .qb-table thead th {
   position: sticky; top: 0; z-index: var(--z-base);
   background: var(--surface-2);
-  text-align: left; font-weight: 800; color: var(--text-soft);
+  text-align: left; font-weight: var(--weight-bold); color: var(--text-soft);
   padding: .6rem .85rem; border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -928,7 +934,7 @@ textarea:focus-visible, a:focus-visible {
   min-width: 30px; height: 30px; padding: 0 .5rem;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  font-size: var(--font-sm); font-weight: 700; color: var(--text-soft);
+  font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text-soft);
   background: var(--surface); text-decoration: none; transition: all var(--t-fast) var(--ease-out);
 }
 .qb-pagination a:hover { border-color: var(--primary); color: var(--primary); }
@@ -986,10 +992,10 @@ textarea:focus-visible, a:focus-visible {
 .qb-switch.qb-switch-sm .qb-switch-track { width: 28px; height: 16px; }
 .qb-switch.qb-switch-sm .qb-switch-thumb { width: 12px; height: 12px; }
 .qb-switch.qb-switch-sm.on .qb-switch-thumb { transform: translateX(12px); }
-.qb-switch.qb-switch-sm .qb-switch-label { font-size: 11px; }
+.qb-switch.qb-switch-sm .qb-switch-label { font-size: var(--font-xs); }
 .qb-switch-label {
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   color: var(--text-soft);
   white-space: nowrap;
 }
@@ -1000,8 +1006,8 @@ textarea:focus-visible, a:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
 }
 .vote-stat svg { flex-shrink: 0; }
 .vote-stat.up   { color: var(--success); }
@@ -1017,7 +1023,7 @@ textarea:focus-visible, a:focus-visible {
   /* --gray-900 inverts between themes, so using it as tooltip ink gave
      white text on a near-white ground in dark mode. These two hold
      their relationship in both themes. */
-  background: var(--navy); color: var(--sidebar-text); font-size: var(--font-xs); font-weight: 600;
+  background: var(--navy); color: var(--sidebar-text); font-size: var(--font-xs); font-weight: var(--weight-semibold);
   padding: 5px 8px; border-radius: var(--radius-sm); white-space: nowrap;
   opacity: 0; pointer-events: none; transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
   z-index: var(--z-dropdown); box-shadow: var(--shadow-md);
@@ -1032,12 +1038,12 @@ h1, h2, h3, .page-title, .card-title {
   font-family: var(--font-display);
   letter-spacing: -0.028em;
 }
-h1 { font-weight: 600; }
-h2, h3 { font-weight: 600; }
+h1 { font-weight: var(--weight-semibold); }
+h2, h3 { font-weight: var(--weight-semibold); }
 
-/* Numbers are brand surface in a data product: set every measure,
-   KPI and delta in the display mono with tabular figures so columns
-   align and digits read as data. */
+/* Every measure, KPI and delta with tabular figures and a slashed
+   zero, so columns align and digits read as data. Only on elements
+   that hold a number: see body. */
 .metric-value, .kpi-value, .stat-value, td.num, .num {
   font-family: var(--font-display);
   font-variant-numeric: tabular-nums;

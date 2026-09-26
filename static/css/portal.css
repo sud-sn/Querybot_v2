@@ -40,8 +40,8 @@ body:has(.portal-app-shell) {
   min-height: 38px;
   padding: 7px 8px;
   color: var(--sidebar-text);
-  font-size: 15px;
-  font-weight: 900;
+  font-size: var(--font-md);
+  font-weight: var(--weight-bold);
   letter-spacing: -.02em;
   text-decoration: none;
 }
@@ -56,7 +56,7 @@ body:has(.portal-app-shell) {
   border-radius: 8px;
   background: var(--primary);
   color: var(--on-primary);
-  font-size: 13px;
+  font-size: var(--font-sm);
   box-shadow: none;
 }
 .portal-nav { display: flex; flex-direction: column; gap: 4px; }
@@ -68,8 +68,8 @@ body:has(.portal-app-shell) {
   padding: 9px 10px;
   border-radius: 8px;
   color: #94A3B8;
-  font-size: 13px;
-  font-weight: 760;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-bold);
   border: 1px solid transparent;
   transition: background .15s, color .15s, border-color .15s;
 }
@@ -161,14 +161,14 @@ body:has(.portal-app-shell) {
   box-shadow: var(--shadow);
   flex-shrink: 0;
 }
-.topbar-brand { font-size: 16px; font-weight: 800; color: var(--text); letter-spacing: -.02em; }
+.topbar-brand { font-size: var(--font-lg); font-weight: var(--weight-bold); color: var(--text); letter-spacing: -.02em; }
 .topbar-brand span { color: var(--primary); }
 
 .topbar-nav { display: flex; gap: 6px; margin-left: 1.5rem; }
 .topbar-nav a {
   color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-bold);
   padding: 8px 12px;
   border-radius: var(--radius);
   border: 1px solid transparent;
@@ -198,14 +198,14 @@ body:has(.portal-app-shell) {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   color: var(--on-primary);
   flex-shrink: 0;
   box-shadow: var(--shadow);
 }
-.topbar-user-name { font-size: 13px; font-weight: 700; color: var(--text); }
-.topbar-user-role { font-size: 11px; color: var(--text-muted); }
+.topbar-user-name { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text); }
+.topbar-user-role { font-size: var(--font-xs); color: var(--text-muted); }
 
 /* ── Page content ── */
 .main {
@@ -248,8 +248,8 @@ body:has(.portal-app-shell) .main { height: 100%; }
 .portal-live-toast.show    { opacity: 1; transform: translateY(0); pointer-events: auto; }
 .portal-live-toast.warning { border-left-color: var(--warning); }
 .portal-live-toast.blocked { border-left-color: var(--danger);  }
-.portal-live-toast-title { font-size: 13px; font-weight: 850; color: var(--text); margin-bottom: 3px; }
-.portal-live-toast-body  { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.portal-live-toast-title { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text); margin-bottom: 3px; }
+.portal-live-toast-body  { font-size: var(--font-xs); color: var(--text-muted); line-height: 1.45; }
 
 /* ── Bottom navigation (mobile only) ── */
 .portal-bottom-nav {
@@ -275,8 +275,8 @@ body:has(.portal-app-shell) .main { height: 100%; }
   min-height: 56px;
   padding: 6px 4px;
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: .02em;
   text-decoration: none;
   flex: 1;
@@ -339,7 +339,7 @@ body:has(.portal-app-shell) .main { height: 100%; }
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text);
   cursor: pointer;
   white-space: nowrap;
@@ -354,7 +354,7 @@ body:has(.portal-app-shell) .main { height: 100%; }
   border-left-color: var(--primary);
 }
 .ac-kind {
-  font-size: 11px;
+  font-size: var(--font-xs);
   flex-shrink: 0;
   width: 16px;
   text-align: center;
@@ -396,7 +396,7 @@ body { background: var(--bg); }
 
 .portal-sidebar-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .portal-sidebar-head .portal-brand { flex: 1; min-width: 0; }
-.portal-brand { min-width: 0; min-height: 38px; padding: 5px 7px; font-weight: 850; }
+.portal-brand { min-width: 0; min-height: 38px; padding: 5px 7px; font-weight: var(--weight-bold); }
 .portal-brand-mark {
   width: 28px;
   height: 28px;
@@ -430,7 +430,7 @@ body { background: var(--bg); }
   cursor: pointer;
 }
 .portal-sidebar-toggle:hover { color: var(--sidebar-text); background: var(--sidebar-hover); }
-.portal-sidebar-toggle span { font-size: 20px; line-height: 1; transition: transform var(--t-med); }
+.portal-sidebar-toggle span { font-size: var(--font-xl); line-height: 1; transition: transform var(--t-med); }
 
 .portal-new-thread-form { width: 100%; margin: 0; }
 .portal-new-thread {
@@ -444,15 +444,15 @@ body { background: var(--bg); }
   border-radius: 7px;
   background: var(--primary);
   color: var(--on-primary);
-  font-size: 13px;
-  font-weight: 750;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-bold);
   text-align: left;
   text-decoration: none;
   cursor: pointer;
   box-shadow: none;
 }
 .portal-new-thread:hover { background: var(--primary-hover); border-color: var(--sidebar-accent); color: var(--on-primary); text-decoration: none; }
-.portal-new-thread-icon { width: 18px; font-size: 20px; font-weight: 400; line-height: 1; text-align: center; }
+.portal-new-thread-icon { width: 18px; font-size: var(--font-xl); font-weight: var(--weight-regular); line-height: 1; text-align: center; }
 
 .portal-nav { gap: 2px; }
 .portal-nav a,
@@ -465,8 +465,8 @@ body { background: var(--bg); }
   border: 1px solid transparent;
   border-radius: 6px;
   color: var(--sidebar-muted);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-bold);
   text-decoration: none;
   transition: background .15s, color .15s, border-color .15s;
 }
@@ -498,7 +498,7 @@ body { background: var(--bg); }
 .portal-user-card .avatar { width: 30px; height: 30px; flex: 0 0 30px; background: var(--primary); box-shadow: none; }
 .portal-user-meta { display: block; }
 
-.portal-side-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.portal-side-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .portal-side-actions button,
 .portal-side-actions a {
   min-width: 0;
@@ -512,22 +512,22 @@ body { background: var(--bg); }
   border-radius: 6px;
   background: var(--sidebar-surface);
   color: var(--sidebar-muted);
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
   text-decoration: none;
   cursor: pointer;
   box-shadow: none;
 }
 .portal-side-actions button:hover,
 .portal-side-actions a:hover { color: var(--sidebar-text); background: var(--sidebar-hover); text-decoration: none; }
-.portal-side-actions .portal-logout-icon { display: inline !important; font-size: 16px; line-height: 1; transform: rotate(180deg); }
+.portal-side-actions .portal-logout-icon { display: inline !important; font-size: var(--font-lg); line-height: 1; transform: rotate(180deg); }
 
-/* The language switcher shares the account-actions row. That grid was already
-   three columns wide with two items in it, so nothing above needs to move. The
+/* The language switcher takes a row of its own above Settings and Logout:
+   three buttons in one row of the sidebar cut the endonym to "Fran...". The
    <form> is the grid item and the button fills it, which means the switcher
    picks up the Settings/Logout styling rather than repeating it -- including
    the collapsed-sidebar rule that hides `span:last-child` and leaves the icon. */
-.portal-lang-switch { display: flex; min-width: 0; gap: 4px; }
+.portal-lang-switch { display: flex; min-width: 0; gap: 4px; grid-column: 1 / -1; }
 .portal-lang-switch .portal-lang-option { flex: 1 1 auto; min-width: 0; }
 .portal-lang-switch .portal-lang-option span {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -659,5 +659,5 @@ body { background: var(--bg); }
   .portal-drawer-open .portal-sidebar-notifications { justify-content: flex-start; padding-inline: 10px; }
   .portal-drawer-open .portal-user-card { justify-content: flex-start; padding-inline: 8px; }
   .portal-drawer-open .portal-user-meta { display: block; }
-  .portal-drawer-open .portal-side-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .portal-drawer-open .portal-side-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

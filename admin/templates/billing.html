@@ -18,7 +18,7 @@
 
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
   <form method="get" style="display:flex;gap:.5rem;align-items:center">
-    <label style="font-size:var(--font-base);font-weight:600;color:var(--gray-700)">Month:</label>
+    <label style="font-size:var(--font-base);font-weight:var(--weight-semibold);color:var(--gray-700)">Month:</label>
     <input type="month" name="month" value="{{ month }}"
       style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;font-size:var(--font-base)">
     <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
@@ -62,7 +62,7 @@
 <div class="card" style="margin-bottom:1.5rem">
   <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
     <div>
-      <h2 style="margin:0">LLM cost rates <span style="font-size:var(--font-sm);font-weight:400;color:var(--text-muted)">(USD per 1M tokens)</span></h2>
+      <h2 style="margin:0">LLM cost rates <span style="font-size:var(--font-sm);font-weight:var(--weight-regular);color:var(--text-muted)">(USD per 1M tokens)</span></h2>
       <p style="font-size:var(--font-sm);color:var(--text-muted);margin:.2rem 0 0">
         Rates are stored in the database. Editing a row updates all future cost calculations immediately — no restart needed.
         Historical rows keep the cost that was active at call time.
@@ -137,17 +137,17 @@
     <form method="post" action="/admin/clients/{{ client.account_id }}/billing/pricing/save"
           style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
       <div>
-        <label style="font-size:var(--font-sm);font-weight:600;display:block;margin-bottom:3px">Model name</label>
+        <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);display:block;margin-bottom:3px">Model name</label>
         <input type="text" name="model" placeholder="e.g. gpt-4o-2025" required
-          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base);font-family:monospace;width:200px">
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base);font-family:var(--font-mono);width:200px">
       </div>
       <div>
-        <label style="font-size:var(--font-sm);font-weight:600;display:block;margin-bottom:3px">Input (per 1M)</label>
+        <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);display:block;margin-bottom:3px">Input (per 1M)</label>
         <input type="number" name="tokens_in" placeholder="5.00" step="0.01" min="0" required
           style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base);width:100px">
       </div>
       <div>
-        <label style="font-size:var(--font-sm);font-weight:600;display:block;margin-bottom:3px">Output (per 1M)</label>
+        <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);display:block;margin-bottom:3px">Output (per 1M)</label>
         <input type="number" name="tokens_out" placeholder="15.00" step="0.01" min="0" required
           style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base);width:100px">
       </div>
@@ -165,7 +165,7 @@
     <tr><th>Date</th><th>Queries</th><th>Successful</th><th>Tokens in</th><th>Tokens out</th><th>Cost (USD)</th></tr>
     {% for row in breakdown %}
     <tr>
-      <td style="font-weight:600">{{ row.date }}</td>
+      <td style="font-weight:var(--weight-semibold)">{{ row.date }}</td>
       <td>{{ row.total_queries }}</td>
       <td style="color:var(--green)">{{ row.successful }}</td>
       <td style="font-size:var(--font-sm)">{{ "{:,}".format(row.tokens_in or 0) }}</td>
@@ -189,7 +189,7 @@
     <!-- header -->
     <div style="display:flex;align-items:center;justify-content:space-between;padding:.9rem 1.1rem;border-bottom:1px solid var(--border)">
       <div>
-        <strong style="font-size:15px">Sync from provider prices</strong>
+        <strong style="font-size:var(--font-md)">Sync from provider prices</strong>
         <span style="font-size:var(--font-xs);color:var(--text-muted);margin-left:.5rem">Public list prices · USD per 1M tokens</span>
       </div>
       <button type="button" onclick="closeSyncModal()" style="background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted);line-height:1">✕</button>

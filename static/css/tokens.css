@@ -1,7 +1,8 @@
 /* ============================================================
    QueryBot — Design Tokens
    ------------------------------------------------------------
-   Identity: navy and azure, on cool blue-grey paper.
+   Identity: navy and azure, on cool blue-grey paper; Inter for
+   text and numbers, JetBrains Mono for SQL and code.
 
    The approved direction ("A · Navy"): a deep navy navigation
    shell, azure blue for actions and links, and one blue-to-cyan
@@ -29,10 +30,11 @@
   color-scheme: light;
 
   /* ── Type families ──────────────────────────────────────────
-     Unchanged here; the typeface moves to Inter in its own step. */
-  --font-ui:      'Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-display: 'Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  --font-mono:    'Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+     Inter for all text, headings and figures; JetBrains Mono for
+     SQL, code and identifiers only. See fonts.css. */
+  --font-ui:      'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-display: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
   /* Spacing: a 4px scale. */
   --space-1: 4px;
@@ -43,16 +45,29 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  /* ── Type scale ── (retuned with the typeface) */
-  --font-2xs:  10px;
-  --font-xs:   11px;
-  --font-sm:   12px;
-  --font-base: 13px;
-  --font-md:   14px;
+  /* ── Type scale ─────────────────────────────────────────────
+     Nothing below 12px: the caption tier (badges, eyebrows, table
+     meta) was 10-11px and read as noise. Body is 14px. */
+  --font-2xs:  12px;
+  --font-xs:   12px;
+  --font-sm:   13px;
+  --font-base: 14px;
+  --font-md:   15px;
   --font-lg:   16px;
   --font-xl:   18px;
   --font-2xl:  22px;
   --font-3xl:  28px;
+  /* ── Weights ───────────────────────────────────────────────
+     Four, and every stylesheet and template names one of them.
+     Inter is a variable font, so a literal 800 or 900 renders as
+     ExtraBold or Black; the old face stopped at 700, which is why
+     the stylesheets could ask for 850 and get a plain bold. Bold is
+     650, not 700: Inter's 700 sets darker than the old face's. */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     650;
+
   --line-tight:   1.25;
   --line-normal:  1.5;
   --line-relaxed: 1.7;

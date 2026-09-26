@@ -8,23 +8,23 @@
 .step-head{padding:.875rem 1.25rem;display:flex;align-items:center;gap:.75rem;
   border-bottom:1px solid var(--border);background:var(--surface-2);}
 .step-num{width:28px;height:28px;border-radius:50%;background:var(--text-soft);color:var(--on-primary);
-  font-size:var(--font-sm);font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  font-size:var(--font-sm);font-weight:var(--weight-bold);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .step-num.done{background:var(--green);}
 .step-num.active{background:var(--blue);}
-.step-title{font-size:var(--font-md);font-weight:700;}
+.step-title{font-size:var(--font-md);font-weight:var(--weight-bold);}
 .step-body{padding:1.25rem;}
-.file-list{font-family:monospace;font-size:var(--font-xs);color:var(--text-soft);
+.file-list{font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-soft);
   background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
   padding:.625rem .875rem;max-height:140px;overflow-y:auto;line-height:1.8;}
-.status-badge{font-size:var(--font-xs);font-weight:800;padding:3px 10px;border-radius:999px;
-  font-family:monospace;letter-spacing:.04em;}
+.status-badge{font-size:var(--font-xs);font-weight:var(--weight-bold);padding:3px 10px;border-radius:999px;
+  font-family:var(--font-mono);letter-spacing:.04em;}
 .badge-ready{background:var(--green-light);color:var(--green);}
 .badge-building{background:var(--amber-light);color:var(--amber);}
 .badge-new{background:var(--surface-2);color:var(--text-muted);}
 .badge-schema{background:var(--blue-light);color:var(--blue);}
 .scope-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
 .scope-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);background:var(--surface)}
-.scope-title{font-size:var(--font-base);font-weight:800;color:var(--text-soft)}
+.scope-title{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text-soft)}
 .scope-note{font-size:var(--font-sm);color:var(--text-muted);margin-top:.2rem}
 .scope-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 .scope-status{display:none;padding:.7rem 1rem;font-size:var(--font-sm);border-bottom:1px solid var(--border)}
@@ -33,23 +33,23 @@
 .scope-db,.scope-schema{margin-bottom:.45rem}
 .scope-row{display:flex;align-items:center;gap:.5rem;padding:.34rem .45rem;border-radius:var(--radius-sm);color:var(--text-soft)}
 .scope-row:hover{background:var(--row-hover)}
-.scope-name{font-weight:800;color:var(--text)}
-.scope-schema-name{font-weight:700;color:var(--text-soft)}
+.scope-name{font-weight:var(--weight-bold);color:var(--text)}
+.scope-schema-name{font-weight:var(--weight-bold);color:var(--text-soft)}
 .scope-count{margin-left:auto;font-size:var(--font-xs);color:var(--text-muted);white-space:nowrap}
 .scope-objects{margin-left:1.65rem}
 .scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:var(--font-sm);color:var(--text-soft)}
 .scope-object:hover{background:var(--row-hover)}
 .scope-check{width:14px;height:14px;accent-color:var(--blue)}
 .mask-field-row{display:flex;align-items:center;gap:.4rem;padding:.22rem 0;font-size:var(--font-xs);color:var(--text-soft)}
-.mask-field-pii{color:var(--amber);font-size:var(--font-2xs);font-weight:700}
+.mask-field-pii{color:var(--amber);font-size:var(--font-2xs);font-weight:var(--weight-bold)}
 /* ── New masking section ── */
 .mask-item{border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem;background:var(--surface);overflow:hidden}
 .mask-item-hd{display:flex;align-items:center;gap:.5rem;padding:.55rem .85rem;cursor:pointer;user-select:none;background:var(--surface-2)}
 .mask-item-hd:hover{background:var(--row-hover)}
 .mask-item-chev{font-size:var(--font-2xs);color:var(--gray-400);transition:transform .15s;display:inline-block;flex-shrink:0}
-.mask-item-name{font-size:var(--font-sm);font-weight:700;color:var(--text)}
-.mask-item-fqn{font-size:var(--font-2xs);color:var(--text-muted);font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mask-item-badge{flex-shrink:0;font-size:var(--font-2xs);font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
+.mask-item-name{font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text)}
+.mask-item-fqn{font-size:var(--font-2xs);color:var(--text-muted);font-family:var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mask-item-badge{flex-shrink:0;font-size:var(--font-2xs);font-weight:var(--weight-bold);padding:2px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
 .mask-item-badge.has-mask{background:color-mix(in srgb,var(--amber) 12%,var(--surface));border-color:color-mix(in srgb,var(--amber) 35%,transparent);color:var(--amber)}
 .mask-item-body{max-height:0;overflow:hidden;border-top:1px solid transparent;transition:max-height .22s ease,border-top-color .22s}
 .mask-item-body.open{max-height:600px;border-top-color:var(--border)}
@@ -57,16 +57,16 @@
 .mask-preview-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:1rem}
 .mask-preview-modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.35)}
 .mask-preview-head{display:flex;align-items:center;justify-content:space-between;padding:.875rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
-.mask-preview-title{font-size:var(--font-md);font-weight:800}
+.mask-preview-title{font-size:var(--font-md);font-weight:var(--weight-bold)}
 .mask-preview-body{overflow:auto;padding:1rem 1.25rem;flex:1}
-.mask-preview-table{width:100%;border-collapse:collapse;font-size:var(--font-xs);font-family:monospace}
-.mask-preview-table th{padding:.35rem .6rem;text-align:left;font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border-bottom:2px solid var(--border);white-space:nowrap}
+.mask-preview-table{width:100%;border-collapse:collapse;font-size:var(--font-xs);font-family:var(--font-mono)}
+.mask-preview-table th{padding:.35rem .6rem;text-align:left;font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border-bottom:2px solid var(--border);white-space:nowrap}
 .mask-preview-table td{padding:.32rem .6rem;border-bottom:1px solid var(--border);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
 .mask-preview-table tr:last-child td{border-bottom:none}
 .mp-real{color:var(--text)}
-.mp-fake{color:var(--green);font-weight:700}
+.mp-fake{color:var(--green);font-weight:var(--weight-bold)}
 .mp-masked-col{background:color-mix(in srgb,var(--amber) 5%,var(--surface))}
-.scope-section{font-size:var(--font-2xs);font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
+.scope-section{font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
 .scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
 .kb-live-status{display:none;align-items:center;gap:.75rem;flex-wrap:wrap;margin-top:.9rem;padding:.8rem 1rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)}
 .kb-live-status.show{display:flex}
@@ -74,16 +74,16 @@
 .kb-live-status.failed{border-color:color-mix(in srgb,var(--red) 30%,transparent);background:var(--red-light);color:var(--red)}
 .kb-progress-track{height:8px;min-width:190px;flex:1;border-radius:999px;background:color-mix(in srgb,var(--surface) 66%,transparent);overflow:hidden;border:1px solid color-mix(in srgb,currentColor 24%,transparent)}
 .kb-progress-fill{height:100%;width:0%;border-radius:999px;background:currentColor;transition:width .25s ease}
-.kb-progress-text{font-size:var(--font-sm);font-weight:800}
-.kb-progress-percent{font-size:var(--font-sm);font-weight:850;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
-.kb-progress-step{font-size:var(--font-sm);font-weight:650;color:inherit;opacity:.9}
+.kb-progress-text{font-size:var(--font-sm);font-weight:var(--weight-bold)}
+.kb-progress-percent{font-size:var(--font-sm);font-weight:var(--weight-bold);min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.kb-progress-step{font-size:var(--font-sm);font-weight:var(--weight-bold);color:inherit;opacity:.9}
 /* ── Setup wizard step indicator ─────────────────────────── */
 .wizard-steps{display:flex;align-items:center;margin-bottom:1.5rem;padding:.75rem 1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 .wizard-step{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
-.wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:var(--font-xs);font-weight:800;flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
+.wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:var(--font-xs);font-weight:var(--weight-bold);flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
 .wizard-step.done .wizard-step-circle{background:var(--green);border-color:var(--green);color:var(--on-primary)}
 .wizard-step.active .wizard-step-circle{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
-.wizard-step-label{font-size:var(--font-sm);font-weight:700;color:var(--text-muted);white-space:nowrap}
+.wizard-step-label{font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-muted);white-space:nowrap}
 .wizard-step.done .wizard-step-label{color:var(--green)}
 .wizard-step.active .wizard-step-label{color:var(--blue)}
 .wizard-step-line{flex:1;height:2px;background:var(--border);margin:0 .65rem;border-radius:1px;min-width:16px;transition:background .2s}
@@ -98,12 +98,12 @@
 .schema-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.45rem;margin-bottom:.875rem}
 .schema-card{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden}
 .schema-card-hd{display:flex;align-items:center;gap:.45rem;padding:.45rem .65rem;background:var(--surface-2);min-height:36px}
-.schema-card-name{font-size:var(--font-xs);font-weight:700;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.schema-card-drift{font-size:9px;font-weight:800;color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
-.schema-card-new{font-size:9px;font-weight:800;color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--green) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
+.schema-card-name{font-size:var(--font-xs);font-weight:var(--weight-bold);font-family:var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.schema-card-drift{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
+.schema-card-new{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--green) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
 /* ── Wizard step tooltip ── */
 .wizard-step-circle{position:relative;cursor:default}
-.wizard-step-circle[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);font-size:var(--font-2xs);font-weight:600;padding:4px 8px;border-radius:4px;white-space:nowrap;z-index:10;pointer-events:none}
+.wizard-step-circle[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);font-size:var(--font-2xs);font-weight:var(--weight-semibold);padding:4px 8px;border-radius:4px;white-space:nowrap;z-index:10;pointer-events:none}
 </style>
 {% endblock %}
 {% block breadcrumb %}
@@ -148,7 +148,7 @@
     <div class="wizard-step-circle" title="Review auto-suggested entities, joins and fields — unreviewed suggestions can steer SQL joins">{% if _w5 %}✓{% else %}5{% endif %}</div>
     <div class="wizard-step-label">
       <a href="/admin/clients/{{ client.account_id }}/graph" style="color:inherit;text-decoration:none">
-        Semantic Review{% if (graph_pending_reviews | default(0) | int) > 0 %} <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--warning);color:var(--on-primary);font-size:var(--font-2xs);font-weight:800">{{ graph_pending_reviews }}</span>{% endif %}
+        Semantic Review{% if (graph_pending_reviews | default(0) | int) > 0 %} <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--warning);color:var(--on-primary);font-size:var(--font-2xs);font-weight:var(--weight-bold)">{{ graph_pending_reviews }}</span>{% endif %}
       </a>
     </div>
   </div>
@@ -204,7 +204,7 @@
   </div>
   <div class="step-body">
     {% if db_cfg %}
-    <p style="font-size:var(--font-base);color:var(--green);font-weight:600">
+    <p style="font-size:var(--font-base);color:var(--green);font-weight:var(--weight-semibold)">
       ✓ Connected to <strong>{{ db_cfg.name }}</strong> ({{ db_cfg.db_type }})
     </p>
     {% else %}
@@ -227,7 +227,7 @@
         Apply the correct product vocabulary before schema discovery and KB generation
       </div>
     </div>
-    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:700">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:var(--weight-bold)">
       {% if client_source_pack == 'other' %}Other / custom database
       {% elif client_source_pack == 'multiple' %}Multiple packs
       {% else %}
@@ -297,7 +297,7 @@
       </div>
     </div>
     {% if client_industry_packs %}
-    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:700">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:var(--weight-bold)">
       {% for pack in erp_packs_available %}{% if pack.pack_id in client_industry_packs %}{{ pack.erp_name }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}
     </span>
     {% endif %}
@@ -337,7 +337,7 @@
       </div>
     </div>
     {% if compliance_profile.mode == 'regulated' %}
-    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:700">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:var(--weight-bold)">
       {{ compliance_profile.industry|replace('_',' ')|title }}
     </span>
     {% endif %}
@@ -378,7 +378,7 @@
       </div>
     </div>
     {% if kb_table_count %}
-    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:700">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--blue);font-weight:var(--weight-bold)">
       {{ kb_table_count }} table{{ "s" if kb_table_count != 1 else "" }} saved
       {% if kb_table_source == 'database' %} (from DB default){% endif %}
       {% if schema_breakdown and schema_breakdown|length > 1 %}
@@ -434,14 +434,14 @@
 <!-- Step 2.5: Field Masking -->
 <div class="setup-step" id="masking-section">
   <div class="step-head">
-    <div class="step-num" id="mask-step-num" style="background:color-mix(in srgb,var(--amber) 80%,#fff);font-size:15px">🛡</div>
+    <div class="step-num" id="mask-step-num" style="background:color-mix(in srgb,var(--amber) 80%,#fff);font-size:var(--font-md)">🛡</div>
     <div style="flex:1">
       <div class="step-title">
         Field Masking
         {% if compliance_profile.mode == 'regulated' %}
-        &nbsp;<span style="font-size:var(--font-xs);font-weight:700;color:var(--red)">(Required — {{ compliance_profile.industry|replace('_',' ')|title }})</span>
+        &nbsp;<span style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--red)">(Required — {{ compliance_profile.industry|replace('_',' ')|title }})</span>
         {% else %}
-        &nbsp;<span style="font-size:var(--font-xs);font-weight:600;color:var(--text-muted)">(Optional)</span>
+        &nbsp;<span style="font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted)">(Optional)</span>
         {% endif %}
       </div>
       <div style="font-size:var(--font-sm);color:var(--text-muted)">
@@ -455,7 +455,7 @@
         {% endif %}
       </div>
     </div>
-    <span id="mask-done-badge" style="display:none;font-size:var(--font-sm);color:var(--amber);font-weight:700;flex-shrink:0;margin-left:1rem">✓ Masking configured</span>
+    <span id="mask-done-badge" style="display:none;font-size:var(--font-sm);color:var(--amber);font-weight:var(--weight-bold);flex-shrink:0;margin-left:1rem">✓ Masking configured</span>
   </div>
   <div class="step-body">
     {% if compliance_profile.mode == 'regulated' and not masking_reviewed_at %}
@@ -485,7 +485,7 @@
       </div>
       <!-- Discovery progress bar — shown while polling -->
       <div id="mask-progress-bar" style="display:none;margin-top:.85rem;align-items:center;gap:.75rem;padding:.65rem .875rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)">
-        <span id="mask-disc-text" style="font-size:var(--font-sm);font-weight:700;min-width:260px">Discovering schema…</span>
+        <span id="mask-disc-text" style="font-size:var(--font-sm);font-weight:var(--weight-bold);min-width:260px">Discovering schema…</span>
         <div style="flex:1;height:8px;border-radius:999px;background:color-mix(in srgb,var(--surface) 60%,transparent);overflow:hidden;border:1px solid color-mix(in srgb,var(--blue) 25%,transparent)">
           <div id="mask-disc-fill" style="height:100%;width:0%;border-radius:999px;background:currentColor;transition:width .4s ease"></div>
         </div>
@@ -509,7 +509,7 @@
       </div>
     </div>
     {% if schema_files %}
-    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--green);font-weight:600">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--green);font-weight:var(--weight-semibold)">
       {{ schema_files|length }} table(s) found
     </span>
     {% endif %}
@@ -616,7 +616,7 @@
       </div>
     </div>
     {% if kb_files %}
-    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--green);font-weight:600">
+    <span style="margin-left:auto;font-size:var(--font-sm);color:var(--green);font-weight:var(--weight-semibold)">
       {{ kb_files|length }} KB file(s)
     </span>
     {% endif %}
@@ -640,14 +640,14 @@
         <div id="schema-desc-blocks" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:.5rem">
           {% for schema_name, tbl_count in schema_breakdown.items() %}
           <div style="display:flex;gap:.5rem;align-items:flex-start">
-            <span style="font-size:var(--font-xs);font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">{{ schema_name }}<br><span style="font-weight:400;color:var(--text-muted)">{{ tbl_count }} table{{ 's' if tbl_count != 1 else '' }}</span></span>
+            <span style="font-size:var(--font-xs);font-weight:var(--weight-bold);font-family:var(--font-mono);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">{{ schema_name }}<br><span style="font-weight:var(--weight-regular);color:var(--text-muted)">{{ tbl_count }} table{{ 's' if tbl_count != 1 else '' }}</span></span>
             <textarea class="schema-desc-input" data-schema="{{ schema_name }}" rows="2"
               placeholder="e.g. Contains profitability and cost data for orders and invoices."
               style="flex:1;font-size:var(--font-sm);padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.schemas.get(schema_name, '') }}</textarea>
           </div>
           {% endfor %}
           <div style="display:flex;gap:.5rem;align-items:flex-start">
-            <span style="font-size:var(--font-xs);font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">Overall<br><span style="font-weight:400;color:var(--text-muted)">optional</span></span>
+            <span style="font-size:var(--font-xs);font-weight:var(--weight-bold);font-family:var(--font-mono);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">Overall<br><span style="font-weight:var(--weight-regular);color:var(--text-muted)">optional</span></span>
             <textarea id="overall-biz-desc" rows="2"
               placeholder="e.g. We are a manufacturing company tracking sales and costs."
               style="flex:1;font-size:var(--font-sm);padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.overall }}</textarea>
@@ -759,7 +759,7 @@
       </div>
 
       <style>
-        #tableDescriptions .td-count{margin-left:.5rem;font-size:var(--font-xs);font-weight:600;color:var(--text-muted)}
+        #tableDescriptions .td-count{margin-left:.5rem;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted)}
         #tableDescriptions .td-alert{margin:.5rem 0;padding:.5rem .7rem;border-radius:var(--radius-sm);
           background:color-mix(in srgb,var(--amber) 12%,transparent);
           border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);font-size:var(--font-sm);line-height:1.5}
@@ -771,14 +771,14 @@
         #tableDescriptions summary::-webkit-details-marker{display:none}
         #tableDescriptions .td-name{font-family:var(--font-mono,monospace);flex:1;
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        #tableDescriptions .td-badge{font-size:var(--font-2xs);font-weight:600;letter-spacing:.02em;
+        #tableDescriptions .td-badge{font-size:var(--font-2xs);font-weight:var(--weight-semibold);letter-spacing:.02em;
           padding:.1rem .4rem;border-radius:999px;white-space:nowrap}
         #tableDescriptions .td-badge--described{background:color-mix(in srgb,var(--green,#0e7c6b) 15%,transparent);color:var(--green,#0e7c6b)}
         #tableDescriptions .td-badge--undescribed{background:var(--surface-2,#0001);color:var(--text-muted)}
         #tableDescriptions .td-badge--new{background:color-mix(in srgb,var(--amber) 20%,transparent);color:var(--amber)}
         #tableDescriptions .td-body{padding:.1rem .6rem .6rem;display:flex;flex-direction:column;gap:.3rem}
-        #tableDescriptions .td-label{font-size:var(--font-xs);font-weight:600;color:var(--text-muted)}
-        #tableDescriptions .td-hint{font-weight:400;font-style:italic}
+        #tableDescriptions .td-label{font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted)}
+        #tableDescriptions .td-hint{font-weight:var(--weight-regular);font-style:italic}
         #tableDescriptions textarea,#tableDescriptions input[type=text]{width:100%;font-size:var(--font-sm);
           padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);
           background:var(--bg,var(--surface));color:var(--text);resize:vertical}
@@ -948,15 +948,15 @@
           onclick="stopKbBuild()">⏹ Stop KB build</button>
         {% endif %}
         {% if state == 'KB_BUILDING' %}
-        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--amber);font-weight:600">
+        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--amber);font-weight:var(--weight-semibold)">
           ⏳ Building… live progress will update here
         </span>
         {% elif state == 'READY' %}
-        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--green);font-weight:600">
+        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--green);font-weight:var(--weight-semibold)">
           ✓ KB is ready — users can start querying
         </span>
         {% else %}
-        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--text-muted);font-weight:600"></span>
+        <span id="kbInlineStatus" style="font-size:var(--font-sm);color:var(--text-muted);font-weight:var(--weight-semibold)"></span>
         {% endif %}
       </div>
       <div id="kbLiveStatus" class="kb-live-status {% if state == 'KB_BUILDING' %}show{% elif state == 'READY' %}show ready{% endif %}">
@@ -969,7 +969,7 @@
       <div id="kbValidationEvidence" style="display:none;margin-top:.75rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);padding:.75rem .875rem">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;flex-wrap:wrap">
           <div>
-            <div style="font-size:var(--font-sm);font-weight:800;color:var(--text)">SQL validation evidence</div>
+            <div style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text)">SQL validation evidence</div>
             <div id="kbValidationSummary" style="font-size:var(--font-xs);color:var(--text-muted);margin-top:2px"></div>
           </div>
           <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
@@ -984,7 +984,7 @@
       {# ── KB Build log stream ── #}
       <div id="kbBuildLog" style="display:{% if state == 'KB_BUILDING' %}block{% else %}none{% endif %};margin-top:.85rem">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem">
-          <span class="text-xs text-muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.05em">Build log</span>
+          <span class="text-xs text-muted" style="font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.05em">Build log</span>
           <button type="button" class="btn btn-ghost btn-xs" onclick="clearKbLog()" style="font-size:var(--font-2xs)">Clear</button>
         </div>
         <div id="kbBuildLogEntries"
@@ -1001,7 +1001,7 @@
     {% if kb_files or state == 'READY' %}
     <div style="margin-top:.875rem;padding:.75rem 1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
       <div style="flex:1;min-width:0">
-        <div style="font-size:var(--font-sm);font-weight:700;color:var(--text)">Delete generated KB</div>
+        <div style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text)">Delete generated KB</div>
         <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:2px">
           Removes all KB files, vector embeddings, and cached query examples for this client.
           Schema discovery files are <strong>kept</strong> — you can rebuild the KB immediately.
@@ -1173,7 +1173,7 @@
         const item = document.createElement('details');
         item.style.cssText = 'border-top:1px solid var(--border);padding:.5rem 0';
         const title = document.createElement('summary');
-        title.style.cssText = 'cursor:pointer;font-size:var(--font-xs);font-weight:700;color:var(--text)';
+        title.style.cssText = 'cursor:pointer;font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text)';
         title.textContent = `${index + 1}. ${failure.table_name || 'Database'} · ${failure.category || 'other'} · ${failure.question || 'Unknown question'}`;
         const error = document.createElement('div');
         error.style.cssText = 'font-size:var(--font-xs);color:var(--red);margin:.45rem 0;white-space:pre-wrap';
@@ -1422,14 +1422,14 @@
 
     let html =
       `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem;flex-wrap:wrap">` +
-      `<span style="font-size:var(--font-2xs);font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">` +
+      `<span style="font-size:var(--font-2xs);font-weight:var(--weight-bold);color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">` +
       `${cols.length} column${cols.length!==1?'s':''}` +
       (piiCount ? ` &nbsp;·&nbsp; <span style="color:var(--amber)">${piiCount} PII</span>` : '') +
       `</span>` +
       (canMask && piiCount
-        ? `<button class="tbl-fields-btn" style="margin-left:auto;font-size:9px" onclick="_tblMaskPiiOnly(${jsArg(fqn)}, ${jsArg(panel.id)})">Mark PII only</button>` +
-          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskAll(${jsArg(fqn)}, ${jsArg(panel.id)}, ${jsArg(cols.map(c=>c.name))})">All</button>` +
-          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskNone(${jsArg(fqn)}, ${jsArg(panel.id)})">None</button>`
+        ? `<button class="tbl-fields-btn" style="margin-left:auto;font-size:var(--font-xs)" onclick="_tblMaskPiiOnly(${jsArg(fqn)}, ${jsArg(panel.id)})">Mark PII only</button>` +
+          `<button class="tbl-fields-btn" style="font-size:var(--font-xs)" onclick="_tblMaskAll(${jsArg(fqn)}, ${jsArg(panel.id)}, ${jsArg(cols.map(c=>c.name))})">All</button>` +
+          `<button class="tbl-fields-btn" style="font-size:var(--font-xs)" onclick="_tblMaskNone(${jsArg(fqn)}, ${jsArg(panel.id)})">None</button>`
         : '') +
       `</div>`;
 
@@ -1442,10 +1442,10 @@
         (canMask
           ? `<input type="checkbox" class="scope-check" ${isMasked ? 'checked' : ''} onclick="_tblFieldMaskToggle(${jsArg(fqn)},${jsArg(col.name)},this.checked,${jsArg(panel.id)})">`
           : '') +
-        `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
-        `<span style="font-size:var(--font-2xs);color:var(--text-muted);font-family:monospace;margin-right:.3rem">${esc(col.type||'')}</span>` +
+        `<span style="flex:1;font-weight:${isPii?'var(--weight-bold)':'var(--weight-regular)'}">${esc(col.name)}</span>` +
+        `<span style="font-size:var(--font-2xs);color:var(--text-muted);font-family:var(--font-mono);margin-right:.3rem">${esc(col.type||'')}</span>` +
         (isPii
-          ? `<span style="font-size:9px;font-weight:700;color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:0 5px;white-space:nowrap">` +
+          ? `<span style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:0 5px;white-space:nowrap">` +
             `PII${strat ? ' · ' + strat : ''}` +
             `</span>`
           : '') +
@@ -1772,7 +1772,7 @@
         `<label class="mask-field-row">` +
         `<input type="checkbox" class="scope-check" ${checked ? 'checked' : ''} ` +
           `onchange="_toggleMaskField2(${jsArg(fqn)},${jsArg(col.name)},this.checked)">` +
-        `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
+        `<span style="flex:1;font-weight:${isPii?'var(--weight-bold)':'var(--weight-regular)'}">${esc(col.name)}</span>` +
         `<span style="font-size:var(--font-2xs);color:var(--text-muted);margin-right:.3rem">${esc(col.type||'')}</span>` +
         (stratLbl ? `<span style="font-size:var(--font-2xs);color:var(--blue);font-style:italic;margin-right:.3rem;white-space:nowrap">${esc(stratLbl)}</span>` : '') +
         (isPii ? `<span class="mask-field-pii" title="Auto-detected PII field">PII</span>` : '') +
@@ -1940,7 +1940,7 @@
     let html =
       `<div style="margin-top:.85rem;padding:.85rem 1rem;background:var(--green-light);` +
       `border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:var(--font-sm)">` +
-      `<div style="font-weight:700;color:var(--green);margin-bottom:.6rem">` +
+      `<div style="font-weight:var(--weight-bold);color:var(--green);margin-bottom:.6rem">` +
         `${selected.size} table${selected.size!==1?'s are':' is'} ready for KB generation` +
       `</div>`;
 
@@ -1953,7 +1953,7 @@
         `<div style="display:flex;align-items:flex-start;gap:.5rem;padding:.3rem 0;border-top:1px solid color-mix(in srgb,var(--green) 20%,transparent)">` +
         `<span style="flex-shrink:0;margin-top:1px">${count > 0 ? '🔒' : '📋'}</span>` +
         `<div style="flex:1">` +
-          `<span style="font-weight:700">${esc(tName)}</span>` +
+          `<span style="font-weight:var(--weight-bold)">${esc(tName)}</span>` +
           `<span style="color:var(--text-muted);margin-left:.35rem;font-size:var(--font-xs)">${esc(fqn)}</span>`;
       if (count > 0) {
         const fields = cfg.masked_fields || [];
@@ -2071,7 +2071,7 @@
     let html =
       `<div style="display:flex;align-items:center;gap:1.5rem;margin-bottom:.85rem;font-size:var(--font-xs);flex-wrap:wrap">` +
         `<span><span style="color:var(--text)">■</span> Original value</span>` +
-        `<span><span style="color:var(--green);font-weight:700">■</span> Masked value (sent to LLM)</span>` +
+        `<span><span style="color:var(--green);font-weight:var(--weight-bold)">■</span> Masked value (sent to LLM)</span>` +
         `<span style="color:var(--text-muted)">${maskedSet.size} of ${columns.length} fields masked</span>` +
       `</div>` +
       `<div style="overflow-x:auto">` +
@@ -2423,13 +2423,13 @@
     </div>
     <div class="metric">
       <div class="metric-label">Last discovery</div>
-      <div class="metric-value" style="font-size:var(--font-xs);font-weight:600">
+      <div class="metric-value" style="font-size:var(--font-xs);font-weight:var(--weight-semibold)">
         {{ egress_summary.last_discovery_at[:16] if egress_summary.last_discovery_at else '—' }}
       </div>
     </div>
     <div class="metric">
       <div class="metric-label">Last KB build</div>
-      <div class="metric-value" style="font-size:var(--font-xs);font-weight:600">
+      <div class="metric-value" style="font-size:var(--font-xs);font-weight:var(--weight-semibold)">
         {{ egress_summary.last_kb_build_at[:16] if egress_summary.last_kb_build_at else '—' }}
       </div>
     </div>
@@ -2448,7 +2448,7 @@
   <!-- Most recent KB build detail -->
   {% if egress_summary.kb_build_rows %}
   <div style="padding:.75rem 1rem .25rem">
-    <h3 style="font-size:var(--font-sm);font-weight:700;margin-bottom:.5rem">Most recent KB build — per-table detail</h3>
+    <h3 style="font-size:var(--font-sm);font-weight:var(--weight-bold);margin-bottom:.5rem">Most recent KB build — per-table detail</h3>
     <table class="table" style="font-size:var(--font-sm)">
       <thead>
         <tr>
@@ -2467,10 +2467,10 @@
         {% set fields  = row.fields_sent_list  or [] %}
         {% set mfields = row.masked_fields_list or [] %}
         <tr>
-          <td style="font-family:Consolas,monospace;font-weight:700">{{ row.table_name }}</td>
+          <td style="font-family:var(--font-mono);font-weight:var(--weight-bold)">{{ row.table_name }}</td>
           <td style="font-size:var(--font-xs);color:var(--text-muted)">{{ row.schema_name or '—' }}<br><span style="font-size:var(--font-2xs)">{{ row.database_name or '' }}</span></td>
           <td>{{ row.column_count or '—' }}</td>
-          <td style="font-weight:700;text-align:center">
+          <td style="font-weight:var(--weight-bold);text-align:center">
             {% if row.sample_mode == 'synthetic' %}
             <span style="color:var(--green)">0</span>
             {% else %}
@@ -2479,11 +2479,11 @@
           </td>
           <td>
             {% if row.sample_mode == 'synthetic' %}
-            <span style="color:var(--green);font-weight:700;font-size:var(--font-xs)">🔒 Synthetic</span>
+            <span style="color:var(--green);font-weight:var(--weight-bold);font-size:var(--font-xs)">🔒 Synthetic</span>
             {% elif row.sample_mode == 'masked' %}
-            <span style="color:var(--amber);font-weight:700;font-size:var(--font-xs)">✎ Masked</span>
+            <span style="color:var(--amber);font-weight:var(--weight-bold);font-size:var(--font-xs)">✎ Masked</span>
             {% elif row.sample_mode == 'real' %}
-            <span style="color:var(--red);font-weight:700;font-size:var(--font-xs)">⚠ Real rows</span>
+            <span style="color:var(--red);font-weight:var(--weight-bold);font-size:var(--font-xs)">⚠ Real rows</span>
             {% else %}
             <span style="font-size:var(--font-xs);color:var(--text-muted)">Schema only</span>
             {% endif %}
@@ -2504,13 +2504,13 @@
             {% if mfields %}
             {% set rmap = row.replacement_map_parsed or {} %}
             <details>
-              <summary style="cursor:pointer;color:var(--amber);font-weight:700">{{ mfields|length }} masked</summary>
+              <summary style="cursor:pointer;color:var(--amber);font-weight:var(--weight-bold)">{{ mfields|length }} masked</summary>
               <div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">
               {% for f in mfields %}
               <div style="display:flex;align-items:center;gap:3px">
                 <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:var(--font-2xs);color:var(--amber)">{{ f }}</code>
                 {% if rmap.get(f) or rmap.get(f.upper()) %}
-                <span style="font-size:9px;color:var(--blue);font-style:italic">
+                <span style="font-size:var(--font-xs);color:var(--blue);font-style:italic">
                   {{ rmap.get(f) or rmap.get(f.upper()) }}
                 </span>
                 {% endif %}
@@ -2535,7 +2535,7 @@
   <!-- Most recent discovery detail (collapsed by default) -->
   {% if egress_summary.discovery_rows %}
   <details style="padding:.75rem 1rem">
-    <summary style="font-size:var(--font-sm);font-weight:700;cursor:pointer;color:var(--text-muted)">
+    <summary style="font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;color:var(--text-muted)">
       Most recent schema discovery — {{ egress_summary.discovery_rows|length }} tables (click to expand)
     </summary>
     <table class="table" style="font-size:var(--font-xs);margin-top:.5rem">
@@ -2549,7 +2549,7 @@
         {% set dfields  = row.fields_sent_list  or [] %}
         {% set dmfields = row.masked_fields_list or [] %}
         <tr>
-          <td style="font-family:Consolas,monospace;font-weight:700">{{ row.table_name }}</td>
+          <td style="font-family:var(--font-mono);font-weight:var(--weight-bold)">{{ row.table_name }}</td>
           <td style="color:var(--text-muted)">{{ row.schema_name or '—' }}<br><span style="font-size:var(--font-2xs)">{{ row.database_name or '' }}</span></td>
           <td>{{ row.column_count or '—' }}</td>
           <td style="text-align:center">
@@ -2557,9 +2557,9 @@
             {% else %}<span>{{ row.row_count_sent or 0 }}</span>{% endif %}
           </td>
           <td>
-            {% if row.sample_mode == 'synthetic' %}<span style="color:var(--green);font-weight:700">🔒 Synthetic</span>
-            {% elif row.sample_mode == 'masked' %}<span style="color:var(--amber);font-weight:700">✎ Masked</span>
-            {% elif row.sample_mode == 'real' %}<span style="color:var(--red);font-weight:700">⚠ Real</span>
+            {% if row.sample_mode == 'synthetic' %}<span style="color:var(--green);font-weight:var(--weight-bold)">🔒 Synthetic</span>
+            {% elif row.sample_mode == 'masked' %}<span style="color:var(--amber);font-weight:var(--weight-bold)">✎ Masked</span>
+            {% elif row.sample_mode == 'real' %}<span style="color:var(--red);font-weight:var(--weight-bold)">⚠ Real</span>
             {% else %}<span style="color:var(--text-muted)">Schema only</span>{% endif %}
           </td>
           <td style="font-size:var(--font-2xs)">
@@ -2573,13 +2573,13 @@
           <td style="font-size:var(--font-2xs)">
             {% if dmfields %}
             {% set drmap = row.replacement_map_parsed or {} %}
-            <details><summary style="cursor:pointer;color:var(--amber);font-weight:700">{{ dmfields|length }} masked</summary>
+            <details><summary style="cursor:pointer;color:var(--amber);font-weight:var(--weight-bold)">{{ dmfields|length }} masked</summary>
               <div style="margin-top:3px;display:flex;flex-direction:column;gap:2px">
               {% for f in dmfields %}
               <div style="display:flex;align-items:center;gap:3px">
                 <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:var(--font-2xs);color:var(--amber)">{{ f }}</code>
                 {% if drmap.get(f) or drmap.get(f.upper()) %}
-                <span style="font-size:9px;color:var(--blue);font-style:italic">{{ drmap.get(f) or drmap.get(f.upper()) }}</span>
+                <span style="font-size:var(--font-xs);color:var(--blue);font-style:italic">{{ drmap.get(f) or drmap.get(f.upper()) }}</span>
                 {% endif %}
               </div>
               {% endfor %}

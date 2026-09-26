@@ -86,7 +86,7 @@
   <div class="card-header">
     <h2>
       {{ clients|length }} client{{ 's' if clients|length != 1 }}
-      {% if search %}<span class="text-muted" style="font-weight:500"> — matching "{{ search }}"</span>{% endif %}
+      {% if search %}<span class="text-muted" style="font-weight:var(--weight-medium)"> — matching "{{ search }}"</span>{% endif %}
     </h2>
     <span class="text-xs text-muted">{{ clients|selectattr("state","equalto","READY")|list|length }} ready</span>
   </div>
@@ -121,7 +121,7 @@
                      style="width:{{ hs.pct }}%"></div>
               </div>
               <span class="health-bar-label num {% if hs.color == 'green' %}text-success{% elif hs.color == 'amber' %}text-warning{% else %}text-danger{% endif %}">
-                {{ hs.score }}<span class="text-muted" style="font-weight:500">/100</span>
+                {{ hs.score }}<span class="text-muted" style="font-weight:var(--weight-medium)">/100</span>
               </span>
             </div>
           </td>
@@ -213,7 +213,7 @@
 .health-bar-fill.danger  { background: var(--danger); }
 .health-bar-label {
   font-size: var(--font-xs);
-  font-weight: 800;
+  font-weight: var(--weight-bold);
   white-space: nowrap;
   flex-shrink: 0;
 }

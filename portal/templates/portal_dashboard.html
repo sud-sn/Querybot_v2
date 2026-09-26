@@ -6,11 +6,11 @@
 {% endblock %}
 {% block head %}
 <script src="/static/vendor/echarts.min.js?v=6.1.0"></script>
-<script src="/static/js/chart-palettes.js?v=20260925-1"></script>
-<script src="/static/js/qb-charts.js?v=20260926-1"></script>
+<script src="/static/js/chart-palettes.js?v=20260926-inter-1"></script>
+<script src="/static/js/qb-charts.js?v=20260926-inter-1"></script>
 <link rel="stylesheet" href="/static/vendor/gridstack.min.css">
 <script src="/static/vendor/gridstack-all.js"></script>
-<link rel="stylesheet" href="/static/css/dashboard.css?v=20260926-1">
+<link rel="stylesheet" href="/static/css/dashboard.css?v=20260926-inter-1">
 {% endblock %}
 {% block content %}
 {% macro workspace_usage(user, charts, monthly_count, query_status,
@@ -39,8 +39,8 @@
       {% if token_status.unlimited %}{{ t('ui.dash.kpi_no_cap') }}{% else %}{{ t('ui.dash.kpi_used', used=token_status.used_label, limit=token_status.limit_label) }}{% endif %}
     </div>
   </div>
-  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_group') }}</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
-  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_tables') }}</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}{{ t('ui.dash.kpi_all') }}{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
+  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_group') }}</div><div class="metric-value" style="font-size:var(--font-md);margin-top:4px">{{ user.group_name or "—" }}</div></div>
+  <div class="metric"><div class="metric-label">{{ t('ui.dash.kpi_tables') }}</div><div class="metric-value" style="font-size:var(--font-md);margin-top:4px">{% if allowed_tables is none %}{{ t('ui.dash.kpi_all') }}{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
 </div>
 
 {% if query_status.blocked %}
@@ -144,7 +144,7 @@
 {% endif %}
 {% if charts %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
-  <h2 style="font-size:15px;font-weight:700">{{ t('ui.dash.tab_visuals', tab=selected_tab) }}</h2>
+  <h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.tab_visuals', tab=selected_tab) }}</h2>
   <span style="font-size:var(--font-sm);color:var(--gray-500)">{% if dashboard_artifact.can_edit %}{{ t('ui.dash.drag_hint') }} · {% endif %}{{ t('ui.dash.live_data') }}</span>
 </div>
 <div class="chart-grid">
@@ -185,11 +185,11 @@
     </div>
     <div class="chart-card-body">
       {% if chart.error %}
-      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:600;margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
+      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
       {% elif chart.kpi %}
       <div style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
-        <div style="font-size:var(--font-sm);font-weight:700;color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
-        <div style="font-size:clamp(30px,4vw,52px);font-weight:850;letter-spacing:-.04em;color:var(--text)">{{ chart.kpi_display or chart.kpi.value }}</div>
+        <div style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
+        <div style="font-size:clamp(30px,4vw,52px);font-weight:var(--weight-bold);letter-spacing:-.04em;color:var(--text)">{{ chart.kpi_display or chart.kpi.value }}</div>
         <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.45rem">{{ chart.kpi.note or 'Single-value result' }}</div>
       </div>
       {% elif chart.table_rows %}
@@ -215,7 +215,7 @@
     chosen, so the card announced AUTO above a rendered area chart. The JS
     overwrites this from the payload once the chart mounts; the server-side
     fallback below is only what shows before that. #}
-        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:700;color:var(--primary);flex-shrink:0">{% if chart.chart_type and chart.chart_type != 'auto' %}{{ enum_label('charttype', chart.chart_type)|upper }}{% elif chart.kpi %}{{ enum_label('charttype','kpi')|upper }}{% elif chart.table_rows %}{{ enum_label('charttype','table')|upper }}{% else %}{{ enum_label('charttype','chart')|upper }}{% endif %}</span>
+        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:var(--weight-bold);color:var(--primary);flex-shrink:0">{% if chart.chart_type and chart.chart_type != 'auto' %}{{ enum_label('charttype', chart.chart_type)|upper }}{% elif chart.kpi %}{{ enum_label('charttype','kpi')|upper }}{% elif chart.table_rows %}{{ enum_label('charttype','table')|upper }}{% else %}{{ enum_label('charttype','chart')|upper }}{% endif %}</span>
       </div>
       {% if chart.chart_json and (not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
@@ -245,7 +245,7 @@
    the fifth. #}
 <section class="artifact-details" aria-label="{{ t('ui.dash.provenance_label') }}">
   <details class="artifact-detail"><summary>{{ t('ui.dash.sources', count=dashboard_sources|length) }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ enum_label('source', source.source_type) }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>{{ t('ui.dash.no_sources') }}</span></div>{% endfor %}</div></details>
-  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>{{ t('ui.dash.history', count=dashboard_versions|length) }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">{{ t('ui.dash.restore') }}</button></form>{% else %}<span>{{ t('ui.dash.current') }}</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:800">{{ t('ui.dash.published_team') }}</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">{{ t('ui.dash.published_team_body') }}</div></div>{% endif %}
+  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>{{ t('ui.dash.history', count=dashboard_versions|length) }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">{{ t('ui.dash.restore') }}</button></form>{% else %}<span>{{ t('ui.dash.current') }}</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:var(--weight-bold)">{{ t('ui.dash.published_team') }}</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">{{ t('ui.dash.published_team_body') }}</div></div>{% endif %}
 </section>
 
 {# The account's own numbers are context for the artifact above, not the
@@ -265,8 +265,8 @@
 {{ workspace_usage(user, charts, monthly_count, query_status, token_status, allowed_tables, t, plural) }}
 
 {% if not dashboard_artifact and dashboards %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:15px;font-weight:800">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=dashboards|length) }}</span></div>
-<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:800">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_with_team') }} · {% endif %}{{ enum_label('status', item.status) }} · v{{ item.version }} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=dashboards|length) }}</span></div>
+<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_with_team') }} · {% endif %}{{ enum_label('status', item.status) }} · v{{ item.version }} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
 {% endif %}
 
 {% endif %}
@@ -619,9 +619,9 @@ function openChartModal(cardEl) {
     modal.innerHTML = `
       <div id="chart-modal-inner" style="background:var(--surface);border-radius:var(--radius);width:calc(100vw - 64px);height:calc(100vh - 80px);max-width:1400px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.28)">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:.85rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0;gap:1rem">
-          <span id="chart-modal-title" style="font-weight:800;font-size:var(--font-md);flex:1"></span>
+          <span id="chart-modal-title" style="font-weight:var(--weight-bold);font-size:var(--font-md);flex:1"></span>
           <div id="chart-modal-ctrl" style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center"></div>
-          <button onclick="closeChartModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted);padding:0 4px;flex-shrink:0" title="Close (Esc)">✕</button>
+          <button onclick="closeChartModal()" style="background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted);padding:0 4px;flex-shrink:0" title="Close (Esc)">✕</button>
         </div>
         <div id="chart-modal-canvas" style="flex:1;padding:1rem;min-height:0"></div>
       </div>`;

@@ -11,14 +11,14 @@
   {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 
   <div class="card" style="margin-bottom:1.5rem">
-    <div class="card-header"><h2 style="font-size:15px;margin:0">{{ t('ui.notif.your_alerts') }}</h2></div>
+    <div class="card-header"><h2 style="font-size:var(--font-md);margin:0">{{ t('ui.notif.your_alerts') }}</h2></div>
     <div class="card-body" style="padding:1rem">
       {% if alerts %}
         {% for a in alerts %}
           <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
             padding:.6rem 0;border-bottom:1px solid var(--border)">
             <div>
-              <div style="font-size:var(--font-base);font-weight:600">{{ a.question }}</div>
+              <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ a.question }}</div>
               <div style="font-size:var(--font-xs);color:var(--gray-500)">
                 {{ a.metric_col }} {{ enum_label('condition', a.condition) }} {{ a.threshold }}
                 {% if a.condition == 'change_pct' %}%{% endif %}
@@ -46,7 +46,7 @@
 
   <div class="card" style="margin-bottom:1.5rem">
     <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
-      <h2 style="font-size:15px;margin:0">{{ t('ui.notif.my_reports') }}</h2>
+      <h2 style="font-size:var(--font-md);margin:0">{{ t('ui.notif.my_reports') }}</h2>
       <a href="/portal/reports/new" class="btn btn-primary btn-sm">+ {{ t('ui.notif.new_report') }}</a>
     </div>
     <div class="card-body" style="padding:1rem">
@@ -58,7 +58,7 @@
           <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
             padding:.5rem 0;border-bottom:1px solid var(--border)">
             <div>
-              <div style="font-size:var(--font-base);font-weight:600">{{ r.name }}</div>
+              <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ r.name }}</div>
               {% if r.description %}<div style="font-size:var(--font-xs);color:var(--gray-500)">{{ r.description }}</div>{% endif %}
             </div>
             <form method="post" action="/portal/reports/{{ r.id }}/delete" style="display:inline"
@@ -79,7 +79,7 @@
   </div>
 
   <div class="card">
-    <div class="card-header"><h2 style="font-size:15px;margin:0">{{ t('ui.notif.subscriptions') }}</h2></div>
+    <div class="card-header"><h2 style="font-size:var(--font-md);margin:0">{{ t('ui.notif.subscriptions') }}</h2></div>
     <div class="card-body" style="padding:1rem">
       {% if reports %}
         {% for r in reports %}
@@ -87,7 +87,7 @@
           <div style="padding:.75rem 0;border-bottom:1px solid var(--border)">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
               <div>
-                <div style="font-size:var(--font-base);font-weight:600">{{ r.name }}</div>
+                <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ r.name }}</div>
                 {% if r.description %}<div style="font-size:var(--font-xs);color:var(--gray-500)">{{ r.description }}</div>{% endif %}
               </div>
               {% if sub %}
