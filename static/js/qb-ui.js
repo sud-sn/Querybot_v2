@@ -42,6 +42,14 @@
      up on load; a script that builds one calls qbTabs itself.
      onChange(name, tab, panel) runs when the reader changes tab.
 
+   qbSelect(select) / <select data-qb-select>
+     A searchable list over a native <select>, which stays in the
+     form and keeps its name, value and change event, so the page
+     posts and reacts exactly as before. Typing filters the options
+     (case and accents ignored); arrows move, Enter picks, Esc
+     puts the choice back. Options a script replaces, a value it
+     sets and the select's disabled state are followed.
+
    All text is set as text, never as markup. Labels come from
    window.qbT when the page has it (the portal, in French too).
    ============================================================ */
@@ -371,9 +379,225 @@
 
   global.qbTabs = qbTabs;
 
-  function setUpTabs() {
-    Array.prototype.forEach.call(doc.querySelectorAll('[data-qb-tabs]'), function (list) { qbTabs(list); });
+  /* ── Searchable select ─────────────────────────────────── */
+  var selectCount = 0;
+
+  function fold(text) {
+    var out = String(text || '').toLowerCase();
+    try { out = out.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (_) { /* no normalize: exact */ }
+    return out;
   }
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', setUpTabs);
-  else setUpTabs();
+
+  function optionsOf(select) {
+    return Array.prototype.map.call(select.querySelectorAll('option'), function (opt) {
+      var group = opt.parentNode && opt.parentNode.tagName === 'OPTGROUP' ? opt.parentNode.getAttribute('label') : '';
+      // An option's text is read as the browser shows it: runs of white
+      // space (a template's line breaks) collapse, the ends are trimmed.
+      var text = String(opt.textContent || '').replace(/\s+/g, ' ').trim();
+      return { el: opt, value: opt.getAttribute('value') !== null ? opt.getAttribute('value') : text,
+               label: text, group: group || '', disabled: opt.hasAttribute('disabled') };
+    });
+  }
+
+  function fireChange(select) {
+    var ev;
+    try { ev = new global.Event('change', { bubbles: true }); } catch (_) { ev = { type: 'change', bubbles: true }; }
+    select.dispatchEvent(ev);
+  }
+
+  function qbSelect(select) {
+    if (!select) return null;
+    if (select.__qbSelect) return select.__qbSelect;
+    var id = 'qb-select-' + (++selectCount);
+
+    var wrap = doc.createElement('div');
+    wrap.className = 'qb-select';
+    var input = doc.createElement('input');
+    input.setAttribute('type', 'text');
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-expanded', 'false');
+    input.setAttribute('aria-controls', id + '-list');
+    input.setAttribute('autocomplete', 'off');
+    input.className = 'form-input qb-select-input';
+    input.id = id;
+    var list = doc.createElement('ul');
+    list.id = id + '-list';
+    list.className = 'qb-select-list';
+    list.setAttribute('role', 'listbox');
+    list.hidden = true;
+
+    // What named the select names what is typed in: its <label for>, the
+    // <label> just before it, or its aria-label.
+    var labelEl = select.id && doc.querySelector ? doc.querySelector('label[for="' + select.id + '"]') : null;
+    var before = select.previousElementSibling;
+    if (!labelEl && before && before.tagName === 'LABEL') labelEl = before;
+    if (labelEl) {
+      if (!labelEl.id) labelEl.id = id + '-label';
+      input.setAttribute('aria-labelledby', labelEl.id);
+      if (labelEl.getAttribute('for') === select.id) labelEl.setAttribute('for', id);
+    } else if (select.getAttribute('aria-label')) {
+      input.setAttribute('aria-label', select.getAttribute('aria-label'));
+    }
+
+    var chevron = doc.createElement('span');
+    chevron.className = 'qb-select-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.innerHTML = icon('chevron-down', 16);
+
+    select.parentNode.insertBefore(wrap, select);
+    wrap.appendChild(select);
+    wrap.appendChild(input);
+    wrap.appendChild(list);
+    wrap.appendChild(chevron);
+    select.classList.add('qb-select-native');
+    select.setAttribute('tabindex', '-1');
+    select.setAttribute('aria-hidden', 'true');
+
+    var shown = [];
+    var active = -1;
+
+    function current() {
+      var value = select.value;
+      return optionsOf(select).filter(function (o) { return o.value === value; })[0] || null;
+    }
+    function placeholder() {
+      var blank = optionsOf(select).filter(function (o) { return o.value === ''; })[0];
+      return blank ? blank.label : null;
+    }
+    function sync() {
+      var picked = current();
+      input.value = picked && picked.value !== '' ? picked.label : '';
+      input.placeholder = placeholder() || '';
+      input.disabled = !!select.disabled;
+    }
+    function close(restore) {
+      list.hidden = true;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+      if (restore) sync();
+    }
+    function highlight(index) {
+      active = index;
+      shown.forEach(function (row, i) {
+        row.li.setAttribute('aria-selected', i === index ? 'true' : 'false');
+        row.li.classList[i === index ? 'add' : 'remove']('is-active');
+      });
+      if (index >= 0 && shown[index]) input.setAttribute('aria-activedescendant', shown[index].li.id);
+      else input.removeAttribute('aria-activedescendant');
+    }
+    function render(query) {
+      while (list.children.length) list.removeChild(list.children[0]);
+      var q = fold(query);
+      var lastGroup = null;
+      shown = [];
+      optionsOf(select).forEach(function (o) {
+        if (o.value === '' || o.disabled) return;
+        if (q && fold(o.label).indexOf(q) < 0 && fold(o.group).indexOf(q) < 0) return;
+        if (o.group && o.group !== lastGroup) {
+          var head = doc.createElement('li');
+          head.className = 'qb-select-group';
+          head.setAttribute('role', 'presentation');
+          head.textContent = o.group;
+          list.appendChild(head);
+          lastGroup = o.group;
+        }
+        var li = doc.createElement('li');
+        li.id = id + '-opt-' + shown.length;
+        li.className = 'qb-select-option';
+        li.setAttribute('role', 'option');
+        li.textContent = o.label;
+        var row = { li: li, option: o };
+        li.addEventListener('mousedown', function (e) { e.preventDefault(); pick(row.option); });
+        list.appendChild(li);
+        shown.push(row);
+      });
+      if (!shown.length) {
+        var empty = doc.createElement('li');
+        empty.className = 'qb-select-empty';
+        empty.setAttribute('role', 'presentation');
+        empty.textContent = label('ui.shell.no_matches', 'No matches');
+        list.appendChild(empty);
+      }
+      var picked = current();
+      var at = -1;
+      shown.forEach(function (row, i) { if (picked && row.option.value === picked.value) at = i; });
+      highlight(at >= 0 ? at : (shown.length ? 0 : -1));
+    }
+    function open(query) {
+      if (select.disabled) return;
+      render(query);
+      list.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+    }
+    function pick(option) {
+      var changed = select.value !== option.value;
+      select.value = option.value;
+      close(true);
+      if (changed) fireChange(select);
+    }
+
+    input.addEventListener('focus', function () { if (input.select) input.select(); });
+    input.addEventListener('click', function () { if (list.hidden) open(''); });
+    input.addEventListener('input', function () { open(input.value); });
+    input.addEventListener('blur', function () {
+      // Emptying the box clears a choice the form does not require.
+      if (!select.required && !String(input.value).trim() && select.value !== '' && placeholder() !== null) {
+        close(false);
+        pick({ value: '' });
+        return;
+      }
+      close(true);
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (list.hidden) { open(''); return; }
+        if (!shown.length) return;
+        var step = e.key === 'ArrowDown' ? 1 : -1;
+        highlight((active + step + shown.length) % shown.length);
+      } else if (e.key === 'Enter') {
+        if (list.hidden) return;
+        e.preventDefault();
+        if (active >= 0 && shown[active]) pick(shown[active].option);
+      } else if (e.key === 'Escape') {
+        if (list.hidden) return;
+        e.preventDefault();
+        close(true);
+      }
+    });
+
+    // Follow what the page's own script does to the select.
+    select.addEventListener('change', sync);
+    if (select.form) select.form.addEventListener('reset', function () { later(sync, 0); });
+    if (typeof global.MutationObserver === 'function') {
+      new global.MutationObserver(sync).observe(select, { childList: true, subtree: true, attributes: true,
+                                                          attributeFilter: ['disabled'] });
+    }
+    try {
+      var proto = Object.getPrototypeOf(select);
+      var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && desc.set) {
+        Object.defineProperty(select, 'value', {
+          configurable: true,
+          get: function () { return desc.get.call(this); },
+          set: function (v) { desc.set.call(this, v); sync(); }
+        });
+      }
+    } catch (_) { /* a value set by script is then shown on the next change */ }
+
+    sync();
+    var api = { input: input, select: select, sync: sync, open: open, close: close };
+    select.__qbSelect = api;
+    return api;
+  }
+
+  global.qbSelect = qbSelect;
+
+  function setUp() {
+    Array.prototype.forEach.call(doc.querySelectorAll('[data-qb-tabs]'), function (list) { qbTabs(list); });
+    Array.prototype.forEach.call(doc.querySelectorAll('select[data-qb-select]'), function (select) { qbSelect(select); });
+  }
+  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', setUp);
+  else setUp();
 })(window);

@@ -227,7 +227,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
         <form method="post" action="/admin/clients/{{ client.account_id }}/date-contexts/save" class="dr-form-grid">
           <div class="dr-field">
             <label>Metric</label>
-            <select name="metric_id" required>
+            <select name="metric_id" required data-qb-select>
               <option value="">Select metric</option>
               {% for metric in metrics %}<option value="{{ metric.id }}">{{ metric.name }}</option>{% endfor %}
             </select>
@@ -242,7 +242,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           </div>
           <div class="dr-field dr-span-2">
             <label>Approved date role</label>
-            <select name="role_identity" required>
+            <select name="role_identity" required data-qb-select>
               <option value="">Select date role</option>
               {% for role in date_roles if role.status == "approved" %}
               <option value="{{ role.fact_table }}||{{ role.fact_column }}">
@@ -281,8 +281,8 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
       </div>
       <div class="dr-panel-body">
         <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/add" class="dr-form-grid" id="dateRoleAddForm">
-          <div class="dr-field dr-span-2"><label>Source table</label><select name="fact_table" id="drFactTable" required><option value="">Select table</option>{% for table in semantic_tables %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
-          <div class="dr-field dr-span-2"><label>Date column or surrogate key</label><select name="fact_column" id="drFactColumn" required><option value="">Select source table first</option></select></div>
+          <div class="dr-field dr-span-2"><label>Source table</label><select name="fact_table" id="drFactTable" required data-qb-select><option value="">Select table</option>{% for table in semantic_tables %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="dr-field dr-span-2"><label>Date column or surrogate key</label><select name="fact_column" id="drFactColumn" required data-qb-select><option value="">Select source table first</option></select></div>
           <div class="dr-field dr-span-2"><label>Storage type</label><select name="date_key_type" id="drDateKeyType"><option value="surrogate_fk" selected>Surrogate key (join to date dimension)</option><option value="yyyymmdd_integer">YYYYMMDD integer on source table</option><option value="yyyymm_integer">YYYYMM integer (month grain) on source table</option><option value="native_date">Native date on source table</option><option value="timestamp">Date/time on source table</option></select></div>
           <p class="dr-mode-help" id="drModeHelp">Choose the date dimension that translates this source key into a calendar date.</p>
           {# A date dimension that the model did not TYPE as a dimension is still the
@@ -290,9 +290,9 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
    DT_DMS came back untyped could not be selected at all, which is the one
    selection this form exists to make. #}
           {% set date_dimension_names = (date_key_bindings or {}).get('date_dimensions') or [] %}
-          <div class="dr-field dr-span-2 dr-surrogate-only"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable"><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' or table.qualified_name in date_dimension_names %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
-          <div class="dr-field dr-surrogate-only"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey"><option value="">Select dimension</option></select></div>
-          <div class="dr-field dr-surrogate-only"><label>Calendar date value</label><select name="date_value_column" id="drDateValue"><option value="">Select dimension</option></select></div>
+          <div class="dr-field dr-span-2 dr-surrogate-only"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable" data-qb-select><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' or table.qualified_name in date_dimension_names %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="dr-field dr-surrogate-only"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey" data-qb-select><option value="">Select dimension</option></select></div>
+          <div class="dr-field dr-surrogate-only"><label>Calendar date value</label><select name="date_value_column" id="drDateValue" data-qb-select><option value="">Select dimension</option></select></div>
           <div class="dr-field"><label>Role key</label><input name="business_role" required placeholder="e.g. inventory_sales_date"></div>
           <div class="dr-field"><label>Display name</label><input name="name" placeholder="e.g. Inventory Sales Date"></div>
           <div class="dr-field dr-span-2"><label>Role phrases</label><input name="synonyms" placeholder="inventory sales date, stock movement date"></div>

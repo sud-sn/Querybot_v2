@@ -538,6 +538,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.confirm": {"en": "Confirm", "fr": "Confirmer"},
     "ui.shell.dismiss": {"en": "Dismiss", "fr": "Fermer"},
     "ui.shell.undo": {"en": "Undo", "fr": "Annuler"},
+    "ui.shell.no_matches": {"en": "No matches", "fr": "Aucun résultat"},
     # The live toast. The status sentence was assembled by concatenation --
     # `(column || 'Field') + ' was ' + statusText + ' by admin.'` -- which
     # cannot be translated as fragments: French puts the participle after the

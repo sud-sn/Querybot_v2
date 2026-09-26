@@ -10,6 +10,14 @@ job queue before evaljs returns). runTimers() fires what setTimeout scheduled.
 toastsNow() and dialogNow() read what is on the page; make(tag, attrs, parent)
 builds an element; goToHash(h) changes location.hash as a link would; El.find/byClass search
 an element's subtree; El.fire(type) dispatches to its listeners.
+
+A <select> behaves as a browser's does where qbSelect and the pages rely on
+it: its value is its selected option's (an accessor on its prototype, as
+HTMLSelectElement's is), options/selectedOptions list its options, innerHTML
+builds <option> elements, disabled and required reflect their attributes, and
+an <option>'s value is its value attribute or else its text. A
+MutationObserver sees children added or removed and attributes set; observers
+are called at once, not queued.
 """
 
 FAKE_DOM = r"""
@@ -32,9 +40,39 @@ function El(tag) {
     contains: function (c) { return self.className.split(' ').indexOf(c) >= 0; }
   };
 }
-El.prototype.appendChild = function (c) { c.parentNode = this; this.children.push(c); return c; };
-El.prototype.removeChild = function (c) { this.children.splice(this.children.indexOf(c), 1); c.parentNode = null; };
-El.prototype.setAttribute = function (k, v) { this.attributes[k] = String(v); };
+var observers = [];
+function MutationObserver(cb) { this.cb = cb; }
+MutationObserver.prototype.observe = function (target, opts) { observers.push({ob: this, target: target, opts: opts || {}}); };
+function notify(node, record) {
+  observers.forEach(function (o) {
+    var hit = node === o.target;
+    for (var n = node.parentNode; !hit && o.opts.subtree && n; n = n.parentNode) hit = n === o.target;
+    if (!hit) return;
+    if (record.type === 'childList' && !o.opts.childList) return;
+    if (record.type === 'attributes' && (!o.opts.attributes ||
+        (o.opts.attributeFilter && o.opts.attributeFilter.indexOf(record.attributeName) < 0))) return;
+    o.ob.cb([record]);
+  });
+}
+El.prototype.appendChild = function (c) {
+  if (c.parentNode) c.parentNode.removeChild(c);
+  c.parentNode = this; this.children.push(c); notify(this, {type: 'childList'}); return c;
+};
+El.prototype.insertBefore = function (c, ref) {
+  if (c.parentNode) c.parentNode.removeChild(c);
+  var at = this.children.indexOf(ref); c.parentNode = this;
+  if (at < 0) this.children.push(c); else this.children.splice(at, 0, c);
+  notify(this, {type: 'childList'}); return c;
+};
+El.prototype.removeChild = function (c) {
+  this.children.splice(this.children.indexOf(c), 1); c.parentNode = null; notify(this, {type: 'childList'});
+};
+Object.defineProperty(El.prototype, 'previousElementSibling', { get: function () {
+  var sibs = this.parentNode ? this.parentNode.children : []; var at = sibs.indexOf(this);
+  return at > 0 ? sibs[at - 1] : null;
+}});
+El.prototype.setAttribute = function (k, v) { this.attributes[k] = String(v); notify(this, {type: 'attributes', attributeName: k}); };
+El.prototype.removeAttribute = function (k) { delete this.attributes[k]; notify(this, {type: 'attributes', attributeName: k}); };
 El.prototype.getAttribute = function (k) { return this.attributes.hasOwnProperty(k) ? this.attributes[k] : null; };
 El.prototype.addEventListener = function (t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); };
 El.prototype.fire = function (t, extra) {
@@ -86,9 +124,54 @@ Object.defineProperty(El.prototype, 'innerHTML', {
   get: function () { return this._html; }, set: function (v) { this._html = String(v); }
 });
 
+// <option> and <select> as HTMLOptionElement and HTMLSelectElement have them,
+// where qbSelect and the pages that fill a select rely on it.
+function optionValue(o) {
+  return o.getAttribute('value') !== null ? o.getAttribute('value') : o.textContent.replace(/\s+/g, ' ').trim();
+}
+function OptionEl() { El.call(this, 'option'); delete this.value; this.selected = false; }
+OptionEl.prototype = Object.create(El.prototype);
+OptionEl.prototype.constructor = OptionEl;
+Object.defineProperty(OptionEl.prototype, 'value', {
+  get: function () { return optionValue(this); }, set: function (v) { this.setAttribute('value', v); }
+});
+function SelectEl() { El.call(this, 'select'); delete this.value; this.form = null; }
+SelectEl.prototype = Object.create(El.prototype);
+SelectEl.prototype.constructor = SelectEl;
+Object.defineProperty(SelectEl.prototype, 'options', { get: function () { return this.querySelectorAll('option'); } });
+Object.defineProperty(SelectEl.prototype, 'selectedOptions', { get: function () {
+  var opts = this.options, picked = opts.filter(function (o) { return o.selected; })[0] || opts[0];
+  return picked ? [picked] : [];
+}});
+Object.defineProperty(SelectEl.prototype, 'value', {
+  get: function () { var picked = this.selectedOptions[0]; return picked ? optionValue(picked) : ''; },
+  set: function (v) { this.options.forEach(function (o) { o.selected = optionValue(o) === String(v); }); }
+});
+// select.innerHTML = '<option value="">Pick one</option>' builds that option.
+Object.defineProperty(SelectEl.prototype, 'innerHTML', {
+  get: function () { return ''; },
+  set: function (html) {
+    var self = this; this.children = [];
+    String(html).replace(/<option(?: value="([^"]*)")?>([^<]*)<\/option>/g, function (_, v, text) {
+      var o = new OptionEl(); if (v !== undefined) o.setAttribute('value', v); o._text = text;
+      o.parentNode = self; self.children.push(o); return '';
+    });
+    notify(this, {type: 'childList'});
+  }
+});
+['disabled', 'required'].forEach(function (name) {
+  Object.defineProperty(SelectEl.prototype, name, {
+    get: function () { return this.hasAttribute(name); },
+    set: function (on) { if (on) this.setAttribute(name, ''); else this.removeAttribute(name); }
+  });
+});
+
 var docListeners = {};
 var document = { body: new El('body'), activeElement: null,
-  createElement: function (t) { return new El(t); },
+  createElement: function (t) {
+    var tag = t.toLowerCase(); return tag === 'select' ? new SelectEl() : tag === 'option' ? new OptionEl() : new El(t);
+  },
+  querySelector: function (sel) { return document.body.querySelector(sel); },
   addEventListener: function (t, f) { (docListeners[t] = docListeners[t] || []).push(f); },
   querySelectorAll: function (sel) { return document.body.querySelectorAll(sel); },
   getElementById: function (id) { return document.body.find(function (e) { return e.id === id; }); } };
@@ -98,12 +181,13 @@ var window = { document: document,
   setTimeout: function (f, ms) { timers.push({f: f, ms: ms}); return timers.length; },
   clearTimeout: function (id) { if (id && timers[id - 1]) timers[id - 1].cleared = true; },
   qbIcon: function (n, s) { return '<svg data-icon="' + n + '"></svg>'; },
+  MutationObserver: MutationObserver,
   location: { hash: '' },
   history: { replaceState: function (s, t, url) { window.location.hash = String(url); } },
   addEventListener: function (t, f) { (winListeners[t] = winListeners[t] || []).push(f); } };
 function goToHash(h) { window.location.hash = h; (winListeners.hashchange || []).forEach(function (f) { f({}); }); }
 function make(tag, attrs, parent) {
-  var el = new El(tag);
+  var el = document.createElement(tag);
   Object.keys(attrs || {}).forEach(function (k) { if (k === 'id') el.id = attrs[k]; else el.setAttribute(k, attrs[k]); });
   (parent || document.body).appendChild(el);
   return el;

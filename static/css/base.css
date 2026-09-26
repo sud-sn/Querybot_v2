@@ -827,6 +827,35 @@ textarea:focus-visible, a:focus-visible {
 .qb-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
 [role="tabpanel"][hidden] { display: none; }
 
+/* ── Searchable select (qb-ui.js qbSelect) ─────────────────
+   The native <select> stays in the form, out of sight; what the
+   reader types in and picks from is drawn over it. */
+.qb-select { position: relative; }
+/* The native select stays in the form, unseen, over the box: a required
+   one's browser message then points at the field. */
+.qb-select > .qb-select-native {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+  opacity: 0; pointer-events: none;
+}
+.qb-select > .qb-select-input { width: 100%; padding-right: 2rem; cursor: pointer; }
+.qb-select-input:focus { cursor: text; }
+.qb-select-chevron {
+  position: absolute; top: 0; right: .6rem; height: 100%;
+  display: flex; align-items: center; color: var(--text-muted); pointer-events: none;
+}
+.qb-select-input:disabled ~ .qb-select-chevron { opacity: .45; }
+.qb-select-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: var(--z-dropdown);
+  max-height: 280px; overflow-y: auto; margin: 0; padding: var(--space-1) 0; list-style: none;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+}
+.qb-select-option { padding: .45rem .75rem; font-size: var(--font-sm); color: var(--text); cursor: pointer; }
+.qb-select-option.is-active { background: var(--state-selected); color: var(--primary-ink); }
+.qb-select-group { padding: .5rem .75rem .25rem; font-size: var(--font-xs); font-weight: var(--weight-semibold);
+  letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.qb-select-empty { padding: .5rem .75rem; font-size: var(--font-sm); color: var(--text-muted); }
+
 /* ── Toasts (qb-ui.js qbToast) ──────────────────────────────
    One stack, bottom right, for both consoles. The tone is the
    icon and a rule on the left; the text stays in the text inks. */
