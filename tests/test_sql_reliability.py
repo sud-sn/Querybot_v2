@@ -994,13 +994,11 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
             "Table CUS_ORD_IVC_FCT has column CUS_ORD_DT_DMS_KEY",
         )
         self.assertIn("AZURE SQL DATE-KEY RULE", prompt)
-        self.assertIn("DATEADD()", prompt)
-        self.assertIn("OVERRIDES the CRITICAL TIME RULE", prompt)
-        self.assertIn(
-            "TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112) >= "
-            "DATEADD(month, -1,",
-            prompt,
-        )
+        self.assertIn("DATEADD() or LAG ordering to the raw integer", prompt)
+        # With no semantic plan the key is undeclared: join its dimension if
+        # the schema has one, decode only when there is none (1.7).
+        self.assertIn("Not declared (CUS_ORD_DT_DMS_KEY)", prompt)
+        self.assertIn("TRY_CONVERT(date, CONVERT(varchar(8), alias.KEY), 112)", prompt)
         self.assertIn("Azure SQL date-key pattern", prompt)
         self.assertIn("WITH dated AS", prompt)
         self.assertIn("GROUP BY YR", prompt)
@@ -1098,7 +1096,8 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
     def test_avg_interval_rule_requires_conversion_inside_inner_subquery(self):
         prompt = build_sql_system_prompt("azure_sql", "Table FNN_FCT has column PAY_DT_DMS_KEY")
         self.assertIn(
-            "convert it with TRY_CONVERT inside the INNER subquery", prompt
+            "read it as the DATE-KEY RULE says (join the dimension, or decode) "
+            "inside the INNER subquery", prompt
         )
 
     def test_period_comparison_prompt_uses_staged_native_date_pattern(self):

@@ -2005,24 +2005,30 @@ def _top_n_shape_error(tree, semantic_context: dict | None) -> dict | None:
     }
 
 
-def _question_scopes_a_relative_window(semantic_context: dict | None) -> bool:
-    """Did the user ask about a period relative to 'now'?
+def _question_names_a_period(semantic_context: dict | None) -> bool:
+    """Did the user name a period -- relative to 'now', or on the calendar?
 
     Read from the request state the pipeline already assembled — the detected
     temporal window, falling back to re-detecting from the question text — so
     this holds even when no approved date role resolved, which is exactly the
     case where nothing else is watching.
+
+    A calendar period counts too: "revenue in 2025" or "Q1 2026" needs no
+    clock, and one written into its SQL -- a missing year taken from
+    GETDATE(), a window capped at today -- answers from the server's calendar
+    on a warehouse loaded to some other day.
     """
     context = semantic_context or {}
     if context.get("temporal_window"):
         return True
-    question = str(context.get("question") or "")
+    question = str(context.get("canonical_question") or context.get("question") or "")
     if not question:
         return False
     try:
-        from core.contextual_dates import detect_temporal_window
-        return bool(detect_temporal_window(question))
+        from core.contextual_dates import detect_temporal_window, question_names_a_calendar_period
+        return bool(detect_temporal_window(question)) or question_names_a_calendar_period(question)
     except Exception:
+        log.warning("Could not read the period in %r", question[:120], exc_info=True)
         return False
 
 
@@ -2053,15 +2059,16 @@ def _temporal_anchor_errors(
         # Oracle already rejected GETDATE as a dialect error; Azure SQL accepted
         # it, so the same question was governed on one warehouse and not on
         # another.
-        if clock_match and _question_scopes_a_relative_window(semantic_context):
+        if clock_match and _question_names_a_period(semantic_context):
             return [{
                 "code": "temporal_anchor_ungoverned",
                 "message": (
-                    "This question asks about a relative period, but no approved "
-                    "date role resolved for it — so the database clock was used. "
-                    "The clock is not this data's calendar: anchor the period to "
-                    "MAX() over the governed business date, or ask an "
-                    "administrator to approve a date role for this table."
+                    "This question names a period, and the query reads the "
+                    "database clock for it. The clock is not this data's "
+                    "calendar: write the year or month the question names as "
+                    "it stands, anchor a relative period to MAX() over the "
+                    "business date, or ask an administrator to approve a date "
+                    "role for this table."
                 ),
                 "forbidden": clock_match.group(0),
                 "required_anchor": "MAX(governed_business_date)",

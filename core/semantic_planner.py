@@ -939,10 +939,11 @@ def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str,
 
 # Generic date-part columns on a date dimension. Matching "by month" / "in
 # year 2024" to DT_DMS.MONTH / DT_DMS.YEAR is a useful hint, but must NOT be
-# hard-required: the system prompt's DATE-KEY RULE teaches the LLM to bucket
-# periods directly from the fact table's YYYYMMDD key (FORMAT(TRY_CONVERT(...))),
-# which is equally valid SQL that never touches the dimension's date-part
-# column — enforcing it as required hard-blocks those correct queries.
+# hard-required: for a key the plan declares YYYYMMDD-encoded, the system
+# prompt's DATE-KEY RULE teaches the LLM to bucket periods directly from the
+# fact table's key (FORMAT(TRY_CONVERT(...))), which is equally valid SQL that
+# never touches the dimension's date-part column — enforcing it as required
+# hard-blocks those correct queries.
 _DATE_PART_COLUMNS = {"DAY", "MONTH", "YEAR", "QUARTER", "WEEK", "SEMESTER", "HALF"}
 
 

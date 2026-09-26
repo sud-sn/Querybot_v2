@@ -309,11 +309,23 @@ def _find_date_role_tokens(table_context: str) -> list[str]:
 
 
 def _governed_date_key_types(semantic_plan: dict | None) -> dict[str, str]:
-    """{COLUMN: date_key_type} as the tenant's compiled plan declares it."""
+    """{COLUMN: date_key_type} as the tenant's compiled plan declares it.
+
+    A date field bound through a dimension names the dimension's date column
+    as its column, so the fields alone left every surrogate key undeclared.
+    The plan's date_key_policies record each fact key with its type, and
+    decide.
+    """
+    plan = semantic_plan or {}
     types: dict[str, str] = {}
-    for field in ((semantic_plan or {}).get("fields") or []):
+    for field in plan.get("fields") or []:
         column = str((field or {}).get("column") or "").strip().upper()
         declared = str((field or {}).get("date_key_type") or "").strip().lower()
+        if column and declared:
+            types[column] = declared
+    for policy in plan.get("date_key_policies") or []:
+        column = str((policy or {}).get("column") or "").strip().upper()
+        declared = str((policy or {}).get("date_key_type") or "").strip().lower()
         if column and declared:
             types[column] = declared
     return types
@@ -335,6 +347,47 @@ def _is_plain_surrogate_date_key(token: str, governed: dict[str, str]) -> bool:
     if declared:
         return declared == "surrogate_fk"
     return is_plain_surrogate_date_role_column(token)
+
+_DMS_DATE_KEY_RE = re.compile(r"_(?:DT|DATE)_DMS_KEY$", re.IGNORECASE)
+
+
+def _dms_date_key_rule(date_keys: list[str], governed: dict[str, str]) -> str:
+    """The one rule for _DT_DMS_KEY / _DATE_DMS_KEY date keys, per key.
+
+    It said every such key IS a YYYYMMDD integer, to be decoded with
+    TRY_CONVERT, and that this OVERRIDES the other rules -- while the
+    surrogate-key rule beside it, and the semantic plan, said the same key
+    joins a date dimension. On a mart whose keys are surrogates (4067, not
+    20260315) the decode is NULL for every row: an empty answer, no error.
+    Each key is now read the way the plan declares it; a key the plan does
+    not declare joins its date dimension when the schema has one -- right
+    whatever the key's encoding -- and is decoded only when there is none.
+    """
+    keys = sorted({key.upper() for key in date_keys if _DMS_DATE_KEY_RE.search(key)})
+    joined = [key for key in keys if governed.get(key) == "surrogate_fk"]
+    encoded = [key for key in keys if governed.get(key) == "yyyymmdd_integer"]
+    undeclared = [key for key in keys if key not in joined and key not in encoded]
+    decode = (
+        "decode it with TRY_CONVERT(date, CONVERT(varchar(8), alias.KEY), 112), keep "
+        "alias.KEY > 0, and use that expression on BOTH sides of any comparison, DATEADD or "
+        "bucket -- FORMAT(<decoded>, 'yyyy-MM') for months, MAX(<decoded>) as the anchor"
+    )
+    lines = ["- AZURE SQL DATE-KEY RULE: read each _DT_DMS_KEY / _DATE_DMS_KEY date key "
+             "the way the semantic plan declares it, and only that way. Never apply FORMAT(), "
+             "YEAR(), MONTH(), DATEPART(), DATEADD() or LAG ordering to the raw integer."]
+    if joined:
+        lines.append(f"  Surrogate keys into the date dimension ({', '.join(joined)}): their "
+                     "integers are not dates. JOIN the date dimension on the key and filter, "
+                     "group and anchor on its date or calendar columns; never decode the key.")
+    if encoded:
+        lines.append(f"  YYYYMMDD integers ({', '.join(encoded)}): {decode}.")
+    if undeclared or not keys:
+        lines.append(
+            (f"  Not declared ({', '.join(undeclared)}): " if undeclared else "  Any other such key: ")
+            + "when the schema has a date dimension keyed by it, JOIN it -- that is right "
+            f"whatever the key's encoding; only when there is none, {decode}.")
+    return "\n".join(lines) + "\n"
+
 
 Provider = Literal["anthropic", "openai", "azure_openai", "local"]
 
@@ -829,21 +882,7 @@ def build_sql_system_prompt(
         "not average row-level values unless the formula explicitly uses AVG(). "
         "Never substitute a 'similar-sounding' column from the KB for an approved formula.\n"
         + (
-            "- AZURE SQL DATE-KEY RULE: Columns ending in _DT_DMS_KEY or _DATE_DMS_KEY are "
-            "integer YYYYMMDD keys, not real date columns. Do NOT call FORMAT(), YEAR(), MONTH(), "
-            "DATEPART(), DATEADD(), or LAG ordering directly on the integer key — applying DATEADD "
-            "to a raw YYYYMMDD integer produces a meaningless date and the filter silently matches "
-            "the wrong rows (or none at all) instead of erroring. This rule OVERRIDES the CRITICAL "
-            "TIME RULE / relative-date examples above whenever the date column in question is a "
-            "_DT_DMS_KEY or _DATE_DMS_KEY column. First convert with "
-            "TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112), and filter out "
-            "invalid zero keys with alias.DATE_KEY_COL > 0. For month buckets use "
-            "FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112), 'yyyy-MM'). "
-            "For relative-date ranges (last month, this month vs last month, last N weeks), convert "
-            "the key on BOTH sides before comparing or applying DATEADD:\n"
-            "  WHERE TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112) >= "
-            "DATEADD(month, -1, (SELECT MAX(TRY_CONVERT(date, CONVERT(varchar(8), DATE_KEY_COL), 112)) "
-            "FROM [schema].[table] WHERE DATE_KEY_COL > 0))\n"
+            _dms_date_key_rule(_date_role_tokens, _governed_key_types)
             if ("_DT_DMS_KEY" in _kb_gate_upper or "_DATE_DMS_KEY" in _kb_gate_upper)
             else ""
         )
@@ -868,8 +907,9 @@ def build_sql_system_prompt(
             "  (a) JOIN the date dimension via the fact's *_DT_DMS_KEY column "
             "(fact.SOME_DT_DMS_KEY = dt.DT_DMS_KEY) and use the dimension's calendar column "
             "(dt.YR), or\n"
-            "  (b) derive the period from the integer YYYYMMDD key itself: year = key / 10000 "
-            "(integer division), or the TRY_CONVERT pattern above.\n"
+            "  (b) only for a key the DATE-KEY RULE reads as a YYYYMMDD integer, derive the "
+            "period from the key itself: year = key / 10000 (integer division), or its "
+            "decoded date (the TRY_CONVERT pattern there).\n"
             if ("_DT_DMS_KEY" in _kb_gate_upper or "_DATE_DMS_KEY" in _kb_gate_upper)
             else ""
         )
@@ -915,8 +955,9 @@ def build_sql_system_prompt(
         "'compared to last year', or 'vs previous year':\n"
         "  1. Always CAST the year/period column to INT: CAST(year_col AS INT) AS YR\n"
         "     The year/period column must come from the date DIMENSION table (joined via "
-        "the fact's date key) or be derived from the YYYYMMDD key — fact tables do not "
-        "carry a year column of their own.\n"
+        "the fact's date key) or, for a key the DATE-KEY RULE reads as a YYYYMMDD integer, "
+        "be derived from its decoded date — fact tables do not carry a year column of "
+        "their own.\n"
         "     If the year comes from an Azure SQL _DT_DMS_KEY / _DATE_DMS_KEY, first compute "
         "YR in an inner CTE and then GROUP BY the simple alias YR in the aggregate CTE. "
         "Do NOT repeat long TRY_CONVERT date-key expressions in GROUP BY.\n"
@@ -1093,9 +1134,9 @@ def build_sql_system_prompt(
         "clause'. ALWAYS compute the per-row gap in an inner subquery using LAG() PARTITION BY "
         "the group column, THEN aggregate the result in an outer query:\n"
         f"{_avg_interval_pattern}\n"
-        "  If the event date is a _DT_DMS_KEY/_DATE_DMS_KEY surrogate key, convert it with "
-        "TRY_CONVERT inside the INNER subquery (per the DATE-KEY RULE above) BEFORE applying "
-        "LAG — never apply LAG to the raw integer key and never leave the conversion for the "
+        "  If the event date is a _DT_DMS_KEY/_DATE_DMS_KEY key, read it as the DATE-KEY "
+        "RULE says (join the dimension, or decode) inside the INNER subquery BEFORE applying "
+        "LAG — never apply LAG to the raw integer key and never leave that step for the "
         "outer query.\n\n")
         + "- NULL-SAFE JOIN RULE: When writing a JOIN or LEFT JOIN that might produce NULLs for "
         "numeric metrics on the right side (i.e. left join where right rows may be absent), "

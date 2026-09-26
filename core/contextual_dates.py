@@ -1719,7 +1719,13 @@ def question_names_a_calendar_period(question: str) -> bool:
     return any(re.search(pattern, q) for pattern in _CALENDAR_PERIOD_PATTERNS)
 
 
-_DATE_PREPOSITIONS = r"in|for|during|of|since|until|till|through|thru|between|by"
+# French ones too, as canonicalisation leaves them: "ventes en 2025", "depuis
+# 2024", "pendant 2025" and "jusqu'à 2025" reach here unchanged, and each
+# skipped date resolution while "sales in 2025" entered it.
+_DATE_PREPOSITIONS = (
+    r"in|for|during|of|since|until|till|through|thru|between|by|before|after"
+    r"|en|depuis|pendant|durant|jusqu\s+a|avant|apres"
+)
 
 _CALENDAR_PERIOD_PATTERNS = (
     # A month name. The ambiguous ones ("march", "may") still need a numeric
