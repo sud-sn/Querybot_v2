@@ -232,13 +232,13 @@ window.qbEnumLabel = function (group, value) {
     </a>
 
     <nav class="portal-nav" aria-label="{{ t('ui.shell.nav_primary') }}">
-      <a href="/portal/chat" title="{{ t('ui.shell.chat') }}" class="{% if '/chat' in request.url.path %}active{% endif %}">
+      <a href="/portal/chat" title="{{ t('ui.shell.chat') }}" class="{% if '/chat' in request.url.path %}active{% endif %}" {% if '/chat' in request.url.path %}aria-current="page"{% endif %}>
         {{ ic("chat", 17) }} <span>{{ t('ui.shell.chat') }}</span>
       </a>
-      <a href="/portal/dashboard" title="{{ t('ui.shell.dashboard') }}" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
+      <a href="/portal/dashboard" title="{{ t('ui.shell.dashboard') }}" class="{% if 'dashboard' in request.url.path %}active{% endif %}" {% if 'dashboard' in request.url.path %}aria-current="page"{% endif %}>
         {{ ic("dashboard", 17) }} <span>{{ t('ui.shell.dashboard') }}</span>
       </a>
-      <a href="/portal/kb" title="{{ t('ui.shell.semantic_layer') }}" class="{% if '/kb' in request.url.path %}active{% endif %}">
+      <a href="/portal/kb" title="{{ t('ui.shell.semantic_layer') }}" class="{% if '/kb' in request.url.path %}active{% endif %}" {% if '/kb' in request.url.path %}aria-current="page"{% endif %}>
         {{ ic("database", 17) }} <span>{{ t('ui.shell.semantic_layer') }}</span>
       </a>
     </nav>
@@ -247,7 +247,7 @@ window.qbEnumLabel = function (group, value) {
 
     <div class="portal-sidebar-spacer"></div>
 
-    <a href="/portal/notifications" title="{{ t('ui.shell.notifications') }}" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}">
+    <a href="/portal/notifications" title="{{ t('ui.shell.notifications') }}" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}" {% if '/notifications' in request.url.path %}aria-current="page"{% endif %}>
       {{ ic("bell", 17) }}
       <span>{{ t('ui.shell.notifications') }}</span>
     </a>

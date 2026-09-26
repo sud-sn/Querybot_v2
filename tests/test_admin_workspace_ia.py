@@ -79,7 +79,7 @@ def _active(html: str, level: str):
     block = re.search(rf'client-workspace-{level}.*?</nav>', html, re.S)
     if not block:
         return None
-    return re.findall(r'class="active"\s*>(.*?)(?:<span|</a>)', block.group(0))
+    return re.findall(r'class="active"[^>]*>(.*?)(?:<span|</a>)', block.group(0))
 
 
 @pytest.mark.parametrize("segment,primary,secondary", _NAV_EXPECTATIONS)

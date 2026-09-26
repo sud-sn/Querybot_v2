@@ -43,53 +43,53 @@
   </div>
 
   <nav class="client-workspace-primary" aria-label="Client lifecycle areas">
-    <a href="{{ _b }}" class="{% if _is_overview %}active{% endif %}">Overview</a>
-    <a href="{{ _b }}/setup" class="{% if _is_model %}active{% endif %}">Data &amp; Model</a>
-    <a href="{{ _b }}/queries" class="{% if _is_activity %}active{% endif %}">Activity</a>
-    <a href="{{ _b }}/model-health" class="{% if _is_quality %}active{% endif %}">Quality</a>
-    <a href="{{ _b }}/users" class="{% if _is_access %}active{% endif %}">Access</a>
-    <a href="{{ _b }}/compliance" class="{% if _is_compliance %}active{% endif %}">Compliance</a>
-    <a href="{{ _b }}/settings" class="{% if _is_configure %}active{% endif %}">Settings</a>
+    <a href="{{ _b }}" class="{% if _is_overview %}active{% endif %}" {% if _is_overview %}aria-current="page"{% endif %}>Overview</a>
+    <a href="{{ _b }}/setup" class="{% if _is_model %}active{% endif %}" {% if _is_model %}aria-current="true"{% endif %}>Data &amp; Model</a>
+    <a href="{{ _b }}/queries" class="{% if _is_activity %}active{% endif %}" {% if _is_activity %}aria-current="true"{% endif %}>Activity</a>
+    <a href="{{ _b }}/model-health" class="{% if _is_quality %}active{% endif %}" {% if _is_quality %}aria-current="true"{% endif %}>Quality</a>
+    <a href="{{ _b }}/users" class="{% if _is_access %}active{% endif %}" {% if _is_access %}aria-current="true"{% endif %}>Access</a>
+    <a href="{{ _b }}/compliance" class="{% if _is_compliance %}active{% endif %}" {% if _is_compliance %}aria-current="page"{% endif %}>Compliance</a>
+    <a href="{{ _b }}/settings" class="{% if _is_configure %}active{% endif %}" {% if _is_configure %}aria-current="true"{% endif %}>Settings</a>
   </nav>
 
   {% if _is_model %}
   <nav class="client-workspace-secondary" aria-label="Data and model tools">
-    <a href="{{ _b }}/setup" class="{% if _seg == 'setup' %}active{% endif %}">Setup</a>
-    <a href="{{ _b }}/kb" class="{% if _seg == 'kb' %}active{% endif %}">Knowledge Base</a>
-    <a href="{{ _b }}/graph" class="{% if _seg == 'graph' %}active{% endif %}">Relationships</a>
-    <a href="{{ _b }}/mapping" class="{% if _seg == 'mapping' %}active{% endif %}">Source Mapping</a>
-    <a href="{{ _b }}/date-roles" class="{% if _seg == 'date-roles' %}active{% endif %}">Dates</a>
-    <a href="{{ _b }}/metrics" class="{% if _seg == 'metrics' %}active{% endif %}">Metrics</a>
-    <a href="{{ _b }}/reports" class="{% if _seg == 'reports' %}active{% endif %}">Reports</a>
-    <a href="{{ _b }}/glossary" class="{% if _seg == 'glossary' %}active{% endif %}">Glossary</a>
-    <a href="{{ _b }}/meanings" class="{% if _seg == 'meanings' %}active{% endif %}">Business Meanings</a>
-    <a href="{{ _b }}/domains" class="{% if _seg == 'domains' %}active{% endif %}">Subject Areas</a>
+    <a href="{{ _b }}/setup" class="{% if _seg == 'setup' %}active{% endif %}" {% if _seg == 'setup' %}aria-current="page"{% endif %}>Setup</a>
+    <a href="{{ _b }}/kb" class="{% if _seg == 'kb' %}active{% endif %}" {% if _seg == 'kb' %}aria-current="page"{% endif %}>Knowledge Base</a>
+    <a href="{{ _b }}/graph" class="{% if _seg == 'graph' %}active{% endif %}" {% if _seg == 'graph' %}aria-current="page"{% endif %}>Relationships</a>
+    <a href="{{ _b }}/mapping" class="{% if _seg == 'mapping' %}active{% endif %}" {% if _seg == 'mapping' %}aria-current="page"{% endif %}>Source Mapping</a>
+    <a href="{{ _b }}/date-roles" class="{% if _seg == 'date-roles' %}active{% endif %}" {% if _seg == 'date-roles' %}aria-current="page"{% endif %}>Dates</a>
+    <a href="{{ _b }}/metrics" class="{% if _seg == 'metrics' %}active{% endif %}" {% if _seg == 'metrics' %}aria-current="page"{% endif %}>Metrics</a>
+    <a href="{{ _b }}/reports" class="{% if _seg == 'reports' %}active{% endif %}" {% if _seg == 'reports' %}aria-current="page"{% endif %}>Reports</a>
+    <a href="{{ _b }}/glossary" class="{% if _seg == 'glossary' %}active{% endif %}" {% if _seg == 'glossary' %}aria-current="page"{% endif %}>Glossary</a>
+    <a href="{{ _b }}/meanings" class="{% if _seg == 'meanings' %}active{% endif %}" {% if _seg == 'meanings' %}aria-current="page"{% endif %}>Business Meanings</a>
+    <a href="{{ _b }}/domains" class="{% if _seg == 'domains' %}active{% endif %}" {% if _seg == 'domains' %}aria-current="page"{% endif %}>Subject Areas</a>
   </nav>
   {% elif _is_activity %}
   <nav class="client-workspace-secondary" aria-label="Activity and history">
-    <a href="{{ _b }}/queries" class="{% if _seg == 'queries' %}active{% endif %}">Queries</a>
-    <a href="{{ _b }}/traces" class="{% if _seg == 'traces' %}active{% endif %}">Timing</a>
-    <a href="{{ _b }}/egress" class="{% if _seg == 'egress' %}active{% endif %}">AI Egress Log</a>
-    <a href="{{ _b }}/billing" class="{% if _seg == 'billing' %}active{% endif %}">Usage &amp; Billing</a>
+    <a href="{{ _b }}/queries" class="{% if _seg == 'queries' %}active{% endif %}" {% if _seg == 'queries' %}aria-current="page"{% endif %}>Queries</a>
+    <a href="{{ _b }}/traces" class="{% if _seg == 'traces' %}active{% endif %}" {% if _seg == 'traces' %}aria-current="page"{% endif %}>Timing</a>
+    <a href="{{ _b }}/egress" class="{% if _seg == 'egress' %}active{% endif %}" {% if _seg == 'egress' %}aria-current="page"{% endif %}>AI Egress Log</a>
+    <a href="{{ _b }}/billing" class="{% if _seg == 'billing' %}active{% endif %}" {% if _seg == 'billing' %}aria-current="page"{% endif %}>Usage &amp; Billing</a>
   </nav>
   {% elif _is_quality %}
   <nav class="client-workspace-secondary" aria-label="Quality tools">
-    <a href="{{ _b }}/model-health" class="{% if _seg == 'model-health' %}active{% endif %}">Model Health</a>
-    <a href="{{ _b }}/readiness" class="{% if _seg == 'readiness' %}active{% endif %}">What To Model Next</a>
-    <a href="{{ _b }}/drafts" class="{% if _seg == 'drafts' %}active{% endif %}">Drafted For Review</a>
-    <a href="{{ _b }}/learning-queue" class="{% if _seg == 'learning-queue' %}active{% endif %}">Flagged Answers</a>
-    <a href="{{ _b }}/evals" class="{% if _seg == 'evals' %}active{% endif %}">Evaluations</a>
+    <a href="{{ _b }}/model-health" class="{% if _seg == 'model-health' %}active{% endif %}" {% if _seg == 'model-health' %}aria-current="page"{% endif %}>Model Health</a>
+    <a href="{{ _b }}/readiness" class="{% if _seg == 'readiness' %}active{% endif %}" {% if _seg == 'readiness' %}aria-current="page"{% endif %}>What To Model Next</a>
+    <a href="{{ _b }}/drafts" class="{% if _seg == 'drafts' %}active{% endif %}" {% if _seg == 'drafts' %}aria-current="page"{% endif %}>Drafted For Review</a>
+    <a href="{{ _b }}/learning-queue" class="{% if _seg == 'learning-queue' %}active{% endif %}" {% if _seg == 'learning-queue' %}aria-current="page"{% endif %}>Flagged Answers</a>
+    <a href="{{ _b }}/evals" class="{% if _seg == 'evals' %}active{% endif %}" {% if _seg == 'evals' %}aria-current="page"{% endif %}>Evaluations</a>
   </nav>
   {% elif _is_access %}
   <nav class="client-workspace-secondary" aria-label="Access tools">
-    <a href="{{ _b }}/users" class="{% if _seg == 'users' %}active{% endif %}">Users</a>
-    <a href="{{ _b }}/groups" class="{% if _seg == 'groups' %}active{% endif %}">Groups</a>
-    <a href="{{ _b }}/pending-users" class="{% if _seg == 'pending-users' %}active{% endif %}">Access Requests{% if pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
+    <a href="{{ _b }}/users" class="{% if _seg == 'users' %}active{% endif %}" {% if _seg == 'users' %}aria-current="page"{% endif %}>Users</a>
+    <a href="{{ _b }}/groups" class="{% if _seg == 'groups' %}active{% endif %}" {% if _seg == 'groups' %}aria-current="page"{% endif %}>Groups</a>
+    <a href="{{ _b }}/pending-users" class="{% if _seg == 'pending-users' %}active{% endif %}" {% if _seg == 'pending-users' %}aria-current="page"{% endif %}>Access Requests{% if pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
   </nav>
   {% elif _is_configure %}
   <nav class="client-workspace-secondary" aria-label="Configuration">
-    <a href="{{ _b }}/settings" class="{% if _seg == 'settings' %}active{% endif %}">Configuration</a>
-    <a href="{{ _b }}/advanced" class="{% if _seg == 'advanced' %}active{% endif %}">Advanced</a>
+    <a href="{{ _b }}/settings" class="{% if _seg == 'settings' %}active{% endif %}" {% if _seg == 'settings' %}aria-current="page"{% endif %}>Configuration</a>
+    <a href="{{ _b }}/advanced" class="{% if _seg == 'advanced' %}active{% endif %}" {% if _seg == 'advanced' %}aria-current="page"{% endif %}>Advanced</a>
   </nav>
   {% endif %}
 </section>

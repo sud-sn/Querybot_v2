@@ -43,12 +43,21 @@ button, input, select, textarea { font: inherit; }
    and headings, which in Inter is darker than anything the scale
    asks for. */
 b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: var(--weight-bold); }
-button:focus-visible, input:focus-visible, select:focus-visible,
-textarea:focus-visible, a:focus-visible {
+/* The keyboard's place. A field shows it with its border and a soft halo;
+   everything else with an outline outside it, in --focus-ring-color, which
+   reads at 3:1 or better against every surface. An outline, not a
+   box-shadow: a component's own shadow -- a flat sidebar link, the active
+   item's accent bar -- used to erase the ring without anyone noticing. */
+input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-  border-radius: var(--radius-sm);
 }
+a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+/* On the navy sidebars the ring is the sidebar's accent, which reads there. */
+.sidebar, .client-sidebar, .portal-sidebar { --focus-ring-color: var(--sidebar-accent); }
 
 /* ── Cards ── */
 .card {

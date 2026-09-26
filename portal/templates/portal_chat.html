@@ -702,7 +702,7 @@ body:has(.chat-page) .main { background: var(--bg); }
               onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'"
               aria-label="{{ t('ui.chat.clear_search') }}">{{ ic("x", 14) }}</button>
     </div>
-    <div class="history-panel open" id="historyPanel" aria-label="{{ t('ui.chat.history_label') }}" role="complementary" data-state="loading">
+    <div class="history-panel open" id="historyPanel" aria-label="{{ t('ui.chat.history_label') }}" role="region" data-state="loading">
       <div class="hp-header">
         <span class="hp-title">{{ t('ui.chat.your_conversations') }}</span>
         <button type="button" class="hp-close" onclick="toggleHistoryPanel(false)" aria-label="{{ t('ui.chat.close_history') }}">{{ ic("x", 16) }}</button>
@@ -789,8 +789,8 @@ body:has(.chat-page) .main { background: var(--bg); }
            every string server-side, the stored answers included.
            `next` carries the thread id, so switching does not lose the
            conversation. #}
-        <form class="chat-lang-switch" method="post" action="/portal/api/language"
-              aria-label="{{ t('ui.lang.label') }}">
+        {# The sidebar's switch is the language landmark; this copy is not a second one. #}
+        <form class="chat-lang-switch" method="post" action="/portal/api/language">
           <input type="hidden" name="next" value="{{ current_portal_path }}">
           <span class="sr-only">{{ t('ui.lang.current', language=language_name) }}</span>
           {% for option in language_options %}
@@ -903,7 +903,7 @@ body:has(.chat-page) .main { background: var(--bg); }
     </div>
   </section>
     </div>
-    <aside class="artifact-pane" id="artifactPane" aria-label="{{ t('ui.chat.artifact_label') }}" aria-hidden="true">
+    <aside class="artifact-pane" id="artifactPane" aria-label="{{ t('ui.chat.artifact_label') }}" aria-hidden="true" inert>
       <header class="artifact-head">
         <div class="artifact-heading">
           <span class="artifact-icon" aria-hidden="true">{{ ic("dashboard", 16) }}</span>
@@ -2812,16 +2812,24 @@ function _setArtifactUrl(resultId){
     history.replaceState({}, '', url);
   } catch (_) {}
 }
+// A closed pane is out of the tab order as well as out of sight: inert, not
+// only aria-hidden, or Tab walks into tabs and buttons nobody can see.
+function _artifactPaneOpen(open){
+  const pane = document.getElementById('artifactPane');
+  if (!pane) return;
+  pane.setAttribute('aria-hidden', open ? 'false' : 'true');
+  if (open) pane.removeAttribute('inert'); else pane.setAttribute('inert', '');
+}
 function closeArtifactPane(){
   document.querySelector('.chat-workspace')?.classList.remove('artifact-open');
-  document.getElementById('artifactPane')?.setAttribute('aria-hidden', 'true');
+  _artifactPaneOpen(false);
   _setArtifactUrl('');
   setTimeout(() => window.dispatchEvent(new Event('resize')), 240);
 }
 function openArtifactPane(){
   if (!_activeArtifactPayload) return;
   document.querySelector('.chat-workspace')?.classList.add('artifact-open');
-  document.getElementById('artifactPane')?.setAttribute('aria-hidden', 'false');
+  _artifactPaneOpen(true);
   _setArtifactUrl(_activeArtifactPayload.data?.result_id || _activeArtifactPayload.trust?.result_id || 'latest');
   setTimeout(() => window.dispatchEvent(new Event('resize')), 240);
 }
