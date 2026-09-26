@@ -254,6 +254,11 @@ PLATFORM_FIELDS: dict[str, list[str]] = {
 
 PLATFORM_LABELS = {"zoom": "Zoom Team Chat", "teams": "Microsoft Teams", "slack": "Slack"}
 
+# The credentials that are secrets: never written back into a page.
+PLATFORM_SECRET_FIELDS = frozenset({
+    "client_secret", "webhook_secret", "app_password", "bot_token", "signing_secret",
+})
+
 
 def save_platform(
     platform_type: str, name: str, credentials: dict,

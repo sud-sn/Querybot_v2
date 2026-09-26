@@ -8,6 +8,7 @@
 
 {% if saved %}<div class="alert alert-success">Platform saved successfully.</div>{% endif %}
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if secrets_cleared %}<div class="alert alert-info">Secrets are never shown back on a page: enter them again before saving.</div>{% endif %}
 
 <div class="card">
   <div class="card-header"><h2>Add platform</h2></div>

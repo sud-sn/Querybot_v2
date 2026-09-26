@@ -1294,7 +1294,11 @@ async def platform_save(request: Request):
         store.save_platform(platform_type, name, creds, platform_id)
         return RedirectResponse("/admin/platforms?saved=1", status_code=303)
     except ValueError as e:
-        # Re-render with form values intact so the user doesn't have to retype everything
+        # Re-render with what was typed, so it need not all be typed again --
+        # but never a secret. The form put every credential back into the
+        # page, the ones just typed and, for an edit, the stored ones the save
+        # had fallen back to: readable in the page source and kept wherever
+        # the page is cached. Secret fields come back empty, and say so.
         platforms = store.list_platforms()
         for p in platforms:
             p["creds_masked"] = {k: store.mask(v) for k, v in p["credentials"].items()}
@@ -1305,8 +1309,9 @@ async def platform_save(request: Request):
             "prefill": {
                 "platform_type": platform_type,
                 "name":          name,
-                **creds,
+                **{k: v for k, v in creds.items() if k not in store.PLATFORM_SECRET_FIELDS},
             },
+            "secrets_cleared": any(creds.get(k) for k in store.PLATFORM_SECRET_FIELDS),
         })
 
 @router.post("/platforms/delete")
