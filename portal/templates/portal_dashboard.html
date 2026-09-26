@@ -162,7 +162,7 @@
            ondblclick, so a team viewer was told to double-click to rename and
            nothing happened. #}
         <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}"
-             {% if _can_edit %}title="{{ t('ui.dash.rename_hint') }}" ondblclick="startRenameChart(this, {{ chart.id }})"{% endif %}
+             {% if _can_edit %}title="{{ t('ui.dash.rename_hint') }}" ondblclick="startRenameChart(this, {{ chart.id|int }})"{% endif %}
              id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
         <div class="chart-card-sub">{% if chart.table_truncated %}{{ t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) }}{% else %}{{ plural('ui.dash.rows', chart.row_count) }}{% endif %} · {% if chart.from_cache %}{{ t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') }}{% else %}{{ t('ui.dash.live_refresh') }}{% endif %}</div>
       </div>
@@ -179,7 +179,7 @@
           <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id if dashboard_artifact else 0 }}">
         </form>
         {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
-          onclick="unpinChart({{ chart.id }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>{{ t('ui.dash.remove') }}</button>
+          onclick="unpinChart({{ chart.id|int }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>{{ t('ui.dash.remove') }}</button>
         {% endif %}
       </div>
     </div>
@@ -195,7 +195,7 @@
       {% elif chart.table_rows %}
       <div style="width:100%;height:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
         <table style="width:100%;border-collapse:collapse;font-size:var(--font-sm);white-space:nowrap">
-          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0 }})">{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }} ↕</button>{% else %}{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }}{% endif %}</th>{% endfor %}</tr></thead>
+          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0|int }})">{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }} ↕</button>{% else %}{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }}{% endif %}</th>{% endfor %}</tr></thead>
           <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}{% set cell = row[col] %}<td data-sort="{{ cell.v if cell.v is not none else '' }}" style="padding:.5rem .65rem;border-bottom:1px solid var(--border)">{{ cell.d }}</td>{% endfor %}</tr>{% endfor %}</tbody>
         </table>
       </div>

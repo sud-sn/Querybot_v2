@@ -245,15 +245,15 @@
               <button type="submit" class="btn btn-success btn-sm">Sync logs now</button>
             </form>
             <form method="post" action="/admin/databases/{{ d.id }}/logs/reset-all" style="display:inline" id="reset-all-logs-{{ d.id }}">
-              <button type="button" class="btn btn-danger btn-sm"
-                onclick="qbConfirm({title:'Reset all log tables?',body:'TRUNCATE all 3 external log tables (QUERY_LOG, LLM_CALL_LOG, KB_DATA_EGRESS_LOG) and re-export all local rows. The original data in those tables will be lost.',confirm:'Reset all logs',onConfirm:()=>document.getElementById('reset-all-logs-{{ d.id }}').submit()})">↺ Reset all logs</button>
+              <button type="submit" class="btn btn-danger btn-sm"
+                data-confirm-title="Reset all log tables?" data-confirm="TRUNCATE all 3 external log tables (QUERY_LOG, LLM_CALL_LOG, KB_DATA_EGRESS_LOG) and re-export all local rows. The original data in those tables will be lost." data-confirm-label="Reset all logs">↺ Reset all logs</button>
             </form>
             <form method="post" action="/admin/databases/{{ d.id }}/logs/reset-egress" style="display:inline" id="reset-egress-{{ d.id }}">
-              <button type="button" class="btn btn-warning btn-sm"
-                onclick="qbConfirm({title:'Reset egress log?',body:'TRUNCATE the external KB_DATA_EGRESS_LOG table and re-export all local rows.',confirm:'Reset egress',variant:'warning',onConfirm:()=>document.getElementById('reset-egress-{{ d.id }}').submit()})">↺ Reset egress only</button>
+              <button type="submit" class="btn btn-warning btn-sm"
+                data-confirm-title="Reset egress log?" data-confirm="TRUNCATE the external KB_DATA_EGRESS_LOG table and re-export all local rows." data-confirm-label="Reset egress" data-confirm-variant="warning">↺ Reset egress only</button>
             </form>
             <button type="button" class="btn btn-secondary btn-sm"
-              onclick="diagnoseLogs({{ d.id }})">{{ ic("search", 13) }} Diagnose</button>
+              onclick="diagnoseLogs({{ d.id|int }})">{{ ic("search", 13) }} Diagnose</button>
           </div>
         {% else %}
           <span class="badge badge-gray">Disabled</span>
@@ -265,8 +265,8 @@
           <button type="button" class="btn btn-secondary btn-sm" onclick="editDbRow(this)">Edit</button>
           <form method="post" action="/admin/databases/delete" style="display:inline">
             <input type="hidden" name="db_id" value="{{ d.id }}">
-            <button type="button" class="btn btn-danger btn-sm"
-              onclick="qbConfirm({title:'Delete database?',body:'Delete {{ d.name }}? Clients using this will lose their DB connection.',confirm:'Delete',onConfirm:()=>this.closest('form').submit()})">Delete</button>
+            <button type="submit" class="btn btn-danger btn-sm"
+              data-confirm-title="Delete database?" data-confirm="Delete {{ d.name }}? Clients using this will lose their DB connection." data-confirm-label="Delete">Delete</button>
           </form>
         </div>
       </td>

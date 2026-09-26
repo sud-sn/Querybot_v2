@@ -915,7 +915,7 @@ function t(id, vars){
   if (vars) for (const k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
   return out;
 }
-const ACCOUNT_ID = {{ user.account_id|tojson }};
+const ACCOUNT_ID = {{ (user.account_id or '')|tojson }};
 const USER_NAME = {{ user.name|tojson }};
 const USER_INIT = (USER_NAME[0] || 'U').toUpperCase();
 const USER_EMAIL = {{ user.email|default('', true)|tojson }};

@@ -334,8 +334,8 @@
           <form method="post" action="/admin/clients/{{ client.account_id }}/semantic-feedback/{{ item.id }}/review" class="review-actions">
             <input type="hidden" name="status" id="status-{{ item.id }}" value="">
             <textarea name="admin_note" placeholder="Optional note to the submitter"></textarea>
-            <button type="button" class="btn btn-success btn-sm" onclick="submitReview('{{ item.id }}','approved',this)">Approve and apply</button>
-            <button type="button" class="btn btn-danger btn-sm" onclick="submitReview('{{ item.id }}','rejected',this)">Reject</button>
+            <button type="button" class="btn btn-success btn-sm" onclick="submitReview('{{ item.id|int }}','approved',this)">Approve and apply</button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="submitReview('{{ item.id|int }}','rejected',this)">Reject</button>
           </form>
           {% else %}
             {% if item.admin_note %}<div class="kb-field-note"><strong>Admin note:</strong> {{ item.admin_note }}</div>{% endif %}

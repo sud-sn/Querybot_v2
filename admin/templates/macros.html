@@ -98,7 +98,7 @@
    variant: primary | secondary | danger | success
    size:    sm | xs | (empty = default)
 #}
-{% macro btn(text, href='', type='button', variant='primary', size='', icon='', extra_class='', onclick='') -%}
+{% macro btn(text, href='', type='button', variant='primary', size='', icon='', extra_class='') -%}
 {% if href -%}
 <a href="{{ href }}"
    class="btn btn-{{ variant }}{% if size %} btn-{{ size }}{% endif %}{% if extra_class %} {{ extra_class }}{% endif %}">
@@ -106,8 +106,7 @@
 </a>
 {%- else -%}
 <button type="{{ type }}"
-        class="btn btn-{{ variant }}{% if size %} btn-{{ size }}{% endif %}{% if extra_class %} {{ extra_class }}{% endif %}"
-        {% if onclick %}onclick="{{ onclick }}"{% endif %}>
+        class="btn btn-{{ variant }}{% if size %} btn-{{ size }}{% endif %}{% if extra_class %} {{ extra_class }}{% endif %}">
   {% if icon %}<span aria-hidden="true">{{ icon }}</span>{% endif %}{{ text }}
 </button>
 {%- endif %}

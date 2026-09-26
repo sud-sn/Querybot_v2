@@ -77,8 +77,8 @@
       <span class="badge badge-gray" style="margin-left:.25rem">{{ group.tables|length }} table{{ 's' if group.tables|length != 1 else '' }}</span>
     </div>
     <form method="post" action="/admin/clients/{{ client.account_id }}/groups/{{ group.id }}/delete" style="display:inline" id="del-group-{{ group.id }}">
-      <button type="button" class="btn btn-danger btn-sm"
-        onclick="qbConfirm({title:'Delete group?',body:'Delete “{{ group.name }}”? Users in this group will lose their table access.',confirm:'Delete group',onConfirm:()=>document.getElementById('del-group-{{ group.id }}').submit()})">Delete group</button>
+      <button type="submit" class="btn btn-danger btn-sm"
+        data-confirm-title="Delete group?" data-confirm="Delete “{{ group.name }}”? Users in this group will lose their table access." data-confirm-label="Delete group">Delete group</button>
     </form>
   </div>
   <div class="group-card-body">

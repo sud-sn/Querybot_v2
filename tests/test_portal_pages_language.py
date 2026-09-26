@@ -220,16 +220,25 @@ class TestTheNotificationsPage:
             assert f'<option value="{index}">' in markup
 
     def test_the_confirm_dialog_survives_an_apostrophe(self):
-        """The handler is JavaScript inside an HTML attribute. Jinja escapes an
-        apostrophe to &#39;, the parser decodes it back BEFORE the JS is
-        parsed, and a bare string would end early -- taking the whole dialog
-        with it. tojson emits \\u0027 and survives both passes."""
-        markup = _page("portal_notifications.html", "fr", alerts=[self.ALERT])
-        handler = markup[markup.index("qbConfirm({"):]
-        handler = handler[:handler.index('">')]
-        assert "&#39;" not in handler
-        assert "\\u0027" in handler
-        assert "Supprimer l\\u0027alerte" in handler
+        """The dialog's text used to be JavaScript inside an HTML attribute,
+        where an apostrophe could end the string -- and tojson's own double
+        quotes ended the attribute, so the button never worked in either
+        language. The text is now attributes the layout hands to qbConfirm;
+        what matters is the text the browser reads out of them."""
+        from html.parser import HTMLParser
+
+        class Buttons(HTMLParser):
+            found: list[dict] = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "button" and any(k == "data-confirm" for k, _ in attrs):
+                    self.found.append(dict(attrs))
+
+        parser = Buttons()
+        parser.found = []
+        parser.feed(_page("portal_notifications.html", "fr", alerts=[self.ALERT]))
+        assert [b["data-confirm-title"] for b in parser.found] == ["Supprimer l'alerte ?"]
+        assert not any(k.startswith("on") for b in parser.found for k in b)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

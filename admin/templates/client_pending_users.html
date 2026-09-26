@@ -109,7 +109,7 @@
   <tr class="pu-row" data-uid="{{ u.id }}">
     <td>
       <button type="button" class="pu-btn" style="padding:2px 6px;font-size:var(--font-2xs)"
-        onclick="togglePuDetail('{{ u.id }}')">+</button>
+        onclick="togglePuDetail('{{ u.id|int }}')">+</button>
     </td>
     <td><span class="pu-name">{{ u.display_name or '—' }}</span></td>
     <td><span class="pu-platform">{{ u.platform_type }}</span></td>
@@ -183,13 +183,13 @@
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/reject"
                   id="pu-block-{{ u.id }}">
-              <button type="button" class="pu-btn pu-btn-reject"
-                onclick="qbConfirm({title:'Block this user?',body:'They will be silently ignored if they message again. You can unblock them later from the Blocked filter.',confirm:'Block user',onConfirm:()=>document.getElementById('pu-block-{{ u.id }}').submit()})">Block User</button>
+              <button type="submit" class="pu-btn pu-btn-reject"
+                data-confirm-title="Block this user?" data-confirm="They will be silently ignored if they message again. You can unblock them later from the Blocked filter." data-confirm-label="Block user">Block User</button>
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
                   id="pu-del-user-{{ u.id }}">
-              <button type="button" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
-                onclick="qbConfirm({title:'Delete this user?',body:'Their portal access is removed along with the request. This cannot be undone.',confirm:'Delete user',onConfirm:()=>document.getElementById('pu-del-user-{{ u.id }}').submit()})">Delete</button>
+              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
+                data-confirm-title="Delete this user?" data-confirm="Their portal access is removed along with the request. This cannot be undone." data-confirm-label="Delete user">Delete</button>
             </form>
           </div>
         </div>
@@ -216,8 +216,8 @@
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
                   id="pu-del-req-{{ u.id }}">
-              <button type="button" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
-                onclick="qbConfirm({title:'Delete this request?',body:'The person can sign up again later. This only removes the pending request.',confirm:'Delete request',onConfirm:()=>document.getElementById('pu-del-req-{{ u.id }}').submit()})">Delete Request</button>
+              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
+                data-confirm-title="Delete this request?" data-confirm="The person can sign up again later. This only removes the pending request." data-confirm-label="Delete request">Delete Request</button>
             </form>
           </div>
         </div>

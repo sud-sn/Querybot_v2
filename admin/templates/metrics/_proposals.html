@@ -53,8 +53,8 @@
         That is what you are approving.
       </div>
       <div class="mp-actions">
-        <button type="button" class="btn btn-primary btn-sm" onclick="reviewProposal({{ p.id }}, 'accept')">Accept</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="reviewProposal({{ p.id }}, 'reject')">Reject</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="reviewProposal({{ p.id|int }}, 'accept')">Accept</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="reviewProposal({{ p.id|int }}, 'reject')">Reject</button>
         <span class="mp-status" id="mp-status-{{ p.id }}"></span>
       </div>
     </div>
@@ -68,7 +68,7 @@ async function reviewProposal(id, action) {
   status.textContent = action === 'accept' ? 'Accepting…' : 'Rejecting…';
   try {
     const res  = await fetch(
-      `/admin/clients/{{ client.account_id }}/metrics/api/proposals/${id}/${action}`,
+      `/admin/clients/${encodeURIComponent({{ (client.account_id or '')|tojson }})}/metrics/api/proposals/${id}/${action}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
     );
     const body = await res.json().catch(() => ({}));

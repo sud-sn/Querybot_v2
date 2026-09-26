@@ -618,18 +618,25 @@ def test_no_native_browser_dialogs_in_the_admin_console():
 def test_destructive_actions_are_confirmed_not_bare_submits():
     """Converting a form from onsubmit=confirm() to qbConfirm means giving the
     form an id and the button an onclick. Doing only the first half leaves the
-    action firing with no confirmation at all -- worse than before."""
+    action firing with no confirmation at all -- worse than before.
+
+    A form is confirmed one of two ways: its submit button carries
+    data-confirm, which the admin layout turns into a qbConfirm before the
+    submit (tests/test_names_cannot_run_as_script.py runs that listener), or a
+    qbConfirm handler submits the form by its id."""
     guarded_ids = ("pu-block-", "pu-del-user-", "pu-del-req-", "revoke-att-",
                    "publish-v", "delete-kb-form")
     for path in sorted((ROOT / "admin" / "templates").glob("*.html")):
         source = path.read_text(encoding="utf-8")
         for form_id in guarded_ids:
-            if f'id="{form_id}' not in source:
-                continue
-            # The confirming button must reference this form by id.
-            assert f"getElementById('{form_id}" in source, (
-                f"{path.name}: form '{form_id}' has no qbConfirm handler pointing at it"
-            )
+            forms = re.findall(r'<form\b[^>]*\bid="' + re.escape(form_id) + r'[^>]*>(.*?)</form>',
+                               source, re.S)
+            for body in forms:
+                buttons = re.findall(r"<button\b[^>]*>", body, re.S)
+                confirmed = any("data-confirm=" in b for b in buttons if 'type="submit"' in b)
+                assert confirmed or f"getElementById('{form_id}" in source, (
+                    f"{path.name}: form '{form_id}' submits without a confirmation"
+                )
 
 
 def test_the_compliance_tabs_show_which_panel_is_open():

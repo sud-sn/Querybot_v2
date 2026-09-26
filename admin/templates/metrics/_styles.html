@@ -444,4 +444,4 @@
 .syn-accept{flex:0 0 auto}
 </style>
 <!-- Pass db_type to JS -->
-<script>window._qbDbType = "{{ db_type | default('azure_sql') }}";</script>
+<script>window._qbDbType = {{ (db_type | default('azure_sql'))|tojson }};</script>

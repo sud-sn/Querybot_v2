@@ -217,8 +217,8 @@ details[open].edit-panel summary{background:var(--gray-100)}
           <form method="post"
             action="/admin/clients/{{ client.account_id }}/glossary/{{ t.id }}/delete"
             style="display:inline" id="del-gloss-{{ t.id }}">
-            <button type="button" class="btn btn-secondary btn-sm"
-              onclick="qbConfirm({title:'Delete term?',body:'This cannot be undone.',confirm:'Delete',onConfirm:()=>document.getElementById('del-gloss-{{ t.id }}').submit()})">Delete</button>
+            <button type="submit" class="btn btn-secondary btn-sm"
+              data-confirm-title="Delete term?" data-confirm="This cannot be undone." data-confirm-label="Delete">Delete</button>
           </form>
         </div>
       </div>
@@ -291,7 +291,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
             </label>
             <textarea name="clarification_options_json"
               placeholder="Clarification options JSON"
-              style="margin-top:.4rem">{% if t.clarification_options_parsed %}{{ t.clarification_options|safe }}{% endif %}</textarea>
+              style="margin-top:.4rem">{{ t.clarification_options_text }}</textarea>
             <div style="margin-top:.4rem">
               <label style="font-size:var(--font-sm)">
                 <input type="checkbox" name="is_active" value="1"

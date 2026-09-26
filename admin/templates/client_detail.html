@@ -691,7 +691,7 @@
         {% set gid = loop.index %}
         <!-- ── Parent row (one per user question) ── -->
         <tbody>
-        <tr class="audit-group-row" onclick="toggleAuditGroup({{ gid }}, this)">
+        <tr class="audit-group-row" onclick="toggleAuditGroup({{ gid|int }}, this)">
           <td style="padding:.7rem .5rem .7rem .75rem">
             <button class="audit-expand-btn" id="btn-{{ gid }}" aria-expanded="false" aria-label="Expand calls">
               <span class="chevron">▶</span>

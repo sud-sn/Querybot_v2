@@ -171,7 +171,7 @@
   <tr class="lq-row" data-cid="{{ cid }}">
     <td>
       <button type="button" class="lq-btn" style="padding:2px 6px;font-size:var(--font-2xs)"
-        onclick="toggleDetail('{{ cid }}')">+</button>
+        data-candidate="{{ cid }}" onclick="toggleDetail(this.dataset.candidate)">+</button>
     </td>
     <td>
       <div class="question-cell" title="{{ c.question_text }}">{{ c.question_text[:80] }}</div>

@@ -106,8 +106,8 @@
       <td>
         <form method="post" action="/admin/platforms/delete" style="display:inline">
           <input type="hidden" name="platform_id" value="{{ p.id }}">
-          <button type="button" class="btn btn-danger btn-sm"
-            onclick="qbConfirm({title:'Delete platform?',body:'Delete {{ p.name }}?',confirm:'Delete',onConfirm:()=>this.closest('form').submit()})">Delete</button>
+          <button type="submit" class="btn btn-danger btn-sm"
+            data-confirm-title="Delete platform?" data-confirm="Delete {{ p.name }}?" data-confirm-label="Delete">Delete</button>
         </form>
       </td>
     </tr>
@@ -129,7 +129,7 @@ function showFields(t){
 }
 // Auto-show fields if form is being re-rendered after a validation error
 (function(){
-  var pre = "{{ pf.get('platform_type','') }}";
+  var pre = {{ pf.get('platform_type','')|tojson }};
   if(pre) showFields(pre);
   // Disable all hidden section inputs on initial load
   else ['zoom','teams','slack'].forEach(function(x){

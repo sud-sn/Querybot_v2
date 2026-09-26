@@ -106,8 +106,8 @@ details[open].edit-panel summary{background:var(--gray-100)}
           <form method="post"
             action="/admin/clients/{{ client.account_id }}/reports/{{ r.id }}/delete"
             style="display:inline" id="del-report-{{ r.id }}">
-            <button type="button" class="btn btn-secondary btn-sm"
-              onclick="qbConfirm({title:'Delete report?',body:'This cannot be undone. Subscriptions to it will stop.',confirm:'Delete',onConfirm:()=>document.getElementById('del-report-{{ r.id }}').submit()})">Delete</button>
+            <button type="submit" class="btn btn-secondary btn-sm"
+              data-confirm-title="Delete report?" data-confirm="This cannot be undone. Subscriptions to it will stop." data-confirm-label="Delete">Delete</button>
           </form>
         </div>
       </div>

@@ -244,8 +244,8 @@
         </div>
         {% if not item.revoked_at %}
         <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ item.id }}/revoke" id="revoke-att-{{ item.id }}">
-          <button type="button" class="btn btn-secondary" style="font-size:var(--font-xs)"
-            onclick="qbConfirm({title:'Revoke this attestation?',body:'{{ item.user_id or 'This user' }} will see masked values again immediately, on their next query.',confirm:'Revoke',onConfirm:()=>document.getElementById('revoke-att-{{ item.id }}').submit()})">Revoke</button>
+          <button type="submit" class="btn btn-secondary" style="font-size:var(--font-xs)"
+            data-confirm-title="Revoke this attestation?" data-confirm="{{ item.user_id or 'This user' }} will see masked values again immediately, on their next query." data-confirm-label="Revoke">Revoke</button>
         </form>
         {% endif %}
       </div>
@@ -507,7 +507,7 @@ document.getElementById('class-search')?.addEventListener('input',e=>{
 document.querySelectorAll('.save-classification').forEach(btn=>btn.addEventListener('click',async()=>{
   const row=btn.closest('tr');btn.disabled=true;
   const tags=[...row.querySelectorAll('[data-tag]:checked')].map(cb=>cb.value);
-  const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/classifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+  const resp=await fetch('/admin/api/clients/'+encodeURIComponent({{ (client.account_id or '')|tojson }})+'/compliance/classifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
     table_fqn:btn.dataset.table,column_name:btn.dataset.column,tags:tags,
     sensitivity:row.querySelector('[data-field=sensitivity]').value,
     identifiability:row.querySelector('[data-field=identifiability]').value,
@@ -518,7 +518,7 @@ document.querySelectorAll('.save-classification').forEach(btn=>btn.addEventListe
 document.getElementById('sim-form')?.addEventListener('submit',async e=>{
   e.preventDefault();const fd=new FormData(e.target);
   const body={user_id:fd.get('user_id'),action:fd.get('action'),purpose_id:fd.get('purpose_id'),channel:'portal',resources:String(fd.get('resources')||'').split(/\r?\n/).filter(Boolean)};
-  const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const resp=await fetch('/admin/api/clients/'+encodeURIComponent({{ (client.account_id or '')|tojson }})+'/compliance/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   document.getElementById('sim-output').textContent=JSON.stringify(await resp.json(),null,2);
 });
 const existingRowPolicies={{ row_policies|tojson }};
@@ -528,7 +528,7 @@ document.getElementById('row-policy-form')?.addEventListener('submit',async e=>{
   if(fd.get('operator')==='IN' && fd.get('value_source')==='static') value=String(value||'').split(',').map(v=>v.trim()).filter(Boolean);
   const next={name:'Admin row policy',subject_type:'role',subject_id:fd.get('subject_id'),table_fqn:fd.get('table_fqn'),condition:{field:fd.get('field'),operator:fd.get('operator'),value_source:fd.get('value_source'),value:value}};
   const clean=existingRowPolicies.map(p=>({name:p.name,subject_type:p.subject_type,subject_id:p.subject_id,table_fqn:p.table_fqn,condition:p.condition}));
-  const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/row-policies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row_policies:[...clean,next]})});
+  const resp=await fetch('/admin/api/clients/'+encodeURIComponent({{ (client.account_id or '')|tojson }})+'/compliance/row-policies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row_policies:[...clean,next]})});
   if(resp.ok) location.reload(); else qbToast.error('Could not save the row policy.');
 });
 </script>

@@ -548,7 +548,7 @@
           <span class="schema-card-name" title="{{ _stem }}">{{ _stem }}</span>
           {% if _stem.upper() in _drift_added %}<span class="schema-card-new">new</span>{% endif %}
           {% if _stem.upper() in _drift_changed %}<span class="schema-card-drift">col changed</span>{% endif %}
-          <button class="tbl-fields-btn" onclick="event.stopPropagation();_toggleSchemaCardFields({{ _stem | tojson }}, this)">▶ Fields</button>
+          <button class="tbl-fields-btn" onclick='event.stopPropagation();_toggleSchemaCardFields({{ _stem | tojson }}, this)'>▶ Fields</button>
         </div>
         <div id="sfld-{{ _fld_key }}" class="tbl-fields-body" style="display:none"></div>
       </div>
@@ -802,7 +802,7 @@
         "use strict";
         const root = document.getElementById('tableDescriptions');
         if (!root) return;
-        const ACCOUNT = "{{ client.account_id }}";
+        const ACCOUNT = {{ (client.account_id or '')|tojson }};
 
         function recount() {
           const rows = root.querySelectorAll('.td-row');

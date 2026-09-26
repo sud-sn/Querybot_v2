@@ -35,7 +35,7 @@
   const send  = document.getElementById('authorChatSend');
   if (!form || !input || !log) return;
 
-  const ACCOUNT = "{{ client.account_id }}";
+  const ACCOUNT = {{ (client.account_id or '')|tojson }};
   // Trimmed to eight turns, matching the graph chat and the portal handler.
   // An unbounded history is a prompt that grows until it is refused.
   const history = [];

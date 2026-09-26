@@ -8621,17 +8621,22 @@ async def glossary_page(request: Request, account_id: str):
     if not client:
         return RedirectResponse("/admin/clients", status_code=303)
     terms = store.list_terms(account_id, active_only=False)
-    # Parse clarification_options JSON for each term so template can render
+    # list_terms returns the options already parsed. This loop used to parse
+    # them again, which raised on the list, so every term showed no options and
+    # its edit form an empty editor -- and saving that form erased them.
     import json as _json
     for t in terms:
-        opts_raw = t.get("clarification_options") or ""
-        if opts_raw:
+        opts = t.get("clarification_options") or []
+        if isinstance(opts, str):
             try:
-                t["clarification_options_parsed"] = _json.loads(opts_raw)
-            except Exception:
-                t["clarification_options_parsed"] = []
-        else:
-            t["clarification_options_parsed"] = []
+                opts = _json.loads(opts)
+            except ValueError:
+                opts = []
+        t["clarification_options_parsed"] = opts if isinstance(opts, list) else []
+        t["clarification_options_text"] = (
+            _json.dumps(t["clarification_options_parsed"], ensure_ascii=False, indent=2)
+            if t["clarification_options_parsed"] else ""
+        )
     stats = store.glossary_stats(account_id)
     return _resp(request, "client_glossary.html", {
         "client": client,

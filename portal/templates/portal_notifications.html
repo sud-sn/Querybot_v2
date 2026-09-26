@@ -29,8 +29,10 @@
             </div>
             <form method="post" action="/portal/notifications/alerts/{{ a.id }}/delete"
               style="display:inline" id="del-alert-{{ a.id }}">
-              <button type="button" class="btn btn-secondary btn-sm"
-                onclick="qbConfirm({title:{{ t('ui.notif.delete_alert_title')|tojson }},body:{{ t('ui.notif.delete_undone')|tojson }},confirm:{{ t('ui.notif.delete')|tojson }},onConfirm:()=>document.getElementById('del-alert-{{ a.id }}').submit()})">{{ t('ui.notif.delete') }}</button>
+              <button type="submit" class="btn btn-secondary btn-sm"
+                data-confirm-title="{{ t('ui.notif.delete_alert_title') }}"
+                data-confirm="{{ t('ui.notif.delete_undone') }}"
+                data-confirm-label="{{ t('ui.notif.delete') }}">{{ t('ui.notif.delete') }}</button>
             </form>
           </div>
         {% endfor %}
@@ -61,8 +63,10 @@
             </div>
             <form method="post" action="/portal/reports/{{ r.id }}/delete" style="display:inline"
               id="del-my-report-{{ r.id }}">
-              <button type="button" class="btn btn-secondary btn-sm"
-                onclick="qbConfirm({title:{{ t('ui.notif.delete_report_title')|tojson }},body:{{ t('ui.notif.delete_report_body')|tojson }},confirm:{{ t('ui.notif.delete')|tojson }},onConfirm:()=>document.getElementById('del-my-report-{{ r.id }}').submit()})">{{ t('ui.notif.delete') }}</button>
+              <button type="submit" class="btn btn-secondary btn-sm"
+                data-confirm-title="{{ t('ui.notif.delete_report_title') }}"
+                data-confirm="{{ t('ui.notif.delete_report_body') }}"
+                data-confirm-label="{{ t('ui.notif.delete') }}">{{ t('ui.notif.delete') }}</button>
             </form>
           </div>
         {% endfor %}

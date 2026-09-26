@@ -422,7 +422,7 @@ class TestDbAwareSyntax(unittest.TestCase):
     def test_db_type_passed_to_js(self):
         tmpl = _tmpl()
         self.assertIn("window._qbDbType", tmpl)
-        self.assertIn("{{ db_type", tmpl)
+        self.assertIn("{{ (db_type | default('azure_sql'))|tojson }}", tmpl)
 
     def test_metrics_route_resolves_db_type(self):
         routes = _routes()

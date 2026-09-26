@@ -80,8 +80,8 @@
             {% if v.status != 'active' %}
             <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/versions/{{ v.version }}/rollback"
                   id="publish-v{{ v.version }}">
-              <button type="button" class="btn btn-secondary btn-xs"
-                onclick="qbConfirm({title:'Publish version {{ v.version }}?',body:'This becomes the active semantic contract and supersedes the current one. Questions asked after publishing use this version.',confirm:'Publish',variant:'primary',onConfirm:()=>document.getElementById('publish-v{{ v.version }}').submit()})">Publish this version</button>
+              <button type="submit" class="btn btn-secondary btn-xs"
+                data-confirm-title="Publish version {{ v.version }}?" data-confirm="This becomes the active semantic contract and supersedes the current one. Questions asked after publishing use this version." data-confirm-label="Publish" data-confirm-variant="primary">Publish this version</button>
             </form>
             {% endif %}
           </td>

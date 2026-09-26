@@ -90,7 +90,7 @@
     <div style="display:flex;gap:.4rem">
       <button class="btn btn-primary btn-sm" type="submit">Save</button>
       <button class="btn btn-sm" type="submit" formaction="/admin/clients/{{ client.account_id }}/domains/delete"
-              formnovalidate onclick="return confirm('Remove {{ domain.name }}? Questions will stop routing to it.')">Remove</button>
+              formnovalidate data-confirm-title="Remove this domain?" data-confirm="Remove {{ domain.name }}? Questions will stop routing to it." data-confirm-label="Remove">Remove</button>
     </div>
   </div>
   <div class="area-body">
@@ -190,7 +190,7 @@
     if (!q) { out.textContent = ''; return; }
     out.textContent = 'Checking…';
     try {
-      var res = await fetch('/admin/api/clients/{{ client.account_id }}/domains/route?q=' + encodeURIComponent(q));
+      var res = await fetch('/admin/api/clients/' + encodeURIComponent({{ (client.account_id or '')|tojson }}) + '/domains/route?q=' + encodeURIComponent(q));
       if (!res.ok) { out.textContent = 'Could not check that question.'; return; }
       var data = await res.json();
       if (!data.primary) {

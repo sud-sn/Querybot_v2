@@ -720,7 +720,7 @@
 </div>
 
 <script>
-const ACCOUNT_ID    = "{{ client.account_id }}";
+const ACCOUNT_ID    = {{ (client.account_id or '')|tojson }};
 const API_BASE      = `/admin/clients/${ACCOUNT_ID}/graph/api`;
 const ENTITY_COLUMNS = {{ entity_columns | tojson | safe }};
 

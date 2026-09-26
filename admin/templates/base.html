@@ -198,6 +198,32 @@
       else { confirmBtn.focus(); }
     }, 30);
   };
+
+  /*
+   * <button type="submit" data-confirm="Delete Ada?"
+   *         data-confirm-title="…" data-confirm-label="…" data-confirm-variant="…">
+   *
+   * Asks with qbConfirm before the button does what it does. The message is
+   * an attribute the page escapes, so a name with a quote in it stays text:
+   * these messages used to be written inside onclick="qbConfirm({body:'…'})",
+   * where a user's display name could close the string and run as script.
+   * On "confirm" the button is clicked again, so it submits exactly as it
+   * would have -- its form, its formaction, its name and value.
+   */
+  document.addEventListener('click', function(e){
+    var el = e.target && e.target.closest ? e.target.closest('[data-confirm]') : null;
+    if(!el) return;
+    if(el.dataset.confirmed === '1'){ delete el.dataset.confirmed; return; }
+    e.preventDefault();
+    e.stopPropagation();
+    window.qbConfirm({
+      title: el.dataset.confirmTitle,
+      body: el.dataset.confirm,
+      confirm: el.dataset.confirmLabel,
+      variant: el.dataset.confirmVariant,
+      onConfirm: function(){ el.dataset.confirmed = '1'; el.click(); }
+    });
+  }, true);
 })();
 </script>
 

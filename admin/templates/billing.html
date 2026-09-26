@@ -119,10 +119,10 @@
         </td>
         <td>
           <button type="button" class="btn btn-xs btn-secondary pr-edit-btn"
-            onclick="editPricingRow(this, '{{ row.model }}')">Edit</button>
+            data-model="{{ row.model }}" onclick="editPricingRow(this, this.dataset.model)">Edit</button>
           <button type="button" class="btn btn-xs btn-primary pr-save-btn"
             style="display:none"
-            onclick="savePricingRow(this, '{{ row.model }}', '{{ client.account_id }}')">Save</button>
+            data-model="{{ row.model }}" data-account="{{ client.account_id }}" onclick="savePricingRow(this, this.dataset.model, this.dataset.account)">Save</button>
           <button type="button" class="btn btn-xs btn-secondary pr-cancel-btn"
             style="display:none"
             onclick="cancelPricingRow(this)">Cancel</button>
@@ -281,7 +281,7 @@ function savePricingRow(btn, model, accountId) {
 var _syncPrices   = [];
 var _syncFilter   = '';
 var _syncProvider = '';
-var _accountId    = '{{ client.account_id }}';
+var _accountId    = {{ (client.account_id or '')|tojson }};
 
 document.getElementById('syncPricesBtn').addEventListener('click', openSyncModal);
 

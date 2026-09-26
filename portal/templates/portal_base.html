@@ -448,6 +448,28 @@ window.qbEnumLabel = function (group, value) {
     backdrop.style.display = 'flex';
     setTimeout(function(){ confirmBtn.focus(); }, 30);
   };
+
+  /*
+   * <button type="submit" data-confirm="…" data-confirm-title="…" data-confirm-label="…">
+   *
+   * Asks with qbConfirm before the button does what it does, as in the admin
+   * layout. The text is an attribute the page escapes, never part of a
+   * handler; on "confirm" the button is clicked again and submits its form.
+   */
+  document.addEventListener('click', function(e){
+    var el = e.target && e.target.closest ? e.target.closest('[data-confirm]') : null;
+    if(!el) return;
+    if(el.dataset.confirmed === '1'){ delete el.dataset.confirmed; return; }
+    e.preventDefault();
+    e.stopPropagation();
+    window.qbConfirm({
+      title: el.dataset.confirmTitle,
+      body: el.dataset.confirm,
+      confirm: el.dataset.confirmLabel,
+      variant: el.dataset.confirmVariant,
+      onConfirm: function(){ el.dataset.confirmed = '1'; el.click(); }
+    });
+  }, true);
 })();
 </script>
 
@@ -483,7 +505,7 @@ window.qbEnumLabel = function (group, value) {
 (function(){
   var socket=null,reconnectMs=1000,toastTimer=null;
   var seenKey='qb-portal-reviewed-feedback';
-  var queryLimitSeenKey='qb-portal-query-limit:{{ user.account_id }}';
+  var queryLimitSeenKey='qb-portal-query-limit:'+{{ (user.account_id or '')|tojson }};
 
   function seenSet(){try{return new Set(JSON.parse(sessionStorage.getItem(seenKey)||'[]'));}catch(_){return new Set();}}
   function markSeen(key){var s=seenSet();s.add(key);sessionStorage.setItem(seenKey,JSON.stringify(Array.from(s).slice(-200)));}

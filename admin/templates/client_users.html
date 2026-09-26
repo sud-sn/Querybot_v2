@@ -226,8 +226,8 @@
               <form method="post"
                     action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/delete"
                     id="del-user-{{ u.id }}">
-                <button type="button" class="btn btn-ghost btn-xs qb-tip text-danger" data-tip="Delete user"
-                  onclick="qbConfirm({title:'Delete user?',body:'Delete {{ u.name }}? This removes their portal access and any pinned charts.',confirm:'Delete user',onConfirm:()=>document.getElementById('del-user-{{ u.id }}').submit()})">
+                <button type="submit" class="btn btn-ghost btn-xs qb-tip text-danger" data-tip="Delete user"
+                  data-confirm-title="Delete user?" data-confirm="Delete {{ u.name }}? This removes their portal access and any pinned charts." data-confirm-label="Delete user">
                   {{ ic("trash", 13) }}
                 </button>
               </form>
@@ -433,7 +433,7 @@
 <script>
 /* The reset dialog: one form, pointed at the user whose button opened it. */
 (function () {
-  var accountId = {{ client.account_id|tojson }};
+  var accountId = {{ (client.account_id or '')|tojson }};
   var dialog = document.getElementById('resetDialog');
   var form = document.getElementById('resetDialogForm');
   var choose = document.getElementById('resetChoose');

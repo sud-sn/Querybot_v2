@@ -137,7 +137,7 @@ class TestTheCoveragePanelIsReachable(unittest.TestCase):
 
     def test_every_metric_row_offers_it(self):
         markup = self.REGISTRY.read_text(encoding="utf-8")
-        self.assertIn("showMetricCoverage({{ m.id }}, this)", markup)
+        self.assertIn("showMetricCoverage({{ m.id|int }}, this)", markup)
         self.assertIn('id="coverage-{{ m.id }}"', markup)
 
     def test_the_handler_calls_the_endpoint_that_exists(self):
