@@ -275,7 +275,7 @@ textarea:focus-visible, a:focus-visible {
    button is .input-reveal-wrap (qb-ui.js, data-qb-reveal). */
 .form-group { margin-bottom: 1rem; }
 .form-label,
-.form-group label {
+.form-group label:not(.choice-card, .form-switch) {
   display: block;
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
@@ -408,11 +408,11 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 }
 .choice-card {
   position: relative;
-  display: flex !important;
+  display: flex;
   align-items: flex-start;
   gap: .7rem;
   min-height: 76px;
-  margin: 0 !important;
+  margin: 0;
   padding: .8rem .9rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -430,11 +430,11 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 .choice-card input[type="checkbox"],
 .choice-card input[type="radio"] {
   appearance: none;
-  width: 18px !important;
-  height: 18px !important;
+  width: 18px;
+  height: 18px;
   min-width: 18px;
   margin: 1px 0 0;
-  padding: 0 !important;
+  padding: 0;
   border: 1.5px solid var(--border-strong);
   border-radius: 5px;
   background: var(--surface);
@@ -456,10 +456,10 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 .choice-card-description { display: block; margin-top: 4px; color: var(--text-muted); font-size: var(--font-xs); line-height: 1.45; font-weight: var(--weight-medium); }
 
 .form-switch {
-  display: flex !important;
+  display: flex;
   align-items: flex-start;
   gap: .75rem;
-  margin: 0 !important;
+  margin: 0;
   cursor: pointer;
 }
 .form-switch input { position: absolute; opacity: 0; pointer-events: none; }
@@ -1325,4 +1325,78 @@ h2, h3 { font-weight: var(--weight-semibold); }
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'zero' 1;
   letter-spacing: -0.015em;
+}
+
+/* ── Folded from production.css ─────────────────────────────
+   These rules came from the override layer that loaded after every
+   page's own styles; they sit last in the sheet that owns them. */
+/* QueryBot production UI layer. Loaded after page-specific styles. */
+
+html {
+  background: var(--bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+body { background: var(--bg); letter-spacing: 0; }
+/* Quiet, consistent surfaces */
+.card,
+.surface-panel,
+.metric,
+.chart-card-content,
+.metric-row,
+.metric-card,
+.metric-editor-card { box-shadow: var(--shadow); }
+.card:hover,
+.metric:hover,
+.metric-row:hover,
+.chart-card:hover .chart-card-content {
+  transform: none;
+  box-shadow: var(--shadow);
+}
+.card-header,
+.metric-card-header,
+.metric-editor-card > .card-header,
+.chart-card-header { background: var(--surface); }
+.alert { border-radius: var(--radius); box-shadow: none; }
+.ui-chip { letter-spacing: 0; }
+.qb-table-wrap { box-shadow: none; }
+.qb-table thead th,
+.table th {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.qb-table tbody tr:nth-child(even),
+.table tbody tr:nth-child(even) { background: transparent; }
+.qb-table tbody tr:hover,
+.table tbody tr:hover { background: var(--row-hover); }
+.page-header h1,
+.page-header-body h1 {
+  font-size: var(--font-2xl);
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+.metric {
+  min-height: 104px;
+  padding: 16px;
+  border-color: var(--border);
+}
+.metric-label { font-size: var(--font-xs); letter-spacing: .05em; }
+.metric-value { letter-spacing: 0; }
+@media (max-width: 640px) {
+  .page-header h1,
+  .page-header-body h1 { font-size: var(--font-xl); }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric { min-height: 92px; padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }

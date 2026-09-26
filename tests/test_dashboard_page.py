@@ -714,13 +714,6 @@ class TestLandmarksAndTableSemantics:
         assert "<style>" not in TEMPLATE.read_text(encoding="utf-8")
         assert "/static/css/dashboard.css" in TEMPLATE.read_text(encoding="utf-8")
 
-    def test_the_stylesheet_still_loads_before_production_css(self):
-        """production.css calls itself the layer "loaded after page-specific
-        styles" -- a quieting pass that flattens gradients and removes the hover
-        lift. Loading this page's CSS after it would silently revert that."""
-        base = (ROOT / "portal" / "templates" / "portal_base.html").read_text(encoding="utf-8")
-        assert base.index("{% block head %}") < base.index("production.css")
-
     def test_the_dead_declarations_were_deleted_not_promoted(self):
         css = STYLESHEET.read_text(encoding="utf-8")
         body = css[css.index("*/") + 2:]

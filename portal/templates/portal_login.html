@@ -57,6 +57,20 @@
 .login-mono-input{font-family:var(--font-mono);letter-spacing:.02em;font-size:var(--font-base)}
 .login-submit{width:100%;justify-content:center;padding:10px;margin-top:.25rem}
 .login-footer{text-align:center;font-size:var(--font-sm);color:var(--text-muted);margin-top:1rem}
+
+/* Folded from production.css, which loaded after this block. */
+.login-shell {
+  width: min(100%, 400px);
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 auto;
+}
+.login-shell .card,
+.login-shell form,
+.login-shell .form-group,
+.login-shell input { min-width: 0; max-width: 100%; }
+.login-brand { color: var(--text); letter-spacing: 0; }
+.login-footer { max-width: 100%; overflow-wrap: anywhere; }
 </style>
 
 {% endblock %}

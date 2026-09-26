@@ -446,6 +446,39 @@
 .eg-m-btn:hover{background:var(--surface-2)}
 .eg-m-btn.primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
 .eg-m-btn.primary:hover{opacity:.85}
+
+/* Folded from production.css, which loaded after this block. */
+/* Entity graph */
+#eg-page,
+#eg-main { background: var(--bg); }
+#eg-main {
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--border-strong) 52%, transparent) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+#eg-sb,
+#eg-tb,
+#bp,
+#bp-tabs { box-shadow: none; }
+#eg-sb-head,
+#eg-tb,
+#bp-header { background: var(--surface); }
+.tb-btn,
+.bp-tab,
+.join-card,
+.eg-modal,
+#eg-zoom { border-radius: var(--radius-sm); }
+.tb-btn.primary,
+.jc-save,
+.filter-save,
+.eg-m-btn.primary { background: var(--primary); border-color: var(--primary); }
+.join-card:hover {
+  box-shadow: none;
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--border));
+}
+#bp {
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -10px 30px color-mix(in srgb, var(--shadow-tint) 8%, transparent);
+}
 </style>
 {% endblock %}
 

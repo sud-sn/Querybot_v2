@@ -1,14 +1,11 @@
 /* QueryBot dashboard page.
  *
- * Loaded from portal_dashboard.html's {% block head %}, which is BEFORE
- * production.css -- deliberately, and unchanged from where this lived as an
- * inline <style>. production.css calls itself "the production UI layer, loaded
- * after page-specific styles": it is a quieting pass that flattens gradients,
- * removes the hover lift and tightens padding across the product. Loading this
- * file after it would silently undo that everywhere on this page.
+ * Loaded from portal_dashboard.html's {% block head %}. The quieting pass that
+ * used to override it from production.css (flat headers, no hover lift,
+ * tighter padding) now sits at the end of this file, where it applies.
  *
- * What DID change is that eight declarations here were already being overridden
- * and have been deleted rather than left to read as though they applied:
+ * Eight declarations here were already being overridden by that pass and
+ * have been deleted rather than left to read as though they applied:
  *
  *   .chart-card:hover .chart-card-content   box-shadow + translateY lift
  *   .chart-card-header                      gradient background, .95rem padding
@@ -196,3 +193,25 @@
   .dcpt-swatch:hover { transform: none; }
 }
 
+/* ── Folded from production.css ─────────────────────────────
+   These rules came from the override layer that loaded after every
+   page's own styles; they sit last in the sheet that owns them. */
+/* Dashboard */
+.dashboard-page {
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto;
+}
+.dashboard-page .metrics {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.chart-grid { gap: 14px; }
+.chart-card-content { border-radius: var(--radius); }
+.chart-card-header { padding: 12px 14px; }
+.chart-card-body { padding: 14px; }
+.chart-canvas { background: var(--surface); }
+.welcome-banner { background: var(--primary); box-shadow: none; }
+@media (max-width: 640px) {
+  .chart-card-header { flex-direction: column; }
+}

@@ -3,7 +3,7 @@ One button, for both consoles.
 
 Buttons were defined three times over: once in base.css, again further down
 base.css (the loading spinner, a success hover in a literal green, a warning
-hover mixed with black), and overridden by production.css, which loads after
+hover mixed with black), and overridden by production.css, which loaded after
 every page's own styles. Pages then built their own: a filled green "approve",
 two copies of an outlined approve/reject pair, a blue fetch button with its own
 white spinner, a restart button in a literal brown. The alert macro asked for a
@@ -156,7 +156,7 @@ def _colouring_rules():
 
 
 def test_no_page_or_later_stylesheet_recolours_the_button():
-    # production.css, admin.css, a page's <style>: layout (width, margins)
+    # admin.css, a page's <style>: layout (width, margins)
     # is theirs to set, colour is the button's.
     found = [f"{name}: {selector}" for name, selector, _ in _colouring_rules()
              if re.search(r"\.btn(?:-[\w-]+)?(?![\w-])", selector)]
@@ -175,7 +175,6 @@ SPECIAL_BUTTONS = {
                          "sql-copy-btn"},                                        # chat, phase 6
     "client_detail.html": {"audit-expand-btn"},                                  # phase 6
     "client_graph.html": {"eg-m-btn", "jc-add-btn", "sf-btn", "tb-btn"},         # relationships, phase 4
-    "production.css": {"eg-m-btn", "tb-btn"},                                    # relationships, phase 4
     "client_setup.html": {"tbl-fields-btn"},                                     # phase 6
     "dashboard.css": {"dctt-btn"},                                               # dashboards, phase 5
     "login.html": {"input-reveal-btn"},                                          # fields, 2.5

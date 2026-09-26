@@ -45,11 +45,8 @@ def _read(path):
 def _defined_tokens() -> set[str]:
     """Everything on :root, plus per-component properties each sheet defines."""
     tokens = set()
-    for name in ("tokens", "base", "admin", "portal", "chat_workspace",
-                 "production", "brand-motion", "fonts"):
-        path = ROOT / "static" / "css" / f"{name}.css"
-        if path.exists():
-            tokens |= set(DEFINITION.findall(_read(path)))
+    for path in sorted((ROOT / "static" / "css").glob("*.css")):
+        tokens |= set(DEFINITION.findall(_read(path)))
     return tokens
 
 

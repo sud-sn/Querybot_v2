@@ -10,20 +10,35 @@ def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def test_production_stylesheet_is_loaded_after_page_head_blocks():
+def _stylesheets() -> list[str]:
+    """Every stylesheet the product ships, but the font faces."""
+    return sorted(p.name for p in (ROOT / "static" / "css").glob("*.css") if p.name != "fonts.css")
+
+
+def test_no_override_layer_loads_after_the_page_styles():
+    """production.css was a layer of overrides linked after each page's own
+    styles, so a rule written on a page could be silently undone by a sheet
+    loaded later. Its rules now live in the sheet or page that owns them. After
+    a page's head block the shell loads only the motion layer, which styles
+    the mark and nothing a page defines."""
+    assert not (ROOT / "static" / "css" / "production.css").exists()
     for template in ("admin/templates/base.html", "portal/templates/portal_base.html"):
         source = _read(template)
-        assert "production.css" in source
-        assert source.index("{% block head %}") < source.index("production.css")
+        after = source[source.index("{% block head %}"):source.index("</head>")]
+        assert re.findall(r'href="/static/css/([\w.-]+?)\.css', after) == ["brand-motion"], template
+    for page in list((ROOT / "admin" / "templates").rglob("*.html")) + list(
+            (ROOT / "portal" / "templates").rglob("*.html")):
+        assert "/static/css/production.css" not in page.read_text(encoding="utf-8"), page.name
 
 
-def test_entity_graph_uses_shared_production_layer():
-    """It used to link production.css itself, because it was a standalone
-    document. It now inherits the whole stylesheet set from the shell, which is
+def test_entity_graph_uses_the_shared_stylesheets():
+    """It used to link the shell's stylesheets itself, because it was a
+    standalone document. It now inherits the whole set from the shell, which is
     what stopped it drifting onto its own cache-busted copy of the tokens."""
     graph = _read("admin/templates/client_graph.html")
     assert graph.lstrip().startswith('{% extends "client_base.html" %}')
-    assert "production.css" in _read("admin/templates/base.html")
+    assert "/static/css/" not in graph
+    assert "base.css" in _read("admin/templates/base.html")
 
 
 # The three tests below used to pin exact hex values from the previous
@@ -74,8 +89,10 @@ def test_every_referenced_token_is_actually_defined():
     import re
     global_tokens = set(re.findall(r"(--[a-z0-9-]+)\s*:", _read("static/css/tokens.css")))
     missing = {}
-    for name in ("base", "admin", "portal", "chat_workspace", "production", "brand-motion"):
-        css = _read(f"static/css/{name}.css")
+    for name in _stylesheets():
+        if name == "tokens.css":
+            continue
+        css = _read(f"static/css/{name}")
         # A stylesheet may also scope its own custom properties to a component
         # (brand-motion's --qb-mark-*), so those count as defined too.
         defined = global_tokens | set(re.findall(r"(--[a-z0-9-]+)\s*:", css))
@@ -128,24 +145,19 @@ def test_there_is_exactly_one_theme_and_it_is_pinned():
     tokens = _read("static/css/tokens.css")
     assert "color-scheme: light" in tokens, "the single theme is not pinned"
     assert "data-theme" not in tokens, "a theme block came back"
-    for stylesheet in ("base.css", "admin.css", "portal.css", "production.css",
-                       "chat_workspace.css", "brand-motion.css"):
+    for stylesheet in _stylesheets():
+        if stylesheet == "tokens.css":
+            continue
         css = _read(f"static/css/{stylesheet}")
         assert "data-theme" not in css, f"{stylesheet} still carries theme rules"
 
 
 def test_admin_and_portal_shells_use_shared_sidebar_tokens():
-    for stylesheet_name in (
-        "static/css/admin.css",
-        "static/css/portal.css",
-        "static/css/production.css",
-    ):
+    for stylesheet_name in ("static/css/admin.css", "static/css/portal.css"):
         stylesheet = _read(stylesheet_name)
         assert "var(--sidebar-bg)" in stylesheet
         assert "var(--sidebar-border)" in stylesheet
-
-    production = _read("static/css/production.css")
-    assert "background: #0A1020" not in production
+        assert "#0A1020" not in stylesheet
 
 
 def test_theme_stylesheets_are_cache_busted_together():
@@ -161,10 +173,8 @@ def test_theme_stylesheets_are_cache_busted_together():
 
     assert f"tokens.css?v={version}" in admin
     assert f"admin.css?v={version}" in admin
-    assert f"production.css?v={version}" in admin
     assert f"tokens.css?v={version}" in portal
     assert f"portal.css?v={version}" in portal
-    assert f"production.css?v={version}" in portal
     assert f"chat_workspace.css?v={version}" in chat
 
 
@@ -175,12 +185,15 @@ def test_portal_mobile_shell_exposes_its_account_actions():
     assert "ToggleTheme" not in template, "the theme toggle is back"
 
 
-def test_production_layer_contains_mobile_and_reduced_motion_guards():
-    stylesheet = _read("static/css/production.css")
-    assert "@media (max-width: 900px)" in stylesheet
-    assert "@media (max-width: 640px)" in stylesheet
-    assert "@media (prefers-reduced-motion: reduce)" in stylesheet
-    assert "scrollWidth" not in stylesheet
+def test_the_shared_sheets_carry_the_mobile_and_reduced_motion_guards():
+    """The phone layout and the reduced-motion switch are in the sheets every
+    page loads: base.css for both consoles, and each shell's own sheet for its
+    sidebar drawer."""
+    base = _read("static/css/base.css")
+    assert "@media (max-width: 640px)" in base
+    assert "@media (prefers-reduced-motion: reduce)" in base
+    assert "@media (max-width: 900px)" in _read("static/css/portal.css")
+    assert "@media (max-width: 640px)" in _read("static/css/admin.css")
 
 
 def test_chat_uses_unified_portal_sidebar_and_responsive_drawer():
@@ -287,8 +300,10 @@ def test_no_rule_puts_bare_white_on_a_brand_fill():
     white = re.compile(r"color\s*:\s*#(?:fff|ffffff)\b", re.I)
 
     offenders = []
-    for name in ("base", "admin", "portal", "chat_workspace", "production", "brand-motion"):
-        css = _read(f"static/css/{name}.css")
+    for name in _stylesheets():
+        if name == "tokens.css":
+            continue
+        css = _read(f"static/css/{name}")
         for block in re.findall(r"\{[^{}]*\}", css):
             if brand_bg.search(block) and white.search(block):
                 offenders.append(f"{name}.css: {block.strip()[:90]}")

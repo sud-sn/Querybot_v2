@@ -210,7 +210,6 @@ SPECIAL_FIELDS = {
                          ".dashboard-picker-body input[aria-invalid=true]", ".dashboard-picker-body select",
                          ".dashboard-picker-body select:focus", ".hp-search-clear", ".hp-search-input",
                          ".hp-search-wrap", ".rc-input", ".rc-input-row", ".rc-input:focus"},  # chat 6, picker 5
-    "production.css": {".chat-input-bar", ".chat-input-bar:focus-within"},                  # chat composer, phase 6
     "client_graph.html": {".jc-cond-row input", ".jc-cond-row input:focus", ".jc-select", ".jc-select:focus"},  # phase 4
     "client_setup.html": {"#tableDescriptions input[type=text]", "#tableDescriptions textarea"},  # phase 6
     "dashboard.css": {".dashboard-filter input"},                                              # dashboards, phase 5

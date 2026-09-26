@@ -442,6 +442,18 @@
   background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
   padding:1px 7px;font-style:italic}
 .syn-accept{flex:0 0 auto}
+
+/* Folded from production.css, which loaded after this block. */
+/* Metrics */
+.metrics-hero { background: var(--surface); box-shadow: var(--shadow); }
+.metrics-kicker { color: var(--primary); }
+.metrics-stat-grid { gap: 12px; }
+.metrics-stat,
+.metric-row,
+.metric-editor-card,
+.metric-card { box-shadow: none; }
+.metric-row:hover { border-color: color-mix(in srgb, var(--primary) 34%, var(--border)); }
+.metric-builder { background: var(--surface-2); box-shadow: none; }
 </style>
 <!-- Pass db_type to JS -->
 <script>window._qbDbType = {{ (db_type | default('azure_sql'))|tojson }};</script>

@@ -158,11 +158,10 @@ SPECIAL_BADGES = {
     "client_setup.html": {"mask-item-badge", "status-badge", "td-badge--described", "td-badge--new",
                           "td-badge--undescribed"},                                                      # 6
     "dashboard.css": {"table-pill"},                                                                     # 5
-    "portal_chat.html": {"chat-pill", "chat-shell-badge", "citation-chip", "composer-chip", "follow-up-chip",
-                         "hp-badge", "query-kpi-pill", "rc-scope-chip", "rc-source-badge", "scope-badge",
-                         "status-badge", "suggestion-chip", "token-kpi-pill", "trust-pill"},             # chat, 6
+    "portal_chat.html": {"chat-pill", "chat-shell-badge", "citation-chip", "composer-chip", "confidence-badge",
+                         "follow-up-chip", "hp-badge", "query-kpi-pill", "rc-scope-chip", "rc-source-badge",
+                         "scope-badge", "status-badge", "suggestion-chip", "token-kpi-pill", "trust-pill"},  # chat, 6
     "portal_kb.html": {"term-chip"},                                                                     # 6
-    "production.css": {"chat-shell-badge", "confidence-badge"},                                          # chat, 6
     "system.html": {"az-badge"},                                                                         # 6
 }
 
