@@ -1450,6 +1450,7 @@ def _run_migrations() -> None:
         # referenced columns are guaranteed to exist.
         _post_migration_indexes(conn)
         _backfill_temporary_password_expiry(conn)
+        _retire_platform_placeholder_passwords(conn)
         # Seed llm_pricing from hardcoded defaults — only inserts rows that
         # don't already exist so admin edits are never overwritten on restart.
         try:
@@ -1462,6 +1463,40 @@ def _run_migrations() -> None:
                 )
         except Exception as e:
             log.debug("llm_pricing seed skipped: %s", e)
+
+
+def _retire_platform_placeholder_passwords(conn) -> None:
+    """Accounts approved from Teams, Slack or Zoom stop having a guessable password.
+
+    They carried SHA-256("__platform_user__"), a string in the source, and the
+    portal's old-hash fallback accepted it: anyone who knew a platform id could
+    sign in to the portal as that user. They get the unusable marker, and their
+    synthetic email is lowercased, as sign-in lowercases what is typed (a
+    mixed-case platform id otherwise made an admin reset unusable). Runs on
+    every start; touches only rows still in the old form.
+    """
+    from store.passwords import LEGACY_PLATFORM_PLACEHOLDER, UNUSABLE
+
+    try:
+        conn.execute("SAVEPOINT sp_platform_placeholder")
+        conn.execute(
+            "UPDATE portal_user SET password_hash = ? WHERE password_hash = ?",
+            (UNUSABLE, LEGACY_PLATFORM_PLACEHOLDER),
+        )
+        conn.execute(
+            "UPDATE portal_user SET email = lower(email) "
+            "WHERE email LIKE '%@platform.internal' AND email <> lower(email) "
+            "AND NOT EXISTS (SELECT 1 FROM portal_user other "
+            "WHERE other.account_id = portal_user.account_id "
+            "AND other.email = lower(portal_user.email))"
+        )
+        conn.execute("RELEASE SAVEPOINT sp_platform_placeholder")
+    except Exception as exc:
+        try:
+            conn.execute("ROLLBACK TO SAVEPOINT sp_platform_placeholder")
+        except Exception:
+            pass
+        log.error("Retiring the platform placeholder passwords failed: %s", exc)
 
 
 def _backfill_temporary_password_expiry(conn) -> None:

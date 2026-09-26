@@ -1342,8 +1342,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "⚠️ Cet espace de travail n'est pas enregistré auprès de QueryBot.\nDemandez à votre administrateur de l'enregistrer dans la console d'administration avant d'envoyer des questions.",
     },
     "dispatch.not_registered_user": {
-        "en": "Not registered yet — send any message for your registration link.",
-        "fr": "Pas encore inscrit — envoyez n'importe quel message pour recevoir votre lien d'inscription.",
+        "en": "You don't have access yet. Send any question and your administrator will be asked to approve you.",
+        "fr": "Vous n'avez pas encore accès. Envoyez une question et votre administrateur recevra une demande d'approbation.",
     },
     "dispatch.workspace_not_ready": {
         "en": "⚠️ This workspace isn't set up yet.\n\nAsk your administrator to finish the *Schema & Knowledge Base Setup* in the QueryBot admin panel before sending queries.",
@@ -4650,37 +4650,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.auth.toggle_password": {"en": "Show / hide password", "fr": "Afficher / masquer le mot de passe"},
     "ui.auth.sign_in": {"en": "Sign in", "fr": "Se connecter"},
     "ui.auth.first_time": {
-        "en": "First time? Message your organisation's QueryBot to get a registration link.",
-        "fr": "Première visite ? Écrivez au QueryBot de votre organisation pour obtenir un lien d'inscription.",
+        "en": "No account yet? Ask your administrator to create one.",
+        "fr": "Pas encore de compte ? Demandez à votre administrateur d'en créer un.",
     },
 
-    # ── Registration ─────────────────────────────────────────────────────────
-    "ui.auth.setting_up_for": {
-        "en": "Setting up your account for {client}",
-        "fr": "Configuration de votre compte pour {client}",
-    },
-    "ui.auth.link_expired_help": {
-        "en": "Message your QueryBot in Zoom to receive a new registration link.",
-        "fr": "Écrivez à votre QueryBot dans Zoom pour recevoir un nouveau lien d'inscription.",
-    },
-    "ui.auth.create_account_title": {"en": "Create your account", "fr": "Créez votre compte"},
-    "ui.auth.one_time_link": {"en": "One-time registration link", "fr": "Lien d'inscription à usage unique"},
-    "ui.auth.one_time_link_note": {
-        "en": "This link expires in 48 hours and can only be used once.",
-        "fr": "Ce lien expire dans 48 heures et ne peut être utilisé qu'une seule fois.",
-    },
-    "ui.auth.full_name": {"en": "Full name", "fr": "Nom complet"},
-    "ui.auth.full_name_placeholder": {"en": "Jane Smith", "fr": "Marie Dupont"},
-    "ui.auth.work_email": {"en": "Work email", "fr": "E-mail professionnel"},
-    "ui.auth.work_email_placeholder": {"en": "jane@company.com", "fr": "marie@entreprise.com"},
     "ui.auth.min_characters": {"en": "Min 8 characters", "fr": "8 caractères minimum"},
-    "ui.auth.confirm_password": {"en": "Confirm password", "fr": "Confirmez le mot de passe"},
-    "ui.auth.repeat_password": {"en": "Repeat password", "fr": "Répétez le mot de passe"},
-    "ui.auth.create_account": {"en": "Create account", "fr": "Créer le compte"},
-    "ui.auth.after_registering": {
-        "en": "After registering, your administrator will assign you to a group so you can start querying data.",
-        "fr": "Après votre inscription, votre administrateur vous affectera à un groupe pour que vous puissiez interroger les données.",
-    },
 
     # ── Changing a password ──────────────────────────────────────────────────
     "ui.auth.set_password_title": {"en": "Set your password", "fr": "Définissez votre mot de passe"},
@@ -4926,7 +4900,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     # front of them when the tab is in the background.
     "ui.title.suffix": {"en": "QueryBot Portal", "fr": "Portail QueryBot"},
     "ui.title.sign_in": {"en": "Sign In", "fr": "Connexion"},
-    "ui.title.register": {"en": "Register", "fr": "Créer un compte"},
     "ui.title.change_password": {"en": "Change Password", "fr": "Changer le mot de passe"},
     "ui.title.notifications": {"en": "My Notifications", "fr": "Mes notifications"},
     "ui.title.new_report": {"en": "New Report", "fr": "Nouveau rapport"},

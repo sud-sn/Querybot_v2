@@ -35,7 +35,6 @@ KB_TABLE = {
 # this file cannot check -- which is the point of test_the_sweep_covers_them_all.
 PAGES = {
     "portal_login.html": dict(error=""),
-    "portal_register.html": dict(token="tok", client_name="Acme", error=""),
     "portal_change_password.html": dict(forced=False, error=""),
     "portal_pin_confirm.html": dict(
         token="t", question="revenue by region", sql="SELECT 1", error="",
@@ -100,22 +99,6 @@ class TestTheSignInPage:
 # ══════════════════════════════════════════════════════════════════════════════
 # The forms
 # ══════════════════════════════════════════════════════════════════════════════
-
-class TestTheRegistrationPage:
-
-    def test_it_is_french(self):
-        markup = visible(_page("portal_register.html", "fr"))
-        assert "Créez votre compte" in markup
-        assert "Lien d'inscription à usage unique" in markup
-
-    def test_the_client_name_is_the_customer_s(self):
-        markup = visible(_page("portal_register.html", "fr", client_name="Acme"))
-        assert "Configuration de votre compte pour Acme" in markup
-
-    def test_the_expired_link_help_is_french(self):
-        markup = visible(_page("portal_register.html", "fr", token="", error="Expired"))
-        assert "Écrivez à votre QueryBot dans Zoom" in markup
-
 
 class TestTheChangePasswordPage:
 

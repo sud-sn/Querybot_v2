@@ -8,8 +8,6 @@ Routes:
   GET  /portal/login              — login page
   POST /portal/login              — authenticate
   GET  /portal/logout             — clear session
-  GET  /portal/register?token=xxx — registration page (one-time link from bot)
-  POST /portal/register           — complete registration
   GET  /portal/dashboard          — personal pinned chart dashboard
   GET  /portal/change-password    — change password form
   POST /portal/change-password    — save new password
@@ -936,6 +934,9 @@ async def portal_login_submit(
     if not user or not store.verify_password(user, password):
         return _resp(request, "portal_login.html",
                      {"error": "Invalid email or password."})
+    # An old unsalted hash, or fewer rounds than today's, is renewed now: the
+    # password is only ever in hand at sign-in.
+    store.upgrade_password_hash(user, password)
 
     # A temporary password signs in to the password change and nothing else
     # (_session_user), and not at all once it has expired.
@@ -1028,112 +1029,6 @@ async def portal_logout():
     resp = RedirectResponse("/portal/login", status_code=303)
     resp.delete_cookie(_COOKIE)
     return resp
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Registration
-# ══════════════════════════════════════════════════════════════════════════════
-
-@router.get("/register", response_class=HTMLResponse)
-async def portal_register_page(request: Request, token: str = ""):
-    if not token:
-        return _resp(request, "portal_register.html",
-                     {"error": "Invalid or missing registration link.", "token": ""})
-
-    token_data = _peek_token(token)
-    if not token_data:
-        return _resp(request, "portal_register.html",
-                     {"error": "This link has expired or already been used. "
-                               "Message the bot again to get a new link.", "token": ""})
-
-    client = store.get_client(token_data["account_id"])
-    return _resp(request, "portal_register.html", {
-        "token":        token,
-        "account_id":   token_data["account_id"],
-        "client_name":  client.get("client_name", "") if client else "",
-        "zoom_user_id": token_data["zoom_user_id"],
-        "error":        "",
-    })
-
-
-@router.post("/register")
-async def portal_register_submit(
-    request:      Request,
-    token:        str = Form(...),
-    name:         str = Form(...),
-    email:        str = Form(...),
-    password:     str = Form(...),
-    confirm_pw:   str = Form(...),
-):
-    token_data = _peek_token(token)
-    if not token_data:
-        return _resp(request, "portal_register.html",
-                     {"error": "Link expired or already used. Message the bot for a new one.",
-                      "token": "", "account_id": "", "client_name": "", "zoom_user_id": ""})
-
-    account_id   = token_data["account_id"]
-    zoom_user_id = token_data["zoom_user_id"]
-
-    if len(name.strip()) < 2:
-        return _re_render_register(request, token, account_id, zoom_user_id,
-                                   "Please enter your full name.")
-    if "@" not in email:
-        return _re_render_register(request, token, account_id, zoom_user_id,
-                                   "Please enter a valid email address.")
-    if len(password) < 8:
-        return _re_render_register(request, token, account_id, zoom_user_id,
-                                   "Password must be at least 8 characters.")
-    if password != confirm_pw:
-        return _re_render_register(request, token, account_id, zoom_user_id,
-                                   "Passwords do not match.")
-
-    token_data = store.consume_registration_token(token)
-    if not token_data:
-        return _re_render_register(request, token, account_id, zoom_user_id,
-                                   "This registration link is no longer valid.")
-
-    existing = store.get_user_by_email(account_id, email)
-    if existing:
-        store.link_zoom_user(existing["id"], zoom_user_id)
-        resp = RedirectResponse("/portal/dashboard", status_code=303)
-        _set_portal_cookie(resp, request, existing["id"])
-        return resp
-
-    user_id, _ = store.create_user(account_id, name.strip(), email.strip())
-    store.change_password(user_id, password, is_temp=False)
-    store.link_zoom_user(user_id, zoom_user_id)
-
-    log.info("New user registered: %s for account %s", email, account_id)
-
-    resp = RedirectResponse("/portal/dashboard?welcome=1", status_code=303)
-    _set_portal_cookie(resp, request, user_id)
-    return resp
-
-
-def _peek_token(token: str) -> dict | None:
-    """Check token validity without consuming it."""
-    from store.db import get_db
-    from datetime import datetime, timezone
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM registration_token WHERE token=? AND used=0", (token,)
-        ).fetchone()
-    if not row:
-        return None
-    row = dict(row)
-    expiry = datetime.strptime(row["expires_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) > expiry:
-        return None
-    return row
-
-
-def _re_render_register(request, token, account_id, zoom_user_id, error):
-    client = store.get_client(account_id)
-    return _resp(request, "portal_register.html", {
-        "token": token, "account_id": account_id,
-        "client_name": client.get("client_name", "") if client else "",
-        "zoom_user_id": zoom_user_id, "error": error,
-    })
 
 
 # ══════════════════════════════════════════════════════════════════════════════

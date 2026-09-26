@@ -139,9 +139,6 @@ KB_MODELS = [
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
-def _hash(pw: str) -> str:
-    return hashlib.sha256(pw.encode()).hexdigest()
-
 def _session_secret() -> str:
     # See core/process_secrets.py: the literal string this used to fall back
     # to was public, so anyone who had read this file could forge an admin
@@ -611,6 +608,7 @@ async def login_submit(request: Request, password: str = Form(...)):
         return _resp(request, "login.html", {"error": _UNREADABLE_ADMIN_PASSWORD})
     if not admin_credentials.verify(password):
         return _resp(request, "login.html", {"error": "Incorrect password"})
+    admin_credentials.upgrade_hash(password)
     resp = RedirectResponse("/admin", status_code=303)
     _set_admin_cookie(resp, request)
     return resp
@@ -3863,7 +3861,7 @@ async def compliance_break_glass(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     form = await request.form()
-    if _hash(str(form.get("password") or "")) != store.get_system("admin_password_hash", ""):
+    if not admin_credentials.verify(str(form.get("password") or "")):
         return RedirectResponse(
             f"/admin/clients/{account_id}/compliance?error=Re-authentication+failed",
             status_code=303,

@@ -1,12 +1,10 @@
 """
 store/user_store.py
 
-CRUD for portal users, groups, table access, registration tokens, and pinned charts.
+CRUD for portal users, groups, table access, account-change records, and pinned charts.
 Passwords are PBKDF2-SHA256 with a per-password salt.
 """
 
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -14,6 +12,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from store import passwords
 from store.db import get_db
 
 log = logging.getLogger("querybot.user_store")
@@ -24,23 +23,11 @@ log = logging.getLogger("querybot.user_store")
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _hash_pw(pw: str) -> str:
-    salt = secrets.token_hex(16)
-    derived = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), 200000)
-    return f"pbkdf2_sha256$200000${salt}${derived.hex()}"
+    return passwords.hash_password(pw)
 
 
 def _verify_pw(stored_hash: str, password: str) -> bool:
-    if not stored_hash:
-        return False
-    if stored_hash.startswith("pbkdf2_sha256$"):
-        try:
-            _, rounds, salt, expected = stored_hash.split("$", 3)
-            derived = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), int(rounds))
-            return hmac.compare_digest(expected, derived.hex())
-        except Exception:
-            return False
-    legacy = hashlib.sha256(password.encode()).hexdigest()
-    return hmac.compare_digest(stored_hash, legacy)
+    return passwords.verify_password(stored_hash, password)
 
 
 def _now() -> str:
@@ -309,6 +296,24 @@ def verify_password(user: dict, password: str) -> bool:
     return _verify_pw(user.get("password_hash", ""), password)
 
 
+def upgrade_password_hash(user: dict, password: str) -> bool:
+    """After a successful sign-in, replace an outdated hash of the same password.
+
+    Unsalted SHA-256 and fewer PBKDF2 rounds than today's still sign in; the
+    password is only in hand at sign-in, so that is when the hash is renewed.
+    Touches nothing else -- not the session version, not is_temp_pw.
+    """
+    stored = user.get("password_hash", "")
+    if not passwords.needs_rehash(stored) or not passwords.verify_password(stored, password):
+        return False
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE portal_user SET password_hash=? WHERE id=? AND password_hash=?",
+            (passwords.hash_password(password), user["id"], stored),
+        )
+    return True
+
+
 def delete_user(user_id: int) -> None:
     with get_db() as conn:
         conn.execute("DELETE FROM portal_user WHERE id=?", (user_id,))
@@ -494,45 +499,6 @@ def touch_user_activity(user_id: int, *, gap_minutes: int = 30) -> bool:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Registration tokens
-# ══════════════════════════════════════════════════════════════════════════════
-
-def create_registration_token(account_id: str, zoom_user_id: str) -> str:
-    """Create a one-time registration token valid for 48 hours."""
-    token = secrets.token_urlsafe(32)
-    with get_db() as conn:
-        # Invalidate any existing unused tokens for this Zoom user
-        conn.execute(
-            "UPDATE registration_token SET used=1 WHERE account_id=? AND zoom_user_id=? AND used=0",
-            (account_id, zoom_user_id)
-        )
-        conn.execute(
-            "INSERT INTO registration_token (token, account_id, zoom_user_id, expires_at) VALUES (?,?,?,?)",
-            (token, account_id, zoom_user_id, _expiry(48))
-        )
-    return token
-
-
-def consume_registration_token(token: str) -> Optional[dict]:
-    """Validate and consume a registration token. Returns token data or None."""
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM registration_token WHERE token=? AND used=0",
-            (token,)
-        ).fetchone()
-        if not row:
-            return None
-        row = dict(row)
-        # Check expiry
-        expiry = datetime.strptime(row["expires_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > expiry:
-            return None
-        # Mark used
-        conn.execute("UPDATE registration_token SET used=1 WHERE token=?", (token,))
-    return row
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # Pending platform users (admin-approval flow)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -632,10 +598,12 @@ def approve_pending_user(
             return None
         pending = dict(pending)
 
-        # Create the portal_user.  A placeholder password hash is used (unusable
-        # hash — they will never log in via the portal, only via Teams).
-        import hashlib as _hashlib
-        _placeholder_hash = _hashlib.sha256(b"__platform_user__").hexdigest()
+        # Create the portal_user with a password nothing matches: they sign in
+        # through the chat platform. It used to be SHA-256 of a string in the
+        # source, which the old-hash fallback accepted as a password. An admin
+        # reset gives them a real one. The email is lowercased, as sign-in
+        # lowercases what is typed; a mixed-case platform id otherwise made
+        # that reset password unusable.
         conn.execute(
             """INSERT OR IGNORE INTO portal_user
                (account_id, group_id, name, email, password_hash,
@@ -645,8 +613,8 @@ def approve_pending_user(
                 account_id,
                 group_id,
                 pending["display_name"] or pending["platform_user_id"],
-                f"{pending['platform_user_id']}@platform.internal",
-                _placeholder_hash,
+                f"{pending['platform_user_id']}@platform.internal".lower(),
+                passwords.UNUSABLE,
                 pending["platform_user_id"],
                 "analyst",
                 now, now,

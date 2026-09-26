@@ -72,6 +72,13 @@ def _point_tests_away_from_the_application_database() -> bool:
 
 def pytest_configure(config):
     _point_tests_away_from_the_application_database()
+    # Passwords hash at 600,000 PBKDF2 rounds in production, 0.4 s each, and
+    # the suite creates users in hundreds of tests. Here they hash with far
+    # fewer rounds; tests/test_no_password_less_doors.py checks the production
+    # value and that every hash records the rounds it was made with.
+    import store.passwords
+
+    store.passwords.ITERATIONS = 1_000
 
 
 @pytest.fixture(autouse=True)

@@ -24,10 +24,8 @@ gets a new cookie.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-
 import store
+from store import passwords
 
 ADMIN_PASSWORD_KEY = "admin_password_hash"
 SESSION_VERSION_KEY = "admin_session_version"
@@ -35,7 +33,9 @@ MIN_LENGTH = 8
 
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    # Salted PBKDF2 (store/passwords.py). It was unsalted SHA-256, compared
+    # with !=; that form still signs in once and is replaced (upgrade_hash).
+    return passwords.hash_password(password)
 
 
 def is_set() -> bool:
@@ -54,8 +54,19 @@ def claim_first(password: str) -> bool:
 
 
 def verify(password: str) -> bool:
+    return passwords.verify_password(store.get_system(ADMIN_PASSWORD_KEY, ""), password)
+
+
+def upgrade_hash(password: str) -> bool:
+    """After a successful sign-in, replace an outdated hash of the same password.
+
+    Not a password change: the version stays, so no admin session ends.
+    """
     stored = store.get_system(ADMIN_PASSWORD_KEY, "")
-    return bool(stored) and hmac.compare_digest(hash_password(password), stored)
+    if not passwords.needs_rehash(stored) or not passwords.verify_password(stored, password):
+        return False
+    store.set_system(ADMIN_PASSWORD_KEY, hash_password(password))
+    return True
 
 
 def set_password(password: str) -> None:
