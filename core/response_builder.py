@@ -1345,6 +1345,12 @@ def infer_result_scope(
         "is_complete_series": False,
     }
 
+    # A question that asks for the low end of a ranking is answered from it:
+    # "which warehouse has the lowest stock" was headed by the warehouse with
+    # the most.
+    from core.analytical_intent import asks_for_ranking, ranking_direction
+
+    scope["ascending"] = asks_for_ranking(question) and ranking_direction(question) == "ascending"
     if mode == "ranking":
         # A top-N framing needs a limit that bound, or a question that asked
         # for one ("top 5 customers" returning all 3 that exist is still the
@@ -1537,7 +1543,8 @@ def build_answer(
         value_col = numeric_cols[0]
         value_fmt = column_formats.get(value_col)
         collapsed = collapse_rows_by_label(rows, label_col, value_col)
-        ordered = sorted(collapsed or [], key=lambda pair: pair[1], reverse=True)
+        ascending = bool(scope.get("ascending"))
+        ordered = sorted(collapsed or [], key=lambda pair: pair[1], reverse=not ascending)
         labels = [str(r.get(label_col, "")) for r in rows]
         if (_looks_temporal(labels) and len(set(labels)) == len(labels)
                 and scope.get("kind") != "ranking"):
@@ -1581,15 +1588,15 @@ def build_answer(
         comparison = scope.get("badge") or _t_plural(
             "answer.across_results", len(ordered))
         if scope.get("is_top_n") and (scope.get("n") or 0) == 1:
-            headline = _t("answer.top_ranked", label=best_label,
+            headline = _t("answer.bottom_ranked" if ascending else "answer.top_ranked", label=best_label,
                           value=format_value(best_value, value_col))
-            comparison = _t("answer.leading_row_only")
+            comparison = _t("answer.lowest_row_only" if ascending else "answer.leading_row_only")
         else:
-            headline = _t("answer.leads", label=best_label,
+            headline = _t("answer.lowest" if ascending else "answer.leads", label=best_label,
                           value=format_value(best_value, value_col))
         if len(ordered) > 1 and not scope.get("is_top_n"):
-            delta = best_value - ordered[1][1]
-            comparison = _t("answer.above_next",
+            delta = abs(best_value - ordered[1][1])
+            comparison = _t("answer.below_next" if ascending else "answer.above_next",
                             delta=format_value(delta, value_col))
         return {
             "headline": headline,

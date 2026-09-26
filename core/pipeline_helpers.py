@@ -1606,7 +1606,13 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     group_sql = "\nGROUP BY " + ", ".join(group_parts) if group_parts else ""
     order_sql = ""
     if ranking:
-        order_sql = f"\nORDER BY {metric_specs[0][0]} DESC"
+        # The end the question asks for -- an explicit Top/Bottom-N's
+        # direction, else its words: "which warehouse has the lowest stock"
+        # was sorted highest first.
+        from core.analytical_intent import ranking_direction
+
+        direction = str((context.get("top_n") or {}).get("direction") or ranking_direction(question))
+        order_sql = f"\nORDER BY {metric_specs[0][0]} {'ASC' if direction == 'ascending' else 'DESC'}"
     elif is_trend:
         order_sql = "\nORDER BY PERIOD"
     limit_sql = f"\nFETCH FIRST {limit} ROWS ONLY" if ranking and limit > 0 and db_type == "oracle" else ""

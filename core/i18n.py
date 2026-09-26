@@ -798,13 +798,28 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Top-ranked result: {label} at {value}.",
         "fr": "Résultat le mieux classé : {label}, avec {value}.",
     },
+    "answer.lowest": {
+        "en": "{label} is lowest at {value}.", "fr": "{label} est le plus bas avec {value}.",
+    },
+    "answer.bottom_ranked": {
+        "en": "Lowest-ranked result: {label} at {value}.",
+        "fr": "Résultat le moins bien classé : {label}, avec {value}.",
+    },
     "answer.leading_row_only": {
         "en": "This card shows only the leading row",
         "fr": "Cette carte n'affiche que la première ligne",
     },
+    "answer.lowest_row_only": {
+        "en": "This card shows only the lowest row",
+        "fr": "Cette carte n'affiche que la ligne la plus basse",
+    },
     "answer.above_next": {
         "en": "{delta} above the next result",
         "fr": "{delta} de plus que le résultat suivant",
+    },
+    "answer.below_next": {
+        "en": "{delta} below the next result",
+        "fr": "{delta} de moins que le résultat suivant",
     },
     "answer.top_result": {"en": "Top result", "fr": "Meilleur résultat"},
 

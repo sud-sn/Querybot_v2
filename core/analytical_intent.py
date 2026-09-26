@@ -99,6 +99,36 @@ _COMPARISON_RE = re.compile(
 )
 _TREND_RE = re.compile(r"\b(?:trend|over\s+time|time\s+series|movement|trajectory)\b", re.I)
 _RANKING_RE = re.compile(r"\b(?:top|bottom|highest|lowest|best|worst|rank)\b", re.I)
+# "Which item has the most stock on hand?" asks for a ranking as surely as
+# "highest" does, but "most" alone does not ("the most recent month", "at
+# most 100"): the superlative has to follow "which <thing> has".
+_SUPERLATIVE_RE = re.compile(
+    r"\b(?:which|what)\s+(?:[a-z][\w-]*\s+){1,3}?(?:has|have|had|holds?|held|carr(?:y|ies)|shows?)\s+"
+    r"(?:the\s+)?(?:most|least|fewest|largest|smallest|greatest|biggest)\b"
+    # French, as typed and as canonicalised: "quel entrepôt a le moins de
+    # stock" reaches the compiler as "which warehouse a the moins of ...".
+    r"|\b(?:quel(?:le)?s?|which)\s+(?:[\w'-]+\s+){1,5}?(?:le|the)\s+(?:plus|moins)\b(?!\s+r[eé]cent)",
+    re.I,
+)
+# The low end of a ranking: sorted smallest first. "At least" is a condition.
+_LOW_END_RE = re.compile(
+    r"\b(?:lowest|fewest|smallest|bottom|worst|minimum)\b|(?<!\bat\s)\bleast\b"
+    r"|\b(?:le|the)\s+moins\b|\b(?:le|the)\s+plus\s+(?:bas|basse|faible|petit|petite)\b",
+    re.I,
+)
+
+
+def asks_for_ranking(question: str) -> bool:
+    """Does the question ask for its members ranked?"""
+    return bool(_RANKING_RE.search(question or "") or _SUPERLATIVE_RE.search(question or ""))
+
+
+def ranking_direction(question: str) -> str:
+    """Which end a ranking is read from: "ascending" when the question asks
+    for the lowest, the least, the fewest or the bottom; "descending"
+    otherwise. "Which warehouse has the lowest stock" was sorted highest
+    first, and its answer named the warehouse with the most."""
+    return "ascending" if _LOW_END_RE.search(question or "") else "descending"
 _DISTRIBUTION_RE = re.compile(
     r"\b(?:distribution|share|mix|composition|breakdown|split)\b", re.I
 )
@@ -740,7 +770,7 @@ def plan_analytical_intent(
         intent = "causal_analysis"
     elif _COMPARISON_RE.search(text):
         intent = "comparison"
-    elif _RANKING_RE.search(text):
+    elif asks_for_ranking(text):
         intent = "ranking"
     elif _DISTRIBUTION_RE.search(text):
         intent = "distribution"
