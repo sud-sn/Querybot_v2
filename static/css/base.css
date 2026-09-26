@@ -827,7 +827,7 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 .alert-icon   { flex-shrink: 0; display: flex; align-items: flex-start; margin-top: 1px; }
 .alert-body   { flex: 1; min-width: 0; }
 .alert-title  { display: block; font-weight: var(--weight-bold); line-height: 1.4; margin-bottom: 2px; }
-.alert-text   { display: block; font-size: var(--font-xs); opacity: .85; line-height: 1.55; }
+.alert-text   { display: block; font-size: var(--font-xs); line-height: 1.55; }
 .alert-action { flex-shrink: 0; align-self: center; }
 
 /* ── Empty state ── */
@@ -1135,8 +1135,7 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   font-weight: var(--weight-bold);
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--accent-400);
-  opacity: .6;
+  color: var(--sidebar-muted);
   padding: 1.1rem 1rem .35rem;
   display: block;
   user-select: none;

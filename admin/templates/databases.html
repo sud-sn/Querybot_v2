@@ -194,7 +194,7 @@
         <button type="submit" class="btn btn-primary" id="save-btn" disabled>Save database</button>
         <button type="button" class="btn btn-secondary" id="test-btn" disabled>Test connection</button>
         <button type="button" class="btn btn-secondary" id="cancel-edit-btn" style="display:none" onclick="cancelEdit()">Cancel</button>
-        <span id="hint" style="font-size:var(--font-sm);color:var(--gray-500)">Select a database type above</span>
+        <span id="hint" style="font-size:var(--font-sm);color:var(--text-muted)">Select a database type above</span>
       </div>
       <div id="db-test-result" style="display:none;margin-top:.75rem;font-size:var(--font-sm)"></div>
     </form>
@@ -210,7 +210,7 @@
     <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds='{{ d.edit_creds|tojson }}' data-db-log='{{ d.edit_log|tojson }}' data-db-scope='{{ d.selected_schema_tables|tojson }}'>
       <td style="font-weight:var(--weight-semibold)">{{ d.name }}</td>
       <td><span class="badge badge-blue">{{ d.label }}</span></td>
-      <td style="font-size:var(--font-xs);color:var(--gray-500)">
+      <td style="font-size:var(--font-xs);color:var(--text-muted)">
         {% if d.db_type == "snowflake" %}
           {{ d.credentials.get("account","—") }} / {{ d.credentials.get("database","—") }} / {{ d.credentials.get("schema","PUBLIC") }}
         {% elif d.db_type == "oracle" %}
@@ -219,14 +219,14 @@
           {{ d.credentials.get("server","—") }} / {{ d.credentials.get("database","—") }}
         {% endif %}
       </td>
-      <td style="font-size:var(--font-xs);color:var(--gray-500)">
+      <td style="font-size:var(--font-xs);color:var(--text-muted)">
         {% if d.selected_schema_count %}
           <span class="badge badge-blue">{{ d.selected_schema_count }} table{{ 's' if d.selected_schema_count != 1 else '' }}</span>
         {% else %}
           <span class="badge badge-gray">Default schema</span>
         {% endif %}
       </td>
-      <td style="font-size:var(--font-xs);color:var(--gray-500)">
+      <td style="font-size:var(--font-xs);color:var(--text-muted)">
         {% if d.log_export_enabled %}
           <div><span class="badge badge-green">Enabled</span> {{ d.log_schema }} at {{ d.log_export_time }}</div>
           {% if d.log_export_state %}
@@ -259,7 +259,7 @@
           <span class="badge badge-gray">Disabled</span>
         {% endif %}
       </td>
-      <td style="color:var(--gray-500);font-size:var(--font-sm)">{{ d.created_at[:10] }}</td>
+      <td style="color:var(--text-muted);font-size:var(--font-sm)">{{ d.created_at[:10] }}</td>
       <td>
         <div style="display:flex;gap:.35rem">
           <button type="button" class="btn btn-secondary btn-sm" onclick="editDbRow(this)">Edit</button>

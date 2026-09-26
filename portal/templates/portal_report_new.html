@@ -24,7 +24,7 @@
         </div>
 
         <div style="margin-top:1rem">
-          <div style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--gray-500);
+          <div style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-muted);
             text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">
             {{ t('ui.report.metrics') }}
           </div>
@@ -34,12 +34,12 @@
                 border-bottom:1px solid var(--border);font-size:var(--font-base)">
                 <input type="checkbox" name="metric_ids" value="{{ m.id }}">
                 <span style="font-weight:var(--weight-semibold)">{{ m.name }}</span>
-                {% if m.base_table %}<span style="color:var(--gray-500);font-family:var(--font-mono);
+                {% if m.base_table %}<span style="color:var(--text-muted);font-family:var(--font-mono);
                   font-size:var(--font-xs)"> — {{ m.base_table }}</span>{% endif %}
               </label>
             {% endfor %}
           {% else %}
-            <div style="font-size:var(--font-sm);color:var(--gray-500)">
+            <div style="font-size:var(--font-sm);color:var(--text-muted)">
               {{ t('ui.report.no_metrics') }}
             </div>
           {% endif %}

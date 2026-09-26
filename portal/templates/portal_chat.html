@@ -150,7 +150,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stage-step summary::after{margin-left:auto;color:var(--line-subtle)}
 .stage-step-tick{flex-shrink:0;width:5px;height:5px;border-radius:999px;background:var(--primary);opacity:.5;transform:translateY(-1px)}
 .stage-step-label{min-width:0}
-.stage-step-detail{padding:.1rem 0 .4rem 1rem;font-size:var(--font-xs);color:var(--text-muted);opacity:.85}
+.stage-step-detail{padding:.1rem 0 .4rem 1rem;font-size:var(--font-xs);color:var(--text-muted)}
 .answer-progress-skeleton{display:grid;gap:7px}
 .answer-progress-skeleton .skeleton{margin:0}
 /* ============================================================================
@@ -303,7 +303,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .rc-foot{padding:4px 10px;font-size:var(--font-xs);color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 40%, transparent);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.5rem}
 .rc-csv-btn{display:inline-flex;align-items:center;gap:.3rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text-soft);font-size:var(--font-2xs);font-weight:var(--weight-bold);cursor:pointer;white-space:nowrap;transition:background .12s}
 .rc-csv-btn:hover{background:color-mix(in srgb,var(--primary-soft) 20%, var(--surface));color:var(--primary);border-color:var(--primary)}
-.rc-narration{font-size:var(--font-sm);line-height:1.55;color:var(--text);font-style:italic;padding:.35rem .1rem .2rem;border-left:2px solid var(--primary);padding-left:.55rem;margin-bottom:.4rem;opacity:.85}
+.rc-narration{font-size:var(--font-sm);line-height:1.55;color:var(--text-soft);font-style:italic;padding:.35rem .1rem .2rem;border-left:2px solid var(--primary);padding-left:.55rem;margin-bottom:.4rem}
 .rc-source-badge{display:inline-flex;align-items:center;gap:.3rem;padding:2px 7px;border-radius:4px;background:color-mix(in srgb,var(--entity-bridge) 10%, var(--surface));border:1px solid color-mix(in srgb,var(--entity-bridge) 25%, var(--border));color:var(--entity-bridge);font-size:var(--font-2xs);font-weight:var(--weight-bold);margin-bottom:.35rem}
 .rc-turn-divider{border:none;border-top:1px dashed color-mix(in srgb,var(--border) 60%, transparent);margin:.2rem 0}
 .rc-input-row{display:flex;gap:.4rem;padding:.55rem .7rem;border-top:1px solid var(--border);background:var(--surface);align-items:center}
@@ -388,7 +388,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .trust-pill{display:inline-flex;align-items:center;gap:.4rem;padding:.25rem .6rem;
   border-radius:999px;font-size:var(--font-xs);font-weight:var(--weight-bold);border:1px solid var(--border);
   background:var(--surface-2);color:var(--text-soft);cursor:pointer}
-.trust-pill .tp-score{font-weight:var(--weight-semibold);opacity:.85;font-variant-numeric:tabular-nums}
+.trust-pill .tp-score{font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums}
 /* Shown only for a LOW verdict — see the comment at the render site. */
 .trust-warn{font-size:var(--font-xs);line-height:1.5;color:var(--warning);flex:1 1 16rem;min-width:0}
 .trust-pill.high{background:var(--success-soft);color:var(--success);border-color:color-mix(in srgb,var(--success) 40%,transparent)}

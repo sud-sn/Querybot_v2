@@ -146,7 +146,7 @@
 {% if charts %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
   <h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.tab_visuals', tab=selected_tab) }}</h2>
-  <span style="font-size:var(--font-sm);color:var(--gray-500)">{% if dashboard_artifact.can_edit %}{{ t('ui.dash.drag_hint') }} · {% endif %}{{ t('ui.dash.live_data') }}</span>
+  <span style="font-size:var(--font-sm);color:var(--text-muted)">{% if dashboard_artifact.can_edit %}{{ t('ui.dash.drag_hint') }} · {% endif %}{{ t('ui.dash.live_data') }}</span>
 </div>
 <div class="chart-grid">
   {% for chart in charts %}

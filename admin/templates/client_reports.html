@@ -40,7 +40,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
   margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
   <div>
     <h1 style="font-size:var(--font-xl);font-weight:var(--weight-bold)">Reports</h1>
-    <p style="font-size:var(--font-base);color:var(--gray-500)">
+    <p style="font-size:var(--font-base);color:var(--text-muted)">
       A named group of metrics users can ask about live in chat ("what's my
       report?") or subscribe to on a schedule. Each metric still respects
       the asking user's own table access — a report grants no extra access.
@@ -107,7 +107,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
         </div>
       </div>
       <div class="report-card-body">
-        <div style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--gray-500);
+        <div style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-muted);
           text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">
           Metrics in this report ({{ r.metrics|length }})
         </div>
@@ -127,7 +127,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
             </div>
           {% endfor %}
         {% else %}
-          <div style="font-size:var(--font-sm);color:var(--gray-500)">No metrics assigned yet.</div>
+          <div style="font-size:var(--font-sm);color:var(--text-muted)">No metrics assigned yet.</div>
         {% endif %}
 
         {% if all_metrics %}
@@ -169,7 +169,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
     </div>
   {% endfor %}
 {% else %}
-  <div style="text-align:center;padding:3rem 1rem;color:var(--gray-500)">
+  <div style="text-align:center;padding:3rem 1rem;color:var(--text-muted)">
     <div style="font-size:var(--font-md);font-weight:var(--weight-semibold);margin-bottom:.5rem">
       No reports defined yet
     </div>

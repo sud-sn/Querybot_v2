@@ -18,7 +18,7 @@
 .bar-label{font-size:var(--font-sm);color:var(--text-soft);width:120px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
 .bar-fill{height:100%;border-radius:999px;background:var(--brand-gradient)}
-.bar-val{font-size:var(--font-xs);color:var(--gray-500);width:50px;text-align:right;flex-shrink:0}
+.bar-val{font-size:var(--font-xs);color:var(--text-muted);width:50px;text-align:right;flex-shrink:0}
 .tab-pane{display:none}.tab-pane.active{display:block}
 .health-arc.green{stroke:var(--success)}
 .health-arc.amber{stroke:var(--warning)}
@@ -49,7 +49,7 @@
 .audit-group-row{background:var(--surface);cursor:pointer;border-bottom:1px solid var(--border)}
 .audit-group-row:hover{background:var(--row-hover)}
 .audit-group-row td{padding:.7rem .75rem;vertical-align:middle}
-.audit-expand-btn{display:inline-flex;align-items:center;gap:5px;font-size:var(--font-xs);color:var(--gray-500);background:none;border:none;cursor:pointer;padding:0;line-height:1}
+.audit-expand-btn{display:inline-flex;align-items:center;gap:5px;font-size:var(--font-xs);color:var(--text-muted);background:none;border:none;cursor:pointer;padding:0;line-height:1}
 .audit-expand-btn .chevron{transition:transform .18s ease;display:inline-block}
 .audit-expand-btn.open .chevron{transform:rotate(90deg)}
 /* Child rows — one per LLM call within the question */
@@ -58,11 +58,11 @@
 .audit-child-row{background:var(--surface-2)}
 .audit-child-row td{padding:.5rem .75rem .5rem 2.5rem;border-bottom:1px solid var(--border);font-size:var(--font-xs);vertical-align:top}
 .audit-child-row:last-child td{border-bottom:2px solid var(--border)}
-.audit-time{font-size:var(--font-xs);color:var(--gray-500);white-space:nowrap;font-variant-numeric:tabular-nums}
+.audit-time{font-size:var(--font-xs);color:var(--text-muted);white-space:nowrap;font-variant-numeric:tabular-nums}
 .audit-req{font-size:var(--font-xs);font-family:var(--font-mono);color:var(--text-soft);white-space:nowrap}
 .audit-comp code{font-size:var(--font-xs);font-family:var(--font-mono);background:var(--surface);border:1px solid var(--border);padding:2px 5px;border-radius:var(--radius-sm);color:var(--text-soft);white-space:nowrap}
-.audit-model{font-size:var(--font-xs);color:var(--gray-500);white-space:nowrap}
-.audit-chars{font-size:var(--font-xs);color:var(--gray-500);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.audit-model{font-size:var(--font-xs);color:var(--text-muted);white-space:nowrap}
+.audit-chars{font-size:var(--font-xs);color:var(--text-muted);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 
 /* ── Client readiness / health score widget ─────────────────────── */
 .health-score-card{grid-column:1/-1}
@@ -71,7 +71,7 @@
 .health-donut-wrap svg{width:110px;height:110px;transform:rotate(-90deg)}
 .health-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:1px}
 .health-donut-score{font-size:var(--font-3xl);font-weight:var(--weight-bold);line-height:1;letter-spacing:-.04em;color:var(--gray-800)}
-.health-donut-denom{font-size:var(--font-2xs);color:var(--gray-400);font-weight:var(--weight-semibold)}
+.health-donut-denom{font-size:var(--font-2xs);color:var(--text-muted);font-weight:var(--weight-semibold)}
 .health-components{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.5rem}
 .health-comp{display:flex;align-items:center;gap:.6rem;padding:.55rem .7rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)}
 .health-comp-icon{width:9px;height:9px;border-radius:50%;flex-shrink:0;background:var(--gray-300)}
@@ -80,7 +80,7 @@
 .health-comp-icon.fail{background:var(--danger);box-shadow:0 0 0 3px color-mix(in srgb,var(--danger) 18%,transparent)}
 .health-comp-body{flex:1;min-width:0}
 .health-comp-name{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--gray-700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.health-comp-pts{font-size:var(--font-2xs);color:var(--gray-500);margin-top:1px}
+.health-comp-pts{font-size:var(--font-2xs);color:var(--text-muted);margin-top:1px}
 @media(max-width:900px){.health-score-layout{grid-template-columns:1fr}.health-donut-wrap{margin:0 auto}}
 @media(max-width:640px){.agent-analysis-grid{grid-template-columns:1fr}}
 </style>
@@ -113,7 +113,7 @@
     <div class="metric-label">Query limit</div>
     <div class="metric-value" style="font-size:var(--font-xl)">
       <span style="color:{% if limit_pct >= 80 %}var(--amber){% else %}var(--green){% endif %}">{{ monthly_count }}</span>
-      <span style="font-size:var(--font-base);color:var(--gray-500)">/ {{ client.query_limit_monthly or 500 }}</span>
+      <span style="font-size:var(--font-base);color:var(--text-muted)">/ {{ client.query_limit_monthly or 500 }}</span>
     </div>
   </div>
   <div class="metric">
@@ -123,7 +123,7 @@
       <span style="color:var(--green)">Unlimited</span>
       {% else %}
       <span style="color:{% if token_status.limit_pct >= 80 %}var(--amber){% else %}var(--green){% endif %}">{{ "{:,}".format(token_status.remaining or 0) }}</span>
-      <span style="font-size:var(--font-base);color:var(--gray-500)"> left</span>
+      <span style="font-size:var(--font-base);color:var(--text-muted)"> left</span>
       {% endif %}
     </div>
   </div>
@@ -142,11 +142,11 @@
     <div class="overview-card">
       <h2>Connection details</h2>
       <table style="width:100%;font-size:var(--font-base);border-collapse:collapse">
-        <tr><td style="padding:5px 0;color:var(--gray-500);width:120px">Platform</td><td><span class="badge badge-blue">{{ client.platform_type }}</span></td></tr>
-        <tr><td style="padding:5px 0;color:var(--gray-500)">Database</td><td style="font-weight:var(--weight-semibold)">{{ db_name }}</td></tr>
-        <tr><td style="padding:5px 0;color:var(--gray-500)">LLM model</td><td>{{ client.llm_model or system_model }}</td></tr>
-        <tr><td style="padding:5px 0;color:var(--gray-500)">Connected</td><td>{{ client.created_at[:10] }}</td></tr>
-        <tr><td style="padding:5px 0;color:var(--gray-500)">Last active</td><td>{{ client.updated_at[:16] }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--text-muted);width:120px">Platform</td><td><span class="badge badge-blue">{{ client.platform_type }}</span></td></tr>
+        <tr><td style="padding:5px 0;color:var(--text-muted)">Database</td><td style="font-weight:var(--weight-semibold)">{{ db_name }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--text-muted)">LLM model</td><td>{{ client.llm_model or system_model }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--text-muted)">Connected</td><td>{{ client.created_at[:10] }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--text-muted)">Last active</td><td>{{ client.updated_at[:16] }}</td></tr>
       </table>
       {% if client.business_desc %}
       <div style="margin-top:.75rem;padding:.6rem .75rem;background:var(--gray-50);border-radius:5px;font-size:var(--font-sm);color:var(--gray-700)">
@@ -159,8 +159,8 @@
       <h2>Monthly usage  —  {{ limit_pct }}% of limit</h2>
       <div style="margin-bottom:1rem">
         <div style="display:flex;justify-content:space-between;font-size:var(--font-sm);margin-bottom:4px">
-          <span style="color:var(--gray-500)">{{ monthly_count }} used</span>
-          <span style="color:var(--gray-500)">{{ (client.query_limit_monthly or 500) - monthly_count }} remaining</span>
+          <span style="color:var(--text-muted)">{{ monthly_count }} used</span>
+          <span style="color:var(--text-muted)">{{ (client.query_limit_monthly or 500) - monthly_count }} remaining</span>
         </div>
         <div style="background:var(--gray-100);border-radius:4px;height:16px;overflow:hidden">
           <div style="width:{{ [limit_pct,100]|min }}%;height:100%;border-radius:4px;background:{% if limit_pct >= 80 %}var(--amber){% else %}var(--blue){% endif %}"></div>
@@ -177,7 +177,7 @@
           <span class="bar-val">{{ cnt }}x</span>
         </div>
         {% endfor %}
-      {% else %}<p style="font-size:var(--font-sm);color:var(--gray-500)">No queries yet.</p>{% endif %}
+      {% else %}<p style="font-size:var(--font-sm);color:var(--text-muted)">No queries yet.</p>{% endif %}
     </div>
 
     <div class="overview-card">
@@ -187,7 +187,7 @@
           {{ ic("check-circle", 18, "text-success") }}
           <div>
         <div style="font-weight:var(--weight-bold);font-size:var(--font-base)">{{ kb_file_count }} KB files ready</div>
-        <div style="font-size:var(--font-xs);color:var(--gray-500)">{{ schema_file_count }} schema + {{ kb_file_count - schema_file_count }} enriched</div>
+        <div style="font-size:var(--font-xs);color:var(--text-muted)">{{ schema_file_count }} schema + {{ kb_file_count - schema_file_count }} enriched</div>
         <div id="semanticPendingInline" class="semantic-review-chip" {% if not semantic_pending_count %}hidden{% endif %}>
           <a href="/admin/clients/{{ client.account_id }}/kb#semantic-feedback" title="Open Semantic Layer review queue">
             <span class="semantic-review-count">{{ semantic_pending_count or 0 }}</span>
@@ -201,11 +201,11 @@
           {{ ic("clock", 18, "text-warning") }}
           <div>
             <div style="font-weight:var(--weight-bold);font-size:var(--font-base)">Schema ready — KB pending</div>
-            <div style="font-size:var(--font-xs);color:var(--gray-500)">{{ schema_file_count }} tables discovered. Open the Setup page to generate the Knowledge Base.</div>
+            <div style="font-size:var(--font-xs);color:var(--text-muted)">{{ schema_file_count }} tables discovered. Open the Setup page to generate the Knowledge Base.</div>
           </div>
         </div>
       {% else %}
-        <p style="font-size:var(--font-base);color:var(--gray-500)">No schema yet. Open the Schema &amp; KB Setup page to run discovery.</p>
+        <p style="font-size:var(--font-base);color:var(--text-muted)">No schema yet. Open the Schema &amp; KB Setup page to run discovery.</p>
       {% endif %}
       <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm" style="margin-top:.25rem">View &amp; Edit KB files</a>
     </div>
@@ -215,7 +215,7 @@
       {% if failed_queries %}
         {% for q in failed_queries[:5] %}
         <div style="border-left:3px solid var(--red);padding:.4rem .6rem;margin-bottom:.4rem;background:var(--red-light);border-radius:0 4px 4px 0">
-          <div style="font-size:var(--font-xs);color:var(--gray-500);display:flex;align-items:center;gap:6px">
+          <div style="font-size:var(--font-xs);color:var(--text-muted);display:flex;align-items:center;gap:6px">
             <span>{{ q.created_at[5:16] }}</span>
             {% if q.error_code %}<span class="badge badge-red" style="font-size:var(--font-xs)" title="Exact failure scenario">{{ q.error_code }}</span>{% endif %}
           </div>
@@ -503,7 +503,7 @@
       <a href="/admin/clients/{{ client.account_id }}/billing" class="btn btn-secondary btn-sm">Full billing report →</a>
     </div>
     {% if not queries %}
-    <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">No queries yet.</div>
+    <div class="card-body" style="color:var(--text-muted);text-align:center;padding:2rem">No queries yet.</div>
     {% else %}
     <div class="qb-table-wrap" style="border:none;border-radius:0">
     <table class="qb-table">
@@ -578,7 +578,7 @@
     <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
       <div>
         <h2 style="margin:0">LLM audit log</h2>
-        <p style="margin:.25rem 0 0;font-size:var(--font-sm);color:var(--gray-500)">
+        <p style="margin:.25rem 0 0;font-size:var(--font-sm);color:var(--text-muted)">
           Every prompt sent to the LLM for this client, with literals and identifiers sanitized. Showing up to the 100 most recent calls matching the current filters.
         </p>
       </div>
@@ -590,7 +590,7 @@
     </div>
 
     {% if not client.enable_llm_audit %}
-    <div class="card-body" style="color:var(--gray-500)">
+    <div class="card-body" style="color:var(--text-muted)">
       LLM audit logging is currently off for this client. Turn on <strong>Enable per-query LLM audit logging</strong> in Settings to capture future prompts.
     </div>
     {% else %}
@@ -656,7 +656,7 @@
     </div>
 
     {% if not llm_calls %}
-    <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">
+    <div class="card-body" style="color:var(--text-muted);text-align:center;padding:2rem">
       No LLM audit rows match these filters.
     </div>
     {% else %}
@@ -732,10 +732,10 @@
         <tbody class="audit-child-section" id="children-{{ gid }}">
           <!-- child header -->
           <tr class="audit-child-row" style="background:var(--surface-3)">
-            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem .4rem 2.5rem">Call</td>
-            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Component / Model</td>
-            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Status</td>
-            <td style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem">Sanitized prompt preview</td>
+            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:.4rem .75rem .4rem 2.5rem">Call</td>
+            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:.4rem .5rem">Component / Model</td>
+            <td colspan="2" style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:.4rem .5rem">Status</td>
+            <td style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);padding:.4rem .75rem">Sanitized prompt preview</td>
           </tr>
           {% for call in group.calls %}
           <tr class="audit-child-row">
@@ -757,7 +757,7 @@
             <td>
               {% if call.egress %}
               <div style="margin-bottom:.45rem;padding:.4rem .55rem;border-radius:4px;background:var(--surface-3);font-size:var(--font-xs);line-height:1.5">
-                <div style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);margin-bottom:2px">What was sent</div>
+                <div style="font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:2px">What was sent</div>
                 {% if call.egress.tables %}
                 <div><strong>{{ call.egress.tables|length }}</strong> table{{ "s" if call.egress.tables|length != 1 else "" }}<span style="color:var(--gray-600)" title="{{ call.egress.tables|join(', ') }}">: {{ call.egress.tables[:3]|join(', ') }}{% if call.egress.tables|length > 3 %} +{{ call.egress.tables|length - 3 }} more{% endif %}</span></div>
                 {% endif %}
@@ -776,11 +776,11 @@
               {% endif %}
               <div class="audit-preview">{{ call.payload_preview_sanitized or "—" }}</div>
               {% if call.response_preview_sanitized %}
-              <div style="margin-top:.4rem;font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500)">Sanitized response preview · {{ call.response_chars }} ch</div>
+              <div style="margin-top:.4rem;font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">Sanitized response preview · {{ call.response_chars }} ch</div>
               <div class="audit-preview" style="margin-top:2px">{{ call.response_preview_sanitized }}</div>
               {% endif %}
               {% if call.payload_hash or call.response_hash %}
-              <div style="margin-top:.35rem;font-size:var(--font-2xs);color:var(--gray-500);font-family:var(--font-mono)" title="SHA-256 fingerprints of the exact prompt sent / response received — recompute to verify nothing else was exchanged">
+              <div style="margin-top:.35rem;font-size:var(--font-2xs);color:var(--text-muted);font-family:var(--font-mono)" title="SHA-256 fingerprints of the exact prompt sent / response received — recompute to verify nothing else was exchanged">
                 {% if call.payload_hash %}sent {{ call.payload_hash[:16] }}…{% endif %}
                 {% if call.response_hash %} · recv {{ call.response_hash[:16] }}…{% endif %}
               </div>

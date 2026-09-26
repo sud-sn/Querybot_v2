@@ -19,7 +19,7 @@
             padding:.6rem 0;border-bottom:1px solid var(--border)">
             <div>
               <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ a.question }}</div>
-              <div style="font-size:var(--font-xs);color:var(--gray-500)">
+              <div style="font-size:var(--font-xs);color:var(--text-muted)">
                 {{ a.metric_col }} {{ enum_label('condition', a.condition) }} {{ a.threshold }}
                 {% if a.condition == 'change_pct' %}%{% endif %}
                 &middot; {{ t('ui.notif.checks_every', count=a.check_interval_minutes or 60) }}
@@ -37,7 +37,7 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:var(--font-sm);color:var(--gray-500)">
+        <div style="font-size:var(--font-sm);color:var(--text-muted)">
           {{ t('ui.notif.no_alerts') }}
         </div>
       {% endif %}
@@ -50,7 +50,7 @@
       <a href="/portal/reports/new" class="btn btn-primary btn-sm">+ {{ t('ui.notif.new_report') }}</a>
     </div>
     <div class="card-body" style="padding:1rem">
-      <div style="font-size:var(--font-xs);color:var(--gray-500);margin-bottom:.75rem">
+      <div style="font-size:var(--font-xs);color:var(--text-muted);margin-bottom:.75rem">
         {{ t('ui.notif.describe_in_chat') }}
       </div>
       {% if my_reports %}
@@ -59,7 +59,7 @@
             padding:.5rem 0;border-bottom:1px solid var(--border)">
             <div>
               <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ r.name }}</div>
-              {% if r.description %}<div style="font-size:var(--font-xs);color:var(--gray-500)">{{ r.description }}</div>{% endif %}
+              {% if r.description %}<div style="font-size:var(--font-xs);color:var(--text-muted)">{{ r.description }}</div>{% endif %}
             </div>
             <form method="post" action="/portal/reports/{{ r.id }}/delete" style="display:inline"
               id="del-my-report-{{ r.id }}">
@@ -71,7 +71,7 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:var(--font-sm);color:var(--gray-500)">
+        <div style="font-size:var(--font-sm);color:var(--text-muted)">
           {{ t('ui.notif.no_my_reports') }}
         </div>
       {% endif %}
@@ -88,7 +88,7 @@
             <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
               <div>
                 <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ r.name }}</div>
-                {% if r.description %}<div style="font-size:var(--font-xs);color:var(--gray-500)">{{ r.description }}</div>{% endif %}
+                {% if r.description %}<div style="font-size:var(--font-xs);color:var(--text-muted)">{{ r.description }}</div>{% endif %}
               </div>
               {% if sub %}
                 <form method="post" action="/portal/notifications/unsubscribe" style="display:inline">
@@ -98,7 +98,7 @@
               {% endif %}
             </div>
             {% if sub %}
-              <div style="font-size:var(--font-xs);color:var(--gray-500);margin-top:.3rem">
+              <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.3rem">
                 {{ t('ui.notif.subscribed') }} &middot; {{ enum_label('cadence', sub.cadence) }}
                 {% if sub.cadence == 'weekly' %}{{ t('ui.notif.on_day', day=t('ui.notif.day.' ~ sub.day_of_week)) }}{% endif %}
                 {{ t('ui.notif.at_hour', hour=sub.hour) }}
@@ -130,7 +130,7 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:var(--font-sm);color:var(--gray-500)">
+        <div style="font-size:var(--font-sm);color:var(--text-muted)">
           {{ t('ui.notif.no_reports') }}
         </div>
       {% endif %}

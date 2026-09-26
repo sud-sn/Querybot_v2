@@ -60,7 +60,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
   margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
   <div>
     <h1 style="font-size:var(--font-xl);font-weight:var(--weight-bold)">Business Glossary</h1>
-    <p style="font-size:var(--font-base);color:var(--gray-500)">
+    <p style="font-size:var(--font-base);color:var(--text-muted)">
       The semantic layer — business terms, synonyms, and metric definitions.
       Used by the clarification loop and the SQL generator to ground every
       query in real domain meaning.
@@ -222,7 +222,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
       <div class="term-card-body">
         {% if t.aliases %}
           <div style="margin-bottom:.4rem">
-            <span style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--gray-500);
+            <span style="font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-muted);
               text-transform:uppercase;letter-spacing:.04em">Aliases:</span>
             {% for a in t.aliases.split(',') %}
               {% if a.strip() %}<span class="alias-pill">{{ a.strip() }}</span>{% endif %}
@@ -304,7 +304,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
     </div>
   {% endfor %}
 {% else %}
-  <div style="text-align:center;padding:3rem 1rem;color:var(--gray-500)">
+  <div style="text-align:center;padding:3rem 1rem;color:var(--text-muted)">
     <div style="font-size:var(--font-md);font-weight:var(--weight-semibold);margin-bottom:.5rem">
       No business terms defined yet
     </div>

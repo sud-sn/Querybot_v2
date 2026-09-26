@@ -100,10 +100,10 @@
     <tr>
       <td style="font-weight:var(--weight-semibold)">{{ p.name }}</td>
       <td><span class="badge badge-blue">{{ p.platform_type }}</span></td>
-      <td style="font-size:var(--font-xs);color:var(--gray-500)">
+      <td style="font-size:var(--font-xs);color:var(--text-muted)">
         {% for k,v in p.creds_masked.items() %}{{ k }}: {{ v }}&nbsp;&nbsp;{% endfor %}
       </td>
-      <td style="color:var(--gray-500);font-size:var(--font-sm)">{{ p.created_at[:10] }}</td>
+      <td style="color:var(--text-muted);font-size:var(--font-sm)">{{ p.created_at[:10] }}</td>
       <td>
         <form method="post" action="/admin/platforms/delete" style="display:inline">
           <input type="hidden" name="platform_id" value="{{ p.id }}">
