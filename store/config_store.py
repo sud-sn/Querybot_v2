@@ -2352,6 +2352,13 @@ def save_entity(
     generated_by/reason: provenance evidence ('manual' | 'heuristic' | 'llm') and a
         human-readable explanation of why this entity was suggested. Written on
         INSERT only — updates never overwrite the original provenance.
+
+    A suggestion never overwrites an admin's decision: status 'suggested'
+    arriving for a row the admin confirmed or rejected leaves the row as it is.
+    The LLM's graph Suggest wrote every table it classified this way, so a
+    confirmed table went back to 'suggested' -- out of the confirmed-only join
+    resolver -- with the model's name and description over the admin's, its
+    row filter cleared and its node moved; and a rejected one came back.
     """
     with get_db() as conn:
         conn.execute("""
@@ -2375,6 +2382,8 @@ def save_entity(
                 confidence_score = excluded.confidence_score,
                 status           = excluded.status,
                 entity_filter    = excluded.entity_filter
+            WHERE excluded.status <> 'suggested'
+               OR COALESCE(entity_graph.status, '') NOT IN ('confirmed', 'rejected')
         """, (account_id, entity_name, table_name, schema_name, pk_column,
               display_name, description, entity_type, is_active,
               pos_x, pos_y, color, confidence_score, status, entity_filter,
@@ -2567,6 +2576,23 @@ def save_relationship(
     return row["id"] if row else -1
 
 
+def _rejected_relationship(conn, account_id: str, where: str, params: tuple) -> int:
+    """The id of a relationship the admin rejected that matches, or 0.
+
+    A rejection sets status='rejected' and is_active=0, and both upserts below
+    looked only at active rows, so the next graph sync or Suggest inserted the
+    same join again as a fresh suggestion: the admin rejected it on every KB
+    build. A row a sync merely retired (still 'suggested', inactive) is not a
+    rejection and does not block anything.
+    """
+    row = conn.execute(
+        f"SELECT id FROM entity_relationships WHERE account_id=? AND status='rejected' AND {where} "
+        "ORDER BY id DESC LIMIT 1",
+        (account_id, *params),
+    ).fetchone()
+    return int(row["id"]) if row else 0
+
+
 def upsert_relationship_by_pair(
     account_id: str,
     from_entity: str,
@@ -2585,9 +2611,17 @@ def upsert_relationship_by_pair(
     Insert or update a relationship keyed by (account_id, from_entity, to_entity).
     Enforces one-relationship-per-table-pair: if a suggested/heuristic relationship
     already exists for this pair it is replaced; confirmed/manual rows are never
-    overwritten.  Returns the relationship id.
+    overwritten, and a join the admin rejected on these same columns is not
+    suggested again.  Returns the relationship id.
     """
     with get_db() as conn:
+        rejected = _rejected_relationship(
+            conn, account_id,
+            "from_entity=? AND to_entity=? AND from_column=? AND to_column=?",
+            (from_entity, to_entity, from_column, to_column),
+        )
+        if rejected:
+            return rejected
         existing = conn.execute(
             """SELECT id, status, generated_by FROM entity_relationships
                WHERE account_id=? AND from_entity=? AND to_entity=? AND is_active=1
@@ -2647,7 +2681,10 @@ def upsert_relationship_by_identity(
 
     ``relationship_key`` identifies the business role or DB constraint, so the
     same two entities may have order-date, invoice-date, composite-key, and
-    other independent relationships. Confirmed/manual rows remain immutable.
+    other independent relationships. Confirmed/manual rows remain immutable,
+    and a key the admin rejected is not suggested again -- not even by a
+    declared foreign key, which is evidence the join exists, not that the
+    business wants it used.
     """
     import json as _json
 
@@ -2660,6 +2697,9 @@ def upsert_relationship_by_identity(
     jc_json = _json.dumps(join_conditions or [])
 
     with get_db() as conn:
+        rejected = _rejected_relationship(conn, account_id, "relationship_key=?", (key,))
+        if rejected:
+            return rejected
         existing = conn.execute(
             """SELECT id, status, generated_by FROM entity_relationships
                  WHERE account_id=? AND relationship_key=? AND is_active=1
@@ -2809,6 +2849,8 @@ def save_entity_property(
     Confirmed fields are synced to the semantic layer business_term table.
     generated_by/reason: provenance ('manual' | 'llm' | 'kb_harvest'), written
     on INSERT only — updates never overwrite the original provenance.
+    A suggestion never overwrites a property the admin confirmed or rejected
+    (see save_entity).
     """
     with get_db() as conn:
         conn.execute("""
@@ -2823,6 +2865,8 @@ def save_entity_property(
                 synonyms         = excluded.synonyms,
                 confidence_score = excluded.confidence_score,
                 status           = excluded.status
+            WHERE excluded.status <> 'suggested'
+               OR COALESCE(entity_properties.status, '') NOT IN ('confirmed', 'rejected')
         """, (account_id, entity_name, column_name, role,
               display_name, synonyms, confidence_score, status,
               generated_by, reason))

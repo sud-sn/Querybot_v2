@@ -5844,6 +5844,8 @@ async def graph_suggest(request: Request, account_id: str):
                 synonyms         = _syn,
                 confidence_score = int(field.get("confidence_score", 70)),
                 status           = "suggested",
+                generated_by     = "llm",
+                reason           = f"LLM schema analysis of {ent.get('table_name', '')}",
             )
             saved_fields += 1
 
@@ -5892,12 +5894,16 @@ async def graph_suggest(request: Request, account_id: str):
                  if e.get("table_name","").upper() == role_info["fact_table"].upper()),
                 role_info["fact_table"]
             )
-            store.save_relationship(
+            # Keyed as schema discovery keys a role join, so a second Suggest --
+            # or discovery itself -- updates this edge instead of adding one.
+            # save_relationship inserted a new row on every run.
+            store.upsert_relationship_by_identity(
                 account_id        = account_id,
                 from_entity       = fact_name_entity,
                 to_entity         = rp_name,
                 from_column       = role_info["fk_col"],
                 to_column         = pk_hint,
+                relationship_key  = f"ROLE:{fact_name_entity}:{role_info['fk_col']}:{rp_name}:{pk_hint}".upper(),
                 relationship_type = "many_to_one",
                 join_type         = "LEFT",
                 label             = role_info.get("relationship_label") or disp,
