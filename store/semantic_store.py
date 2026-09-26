@@ -280,7 +280,10 @@ def _metric_synonym_set(account_id: str) -> set[str]:
     except ImportError:
         return set()
     phrases: set[str] = set()
-    for m in _list_metrics(account_id, active_only=True):
+    # Only a metric that can answer may shadow a term: a draft that failed
+    # validation is never used, and a term it hid would leave the phrase with
+    # no meaning at all.
+    for m in _list_metrics(account_id, active_only=True, answerable_only=True):
         name = (m.get("name") or "").strip().lower()
         if name:
             phrases.add(name)

@@ -1347,6 +1347,25 @@ def metric_not_groupable_disclosure(metric, *, lang) -> str:
     )
 
 
+def planner_metrics_in_scope(account_id: str, effective) -> list[dict]:
+    """The registry metrics the analytical planner may bind for this question:
+    answerable ones (store.metric_is_answerable -- a formula that failed
+    validation is never offered) whose base table is among the tables in
+    scope. A metric with no base table has nothing to scope and is kept.
+    Raises when the registry cannot be read, so the caller can tell "none in
+    scope" from "unknown"."""
+    metrics = []
+    for metric in store.list_metrics(account_id, answerable_only=True):
+        base_table = str(metric.get("base_table") or "").upper().strip()
+        if base_table and not any(
+            table == base_table or table.endswith("." + base_table)
+            for table in effective
+        ):
+            continue
+        metrics.append(metric)
+    return metrics
+
+
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
     # Set from every governed execution below. Row-level statistics (quartiles,
@@ -1655,15 +1674,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # untrue. False means unknown, and unknown keeps asking.
     _planner_metrics_read = False
     try:
-        _planner_metrics = []
-        for _metric in store.list_metrics(account_id):
-            _base_table = str(_metric.get("base_table") or "").upper().strip()
-            if _base_table and not any(
-                table == _base_table or table.endswith("." + _base_table)
-                for table in effective
-            ):
-                continue
-            _planner_metrics.append(_metric)
+        _planner_metrics = planner_metrics_in_scope(account_id, effective)
         # The registry read completed. Set here rather than after the whole try:
         # store.list_terms below can raise on its own, and a terms failure says
         # nothing about whether the metrics are known.

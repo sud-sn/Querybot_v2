@@ -9014,7 +9014,9 @@ async def reports_page(request: Request, account_id: str):
         r["metrics"] = report_store.list_report_metrics(r["id"])
         creator = store.get_user(r["created_by_user_id"]) if r.get("created_by_user_id") else None
         r["creator_label"] = creator["name"] if creator else "Admin"
-    all_metrics = store.list_metrics(account_id, active_only=True)
+    # The report picker offers what a report can run: a draft that failed
+    # validation would only ever print "not computed" to its subscribers.
+    all_metrics = store.list_metrics(account_id, answerable_only=True)
     return _resp(request, "client_reports.html", {
         "client": client,
         "reports": reports,

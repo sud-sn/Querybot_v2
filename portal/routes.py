@@ -590,7 +590,7 @@ def _guess_safe_metric_suggestions(
     trend/breakdown questions that the workspace cannot reliably answer.
     """
     try:
-        metrics = store.list_metrics(account_id)
+        metrics = store.list_metrics(account_id, answerable_only=True)
     except Exception:
         return []
     if not metrics:
@@ -1663,7 +1663,7 @@ async def report_new_page(request: Request):
 
     account_id = user["account_id"]
     allowed = store.get_allowed_tables(user)  # None = admin, unrestricted
-    all_metrics = store.list_metrics(account_id, active_only=True)
+    all_metrics = store.list_metrics(account_id, answerable_only=True)
     if allowed is not None:
         all_metrics = [
             m for m in all_metrics

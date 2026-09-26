@@ -524,20 +524,44 @@ def _build_zero_row_message(
 
 # ── Metric formula helpers ────────────────────────────────────────────────────
 
-def _format_metric_formula_context(metrics: list[dict], account_id: str = "") -> str:
-    if not metrics:
-        return ""
+_FORMULA_USE = [
+    "For formula expressions: use the EXACT sql_template in EVERY SELECT expression",
+    "(including inside CTEs). The formula columns MUST appear in the SELECT clause.",
+]
 
-    blocks = [
-        "=" * 60,
-        "APPROVED METRIC FORMULAS — READ THIS FIRST",
-        "=" * 60,
-        "These metric formulas are ADMIN-APPROVED and take ABSOLUTE PRECEDENCE.",
-        "They OVERRIDE any column or formula documented in the Knowledge Base below.",
-        "For formula expressions: use the EXACT sql_template in EVERY SELECT expression",
-        "(including inside CTEs). The formula columns MUST appear in the SELECT clause.",
-        "NEVER substitute a similar-sounding column from the KB for an approved formula.",
-    ]
+
+def _format_metric_formula_context(metrics: list[dict], account_id: str = "") -> str:
+    """The metric formulas the SQL model must use, under a header that says
+    who stands behind them. A registry metric is the admin's; a draft the
+    reader composed in this thread (store.adhoc_metric_store, marked _adhoc)
+    is theirs, applies to this conversation only, and was printed under
+    "ADMIN-APPROVED" too -- in the prompt and in every trace of it."""
+    approved = [metric for metric in metrics or [] if not metric.get("_adhoc")]
+    conversation = [metric for metric in metrics or [] if metric.get("_adhoc")]
+    sections = []
+    if approved:
+        sections.append(_formula_section([
+            "APPROVED METRIC FORMULAS — READ THIS FIRST",
+            "=" * 60,
+            "These metric formulas are ADMIN-APPROVED and take ABSOLUTE PRECEDENCE.",
+            "They OVERRIDE any column or formula documented in the Knowledge Base below.",
+            *_FORMULA_USE,
+            "NEVER substitute a similar-sounding column from the KB for an approved formula.",
+        ], approved, account_id))
+    if conversation:
+        sections.append(_formula_section([
+            "METRICS DEFINED IN THIS CONVERSATION — READ THIS FIRST",
+            "=" * 60,
+            "The reader defined these metrics earlier in this conversation. They are NOT",
+            "admin-approved: they apply to this conversation only, and for it they take",
+            "precedence over any column or formula documented in the Knowledge Base below.",
+            *_FORMULA_USE,
+        ], conversation, account_id))
+    return "\n\n".join(sections)
+
+
+def _formula_section(header: list[str], metrics: list[dict], account_id: str) -> str:
+    blocks = ["=" * 60, *header]
     for idx, metric in enumerate(metrics, start=1):
         formula_type = (metric.get("formula_type") or "query").lower()
         kind = "formula expression" if formula_type == "expression" else "trusted SQL query/template"

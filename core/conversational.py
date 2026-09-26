@@ -454,9 +454,7 @@ def _example_questions(
 
     try:
         import store
-        for metric in store.list_metrics(account_id):
-            if not metric.get("is_active", 1):
-                continue
+        for metric in store.list_metrics(account_id, answerable_only=True):
             for q in str(metric.get("example_questions") or "").split("\n"):
                 for part in q.split(";"):
                     if part.strip():
@@ -505,8 +503,8 @@ def _metric_names(account_id: str, limit: int = 5) -> list[str]:
     try:
         import store
         names = []
-        for metric in store.list_metrics(account_id):
-            if metric.get("is_active", 1) and metric.get("name"):
+        for metric in store.list_metrics(account_id, answerable_only=True):
+            if metric.get("name"):
                 names.append(str(metric["name"]))
             if len(names) >= limit:
                 break

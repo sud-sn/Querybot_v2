@@ -136,6 +136,15 @@ def run_metric_for_report(account_id: str, user: dict, metric: dict) -> dict:
     metric_name = metric.get("name") or "this metric"
     base_table = (metric.get("base_table") or "").strip()
 
+    # A report keeps its metric rows by id (store.report_store joins
+    # metric_registry on it), so a metric edited into a formula that fails
+    # validation, or retired, is still listed here -- and its SQL would run
+    # for every subscriber on every cadence.
+    if not store.metric_is_answerable(metric):
+        reason = "retired" if not metric.get("is_active", 1) or str(
+            metric.get("metric_status") or "").lower() == "deprecated" else "not_validated"
+        return {"ok": False, "reason": reason, "metric_name": metric_name}
+
     if base_table:
         allowed_tables = store.get_allowed_tables(user)
         if allowed_tables is not None and base_table not in allowed_tables:
@@ -219,8 +228,13 @@ def _format_metric_line(result: dict, lang: str | None = None) -> str:
 
     metric_name = result.get("metric_name") or t("digest.metric.unnamed", lang=lang)
     if not result.get("ok"):
-        if result.get("reason", "") == "access_denied":
+        reason = result.get("reason", "")
+        if reason == "access_denied":
             return t("digest.metric.no_access", lang=lang, metric=metric_name)
+        if reason == "not_validated":
+            return t("digest.metric.not_validated", lang=lang, metric=metric_name)
+        if reason == "retired":
+            return t("digest.metric.retired", lang=lang, metric=metric_name)
         return t("digest.metric.failed", lang=lang, metric=metric_name)
 
     rows = result.get("rows") or []

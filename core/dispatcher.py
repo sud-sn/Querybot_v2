@@ -340,9 +340,7 @@ def _build_analyst_context(account_id: str, client_row: dict) -> str:
     # Metric list — names + short descriptions, capped at 15
     try:
         metric_lines: list[str] = []
-        for metric in store.list_metrics(account_id):
-            if not metric.get("is_active", 1):
-                continue
+        for metric in store.list_metrics(account_id, answerable_only=True):
             name = str(metric.get("name") or "").strip()
             desc = str(metric.get("description") or "").strip()
             if name:

@@ -25,7 +25,7 @@ from store.source_store import (
 )
 from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (
-    save_metric, list_metrics, get_metric, update_metric,
+    save_metric, list_metrics, metric_is_answerable, get_metric, update_metric,
     delete_metric, deprecate_metric, certify_metric, uncertify_metric,
     match_metric, list_metric_formula_context,
     validate_metric_refs, increment_metric_usage,
@@ -201,7 +201,7 @@ __all__ = [
     "flag_relationships_needing_review","clear_relationship_review_flag",
     "save_graph_version","list_graph_versions","get_graph_version",
     "replace_graph_from_snapshot",
-    "save_metric","list_metrics","get_metric","update_metric",
+    "save_metric","list_metrics","metric_is_answerable","get_metric","update_metric",
     "delete_metric","deprecate_metric","certify_metric","uncertify_metric",
     "match_metric","list_metric_formula_context",
     "increment_metric_usage",

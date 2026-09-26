@@ -874,7 +874,8 @@ def build_sql_system_prompt(
         "as a scatter chart. Example: SELECT label_col, numeric_col_1, numeric_col_2 "
         "FROM table ORDER BY numeric_col_1 DESC\n")
         + "- APPROVED METRIC FORMULA RULE: If the context includes 'APPROVED METRIC FORMULAS' "
-        "and the user asks for that metric or any synonym, the approved calculation MUST be "
+        "or 'METRICS DEFINED IN THIS CONVERSATION' "
+        "and the user asks for that metric or any synonym, that calculation MUST be "
         "used in EVERY SELECT expression — including inside CTEs, subqueries, and comparison "
         "queries. The approved formula OVERRIDES any column name found in the KB schema docs "
         "for that metric. For by/per/grouped-by questions, put the approved formula in the "

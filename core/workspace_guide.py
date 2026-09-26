@@ -289,8 +289,8 @@ def build_workspace_guide(account_id: str, user: dict | None) -> dict:
 
     metrics: list[dict] = []
     try:
-        for metric in store.list_metrics(account_id):
-            if not metric.get("is_active", 1) or not _metric_visible(metric, allowed_tables):
+        for metric in store.list_metrics(account_id, answerable_only=True):
+            if not _metric_visible(metric, allowed_tables):
                 continue
             metrics.append({
                 "name": _clean_text(metric.get("name"), 100),

@@ -334,7 +334,7 @@ def suggest_closest_terms(
 
     try:
         import store
-        for metric in store.list_metrics(account_id) or []:
+        for metric in store.list_metrics(account_id, answerable_only=True) or []:
             _consider(metric.get("name"))
             for syn in str(metric.get("synonyms") or "").split(","):
                 _consider(syn)

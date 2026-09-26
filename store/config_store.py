@@ -1213,7 +1213,12 @@ def _ensure_metric_registry_schema(conn) -> None:
         "base_entity": "TEXT DEFAULT ''",
         "base_table": "TEXT DEFAULT ''",
         "formula_ast": "TEXT DEFAULT '[]'",
-        "metric_status": "TEXT DEFAULT 'draft'",
+        # 'published', as store/db.py's v27 migration adds it: a column added to
+        # a table that already holds metrics must leave them live. 'draft' here
+        # meant whichever schema path ran first decided whether every existing
+        # metric could still answer. save_metric and update_metric set the
+        # status from validation on every write, so no new row relies on it.
+        "metric_status": "TEXT DEFAULT 'published'",
         "validation_errors": "TEXT DEFAULT '[]'",
         "last_validated_at": "TEXT DEFAULT ''",
         "version": "INTEGER DEFAULT 1",
@@ -1340,7 +1345,28 @@ def _snapshot_metric_version(conn, metric_id: int, account_id: str, changed_by: 
         )
 
 
-def list_metrics(account_id: str, active_only: bool = True) -> list[dict]:
+# A metric answers questions only once its formula has passed validation.
+# derive_metric_status marks a failed formula 'draft' -- "metric cannot be
+# used" -- and deprecate_metric retires one, yet the template route, the
+# formula block that tells the SQL model a metric is ADMIN-APPROVED with
+# ABSOLUTE PRECEDENCE, the planner, suggestions and scheduled reports all read
+# list_metrics(), which returned both. Everything that turns a metric into an
+# answer, a suggestion or a report line asks for answerable_only=True; the
+# admin's pages do not, because a draft is listed there to be fixed.
+_UNANSWERABLE_METRIC_STATUSES = frozenset({"draft", "deprecated"})
+
+
+def metric_is_answerable(metric: dict) -> bool:
+    """True for an active metric whose formula passed validation. A row that
+    predates the status column reads as published, as the migration made it."""
+    if not metric.get("is_active", 1):
+        return False
+    status = str(metric.get("metric_status") or "published").strip().lower()
+    return status not in _UNANSWERABLE_METRIC_STATUSES
+
+
+def list_metrics(account_id: str, active_only: bool = True, *,
+                 answerable_only: bool = False) -> list[dict]:
     from store.db import get_db
     with get_db() as conn:
         _ensure_metric_registry_schema(conn)
@@ -1354,7 +1380,10 @@ def list_metrics(account_id: str, active_only: bool = True) -> list[dict]:
                 "SELECT * FROM metric_registry WHERE account_id=? ORDER BY is_active DESC, name",
                 (account_id,)
             ).fetchall()
-    return [dict(r) for r in rows]
+    metrics = [dict(r) for r in rows]
+    if answerable_only:
+        metrics = [metric for metric in metrics if metric_is_answerable(metric)]
+    return metrics
 
 
 def get_metric(metric_id: int) -> dict | None:
@@ -1635,6 +1664,10 @@ def list_metric_formula_context(
     """
     scored: list[tuple[int, dict]] = []
     for metric in (metrics if metrics is not None else list_metrics(account_id)):
+        # The contract's metrics section is a snapshot of every active metric,
+        # drafts included, so the filter is applied to both sources here.
+        if not metric_is_answerable(metric):
+            continue
         score = _score_metric_for_question(metric, question)
         if score > 0:
             metric = dict(metric)
@@ -1834,7 +1867,7 @@ def match_metric(account_id: str, question: str, *, lang: str = "") -> dict | No
         )
         return None
 
-    for metric in list_metrics(account_id):
+    for metric in list_metrics(account_id, answerable_only=True):
         if (metric.get("formula_type") or "query").lower() != "query":
             continue
         if not (metric.get("sql_template") or "").lstrip().upper().startswith("SELECT"):

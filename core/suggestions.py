@@ -551,7 +551,7 @@ def get_suggestions(
     if len(suggestions) < n:
         try:
             import store
-            metrics = store.list_metrics(account_id)
+            metrics = store.list_metrics(account_id, answerable_only=True)
             random.shuffle(metrics)
             for metric in metrics:
                 name = (metric.get("name") or "").strip()

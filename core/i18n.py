@@ -1277,6 +1277,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "⚠️ **{metric}** — couldn't be computed right now.",
         "fr": "⚠️ **{metric}** — n'a pas pu être calculé pour le moment.",
     },
+    "digest.metric.not_validated": {
+        "en": "⚠️ **{metric}** — not computed: its formula doesn't pass the checks yet. Your admin can see why on the Metrics page.",
+        "fr": "⚠️ **{metric}** — non calculé : sa formule ne passe pas encore les vérifications. Votre administrateur en voit la raison sur la page des indicateurs.",
+    },
+    "digest.metric.retired": {
+        "en": "**{metric}** — this metric has been retired and is no longer reported.",
+        "fr": "**{metric}** — cet indicateur a été retiré et n'est plus calculé.",
+    },
     "digest.metric.unnamed": {"en": "Metric", "fr": "Indicateur"},
 
     "alert.triggered": {

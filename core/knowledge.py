@@ -519,7 +519,9 @@ def _format_approved_metrics_for_kb(account_id: str, table_name: str) -> str:
     """
     try:
         from store.config_store import list_metrics
-        metrics = list_metrics(account_id)
+        # "Approved" is what the KB prompt calls these: a draft that failed
+        # validation is not.
+        metrics = list_metrics(account_id, answerable_only=True)
     except Exception:
         return ""
     if not metrics:

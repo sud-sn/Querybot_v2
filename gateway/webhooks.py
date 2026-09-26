@@ -1940,7 +1940,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         """
         await websocket.send_json({"type": "typing", "active": True})
         try:
-            all_metrics = store.list_metrics(account_id)
+            all_metrics = store.list_metrics(account_id, answerable_only=True)
             allowed = store.get_allowed_tables(portal_user)
             if allowed is not None:
                 all_metrics = [
@@ -2320,7 +2320,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 from core.dashboard_planner import looks_like_multi_widget_request
 
                 if looks_like_multi_widget_request(tail):
-                    all_metrics = store.list_metrics(account_id)
+                    all_metrics = store.list_metrics(account_id, answerable_only=True)
                     allowed = store.get_allowed_tables(portal_user)
                     if allowed is not None:
                         all_metrics = [
