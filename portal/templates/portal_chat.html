@@ -4119,6 +4119,16 @@ function _collapseHero() {
   const infoBtn = document.getElementById('heroInfoBtn');
   if (infoBtn) infoBtn.style.display = 'inline-flex';
 }
+/* The run state a message ends in, from the state the server sends beside the
+   text (gateway/base.py message_state): 'failed', 'waiting_for_user', or ''.
+   Never from the text: a reply that happens to start with a symbol is an
+   answer, and the symbols are going. */
+function _terminalRunState(msg) {
+  const state = (msg && msg.state) || '';
+  if (state === 'failed') return 'failed';
+  if (state === 'needs_input') return 'waiting_for_user';
+  return '';
+}
 function _expandHero() {
   const hero = document.getElementById('chatHero');
   if (!hero) return;
@@ -4188,12 +4198,13 @@ function connect(){
         refreshQueryLimitStatus({toast:true});
         return;
       }
-      // Detect failure messages — show error mascot briefly before rendering
-      if (msgContent.startsWith('❌') || msgContent.startsWith('❓')) {
-        // This is a terminal frame. Do not depend on a later typing:false
-        // message to restore the composer; that frame can be delayed/lost.
-        setAgentRunState(msgContent.startsWith('❌') ? 'failed' : 'waiting_for_user', msg);
-        if (msgContent.startsWith('❌')) {
+      // A terminal frame: the server says so in msg.state, never the text.
+      const terminalState = _terminalRunState(msg);
+      if (terminalState) {
+        // Do not depend on a later typing:false message to restore the
+        // composer; that frame can be delayed/lost.
+        setAgentRunState(terminalState, msg);
+        if (terminalState === 'failed') {
           _markActiveOutbound('failed', t('ui.chat.delivery.needs_attention'));
           showMascotError();
           // Show contextual error on the composer mascot

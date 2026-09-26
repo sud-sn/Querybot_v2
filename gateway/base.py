@@ -17,6 +17,24 @@ from typing import Optional
 from abc import ABC, abstractmethod
 
 
+# What a reply means for the conversation. The pipeline and the message
+# catalogue still mark a terminal reply by its first character -- a failure
+# with "❌", a question back to the reader with "❓" -- which Teams,
+# Slack and Zoom show as text. A client must not read meaning from a glyph:
+# the web chat gets the state as a field beside the text (web_adapter.py),
+# read from the marker here, in one place, until the catalogue carries it.
+MESSAGE_STATES: dict[str, str] = {"\u274c": "failed", "\u2753": "needs_input"}
+
+
+def message_state(text: str) -> str:
+    """The state a reply declares: "failed", "needs_input", or "" for none."""
+    lead = str(text or "").lstrip()
+    for marker, state in MESSAGE_STATES.items():
+        if lead.startswith(marker):
+            return state
+    return ""
+
+
 @dataclass
 class PlatformEvent:
     """

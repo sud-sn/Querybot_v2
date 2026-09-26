@@ -19,7 +19,7 @@ from collections import deque
 from typing import Optional
 
 from fastapi import WebSocket
-from gateway.base import PlatformAdapter, PlatformEvent
+from gateway.base import PlatformAdapter, PlatformEvent, message_state
 
 log = logging.getLogger("querybot.web_adapter")
 
@@ -404,12 +404,13 @@ class WebAdapter(PlatformAdapter):
                     run.record_assistant_message(text)
             except Exception as exc:
                 log.debug("Agent assistant message audit failed: %s", exc)
+            payload = {"type": "message", "role": "assistant", "content": text}
+            state = message_state(text)
+            if state:
+                # The chat ends the run on this field, not on the text.
+                payload["state"] = state
             async with self.send_lock:
-                await self.ws.send_json({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": text,
-                })
+                await self.ws.send_json(payload)
         except Exception as e:
             log.error("WebSocket send_message failed: %s", e)
 

@@ -278,7 +278,8 @@ class TestThePageShowsDifferentQuestions:
 def _frames_through_the_socket_handler(frames: list[dict]) -> list[dict]:
     """Feed frames to the handler the page's own connect() installs, and
     report what each one asked appendBot for. Everything the handler calls
-    besides appendBot is a recorder."""
+    besides appendBot and the page's own reading of a frame's state
+    (_terminalRunState) is a recorder."""
     import dukpy
 
     src = chat_page_source()
@@ -300,6 +301,7 @@ function _setStageState() {{}}
 function _genieEvent() {{}}
 function refreshQueryLimitStatus() {{}}
 function showMascotError() {{}}
+{lift(src, "function _terminalRunState(msg)")};
 {lift(src, "function connect()")}
 connect();
 {json.dumps(frames)}.forEach(frame => _socket.onmessage({{data: JSON.stringify(frame)}}));
