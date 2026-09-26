@@ -404,18 +404,19 @@ class TestADraftsTablesAreKnownNotInferred:
     nobody mentioned.
 
     metric_source_tables INFERS a metric's tables, and one of its rules is "any
-    table whose columns intersect required_columns". A draft requiring
-    CUS_DMS_KEY therefore claims every fact and dimension carrying that key.
-    That inference is the right default for a registry metric someone typed by
-    hand. For a draft it is strictly worse than the truth, because every table
-    came from a COL_REF binding this process issued.
+    table whose columns intersect required_columns". A column the metric's own
+    base table holds is read there, but one it does not -- ACT_FLG -- claims
+    every table carrying a column of that name, the supplier dimension's as
+    well as the customer's. That inference is the right default for a registry
+    metric someone typed by hand. For a draft it is strictly worse than the
+    truth, because every table came from a COL_REF binding this process issued.
     """
 
     ALL_COLUMNS = {
         "EMDW_DMART.CUS_ORD_IVC_FCT": {"IVC_GRS_AMT": "d", "CUS_DMS_KEY": "i"},
         "EMDW_DMART.CUS_DMS": {"CUS_DMS_KEY": "i", "ACT_FLG": "c"},
         "EMDW_DMART.CUS_TYP_DMS": {"CUS_DMS_KEY": "i"},
-        "EMDW_DMART.SUP_DMS": {"CUS_DMS_KEY": "i"},
+        "EMDW_DMART.SUP_DMS": {"CUS_DMS_KEY": "i", "ACT_FLG": "c"},
         "EMDW_DMART.WHS_DMS": {"CUS_DMS_KEY": "i"},
     }
 

@@ -14,8 +14,10 @@ for one order. But it names a metric, and the metric's approved formula is
 the governed answer. The same happens to a metric named for any of the event
 nouns: transactions, receipts, deliveries, invoices, payments...
 
-A plain "how many orders" still waits on the identifier. Synthetic workspace;
-no customer data.
+A plain "how many orders" still waits on the identifier. Now that the governed
+compiler writes a lone metric with no window, the answer is the metric's own
+formula over its table with no model call at all. Synthetic workspace; no
+customer data.
 """
 
 from __future__ import annotations
@@ -76,8 +78,9 @@ SCHEMA = {
 }
 
 
-def _ask(question: str) -> tuple[list[dict], list[str]]:
-    """Ask over the real chat socket; the model and the warehouse are stubbed."""
+def _ask(question: str) -> tuple[list[dict], list[str], list[str]]:
+    """Ask over the real chat socket; the model and the warehouse are stubbed.
+    Returns the frames sent, the model calls and the SQL the warehouse ran."""
     import anyio
     import core.llm as llm
     import core.query_pipeline as qp
@@ -108,6 +111,7 @@ def _ask(question: str) -> tuple[list[dict], list[str]]:
     write_contract(account, kb)
 
     calls: list[str] = []
+    executed: list[str] = []
 
     async def model(system, user, *args, **kwargs):
         calls.append("sql" if "Return ONLY the raw SQL" in system else "other")
@@ -117,6 +121,10 @@ def _ask(question: str) -> tuple[list[dict], list[str]]:
         def __init__(self, sql):
             self.sql, self.rows, self.truncated = sql, [{"ORDER_LINES": 5120}], False
             self.row_obligations, self.decision, self.analysis = [], None, None
+
+    def warehouse(credentials, db_type, sql, *args, **kwargs):
+        executed.append(sql)
+        return Result(sql)
 
     class Retriever:
         last_retrieval_weak = False
@@ -168,21 +176,24 @@ def _ask(question: str) -> tuple[list[dict], list[str]]:
             patch.object(llm, "resolve_provider", return_value=provider),
             patch.object(wh, "resolve_provider", return_value=provider),
             patch.object(qp, "retrieve_similar_examples", return_value=[]),
-            patch.object(qp, "execute_governed_query", lambda credentials, db_type, sql, *a, **k: Result(sql)),
+            patch.object(qp, "execute_governed_query", warehouse),
         ):
             stack.enter_context(mock)
         with client.websocket_connect(f"/ws/chat/{account}?thread_id=t1") as ws:
             drain(ws, 5, 2.0)
             ws.send_json({"type": "message", "text": question})
             frames = drain(ws, 40, 6.0)
-    return frames, calls
+    return frames, calls, executed
 
 
 def test_the_suggested_question_for_a_count_metric_is_answered():
-    frames, calls = _ask("What is our total Order lines?")
+    frames, calls, executed = _ask("What is our total Order lines?")
     answers = [frame for frame in frames if frame.get("type") == "assistant_response"]
     refusals = [frame.get("content") for frame in frames
                 if frame.get("type") == "message" and "business identifier" in str(frame.get("content"))]
     assert refusals == [] and len(answers) == 1, [frame.get("type") for frame in frames]
     assert "5,120" in json.dumps(answers[0])
-    assert calls.count("sql") == 1
+    assert calls.count("sql") == 0
+    assert [" ".join(sql.split()) for sql in executed] == [
+        "SELECT COUNT(*) AS ORDER_LINES FROM [MART].[SLS_FCT] AS fact_rows"
+    ]

@@ -21,7 +21,9 @@ Four fixes, each tested here:
   * an anchor on such a fact keeps month rows, in the prompt and in the probe;
   * a date bound to the question is never counted as its measure -- BAL_TS was
     the plan's "Measures:" line, and that alone let the plan compile;
-  * end to end: a model that copies the anchor it is given gets an answer.
+  * end to end: the question is answered from the newest month -- by the
+    governed compiler, which now reads a balance at its latest snapshot --
+    and a model that copies the anchor it is given gets an answer.
 
 A synthetic mart in the same naming convention; no customer data.
 """
@@ -294,7 +296,7 @@ class TestTheLiveQuestion:
     the monthly fact, and a model that copies the anchor its prompt requires.
     The model and the warehouse are the boundaries."""
 
-    def _ask(self) -> tuple[list[str], list[str], int]:
+    def _ask(self, question: str = STOCK, condition: str = "") -> tuple[list[str], list[str], int]:
         import core.query_pipeline as qp
         from core.graph_autopopulate import auto_populate_from_schema
         from core.semantic_contract import write_contract
@@ -329,7 +331,7 @@ class TestTheLiveQuestion:
             anchor, value = _REQUIRED_ANCHOR.search(system).group(1, 2)
             return (
                 f"SELECT SUM(CUR_ON_HND_QTY) AS STOCK_ON_HAND FROM {PERIOD_FACT} "
-                f"WHERE PRD_DMS_KEY % 100 BETWEEN 1 AND 12 AND {value} = {anchor}"
+                f"WHERE PRD_DMS_KEY % 100 BETWEEN 1 AND 12 AND {value} = {anchor}{condition}"
             ), 10, 10
 
         class Result:
@@ -393,16 +395,34 @@ class TestTheLiveQuestion:
             ):
                 stack.enter_context(mock)
             asyncio.run(qp._handle_query_impl(
-                account, PlatformEvent(account, "u1", "c1", STOCK, "portal", raw=chosen), Adapter(), STOCK,
+                account, PlatformEvent(account, "u1", "c1", question, "portal", raw=chosen), Adapter(), question,
                 {"id": 1, "role": "admin", "email": "u@x.com", "name": "U", "group_name": None, "lang": "en"},
             ))
         return sent, executed, len(calls)
 
-    def test_a_model_that_copies_the_anchor_gets_an_answer(self):
+    def test_the_product_answers_it_from_the_newest_month(self):
+        """The metric and the reader's source choice settle every decision, so
+        the governed compiler writes it: the newest month of the period key.
+        The key is decoded through yyyymm01, which a year row (yyyy00) never
+        is, so the year row is neither the newest month nor added to it."""
         sent, executed, model_calls = self._ask()
+        assert model_calls == 0
+        assert not any("could not build a trusted query" in text for text in sent), sent
+        answer = executed[-1]
+        assert "SUM(CUR_ON_HND_QTY) AS STOCK_ON_HAND" in answer and "BAL_TS" not in answer
+        newest = "MAX(TRY_CONVERT(date, CONVERT(varchar(6), fact_rows.[PRD_DMS_KEY]) + '01', 112))"
+        assert newest in answer and "IN (SELECT snapshot_date FROM snapshot_dates)" in answer
+        assert any("What is our total stock on hand?" in text for text in sent), sent
+
+    def test_a_model_that_copies_the_anchor_gets_an_answer(self):
+        """A condition on a value is not the compiler's to write, so this one
+        goes to the model, which copies the anchor its prompt requires."""
+        question = "What is our total stock on hand where on hand is over 100?"
+        sent, executed, model_calls = self._ask(question, " AND CUR_ON_HND_QTY > 100")
         assert model_calls == 1
         assert not any("could not build a trusted query" in text for text in sent), sent
         answer = executed[-1]
         assert answer.startswith("SELECT SUM(CUR_ON_HND_QTY) AS STOCK_ON_HAND")
         assert "PRD_DMS_KEY" in answer.split(" = ", 1)[1] and "BAL_TS" not in answer
-        assert any("What is our total stock on hand?" in text for text in sent), sent
+        assert answer.endswith("CUR_ON_HND_QTY > 100")
+        assert any(question in text for text in sent), sent

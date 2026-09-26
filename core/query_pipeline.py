@@ -2839,6 +2839,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     verified_values_hint = ""
     _value_clarify: list[dict] = []
     _resolved_values: dict = {}
+    _named_members: list[str] = []
     try:
         from core.value_index import value_index_enabled
         from core.value_resolver import (
@@ -2851,6 +2852,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 account_id, question, allowed_tables=query_scope_tables,
                 known_terms=_known_terms,
             )
+            # Read before the compliance filter below: these are the reader's
+            # own words, they reach no prompt, and a member named on a column
+            # nobody has reviewed is still a member.
+            _named_members = [
+                str(item.get("phrase"))
+                for bucket in ("verified", "in_lists", "narrowed", "clarify")
+                for item in (_resolved_values.get(bucket) or [])
+                if item.get("phrase")
+            ]
             # Regulated tenants only ground on columns an admin has reviewed as
             # non-sensitive; everything else is dropped before it can reach the
             # prompt. Applied here rather than inside the injection builder so
@@ -5649,6 +5659,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # difference. The reader's own text stays under "question" for everything
         # that displays or prompts.
         "canonical_question": _semantic_plan_question,
+        # The members the question names -- an item, a warehouse. The
+        # governed compilers write no member filter, so they leave such a
+        # question to the planner.
+        "named_members": _named_members,
         "production_sql": True,
         "graph_context": _graph_ctx,
         "semantic_plan": _semantic_plan,

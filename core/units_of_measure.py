@@ -277,6 +277,32 @@ def unit_mixes(sql, policies: list[dict] | None, db_type: str = "azure_sql") -> 
     return mixes
 
 
+def unit_for_total(formula: str, fact_table: str, policies: list[dict] | None,
+                   db_type: str = "azure_sql") -> dict | None:
+    """The unit a total of ``formula`` over ``fact_table`` is kept apart by,
+    read by the same test the validator applies: ``{"table", "column",
+    "join"}`` where ``join`` reaches the unit's table from the fact (None when
+    the unit is the fact's own column). None when the formula totals no
+    quantity of that fact -- a value (quantity times cost) adds up."""
+    for policy in policies or []:
+        if not isinstance(policy, dict) or not policy.get("quantities"):
+            continue
+        if _bare(policy.get("fact_table", "")) != _bare(fact_table):
+            continue
+        tree = _parse(f"SELECT {formula} FROM {_bare(fact_table)}", db_type)
+        select = tree if tree is not None and tree.key == "select" else None
+        if select is None or not _quantity_aggregates(select, {q.upper() for q in policy["quantities"]}):
+            continue
+        unit = _preferred_unit(policy)
+        join = None
+        if _bare(unit["table"]) != _bare(policy["fact_table"]):
+            join = next((j for j in policy.get("unit_joins") or [] if j["table"] == unit["table"]), None)
+            if join is None:
+                continue
+        return {"table": unit["table"], "column": unit["column"], "join": join}
+    return None
+
+
 def _keeps_one(conjunct, names: set[str]) -> bool:
     """column = 'EA', or column IN ('EA'): one unit, or one item."""
     from sqlglot import exp

@@ -774,6 +774,21 @@ def _join_condition_pairs(join: dict) -> list[tuple[str, str]]:
     return pairs
 
 
+def _graph_join_type(context: dict, left: str, right: str) -> str | None:
+    """The join the resolved entity graph requires from `left` to `right`:
+    what the validator will hold the SQL to. An edge the graph resolved in the
+    other direction as an outer join has no equivalent here (None)."""
+    for edge in ((context or {}).get("graph_context") or {}).get("resolved_edges") or []:
+        source = ".".join(p for p in (edge.get("from_schema"), edge.get("from_table")) if p)
+        target = ".".join(p for p in (edge.get("to_schema"), edge.get("to_table")) if p)
+        kind = str(edge.get("join_type") or "INNER").upper()
+        if _same_physical_table(source, left) and _same_physical_table(target, right):
+            return "LEFT JOIN" if kind == "LEFT" else "JOIN"
+        if _same_physical_table(source, right) and _same_physical_table(target, left):
+            return None if kind == "LEFT" else "JOIN"
+    return "JOIN"
+
+
 def _required_join_path(
     source: str,
     target: str,
@@ -918,6 +933,89 @@ def unmet_aggregates(question: str, metrics: list[dict]) -> list[str]:
     return [name for name in asked if name not in computed]
 
 
+# A condition on a value: "more than 100 units", "over 5,000", "below
+# average", and the French forms as the normaliser leaves them ("plus of 100",
+# "superieur a 100", "to moins 10"). No governed compiler writes one. A number
+# that is a span of time is a window ("more than 3 months"), and a year after
+# "between" a date range.
+_VALUE_CONDITION = re.compile(
+    r"\b(?:(?:more|greater|higher|larger|bigger|less|fewer|lower|smaller)\s+than"
+    r"|at\s+(?:least|most)|over|above|below|under|exceed(?:s|ed|ing)?"
+    r"|(?:plus|moins)\s+(?:of|de|que)|(?:to|au)\s+(?:moins|plus)"
+    r"|(?:superieur|inferieur)(?:e|s|es)?\s+(?:a|to)|(?:au|to|en)[- ]dess(?:us|ous)\s+(?:of|de))\s+"
+    r"(?:\$\s*)?(?:\d+(?:[.,]\d+)*\b(?!\s*(?:days?|weeks?|months?|quarters?|years?"
+    r"|jours?|semaines?|mois|trimestres?|ans?|annees?)\b)|(?:the\s+)?(?:average|mean|median)\b)"
+    r"|\b(?:between|entre)\s+(?!(?:19|20)\d\d\b)\d",
+    re.I,
+)
+
+
+def _left_to_the_planner(context: dict) -> str:
+    """Why no governed compiler may answer this question, or "".
+
+    They write no member filter and no condition on a value, so they would
+    answer for every member: "stock on hand for BRASS ELBOW EA" came back as
+    every item's stock. A member the question names is found in the value
+    index before planning (core/value_resolver.py) and carried here.
+    """
+    if (context or {}).get("named_members"):
+        return "names a member"
+    if _VALUE_CONDITION.search(_gate_question(context)):
+        return "states a condition on a value"
+    return ""
+
+
+# A period is the compilers' own grain; "across all units" is a total.
+_PERIOD_WORDS = frozenset({"day", "date", "week", "month", "quarter", "year", "period", "hour", "time"})
+_WHICH = re.compile(
+    r"\bwhich\s+(?!(?:of|is|are|was|were|one|ones|the|a|an|do|does|did|has|have)\b)[a-z][a-z0-9_-]+",
+    re.I,
+)
+
+
+def _requested_breakdowns(question: str) -> int:
+    """How many things the question asks its answer to be broken down by:
+    "by warehouse", "par groupe d'articles" (canonical "by groupe articles"),
+    "for each supplier", "which item". A period is not counted, nor all of
+    something ("across all units" asks for a total).
+
+    The planner does not always bind what was asked -- "sales by item group"
+    reached the compiler with no field for the group at all -- and the answer
+    without it is a single total for a question that asked for a breakdown.
+    """
+    from core.analytical_intent import _DIMENSION_RE
+
+    count = 0
+    for match in _DIMENSION_RE.finditer(question or ""):
+        for part in re.split(r"\s+(?:and|et)\s+(?:by\s+)?", match.group(1).lower()):
+            words = part.split()
+            if words and words[0] not in {"all", "every", "each"} and words[-1].rstrip("s") not in _PERIOD_WORDS:
+                count += 1
+    return count + len(_WHICH.findall(question or ""))
+
+
+def _unwritten_display_fields(plan: dict, written: list[dict]) -> list[dict]:
+    """Fields the question asks to see -- "by item", "which item" -- that a
+    compiler would not write.
+
+    The planner leaves such a field optional when its binding is a tie or not
+    yet confirmed, and the compilers write required fields only: answered
+    without it, "stock on hand by item" came back as one total per unit. A
+    modifier the planner demoted as not the requested grain ("customer" in
+    "warehouses with the most customer orders") is not asked to be seen.
+    """
+    return [
+        field for field in (plan or {}).get("fields") or []
+        if (field.get("display_required") or str(field.get("role") or "").lower() == "display_dimension")
+        and not field.get("demotion_reason")
+        and not any(
+            _same_physical_table(field.get("table"), kept.get("table"))
+            and str(field.get("column") or "").upper() == str(kept.get("column") or "").upper()
+            for kept in written
+        )
+    ]
+
+
 def _snapshot_measures(metrics: list[dict]) -> bool | None:
     """True when every metric is a level held at each snapshot -- stock, a
     balance -- False when none is, None when they are mixed.
@@ -986,7 +1084,7 @@ def _compile_governed_grouped_request_sql(
         return ""
     policy = policies[0] if policies else {}
     if policy and str(policy.get("kind") or "") not in {
-        "last_n", "latest_n_observed", "today", "yesterday",
+        "last_n", "latest_n_observed", "today", "yesterday", "latest_snapshot",
     }:
         return ""
 
@@ -1078,15 +1176,23 @@ def _compile_governed_grouped_request_sql(
             for existing in unique_dimensions
         ):
             unique_dimensions.append(field)
-    if len(unique_dimensions) > 1:
+    if (
+        len(unique_dimensions) > 1
+        or _unwritten_display_fields(plan, unique_dimensions)
+        or _requested_breakdowns(question) > len(unique_dimensions)
+    ):
         return ""
-    # Preserve the established scalar/single-series compiler byte-for-byte.
-    # This helper owns only the new cases: a governed dimension, a governed
-    # derived event count, or multiple same-fact metrics.
+    # Preserve the established scalar/single-series compiler byte-for-byte:
+    # a lone metric under a window that compiler reads is its case. Every
+    # other case is this helper's -- a governed dimension, a derived event
+    # count, several same-fact metrics, or a lone metric read at its latest
+    # snapshot, which the scalar compiler declines, so "what is our inventory
+    # value?" went to free-form generation.
     if (
         not unique_dimensions
         and len(metric_specs) == 1
         and derived.get("semantics") != "count_distinct_business_identifier"
+        and str(policy.get("kind") or "") in _COMPILABLE_WINDOW_KINDS
     ):
         return ""
 
@@ -1142,8 +1248,11 @@ def _compile_governed_grouped_request_sql(
                 f"{left_alias}.{qcol(left_col)} = {right_alias}.{qcol(right_col)}"
                 for left_col, right_col in edge["conditions"]
             )
+            join_type = _graph_join_type(context, str(edge["from"]), right_table)
+            if join_type is None:
+                return ""
             from_lines.append(
-                f"JOIN {_quote_table_for_count(right_table, db_type)} AS {right_alias} ON {conditions}"
+                f"{join_type} {_quote_table_for_count(right_table, db_type)} AS {right_alias} ON {conditions}"
             )
             alias_by_table[right_table] = right_alias
 
@@ -1158,6 +1267,36 @@ def _compile_governed_grouped_request_sql(
         if not table_alias:
             return ""
         dimension_ref = f"{table_alias}.{qcol(str(dimension['column']))}"
+
+    # A total of a quantity is kept per unit of measure (core/units_of_measure):
+    # eaches and feet do not add up, and the validator refuses a query that
+    # adds them. The item's unit is read through the discovered join.
+    from core.units_of_measure import unit_for_total
+
+    unit_ref = unit_alias = ""
+    unit = next(
+        (found for found in (
+            unit_for_total(formula, fact_table, plan.get("unit_policies"), db_type)
+            for _alias, formula in metric_specs
+        ) if found),
+        None,
+    )
+    if unit:
+        unit_table = str(unit["table"])
+        unit_table_alias = "fact_rows" if not unit["join"] else alias_for(unit_table)
+        if not unit_table_alias:
+            join_type = _graph_join_type(context, fact_table, unit_table)
+            if join_type is None:
+                return ""
+            unit_table_alias = "unit_item" if "unit_item" not in alias_by_table.values() else f"join_{len(alias_by_table)}"
+            from_lines.append(
+                f"{join_type} {_quote_table_for_count(unit_table, db_type)} AS {unit_table_alias} "
+                f"ON fact_rows.{qcol(str(unit['join']['fact_column']))} = "
+                f"{unit_table_alias}.{qcol(str(unit['join']['key']))}"
+            )
+            alias_by_table[unit_table] = unit_table_alias
+        unit_ref = f"{unit_table_alias}.{qcol(str(unit['column']))}"
+        unit_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(unit["column"])).upper()
 
     date_ref = ""
     if policy:
@@ -1199,7 +1338,13 @@ def _compile_governed_grouped_request_sql(
         ):
             where_parts.append(exclusion_predicate(f"fact_rows.{qcol(derived_target_column)}", unknown))
     anchor_sql = ""
-    if policy:
+    if policy and str(policy.get("kind") or "") == "latest_snapshot":
+        # A balance asked for with no period is read at its newest snapshot --
+        # the last-snapshot step below -- never summed across dates. A measure
+        # that is not a balance has no snapshot to be read at.
+        if not snapshot:
+            return ""
+    elif policy:
         try:
             amount = int(policy.get("amount"))
         except (TypeError, ValueError):
@@ -1361,6 +1506,9 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     if dimension_ref:
         select_parts.append(f"{dimension_ref} AS {dimension_alias}")
         group_parts.append(dimension_ref)
+    if unit_ref:
+        select_parts.append(f"{unit_ref} AS {unit_alias}")
+        group_parts.append(unit_ref)
     select_parts.extend(f"{formula} AS {alias}" for alias, formula in metric_specs)
 
     top_clause = ""
@@ -1375,7 +1523,7 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
             return ""
     cross_anchor = (
         "\nCROSS JOIN anchor"
-        if policy and str(policy.get("kind") or "") != "latest_n_observed"
+        if policy and str(policy.get("kind") or "") not in {"latest_n_observed", "latest_snapshot"}
         else ""
     )
     where_sql = "\nWHERE " + "\n  AND ".join(where_parts) if where_parts else ""
@@ -1577,6 +1725,10 @@ def compile_governed_temporal_metric_sql(
     if unmet_aggregates(_gate_question(semantic_context or {}),
                         (semantic_context or {}).get("metric_formulas") or []):
         return ""
+    reason = _left_to_the_planner(semantic_context or {})
+    if reason:
+        log.info("Governed compilers leave this question to the planner: it %s", reason)
+        return ""
 
     grouped = _compile_governed_grouped_request_sql(
         db_type,
@@ -1622,11 +1774,8 @@ def compile_governed_temporal_metric_sql(
 
     # A requested non-date display field changes the result grain.  It must be
     # handled by the full semantic join planner, not this scalar/time-series
-    # compiler.
-    if any(
-        field.get("display_required") and field.get("enforcement") != "optional"
-        for field in (plan.get("fields") or [])
-    ):
+    # compiler -- optional or not, bound or not.
+    if _unwritten_display_fields(plan, []) or _requested_breakdowns(question):
         return ""
 
     policy = policies[0]
@@ -2004,7 +2153,7 @@ def attempt_governed_temporal_metric_repair(
     ]
     if len(policies) != 1 or len(metrics) != 1:
         return ""
-    if unmet_aggregates(_gate_question(context), metrics):
+    if unmet_aggregates(_gate_question(context), metrics) or _left_to_the_planner(context):
         return ""
     if not re.search(r"\b(?:compare|comparison|versus|vs\.?|difference|change)\b", question, re.I):
         return ""
@@ -2013,12 +2162,9 @@ def attempt_governed_temporal_metric_repair(
     if not re.search(r"\b(?:last|previous|prior)\s+(?:week|month|quarter|year)\b", question, re.I):
         return ""
 
-    # A required non-date display dimension changes the requested grain and
+    # A requested non-date display dimension changes the requested grain and
     # cannot be safely synthesized by this narrow compiler.
-    if any(
-        field.get("display_required") and field.get("enforcement") != "optional"
-        for field in (plan.get("fields") or [])
-    ):
+    if _unwritten_display_fields(plan, []) or _requested_breakdowns(_gate_question(context)):
         return ""
 
     policy = policies[0]

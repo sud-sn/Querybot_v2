@@ -197,11 +197,27 @@ def metric_source_tables(metric: dict[str, Any], table_columns: dict[str, dict[s
 
     required = _split_required_columns(str(metric.get("required_columns") or ""))
     if table_columns and required:
+        # A column the metric's own tables hold is read there. ITM_CST on the
+        # base table was reason enough to add every other fact with an
+        # ITM_CST, so a daily inventory value also claimed the monthly fact.
+        # The own tables are still added as the catalog names them, which is
+        # what qualifies a bare base table.
+        own = {_bare_table(t) for t in tables}
+        held = {
+            str(c).upper()
+            for table, cols in table_columns.items() if _bare_table(table) in own
+            for c in (cols or {})
+        }
         for table, cols in table_columns.items():
             col_names = {str(c).upper() for c in (cols or {})}
-            if required & col_names:
+            wanted = required if _bare_table(table) in own else required - held
+            if wanted & col_names:
                 tables.add(str(table).upper())
     return _canonical_table_references(tables)
+
+
+def _bare_table(name: object) -> str:
+    return str(name or "").replace("[", "").replace("]", "").replace('"', "").split(".")[-1].strip().upper()
 
 
 def metric_source_schemas(

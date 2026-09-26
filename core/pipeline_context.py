@@ -209,18 +209,38 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
                 _semantic_table_identity(field.get("table") or ""),
                 (field.get("column") or "").upper(),
             )
-            if not key[0] or not key[1] or key in seen_fields:
+            if not key[0] or not key[1]:
                 continue
             if key in seen_avoid and field.get("source") != "approved_semantic_field":
                 continue
-            seen_fields.add(key)
-            fields.append(field)
+            # A field an earlier plan already bound still names the tables
+            # THIS plan's joins connect: skipping it here dropped the only
+            # plan that knew how to reach it, and the field, left with no
+            # path, was demoted to optional.
             relevant_tables.add(key[0])
             source_table = _semantic_table_identity(
                 field.get("source_table") or field.get("source_key_table") or ""
             )
             if source_table:
                 relevant_tables.add(source_table)
+            if key in seen_fields:
+                # The same column bound by a second planner with certainty
+                # settles the first one's tie: "warehouse" tied across the
+                # warehouse table's columns in the lexical planner, and the
+                # semantic model bound it to one of them outright.
+                if field.get("enforcement") != "optional":
+                    for kept in fields:
+                        if (
+                            kept.get("enforcement") == "optional"
+                            and kept.get("ambiguous_source")
+                            and (_semantic_table_identity(kept.get("table") or ""),
+                                 (kept.get("column") or "").upper()) == key
+                        ):
+                            kept["enforcement"] = field.get("enforcement") or "required"
+                            kept.pop("ambiguous_source", None)
+                continue
+            seen_fields.add(key)
+            fields.append(field)
         available_dimensions.extend(plan.get("available_dimensions") or [])
         for policy in plan.get("date_key_policies") or []:
             policy_key = (
