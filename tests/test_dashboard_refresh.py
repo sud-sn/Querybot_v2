@@ -22,7 +22,7 @@ VIEWER = {"id": 12, "account_id": "tenant-a", "is_active": 1}
 
 def _common_mocks(monkeypatch):
     monkeypatch.setattr(refresh.store, "get_compliance_profile", lambda account: {"active_policy_version": 4})
-    monkeypatch.setattr(refresh.store, "get_semantic_compiler_state", lambda account: {"active_contract_version": "contract-2"})
+    monkeypatch.setattr(refresh.store, "get_semantic_compiler_state", lambda account: {"active_version": "contract-2"})
     monkeypatch.setattr(refresh.store, "get_db_config", lambda db_id: {"db_type": "azure_sql", "credentials": {}})
     monkeypatch.setattr(refresh.store, "get_client_state", lambda account: {"schema_dir": ""})
     monkeypatch.setattr(refresh.store, "get_allowed_tables", lambda user: {"sales"})

@@ -39,9 +39,12 @@ def execute_dashboard_source(
     is_owner = int(source.get("user_id") or 0) == int(viewer.get("id") or 0)
     profile = store.get_compliance_profile(account_id)
     compiler = store.get_semantic_compiler_state(account_id)
+    # semantic_compiler_state keeps the published version in active_version.
+    # This read two names the table has never had, so every dashboard fell
+    # back to the version its source was saved under and a cached result was
+    # never invalidated by a change in meaning.
     contract_version = str(
-        compiler.get("active_contract_version")
-        or compiler.get("published_version")
+        compiler.get("active_version")
         or source.get("semantic_contract_version")
         or ""
     )

@@ -8178,6 +8178,12 @@ async def model_health_rollback_contract_version(request: Request, account_id: s
         )
 
     store.publish_semantic_contract_version(account_id, version)
+    # Answers read the contract file, not the publish pointer: a rollback that
+    # only moved the pointer changed the versions page and no answer.
+    _kb_dir = str((store.get_client_state(account_id) or {}).get("kb_dir") or "")
+    if _kb_dir and target.get("contract"):
+        from core.semantic_contract import _write_contract_file
+        _write_contract_file(target["contract"], _kb_dir)
     log.warning("Semantic contract rolled back to %s for %s", version, account_id)
     return RedirectResponse(
         f"/admin/clients/{account_id}/model-health/versions?saved=rollback", status_code=303,

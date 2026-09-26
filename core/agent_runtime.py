@@ -114,11 +114,8 @@ class AgentRunSession:
         allowed_tables = store.get_allowed_tables(portal_user)
         profile = store.get_compliance_profile(account_id)
         compiler = store.get_semantic_compiler_state(account_id)
-        contract_version = str(
-            compiler.get("active_contract_version")
-            or compiler.get("published_version")
-            or ""
-        )
+        # active_version: the column semantic_compiler_state actually has.
+        contract_version = str(compiler.get("active_version") or "")
         thread = store.ensure_agent_thread(
             account_id=account_id,
             portal_user_id=user_id,

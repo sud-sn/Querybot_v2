@@ -63,7 +63,7 @@ def agent_db(monkeypatch):
     monkeypatch.setattr(
         store,
         "get_semantic_compiler_state",
-        lambda account_id: {"active_contract_version": "contract-12"},
+        lambda account_id: {"active_version": "contract-12"},
     )
     yield conn
     conn.close()

@@ -57,6 +57,52 @@ def _hash(obj: Any) -> str:
     return hashlib.md5(_canonical(obj).encode("utf-8")).hexdigest()[:12]
 
 
+# Fields a store row carries that record when or how often something happened,
+# where it sits on a canvas, or what the latest profiling run measured -- not
+# what anything means. They were hashed into contract_version with the rest,
+# so every answered question (usage_count), every node dragged on the graph
+# canvas and every KB build (the model's drift timestamp) minted a new version,
+# which invalidated reused SQL plans and every stamp that compares versions.
+_NOT_MEANING = frozenset({
+    "created_at", "updated_at", "usage_count", "last_validated_at", "last_used_at", "version",
+    "pos_x", "pos_y", "color", "reviewed_at",
+    "validated_at", "last_profiled_at", "row_count_estimate",
+    "match_rate", "orphan_rate", "null_fk_rate", "fanout_ratio",
+})
+
+
+def _meaning_only(value: Any) -> Any:
+    """The body as it bears on answers: the record-keeping fields above
+    removed at every depth, the graph's pending proposals (not in force until
+    accepted) and the model's drift record left out."""
+    if isinstance(value, dict):
+        return {
+            key: _meaning_only(item) for key, item in value.items()
+            if key not in _NOT_MEANING and key not in ("change_proposals", "_last_drift")
+        }
+    if isinstance(value, list):
+        return [_meaning_only(item) for item in value]
+    return value
+
+
+def _vocabulary(account_id: str) -> dict:
+    """What the tenant's vocabulary is made of: the packs in force and the
+    client's own overlay. Every label, expansion and alias reads through it,
+    and a pack change moved no version at all."""
+    from core import vocab_packs
+
+    explicit = vocab_packs._client_pack_ids(account_id)
+    overlay_path = vocab_packs._CLIENTS_DIR / (account_id or "") / "vocab.json"
+    try:
+        overlay = json.loads(overlay_path.read_text(encoding="utf-8")) if overlay_path.is_file() else {}
+    except (OSError, ValueError):
+        overlay = {"unreadable": True}
+    return {
+        "packs": explicit or vocab_packs._detected_pack_ids(account_id),
+        "overlay": overlay,
+    }
+
+
 def _load_column_context(account_id: str) -> dict:
     path = Path("clients") / account_id / "column_context.json"
     try:
@@ -242,6 +288,32 @@ def _compile_contract_internal(
         diagnostics.append(_source_conflict("classifications", exc))
         classifications = {}
 
+    # Meaning the contract did not carry, so changing it moved no version:
+    # confirmed business meanings (they become the vocabulary's readings),
+    # table descriptions and column terms, subject areas, and the vocabulary.
+    extra: dict[str, Any] = {}
+    for section, read in (
+        ("business_meanings", lambda: [
+            {k: row.get(k) for k in ("scope", "subject", "decided_reading", "decided_synonyms", "reading", "synonyms")}
+            for row in store.list_business_meanings(account_id, statuses={"confirmed"})
+        ]),
+        ("table_descriptions", lambda: {
+            name: {k: row.get(k) for k in ("description", "synonyms", "column_synonyms")}
+            for name, row in store.list_table_descriptions(account_id).items()
+        }),
+        ("domains", lambda: [
+            {k: row.get(k) for k in ("name", "description", "tables_json", "tables", "synonyms")}
+            for row in store.list_domains(account_id)
+        ]),
+        ("vocabulary", lambda: _vocabulary(account_id)),
+    ):
+        try:
+            extra[section] = read()
+        except Exception as exc:
+            log.warning("Contract compile: %s unavailable for %s: %s", section, account_id, exc)
+            diagnostics.append(_source_conflict(section, exc))
+            extra[section] = None
+
     body = {
         # The approval-preserving structured model: tables (fields, measures,
         # dimensions, date_roles, grain, default_filters) and relationships.
@@ -264,10 +336,11 @@ def _compile_contract_internal(
             "field_overrides": field_overrides,
             "column_context": _load_column_context(account_id),
         },
+        **extra,
     }
 
     _stamp_canonical_ids(body)
-    contract_version = _hash(body)
+    contract_version = _hash(_meaning_only(body))
 
     # Sprint 2 conflict detectors run over the already-stamped, already-
     # hashed body — they're read-only analysis of the content, not content
@@ -286,7 +359,7 @@ def _compile_contract_internal(
             "compiled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             # Per-source fingerprints make "what changed?" answerable at a
             # glance when two contract versions differ.
-            "sources": {key: _hash(value) for key, value in body.items()},
+            "sources": {key: _hash(_meaning_only(value)) for key, value in body.items()},
         },
         **body,
     }
