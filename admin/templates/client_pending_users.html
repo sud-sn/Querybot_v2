@@ -84,7 +84,7 @@
 <table class="pu-table" id="puTable">
   <thead>
     <tr>
-      <th style="width:28px"></th>
+      <th style="width:28px"><span class="sr-only">Details</span></th>
       <th>Name</th>
       <th>Platform</th>
       <th>Platform ID</th>
@@ -195,7 +195,7 @@
           <div style="display:flex;gap:0.5rem">
             <!-- Allow re-approving a rejected user -->
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/approve" style="display:flex;gap:0.5rem">
-              <select name="group_id" class="form-input form-input-sm group-select" required style="margin:0;min-width:140px">
+              <select aria-label="Group for {{ u.name or u.email }}" name="group_id" class="form-input form-input-sm group-select" required style="margin:0;min-width:140px">
                 <option value="">— select group —</option>
                 {% for g in groups %}
                 <option value="{{ g.id }}">{{ g.name }}</option>

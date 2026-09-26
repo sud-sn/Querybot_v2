@@ -186,7 +186,7 @@
   {% else %}
   <div class="kb-toolbar" id="fields-workspace">
     <div class="kb-toolbar-controls">
-      <input type="search" class="form-input kb-search" id="kbFieldSearch" placeholder="Search tables, fields, meanings, or use cases..." autocomplete="off">
+      <input aria-label="Search tables, fields and meanings" type="search" class="form-input kb-search" id="kbFieldSearch" placeholder="Search tables, fields, meanings, or use cases..." autocomplete="off">
       <select class="form-input kb-filter" id="kbFieldFilter" aria-label="Filter fields">
         <option value="all">All fields</option>
         <option value="needs-context">Needs context</option>
@@ -332,7 +332,7 @@
           {% if item.status == "pending" %}
           <form method="post" action="/admin/clients/{{ client.account_id }}/semantic-feedback/{{ item.id }}/review" class="review-actions">
             <input type="hidden" name="status" id="status-{{ item.id }}" value="">
-            <textarea class="form-input" name="admin_note" placeholder="Optional note to the submitter"></textarea>
+            <textarea aria-label="Note to the submitter" class="form-input" name="admin_note" placeholder="Optional note to the submitter"></textarea>
             <button type="button" class="btn btn-success btn-sm" onclick="submitReview('{{ item.id|int }}','approved',this)">Approve and apply</button>
             <button type="button" class="btn btn-danger btn-sm" onclick="submitReview('{{ item.id|int }}','rejected',this)">Reject</button>
           </form>
@@ -394,7 +394,7 @@
           <form method="post" action="/admin/clients/{{ client.account_id }}/kb/save" id="rawFileForm">
             <input type="hidden" name="filename" value="{{ file_view }}">
             <input type="hidden" name="file_type" value="{{ request.query_params.get('type','kb') }}">
-            <textarea name="content" class="editor-area" id="rawEditor">{{ file_content }}</textarea>
+            <textarea aria-label="Knowledge base file" name="content" class="editor-area" id="rawEditor">{{ file_content }}</textarea>
             <div class="editor-actions">
               <button type="submit" class="btn btn-primary">Save and re-embed</button>
               <a href="/admin/clients/{{ client.account_id }}/kb?view=files" class="btn btn-secondary">Cancel</a>

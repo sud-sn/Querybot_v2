@@ -660,7 +660,29 @@
     busyNow.slice().forEach(function (pair) { settle(pair[0], pair[1]); });
   });
 
+  // ── A label names the field beside it ──
+  // Pages write <label>Store</label><select ...> side by side with no for/id,
+  // which leaves the control with no name for a screen reader and the label
+  // unclickable. A label that neither points at nor wraps a control is tied
+  // to the one that follows it -- the next element, or the first field
+  // inside it (an icon or reveal wrapper) -- which gets an id if it has none.
+  var tied = 0;
+  function qbTieLabels(root) {
+    Array.prototype.forEach.call((root || doc).querySelectorAll('label:not([for])'), function (lab) {
+      if (lab.querySelector('input, select, textarea')) return;
+      var next = lab.nextElementSibling;
+      if (!next) return;
+      var field = /^(INPUT|SELECT|TEXTAREA)$/.test(next.tagName) ? next
+        : next.querySelector('input:not([type="hidden"]), select, textarea');
+      if (!field || field.getAttribute('type') === 'hidden') return;
+      if (!field.id) field.id = 'qb-field-' + (++tied);
+      lab.setAttribute('for', field.id);
+    });
+  }
+  global.qbTieLabels = qbTieLabels;
+
   function setUp() {
+    qbTieLabels(doc);
     Array.prototype.forEach.call(doc.querySelectorAll('[data-qb-tabs]'), function (list) { qbTabs(list); });
     Array.prototype.forEach.call(doc.querySelectorAll('select[data-qb-select]'), function (select) { qbSelect(select); });
   }

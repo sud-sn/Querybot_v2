@@ -7,7 +7,7 @@
     </h3>
     <button class="fn-pop-close" onclick="closeFnHelper()">✕</button>
   </div>
-  <input class="fn-search" id="fnSearch" placeholder="Search functions…" oninput="filterFns(this.value)">
+  <input aria-label="Search functions" class="fn-search" id="fnSearch" placeholder="Search functions…" oninput="filterFns(this.value)">
   <div id="fn-buckets"></div>
 </div>
 <div id="fn-overlay" style="display:none;position:fixed;inset:0;z-index:10499" onclick="closeFnHelper()"></div>

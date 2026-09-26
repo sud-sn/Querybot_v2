@@ -109,17 +109,17 @@
               <form method="post" action="/portal/notifications/subscribe"
                 style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;flex-wrap:wrap">
                 <input type="hidden" name="report_id" value="{{ r.id }}">
-                <select name="cadence" style="width:auto">
+                <select aria-label="{{ t('ui.notif.cadence_label') }}" name="cadence" style="width:auto">
                   {% for value in ['daily', 'weekly'] %}
                   <option value="{{ value }}">{{ enum_label('cadence', value) }}</option>
                   {% endfor %}
                 </select>
-                <select name="day_of_week" style="width:auto" title="{{ t('ui.notif.day_label') }}">
+                <select aria-label="{{ t('ui.notif.day_label') }}" name="day_of_week" style="width:auto" title="{{ t('ui.notif.day_label') }}">
                   {% for day in range(7) %}
                   <option value="{{ day }}">{{ t('ui.notif.day.' ~ day) }}</option>
                   {% endfor %}
                 </select>
-                <select name="hour" style="width:auto" title="{{ t('ui.notif.hour_label') }}">
+                <select aria-label="{{ t('ui.notif.hour_label') }}" name="hour" style="width:auto" title="{{ t('ui.notif.hour_label') }}">
                   {% for h in range(24) %}
                     <option value="{{ h }}" {% if h == 8 %}selected{% endif %}>{{ '%02d'|format(h) }}:00</option>
                   {% endfor %}

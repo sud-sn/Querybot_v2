@@ -92,7 +92,7 @@
         <th>Input (per 1M tokens)</th>
         <th>Output (per 1M tokens)</th>
         <th>Last updated</th>
-        <th style="width:90px"></th>
+        <th style="width:90px"><span class="sr-only">Actions</span></th>
       </tr>
     </thead>
     <tbody>
@@ -106,12 +106,12 @@
         </td>
         <td>
           <span class="pr-display-in">${{ "%.2f"|format(row.tokens_in) }}</span>
-          <input class="pr-input-in" type="number" step="0.01" min="0" value="{{ row.tokens_in }}"
+          <input class="pr-input-in" aria-label="Input price for {{ row.model }}" type="number" step="0.01" min="0" value="{{ row.tokens_in }}"
             style="display:none;width:90px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base)">
         </td>
         <td>
           <span class="pr-display-out">${{ "%.2f"|format(row.tokens_out) }}</span>
-          <input class="pr-input-out" type="number" step="0.01" min="0" value="{{ row.tokens_out }}"
+          <input class="pr-input-out" aria-label="Output price for {{ row.model }}" type="number" step="0.01" min="0" value="{{ row.tokens_out }}"
             style="display:none;width:90px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base)">
         </td>
         <td style="font-size:var(--font-sm);color:var(--text-muted)">
@@ -196,7 +196,7 @@
     </div>
     <!-- filter bar -->
     <div style="padding:.6rem 1.1rem;border-bottom:1px solid var(--border);display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
-      <input id="syncSearch" type="text" placeholder="Filter models…"
+      <input id="syncSearch" aria-label="Filter models" type="text" placeholder="Filter models…"
         oninput="filterSyncRows()"
         style="padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:var(--font-base);flex:1;min-width:140px;background:var(--surface-2);color:var(--text)">
       <div id="syncProviderBtns" style="display:flex;gap:.3rem;flex-wrap:wrap"></div>
@@ -206,7 +206,7 @@
       <div id="syncLoading" style="text-align:center;padding:2rem;color:var(--text-muted)">Loading prices…</div>
       <table id="syncTable" class="table" style="display:none">
         <thead><tr>
-          <th style="width:32px"><input type="checkbox" id="syncCheckAll" onchange="toggleAllSync(this)"></th>
+          <th style="width:32px"><input type="checkbox" id="syncCheckAll" aria-label="Select every model" onchange="toggleAllSync(this)"></th>
           <th>Model</th>
           <th>Provider</th>
           <th>Input / 1M</th>

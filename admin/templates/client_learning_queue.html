@@ -140,7 +140,7 @@
 <table class="lq-table" id="lqTable">
   <thead>
     <tr>
-      <th style="width:28px"></th>
+      <th style="width:28px"><span class="sr-only">Details</span></th>
       <th>Question</th>
       <th>Type</th>
       <th class="num">Score</th>
@@ -259,10 +259,10 @@
             </span>
           </div>
           <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/correct-sql">
-            <textarea class="form-input form-input-mono" name="corrected_sql"
+            <textarea aria-label="Corrected SQL" class="form-input form-input-mono" name="corrected_sql"
               placeholder="SELECT ... (leave blank to skip)">{% if c.corrected_sql %}{{ c.corrected_sql }}{% endif %}</textarea>
             <div style="display:flex;gap:.5rem;margin-top:.45rem;align-items:center">
-              <input class="form-input form-input-sm" style="flex:1" type="text"
+              <input aria-label="Reviewer note" class="form-input form-input-sm" style="flex:1" type="text"
                 name="reviewer_note" placeholder="Reviewer note (optional)"
                 value="{{ c.reviewer_note or '' }}">
               <button type="submit" class="btn btn-secondary btn-xs">Save corrected SQL</button>

@@ -58,7 +58,7 @@
     </div>
     <div class="ci-body">
       <div style="display:flex;gap:.5rem">
-        <input type="text" id="tq-question" placeholder="e.g. what is total revenue by region?"
+        <input type="text" id="tq-question" aria-label="Question to check" placeholder="e.g. what is total revenue by region?"
                style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:var(--font-base)">
         <button type="button" id="tq-run" class="btn btn-primary btn-sm">Test</button>
       </div>
@@ -145,7 +145,7 @@
     </div>
     {% if status == 'open' %}
     <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/conflicts/{{ c.conflict_id }}/resolve" class="ci-actions">
-      <input type="text" class="form-input form-input-sm" name="note" placeholder="Optional note (why you're resolving this)">
+      <input type="text" class="form-input form-input-sm" name="note" aria-label="Resolution note" placeholder="Optional note (why you're resolving this)">
       <button type="submit" name="action" value="acknowledge" class="btn btn-secondary btn-xs">Acknowledge</button>
       <button type="submit" name="action" value="resolve" class="btn btn-primary btn-xs">Mark resolved</button>
       <button type="submit" name="action" value="dismiss" class="btn btn-ghost btn-xs">Dismiss</button>

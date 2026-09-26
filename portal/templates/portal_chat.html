@@ -876,7 +876,7 @@ body:has(.chat-page) .main { background: var(--bg); }
                 <div class="chat-input-bar">
           <div class="chat-input-wrap" id="inputWrap">
             {{ brand_motion('composer-brand', 'idle', 'xs', t('ui.chat.ready'), 'composerMascot', 'composerTooltip', 'ai-tooltip', 'ai-indicator ai-idle') }}
-            <textarea id="input" class="chat-input" placeholder="{{ t('ui.chat.composer_placeholder') }}" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
+            <textarea aria-label="{{ t('ui.chat.composer_label') }}" id="input" class="chat-input" placeholder="{{ t('ui.chat.composer_placeholder') }}" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
           </div>
           <div class="composer-side">
             <span class="char-count" id="charCount">500</span>

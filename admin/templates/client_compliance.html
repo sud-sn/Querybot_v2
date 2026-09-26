@@ -143,7 +143,7 @@
 
 <section class="compliance-panel" id="panel-classification" role="tabpanel" aria-labelledby="tab-classification" hidden>
   <div class="card"><div class="card-header"><h2>Classification workspace</h2></div><div class="card-body">
-    <div class="form-group"><input id="class-search" type="search" placeholder="Filter table, column or tag"></div>
+    <div class="form-group"><input id="class-search" aria-label="Filter table, column or tag" type="search" placeholder="Filter table, column or tag"></div>
     <div class="classification-wrap"><table class="classification-table"><thead><tr><th>Resource</th><th>Tags</th><th>Sensitivity</th><th>Identifiability</th><th>Display protection</th><th>Confidence</th><th>Review</th></tr></thead><tbody>
       {% set _tag_choices = pack.classification_tags if (pack and pack.classification_tags) else ['PII','PCI','PHI','PRESCRIPTION','PAYMENT','KYC_AML','FINANCIAL'] %}
       {% for item in classifications %}
@@ -156,9 +156,9 @@
           </label>
           {% endfor %}
         </td>
-        <td><select class="form-input form-input-sm" data-field="sensitivity"><option>{{ item.sensitivity }}</option>{% for v in ['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'] %}{% if v != item.sensitivity %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
-        <td><select class="form-input form-input-sm" data-field="identifiability"><option>{{ item.identifiability }}</option>{% for v in ['NONE','INDIRECT','DIRECT'] %}{% if v != item.identifiability %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
-        <td><select class="form-input form-input-sm" data-field="mask_strategy" title="Safe aliases preserve analytical grouping without exposing the original value">
+        <td><select class="form-input form-input-sm" data-field="sensitivity" aria-label="Sensitivity of {{ item.column_name }}"><option>{{ item.sensitivity }}</option>{% for v in ['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'] %}{% if v != item.sensitivity %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
+        <td><select class="form-input form-input-sm" data-field="identifiability" aria-label="Identifiability of {{ item.column_name }}"><option>{{ item.identifiability }}</option>{% for v in ['NONE','INDIRECT','DIRECT'] %}{% if v != item.identifiability %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
+        <td><select class="form-input form-input-sm" data-field="mask_strategy" aria-label="Masking for {{ item.column_name }}" title="Safe aliases preserve analytical grouping without exposing the original value">
           {% for value,label in [('redact','Strict redaction'),('smart_alias','Safe alias (auto type)'),('safe_alias_name','Safe person alias'),('safe_alias_identifier','Safe identifier alias'),('partial','Show last 4'),('partial_original','Show first character'),('tokenize','Opaque token'),('null','Return null')] %}
           <option value="{{ value }}" {% if item.mask_strategy == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}

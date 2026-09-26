@@ -275,7 +275,7 @@
               <label class="formula-label">Approved formula *</label>
               <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
             </div>
-            <textarea name="sql_template" rows="4" required class="formula-editor"
+            <textarea aria-label="Approved formula" name="sql_template" rows="4" required class="formula-editor"
               spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
               placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
             <p class="form-note">
@@ -374,7 +374,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
               Fields
               <span id="mc-col-status">loading…</span>
             </div>
-            <input class="mc-fields-search" type="text" placeholder="Search fields…" oninput="filterMcFields(this.value)">
+            <input aria-label="Search fields" class="mc-fields-search" type="text" placeholder="Search fields…" oninput="filterMcFields(this.value)">
             <div class="mc-fields-list" id="mc-fields-list">
               <div style="padding:10px;font-size:var(--font-xs);color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>
             </div>

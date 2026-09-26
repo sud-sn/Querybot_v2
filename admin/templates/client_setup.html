@@ -637,23 +637,23 @@
           {% for schema_name, tbl_count in schema_breakdown.items() %}
           <div style="display:flex;gap:.5rem;align-items:flex-start">
             <span style="font-size:var(--font-xs);font-weight:var(--weight-bold);font-family:var(--font-mono);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">{{ schema_name }}<br><span style="font-weight:var(--weight-regular);color:var(--text-muted)">{{ tbl_count }} table{{ 's' if tbl_count != 1 else '' }}</span></span>
-            <textarea class="schema-desc-input" data-schema="{{ schema_name }}" rows="2"
+            <textarea aria-label="What the {{ schema_name }} schema holds" class="schema-desc-input" data-schema="{{ schema_name }}" rows="2"
               placeholder="e.g. Contains profitability and cost data for orders and invoices."
               style="flex:1;font-size:var(--font-sm);padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.schemas.get(schema_name, '') }}</textarea>
           </div>
           {% endfor %}
           <div style="display:flex;gap:.5rem;align-items:flex-start">
             <span style="font-size:var(--font-xs);font-weight:var(--weight-bold);font-family:var(--font-mono);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">Overall<br><span style="font-weight:var(--weight-regular);color:var(--text-muted)">optional</span></span>
-            <textarea id="overall-biz-desc" rows="2"
+            <textarea aria-label="The business overall" id="overall-biz-desc" rows="2"
               placeholder="e.g. We are a manufacturing company tracking sales and costs."
               style="flex:1;font-size:var(--font-sm);padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.overall }}</textarea>
           </div>
         </div>
         {# Hidden textarea that gets populated on submit with the combined value #}
-        <textarea name="business_desc" id="business_desc_combined" style="display:none" required>{{ biz_desc or '' }}</textarea>
+        <textarea aria-label="Business description" name="business_desc" id="business_desc_combined" style="display:none" required>{{ biz_desc or '' }}</textarea>
         {% else %}
         {# Single schema: plain textarea #}
-        <textarea name="business_desc" rows="3" required
+        <textarea aria-label="Business description" name="business_desc" rows="3" required
           placeholder="e.g. We are a compounding pharmacy managing prescriptions, patients, drug inventory, and insurance claims."
           style="font-size:var(--font-base)">{{ biz_desc or '' }}</textarea>
         {% endif %}

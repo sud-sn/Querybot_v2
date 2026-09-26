@@ -75,7 +75,7 @@
     <form class="mp-form" method="post" enctype="multipart/form-data"
           action="/admin/clients/{{ client.account_id }}/mapping/preview">
       <input type="hidden" name="kind" value="joins">
-      <input type="file" name="file" accept=".csv,text/csv">
+      <input aria-label="Joins CSV" type="file" name="file" accept=".csv,text/csv">
       <div class="mp-actions">
         <button class="btn btn-sm btn-primary" type="submit">Preview changes</button>
         <a class="btn btn-sm" href="/admin/clients/{{ client.account_id }}/mapping/joins.csv">Download current</a>
@@ -92,7 +92,7 @@
     <form class="mp-form" method="post" enctype="multipart/form-data"
           action="/admin/clients/{{ client.account_id }}/mapping/preview">
       <input type="hidden" name="kind" value="terms">
-      <input type="file" name="file" accept=".csv,text/csv">
+      <input aria-label="Column terms CSV" type="file" name="file" accept=".csv,text/csv">
       <div class="mp-actions">
         <button class="btn btn-sm btn-primary" type="submit">Preview changes</button>
         <a class="btn btn-sm" href="/admin/clients/{{ client.account_id }}/mapping/terms.csv">Download current</a>

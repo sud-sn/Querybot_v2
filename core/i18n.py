@@ -4823,6 +4823,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.notif.subscribed": {"en": "Subscribed", "fr": "Abonné"},
     "ui.notif.on_day": {"en": "(day {day})", "fr": "(jour {day})"},
     "ui.notif.at_hour": {"en": "at {hour}:00", "fr": "à {hour} h 00"},
+    "ui.notif.cadence_label": {"en": "How often", "fr": "Fréquence"},
     "ui.notif.day_label": {"en": "Day (weekly only)", "fr": "Jour (hebdomadaire uniquement)"},
     "ui.notif.hour_label": {"en": "Hour (server local time)", "fr": "Heure (heure locale du serveur)"},
     "ui.notif.no_reports": {
@@ -4868,6 +4869,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "ui.kb.schema_selector": {"en": "Schema selector", "fr": "Sélecteur de schéma"},
     "ui.kb.search": {"en": "Search tables and fields…", "fr": "Rechercher des tables et des champs…"},
+    "ui.kb.search_label": {"en": "Search tables and fields", "fr": "Rechercher des tables et des champs"},
     "ui.kb.no_match": {
         "en": "No tables or fields match {query}. Try a shorter term or clear the search.",
         "fr": "Aucune table ni aucun champ ne correspond à {query}. Essayez un terme plus court ou effacez la recherche.",
@@ -5049,6 +5051,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.workspace_insight": {"en": "Workspace insight", "fr": "Analyse de l'espace"},
 
     # The composer.
+    "ui.chat.composer_label": {"en": "Your question", "fr": "Votre question"},
     "ui.chat.composer_placeholder": {
         "en": "Ask anything about your data…",
         "fr": "Posez n'importe quelle question sur vos données…",

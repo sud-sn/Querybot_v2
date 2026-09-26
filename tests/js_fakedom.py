@@ -71,6 +71,10 @@ Object.defineProperty(El.prototype, 'previousElementSibling', { get: function ()
   var sibs = this.parentNode ? this.parentNode.children : []; var at = sibs.indexOf(this);
   return at > 0 ? sibs[at - 1] : null;
 }});
+Object.defineProperty(El.prototype, 'nextElementSibling', { get: function () {
+  var sibs = this.parentNode ? this.parentNode.children : []; var at = sibs.indexOf(this);
+  return at >= 0 && at < sibs.length - 1 ? sibs[at + 1] : null;
+}});
 El.prototype.setAttribute = function (k, v) { this.attributes[k] = String(v); notify(this, {type: 'attributes', attributeName: k}); };
 El.prototype.removeAttribute = function (k) { delete this.attributes[k]; notify(this, {type: 'attributes', attributeName: k}); };
 El.prototype.getAttribute = function (k) { return this.attributes.hasOwnProperty(k) ? this.attributes[k] : null; };

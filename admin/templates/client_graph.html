@@ -496,7 +496,7 @@
     <button id="sb-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar">◀</button>
   </div>
   <div id="sb-search-area" class="sb-hide">
-    <input id="sb-search" placeholder="Search tables…" oninput="buildSidebar()">
+    <input aria-label="Search tables" id="sb-search" placeholder="Search tables…" oninput="buildSidebar()">
   </div>
   <div id="sb-filters" class="sb-hide">
     <button class="sf-btn active" data-type="" onclick="setTypeFilter(this,'')">All</button>
@@ -533,7 +533,7 @@
         <button class="tools-item" onclick="exportGraph()">⬇ Export JSON</button>
         <button class="tools-item" onclick="document.getElementById('graph-import-file').click()">⬆ Import JSON…</button>
       </div>
-      <input type="file" id="graph-import-file" accept="application/json,.json" style="display:none" onchange="importGraphFile(this)">
+      <input aria-label="Graph JSON to import" type="file" id="graph-import-file" accept="application/json,.json" style="display:none" onchange="importGraphFile(this)">
     </div>
   </div>
 
@@ -670,7 +670,7 @@
         including whether it had to fall back to unreviewed suggestions.
       </p>
       <div style="display:flex;gap:.5rem;margin-bottom:.6rem">
-        <input id="rt-question" class="eg-inp" placeholder="e.g. revenue by prescriber and region"
+        <input aria-label="Question to trace" id="rt-question" class="eg-inp" placeholder="e.g. revenue by prescriber and region"
                style="flex:1" onkeydown="if(event.key==='Enter')runResolverTest()">
         <button class="eg-m-btn primary" id="rt-run-btn" onclick="runResolverTest()">Run</button>
       </div>

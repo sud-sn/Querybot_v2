@@ -14,7 +14,7 @@
 
 <!-- Search / filter / sort toolbar -->
 <div class="metrics-toolbar">
-  <input type="text" id="metricSearch" placeholder="Search by name, synonym, or description…"
+  <input aria-label="Search metrics" type="text" id="metricSearch" placeholder="Search by name, synonym, or description…"
     oninput="applyFilters()" autocomplete="off">
   <div class="filter-chips">
     <button class="filter-chip active" data-filter="all"        onclick="setChip(this,'all')">All</button>
@@ -23,7 +23,7 @@
     <button class="filter-chip"        data-filter="draft"      onclick="setChip(this,'draft')">Draft</button>
     <button class="filter-chip"        data-filter="inactive"   onclick="setChip(this,'inactive')">Inactive</button>
   </div>
-  <select id="metricSort" onchange="applyFilters()" title="Sort metrics">
+  <select id="metricSort" onchange="applyFilters()" aria-label="Sort metrics">
     <option value="name-asc">Name A–Z</option>
     <option value="name-desc">Name Z–A</option>
     <option value="usage-desc">Most used</option>
@@ -281,7 +281,7 @@
           <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
           <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
         </div>
-        <textarea name="sql_template" rows="3" required class="formula-editor"
+        <textarea aria-label="Formula for {{ m.name }}" name="sql_template" rows="3" required class="formula-editor"
           spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">{{ m.sql_template }}</textarea>
         <div class="validate-result"></div>
         <!-- Compact inline syntax hint bar — unblocks updateFormulaHints for edit forms -->

@@ -21,6 +21,10 @@ body {
 }
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/* A link inside a sentence is told apart by more than its colour. */
+p a:not(.btn), .hint a:not(.btn), .form-note a:not(.btn) {
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px;
+}
 code {
   font-family: var(--font-mono);
   font-size: var(--font-xs);

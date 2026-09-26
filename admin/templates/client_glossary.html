@@ -262,22 +262,22 @@ details[open].edit-panel summary{background:var(--gray-100)}
             action="/admin/clients/{{ client.account_id }}/glossary/{{ t.id }}/update"
             class="inline-form" style="margin-top:.6rem">
             <div class="form-grid">
-              <input name="term" type="text" required value="{{ t.term }}">
-              <select name="kind">
+              <input name="term" type="text" required value="{{ t.term }}" aria-label="Term">
+              <select name="kind" aria-label="Kind">
                 <option value="metric" {% if t.kind == 'metric' %}selected{% endif %}>metric</option>
                 <option value="dimension" {% if t.kind == 'dimension' %}selected{% endif %}>dimension</option>
                 <option value="filter" {% if t.kind == 'filter' %}selected{% endif %}>filter</option>
                 <option value="entity" {% if t.kind == 'entity' %}selected{% endif %}>entity</option>
               </select>
             </div>
-            <input name="aliases" type="text" placeholder="Aliases"
+            <input aria-label="Aliases" name="aliases" type="text" placeholder="Aliases"
               value="{{ t.aliases }}" style="width:100%;margin-top:.4rem">
-            <textarea name="canonical_expression"
+            <textarea aria-label="Canonical expression" name="canonical_expression"
               style="margin-top:.4rem">{{ t.canonical_expression }}</textarea>
             <div class="form-grid" style="margin-top:.4rem">
-              <input name="tables_involved" type="text"
+              <input aria-label="Tables involved" name="tables_involved" type="text"
                 placeholder="Tables" value="{{ t.tables_involved }}">
-              <input name="definition" type="text"
+              <input aria-label="Definition" name="definition" type="text"
                 placeholder="Definition" value="{{ t.definition }}">
             </div>
             <label style="display:flex;align-items:center;gap:.4rem;

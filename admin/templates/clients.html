@@ -25,7 +25,7 @@
   <div class="clients-search-bar">
     <div class="clients-search-input-wrap input-icon-wrap">
       {{ ic("search", 16) }}
-      <input type="text" class="form-input" name="q" id="clientSearch" value="{{ search }}"
+      <input aria-label="Search clients" type="text" class="form-input" name="q" id="clientSearch" value="{{ search }}"
              placeholder="Search by name or account ID…"
              autocomplete="off" spellcheck="false">
       {% if search %}
@@ -101,7 +101,7 @@
           <th>Database</th>
           <th class="text-right">Limit</th>
           <th>Connected</th>
-          <th></th>
+          <th><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
       <tbody>

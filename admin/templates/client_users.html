@@ -157,7 +157,7 @@
           <th>Role</th>
           <th>Chat</th>
           <th>Status</th>
-          <th></th>
+          <th><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
       <tbody>
@@ -198,7 +198,8 @@
               <form method="post"
                     action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
                     class="inline-form" data-no-loading>
-                <select name="group_id" class="form-input form-input-sm select-xs" onchange="this.form.submit()">
+                <select name="group_id" class="form-input form-input-sm select-xs" onchange="this.form.submit()"
+                        aria-label="Group for {{ u.name or u.email }}">
                   <option value="">no group</option>
                   {% for g in groups %}
                   <option value="{{ g.id }}" {% if g.id == u.group_id %}selected{% endif %}>{{ g.name }}</option>

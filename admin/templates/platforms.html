@@ -95,7 +95,7 @@
 <div class="card">
   <div class="card-header"><h2>Configured platforms ({{ platforms|length }})</h2></div>
   <table class="table">
-    <tr><th>Name</th><th>Type</th><th>Credentials (masked)</th><th>Created</th><th></th></tr>
+    <tr><th>Name</th><th>Type</th><th>Credentials (masked)</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr>
     {% for p in platforms %}
     <tr>
       <td style="font-weight:var(--weight-semibold)">{{ p.name }}</td>

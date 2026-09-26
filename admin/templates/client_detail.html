@@ -536,7 +536,7 @@
           <div class="sql-cell">
             <code title="Click to expand" onclick="toggleSql(this)">{{ q.sql_generated[:60] }}{% if q.sql_generated|length > 60 %}…{% endif %}</code>
             <button type="button" class="btn btn-secondary btn-xs" onclick="copySql(this)">{{ ic("copy", 11) }} Copy</button>
-            <textarea class="sql-hidden" readonly>{{ q.sql_generated }}</textarea>
+            <textarea class="sql-hidden" readonly aria-label="SQL to copy">{{ q.sql_generated }}</textarea>
           </div>
           <pre class="sql-full">{{ q.sql_generated }}</pre>
           {% else %}
@@ -673,7 +673,7 @@
         </colgroup>
         <thead>
           <tr>
-            <th></th>
+            <th><span class="sr-only">Details</span></th>
             <th>Time</th>
             <th>Calls</th>
             <th>Status</th>
