@@ -173,7 +173,7 @@ def report(account_id: str) -> int:
     # ── 4 · what the harder sections need ────────────────────────────────
     print("\nFor the later sections")
     try:
-        domains = store.list_domains(account_id, active_only=False)
+        domains = store.list_domains(account_id)
     except Exception:
         domains = []
     line(OK if len(domains) >= 2 else WARN, "subject areas", f"{len(domains)}"

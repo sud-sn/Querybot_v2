@@ -8573,7 +8573,11 @@ async def domains_page(request: Request, account_id: str):
 
     from core.domains import DECISIVE_MARGIN, MIN_ROUTE_SCORE
 
-    domains = store.list_domains(account_id, active_only=False)
+    # A removed area is kept, so an answer that cited it still resolves, but
+    # it routes nothing. Listed among the live ones it looked as if Remove had
+    # done nothing, and its tables still counted as assigned and as shared.
+    every = store.list_domains(account_id, active_only=False)
+    domains = [domain for domain in every if domain.get("is_active")]
     choices = _domain_table_choices(client)
     # Which tables sit in more than one area. Not an error -- a shared
     # dimension legitimately belongs to several -- but overlap is what decides
@@ -8585,6 +8589,7 @@ async def domains_page(request: Request, account_id: str):
     return _resp(request, "client_domains.html", {
         "client": client,
         "domains": domains,
+        "removed": [domain["name"] for domain in every if not domain.get("is_active")],
         "table_choices": choices,
         "unassigned": [t for t in choices if t not in seen],
         "shared": {t: names for t, names in seen.items() if len(names) > 1},

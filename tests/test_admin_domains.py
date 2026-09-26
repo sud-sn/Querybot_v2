@@ -284,6 +284,79 @@ class TestThePageAndItsPreview(_RealStore):
         self.assertEqual(payload["reason"], "no_domain_matched")
 
 
+class TestARemovedAreaIsShownAsRemoved(_RealStore):
+    """Remove deactivates an area -- kept, so an answer that cited it still
+    resolves -- and the page listed it among the live ones: Remove looked as
+    if it had done nothing, its tables still counted as in an area, and as
+    shared with the areas it overlapped. The live preflight counted it too."""
+
+    def _context(self):
+        with patch.object(routes, "_is_auth", return_value=True), \
+                patch.object(routes.store, "get_client", return_value=self.client), \
+                patch.object(routes, "_resp", side_effect=lambda r, t, c: c):
+            return asyncio.run(routes.domains_page(_request(), self.account_id))
+
+    def _html(self):
+        from starlette.requests import Request
+
+        request = Request({"type": "http", "method": "GET", "root_path": "", "scheme": "http",
+                           "path": f"/admin/clients/{self.account_id}/domains", "query_string": b"",
+                           "headers": [], "server": ("testserver", 80), "client": ("127.0.0.1", 1)})
+        with patch.object(routes, "_is_auth", return_value=True), \
+                patch.object(routes.store, "get_client", return_value=self.client):
+            return asyncio.run(routes.domains_page(request, self.account_id)).body.decode()
+
+    def _remove_sales(self):
+        self._save(name="Sales", tables=["SALES.ORDERS"])
+        self._save(name="Finance", tables=["SALES.ORDERS", "FIN.GL"])
+        self._delete("Sales")
+
+    def test_it_is_not_listed_among_the_live_areas(self):
+        self._remove_sales()
+        context = self._context()
+        self.assertEqual([area["name"] for area in context["domains"]], ["Finance"])
+        self.assertEqual(context["removed"], ["Sales"])
+
+    def test_the_page_offers_no_card_for_it_and_names_it_as_removed(self):
+        self._remove_sales()
+        html = self._html()
+        self.assertNotIn('name="original_name" value="Sales"', html)
+        self.assertIn('name="original_name" value="Finance"', html)
+        self.assertIn("Removed: Sales.", html)
+
+    def test_its_tables_are_in_no_area_once_no_live_area_has_them(self):
+        self._save(name="Sales", tables=["SALES.CUSTOMER"])
+        self._delete("Sales")
+        self.assertIn("SALES.CUSTOMER", self._context()["unassigned"])
+
+    def test_no_table_is_shared_with_it(self):
+        self._remove_sales()
+        self.assertEqual(self._context()["shared"], {})
+
+    def test_adding_an_area_by_its_name_brings_it_back(self):
+        self._remove_sales()
+        self._save(name="Sales", tables=["SALES.CUSTOMER"])
+        context = self._context()
+        self.assertEqual(sorted((area["name"], tuple(area["tables"])) for area in context["domains"]),
+                         [("Finance", ("FIN.GL", "SALES.ORDERS")), ("Sales", ("SALES.CUSTOMER",))])
+        self.assertEqual(context["removed"], [])
+
+    def test_the_live_preflight_does_not_count_it(self):
+        import importlib.util
+
+        self._remove_sales()
+        spec = importlib.util.spec_from_file_location(
+            "_preflight_domains", Path(__file__).resolve().parents[1] / "deploy" / "preflight_live.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        printed: list[str] = []
+        module.line = lambda mark, label, detail="": printed.append(f"{mark}|{label}|{detail}")
+        module.report(self.account_id)
+        areas = [row for row in printed if "|subject areas|" in row]
+        self.assertEqual(len(areas), 1, printed)
+        self.assertTrue(areas[0].startswith(f"{module.WARN}|subject areas|1"), areas[0])
+
+
 class TestAuthorisation(_RealStore):
 
     def test_an_unauthenticated_save_writes_nothing(self):

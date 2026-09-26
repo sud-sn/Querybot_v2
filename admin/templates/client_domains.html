@@ -123,6 +123,11 @@
 </form>
 {% endfor %}
 
+{% if removed %}
+<p class="hint">Removed: {{ removed | join(", ") }}. Questions no longer route to
+  {{ "it" if removed | length == 1 else "them" }}; adding an area with the same name brings it back.</p>
+{% endif %}
+
 <form class="area-card" method="post" action="/admin/clients/{{ client.account_id }}/domains/save">
   <div class="area-head">
     <div class="area-name">Add a subject area</div>
