@@ -644,13 +644,15 @@ def test_destructive_actions_are_confirmed_not_bare_submits():
 
 def test_the_compliance_tabs_show_which_panel_is_open():
     """Ten panels behind a tab bar with no active state, and no record of the
-    choice, so a refresh silently returned to Profile."""
+    choice, so a refresh silently returned to Profile. They are the shared tabs
+    now (static/js/qb-ui.js): selected state, styled, and kept in the URL."""
     source = _read("admin/templates/client_compliance.html")
-    assert 'aria-selected' in source, "the compliance tabs expose no selected state"
-    assert ".compliance-tab.active" in source, "the active tab is not styled"
-    assert "location.hash" in source, (
+    bar = source[source.index('<div class="compliance-nav'):source.index("</div>", source.index('<div class="compliance-nav'))]
+    assert 'role="tablist"' in bar and "data-qb-tabs" in bar and "aria-selected" in bar
+    assert "data-qb-tabs-hash" in bar, (
         "the open panel is not reflected in the URL, so refresh and deep links lose it"
     )
+    assert '.qb-tab[aria-selected="true"]' in _read("static/css/base.css"), "the active tab is not styled"
 
 
 def test_the_widget_wall_pages_state_what_they_are():

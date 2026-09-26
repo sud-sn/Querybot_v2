@@ -29,6 +29,19 @@
    qbToast.show(message, tone, duration), .success/.error/.warning/.info
      The older one-line form.
 
+   qbTabs(tablist, {onChange}) -> {select(name)}
+     <div role="tablist" data-qb-tabs [data-qb-tabs-hash] aria-label="...">
+       <button role="tab" data-tab="profile" id="tab-profile"
+               aria-controls="panel-profile" aria-selected="true">
+     <section role="tabpanel" id="panel-profile" aria-labelledby="tab-profile">
+     One tab component: the selected tab is aria-selected and the
+     only one in the Tab order; arrow keys, Home and End move
+     between tabs; unselected panels are hidden. With
+     data-qb-tabs-hash the tab follows location.hash, so a refresh,
+     a bookmark or a link lands on it. [data-qb-tabs] lists are set
+     up on load; a script that builds one calls qbTabs itself.
+     onChange(name, tab, panel) runs when the reader changes tab.
+
    All text is set as text, never as markup. Labels come from
    window.qbT when the page has it (the portal, in French too).
    ============================================================ */
@@ -272,4 +285,95 @@
       onConfirm: function () { el.dataset.confirmed = '1'; el.click(); }
     });
   }, true);
+
+  /* ── Tabs ──────────────────────────────────────────────── */
+  function tabsOf(list) {
+    return Array.prototype.filter.call(list.querySelectorAll('[role="tab"]'), function (tab) {
+      return tab.closest('[role="tablist"]') === list;
+    });
+  }
+
+  function panelOf(tab) {
+    var id = tab.getAttribute('aria-controls');
+    return id ? doc.getElementById(id) : null;
+  }
+
+  function nameOf(tab) { return tab.getAttribute('data-tab') || tab.id; }
+
+  function qbTabs(list, opts) {
+    if (!list) return null;
+    if (list.__qbTabs) return list.__qbTabs;
+    opts = opts || {};
+    list.setAttribute('role', 'tablist');
+    var followHash = list.hasAttribute('data-qb-tabs-hash');
+
+    function byName(name) {
+      return tabsOf(list).filter(function (tab) { return nameOf(tab) === name; })[0] || null;
+    }
+
+    function select(tab, how) {
+      var tabs = tabsOf(list);
+      if (tabs.indexOf(tab) < 0) return false;
+      tabs.forEach(function (each) {
+        var on = each === tab;
+        each.setAttribute('aria-selected', on ? 'true' : 'false');
+        each.setAttribute('tabindex', on ? '0' : '-1');
+        each.classList[on ? 'add' : 'remove']('is-active');
+        var panel = panelOf(each);
+        if (panel) {
+          panel.hidden = !on;
+          panel.classList[on ? 'add' : 'remove']('is-active');
+        }
+      });
+      if (how === 'key') tab.focus();
+      if (how === 'init') return true;
+      var name = nameOf(tab);
+      if (followHash && how !== 'hash' && global.location.hash !== '#' + name) {
+        global.history.replaceState(null, '', '#' + name);
+      }
+      if (typeof opts.onChange === 'function') opts.onChange(name, tab, panelOf(tab));
+      return true;
+    }
+
+    list.addEventListener('click', function (e) {
+      var tab = e.target && e.target.closest ? e.target.closest('[role="tab"]') : null;
+      if (tab) select(tab, 'click');
+    });
+    list.addEventListener('keydown', function (e) {
+      var tabs = tabsOf(list);
+      var at = tabs.indexOf(doc.activeElement);
+      if (at < 0) return;
+      var to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      select(tabs[(to + tabs.length) % tabs.length], 'key');
+    });
+
+    var api = {
+      list: list,
+      select: function (name) { var tab = byName(name); return tab ? select(tab, 'api') : false; }
+    };
+    list.__qbTabs = api;
+
+    var tabs = tabsOf(list);
+    var first = (followHash && byName(String(global.location.hash || '').slice(1)))
+      || tabs.filter(function (tab) { return tab.getAttribute('aria-selected') === 'true'; })[0]
+      || tabs[0];
+    if (first) select(first, 'init');
+    if (followHash) {
+      global.addEventListener('hashchange', function () {
+        var tab = byName(String(global.location.hash || '').slice(1));
+        if (tab) select(tab, 'hash');
+      });
+    }
+    return api;
+  }
+
+  global.qbTabs = qbTabs;
+
+  function setUpTabs() {
+    Array.prototype.forEach.call(doc.querySelectorAll('[data-qb-tabs]'), function (list) { qbTabs(list); });
+  }
+  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', setUpTabs);
+  else setUpTabs();
 })(window);

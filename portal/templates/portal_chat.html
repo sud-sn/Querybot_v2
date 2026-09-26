@@ -7,7 +7,7 @@
 <script src="/static/vendor/echarts.min.js?v=6.1.0"></script>
 <script src="/static/js/chart-palettes.js?v=20260926-brand-1"></script>
 <script src="/static/js/qb-charts.js?v=20260926-brand-1"></script>
-<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260926-ui-1">
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260926-ui-2">
 <style>
 /* Full-viewport constraints — chat page only */
 html,body{height:100%;overflow:hidden}
@@ -75,9 +75,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .artifact-surface{min-height:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .artifact-summary{padding:.85rem 1rem;border-bottom:1px solid var(--border)}
 .artifact-summary h3{font-size:var(--font-md);font-weight:var(--weight-bold);color:var(--text);margin:0 0 .2rem}.artifact-summary p{font-size:var(--font-xs);color:var(--text-muted);margin:0}
-.artifact-tabs{display:flex;align-items:center;gap:.2rem;padding:.45rem .65rem;border-bottom:1px solid var(--border);background:var(--surface)}
-.artifact-tab{border:0;background:transparent;color:var(--text-muted);padding:6px 9px;border-radius:5px;font-size:var(--font-xs);font-weight:var(--weight-bold);cursor:pointer}.artifact-tab.active{background:var(--primary-soft);color:var(--primary)}
-.artifact-panel{display:none;padding:.85rem}.artifact-panel.active{display:block}.artifact-chart{height:clamp(320px,52vh,590px);width:100%}
+.artifact-tabs{padding:0 .65rem;background:var(--surface)}
+.artifact-panel{padding:.85rem}.artifact-chart{height:clamp(320px,52vh,590px);width:100%}
 .artifact-panel .data-table-wrap{max-height:none}.artifact-query{margin:0;white-space:pre-wrap;word-break:break-word;font:var(--font-xs)/1.65 var(--font-mono);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:.8rem}
 .artifact-actions{display:flex;gap:.45rem;flex-wrap:wrap;padding:.7rem .85rem;border-top:1px solid var(--border);background:var(--surface)}
 .artifact-open-btn{display:inline-flex;align-items:center;gap:.35rem}
@@ -2763,14 +2762,22 @@ function openArtifactPane(){
   _setArtifactUrl(_activeArtifactPayload.data?.result_id || _activeArtifactPayload.trust?.result_id || 'latest');
   setTimeout(() => window.dispatchEvent(new Event('resize')), 240);
 }
-function _activateArtifactTab(root, tabName){
-  root.querySelectorAll('.artifact-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.artifactTab === tabName));
-  root.querySelectorAll('.artifact-panel').forEach(panel => panel.classList.toggle('active', panel.dataset.artifactPanel === tabName));
+// The artifact's tabs are the shared ones (qb-ui.js qbTabs); a chart drawn
+// while its panel was hidden has no size, so it is fitted when shown.
+function _artifactTabShown(tabName){
   if (tabName === 'visual' && _activeArtifactChartId) {
     const node = document.getElementById(_activeArtifactChartId);
     const instance = node && window.echarts ? echarts.getInstanceByDom(node) : null;
     setTimeout(() => window.QBCharts.fit(instance), 10);
   }
+}
+function _artifactTab(name, label, selected){
+  return `<button type="button" class="qb-tab" role="tab" data-tab="${name}" id="artifact-tab-${name}"`
+    + ` aria-controls="artifact-panel-${name}" aria-selected="${selected ? 'true' : 'false'}">${escHtml(label)}</button>`;
+}
+function _artifactPanel(name, html, selected){
+  return `<div class="artifact-panel" role="tabpanel" id="artifact-panel-${name}" aria-labelledby="artifact-tab-${name}"`
+    + `${selected ? '' : ' hidden'}>${html}</div>`;
 }
 function renderArtifactPreview(msg){
   const hasChart = !!msg.chart;
@@ -2790,7 +2797,7 @@ function renderArtifactPreview(msg){
   const tabs = [];
   const panels = [];
   if (hasChart || hasKpi) {
-    tabs.push(`<button type="button" class="artifact-tab active" data-artifact-tab="visual">${t('ui.chat.card.visual')}</button>`);
+    tabs.push(_artifactTab('visual', t('ui.chat.card.visual'), true));
     let visual = '';
     if (hasKpi) {
       const kpi = msg.kpi || {};
@@ -2799,23 +2806,23 @@ function renderArtifactPreview(msg){
     } else {
       visual = `<div id="${artifactChartId}" class="artifact-chart"></div>${renderChartWarnings(msg.chart)}`;
     }
-    panels.push(`<div class="artifact-panel active" data-artifact-panel="visual">${visual}</div>`);
+    panels.push(_artifactPanel('visual', visual, true));
   }
   if (hasData) {
     const active = !hasChart && !hasKpi;
-    tabs.push(`<button type="button" class="artifact-tab${active ? ' active' : ''}" data-artifact-tab="data">${t('ui.chat.card.data')}</button>`);
-    panels.push(`<div class="artifact-panel${active ? ' active' : ''}" data-artifact-panel="data">${renderDataTable(msg.data, { question: msg.question || '', trace_id: msg.trace_id || '' })}</div>`);
+    tabs.push(_artifactTab('data', t('ui.chat.card.data'), active));
+    panels.push(_artifactPanel('data', renderDataTable(msg.data, { question: msg.question || '', trace_id: msg.trace_id || '' }), active));
   }
   if (msg.trust?.sql) {
-    tabs.push(`<button type="button" class="artifact-tab" data-artifact-tab="query">${t('ui.chat.card.query')}</button>`);
-    panels.push(`<div class="artifact-panel" data-artifact-panel="query"><pre class="artifact-query">${escHtml(msg.trust.sql)}</pre></div>`);
+    tabs.push(_artifactTab('query', t('ui.chat.card.query'), false));
+    panels.push(_artifactPanel('query', `<pre class="artifact-query">${escHtml(msg.trust.sql)}</pre>`, false));
   }
   const dashboardAction = dashboard
     ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">${escHtml(t('ui.chat.dashboard.open', {name: dashboard.name}))}</a>`
     : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">' + t('ui.chat.chart.pin') + '</button>');
   const root = document.getElementById('artifactBody');
-  root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || t('ui.chat.artifact.governed_note'))}</p></div><div class="artifact-tabs">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
-  root.querySelectorAll('.artifact-tab').forEach(btn => btn.addEventListener('click', () => _activateArtifactTab(root, btn.dataset.artifactTab)));
+  root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || t('ui.chat.artifact.governed_note'))}</p></div><div class="artifact-tabs qb-tabs" role="tablist" aria-label="${escHtml(t('ui.chat.artifact_label'))}">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
+  window.qbTabs(root.querySelector('.artifact-tabs'), {onChange: _artifactTabShown});
   root.querySelectorAll('.data-table-wrap').forEach(wrap => _mountDataTableControls(wrap, msg.question || ''));
   if (hasChart) {
     window._chartPayloads[artifactChartId] = Object.assign({}, msg.chart);

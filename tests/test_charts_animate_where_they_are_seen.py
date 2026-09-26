@@ -225,11 +225,10 @@ var echarts = window.echarts = {getInstanceByDom: function () { return current; 
 var document = {getElementById: function () { return current && current.el; }};
 var setTimeout = function (fn) { fn(); };
 var _activeArtifactChartId = 'artifact-chart';
-var root = {querySelectorAll: function () { return []; }};
-""" + lift(CHAT, "function _activateArtifactTab(root, tabName)") + """
-current = hidden; _activateArtifactTab(root, 'visual');
-current = shown; _activateArtifactTab(root, 'visual');
-current = hidden; _activateArtifactTab(root, 'sql');
+""" + lift(CHAT, "function _artifactTabShown(tabName)") + """
+current = hidden; _artifactTabShown('visual');
+current = shown; _artifactTabShown('visual');
+current = hidden; _artifactTabShown('query');
 JSON.stringify(resizes);
 """
         assert json.loads(_run("portal_chat.html", "en", script)) == ["artifact-chart-2"]
