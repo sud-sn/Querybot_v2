@@ -430,7 +430,7 @@ body { background: var(--bg); }
   cursor: pointer;
 }
 .portal-sidebar-toggle:hover { color: var(--sidebar-text); background: var(--sidebar-hover); }
-.portal-sidebar-toggle span { font-size: var(--font-xl); line-height: 1; transition: transform var(--t-med); }
+.portal-sidebar-toggle .qb-icon { transition: transform var(--t-med); }
 
 .portal-new-thread-form { width: 100%; margin: 0; }
 .portal-new-thread {
@@ -520,7 +520,6 @@ body { background: var(--bg); }
 }
 .portal-side-actions button:hover,
 .portal-side-actions a:hover { color: var(--sidebar-text); background: var(--sidebar-hover); text-decoration: none; }
-.portal-side-actions .portal-logout-icon { display: inline !important; font-size: var(--font-lg); line-height: 1; transform: rotate(180deg); }
 
 /* The language switcher takes a row of its own above Settings and Logout:
    three buttons in one row of the sidebar cut the endonym to "Fran...". The
@@ -569,7 +568,7 @@ body { background: var(--bg); }
 .portal-sidebar-collapsed .portal-sidebar-context { display: none; }
 .portal-sidebar-collapsed .portal-sidebar-head { flex-direction: column; }
 .portal-sidebar-collapsed .portal-sidebar-head .portal-brand { flex: 0 0 auto; padding-inline: 0; }
-.portal-sidebar-collapsed .portal-sidebar-toggle span { transform: rotate(180deg); }
+.portal-sidebar-collapsed .portal-sidebar-toggle .qb-icon { transform: rotate(180deg); }
 .portal-sidebar-collapsed .portal-new-thread,
 .portal-sidebar-collapsed .portal-nav a,
 .portal-sidebar-collapsed .portal-sidebar-notifications { justify-content: center; padding-inline: 0; }
@@ -626,7 +625,7 @@ body { background: var(--bg); }
 @media (prefers-reduced-motion: reduce) {
   .portal-app-shell,
   .portal-sidebar,
-  .portal-sidebar-toggle span { transition: none; }
+  .portal-sidebar-toggle .qb-icon { transition: none; }
 }
 
 @media (max-width: 1100px) and (min-width: 721px) {

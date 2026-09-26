@@ -1,4 +1,5 @@
 {% extends "client_base.html" %}
+{% from "icons.html" import ic %}
 {% from "macros.html" import breadcrumb, page_header %}
 {% block title %}Learning Queue — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
@@ -200,8 +201,8 @@
     </td>
     <td class="num">
       <div class="feedback-votes">
-        <span class="vote-stat up" title="Positive votes"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>{{ c.positive_vote_count or 0 }}</span>
-        <span class="vote-stat down" title="Negative votes"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>{{ c.negative_vote_count or 0 }}</span>
+        <span class="vote-stat up" title="Positive votes">{{ ic("arrow-up", 12) }}{{ c.positive_vote_count or 0 }}</span>
+        <span class="vote-stat down" title="Negative votes">{{ ic("arrow-down", 12) }}{{ c.negative_vote_count or 0 }}</span>
       </div>
     </td>
     <td><span class="source-pill">{{ c.source }}</span></td>

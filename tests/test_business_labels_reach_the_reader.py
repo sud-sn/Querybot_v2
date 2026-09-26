@@ -739,6 +739,10 @@ function t(id) { return id; }
 function plural(id, n, v) { return String(n); }
 var _dtIdCounter = 0;
 """
+# The real icon helper, which the table's CSV button draws with; page
+# scripts call it bare, as a browser resolves a global on window.
+_TABLE_STUBS += (Path(__file__).resolve().parents[1] / "static" / "js" / "qb-icons.js").read_text(encoding="utf-8") \
+    + "\nvar qbIcon = window.qbIcon;\n"
 
 
 class TestTheAnswerTableHeader:

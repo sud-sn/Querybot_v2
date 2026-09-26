@@ -10,12 +10,13 @@
 <link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260904-reduced-1">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/portal.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-lucide-1">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-lucide-1">
+<link rel="stylesheet" href="/static/css/portal.css?v=20260926-lucide-1">
+<script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
 {# Prevent flash of unstyled content #}
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-lucide-1">
 <link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-inter-1">
 </head>
 <body>
@@ -217,7 +218,7 @@ window.qbEnumLabel = function (group, value) {
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <button type="button" class="portal-sidebar-toggle" onclick="window.__qbToggleSidebar()" aria-label="{{ t('ui.shell.collapse') }}" title="{{ t('ui.shell.collapse') }}">
-        <span aria-hidden="true">&#8249;</span>
+        {{ ic("chevron-left", 16) }}
       </button>
     </div>
 
@@ -243,7 +244,7 @@ window.qbEnumLabel = function (group, value) {
     <div class="portal-sidebar-spacer"></div>
 
     <a href="/portal/notifications" title="{{ t('ui.shell.notifications') }}" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}">
-      <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      {{ ic("bell", 17) }}
       <span>{{ t('ui.shell.notifications') }}</span>
     </a>
 
@@ -278,7 +279,7 @@ window.qbEnumLabel = function (group, value) {
           {% endfor %}
         </form>
         <a href="/portal/change-password" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }} <span>{{ t('ui.shell.settings') }}</span></a>
-        <a href="/portal/logout" title="{{ t('ui.shell.logout') }}"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>{{ t('ui.shell.logout') }}</span></a>
+        <a href="/portal/logout" title="{{ t('ui.shell.logout') }}">{{ ic("log-out", 16) }}<span>{{ t('ui.shell.logout') }}</span></a>
       </div>
     </footer>
   </aside>

@@ -30,6 +30,11 @@ code {
   border-radius: var(--radius-sm);
 }
 button, input, select, textarea { font: inherit; }
+/* An icon from the sprite (icons.html, qb-icons.js): sits on the text's
+   baseline and never shrinks in a flex row. */
+.qb-icon { flex-shrink: 0; display: inline-block; vertical-align: -0.2em; }
+.qb-icon-lead  { margin-right: .35em; }                     /* before text, outside a flex row */
+.qb-icon-block { display: block; margin: 0 auto var(--space-2); } /* above a centred message */
 /* Browsers set these bolder than the weight scale: 700 for strong
    and headings, which in Inter is darker than anything the scale
    asks for. */

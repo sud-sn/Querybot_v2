@@ -7,7 +7,7 @@
 <script src="/static/vendor/echarts.min.js?v=6.1.0"></script>
 <script src="/static/js/chart-palettes.js?v=20260926-inter-1"></script>
 <script src="/static/js/qb-charts.js?v=20260926-inter-1"></script>
-<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260926-lucide-1">
 <style>
 /* Full-viewport constraints — chat page only */
 html,body{height:100%;overflow:hidden}
@@ -18,7 +18,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chat-hero.hero-collapsed{max-height:0;opacity:0;padding-top:0;padding-bottom:0;pointer-events:none;border-bottom:none}
 .hero-dismiss-btn{background:none;border:none;color:var(--text-muted);font-size:var(--font-xl);cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1;flex-shrink:0;align-self:flex-start;margin-top:-.1rem;transition:color .15s}
 .hero-dismiss-btn:hover{color:var(--text);background:var(--surface-2)}
-.hero-info-btn{background:none;border:none;color:var(--text-muted);font-size:var(--font-sm);cursor:pointer;padding:4px 9px;border-radius:999px;border:1px solid var(--border);line-height:1;flex-shrink:0;transition:all .15s}
+.hero-info-btn{align-items:center;gap:.3rem;background:none;border:none;color:var(--text-muted);font-size:var(--font-sm);cursor:pointer;padding:4px 9px;border-radius:999px;border:1px solid var(--border);line-height:1;flex-shrink:0;transition:all .15s}
 .hero-info-btn:hover{color:var(--primary);border-color:var(--primary)}
 .chat-title{font-size:var(--font-md);font-weight:var(--weight-bold);letter-spacing:0;color:var(--text);margin-bottom:.15rem}
 .chat-subtitle{display:none;color:var(--text-muted);line-height:1.6;max-width:700px}
@@ -144,8 +144,11 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stage-step summary::-webkit-details-marker{display:none}
 /* Reuses the trust-box +/- language rather than inventing a second disclosure
    idiom on the same card. */
-.stage-step summary::after{content:'+';margin-left:auto;font-weight:var(--weight-bold);color:var(--line-subtle)}
-.stage-step[open] summary::after{content:'-'}
+/* The disclosure mark: a chevron drawn in the text colour, pointing down
+   when closed and up when open. */
+.stage-step summary::after,.trust-box summary::after{content:'';flex-shrink:0;width:7px;height:7px;border-right:1.75px solid currentColor;border-bottom:1.75px solid currentColor;transform:translateY(-2px) rotate(45deg);transition:transform .15s ease}
+.stage-step[open] summary::after,.trust-box[open] summary::after{transform:translateY(2px) rotate(-135deg)}
+.stage-step summary::after{margin-left:auto;color:var(--line-subtle)}
 .stage-step-tick{flex-shrink:0;width:5px;height:5px;border-radius:999px;background:var(--primary);opacity:.5;transform:translateY(-1px)}
 .stage-step-label{min-width:0}
 .stage-step-detail{padding:.1rem 0 .4rem 1rem;font-size:var(--font-xs);color:var(--text-muted);opacity:.85}
@@ -365,8 +368,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .feedback-submit:hover{opacity:.85}
 .trust-box{margin-top:.95rem;border:1px solid var(--border);border-radius:var(--radius);background:color-mix(in srgb,var(--surface-2) 46%,transparent);overflow:hidden}
 .trust-box summary{cursor:pointer;list-style:none;font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-soft);padding:.75rem .85rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem}
-.trust-box summary::after{content:'+';font-weight:var(--weight-bold);color:var(--text-muted)}
-.trust-box[open] summary::after{content:'-'}
+.trust-box summary::after{color:var(--text-muted)}
 .trust-box summary::-webkit-details-marker{display:none}
 .trust-grid{padding:0 .85rem .85rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.7rem}
 .trust-item{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem}
@@ -630,7 +632,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
   <section class="portal-thread-panel" aria-label="{{ t('ui.chat.recent_threads') }}">
     <div class="portal-thread-heading">
       <span>{{ t('ui.chat.recent_threads') }}</span>
-      <button type="button" onclick="refreshHistory()" title="{{ t('ui.chat.refresh_threads') }}" aria-label="{{ t('ui.chat.refresh_threads') }}">&#8635;</button>
+      <button type="button" onclick="refreshHistory()" title="{{ t('ui.chat.refresh_threads') }}" aria-label="{{ t('ui.chat.refresh_threads') }}">{{ ic("refresh", 14) }}</button>
     </div>
     <div class="hp-search-wrap">
       {{ ic("search", 15, "hp-search-icon") }}
@@ -639,12 +641,12 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
              aria-label="{{ t('ui.chat.search_threads') }}" oninput="filterHistory(this.value)">
       <button type="button" id="historySearchClear" class="hp-search-clear" style="display:none"
               onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'"
-              aria-label="{{ t('ui.chat.clear_search') }}">&times;</button>
+              aria-label="{{ t('ui.chat.clear_search') }}">{{ ic("x", 14) }}</button>
     </div>
     <div class="history-panel open" id="historyPanel" aria-label="{{ t('ui.chat.history_label') }}" role="complementary" data-state="loading">
       <div class="hp-header">
         <span class="hp-title">{{ t('ui.chat.your_conversations') }}</span>
-        <button type="button" class="hp-close" onclick="toggleHistoryPanel(false)" aria-label="{{ t('ui.chat.close_history') }}">&times;</button>
+        <button type="button" class="hp-close" onclick="toggleHistoryPanel(false)" aria-label="{{ t('ui.chat.close_history') }}">{{ ic("x", 16) }}</button>
       </div>
       <div class="hp-list" id="historyList">
         <div class="hp-empty hp-loading" id="historyEmpty"><span class="hp-state-dot" aria-hidden="true"></span>{{ t('ui.chat.loading_threads') }}</div>
@@ -661,7 +663,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 {% block content %}
 {% if not enabled %}
 <div style="max-width:500px;margin:4rem auto;text-align:center">
-  <div style="margin-bottom:1.5rem"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg></div>
+  <div style="margin-bottom:1.5rem">{{ ic("lock", 48, "text-muted") }}</div>
   <h2 style="font-size:var(--font-xl);font-weight:var(--weight-bold);margin-bottom:.75rem">{{ t('ui.chat.disabled_title') }}</h2>
   <p style="color:var(--text-muted);line-height:1.7">{{ t('ui.chat.disabled_body') }}</p>
   <a href="/portal/dashboard" class="btn btn-secondary" style="margin-top:1.5rem;display:inline-flex">&#8592; {{ t('ui.chat.back_to_dashboard') }}</a>
@@ -693,7 +695,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         <span id="queryLimitNoticeText">{{ query_status.message }}</span>
       </div>
     </div>
-    <button class="hero-dismiss-btn" id="heroDismissBtn" title="{{ t('ui.chat.hide_hero') }}" aria-label="{{ t('ui.chat.dismiss_hero') }}" onclick="_collapseHero()">×</button>
+    <button class="hero-dismiss-btn" id="heroDismissBtn" title="{{ t('ui.chat.hide_hero') }}" aria-label="{{ t('ui.chat.dismiss_hero') }}" onclick="_collapseHero()">{{ ic("x", 16) }}</button>
   </section>
 
   <div class="chat-workspace">
@@ -710,12 +712,10 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
       <div class="status-wrap">
         <div class="status-badge" id="connBadge"><span class="status-led"></span><span id="connText">{{ t('ui.chat.connecting') }}</span></div>
         <div class="status-note" id="connNote">{{ t('ui.chat.waiting_session') }}</div>
-        <button type="button" class="hero-info-btn" id="heroInfoBtn" title="{{ t('ui.chat.show_info') }}" aria-label="{{ t('ui.chat.show_info_panel') }}" onclick="_expandHero()" style="display:none">&#8505; {{ t('ui.chat.info') }}</button>
+        <button type="button" class="hero-info-btn" id="heroInfoBtn" title="{{ t('ui.chat.show_info') }}" aria-label="{{ t('ui.chat.show_info_panel') }}" onclick="_expandHero()" style="display:none">{{ ic("info", 14) }} {{ t('ui.chat.info') }}</button>
         <button type="button" class="history-btn" id="historyToggleBtn"
                 onclick="toggleHistoryPanel()" title="{{ t('ui.chat.view_history') }}" aria-expanded="false">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <circle cx="8" cy="8" r="6.5"/><path d="M8 4.5v3.5l2 2"/>
-          </svg>
+          {{ ic("clock", 13) }}
           {{ t('ui.chat.history') }}
         </button>
         {# The language toggle, in the corner a reader looks for it.
@@ -737,10 +737,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
           <button type="submit" name="lang" value="{{ option.code }}"
                   class="chat-lang-option"
                   title="{{ t('ui.lang.switch_to', language=option.name) }}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/>
-            </svg>
+            {{ ic("globe", 13) }}
             {# lang= so a screen reader pronounces the endonym in its own
                language rather than reading "Français" with English phonemes. #}
             <span lang="{{ option.code }}">{{ option.code | upper }}</span>
@@ -795,7 +792,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         <div class="suggestions-wrap" id="suggestionsWrap">
           <div class="suggestions-heading">
             <span class="suggestions-label">{{ t('ui.chat.suggestions_label') }}</span>
-            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>&#8635; {{ t('ui.chat.refresh') }}</button>
+            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>{{ ic("refresh", 14) }} {{ t('ui.chat.refresh') }}</button>
           </div>
           <div class="suggestions" id="suggestions">
             {% for s in suggestions %}
@@ -810,7 +807,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
             </button>
             {% endfor %}
           </div>
-          <button type="button" onclick="shuffleSuggestions()" style="font-size:var(--font-xs);font-weight:var(--weight-bold);padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>&#8635;</button>
+          <button type="button" onclick="shuffleSuggestions()" style="font-size:var(--font-xs);font-weight:var(--weight-bold);padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>{{ ic("refresh", 14) }}</button>
         </div>
         {% endif %}
       </div>
@@ -871,7 +868,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         <div class="dashboard-picker-title" id="dashboardPickerTitle">{{ t('ui.pin.title') }}</div>
         <div class="dashboard-picker-copy" id="dashboardPickerCopy">{{ t('ui.pin.subtitle') }}</div>
       </div>
-      <button type="button" class="dashboard-picker-close" onclick="closeDashboardPicker()" aria-label="{{ t('ui.pin.close') }}">&times;</button>
+      <button type="button" class="dashboard-picker-close" onclick="closeDashboardPicker()" aria-label="{{ t('ui.pin.close') }}">{{ ic("x", 16) }}</button>
     </header>
     <div class="dashboard-picker-subject" id="dashboardPickerSubject" hidden>
       <strong id="dashboardPickerSubjectTitle"></strong>
@@ -2328,7 +2325,7 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
     ? `<span>${escHtml(t('ui.chat.table.showing_first', {shown: window.qbNum(shown), total: window.qbNum(total)}))}</span>`
     : `<span>${escHtml(plural('ui.chat.table.rows', shown, {count: window.qbNum(shown)}))}</span>`;
 
-  const csvIcon = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>`;
+  const csvIcon = qbIcon('download', 12);
   const toolbarHtml = `<div class="data-table-toolbar">
     <input class="data-table-filter" type="text" placeholder="${t('ui.chat.table.filter')}" aria-label="${t('ui.chat.table.filter_label')}" data-dt="${dtId}">
     <span class="data-table-agg" id="${dtId}-agg"></span>
@@ -2588,7 +2585,7 @@ function _mountResultChat(cardEl, rcId) {
         <div class="rc-foot">
           <span>${escHtml(plural('ui.chat.table.rows', rows.length, {count: window.qbNum(rows.length)}))}</span>
           <button id="${csvId}" class="rc-csv-btn" title="${t('ui.chat.table.download_csv')}">
-            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>
+            ${qbIcon('download', 12)}
             CSV
           </button>
         </div>
@@ -2652,7 +2649,7 @@ function _mountResultChat(cardEl, rcId) {
       if (msg.source === 'database') {
         const badge = document.createElement('div');
         badge.className = 'rc-source-badge';
-        badge.innerHTML = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="8" cy="4" rx="6" ry="2"/><path d="M2 4v4c0 1.1 2.7 2 6 2s6-.9 6-2V4"/><path d="M2 8v4c0 1.1 2.7 2 6 2s6-.9 6-2V8"/></svg> ${t('ui.chat.source.live_db')}`;
+        badge.innerHTML = `${qbIcon('database', 12)} ${t('ui.chat.source.live_db')}`;
         thread.appendChild(badge);
       }
 
@@ -3010,7 +3007,7 @@ function appendAssistantResponse(msg, opts = {}){
         const isDiagnose = a.id === 'diagnose';
         const cls = isDiagnose ? 'msg-action msg-action-diagnose' : 'msg-action';
         const icon = isDiagnose
-          ? '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v3M11 14h.01"/></svg>'
+          ? qbIcon('diagnose', 13, 'qb-icon-lead')
           : '';
         return `<button class="${cls}" type="button" data-analysis-action="${escHtml(a.id)}" data-analysis-label="${escHtml(a.label)}">${icon}${escHtml(a.label)}</button>`;
       }).join('')
@@ -3018,7 +3015,7 @@ function appendAssistantResponse(msg, opts = {}){
 
   const dashboardToken = msg.pin_token || msg.chart?.pin_token || '';
   const pinBtnHtml = (dashboardToken && (hasChart || msg.kpi || hasData))
-    ? '<button class="msg-action" type="button" data-pin="chart"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>' + escHtml(t('ui.chat.chart.pin')) + '</button>'
+    ? '<button class="msg-action" type="button" data-pin="chart">' + qbIcon('chart-line', 14, 'qb-icon-lead') + '' + escHtml(t('ui.chat.chart.pin')) + '</button>'
     : '';
 
   // Follow-up suggestions — result-aware chips generated from the data brief
@@ -3041,8 +3038,8 @@ function appendAssistantResponse(msg, opts = {}){
   const feedbackHtml = (FEEDBACK_ENABLED && _qid)
     ? `<div class="feedback-row">
         <span class="feedback-label">${t('ui.chat.card.helpful')}</span>
-        <button class="feedback-btn up" type="button" title="${t('ui.chat.feedback.up')}" aria-label="${t('ui.chat.feedback.up')}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904M6.633 10.25H3.75a1.5 1.5 0 00-1.5 1.5v7.5a1.5 1.5 0 001.5 1.5h2.154"/></svg></button>
-        <button class="feedback-btn down" type="button" title="${t('ui.chat.feedback.down')}" aria-label="${t('ui.chat.feedback.not_helpful')}"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.367 13.75c-.806 0-1.533.446-2.031 1.08a9.041 9.041 0 01-2.861 2.4c-.723.384-1.35.956-1.653 1.715a4.498 4.498 0 00-.322 1.672V21a.75.75 0 01-.75.75 2.25 2.25 0 01-2.25-2.25c0-1.152.26-2.243.723-3.218.266-.558-.107-1.282-.725-1.282H4.372c-1.026 0-1.945-.694-2.054-1.715A11.95 11.95 0 014.967 4.236c.388-.482.987-.729 1.605-.729h4.948c.483 0 .964.078 1.423.23l3.114 1.04c.459.152.94.23 1.423.23h2.616M17.367 13.75h2.883a1.5 1.5 0 001.5-1.5v-7.5a1.5 1.5 0 00-1.5-1.5h-2.154"/></svg></button>
+        <button class="feedback-btn up" type="button" title="${t('ui.chat.feedback.up')}" aria-label="${t('ui.chat.feedback.up')}">${qbIcon('thumbs-up', 15)}</button>
+        <button class="feedback-btn down" type="button" title="${t('ui.chat.feedback.down')}" aria-label="${t('ui.chat.feedback.not_helpful')}">${qbIcon('thumbs-down', 15)}</button>
         <span class="feedback-done" style="display:none"></span>
        </div>
        <div class="feedback-panel">
@@ -4587,7 +4584,7 @@ function openChartFullscreen(chartEl, title) {
       '<div class="chart-fs-modal">' +
         '<div class="chart-fs-head">' +
           '<span class="chart-fs-title" id="chartFsTitle"></span>' +
-          '<button class="chart-fs-close" onclick="closeChartFullscreen()" aria-label="Close">✕</button>' +
+          '<button class="chart-fs-close" onclick="closeChartFullscreen()" aria-label="Close">' + qbIcon('x', 18) + '</button>' +
         '</div>' +
         '<div class="chart-fs-body"><div id="chartFsEl"></div></div>' +
       '</div>';
@@ -4677,12 +4674,11 @@ class AutoSuggest {
       this._dd.setAttribute('role', 'listbox');
       document.body.appendChild(this._dd);
     }
-    const _acSvg = (d) => `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="${d}"/></svg>`;
     const KIND_ICON = {
-      history: _acSvg('M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z'),
-      metric:  _acSvg('M3 3v18h18M7 14l4-4 3 3 5-6'),
-      entity:  _acSvg('M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244'),
-      term:    _acSvg('M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25'),
+      history: qbIcon('clock', 13),
+      metric:  qbIcon('chart-line', 13),
+      entity:  qbIcon('link', 13),
+      term:    qbIcon('book', 13),
     };
     this._dd.innerHTML = this._items.map((item, i) => {
       const icon = KIND_ICON[item.kind] || '';

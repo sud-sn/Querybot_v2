@@ -10,11 +10,12 @@
 <link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260904-reduced-1">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/admin.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-lucide-1">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-lucide-1">
+<link rel="stylesheet" href="/static/css/admin.css?v=20260926-lucide-1">
+<script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-inter-1">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-lucide-1">
 <link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-inter-1">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
@@ -266,10 +267,10 @@ function closeSidebar(){
 window.qbToast = (function(){
   var container = null;
   var icons = {
-    success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
-    error:   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
-    warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>',
-    info:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/></svg>'
+    success: qbIcon('check-circle', 16),
+    error:   qbIcon('x-circle', 16),
+    warning: qbIcon('alert-triangle', 16),
+    info:    qbIcon('info', 16)
   };
   // Read from the design tokens rather than held privately. These were stock
   // Tailwind hexes with light-only backgrounds and near-black text, so every
@@ -301,7 +302,7 @@ window.qbToast = (function(){
     ].join(';');
     toast.innerHTML = '<span style="flex-shrink:0;margin-top:1px;color:'+c.bar+'">'+(icons[type]||'')+
       '</span><span style="flex:1">'+message+'</span>'+
-      '<button onclick="this.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:'+c.text+';opacity:.5;font-size:var(--font-lg);line-height:1;padding:0 0 0 6px;flex-shrink:0">&times;</button>';
+      '<button onclick="this.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:'+c.text+';opacity:.5;font-size:var(--font-lg);line-height:1;padding:0 0 0 6px;flex-shrink:0" aria-label="Dismiss">'+qbIcon('x', 14)+'</button>';
     container.appendChild(toast);
     requestAnimationFrame(function(){ toast.style.opacity='1'; toast.style.transform='translateX(0)'; });
     if(duration > 0){

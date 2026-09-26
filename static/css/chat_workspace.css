@@ -22,7 +22,6 @@ body:has(.chat-page) .portal-nav a,
 body:has(.chat-page) .portal-side-actions .btn { justify-content: center; padding-inline: 0; }
 body:has(.chat-page) .portal-user-card { justify-content: center; padding: 8px 0; }
 body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
-body:has(.chat-page) .portal-logout-icon { display: inline !important; font-size: var(--font-lg); line-height: 1; }
 
 .chat-page { background: var(--surface); }
 .chat-page > .chat-hero { display: none; }

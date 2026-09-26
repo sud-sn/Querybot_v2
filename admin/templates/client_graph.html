@@ -1,4 +1,5 @@
 {% extends "client_base.html" %}
+{% from "icons.html" import ic %}
 {% block title %}Relationships — {{ client.client_name or client.account_id }}{% endblock %}
 
 {# This page was a standalone <!DOCTYPE html> document: its own head, its own
@@ -586,15 +587,15 @@
     </div>
     <div id="bp-tabs">
       <button class="bp-tab active" data-tab="details" onclick="switchTab('details')">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1" y="1" width="4" height="4" rx=".5"/><rect x="7" y="1" width="4" height="4" rx=".5"/><rect x="1" y="7" width="4" height="4" rx=".5"/><rect x="7" y="7" width="4" height="4" rx=".5"/></svg>
+        {{ ic("layout-grid", 13) }}
         Details
       </button>
       <button class="bp-tab" data-tab="joins" onclick="switchTab('joins')">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="2.5" cy="6" r="1.5"/><circle cx="9.5" cy="6" r="1.5"/><line x1="4" y1="6" x2="8" y2="6"/><polyline points="6.5,4 8,6 6.5,8"/></svg>
+        {{ ic("link", 13) }}
         Joins <span id="bp-join-count" class="bp-tab-badge">0</span>
       </button>
       <button class="bp-tab" data-tab="filter" onclick="switchTab('filter')">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="1" y1="3" x2="11" y2="3"/><line x1="3" y1="6" x2="9" y2="6"/><line x1="5" y1="9" x2="7" y2="9"/></svg>
+        {{ ic("list-filter", 13) }}
         Filter
       </button>
     </div>

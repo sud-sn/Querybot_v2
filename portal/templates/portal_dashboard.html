@@ -1,4 +1,5 @@
 {% extends "portal_base.html" %}
+{% from "icons.html" import ic %}
 {% from "macros.html" import breadcrumb, alert %}
 {% block title %}{{ t('ui.shell.dashboard') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block breadcrumb %}
@@ -167,7 +168,7 @@
         <div class="chart-card-sub">{% if chart.table_truncated %}{{ t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) }}{% else %}{{ plural('ui.dash.rows', chart.row_count) }}{% endif %} · {% if chart.from_cache %}{{ t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') }}{% else %}{{ t('ui.dash.live_refresh') }}{% endif %}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
-        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="{{ t('ui.dash.drag_handle_title') }}" aria-label="{{ t('ui.dash.drag_handle_label') }}">⋮⋮</button>{% endif %}
+        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="{{ t('ui.dash.drag_handle_title') }}" aria-label="{{ t('ui.dash.drag_handle_label') }}">{{ ic("grip", 16) }}</button>{% endif %}
         {# Only a card that HAS a chart node can expand: openChartModal does
            `querySelector('[data-chart]'); if (!node) return;`, so on error, KPI
            and table cards this was a button that did nothing and said nothing. #}
@@ -179,13 +180,13 @@
           <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id if dashboard_artifact else 0 }}">
         </form>
         {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
-          onclick="unpinChart({{ chart.id|int }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>{{ t('ui.dash.remove') }}</button>
+          onclick="unpinChart({{ chart.id|int }}, this.closest('.chart-card'))">{{ ic("x", 12, "qb-icon-lead") }}{{ t('ui.dash.remove') }}</button>
         {% endif %}
       </div>
     </div>
     <div class="chart-card-body">
       {% if chart.error %}
-      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
+      <div class="chart-error">{{ ic("alert-triangle", 24, "text-warning qb-icon-block") }}<div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
       {% elif chart.kpi %}
       <div style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
         <div style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
@@ -229,7 +230,7 @@
 </div>
 {% elif dashboard_artifact %}
 <div class="empty-state">
-  <div class="empty-state-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg></div>
+  <div class="empty-state-icon">{{ ic("chart-line", 24) }}</div>
   <h3 class="empty-state-title">{{ t('ui.dash.empty_title') }}</h3>
   <p class="empty-state-body">{{ t('ui.dash.empty_body') }}</p>
   <div class="empty-state-actions">
@@ -621,7 +622,7 @@ function openChartModal(cardEl) {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:.85rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0;gap:1rem">
           <span id="chart-modal-title" style="font-weight:var(--weight-bold);font-size:var(--font-md);flex:1"></span>
           <div id="chart-modal-ctrl" style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center"></div>
-          <button onclick="closeChartModal()" style="background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted);padding:0 4px;flex-shrink:0" title="Close (Esc)">✕</button>
+          <button onclick="closeChartModal()" style="background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted);padding:0 4px;flex-shrink:0" title="Close (Esc)">{{ ic("x", 18) }}</button>
         </div>
         <div id="chart-modal-canvas" style="flex:1;padding:1rem;min-height:0"></div>
       </div>`;
@@ -807,7 +808,7 @@ function initFallbackDashboardDrag(grid) {
 <div id="unpin-toast" role="status" aria-live="polite" style="display:none">
   <span>Chart removed from dashboard</span>
   <button type="button" class="unpin-toast-undo" onclick="_undoUnpin()">Undo</button>
-  <button type="button" class="unpin-toast-close" onclick="_commitUnpin()" aria-label="Dismiss">×</button>
+  <button type="button" class="unpin-toast-close" onclick="_commitUnpin()" aria-label="Dismiss">{{ ic("x", 14) }}</button>
 </div>
 
 

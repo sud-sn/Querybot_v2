@@ -36,7 +36,11 @@ def _read(rel):
 
 
 def _icons_defined(rel):
-    return set(re.findall(r"name == '([a-z0-9_-]+)'", _read(rel)))
+    # Both macros now draw from one sprite (tools/build_icon_sprite.py), so an
+    # icon is defined when the sprite holds its symbol. `rel` names the macro
+    # file the call site imports; the macro must still be the sprite's.
+    assert "qb-icons.svg" in _read(rel), rel
+    return set(re.findall(r'<symbol id="([a-z0-9-]+)"', _read("static/icons/qb-icons.svg")))
 
 
 def _icons_called(folder):

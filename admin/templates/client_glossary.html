@@ -1,4 +1,5 @@
 {% extends "client_base.html" %}
+{% from "icons.html" import ic %}
 {% from "macros.html" import breadcrumb %}
 {% block title %}Business Glossary — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
@@ -73,7 +74,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
     action="/admin/clients/{{ client.account_id }}/glossary/auto-populate">
     <button type="submit" class="btn btn-secondary btn-sm"
       title="Re-extract terms from the current Knowledge Base. Manual edits are preserved.">
-      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M21.015 4.356v4.993m0 0h-4.992m4.992 0l-3.181-3.183a8.25 8.25 0 00-13.803 3.7"/></svg>
+      {{ ic("refresh", 14) }}
       Auto-populate from KB
     </button>
   </form>
