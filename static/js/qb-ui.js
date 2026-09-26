@@ -615,8 +615,10 @@
     var show = inputs[0].type === 'password';
     inputs.forEach(function (input) { input.type = show ? 'text' : 'password'; });
     btn.setAttribute('aria-pressed', show ? 'true' : 'false');
-    btn.setAttribute('aria-label', show ? label('ui.auth.hide_password', 'Hide password')
-                                        : label('ui.auth.show_password', 'Show password'));
+    // A button may say what it shows (a key, a URL); a password is the default.
+    btn.setAttribute('aria-label', show
+      ? (btn.getAttribute('data-label-hide') || label('ui.auth.hide_password', 'Hide password'))
+      : (btn.getAttribute('data-label-show') || label('ui.auth.show_password', 'Show password')));
     btn.innerHTML = icon(show ? 'eye-off' : 'eye', 16);
   });
 

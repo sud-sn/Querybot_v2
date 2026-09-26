@@ -112,7 +112,7 @@
                    placeholder="Leave blank to auto-generate"
                    autocomplete="new-password" minlength="8"
                    oninput="validatePwMatch()">
-            <button type="button" class="input-reveal-btn" onclick="toggleReveal('cu_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+            <button type="button" class="input-reveal-btn" data-qb-reveal="cu_pw" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
           </div>
         </div>
         <div class="form-group">
@@ -122,7 +122,7 @@
                    placeholder="Repeat password"
                    autocomplete="new-password"
                    oninput="validatePwMatch()">
-            <button type="button" class="input-reveal-btn" onclick="toggleReveal('cu_pw2',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+            <button type="button" class="input-reveal-btn" data-qb-reveal="cu_pw2" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
           </div>
           <p class="form-note" id="pwMatchMsg" style="display:none"></p>
         </div>
@@ -207,7 +207,7 @@
               </form>
               {# Reset password: opens the reset dialog below. The name travels in a
                  data attribute, never inside a script. #}
-              <button type="button" class="btn btn-ghost btn-xs qb-tip" data-tip="Reset password"
+              <button type="button" class="btn btn-ghost btn-xs btn-icon qb-tip" data-tip="Reset password" aria-label="Reset password"
                       data-reset-user="{{ u.id }}" data-user-name="{{ u.name }}" data-user-email="{{ u.email }}">
                 {{ ic("refresh", 13) }}
               </button>
@@ -216,8 +216,9 @@
                     action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
                     class="inline-form" data-no-loading>
                 <input type="hidden" name="is_active" value="{{ '0' if u.is_active else '1' }}">
-                <button type="submit" class="btn btn-ghost btn-xs qb-tip"
+                <button type="submit" class="btn btn-ghost btn-xs btn-icon qb-tip"
                         data-tip="{{ 'Deactivate' if u.is_active else 'Activate' }}"
+                        aria-label="{{ 'Deactivate' if u.is_active else 'Activate' }} {{ u.name }}"
                         style="color:{% if u.is_active %}var(--warning){% else %}var(--success){% endif %}">
                   {% if u.is_active %}{{ ic("eye-off", 13) }}{% else %}{{ ic("eye", 13) }}{% endif %}
                 </button>
@@ -226,7 +227,7 @@
               <form method="post"
                     action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/delete"
                     id="del-user-{{ u.id }}">
-                <button type="submit" class="btn btn-ghost btn-xs qb-tip text-danger" data-tip="Delete user"
+                <button type="submit" class="btn btn-ghost btn-xs btn-icon qb-tip text-danger" data-tip="Delete user" aria-label="Delete {{ u.name }}"
                   data-confirm-title="Delete user?" data-confirm="Delete {{ u.name }}? This removes their portal access and any pinned charts." data-confirm-label="Delete user">
                   {{ ic("trash", 13) }}
                 </button>
@@ -470,16 +471,6 @@ function validatePwMatch() {
 }
 
 /* Password reveal toggle */
-function toggleReveal(inputId, btn) {
-  var inp = document.getElementById(inputId);
-  var showing = inp.type === 'text';
-  inp.type = showing ? 'password' : 'text';
-  btn.setAttribute('aria-label', showing ? 'Show' : 'Hide');
-  btn.innerHTML = showing
-    ? qbIcon('eye', 15)
-    : qbIcon('eye-off', 15);
-}
-
 /* Copy temp password */
 function copyTempPw(btn) {
   var text = document.getElementById('tempPwCode').textContent.trim();

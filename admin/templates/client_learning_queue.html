@@ -1,6 +1,6 @@
 {% extends "client_base.html" %}
 {% from "icons.html" import ic %}
-{% from "macros.html" import breadcrumb, page_header %}
+{% from "macros.html" import breadcrumb, page_header, empty_state %}
 {% block title %}Learning Queue — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -44,7 +44,6 @@
 .evidence-item{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 7px}
 .correct-sql-form{margin-top:.75rem}
 .correct-sql-label{font-size:var(--font-xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:.35rem}
-.lq-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:var(--font-md)}
 .lq-stats{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem}
 .lq-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
 .lq-stat-n{font-size:var(--font-2xl);font-weight:var(--weight-bold);color:var(--text)}
@@ -131,13 +130,11 @@
 {% endif %}
 
 {% if not candidates %}
-<div class="lq-empty">
-  {% if status_filter == 'pending_review' %}
-  No candidates pending review — the queue is clear.
-  {% else %}
-  No candidates matching this filter.
-  {% endif %}
-</div>
+{% if status_filter == 'pending_review' %}
+{{ empty_state('check-circle', 'The queue is clear', 'No learned questions are waiting for review.') }}
+{% else %}
+{{ empty_state('inbox', 'Nothing matches this filter') }}
+{% endif %}
 {% else %}
 <div style="overflow-x:auto">
 <table class="lq-table" id="lqTable">

@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, empty_state %}
 {% block title %}Pending Access — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -26,7 +26,6 @@
 .pu-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
 .pu-stat-n{font-size:var(--font-2xl);font-weight:var(--weight-bold);color:var(--text)}
 .pu-stat-l{font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-top:.15rem}
-.pu-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:var(--font-md)}
 .expand-detail{display:none}
 .expand-detail.open{display:table-row}
 .detail-panel{background:var(--surface-2);padding:.85rem 1rem;border-radius:var(--radius-sm);border:1px solid var(--border)}
@@ -72,15 +71,13 @@
 {% endif %}
 
 {% if not pending_users %}
-<div class="pu-empty">
-  {% if status_filter == 'pending' %}
-  No pending access requests — the queue is clear.
-  {% elif status_filter == 'approved' %}
-  No approved platform users yet.
-  {% else %}
-  No rejected requests.
-  {% endif %}
-</div>
+{% if status_filter == 'pending' %}
+{{ empty_state('check-circle', 'The queue is clear', 'No one is waiting for access.') }}
+{% elif status_filter == 'approved' %}
+{{ empty_state('users', 'No approved platform users yet', 'People you approve from the pending queue appear here.') }}
+{% else %}
+{{ empty_state('inbox', 'No rejected requests') }}
+{% endif %}
 {% else %}
 <div style="overflow-x:auto">
 <table class="pu-table" id="puTable">

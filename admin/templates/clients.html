@@ -131,7 +131,7 @@
           <td>
             <div class="flex-center gap-1">
               <a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-xs">Details</a>
-              <a href="/admin/clients/{{ c.account_id }}/setup" class="btn btn-ghost btn-xs qb-tip" data-tip="KB Setup">{{ ic("settings", 13) }}</a>
+              <a href="/admin/clients/{{ c.account_id }}/setup" class="btn btn-ghost btn-xs btn-icon qb-tip" data-tip="KB Setup" aria-label="KB setup for {{ c.client_name or c.account_id }}">{{ ic("settings", 13) }}</a>
             </div>
           </td>
         </tr>

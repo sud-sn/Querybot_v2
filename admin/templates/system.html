@@ -271,6 +271,7 @@
         <label for="local_api_key">Shared secret <span class="form-note-inline">(optional)</span></label>
         <div class="input-reveal-wrap">
           <input type="password" id="local_api_key" name="local_api_key" value="{{ cfg.get('local_llm_api_key', '') }}">
+          <button type="button" class="input-reveal-btn" data-qb-reveal="local_api_key" aria-pressed="false" data-label-show="Show secret" data-label-hide="Hide secret" aria-label="Show secret">{{ ic("eye", 15) }}</button>
         </div>
         <p class="form-note">Most local runtimes ignore this. Set it only if you have put a reverse proxy in front of the model server.</p>
       </div>
@@ -297,7 +298,7 @@
         <div class="input-reveal-wrap">
           <input type="password" id="anthropic_key" name="anthropic_key"
                  value="{{ cfg.get('anthropic_api_key','') }}" placeholder="sk-ant-api03-…">
-          <button type="button" class="input-reveal-btn" onclick="toggleReveal('anthropic_key',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+          <button type="button" class="input-reveal-btn" data-qb-reveal="anthropic_key" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
         </div>
         <p class="form-note">Leave blank to keep existing key. Changing only affects future queries.</p>
       </div>
@@ -330,7 +331,7 @@
         <div class="input-reveal-wrap">
           <input type="password" id="openai_key" name="openai_key"
                  value="{{ cfg.get('openai_api_key','') }}" placeholder="sk-…">
-          <button type="button" class="input-reveal-btn" onclick="toggleReveal('openai_key',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+          <button type="button" class="input-reveal-btn" data-qb-reveal="openai_key" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
         </div>
         <p class="form-note">Required for GPT-4o or GPT-4o-mini. Leave blank to keep existing key.</p>
       </div>
@@ -372,7 +373,7 @@
                 <input type="password" id="azure_openai_key" name="azure_openai_key"
                   value="{{ cfg.get('azure_openai_api_key','') }}"
                   placeholder="Your Azure OpenAI resource key">
-                <button type="button" class="input-reveal-btn" onclick="toggleReveal('azure_openai_key',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+                <button type="button" class="input-reveal-btn" data-qb-reveal="azure_openai_key" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
               </div>
               <p class="form-note">Azure Portal → Your OpenAI resource → Keys and Endpoint. Leave blank to keep existing.</p>
             </div>
@@ -537,7 +538,7 @@
                    value="{{ saved_pg_url }}"
                    placeholder="postgresql://user:password@host:5432/dbname"
                    autocomplete="off">
-            <button type="button" class="input-reveal-btn" onclick="toggleReveal('pg_url',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+            <button type="button" class="input-reveal-btn" data-qb-reveal="pg_url" aria-pressed="false" data-label-show="Show connection URL" data-label-hide="Hide connection URL" aria-label="Show connection URL">{{ ic("eye", 15) }}</button>
           </div>
           <p class="form-note">
             Format: <code>postgresql://user:password@host:5432/dbname</code>
@@ -613,7 +614,7 @@
           <label for="sys_cur_pw">Current password</label>
           <div class="input-reveal-wrap">
             <input type="password" id="sys_cur_pw" name="current_password" required autocomplete="current-password">
-            <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_cur_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+            <button type="button" class="input-reveal-btn" data-qb-reveal="sys_cur_pw" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
           </div>
         </div>
         <div class="form-group">
@@ -621,7 +622,7 @@
           <div class="input-reveal-wrap">
             <input type="password" id="sys_new_pw" name="new_password" minlength="8" required
                    autocomplete="new-password" oninput="validateSysPw()">
-            <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_new_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+            <button type="button" class="input-reveal-btn" data-qb-reveal="sys_new_pw" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
           </div>
         </div>
         <div class="form-group">
@@ -629,7 +630,7 @@
           <div class="input-reveal-wrap">
             <input type="password" id="sys_conf_pw" name="confirm_password" minlength="8" required
                    autocomplete="new-password" oninput="validateSysPw()">
-            <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_conf_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+            <button type="button" class="input-reveal-btn" data-qb-reveal="sys_conf_pw" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
           </div>
           <p class="form-note" id="sys-pw-msg" style="display:none"></p>
         </div>
@@ -858,16 +859,6 @@
 })();
 
 /* ── API key reveal toggle ─────────────────────────────────────────────── */
-function toggleReveal(inputId, btn) {
-  var inp = document.getElementById(inputId);
-  var showing = inp.type === 'text';
-  inp.type = showing ? 'password' : 'text';
-  btn.setAttribute('aria-label', showing ? 'Show' : 'Hide');
-  btn.innerHTML = showing
-    ? qbIcon('eye', 15)
-    : qbIcon('eye-off', 15);
-}
-
 /* ── Test connection ───────────────────────────────────────────────────── */
 /* One line per deployment tested, when the answer lists them (Azure tests the
    deployment each purpose will really call); otherwise one line. */
