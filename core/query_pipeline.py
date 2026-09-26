@@ -2891,7 +2891,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         from core.value_index import value_index_enabled
         from core.value_resolver import (
             resolve_literals, build_verified_values_injection,
-            build_known_terms, filter_resolved_for_compliance,
+            build_known_terms, build_vocabulary_words, filter_resolved_for_compliance,
         )
         if value_index_enabled(state):
             _known_terms = build_known_terms(account_id, all_columns)
@@ -2899,6 +2899,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 resolve_literals(
                     account_id, question, allowed_tables=query_scope_tables,
                     known_terms=_known_terms,
+                    vocabulary=build_vocabulary_words(account_id, all_columns),
                 ),
                 _analysis_question,
                 question,

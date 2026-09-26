@@ -699,6 +699,12 @@ _LEXICON: dict[str, str] = {
     "quelles sont": "what are",
     "quel est": "what is",
     "quelle est": "what is",
+    # The past too: "quel était notre stock à la fin de 2025" read "which
+    # etait notre inventory", asked for a which-thing, and was not compiled.
+    "quels etaient": "what were",
+    "quelles etaient": "what were",
+    "quel etait": "what was",
+    "quelle etait": "what was",
     "quels": "which",
     "quelles": "which",
     "quel": "which",
@@ -715,6 +721,33 @@ _LEXICON: dict[str, str] = {
 # Entries are matched on the FOLDED text, so the keys are folded once here
 # rather than at every call. Sorted longest first so a phrase always beats its
 # own words -- without this, "chiffre d'affaires" would be eaten by "ca".
+_LEXICON_WORDS = frozenset(
+    w for key in _LEXICON for w in re.findall(r"[a-z0-9]+", _fold(key)) if len(w) > 2
+)
+
+
+def vocabulary_words(vocab=None) -> frozenset[str]:
+    """The words of the French phrases this module and a vocabulary's packs
+    rewrite, folded: each is vocabulary -- a measure, a dimension, a period,
+    grammar -- whose English twin names a column or a measure.
+
+    core/value_resolver.py keeps them out of its member candidates, as it
+    keeps their twins: "valeur du stock par pays" offered "pays" to the value
+    index, which matched a three-letter warehouse code, where "by country"
+    never reached the index at all. ``vocab`` defaults to the active one.
+    """
+    if vocab is None:
+        try:
+            from core.vocab_packs import get_active_vocab
+            vocab = get_active_vocab()
+        except Exception:  # noqa: BLE001 - the lexicon's words still stand
+            vocab = None
+    terms = getattr(vocab, "french_terms", None) or {}
+    return frozenset(_LEXICON_WORDS | {
+        w for key in terms for w in re.findall(r"[a-z0-9]+", _fold(key)) if len(w) > 2
+    })
+
+
 _ENTRIES: tuple[tuple[str, str], ...] = tuple(sorted(
     ((_fold(source), target) for source, target in _LEXICON.items()),
     key=lambda pair: (-len(pair[0]), pair[0]),

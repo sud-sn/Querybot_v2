@@ -66,7 +66,10 @@ SCHEMA = {
 }
 
 _PLACEHOLDER = "NULL value provided"
-WAREHOUSES = {0: ("0", _PLACEHOLDER), 1: ("N01", "NORTH DEPOT"), 2: ("S02", "SOUTH DEPOT")}
+# Two warehouses with no stock yet, coded like French words a question uses:
+# "par pays", "par entrepôt".
+WAREHOUSES = {0: ("0", _PLACEHOLDER), 1: ("N01", "NORTH DEPOT"), 2: ("S02", "SOUTH DEPOT"), 3: ("PAY", "PAYETTE YARD"),
+              4: ("ENTREPOT", "ENTREPOT LAVAL")}
 # Two groups with no items yet, named like words a question uses for its
 # measure ("sold") and its period ("premier semestre").
 GROUPS = {0: ("0", _PLACEHOLDER), 10: ("FIT", "FITTINGS"), 20: ("PIP", "PIPE"), 30: ("SLD", "SOLDER"),

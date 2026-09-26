@@ -28,6 +28,7 @@ from __future__ import annotations
 import sqlite3
 import logging
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 from core.value_index import (
@@ -99,12 +100,25 @@ _META_WORDS = frozenset({
     "précédente", "precedente", "prochain", "prochaine", "récent", "récente",
     "recente", "récents", "recents", "courant", "courante", "actuel", "actuelle",
     "début", "debut",
+    # French verbs and pronouns a question is phrased with: "les articles
+    # ayant la plus grande valeur" offered "ayant" (having), which matched a
+    # party code and a party's name, and the reader was asked which one.
+    "ayant", "ont", "été", "ete", "étant", "etant", "il", "ils", "elle", "elles", "ci",
+    # and the degree of a superlative ("la plus grande valeur").
+    "grand", "grande", "grands", "grandes", "petit", "petite", "petits", "petites",
+    "haut", "haute", "hauts", "hautes", "bas", "basse", "basses", "faible", "faibles",
 })
 
 
 def _stopwords() -> set[str]:
     from core.clarification import _COMMON_STOPWORDS
     return set(_COMMON_STOPWORDS)
+
+
+def _folded(word: str) -> str:
+    """Lowercase without accents: "entrepôt" is the lexicon's "entrepot"."""
+    decomposed = unicodedata.normalize("NFD", word.lower())
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
 
 
 def build_known_terms(account_id: str, all_columns: dict | None) -> set[str]:
@@ -157,7 +171,49 @@ def build_known_terms(account_id: str, all_columns: dict | None) -> set[str]:
     return terms
 
 
-def extract_candidate_phrases(question: str, known_terms: set[str] | None = None) -> list[str]:
+def build_vocabulary_words(account_id: str, all_columns: dict | None) -> set[str]:
+    """The words a reader names a column, a measure or a period with.
+
+    Never a member on their own: "Inventory value by buyer" (the name of a
+    role-named key) fuzzy-matched "buyer" to a party whose name holds the
+    word, and "valeur du stock par pays" matched "pays" to a warehouse coded
+    PAY -- the question was taken to name that one member. But part of a
+    member's name they may be: "l'entrepôt Laval" names ENTREPOT LAVAL, so
+    unlike a known term (build_known_terms) a word of these never stops a run
+    of words from being tried whole.
+
+    The words the tenant's columns are named with, read through its
+    vocabulary, and the French the canonicaliser and the tenant's packs
+    rewrite as their English twins ("pays", "ville", "acheteur"), folded.
+    """
+    words: set[str] = set()
+    vocab = None
+    try:
+        from core.vocab_packs import vocab_for_account
+        vocab = vocab_for_account(account_id)
+        abbreviations = getattr(vocab, "abbreviations", {}) or {}
+        codes = {
+            code for cols in (all_columns or {}).values() for column in (cols or {})
+            for code in re.split(r"[^A-Za-z0-9]+", str(column).upper()) if code
+        }
+        for code in codes:
+            words.update(
+                word.lower() for word in re.findall(r"[A-Za-z]+", str(abbreviations.get(code) or ""))
+                if len(word) > 2
+            )
+    except Exception as exc:
+        log.warning("Column words for member candidates skipped: %s", exc)
+    try:
+        from core.question_normalizer import vocabulary_words
+        words.update(vocabulary_words(vocab))
+    except Exception as exc:
+        log.warning("French vocabulary for member candidates skipped: %s", exc)
+    return words
+
+
+def extract_candidate_phrases(
+    question: str, known_terms: set[str] | None = None, vocabulary: set[str] | None = None,
+) -> list[str]:
     """
     Conservative candidate extraction in three precision tiers:
       1. spans  — quoted spans and capitalized multi-word spans (explicit
@@ -173,27 +229,47 @@ def extract_candidate_phrases(question: str, known_terms: set[str] | None = None
     """
     text = question or ""
     known = {t.lower() for t in (known_terms or set())}
+    words_of_vocabulary = {t.lower() for t in (vocabulary or set())}
     stop = _stopwords()
 
     def _excluded(word: str) -> bool:
         low = word.lower()
+        # A word joined by hyphens is its words: "avons-nous", "a-t-il",
+        # "mois-ci" are grammar as their parts are, a lone letter included.
+        # A code is not: "BE-1" and "CP-9" name items.
+        parts = [part for part in low.split("-") if part]
+        if len(parts) > 1:
+            return all((len(part) == 1 and part.isalpha()) or _excluded(part) for part in parts)
+        variants = _forms(low)
+        return bool(variants & stop or variants & known or variants & _META_WORDS)
+
+    def _forms(low: str) -> set[str]:
         # Check naive singular forms too: known_terms/vocab store "item",
         # "customer", "delivery" — questions say "items", "customers",
-        # "deliveries".
-        variants = {low}
-        if low.endswith("ies"):
-            variants.add(low[:-3] + "y")
-        if low.endswith("es"):
-            variants.add(low[:-2])
-        if low.endswith("s"):
-            variants.add(low[:-1])
-        return bool(variants & stop or variants & known or variants & _META_WORDS)
+        # "deliveries". And each without its accents, as the French
+        # vocabulary is kept.
+        variants = {low, _folded(low)}
+        for form in list(variants):
+            if form.endswith("ies"):
+                variants.add(form[:-3] + "y")
+            if form.endswith("es"):
+                variants.add(form[:-2])
+            if form.endswith("s"):
+                variants.add(form[:-1])
+        return variants
+
+    def _vocabulary_or_excluded(word: str) -> bool:
+        return _excluded(word) or bool(_forms(word.lower()) & words_of_vocabulary)
 
     spans: list[str] = []
     for m in _QUOTED_RE.finditer(text):
         spans.append(m.group(1).strip())
     for m in _CAPITALIZED_RE.finditer(text):
-        spans.append(m.group(0).strip())
+        span = m.group(0).strip()
+        # A capital a sentence starts with is not a name: "Les 10 articles"
+        # is grammar and a number. A quoted word is always the reader's.
+        if not all(word.isdigit() or _vocabulary_or_excluded(word) for word in span.split()):
+            spans.append(span)
     spans.sort(key=len, reverse=True)
     kept_spans: list[str] = []
     for s in spans:
@@ -201,11 +277,14 @@ def extract_candidate_phrases(question: str, known_terms: set[str] | None = None
             kept_spans.append(s)
 
     grams: list[str] = []
-    words = re.findall(r"[A-Za-z0-9][\w\-]{2,}", text)
+    # A word starts at a letter or a digit, accented or not, and never inside
+    # another: "était" was read from its second letter, as "tait", and that
+    # narrowed the question to a party whose code ends with it.
+    words = re.findall(r"(?<![\w\-])[^\W_][\w\-]{2,}", text)
     for n in (3, 2):
         for i in range(len(words) - n + 1):
             gram = words[i:i + n]
-            if any(_excluded(w) for w in gram):
+            if any(_excluded(w) for w in gram) or all(_vocabulary_or_excluded(w) for w in gram):
                 continue
             if not any(len(w) >= 4 and w[0].isalpha() for w in gram):
                 continue
@@ -220,9 +299,9 @@ def extract_candidate_phrases(question: str, known_terms: set[str] | None = None
         kept_grams.append(g)
 
     tokens: list[str] = []
-    for token in re.findall(r"[A-Za-z][\w\-]{3,}", text):
+    for token in re.findall(r"(?<![\w\-])[^\W\d_][\w\-]{3,}", text):
         low = token.lower()
-        if _excluded(token):
+        if _vocabulary_or_excluded(token):
             continue
         if any(low in k.lower() for k in kept_spans):
             continue
@@ -307,9 +386,15 @@ def resolve_literals(
     allowed_tables: set[str] | None = None,
     known_terms: set[str] | None = None,
     base_dir: str = "clients",
+    *,
+    vocabulary: set[str] | None = None,
 ) -> dict:
     """
     Resolve candidate phrases from the question against the value index.
+
+    ``known_terms`` and ``vocabulary`` are words that are never a member on
+    their own (build_known_terms, build_vocabulary_words); a known term also
+    stops a run of words from being tried whole, a word of vocabulary does not.
 
     Returns {"verified": [...], "in_lists": [...], "clarify": [...],
     "narrowed": [...]} where each verified entry is {phrase, table_fqn, column,
@@ -345,7 +430,7 @@ def resolve_literals(
             "value": match.get("value"),
             "dropped": dropped,
         })
-    for phrase in extract_candidate_phrases(question, known_terms):
+    for phrase in extract_candidate_phrases(question, known_terms, vocabulary):
         exact = lookup_exact(account_id, phrase, allowed_tables, base_dir=base_dir)
         if exact:
             columns = {(m["table_fqn"], m["column"]) for m in exact}
