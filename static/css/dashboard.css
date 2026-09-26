@@ -158,7 +158,7 @@
 
 .empty-state { text-align: center; padding: var(--space-8) var(--space-6); color: var(--text-muted); }
 .empty-state .icon { font-size: 48px; margin-bottom: var(--space-4); }
-.empty-state h3 { font-size: var(--font-lg); font-weight: var(--weight-bold); color: var(--text); margin-bottom: var(--space-2); }
+.empty-state .empty-state-title { font-size: var(--font-lg); font-weight: var(--weight-bold); color: var(--text); margin-bottom: var(--space-2); }
 
 #chart-modal { animation: qb-fadeIn var(--t-fast) var(--ease-out); }
 

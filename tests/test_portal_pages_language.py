@@ -376,7 +376,7 @@ class TestNoPageWasMissed:
         case this test exists to catch."""
         def body(lang):
             markup = visible(_page(name, lang))
-            start = markup.index('<div class="main">')
+            start = markup.index('<main class="main"')
             # Nothing the reader sees follows the page's own content: the
             # shell's dialog and toasts are built by static/js/qb-ui.js when
             # they are needed, and scripts are not visible text.

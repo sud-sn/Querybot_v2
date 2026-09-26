@@ -42,8 +42,8 @@ def _empty_state(html: str) -> tuple[str, str]:
     """The shared empty state's title and icon name."""
     start = html.find('<div class="empty-state">')
     assert start >= 0, "no shared empty state on the page"
-    block = html[start:html.index("</h3>", start)]
-    title = re.search(r'<h3 class="empty-state-title">([^<]*)', block).group(1)
+    block = html[start:html.index("</h2>", start)]
+    title = re.search(r'<h2 class="empty-state-title">([^<]*)', block).group(1)
     icon = re.search(r'#([a-z-]+)"', block).group(1)
     return title, icon
 

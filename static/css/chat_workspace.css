@@ -774,7 +774,7 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
   letter-spacing: .09em;
   text-transform: uppercase;
 }
-.chat-workspace-main .empty-state h1 { margin: 0; color: var(--text); font-size: clamp(28px, 4vw, 42px); font-weight: var(--weight-medium); letter-spacing: -.035em; line-height: 1.12; }
+.chat-workspace-main .empty-state h2 { margin: 0; color: var(--text); font-size: clamp(28px, 4vw, 42px); font-weight: var(--weight-medium); letter-spacing: -.035em; line-height: 1.12; }
 .chat-workspace-main .empty-state p { max-width: 610px; margin: 12px auto 0; color: var(--text-muted); font-size: var(--font-sm); line-height: 1.65; }
 
 .chat-inner:has(#welcomeState:not([style*="display: none"])) .chat-composer {
@@ -1019,7 +1019,7 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
   .chat-workspace-main .chat-thread { padding: 15px 10px; }
   .chat-inner:has(#welcomeState:not([style*="display: none"])) { justify-content: flex-start; padding: 28px 12px 20px; }
   .chat-workspace-main .empty-state { padding-inline: 4px; }
-  .chat-workspace-main .empty-state h1 { font-size: clamp(26px, 9vw, 34px); }
+  .chat-workspace-main .empty-state h2 { font-size: clamp(26px, 9vw, 34px); }
   .chat-workspace-main .empty-state p { font-size: var(--font-xs); }
   .chat-workspace-main .chat-composer { padding: 9px 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
   .chat-inner:has(#welcomeState:not([style*="display: none"])) .chat-composer { padding: 0; }

@@ -41,6 +41,7 @@
 {% if saved %}<div class="alert alert-success">{% if saved == 'confirmed' %}Confirmed — questions, labels and the knowledge base now read it.{% elif saved == 'rejected' %}Rejected — it will not be proposed again.{% elif saved == 'suggested' %}Back in review.{% else %}{{ saved }}.{% endif %}</div>{% endif %}
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 
+<h1 class="sr-only">Business meanings</h1>
 <div class="card">
   <div class="card-header"><h2>Business meanings</h2></div>
   <div class="card-body">

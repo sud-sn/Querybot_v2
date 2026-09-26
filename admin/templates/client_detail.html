@@ -13,7 +13,7 @@
 <style>
 .overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem}
 .overview-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow)}
-.overview-card h3{font-size:var(--font-xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.75rem}
+.overview-card h2{font-size:var(--font-xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.75rem}
 .bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem}
 .bar-label{font-size:var(--font-sm);color:var(--text-soft);width:120px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
@@ -86,6 +86,7 @@
 </style>
 {% endblock %}
 {% block content %}
+<h1 class="sr-only">Overview</h1>
 
 
 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem">
@@ -139,7 +140,7 @@
   <div class="overview-grid">
 
     <div class="overview-card">
-      <h3>Connection details</h3>
+      <h2>Connection details</h2>
       <table style="width:100%;font-size:var(--font-base);border-collapse:collapse">
         <tr><td style="padding:5px 0;color:var(--gray-500);width:120px">Platform</td><td><span class="badge badge-blue">{{ client.platform_type }}</span></td></tr>
         <tr><td style="padding:5px 0;color:var(--gray-500)">Database</td><td style="font-weight:var(--weight-semibold)">{{ db_name }}</td></tr>
@@ -155,7 +156,7 @@
     </div>
 
     <div class="overview-card">
-      <h3>Monthly usage  —  {{ limit_pct }}% of limit</h3>
+      <h2>Monthly usage  —  {{ limit_pct }}% of limit</h2>
       <div style="margin-bottom:1rem">
         <div style="display:flex;justify-content:space-between;font-size:var(--font-sm);margin-bottom:4px">
           <span style="color:var(--gray-500)">{{ monthly_count }} used</span>
@@ -166,7 +167,7 @@
         </div>
         {% if limit_pct >= 80 %}<p style="font-size:var(--font-xs);color:var(--amber);margin-top:4px;font-weight:var(--weight-bold)">Approaching limit</p>{% endif %}
       </div>
-      <h3>Top questions</h3>
+      <h2>Top questions</h2>
       {% if top_questions %}
         {% set max_cnt = top_questions[0][1] %}
         {% for q, cnt in top_questions[:5] %}
@@ -180,7 +181,7 @@
     </div>
 
     <div class="overview-card">
-      <h3>Knowledge Base</h3>
+      <h2>Knowledge Base</h2>
       {% if kb_file_count > 0 %}
         <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem">
           {{ ic("check-circle", 18, "text-success") }}
@@ -210,7 +211,7 @@
     </div>
 
     <div class="overview-card">
-      <h3>Recent errors</h3>
+      <h2>Recent errors</h2>
       {% if failed_queries %}
         {% for q in failed_queries[:5] %}
         <div style="border-left:3px solid var(--red);padding:.4rem .6rem;margin-bottom:.4rem;background:var(--red-light);border-radius:0 4px 4px 0">
@@ -229,7 +230,7 @@
 
     <!-- ── Client readiness widget (full-width) ── -->
     <div class="overview-card health-score-card">
-      <h3 style="display:flex;align-items:center;gap:.5rem">
+      <h2 style="display:flex;align-items:center;gap:.5rem">
         Client readiness
         {% if health_score.grade == 'A' or health_score.grade == 'B' %}
           <span class="badge badge-green">{{ health_score.grade }}</span>
@@ -241,7 +242,7 @@
         <span id="healthGradeBadge" style="display:none"></span>
         <button type="button" class="btn btn-secondary btn-xs" id="healthRefreshBtn" style="margin-left:.35rem"
                 onclick="refreshHealthScore()" title="Refresh health score">{{ ic("refresh", 12) }} Refresh</button>
-      </h3>
+      </h2>
       <div class="health-score-layout" id="healthScoreWidget">
         <!-- Donut gauge -->
         <div class="health-donut-wrap">
@@ -817,7 +818,7 @@
 <div id="tab-agent-analysis" class="tab-pane{% if active_tab in ['audit', 'agent-analysis'] %} active{% endif %}">
   <div class="overview-grid agent-analysis-grid">
     <div class="overview-card">
-      <h3>Governed Python policy</h3>
+      <h2>Governed Python policy</h2>
       <div style="display:grid;gap:.55rem;font-size:var(--font-sm)">
         <div><span class="badge {% if client.enable_python_analysis %}badge-green{% else %}badge-gray{% endif %}">{{ 'Enabled' if client.enable_python_analysis else 'Disabled' }}</span> Metadata-planned custom analysis</div>
         <div><span class="badge {% if client.allow_user_python %}badge-amber{% else %}badge-gray{% endif %}">{{ 'Enabled' if client.allow_user_python else 'Disabled' }}</span> User-submitted source</div>
@@ -825,7 +826,7 @@
       </div>
     </div>
     <div class="overview-card">
-      <h3>SQL quality gate</h3>
+      <h2>SQL quality gate</h2>
       {% set _target = client.sql_accuracy_target_pct or 85 %}
       {% if latest_sql_pass_rate is not none %}
       <div style="font-size:var(--font-3xl);font-weight:var(--weight-bold);color:{% if latest_sql_pass_rate >= _target %}var(--success){% else %}var(--warning){% endif %}">{{ latest_sql_pass_rate }}%</div>

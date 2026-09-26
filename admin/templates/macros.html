@@ -193,7 +193,7 @@
 {% macro empty_state(icon_name='inbox', title='Nothing here yet', body='', action_href='', action_label='', sec_href='', sec_label='') -%}
 <div class="empty-state">
   <div class="empty-state-icon" aria-hidden="true">{{ ic(icon_name, 24) }}</div>
-  <h3 class="empty-state-title">{{ title }}</h3>
+  <h2 class="empty-state-title">{{ title }}</h2>
   {% if body %}<p class="empty-state-body">{{ body }}</p>{% endif %}
   {% if action_href or sec_href %}
   <div class="empty-state-actions">

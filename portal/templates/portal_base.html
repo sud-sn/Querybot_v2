@@ -211,6 +211,8 @@ window.qbEnumLabel = function (group, value) {
 };
 </script>
 
+<a class="skip-link" href="#main-content">{{ t('ui.shell.skip_to_content') }}</a>
+
 {% if user %}
 <div class="portal-app-shell">
   <aside class="portal-sidebar" id="portalSidebar" aria-label="{{ t('ui.shell.nav_label') }}">
@@ -324,10 +326,10 @@ window.qbEnumLabel = function (group, value) {
 </form>
 {% endif %}
 
-<div class="main">
+<main class="main" id="main-content" tabindex="-1">
   {% block breadcrumb %}{% endblock %}
   {% block content %}{% endblock %}
-</div>
+</main>
 
 {% if user %}
   </div>

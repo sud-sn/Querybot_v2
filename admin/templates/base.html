@@ -23,11 +23,13 @@
 {# ── Determine if this is a full-shell page or an auth page ── #}
 {% set _auth_page = request.url.path in ['/admin/login', '/admin/setup'] %}
 
+<a class="skip-link" href="#main-content">Skip to content</a>
+
 {% if _auth_page %}
 {# ── Auth pages: no sidebar, centred content ── #}
-<div class="auth-page">
+<main class="auth-page" id="main-content" tabindex="-1">
   {% block auth_content %}{% endblock %}
-</div>
+</main>
 
 {% else %}
 {# ── Full shell: sidebar + main ── #}
@@ -101,7 +103,7 @@
       <span class="admin-topbar-brand">Query<span>Bot</span> Admin</span>
     </header>
 
-    <main class="page">
+    <main class="page" id="main-content" tabindex="-1">
       {% if client is defined and client %}
       {% include "_client_workspace_nav.html" %}
       {% endif %}

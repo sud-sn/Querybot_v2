@@ -720,6 +720,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 {% endblock %}
 
 {% block content %}
+<h1 class="sr-only">{{ t('ui.shell.chat') }}</h1>
 {% if not enabled %}
 <div style="max-width:500px;margin:4rem auto;text-align:center">
   <div style="margin-bottom:1.5rem">{{ ic("lock", 48, "text-muted") }}</div>
@@ -758,7 +759,7 @@ body:has(.chat-page) .main { background: var(--bg); }
   </section>
 
   <div class="chat-workspace">
-    <main class="chat-workspace-main">
+    <div class="chat-workspace-main">
   <section class="chat-shell">
     <div class="chat-shell-header">
       <div class="chat-shell-title">
@@ -835,7 +836,7 @@ body:has(.chat-page) .main { background: var(--bg); }
           <div class="msg-system">{{ t('ui.chat.system_line', workspace=client.client_name or t('ui.chat.your_workspace')) }}</div>
           <div class="empty-state" id="welcomeState">
             <span class="welcome-kicker">{{ client.client_name or t('ui.chat.your_workspace') }}</span>
-            <h1>{{ t('ui.chat.welcome_title') }}</h1>
+            <h2>{{ t('ui.chat.welcome_title') }}</h2>
             <p>{{ t('ui.chat.welcome_body') }}</p>
           </div>
         </div>
@@ -901,7 +902,7 @@ body:has(.chat-page) .main { background: var(--bg); }
       </div>
     </div>
   </section>
-    </main>
+    </div>
     <aside class="artifact-pane" id="artifactPane" aria-label="{{ t('ui.chat.artifact_label') }}" aria-hidden="true">
       <header class="artifact-head">
         <div class="artifact-heading">

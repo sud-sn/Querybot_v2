@@ -231,7 +231,7 @@
 {% elif dashboard_artifact %}
 <div class="empty-state">
   <div class="empty-state-icon">{{ ic("chart-line", 24) }}</div>
-  <h3 class="empty-state-title">{{ t('ui.dash.empty_title') }}</h3>
+  <h2 class="empty-state-title">{{ t('ui.dash.empty_title') }}</h2>
   <p class="empty-state-body">{{ t('ui.dash.empty_body') }}</p>
   <div class="empty-state-actions">
     <a href="/portal/kb" class="btn btn-secondary">{{ t('ui.dash.browse_semantic') }}</a>
@@ -239,7 +239,7 @@
   </div>
 </div>
 {% elif not dashboards %}
-<div class="empty-state"><h3 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h3><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
+<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
 {% endif %}
 {# Provenance is a footnote to the charts, not a two-column block above
    them: it used to be the third thing on the page while the charts were

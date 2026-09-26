@@ -516,6 +516,7 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     # ── The portal shell ─────────────────────────────────────────────────────
     "ui.shell.nav_label": {"en": "Portal navigation", "fr": "Navigation du portail"},
+    "ui.shell.skip_to_content": {"en": "Skip to content", "fr": "Aller au contenu"},
     "ui.shell.nav_primary": {"en": "Primary", "fr": "Principale"},
     "ui.shell.home": {"en": "QueryBot dashboard", "fr": "Tableau de bord QueryBot"},
     "ui.shell.collapse": {"en": "Collapse sidebar", "fr": "Réduire le menu latéral"},
