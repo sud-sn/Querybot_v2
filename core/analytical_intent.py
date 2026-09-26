@@ -117,6 +117,17 @@ _EVENT_COUNT_CUE_RE = re.compile(
     r"payments?|purchases?|receipts?|deliveries?|claims?|prescriptions?|tickets?)\b",
     re.I,
 )
+# An event noun followed by a date word is that date's name: "budget by
+# shipment date" asks for the budget, dated by shipment. Read as an event,
+# "by shipment" is the count cue of "customers by orders", and the question
+# became a count of shipments -- in the planner and in the SQL prompt's hint.
+# Singular only: "returns year over year" and "orders month to date" count
+# returns and orders.
+_EVENT_DATE_NAME_RE = re.compile(
+    r"\b(?:order|invoice|shipment|return|transaction|payment|purchase|receipt|"
+    r"delivery|claim|prescription|ticket)\s+(?:date|day|week|month|quarter|year|period)s?\b",
+    re.I,
+)
 _EVENT_VALUE_CUE_RE = re.compile(
     r"\b(?:value|amount|revenue|sales|quantity|units?|cost|margin|discount|price|"
     r"duration|days?)\b",
@@ -517,7 +528,7 @@ def detect_business_event_count(question: str) -> str:
     identifier is resolved later from governed semantic metadata; this helper
     never guesses a column or table.
     """
-    text = str(question or "")
+    text = _EVENT_DATE_NAME_RE.sub(" ", str(question or ""))
     match = _BUSINESS_EVENT_RE.search(text)
     if not match or _EVENT_VALUE_CUE_RE.search(text):
         return ""
