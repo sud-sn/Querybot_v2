@@ -24,3 +24,5 @@ data/.querybot_key
 
 # Generated per-client lookup indexes are rebuilt from the client knowledge base.
 clients/*/value_index.sqlite
+# A tenant's naming profile is written by its KB build; it is runtime state.
+clients/*/naming_profile.json
