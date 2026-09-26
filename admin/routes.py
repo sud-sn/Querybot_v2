@@ -47,6 +47,7 @@ from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
 from store.config_store import get_db_config
 from core.pipeline_context import save_state
 from core.process_secrets import env_secret_or_random
+from core.static_assets import asset_url
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.log_export import (
     DEFAULT_EXPORT_TIME,
@@ -108,6 +109,8 @@ def _jinja_from_json(value, default=None):
         return default if default is not None else []
 
 templates.env.filters["from_json"] = _jinja_from_json
+# Every /static/ link carries a hash of the file it names (core/static_assets.py).
+templates.env.globals["asset"] = asset_url
 
 _COOKIE = "querybot_session"
 

@@ -1,10 +1,13 @@
 /* qbIcon(name, size, cls): one icon from the sprite, as markup, for page
    scripts that build HTML. Templates use the ic() macro (icons.html), which
    renders the same element; tools/build_icon_sprite.py lists the names.
-   A name outside [a-z0-9-] draws nothing rather than reaching the markup. */
+   A name outside [a-z0-9-] draws nothing rather than reaching the markup.
+   The sprite's URL, versioned by its content, comes from this script's own
+   tag (data-sprite), which the shell writes with the same asset() as ic(). */
 (function (global) {
   'use strict';
-  var SPRITE = '/static/icons/qb-icons.svg?v=20260926-lucide-1';
+  var me = global.document && global.document.currentScript;
+  var SPRITE = (me && me.getAttribute('data-sprite')) || '/static/icons/qb-icons.svg';
   function qbIcon(name, size, cls) {
     name = String(name || '');
     if (!/^[a-z0-9-]+$/.test(name)) return '';

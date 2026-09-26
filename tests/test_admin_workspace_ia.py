@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 from jinja2 import Environment, FileSystemLoader
 
+from core.static_assets import asset_url
+
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "admin" / "templates"
 
@@ -64,6 +66,7 @@ _KNOWN_ORPHANS: list[str] = []
 
 def _render_nav(account_id: str, segment: str) -> str:
     env = Environment(loader=FileSystemLoader(str(TEMPLATES)))
+    env.globals["asset"] = asset_url
     path = f"/admin/clients/{account_id}" + (f"/{segment}" if segment else "")
     request = type("R", (), {"url": type("U", (), {"path": path})()})()
     return env.get_template("_client_workspace_nav.html").render(

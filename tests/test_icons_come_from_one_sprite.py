@@ -15,6 +15,7 @@ the real helper (dukpy) and read the sprite and the pages as data.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -22,6 +23,8 @@ from pathlib import Path
 import dukpy
 import pytest
 from jinja2 import Environment, FileSystemLoader
+
+from core.static_assets import asset_url
 
 ROOT = Path(__file__).resolve().parents[1]
 SPRITE = ROOT / "static" / "icons" / "qb-icons.svg"
@@ -43,11 +46,28 @@ def _symbols() -> dict[str, ET.Element]:
 
 def _macro(shell: str):
     env = Environment(loader=FileSystemLoader(str(SHELLS[shell])), autoescape=True)
+    env.globals["asset"] = asset_url     # as admin/routes.py and portal/routes.py register it
     return env.get_template("icons.html").module.ic
 
 
-def _helper(call: str) -> str:
-    return dukpy.evaljs("var window = {};\n" + HELPER.read_text(encoding="utf-8") + f"\n{call}")
+def _shell_sprite() -> str:
+    """The sprite URL the admin shell writes on the helper's own script tag."""
+    from unittest.mock import MagicMock
+
+    import admin.routes as routes
+
+    request = MagicMock()
+    request.url.path = "/admin/"
+    html = routes.templates.env.get_template("base.html").render(request=request)
+    return re.search(r'<script src="/static/js/qb-icons\.js\?v=\w+" data-sprite="([^"]+)"', html).group(1)
+
+
+def _helper(call: str, sprite: str | None = None) -> str:
+    """Run qb-icons.js as the browser does: document.currentScript is its tag."""
+    tag = "null" if sprite is None else (
+        "{getAttribute: function (n) { return n === 'data-sprite' ? %s : null; }}" % json.dumps(sprite))
+    return dukpy.evaljs("var window = {document: {currentScript: %s}};\n" % tag
+                        + HELPER.read_text(encoding="utf-8") + f"\n{call}")
 
 
 def _pages() -> list[Path]:
@@ -98,9 +118,12 @@ class TestTheMacro:
 class TestTheHelper:
 
     def test_it_draws_what_the_macro_draws(self):
-        from_script = _helper("window.qbIcon('refresh', 14, 'text-muted')")
+        from_script = _helper("window.qbIcon('refresh', 14, 'text-muted')", _shell_sprite())
         from_template = str(_macro("portal")("refresh", 14, "text-muted"))
         assert from_script == from_template
+
+    def test_without_its_tag_it_still_draws_from_the_sprite(self):
+        assert _sprite_url(_helper("window.qbIcon('refresh')")) == "/static/icons/qb-icons.svg"
 
     def test_it_defaults_to_16px(self):
         assert 'width="16" height="16"' in _helper("window.qbIcon('x')")
@@ -147,9 +170,9 @@ class TestEveryPage:
     def test_the_shells_load_the_helper_before_any_page_script(self):
         for shell, base in (("admin", "base.html"), ("portal", "portal_base.html")):
             page = (SHELLS[shell] / base).read_text(encoding="utf-8")
-            loads = re.search(r'<script src="(/static/js/qb-icons\.js[^"]*)"></script>', page)
+            loads = re.search(r'<script src="\{\{ asset\(\'(js/qb-icons\.js)\'\) \}\}"[^>]*></script>', page)
             assert loads, shell
-            assert (ROOT / loads.group(1).split("?")[0].lstrip("/")).is_file()
+            assert (ROOT / "static" / loads.group(1)).is_file()
             head = page.split("</head>", 1)[0]
             assert loads.group(0) in head and head.index(loads.group(0)) < head.index("{% block head %}")
 

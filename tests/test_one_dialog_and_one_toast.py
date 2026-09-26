@@ -198,8 +198,8 @@ class TestEveryPageUsesThem:
     @pytest.mark.parametrize("shell", ["admin/templates/base.html", "portal/templates/portal_base.html"])
     def test_both_shells_load_them_before_any_page_script(self, shell):
         page = _page(shell)
-        tag = re.search(r'<script src="(/static/js/qb-ui\.js[^"]*)"></script>', page)
-        assert tag and (ROOT / tag.group(1).split("?")[0].lstrip("/")).is_file()
+        tag = re.search(r'<script src="\{\{ asset\(\'(js/qb-ui\.js)\'\) \}\}"></script>', page)
+        assert tag and (ROOT / "static" / tag.group(1)).is_file()
         head = page.split("</head>", 1)[0]
         assert head.index(tag.group(0)) < head.index("{% block head %}")
         assert head.index("qb-icons.js") < head.index(tag.group(0))

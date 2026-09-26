@@ -52,7 +52,7 @@ def test_no_page_carries_its_own_copy_of_the_palettes(name):
 @pytest.mark.parametrize("name", CONSUMERS)
 def test_each_page_loads_the_shared_file_before_reading_it(name):
     source = _consumer(name)
-    tag = source.find('src="/static/js/chart-palettes.js')
+    tag = source.find("src=\"{{ asset('js/chart-palettes.js') }}\"")
     assert tag != -1, f"{name} does not load the shared palette file"
 
     use = source.find("window.QB_PALETTES")

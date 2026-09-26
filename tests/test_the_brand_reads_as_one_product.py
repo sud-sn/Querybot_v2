@@ -81,14 +81,17 @@ class TestTheMark:
         assert _stops(MARKS[0]) == _stops(MARKS[1])
 
     @pytest.mark.parametrize("mark", MARKS, ids=lambda p: p.name)
-    def test_every_page_asks_for_the_same_version(self, mark):
+    def test_every_page_links_it_by_its_content(self, mark):
         # A recoloured mark reaches a browser that cached the old one only
-        # when every reference carries the new version.
-        versions = set()
+        # when every reference changes with it: each is asset(), whose version
+        # is the file's hash (tests/test_asset_urls_follow_the_file.py).
+        linked, by_hand = 0, []
         for page in list((ROOT / "admin" / "templates").rglob("*.html")) + \
                 list((ROOT / "portal" / "templates").rglob("*.html")):
-            versions |= set(re.findall(rf"/static/img/{re.escape(mark.name)}\?v=([\w.-]+)", page.read_text(encoding="utf-8")))
-        assert len(versions) == 1, versions
+            text = page.read_text(encoding="utf-8")
+            linked += text.count(f"asset('img/{mark.name}')")
+            by_hand += [page.name for _ in re.finditer(rf"/static/img/{re.escape(mark.name)}", text)]
+        assert linked and not by_hand, by_hand
 
 
 def test_the_admin_console_carries_the_mark():

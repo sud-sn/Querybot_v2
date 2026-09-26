@@ -902,8 +902,11 @@ class TestThePage(RealWorkspace):
     def _render(self, ctx):
         from jinja2 import Environment, FileSystemLoader
 
+        from core.static_assets import asset_url
+
         env = Environment(loader=FileSystemLoader(str(ROOT / "admin" / "templates")))
         env.globals["ic"] = lambda name, size=16: ""
+        env.globals["asset"] = asset_url
         request = type("R", (), {
             "url": type("U", (), {"path": f"/admin/clients/{self.account_id}/mapping"})(),
             "query_params": {}})()

@@ -36,6 +36,7 @@ import store
 from core import web_security
 from store import passwords
 from core.process_secrets import env_secret_or_random
+from core.static_assets import asset_url
 from core.schema import run_query
 from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
@@ -57,6 +58,8 @@ templates = Jinja2Templates(
     # which stay out of scope for free by not registering this there.
     context_processors=[lambda request: _language_context(request)],
 )
+# Every /static/ link carries a hash of the file it names (core/static_assets.py).
+templates.env.globals["asset"] = asset_url
 
 _COOKIE = "qb_portal_session"  # different from admin cookie
 

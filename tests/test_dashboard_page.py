@@ -712,7 +712,7 @@ class TestLandmarksAndTableSemantics:
         """66 lines of CSS in a 989-line template is why nobody noticed that
         eight of its declarations had been dead since production.css landed."""
         assert "<style>" not in TEMPLATE.read_text(encoding="utf-8")
-        assert "/static/css/dashboard.css" in TEMPLATE.read_text(encoding="utf-8")
+        assert "asset('css/dashboard.css')" in TEMPLATE.read_text(encoding="utf-8")
 
     def test_the_dead_declarations_were_deleted_not_promoted(self):
         css = STYLESHEET.read_text(encoding="utf-8")

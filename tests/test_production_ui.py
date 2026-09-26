@@ -25,7 +25,7 @@ def test_no_override_layer_loads_after_the_page_styles():
     for template in ("admin/templates/base.html", "portal/templates/portal_base.html"):
         source = _read(template)
         after = source[source.index("{% block head %}"):source.index("</head>")]
-        assert re.findall(r'href="/static/css/([\w.-]+?)\.css', after) == ["brand-motion"], template
+        assert re.findall(r"asset\('css/([\w.-]+?)\.css'\)", after) == ["brand-motion"], template
     for page in list((ROOT / "admin" / "templates").rglob("*.html")) + list(
             (ROOT / "portal" / "templates").rglob("*.html")):
         assert "/static/css/production.css" not in page.read_text(encoding="utf-8"), page.name
@@ -37,7 +37,7 @@ def test_entity_graph_uses_the_shared_stylesheets():
     what stopped it drifting onto its own cache-busted copy of the tokens."""
     graph = _read("admin/templates/client_graph.html")
     assert graph.lstrip().startswith('{% extends "client_base.html" %}')
-    assert "/static/css/" not in graph
+    assert "/static/css/" not in graph and "asset('css/" not in graph
     assert "base.css" in _read("admin/templates/base.html")
 
 
@@ -160,22 +160,18 @@ def test_admin_and_portal_shells_use_shared_sidebar_tokens():
         assert "#0A1020" not in stylesheet
 
 
-def test_theme_stylesheets_are_cache_busted_together():
-    """Version derived from the shell rather than hardcoded, so bumping the
-    identity does not require editing this test."""
-    admin_src = _read("admin/templates/base.html")
-    match = re.search(r"tokens\.css\?v=([\w.-]+)", admin_src)
-    assert match, "admin base.html does not cache-bust tokens.css"
-    version = match.group(1)
+def test_theme_stylesheets_are_linked_by_their_content():
+    """Each theme stylesheet is linked through asset(), whose version is the
+    file's own hash, so an edited sheet reaches returning browsers without
+    anyone bumping a version (tests/test_asset_urls_follow_the_file.py)."""
     admin = _read("admin/templates/base.html")
     portal = _read("portal/templates/portal_base.html")
     chat = _read("portal/templates/portal_chat.html")
-
-    assert f"tokens.css?v={version}" in admin
-    assert f"admin.css?v={version}" in admin
-    assert f"tokens.css?v={version}" in portal
-    assert f"portal.css?v={version}" in portal
-    assert f"chat_workspace.css?v={version}" in chat
+    for sheet in ("tokens", "base", "admin", "brand-motion"):
+        assert f"href=\"{{{{ asset('css/{sheet}.css') }}}}\"" in admin, sheet
+    for sheet in ("tokens", "base", "portal", "brand-motion"):
+        assert f"href=\"{{{{ asset('css/{sheet}.css') }}}}\"" in portal, sheet
+    assert "href=\"{{ asset('css/chat_workspace.css') }}\"" in chat
 
 
 def test_portal_mobile_shell_exposes_its_account_actions():
@@ -306,18 +302,18 @@ def test_no_rule_puts_bare_white_on_a_brand_fill():
         css = _read(f"static/css/{name}")
         for block in re.findall(r"\{[^{}]*\}", css):
             if brand_bg.search(block) and white.search(block):
-                offenders.append(f"{name}.css: {block.strip()[:90]}")
+                offenders.append(f"{name}: {block.strip()[:90]}")
     assert not offenders, "white hardcoded on a brand fill (use var(--on-primary)): " + "; ".join(offenders)
 
 
 def test_every_local_stylesheet_is_cache_busted():
     """base.css shipped with no version parameter, so returning users kept a
     stale copy through every deploy -- which is how a fixed rule can look
-    unfixed in the browser."""
+    unfixed in the browser. Every stylesheet link in the shells is asset()."""
     for template in ("admin/templates/base.html", "portal/templates/portal_base.html"):
         shell = _read(template)
-        unversioned = re.findall(r'href="(/static/css/[A-Za-z0-9._-]+\.css)"', shell)
-        assert not unversioned, f"{template} loads un-versioned stylesheets: {unversioned}"
+        links = re.findall(r'<link rel="stylesheet" href="([^"]+)"', shell)
+        assert links and all(re.fullmatch(r"\{\{ asset\('css/[\w.-]+\.css'\) \}\}", h) for h in links), links
 
 
 def test_no_template_depends_on_an_external_cdn():

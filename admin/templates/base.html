@@ -7,16 +7,16 @@
 <title>{% block title %}QueryBot Admin{% endblock %}</title>
 <!-- The reduced mark: at 16px the full mark's three bars are 1.36px wide
      separated by 0.60px, which is sub-pixel. These two are 2.0 by 1.0. -->
-<link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260926-navy-1">
+<link rel="icon" type="image/svg+xml" href="{{ asset('img/logo-mark-sm.svg') }}">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-ui-9">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-ui-9">
-<link rel="stylesheet" href="/static/css/admin.css?v=20260926-ui-9">
-<script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
-<script src="/static/js/qb-ui.js?v=20260926-ui-9"></script>
+<link rel="stylesheet" href="{{ asset('css/fonts.css') }}">
+<link rel="stylesheet" href="{{ asset('css/tokens.css') }}">
+<link rel="stylesheet" href="{{ asset('css/base.css') }}">
+<link rel="stylesheet" href="{{ asset('css/admin.css') }}">
+<script src="{{ asset('js/qb-icons.js') }}" data-sprite="{{ asset('icons/qb-icons.svg') }}"></script>
+<script src="{{ asset('js/qb-ui.js') }}"></script>
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-ui-9">
+<link rel="stylesheet" href="{{ asset('css/brand-motion.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
@@ -42,7 +42,7 @@
   <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
 
     <div class="sidebar-brand">
-      <img src="/static/img/logo-mark.svg?v=20260926-navy-1" alt="" class="sidebar-brand-mark" width="30" height="30">
+      <img src="{{ asset('img/logo-mark.svg') }}" alt="" class="sidebar-brand-mark" width="30" height="30">
       <div>
         <div class="sidebar-brand-text">Query<span>Bot</span></div>
         <div class="sidebar-brand-sub">Admin Panel</div>
@@ -280,6 +280,6 @@ function closeSidebar(){
 </script>
 
 {% endif %}{# end _auth_page #}
-<script src="/static/js/brand-motion.js?v=20260818-bubble-1"></script>
+<script src="{{ asset('js/brand-motion.js') }}"></script>
 </body>
 </html>

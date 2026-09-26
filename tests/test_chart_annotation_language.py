@@ -66,7 +66,7 @@ def _renderer_for(page: str) -> str:
     """The chart renderer `page` draws with: the one shared file, which the
     page must actually load -- a page that stopped loading it would draw
     nothing, and executing the file on its behalf would hide that."""
-    assert 'src="/static/js/qb-charts.js' in _page(page), (
+    assert "src=\"{{ asset('js/qb-charts.js') }}\"" in _page(page), (
         f"{page} does not load the shared chart renderer")
     # In a browser `window` IS the global object, so the renderer's
     # window.QBCharts is reachable as QBCharts; here `window` is a plain

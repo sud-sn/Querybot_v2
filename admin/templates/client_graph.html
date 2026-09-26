@@ -11,9 +11,9 @@
 {% block body_class %}page-bleed{% endblock %}
 
 {% block head %}
-<script src="/static/vendor/cytoscape.min.js"></script>
-<script src="/static/vendor/dagre.min.js"></script>
-<script src="/static/vendor/cytoscape-dagre.min.js"></script>
+<script src="{{ asset('vendor/cytoscape.min.js') }}"></script>
+<script src="{{ asset('vendor/dagre.min.js') }}"></script>
+<script src="{{ asset('vendor/cytoscape-dagre.min.js') }}"></script>
 <style>
 /* No document reset here: the page now lives inside the admin shell, which
    owns box-sizing, the font stack and the scroll behaviour. Overriding them

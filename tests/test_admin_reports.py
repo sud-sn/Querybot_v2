@@ -203,7 +203,10 @@ class ClientReportsTemplateTests(unittest.TestCase):
 
     def test_template_renders_with_reports_and_without(self):
         import jinja2
+        from core.static_assets import asset_url
+
         env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(ROOT / "admin" / "templates")))
+        env.globals["asset"] = asset_url
         tmpl = env.get_template("client_reports.html")
 
         client = {"account_id": "acct1", "client_name": "Acme", "state": "READY",

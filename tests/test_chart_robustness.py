@@ -183,4 +183,4 @@ def test_both_portal_pages_share_one_chart_theme():
     from tests.test_chart_annotation_language import PAGES, _page, _renderer_for
     for page in PAGES:
         _renderer_for(page)   # asserts the page loads the shared renderer
-        assert 'src="/static/js/chart-palettes.js' in _page(page), page
+        assert "src=\"{{ asset('js/chart-palettes.js') }}\"" in _page(page), page

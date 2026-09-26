@@ -431,6 +431,7 @@ class TestTheAdminSurfacesKeepTheTwoKindsApart(unittest.TestCase):
         import admin.routes as routes
 
         env = Environment(loader=FileSystemLoader(str(ROOT / "admin" / "templates")))
+        env.globals["asset"] = routes.asset_url
         rendered = env.from_string(
             # encoding is not optional here: the template carries non-ASCII
             # since the French work, and read_text() defaults to the locale
