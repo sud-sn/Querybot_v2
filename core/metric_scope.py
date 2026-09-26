@@ -14,8 +14,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.source_resolution import GENERIC_MEASURE_WORDS
-from core.word_forms import base_form, without_grain_or_window
+from core.word_forms import (
+    FRENCH_FUNCTION_WORDS, FRENCH_GENERIC_MEASURE_WORDS, base_form, without_grain_or_window,
+)
 
+
+_GENERIC_WORDS = GENERIC_MEASURE_WORDS | FRENCH_GENERIC_MEASURE_WORDS
 
 _STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "by", "each", "find", "for", "from",
@@ -41,7 +45,7 @@ def _tokens(text: str) -> set[str]:
     return {
         base_form(tok)
         for tok in re.findall(r"[a-z0-9]+", _norm(text))
-        if len(tok) > 1 and tok not in _STOP_WORDS
+        if len(tok) > 1 and tok not in _STOP_WORDS and tok not in FRENCH_FUNCTION_WORDS
     }
 
 
@@ -111,11 +115,18 @@ def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
         # The exact-phrase bonus below is deliberately still allowed: a metric
         # literally named "Total Value" appearing verbatim in the question IS
         # evidence, and that path requires the whole phrase, not one token.
-        if overlap and overlap <= GENERIC_MEASURE_WORDS:
+        if overlap and overlap <= _GENERIC_WORDS:
             overlap = set()
         score = len(overlap) * 10
         if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", q):
             score += 100 + len(phrase_tokens) * 12
+        elif len(phrase_tokens) > 1 and overlap == phrase_tokens:
+            # Every word of the phrase, in another order, is one more word of
+            # evidence: "la valeur de notre stock" has all of "valeur du stock"
+            # and half of "valeur du stock en fin de mois", whose other words
+            # name a narrower measure nobody asked for. Both scored 20, and the
+            # tie was broken by the metrics' names.
+            score += 10
         best = max(best, score)
     metadata_tokens = _tokens(" ".join([
         str(metric.get("required_columns") or ""),

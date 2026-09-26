@@ -208,7 +208,8 @@ def _metrics_for(base: str, columns: list[str], monthly: bool) -> list[StarterMe
         found.append(StarterMetric(
             "allocated", "Allocated quantity", f"SUM({allocated})", base, (allocated,),
             ("allocated quantity", "allocated stock", "quantity allocated",
-             "quantité allouée", "stock alloué"),
+             "reserved quantity", "reserved stock", "quantity reserved",
+             "quantité allouée", "stock alloué", "quantité réservée", "stock réservé"),
             f"Units of stock allocated to orders {at} ({allocated}). {level}",
             (f"{allocated}: allocated stock by name." + _others(allocated, allocated_all),),
         ))

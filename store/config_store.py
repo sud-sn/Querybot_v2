@@ -1608,7 +1608,7 @@ def _metric_phrases(metric: dict) -> list[str]:
 def _metric_tokens(text: str) -> set[str]:
     import re
 
-    from core.word_forms import base_form
+    from core.word_forms import FRENCH_FUNCTION_WORDS, base_form
     stop = {
         "a", "an", "and", "are", "as", "at", "by", "for", "from", "how",
         "in", "is", "me", "of", "on", "or", "per", "show", "the", "to",
@@ -1617,7 +1617,7 @@ def _metric_tokens(text: str) -> set[str]:
     return {
         base_form(token)
         for token in re.findall(r"[a-z0-9]+", (text or "").lower().replace("_", " "))
-        if len(token) > 2 and token not in stop
+        if len(token) > 2 and token not in stop and token not in FRENCH_FUNCTION_WORDS
     }
 
 
@@ -1637,14 +1637,16 @@ def _score_metric_for_question(metric: dict, question: str) -> int:
     # injected into the SQL prompt, so a metric that survives here on the word
     # "value" alone offers the model a formula from an unrelated fact table.
     from core.source_resolution import GENERIC_MEASURE_WORDS
+    from core.word_forms import FRENCH_GENERIC_MEASURE_WORDS
 
+    generic = GENERIC_MEASURE_WORDS | FRENCH_GENERIC_MEASURE_WORDS
     score = 0
     for phrase in _metric_phrases(metric):
         phrase_tokens = _metric_tokens(phrase)
         if phrase and phrase in q:
             score += 8
         overlap = q_tokens & phrase_tokens
-        if overlap and not overlap <= GENERIC_MEASURE_WORDS:
+        if overlap and not overlap <= generic:
             score += len(overlap) * 3
 
     metadata_tokens = _metric_tokens(" ".join([

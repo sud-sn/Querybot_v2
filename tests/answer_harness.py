@@ -461,11 +461,16 @@ _built: dict = {}
 @contextlib.contextmanager
 def tenant_in(root: Path):
     """The tenant, with the working directory where its files live while the
-    tests ask their questions. It is built once per process, at the first
+    tests ask their questions. It is built once per store, at the first
     ``root``: its account is process-wide and the suite shares one store, so a
-    second build would lay a second graph and metric set over the first."""
+    second build would lay a second graph and metric set over the first. A
+    module that points the process at another store -- as
+    tests/test_metric_authoring.py does when it is imported -- leaves the
+    tenant in the old one, and it is built again in the new."""
+    import store
+
     previous = Path.cwd()
-    if "warehouse" not in _built:
+    if "warehouse" not in _built or store.get_client(ACCOUNT) is None:
         os.chdir(root)
         try:
             _built["warehouse"] = build_tenant(root)
