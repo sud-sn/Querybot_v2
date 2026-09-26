@@ -894,6 +894,39 @@ def unmet_aggregates(question: str, metrics: list[dict]) -> list[str]:
     return [name for name in asked if name not in computed]
 
 
+def _snapshot_measures(metrics: list[dict]) -> bool | None:
+    """True when every metric is a level held at each snapshot -- stock, a
+    balance -- False when none is, None when they are mixed.
+
+    A level summed over a window adds one snapshot to the next: six months of
+    daily stock is about 180 times the stock. It is read at the last snapshot
+    of each period instead (_last_snapshot_cte).
+    """
+    from core.analysis_contract import measure_class_for_metric
+
+    classes = []
+    for metric in metrics:
+        try:
+            classes.append(measure_class_for_metric(metric) == "semi_additive")
+        except Exception:
+            log.warning("Measure class unavailable for metric %r", metric.get("name"), exc_info=True)
+            return None
+    if not classes or not any(classes):
+        return False
+    return True if all(classes) else None
+
+
+def _last_snapshot_cte(date_ref: str, from_sql: str, where_sql: str, bucket: str = "") -> tuple[str, str]:
+    """The CTE naming the last snapshot of each period, and the predicate that
+    keeps only it: of the whole window, or of each bucket when the answer is a
+    series. Built on the query's own FROM and WHERE, so the snapshot is one
+    the rows in scope actually have."""
+    group = f"\n    GROUP BY {bucket}" if bucket else ""
+    cte = (f"snapshot_dates AS (\n    SELECT MAX({date_ref}) AS snapshot_date\n"
+           f"    FROM {from_sql}{where_sql}{group}\n)")
+    return cte, f"{date_ref} IN (SELECT snapshot_date FROM snapshot_dates)"
+
+
 def _compile_governed_grouped_request_sql(
     db_type: str,
     known_tables: set[str],
@@ -965,6 +998,11 @@ def _compile_governed_grouped_request_sql(
             f"COUNT(DISTINCT fact_rows.{{qcol:{target_column}}})",
         ))
     if not metric_specs or len(metric_specs) > 3:
+        return ""
+    snapshot = _snapshot_measures(metrics)
+    if snapshot is None:
+        # Stock beside a flow: one is read at the last snapshot, the other
+        # summed over the window, and one query cannot do both.
         return ""
 
     def qcol(name: str) -> str:
@@ -1317,6 +1355,14 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
         else ""
     )
     where_sql = "\nWHERE " + "\n  AND ".join(where_parts) if where_parts else ""
+    if snapshot:
+        if not date_ref:
+            return ""
+        snapshot_cte, snapshot_filter = _last_snapshot_cte(
+            date_ref, f"{from_sql}{cross_anchor}", where_sql, group_parts[0] if is_trend else "")
+        anchor_sql = (anchor_sql.rstrip("\n") + ",\n" if anchor_sql else "WITH ") + snapshot_cte + "\n"
+        where_parts.append(snapshot_filter)
+        where_sql = "\nWHERE " + "\n  AND ".join(where_parts)
     group_sql = "\nGROUP BY " + ", ".join(group_parts) if group_parts else ""
     order_sql = ""
     if ranking:
@@ -1832,11 +1878,11 @@ def compile_governed_temporal_metric_sql(
         group_sql = f"\nGROUP BY {bucket}"
         order_sql = "\nORDER BY PERIOD"
 
+    main_from = from_sql
+    main_where = where_sql
+    ctes: list[str] = []
     if window_kind == "latest_n_observed":
-        compiled = f"""{observed_period_cte}SELECT
-    {select_sql}
-FROM {from_sql}
-WHERE {where_sql}{group_sql}{order_sql}"""
+        ctes.append(observed_period_cte[len("WITH "):].rstrip("\n"))
     elif seekable and resolved_anchor.get("value"):
         # The anchor was already resolved from the fact's own rows once for this
         # account+fact+key and cached, so the query does not have to ask the
@@ -1847,13 +1893,7 @@ WHERE {where_sql}{group_sql}{order_sql}"""
         window_keys_sql = window_keys_body.replace(
             "{anchor_join}", "",
         ).replace("{window_predicate}", literal_window_predicate)
-        compiled = f"""WITH window_keys AS (
-    {window_keys_sql}
-)
-SELECT
-    {select_sql}
-FROM {from_sql}
-WHERE {where_sql}{group_sql}{order_sql}"""
+        ctes.append(f"window_keys AS (\n    {window_keys_sql}\n)")
     elif seekable:
         # anchor and window_keys are both computed off the small date dimension.
         # The main query keeps its physical fact-to-dimension join (so the
@@ -1863,16 +1903,8 @@ WHERE {where_sql}{group_sql}{order_sql}"""
         window_keys_sql = window_keys_body.replace(
             "{anchor_join}", "\n    CROSS JOIN anchor",
         ).replace("{window_predicate}", window_predicate)
-        compiled = f"""WITH anchor AS (
-    {anchor_body}
-),
-window_keys AS (
-    {window_keys_sql}
-)
-SELECT
-    {select_sql}
-FROM {from_sql}
-WHERE {where_sql}{group_sql}{order_sql}"""
+        ctes.append(f"anchor AS (\n    {anchor_body}\n)")
+        ctes.append(f"window_keys AS (\n    {window_keys_sql}\n)")
     elif resolved_anchor.get("value") and literal_window_predicate:
         # A fact-native date with a resolved anchor is the cheapest shape there
         # is: the window is two literals against the fact's own date column, so
@@ -1881,20 +1913,24 @@ WHERE {where_sql}{group_sql}{order_sql}"""
         # the literal window was computed and then silently discarded and the
         # full-scan anchor came back — the cache bought nothing for exactly the
         # configuration it helps most.
-        compiled = f"""SELECT
-    {select_sql}
-FROM {from_sql}
-WHERE {literal_window_predicate}{group_sql}{order_sql}"""
+        main_where = literal_window_predicate
     else:
-        compiled = f"""WITH anchor AS (
-    SELECT MAX({date_ref}) AS max_business_date
-    FROM {from_sql}
-)
-SELECT
-    {select_sql}
-FROM {from_sql}
-CROSS JOIN anchor
-WHERE {where_sql}{group_sql}{order_sql}"""
+        ctes.append(f"anchor AS (\n    SELECT MAX({date_ref}) AS max_business_date\n    FROM {from_sql}\n)")
+        main_from = f"{from_sql}\nCROSS JOIN anchor"
+    # Stock and balances: the last snapshot of the window, or of each period
+    # of a series -- never their sum across the window's snapshots.
+    snapshot = _snapshot_measures([metric])
+    if snapshot is None:
+        return ""
+    if snapshot:
+        snapshot_cte, snapshot_filter = _last_snapshot_cte(
+            date_ref, main_from, f"\n    WHERE {main_where}", bucket if is_trend else "")
+        ctes.append(snapshot_cte)
+        main_where = f"{main_where}\n  AND {snapshot_filter}"
+    compiled = (
+        ("WITH " + ",\n".join(ctes) + "\n" if ctes else "")
+        + f"SELECT\n    {select_sql}\nFROM {main_from}\nWHERE {main_where}{group_sql}{order_sql}"
+    )
 
     result = validate_sql_detailed(
         compiled,
