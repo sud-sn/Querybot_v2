@@ -774,10 +774,11 @@ def _join_condition_pairs(join: dict) -> list[tuple[str, str]]:
     return pairs
 
 
-def _graph_join_type(context: dict, left: str, right: str) -> str | None:
+def _graph_join_type(context: dict, left: str, right: str, *, unresolved: str = "JOIN") -> str | None:
     """The join the resolved entity graph requires from `left` to `right`:
     what the validator will hold the SQL to. An edge the graph resolved in the
-    other direction as an outer join has no equivalent here (None)."""
+    other direction as an outer join has no equivalent here (None); an edge
+    the question's graph did not resolve gets ``unresolved``."""
     for edge in ((context or {}).get("graph_context") or {}).get("resolved_edges") or []:
         source = ".".join(p for p in (edge.get("from_schema"), edge.get("from_table")) if p)
         target = ".".join(p for p in (edge.get("to_schema"), edge.get("to_table")) if p)
@@ -786,7 +787,7 @@ def _graph_join_type(context: dict, left: str, right: str) -> str | None:
             return "LEFT JOIN" if kind == "LEFT" else "JOIN"
         if _same_physical_table(source, right) and _same_physical_table(target, left):
             return None if kind == "LEFT" else "JOIN"
-    return "JOIN"
+    return unresolved
 
 
 def _resolved_graph_joins(context: dict) -> list[dict]:
@@ -1313,7 +1314,10 @@ def _compile_governed_grouped_request_sql(
         unit_table = str(unit["table"])
         unit_table_alias = "fact_rows" if not unit["join"] else alias_for(unit_table)
         if not unit_table_alias:
-            join_type = _graph_join_type(context, fact_table, unit_table)
+            # A lookup of each row's unit, not a requirement on the rows: where
+            # the question's graph did not resolve the edge it is outer, so a
+            # fact row whose item is missing is kept, under no unit.
+            join_type = _graph_join_type(context, fact_table, unit_table, unresolved="LEFT JOIN")
             if join_type is None:
                 return ""
             unit_table_alias = "unit_item" if "unit_item" not in alias_by_table.values() else f"join_{len(alias_by_table)}"
