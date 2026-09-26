@@ -12,7 +12,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from store import passwords
+from store import passwords, sign_in_throttle
 from store.db import get_db
 
 log = logging.getLogger("querybot.user_store")
@@ -273,6 +273,12 @@ def change_password(user_id: int, new_password: str, is_temp: bool = False) -> N
             "session_version=session_version+1, updated_at=datetime('now') WHERE id=?",
             (_hash_pw(new_password), 1 if is_temp else 0, expires, user_id)
         )
+        row = conn.execute("SELECT account_id, email FROM portal_user WHERE id=?", (user_id,)).fetchone()
+    # A new password -- an admin's reset included -- ends any wait the old
+    # one's failed attempts had built up.
+    if row:
+        sign_in_throttle.clear_sign_in_failures(
+            sign_in_throttle.sign_in_identity("portal", row["account_id"], row["email"]))
 
 
 def reset_user_password(user_id: int) -> str:

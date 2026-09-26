@@ -32,6 +32,7 @@ from store.db import init_db
 from admin import router as admin_router
 from portal import router as portal_router
 from gateway.webhooks import router as webhooks_router
+from core.web_security import RefuseCrossSiteRequests
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +41,7 @@ logging.basicConfig(
 log = logging.getLogger("querybot")
 
 app = FastAPI(title="QueryBot", version="2.0.0")
+app.add_middleware(RefuseCrossSiteRequests)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(admin_router)
 app.include_router(portal_router)

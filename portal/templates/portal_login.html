@@ -25,12 +25,14 @@
         </div>
         <div class="form-group">
           <label for="login-email">{{ t('ui.auth.email') }}</label>
-          <input id="login-email" type="email" name="email" required placeholder="{{ t('ui.auth.email_placeholder') }}">
+          <input id="login-email" type="email" name="email" required autocomplete="username"
+            placeholder="{{ t('ui.auth.email_placeholder') }}">
         </div>
         <div class="form-group">
           <label for="login-password">{{ t('ui.auth.password') }}</label>
           <div class="input-reveal-wrap">
-            <input id="login-password" type="password" name="password" required placeholder="••••••••">
+            <input id="login-password" type="password" name="password" required autocomplete="current-password"
+              placeholder="••••••••">
             <button type="button" class="input-reveal-btn" id="login-pw-reveal"
               aria-label="{{ t('ui.auth.show_password') }}" title="{{ t('ui.auth.toggle_password') }}">
               {{ ic("eye", 15) }}

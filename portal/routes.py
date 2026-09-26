@@ -33,6 +33,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 import store
+from core import web_security
+from store import passwords
 from core.process_secrets import env_secret_or_random
 from core.schema import run_query
 from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
@@ -267,7 +269,7 @@ def _read_session_value(raw: str) -> int | None:
 
 
 def _cookie_secure(request: Request) -> bool:
-    return request.url.scheme == "https"
+    return web_security.cookie_secure(request)
 
 
 def _set_portal_cookie(resp: RedirectResponse, request: Request, user_id: int) -> None:
@@ -917,6 +919,17 @@ async def portal_login_page(request: Request):
     })
 
 
+def _sign_in_refused(request: Request, lang: str, wait: int):
+    """Too many recent failures: say how long to wait, and check nothing."""
+    minutes = max(1, -(-wait // 60))
+    response = templates.TemplateResponse(
+        request=request, name="portal_login.html", status_code=429,
+        context={"error": i18n_t("ui.auth.error.too_many_attempts", lang=lang, minutes=minutes)},
+    )
+    response.headers["Retry-After"] = str(wait)
+    return response
+
+
 @router.post("/login")
 async def portal_login_submit(
     request: Request,
@@ -924,16 +937,29 @@ async def portal_login_submit(
     email:      str = Form(...),
     password:   str = Form(...),
 ):
-    # Validate client exists
-    client = store.get_client(account_id)
-    if not client:
-        return _resp(request, "portal_login.html",
-                     {"error": "Account ID not found."})
+    lang = _request_language(request)
+    identity = store.sign_in_identity("portal", account_id, email)
+    wait = store.sign_in_wait_seconds(identity)
+    if wait:
+        return _sign_in_refused(request, lang, wait)
 
-    user = store.get_user_by_email(account_id, email)
-    if not user or not store.verify_password(user, password):
-        return _resp(request, "portal_login.html",
-                     {"error": "Invalid email or password."})
+    # One answer and the same work whether the workspace, the email or the
+    # password was wrong: "Account ID not found" told anyone which workspaces
+    # exist, and an unknown account answered before any password was hashed.
+    user = store.get_user_by_email(account_id, email) if store.get_client(account_id) else None
+    if user:
+        signed_in = store.verify_password(user, password)
+    else:
+        passwords.spend(password)
+        signed_in = False
+    if not signed_in:
+        wait = store.record_sign_in_failure(identity, "portal")
+        if wait:
+            return _sign_in_refused(request, lang, wait)
+        return _resp(request, "portal_login.html", {
+            "error": i18n_t("ui.auth.error.sign_in_failed", lang=lang),
+        })
+    store.clear_sign_in_failures(identity)
     # An old unsalted hash, or fewer rounds than today's, is renewed now: the
     # password is only ever in hand at sign-in.
     store.upgrade_password_hash(user, password)

@@ -221,7 +221,42 @@ cd /home/azureuser/querybot
 venv/bin/python -m admin.reset_password     # asks twice, without echo
 ```
 
-It also signs out every admin session.
+It also signs out every admin session and ends any wait that failed sign-ins
+built up (section 14).
 
 If the service sets `QUERYBOT_DB_PATH`, `DATABASE_URL` or `QUERYBOT_KEY_FILE`,
 export the same values first, or the command writes to a different store.
+
+## 14. HTTPS, the reverse proxy and the question API
+
+Session cookies are marked Secure, so they travel over https only, when the
+request arrived over https or `PORTAL_BASE_URL` starts with `https://`. Behind
+a proxy that ends TLS (nginx, an Azure Application Gateway or Front Door), set
+`PORTAL_BASE_URL` to the public https address, and let uvicorn trust the
+proxy's forwarded headers so it also sees the real scheme and client address:
+
+```ini
+ExecStart=/home/azureuser/querybot/venv/bin/uvicorn main:app \
+    --host 127.0.0.1 --port 8000 --workers 1 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1
+```
+
+Use the proxy's own address in `--forwarded-allow-ips` if it runs on another
+machine. The admin console counts failed sign-ins per client address: without
+the forwarded headers every attempt seems to come from the proxy, and one
+person guessing makes everyone wait.
+
+The proxy must pass the `Host` header through (nginx: `proxy_set_header Host
+$host;`). Writes to /admin and /portal, and the chat socket's handshake, are
+refused when the browser says they came from another site; a browser too old
+to say so is judged by comparing its `Origin` with `Host`.
+
+"Too many attempts" at sign-in: five failures in fifteen minutes are free,
+then each doubles the wait, up to fifteen minutes. The wait ends by itself; a
+password reset by an admin ends a portal user's, and
+`python -m admin.reset_password` ends the admin console's.
+
+`POST /api/ask` (for Copilot Studio or Power Automate) is off until
+`QUERYBOT_API_KEY` is set in the service's environment; callers send the same
+value as `api_key`. It answers without per-user restrictions, so keep the key
+as carefully as the admin password.

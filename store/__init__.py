@@ -64,6 +64,10 @@ from store.config_store import (
     log_llm_call, get_recent_llm_calls, purge_old_llm_calls, purge_old_kb_egress,
     get_llm_trust_summary, RESULT_LLM_COMPONENTS, get_kb_table_doc_audit,
 )
+from store.sign_in_throttle import (
+    sign_in_identity, sign_in_wait_seconds, record_sign_in_failure,
+    clear_sign_in_failures, clear_sign_in_scope,
+)
 from store.user_store import (
     create_group, list_groups, get_group, update_group, delete_group,
     set_group_tables, get_group_tables,
@@ -222,6 +226,8 @@ __all__ = [
     "temporary_password_expired","TEMP_PASSWORD_HOURS",
     "user_email_exists","record_user_event","list_user_events","USER_EVENT_LABELS",
     "upgrade_password_hash",
+    "sign_in_identity","sign_in_wait_seconds","record_sign_in_failure",
+    "clear_sign_in_failures","clear_sign_in_scope",
     "set_user_extra_tables","get_user_extra_tables","get_allowed_tables",
     "touch_user_activity","set_user_language","normalise_language",
     "SUPPORTED_LANGUAGES",

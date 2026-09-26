@@ -9,6 +9,7 @@ Routes registered on an APIRouter that main.py mounts at startup.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -550,8 +551,8 @@ async def api_ask(request: Request):
     Request body (JSON):
         {
             "question":   "What is my total revenue this month?",
-            "account_id": "Emco_Poc",
-            "api_key":    "your-secret-key"   ← required if QUERYBOT_API_KEY is set
+            "account_id": "acme",
+            "api_key":    "the value of QUERYBOT_API_KEY on the server"
         }
 
     Response:
@@ -560,27 +561,31 @@ async def api_ask(request: Request):
             "clarification": null | { "question": "...", "options": [...] }
         }
 
-    Security: set QUERYBOT_API_KEY environment variable to restrict access.
-    If the env var is not set the endpoint is open (suitable for local dev/demo only).
+    Off unless QUERYBOT_API_KEY is set on the server. It used to be open when
+    the variable was unset -- no deployment file sets it -- and it answers with
+    no per-user restrictions, so any caller could query any workspace.
     """
+    expected_key = os.getenv("QUERYBOT_API_KEY", "")
+    if not expected_key:
+        raise HTTPException(503, detail="The question API is off. Set QUERYBOT_API_KEY on the server to turn it on.")
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(400, detail="Request body must be valid JSON.")
+    if not isinstance(body, dict):
+        raise HTTPException(400, detail="Request body must be a JSON object.")
+
+    api_key = str(body.get("api_key") or "")
+    if not hmac.compare_digest(api_key.encode("utf-8"), expected_key.encode("utf-8")):
+        raise HTTPException(401, detail="Invalid or missing api_key.")
 
     question   = (body.get("question") or "").strip()
     account_id = (body.get("account_id") or "").strip()
-    api_key    = (body.get("api_key") or "").strip()
 
     if not question:
         raise HTTPException(400, detail="'question' is required.")
     if not account_id:
         raise HTTPException(400, detail="'account_id' is required.")
-
-    # API key guard — only enforced when QUERYBOT_API_KEY is set
-    expected_key = os.getenv("QUERYBOT_API_KEY", "")
-    if expected_key and api_key != expected_key:
-        raise HTTPException(401, detail="Invalid or missing api_key.")
 
     # Confirm the client exists before spinning up the pipeline
     client = store.get_client(account_id)

@@ -1426,6 +1426,7 @@ def _run_migrations() -> None:
         _ensure_business_date_anchor_scope(conn)
         _ensure_semantic_compiler_tables(conn)
         _ensure_user_account_event_table(conn)
+        _ensure_sign_in_attempt_table(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1546,6 +1547,25 @@ def _ensure_graph_change_proposal_table(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
             ON graph_change_proposal(account_id, status, created_at);
+        """
+    )
+
+
+def _ensure_sign_in_attempt_table(conn: sqlite3.Connection) -> None:
+    """Recent failed sign-ins per identity (store/sign_in_throttle.py).
+
+    The identity is a hash; times are epoch seconds.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sign_in_attempt (
+            identity        TEXT    PRIMARY KEY,
+            scope           TEXT    NOT NULL,
+            failures        INTEGER NOT NULL DEFAULT 0,
+            last_failed_at  BIGINT,
+            locked_until    BIGINT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sign_in_attempt_scope ON sign_in_attempt(scope);
         """
     )
 

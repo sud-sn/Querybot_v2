@@ -42,6 +42,9 @@ def main(argv: list[str] | None = None, *, prompt=getpass.getpass, stdin=None) -
 
     store.init_db()
     credentials.set_password(password)
+    # Whoever runs this holds the server, so any wait failed attempts built up
+    # ends here too.
+    store.clear_sign_in_scope("admin")
     print("The admin password is set and every admin session is signed out. "
           "Sign in at /admin/login.")
     return 0

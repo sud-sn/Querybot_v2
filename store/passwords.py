@@ -42,6 +42,7 @@ def hash_password(password: str) -> str:
 
 def verify_password(stored: str | None, password: str) -> bool:
     if not stored or stored.startswith(UNUSABLE) or stored == LEGACY_PLATFORM_PLACEHOLDER:
+        spend(password)
         return False
     if stored.startswith(_PREFIX):
         try:
@@ -53,6 +54,22 @@ def verify_password(stored: str | None, password: str) -> bool:
     # Unsalted SHA-256, from before salted hashes: accepted, then replaced.
     legacy = hashlib.sha256(password.encode()).hexdigest()
     return hmac.compare_digest(stored, legacy)
+
+
+_DECOY: dict[int, str] = {}
+
+
+def spend(password: str) -> None:
+    """Check a password against nothing, at the cost of checking a real one.
+
+    A sign-in refused because the account does not exist, or has no password,
+    would otherwise answer in a fraction of the time a wrong password takes --
+    which tells the caller whether the account is there.
+    """
+    decoy = _DECOY.get(ITERATIONS)
+    if decoy is None:
+        decoy = _DECOY[ITERATIONS] = hash_password(secrets.token_hex(16))
+    verify_password(decoy, password)
 
 
 def needs_rehash(stored: str | None) -> bool:

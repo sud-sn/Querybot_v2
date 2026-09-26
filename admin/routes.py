@@ -41,6 +41,7 @@ from fastapi.templating import Jinja2Templates
 
 import store
 from admin import credentials as admin_credentials
+from core import web_security
 from store.db import get_db as _get_db
 from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
 from store.config_store import get_db_config
@@ -193,7 +194,7 @@ def _set_admin_cookie(resp: RedirectResponse, request: Request) -> None:
         max_age=_ADMIN_SESSION_HOURS * 3600,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=web_security.cookie_secure(request),
     )
 
 def _first_run() -> bool:
@@ -606,8 +607,22 @@ async def login_submit(request: Request, password: str = Form(...)):
         return RedirectResponse("/admin/setup", status_code=303)
     if not admin_credentials.is_readable():
         return _resp(request, "login.html", {"error": _UNREADABLE_ADMIN_PASSWORD})
-    if not admin_credentials.verify(password):
-        return _resp(request, "login.html", {"error": "Incorrect password"})
+    # One password and no user name, so attempts are counted per client
+    # address. Behind a reverse proxy that is the proxy's address unless
+    # uvicorn is told to trust its forwarded headers (docs/UPGRADE_RUNBOOK.md).
+    identity = store.sign_in_identity("admin", request.client.host if request.client else "")
+    wait = store.sign_in_wait_seconds(identity)
+    if not wait and not admin_credentials.verify(password):
+        wait = store.record_sign_in_failure(identity, "admin")
+        if not wait:
+            return _resp(request, "login.html", {"error": "Incorrect password"})
+    if wait:
+        response = templates.TemplateResponse(
+            request=request, name="login.html", status_code=429,
+            context={"error": f"Too many attempts. Wait {max(1, -(-wait // 60))} min and try again."})
+        response.headers["Retry-After"] = str(wait)
+        return response
+    store.clear_sign_in_failures(identity)
     admin_credentials.upgrade_hash(password)
     resp = RedirectResponse("/admin", status_code=303)
     _set_admin_cookie(resp, request)

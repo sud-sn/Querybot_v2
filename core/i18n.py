@@ -4697,6 +4697,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "This temporary password has expired. Ask your administrator for a new one.",
         "fr": "Ce mot de passe temporaire a expiré. Demandez-en un nouveau à votre administrateur.",
     },
+    "ui.auth.hint.stronger": {
+        "en": "Longer is stronger: a phrase of a few words beats a short mix of symbols.",
+        "fr": "Plus c'est long, plus c'est sûr : une phrase de quelques mots vaut mieux qu'un court mélange de symboles.",
+    },
+    "ui.auth.hint.same": {"en": "The two passwords match.", "fr": "Les deux mots de passe correspondent."},
+    "ui.auth.hint.differ": {"en": "The two passwords differ.", "fr": "Les deux mots de passe sont différents."},
+    "ui.auth.error.sign_in_failed": {
+        "en": "The account ID, email or password is not right.",
+        "fr": "L'identifiant du compte, l'e-mail ou le mot de passe est incorrect.",
+    },
+    "ui.auth.error.too_many_attempts": {
+        "en": "Too many attempts. Wait {minutes} min and try again.",
+        "fr": "Trop de tentatives. Patientez {minutes} min puis réessayez.",
+    },
 
     # ── Pinning a chart from a link ──────────────────────────────────────────
     "ui.pinpage.title": {"en": "Add chart to a dashboard", "fr": "Ajouter le graphique à un tableau de bord"},
