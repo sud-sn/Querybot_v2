@@ -39,6 +39,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse,
 from fastapi.templating import Jinja2Templates
 
 import store
+from admin import credentials as admin_credentials
 from store.db import get_db as _get_db
 from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
 from store.config_store import get_db_config
@@ -192,7 +193,9 @@ def _set_admin_cookie(resp: RedirectResponse, request: Request) -> None:
     )
 
 def _first_run() -> bool:
-    return not store.get_system("admin_password_hash")
+    # A row that exists but cannot be decrypted is not a first run: see
+    # admin/credentials.py.
+    return not admin_credentials.is_set()
 
 def _resp(request, name, ctx=None):
     return templates.TemplateResponse(request=request, name=name, context=ctx or {})
@@ -586,12 +589,20 @@ async def admin_notifications_ws(websocket: WebSocket):
 async def login_page(request: Request):
     return _resp(request, "login.html", {"error": None})
 
+_UNREADABLE_ADMIN_PASSWORD = (
+    "The admin password stored on this server can't be read: the encryption "
+    "key has changed. Set a new one on the server with "
+    "python -m admin.reset_password"
+)
+
+
 @router.post("/login")
 async def login_submit(request: Request, password: str = Form(...)):
-    stored = store.get_system("admin_password_hash", "")
-    if not stored:
+    if _first_run():
         return RedirectResponse("/admin/setup", status_code=303)
-    if _hash(password) != stored:
+    if not admin_credentials.is_readable():
+        return _resp(request, "login.html", {"error": _UNREADABLE_ADMIN_PASSWORD})
+    if not admin_credentials.verify(password):
         return _resp(request, "login.html", {"error": "Incorrect password"})
     resp = RedirectResponse("/admin", status_code=303)
     _set_admin_cookie(resp, request)
@@ -626,13 +637,18 @@ async def setup_submit(
     default_model:  str = Form("claude-sonnet-4-6"),
     kb_model:       str = Form("claude-opus-4-5"),
 ):
-    if len(admin_password) < 8:
+    # Setup runs once. Only the GET used to check, so anyone who could reach
+    # the server could POST here and replace the admin password.
+    if not _first_run():
+        return RedirectResponse("/admin/login", status_code=303)
+    if len(admin_password) < admin_credentials.MIN_LENGTH:
         return _resp(request, "setup.html", {
             "error": "Password must be at least 8 characters",
             "query_models": QUERY_MODELS, "kb_models": KB_MODELS,
         })
-    pw_hash = _hash(admin_password)
-    store.set_system("admin_password_hash",   pw_hash)
+    if not admin_credentials.claim_first(admin_password):
+        # Another request finished setup between the check above and here.
+        return RedirectResponse("/admin/login", status_code=303)
     store.set_system("default_llm_provider",  default_provider)
     store.set_system("default_llm_model",     default_model)
     store.set_system("kb_llm_model",          kb_model)

@@ -161,6 +161,37 @@ def set_system(key: str, value: str) -> None:
         """, (key, encrypt(value)))
 
 
+def system_key_is_set(key: str) -> bool:
+    """Whether a row exists for ``key``, whether or not it can be decrypted.
+
+    ``get_system`` answers "unset" for a row it cannot read, which is right for
+    an API key and wrong for a question like "has this server been set up?": a
+    row encrypted under a lost key still means someone set it.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM system_config WHERE key = ?", (key,)
+        ).fetchone()
+    return row is not None
+
+
+def claim_system_key(key: str, value: str) -> bool:
+    """Store ``key`` only if it has never been stored. True when this call stored it.
+
+    One INSERT that does nothing on conflict, so of two requests racing to be
+    first, the database lets exactly one win.
+    """
+    if key not in SYSTEM_KEYS:
+        raise ValueError(f"Unknown system key: {key!r}")
+    with get_db() as conn:
+        cur = conn.execute("""
+            INSERT INTO system_config (key, value_encrypted, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(key) DO NOTHING
+        """, (key, encrypt(value)))
+        return cur.rowcount == 1
+
+
 def _decrypt_setting(key: str, blob) -> str | None:
     """One stored setting, or None when it cannot be read.
 

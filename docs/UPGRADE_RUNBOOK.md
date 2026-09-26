@@ -206,3 +206,18 @@ if the store itself is the problem, and only with the service stopped
 (`sudo systemctl stop querybot`, then
 `cp data/querybot.db.bak-<stamp> data/querybot.db`); that also undoes those
 decisions.
+
+## 13. If the admin password is lost
+
+The setup page runs once: after the first admin password is saved, it is
+closed, even when the stored password can no longer be read because
+`~/.querybot_key` changed (the sign-in page then says so). Set a new password
+on the server, as the service's user, from the application directory:
+
+```bash
+cd /home/azureuser/querybot
+venv/bin/python -m admin.reset_password     # asks twice, without echo
+```
+
+If the service sets `QUERYBOT_DB_PATH`, `DATABASE_URL` or `QUERYBOT_KEY_FILE`,
+export the same values first, or the command writes to a different store.
