@@ -91,6 +91,18 @@ def extract_sql_tables(sql: str, db_type: str = "azure_sql") -> list[str]:
     return tables
 
 
+def _period_days(policy: dict) -> tuple[str, str] | None:
+    """A stated period's first and last day, from its start and exclusive end."""
+    from datetime import date, timedelta
+
+    try:
+        start = date.fromisoformat(str(policy.get("start") or ""))
+        end = date.fromisoformat(str(policy.get("end") or ""))
+    except ValueError:
+        return None
+    return (start.isoformat(), (end - timedelta(days=1)).isoformat()) if end > start else None
+
+
 def build_business_rca(
     *,
     question: str = "",
@@ -164,6 +176,28 @@ def build_business_rca(
             "most_likely_reason": _t("fail.zero_row.empty_table.reason",
                                      tables=listed),
             "suggested_next_step": _t("fail.zero_row.empty_table.next_step"),
+            "technical_notes": technical_notes,
+        }
+
+    # A period the question states outright, with nothing in it, is the most
+    # specific reason left: "stock at the end of 2025" read on a snapshot that
+    # starts in 2026 has no join to blame and no filter to loosen.
+    stated = next(
+        (policy for policy in plan.get("temporal_policies") or []
+         if isinstance(policy, dict) and policy.get("kind") == "named_period"),
+        None,
+    )
+    if row_count == 0 and stated and _period_days(stated):
+        start, last = _period_days(stated)
+        date = str(stated.get("business_role") or "").strip()
+        technical_notes.append(f"Stated period: {start} to {last}")
+        return {
+            "headline": _t("fail.zero_row.headline"),
+            "most_likely_reason": (
+                _t("fail.zero_row.period.reason", date=date, start=start, last=last) if date
+                else _t("fail.zero_row.period.reason_unnamed", start=start, last=last)
+            ),
+            "suggested_next_step": _t("fail.zero_row.period.next_step"),
             "technical_notes": technical_notes,
         }
 

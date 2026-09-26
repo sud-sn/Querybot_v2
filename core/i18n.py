@@ -2008,6 +2008,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Check whether the relationship keys match in the database, or choose a less restrictive join path.",
         "fr": "Vérifiez que les clés de relation correspondent dans la base de données, ou choisissez un chemin de jointure moins restrictif.",
     },
+    "fail.zero_row.period.reason": {
+        "en": "The period the question names, {start} to {last}, has no records by “{date}”.",
+        "fr": "La période que nomme la question, du {start} au {last}, ne compte aucun enregistrement selon « {date} ».",
+    },
+    "fail.zero_row.period.reason_unnamed": {
+        "en": "The period the question names, {start} to {last}, has no records.",
+        "fr": "La période que nomme la question, du {start} au {last}, ne compte aucun enregistrement.",
+    },
+    "fail.zero_row.period.next_step": {
+        "en": "Ask about a period the data covers, or for the latest figure.",
+        "fr": "Posez la question sur une période que couvrent les données, ou demandez le chiffre le plus récent.",
+    },
     "fail.zero_row.filters.reason": {
         "en": "The filters produced no matching rows.",
         "fr": "Les filtres n'ont produit aucune ligne correspondante.",

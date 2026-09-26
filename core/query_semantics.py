@@ -414,7 +414,7 @@ def summarize_query_intent(question: str) -> str:
     return ", ".join(labels)
 
 
-def build_generic_query_hints(question: str) -> str:
+def build_generic_query_hints(question: str, calendar_basis: str = "unresolved") -> str:
     """
     Return safe, cross-client guidance for common analytics phrasing.
 
@@ -560,7 +560,19 @@ def build_generic_query_hints(question: str) -> str:
             "user didn't specify. Cast integer columns to FLOAT for Azure SQL."
         )
 
-    if intent["wants_named_period"]:
+    # A period stated with its year is read into bounds, and told as bounds:
+    # for "March 2025" a bare MONTH() = 3 ignores the year, and anchoring on
+    # MAX(date_col) moves it to the data's newest.
+    from core.contextual_dates import stated_period
+
+    stated = stated_period(question, calendar_basis)
+    if stated:
+        hints.append(
+            f"- NAMED PERIOD: the question names {stated['label']}. Keep rows whose date is on or "
+            f"after '{stated['start']}' and before '{stated['end']}'. A stated period is not relative: "
+            "no anchor, no MAX() over the data, no GETDATE()/SYSDATE."
+        )
+    elif intent["wants_named_period"]:
         hints.append(
             "- NAMED PERIOD FILTER DETECTED: The user referred to a specific quarter (Q1-Q4), "
             "half (H1/H2), month name, or 'last N months/weeks'. Apply the NAMED PERIOD FILTERS "

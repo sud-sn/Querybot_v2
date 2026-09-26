@@ -161,10 +161,57 @@ class Warehouse:
             for table in tree.find_all(exp.Table):
                 table.set("db", None)
                 table.set("catalog", None)
+            # Three T-SQL meanings sqlglot does not carry over: `+` beside text
+            # joins the text; TRY_CONVERT(date, text, 112) is NULL for a string
+            # that is not a date -- a yyyymm key's whole-year row decodes to
+            # month 00 -- where DuckDB's STRPTIME raises; and the date 0 in
+            # DATEADD(month, DATEDIFF(month, 0, d), 0) is 1900-01-01.
+            tree = tree.transform(_tsql_concatenation).transform(_tsql_try_date).transform(_tsql_day_zero)
             statements.append(tree.sql(dialect="duckdb"))
         cursor = self.con.execute(";\n".join(statements))
         names = [d[0] for d in cursor.description]
         return [dict(zip(names, row)) for row in cursor.fetchmany(max_rows)]
+
+
+def _is_text(node) -> bool:
+    from sqlglot import exp
+
+    if isinstance(node, exp.Literal):
+        return node.is_string
+    if isinstance(node, exp.Convert):
+        return node.this.is_type(*exp.DataType.TEXT_TYPES)
+    if isinstance(node, exp.Cast):
+        return node.to.is_type(*exp.DataType.TEXT_TYPES)
+    return False
+
+
+def _tsql_concatenation(node):
+    from sqlglot import exp
+
+    if isinstance(node, exp.Add) and (_is_text(node.this) or _is_text(node.expression)):
+        return exp.DPipe(this=node.this, expression=node.expression)
+    return node
+
+
+def _tsql_try_date(node):
+    from sqlglot import exp
+
+    if (
+        isinstance(node, exp.Convert) and node.args.get("safe") and node.this.is_type("date")
+        and str(node.args.get("style") or "") == "112"
+    ):
+        parsed = exp.Anonymous(this="TRY_STRPTIME", expressions=[node.expression, exp.Literal.string("%Y%m%d")])
+        return exp.TryCast(this=parsed, to=exp.DataType.build("date"))
+    return node
+
+
+def _tsql_day_zero(node):
+    from sqlglot import exp
+
+    if isinstance(node, exp.DateAdd) and isinstance(node.this, exp.Literal) and not node.this.is_string \
+            and str(node.this.this) == "0":
+        node.set("this", exp.cast(exp.Literal.string("1900-01-01"), "date"))
+    return node
 
 
 # ── The tenant ───────────────────────────────────────────────────────────────

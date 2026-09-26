@@ -135,9 +135,9 @@ class TestTheQuestionOnTheCard:
 
 # ── Over the chat socket ─────────────────────────────────────────────────────
 
-def _ask(question: str) -> tuple[list[dict], list[str]]:
+def _ask(question: str) -> tuple[list[dict], list[str], list[str]]:
     """Ask over the real chat socket; the model and the warehouse are stubbed.
-    Returns the frames and the prompts the model was sent."""
+    Returns the frames, the prompts the model was sent and the SQL run."""
     import anyio
     import core.llm as llm
     import core.query_pipeline as qp
@@ -166,6 +166,7 @@ def _ask(question: str) -> tuple[list[dict], list[str]]:
     write_contract(account, kb)
 
     prompts: list[str] = []
+    executed: list[str] = []
 
     async def model(system, user, *args, **kwargs):
         prompts.append(f"{system}\n{user}")
@@ -226,41 +227,42 @@ def _ask(question: str) -> tuple[list[dict], list[str]]:
             patch.object(llm, "resolve_provider", return_value=provider),
             patch.object(wh, "resolve_provider", return_value=provider),
             patch.object(qp, "retrieve_similar_examples", return_value=[]),
-            patch.object(qp, "execute_governed_query", lambda credentials, db_type, sql, *a, **k: Result(sql)),
+            patch.object(qp, "execute_governed_query",
+                         lambda credentials, db_type, sql, *a, **k: executed.append(sql) or Result(sql)),
         ):
             stack.enter_context(mock)
         with client.websocket_connect(f"/ws/chat/{account}?thread_id=t1") as ws:
             drain(ws, 5, 2.0)
             ws.send_json({"type": "message", "text": question})
             frames = drain(ws, 40, 6.0)
-    return frames, prompts
+    return frames, prompts, executed
 
 
 def _said(frames):
     return json.dumps(frames, ensure_ascii=False)
 
 
-def _join_paths(prompts):
-    """The "Required join path" sections of the prompts the model was sent."""
-    return ["\n".join(section.split("\n\n", 1)[0] for section in prompt.split("Required join path:")[1:])
-            for prompt in prompts]
-
-
 class TestOverTheChatSocket:
 
     def test_the_reader_is_offered_the_measures_own_dates_and_told_why(self):
-        frames, prompts = _ask("net sales by shipment date for 2025")
+        frames, prompts, _executed = _ask("net sales by shipment date for 2025")
         said = _said(frames)
         assert "**Shipment Date** is not a date of **Net sales**" in said
         assert "Order Date" in said and "Invoice Date" in said
         assert prompts == []  # asked, not answered
 
     def test_a_measure_with_no_dates_is_told_so(self):
-        frames, _prompts = _ask("budget amount by shipment date for 2025")
+        frames, _prompts, _executed = _ask("budget amount by shipment date for 2025")
         assert "and it has no other date to use" in _said(frames)
 
     def test_the_other_facts_date_does_not_bring_its_table_into_the_query(self):
-        _frames, prompts = _ask("net sales by order date and shipment date for 2025")
-        paths = _join_paths(prompts)
-        assert paths and all("SLS_FCT.ORD_DT_DMS_KEY" in path for path in paths)
-        assert not [path for path in paths if "SHP_FCT" in path]
+        # "for 2025" is a stated period, compiled on the measure's own date: no
+        # prompt to carry a join path, and the query that runs reads the order
+        # date and never the shipments fact.
+        _frames, prompts, executed = _ask("net sales by order date and shipment date for 2025")
+        assert prompts == [] and executed
+        answer = [sql for sql in executed if "NET_AMT" in sql]
+        assert answer and all("ORD_DT_DMS_KEY" in sql for sql in answer)
+        # A date key is read by the date plan, never grouped by as a member.
+        assert not [sql for sql in answer if "GROUP BY" in sql]
+        assert not [sql for sql in executed if "SHP_FCT" in sql or "SHP_DT_DMS_KEY" in sql]

@@ -1538,7 +1538,19 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                     str(policy.get("date_key_type") or ""),
                     db_type,
                 )
-            if policy.get("kind") == "latest_n_observed":
+            if policy.get("kind") == "named_period":
+                lines.append(
+                    f"- {policy.get('business_role') or 'Business date'}: the question names the "
+                    f"period {policy.get('label')}. Keep rows with {date_ref} >= '{policy.get('start')}' "
+                    f"and {date_ref} < '{policy.get('end')}'. A named period is stated, not relative: "
+                    "no anchor, no MAX() over the data, no clock."
+                )
+                if policy.get("reads_a_level"):
+                    lines.append(
+                        "  SNAPSHOT RULE: a level is read at the last snapshot inside this period "
+                        "(the MAX date within it); do not sum it across the period's dates."
+                    )
+            elif policy.get("kind") == "latest_n_observed":
                 lines.append(
                     f"- {policy.get('business_role') or 'Business date'}: select exactly the latest "
                     f"{int(policy.get('amount') or 1)} DISTINCT observed {policy.get('unit') or 'period'} "
@@ -1570,7 +1582,10 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                     "  SNAPSHOT RULE: filter the decoded business date equal to the "
                     "required MAX anchor; do not sum inventory/balance values across periods."
                 )
-            _anchor = "" if policy.get("kind") == "latest_n_observed" else format_required_anchor(policy, db_type)
+            _anchor = (
+                "" if policy.get("kind") in {"latest_n_observed", "named_period"}
+                else format_required_anchor(policy, db_type)
+            )
             if _anchor:
                 lines.append(
                     f"  REQUIRED ANCHOR (copy this exact subquery as the anchor; do not "

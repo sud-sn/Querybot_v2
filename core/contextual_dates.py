@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Any
 
 from core.i18n import t as _t
@@ -1833,7 +1834,11 @@ def question_names_a_calendar_period(question: str) -> bool:
     q = normalize_date_role_text(question)
     if not q:
         return False
-    return any(re.search(pattern, q) for pattern in _CALENDAR_PERIOD_PATTERNS)
+    # A period the period reader reads is named, whatever its shape: "H1 2025",
+    # "throughout 2025", "premier semestre 2025".
+    return any(re.search(pattern, q) for pattern in _CALENDAR_PERIOD_PATTERNS) or bool(
+        read_named_period(question)
+    )
 
 
 # French ones too, as canonicalisation leaves them: "ventes en 2025", "depuis
@@ -2151,6 +2156,14 @@ def detect_temporal_window(question: str) -> dict:
         (r"\b(?:this|current)\s+month\b", "this_month", 0, "month"),
         (r"\b(?:this|current)\s+quarter\b", "this_quarter", 0, "quarter"),
         (r"\b(?:this|current)\s+year\b", "this_year", 0, "year"),
+        # The newest month in the data is the data's current month: "units
+        # purchased in the most recent month" had no window at all.
+        (r"\b(?:most\s+recent|latest|newest)\s+week\b", "this_week", 0, "week"),
+        (r"\b(?:most\s+recent|latest|newest)\s+month\b", "this_month", 0, "month"),
+        # "le mois le plus recent", as the normaliser leaves it.
+        (r"\bmonth\s+the\s+plus\s+recent\b", "this_month", 0, "month"),
+        (r"\b(?:most\s+recent|latest|newest)\s+quarter\b", "this_quarter", 0, "quarter"),
+        (r"\b(?:most\s+recent|latest|newest)\s+year\b", "this_year", 0, "year"),
         # "past" joins previous/prior/last: "past month" is as common as
         # "last month" and was going to free-form generation.
         (r"\b(?:previous|prior|last|past)\s+week\b", "previous_week", 1, "week"),
@@ -2182,12 +2195,157 @@ def detect_temporal_window(question: str) -> dict:
     return {}
 
 
+# A named period -- a year, a quarter, a half, a month, a run of months --
+# stated outright. Unlike the windows above it needs no anchor: "units sold in
+# 2022" is 2022 whatever the data's newest date. French is read as typed --
+# "en 2022", "premier semestre 2025", "fevrier 2025" -- and as the normaliser
+# leaves it: "T1" as "Q1", "mars" as "March", "de janvier a mars".
+_PERIOD_MONTHS = {
+    name: number
+    for number, names in enumerate((
+        ("january", "jan", "janvier"), ("february", "feb", "fevrier"), ("march", "mar", "mars"),
+        ("april", "apr", "avril"), ("may", "mai"), ("june", "jun", "juin"), ("july", "jul", "juillet"),
+        ("august", "aug", "aout"), ("september", "sept", "sep", "septembre"), ("october", "oct", "octobre"),
+        ("november", "nov", "novembre"), ("december", "dec", "decembre"),
+    ), start=1)
+    for name in names
+}
+_PERIOD_MONTH = "|".join(sorted(_PERIOD_MONTHS, key=len, reverse=True))
+_PERIOD_ORDINALS = {
+    "first": 1, "1st": 1, "premier": 1, "premiere": 1,
+    "second": 2, "2nd": 2, "deuxieme": 2, "seconde": 2,
+    "third": 3, "3rd": 3, "troisieme": 3,
+    "fourth": 4, "4th": 4, "quatrieme": 4,
+}
+_PERIOD_ORDINAL = "|".join(_PERIOD_ORDINALS)
+_PERIOD_YEAR = r"((?:19|20)\d{2})"
+_OF = r"(?:of\s+|de\s+|du\s+)?"
+# A fiscal period is the calendar-basis planner's to read (a fiscal year need
+# not start in January); this reader only ever states calendar periods.
+_FISCAL_WORDS = re.compile(r"\b(?:fiscal|financial\s+year|fy\s*\d*|exercice)\b", re.I)
+_COMPARED = re.compile(r"\b(?:vs\.?|versus|compared?|comparison|against|par\s+rapport)\b", re.I)
+_NAMED_PERIOD_PATTERNS = (
+    ("month_range", re.compile(
+        rf"\b({_PERIOD_MONTH})\s+(?:to|through|thru|until|till|and|a|au|et|-)\s+({_PERIOD_MONTH})\s+{_OF}{_PERIOD_YEAR}\b")),
+    ("quarter", re.compile(rf"\bq([1-4])\s*{_OF}{_PERIOD_YEAR}\b")),
+    ("quarter", re.compile(rf"\b({_PERIOD_ORDINAL})\s+(?:quarter|trimestre)\s+{_OF}(?:the\s+)?(?:year\s+)?{_PERIOD_YEAR}\b")),
+    ("half", re.compile(rf"\b[hs]([12])\s*{_OF}{_PERIOD_YEAR}\b")),
+    ("half", re.compile(rf"\b({_PERIOD_ORDINAL})\s+(?:half|semester|semestre)\s+{_OF}(?:the\s+)?(?:year\s+)?{_PERIOD_YEAR}\b")),
+    ("month", re.compile(rf"\b({_PERIOD_MONTH})\s+{_OF}{_PERIOD_YEAR}\b")),
+    ("iso_month", re.compile(rf"\b{_PERIOD_YEAR}-(0[1-9]|1[0-2])\b(?!-\d)")),
+    ("year_range", re.compile(rf"\b(?:between|from)\s+{_PERIOD_YEAR}\s+(?:and|to|through|-)\s+{_PERIOD_YEAR}\b")),
+    # A bare year needs a word that makes it a period: "orders over 2000" is
+    # an amount (see question_names_a_calendar_period).
+    ("year", re.compile(
+        rf"\b(?:in|for|during|throughout|en|pendant|durant|dans|end\s+of|fin(?:\s+(?:of|de|du))?|year(?:\s+of)?|annee)\s+"
+        rf"(?:the\s+)?(?:year\s+|annee\s+)?{_PERIOD_YEAR}\b(?!\s*(?:-|to|a|and)\s*\d)")),
+)
+
+
+def _period_bounds(kind: str, match: re.Match) -> tuple[int, int, int, int, str, str] | None:
+    """(start year, start month, end year, end month exclusive, grain, label)."""
+    groups = match.groups()
+    if kind == "year":
+        year = int(groups[0])
+        return year, 1, year + 1, 1, "year", str(year)
+    if kind == "year_range":
+        first, last = int(groups[0]), int(groups[1])
+        if last < first:
+            return None
+        return first, 1, last + 1, 1, "year", f"{first}-{last}"
+    if kind in {"month", "iso_month"}:
+        if kind == "month":
+            month, year = _PERIOD_MONTHS[groups[0]], int(groups[1])
+        else:
+            year, month = int(groups[0]), int(groups[1])
+        end_year, end_month = (year + 1, 1) if month == 12 else (year, month + 1)
+        return year, month, end_year, end_month, "month", f"{year}-{month:02d}"
+    if kind == "month_range":
+        first, last, year = _PERIOD_MONTHS[groups[0]], _PERIOD_MONTHS[groups[1]], int(groups[2])
+        if last < first:
+            return None
+        end_year, end_month = (year + 1, 1) if last == 12 else (year, last + 1)
+        return year, first, end_year, end_month, "month", f"{year}-{first:02d} to {year}-{last:02d}"
+    number = int(groups[0]) if groups[0].isdigit() else _PERIOD_ORDINALS.get(groups[0], 0)
+    year = int(groups[1])
+    size, grain, prefix = (3, "quarter", "Q") if kind == "quarter" else (6, "half", "H")
+    if not 1 <= number <= 12 // size:
+        return None
+    first = (number - 1) * size + 1
+    end_year, end_month = (year + 1, 1) if first + size > 12 else (year, first + size)
+    return year, first, end_year, end_month, grain, f"{prefix}{number} {year}"
+
+
+def read_named_period(question: str) -> dict:
+    """The calendar period a question names outright, or {}.
+
+    detect_temporal_window reads relative windows only, so "units sold in
+    2022", "Q1 2022", "March 2025" and "the first half of 2022" carried no
+    window at all: the governed date was bound, and the period itself was left
+    for the model to write, or dropped. This reads it into bounds -- a start
+    and an exclusive end -- that need no anchor and no clock. The first
+    period the question names is the one read; a fiscal period is left to the
+    calendar-basis planner.
+    """
+    text = " ".join(
+        unicodedata.normalize("NFKD", str(question or "").replace("\u2019", "'"))
+        .encode("ascii", "ignore").decode().lower().split()
+    )
+    if not text or _FISCAL_WORDS.search(text) or _COMPARED.search(text):
+        return {}
+    found = [
+        (match.span(), _period_bounds(kind, match))
+        for kind, pattern in _NAMED_PERIOD_PATTERNS
+        for match in pattern.finditer(text)
+    ]
+    periods: dict[tuple, dict] = {}
+    for span, bounds in found:
+        # "March 2025" inside "January to March 2025" is part of that period,
+        # and "January 2025" inside "March to January 2025" is not a period.
+        if any(other != span and other[0] <= span[0] and span[1] <= other[1] for other, _ in found):
+            continue
+        if bounds is None:
+            return {}
+        start_year, start_month, end_year, end_month, grain, label = bounds
+        periods.setdefault((start_year, start_month, end_year, end_month), {
+            "kind": "named_period",
+            "anchor_policy": "stated",
+            "start": f"{start_year:04d}-{start_month:02d}-01",
+            "end": f"{end_year:04d}-{end_month:02d}-01",
+            "period_grain": grain,
+            "label": label,
+        })
+    # Two periods are a comparison or a list, the planner's to shape: read as
+    # the first alone, "2022 vs 2021" would be 2022.
+    return next(iter(periods.values())) if len(periods) == 1 else {}
+
+
+def stated_period(question: str, calendar_basis: str = "unresolved") -> dict:
+    """The period the question names, where its calendar is known.
+
+    A quarter is January to March only on a calendar basis: a fiscal year's
+    first quarter is other months, and a basis nobody has settled is the
+    reader's to settle -- the analytical planner asks. A half is the
+    calendar's unless the workspace keeps a fiscal year, as it was before
+    periods were read; a year, a month or a run of months is the same on any
+    basis ("FY" and "fiscal" are not read at all).
+    """
+    period = read_named_period(question)
+    grain = period.get("period_grain")
+    if grain == "quarter" and calendar_basis != "calendar":
+        return {}
+    if grain == "half" and calendar_basis == "fiscal":
+        return {}
+    return period
+
+
 def build_contextual_date_plan(
     binding: dict,
     question: str = "",
     *,
     temporal_window: dict | None = None,
     snapshot: bool | None = None,
+    calendar_basis: str = "unresolved",
 ) -> dict:
     """Compile a selected binding into validator-enforced semantic fields.
 
@@ -2300,7 +2458,16 @@ def build_contextual_date_plan(
     # Clarification resumes may carry a structured temporal constraint from
     # the pending request.  Prefer that governed state over reparsing the
     # display text; the latter may contain only the selected date-role label.
-    window = dict(temporal_window or {}) or detect_temporal_window(question)
+    reads_a_level = question_has_snapshot_intent(question) if snapshot is None else snapshot
+    window = (
+        dict(temporal_window or {}) or detect_temporal_window(question)
+        or stated_period(question, calendar_basis)
+    )
+    if window.get("kind") == "named_period" and reads_a_level:
+        # A level in a named period is read at the last snapshot inside it:
+        # "allocated quantity at the end of 2022" is December's, not the
+        # year's snapshots added up.
+        window["reads_a_level"] = True
     if (
         not window
         # An outright stated date is the user's filter and outranks any
@@ -2308,7 +2475,7 @@ def build_contextual_date_plan(
         # "for March 2, 2026" with MAX(snapshot date) and report the newest
         # snapshot as though it were the requested one.
         and not question_has_explicit_date_filter(question)
-        and (question_has_snapshot_intent(question) if snapshot is None else snapshot)
+        and reads_a_level
     ):
         window = {
             "kind": "latest_snapshot",
@@ -2531,6 +2698,7 @@ def build_contextual_date_plan_many(
     *,
     temporal_window: dict | None = None,
     snapshot: bool | None = None,
+    calendar_basis: str = "unresolved",
 ) -> dict:
     """Compile multiple explicit role-playing dates into one exact plan."""
     plans = [
@@ -2539,6 +2707,7 @@ def build_contextual_date_plan_many(
             question,
             temporal_window=temporal_window,
             snapshot=snapshot,
+            calendar_basis=calendar_basis,
         )
         for binding in bindings or []
     ]

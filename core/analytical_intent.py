@@ -25,12 +25,30 @@ _TIME_RE = re.compile(
     r"latest(?:\s+available)?(?:\s+(?:day|date|period))?)\b",
     re.I,
 )
+# A French quarter is a quarter too ("premier trimestre 2022", "T1 2022"): it
+# was never read here, so its calendar basis was never asked, while the
+# period reader (core.contextual_dates) could read it.
 _NAMED_QUARTER_RE = re.compile(
-    r"\b(?:q\s*([1-4])|quarter\s+([1-4])|"
-    r"(first|second|third|fourth)\s+quarter)"
-    r"(?:\s+(?:of\s+)?((?:19|20)\d{2}))?\b",
+    r"\b(?:q\s*(?P<q>[1-4])|quarter\s+(?P<n>[1-4])|"
+    r"(?P<word>first|second|third|fourth|premier|premi[eè]re|deuxi[eè]me|seconde|"
+    r"troisi[eè]me|quatri[eè]me)\s+(?:quarter|trimestre)"
+    r"|t(?P<t>[1-4])(?=\s+(?:19|20)\d{2}\b))"
+    r"(?:\s+(?:of\s+|de\s+|du\s+)?(?P<year>(?:19|20)\d{2}))?\b",
     re.I,
 )
+_QUARTER_WORDS = {
+    "first": "1", "premier": "1", "premiere": "1", "première": "1",
+    "second": "2", "seconde": "2", "deuxieme": "2", "deuxième": "2",
+    "third": "3", "troisieme": "3", "troisième": "3",
+    "fourth": "4", "quatrieme": "4", "quatrième": "4",
+}
+
+
+def _quarter_number(match: re.Match) -> str:
+    return (
+        match.group("q") or match.group("n") or match.group("t")
+        or _QUARTER_WORDS.get(str(match.group("word") or "").casefold(), "")
+    )
 _CALENDAR_BASIS_RE = re.compile(
     r"\b(?:calendar\s+(?:year|quarter|q[1-4])|"
     r"use\s+calendar\s+(?:quarters?|periods?)|calendar\s+basis)\b",
@@ -610,11 +628,8 @@ def _named_quarter(text: str) -> str:
     match = _NAMED_QUARTER_RE.search(text or "")
     if not match:
         return ""
-    word_numbers = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
-    number = match.group(1) or match.group(2) or word_numbers.get(
-        str(match.group(3) or "").casefold(), ""
-    )
-    year = str(match.group(4) or "")
+    number = _quarter_number(match)
+    year = str(match.group("year") or "")
     return f"Q{number}{' ' + year if year else ''}"
 
 
@@ -626,12 +641,9 @@ def _named_quarters(text: str) -> tuple[str, ...]:
     is resolved separately; this function only preserves the requested shape.
     """
     found: list[str] = []
-    word_numbers = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
     for match in _NAMED_QUARTER_RE.finditer(text or ""):
-        number = match.group(1) or match.group(2) or word_numbers.get(
-            str(match.group(3) or "").casefold(), ""
-        )
-        year = str(match.group(4) or "")
+        number = _quarter_number(match)
+        year = str(match.group("year") or "")
         label = f"Q{number}{' ' + year if year else ''}"
         if number and label not in found:
             found.append(label)

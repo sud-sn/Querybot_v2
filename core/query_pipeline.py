@@ -106,6 +106,7 @@ from core.contextual_dates import (
     same_date_fact,
     question_names_a_calendar_period,
     resolve_contextual_date_binding,
+    stated_period,
 )
 from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_rca import extract_sql_tables
@@ -515,6 +516,31 @@ def _table_matches_policy_scope(table: str, scope: set[str]) -> bool:
         or candidate.endswith("." + table)
         for candidate in scope
     )
+
+
+def _without_the_stated_period(resolved: dict, question: str) -> dict:
+    """The value matches, less any that is the question's own stated period.
+
+    "Units sold in March 2025" names a period, and "March 2025" is also a row
+    of a period table's descriptions. Matched there, it made that table a join
+    the answer had to make and a member to filter on, beside the date plan that
+    keeps the period already (core.contextual_dates.read_named_period), so the
+    compiled answer was refused for a join it did not need.
+    """
+    from core.contextual_dates import read_named_period
+
+    stated = read_named_period(question)
+    if not stated:
+        return resolved
+
+    def is_the_period(item: object) -> bool:
+        reading = read_named_period(str((item or {}).get("phrase") or "")) if isinstance(item, dict) else {}
+        return bool(reading) and (reading["start"], reading["end"]) == (stated["start"], stated["end"])
+
+    return {
+        bucket: [item for item in items if not is_the_period(item)] if isinstance(items, list) else items
+        for bucket, items in (resolved or {}).items()
+    }
 
 
 def _graph_entities_for_verified_values(resolved: dict, graph: dict) -> set[str]:
@@ -1034,6 +1060,15 @@ def _governed_date_anchor_repair_lines(
         date_expression = format_date_value_expression(
             date_table, date_column, key_type, db_type
         )
+        if str(policy.get("kind") or "") == "named_period":
+            # A stated period has bounds, not an anchor: handing the model a
+            # MAX() subquery to copy would move it to the data's newest date.
+            lines.append(
+                f"- JOIN/FIELD: {join_rule}; filter on {date_expression} "
+                f">= '{policy.get('start')}' and < '{policy.get('end')}' "
+                f"(the period {policy.get('label')})."
+            )
+            continue
         lines.append(
             f"- JOIN/FIELD: {join_rule}; filter and anchor on "
             f"{date_expression}.\n"
@@ -2848,9 +2883,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         if value_index_enabled(state):
             _known_terms = build_known_terms(account_id, all_columns)
-            _resolved_values = resolve_literals(
-                account_id, question, allowed_tables=query_scope_tables,
-                known_terms=_known_terms,
+            _resolved_values = _without_the_stated_period(
+                resolve_literals(
+                    account_id, question, allowed_tables=query_scope_tables,
+                    known_terms=_known_terms,
+                ),
+                _analysis_question,
             )
             # Read before the compliance filter below: these are the reader's
             # own words, they reach no prompt, and a member named on a column
@@ -2885,7 +2923,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
     except Exception as _vr_exc:
         log.debug("Value resolution skipped: %s", _vr_exc)
-    generic_hints = build_generic_query_hints(_analysis_question)
+    generic_hints = build_generic_query_hints(
+        _analysis_question, calendar_basis=_analytical_plan.calendar_basis,
+    )
     query_intent = analyze_query_intent(_analysis_question)
     top_n_intent = detect_top_n_intent(_analysis_question)
     # Candidate metrics are account-wide. We delay injecting/enforcing them
@@ -4763,18 +4803,26 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     matched_metrics=_matched_metrics,
                     measure_fields=list((_semantic_plan or {}).get("fields") or []),
                 )
+                # The window is read once, on the workspace's calendar: a
+                # stated quarter is its calendar months only on a calendar
+                # basis (core.contextual_dates.stated_period).
+                _plan_window = (
+                    _structured_temporal_window
+                    or detect_temporal_window(_semantic_plan_question)
+                    or stated_period(_semantic_plan_question, _analytical_plan.calendar_basis)
+                )
                 if _date_context_resolution.get("status") == "selected_many":
                     _date_plan = build_contextual_date_plan_many(
                         _date_context_resolution.get("bindings") or [],
                         _semantic_plan_question,
-                        temporal_window=_structured_temporal_window,
+                        temporal_window=_plan_window,
                         snapshot=_reads_a_level,
                     )
                 else:
                     _date_plan = build_contextual_date_plan(
                         _date_context_resolution.get("binding") or {},
                         _semantic_plan_question,
-                        temporal_window=_structured_temporal_window,
+                        temporal_window=_plan_window,
                         snapshot=_reads_a_level,
                     )
                 _expected_temporal_window = (
@@ -6537,10 +6585,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # which is very often a legitimate answer and must NOT be retried away
     # into a fabricated non-zero result. Scoped narrowly to date-filtered
     # questions only, mirroring the reused_plan_empty repair path above but
-    # for SQL that was never cached in the first place.
+    # for SQL that was never cached in the first place. A compiled query is
+    # not a guess either: its window is the data's own anchor or the period
+    # the question states, so its zero is the answer ("stock at the end of
+    # 2025" on a snapshot that starts in 2026), and a regeneration told to try
+    # another anchor could only answer a different question.
     elif (
-        not _reused_plan and ok and exec_error is None and rows is not None
-        and len(rows) == 0 and (_semantic_plan or {}).get("temporal_policies")
+        not _reused_plan and not _compiled_governed_sql and ok and exec_error is None
+        and rows is not None and len(rows) == 0 and (_semantic_plan or {}).get("temporal_policies")
     ):
         last_code = "zero_row_fresh"
         last_reason = (

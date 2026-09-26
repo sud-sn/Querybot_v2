@@ -76,6 +76,13 @@ SHAPES = {
     "filters_joins_mapped": dict(validation_code="ok", row_count=0,
                                  tables_used=["A", "B"],
                                  semantic_plan={"enabled": True}),
+    "stated_period": dict(validation_code="ok", row_count=0, tables_used=["A", "B"],
+                          semantic_plan={"enabled": True, "temporal_policies": [{
+                              "kind": "named_period", "start": "2025-01-01", "end": "2026-01-01",
+                              "business_role": "Balance date"}]}),
+    "stated_period_unnamed": dict(validation_code="ok", row_count=0, tables_used=["A"],
+                                  semantic_plan={"enabled": True, "temporal_policies": [{
+                                      "kind": "named_period", "start": "2025-01-01", "end": "2026-01-01"}]}),
     "success": dict(validation_code="ok", row_count=5),
 }
 

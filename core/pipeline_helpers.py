@@ -993,6 +993,15 @@ _WHICH = re.compile(
 )
 
 
+# Where the words of a breakdown end and its period begins: "by month over
+# the last 6 months", "by month en 2025" (French, as canonicalised).
+_BREAKDOWN_END = re.compile(
+    r"\s+(?:over|within|since|until|till|through|throughout|between"
+    r"|en|pendant|durant|depuis|sur|dans|(?:19|20)\d\d)\b",
+    re.I,
+)
+
+
 def _requested_breakdowns(question: str) -> int:
     """How many things the question asks its answer to be broken down by:
     "by warehouse", "par groupe d'articles" (canonical "by groupe articles"),
@@ -1008,7 +1017,7 @@ def _requested_breakdowns(question: str) -> int:
     count = 0
     for match in _DIMENSION_RE.finditer(question or ""):
         for part in re.split(r"\s+(?:and|et)\s+(?:by\s+)?", match.group(1).lower()):
-            words = part.split()
+            words = _BREAKDOWN_END.split(part, maxsplit=1)[0].split()
             if words and words[0] not in {"all", "every", "each"} and words[-1].rstrip("s") not in _PERIOD_WORDS:
                 count += 1
     return count + len(_WHICH.findall(question or ""))
@@ -1066,6 +1075,21 @@ def _snapshot_measures(metrics: list[dict]) -> bool | None:
     return True if all(classes) else None
 
 
+def _date_literal(iso: object, db_type: str) -> str:
+    """A calendar date as the dialect writes one. Only an ISO date the period
+    reader produced reaches here -- never the question's own text."""
+    value = str(iso or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return ""
+    if db_type == "azure_sql":
+        return f"CAST('{value}' AS date)"
+    if db_type == "snowflake":
+        return f"TO_DATE('{value}')"
+    if db_type == "oracle":
+        return f"DATE '{value}'"
+    return ""
+
+
 def _last_snapshot_cte(date_ref: str, from_sql: str, where_sql: str, bucket: str = "") -> tuple[str, str]:
     """The CTE naming the last snapshot of each period, and the predicate that
     keeps only it: of the whole window, or of each bucket when the answer is a
@@ -1112,7 +1136,7 @@ def _compile_governed_grouped_request_sql(
         return ""
     policy = policies[0] if policies else {}
     if policy and str(policy.get("kind") or "") not in {
-        "last_n", "latest_n_observed", "today", "yesterday", "latest_snapshot",
+        "last_n", "latest_n_observed", "today", "yesterday", "latest_snapshot", "named_period",
     }:
         return ""
 
@@ -1180,7 +1204,10 @@ def _compile_governed_grouped_request_sql(
     dimensions = []
     for field in required_fields:
         role = str(field.get("role") or "").lower()
-        if role in {"date_dimension", "contextual_date", "measure", "measure_candidate"}:
+        # A date key is the date plan's to read, never a member to group by:
+        # "net sales by order date and shipment date for 2025" came back one
+        # row per calendar key.
+        if role in {"date_dimension", "contextual_date", "date_key", "measure", "measure_candidate"}:
             continue
         table = str(field.get("table") or "")
         column = str(field.get("column") or "")
@@ -1376,6 +1403,15 @@ def _compile_governed_grouped_request_sql(
         # that is not a balance has no snapshot to be read at.
         if not snapshot:
             return ""
+    elif policy and str(policy.get("kind") or "") == "named_period":
+        # A stated period is kept on its literal bounds, with no anchor read. A
+        # level in it is read at the last snapshot inside the bounds, below; a
+        # flow is summed over them.
+        period_start = _date_literal(policy.get("start"), db_type)
+        period_end = _date_literal(policy.get("end"), db_type)
+        if not (period_start and period_end and date_ref):
+            return ""
+        where_parts.extend((f"{date_ref} >= {period_start}", f"{date_ref} < {period_end}"))
     elif policy:
         try:
             amount = int(policy.get("amount"))
@@ -1555,7 +1591,7 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
             return ""
     cross_anchor = (
         "\nCROSS JOIN anchor"
-        if policy and str(policy.get("kind") or "") not in {"latest_n_observed", "latest_snapshot"}
+        if policy and str(policy.get("kind") or "") not in {"latest_n_observed", "latest_snapshot", "named_period"}
         else ""
     )
     where_sql = "\nWHERE " + "\n  AND ".join(where_parts) if where_parts else ""
@@ -2063,8 +2099,32 @@ def compile_governed_temporal_metric_sql(
         or str(request_plan.get("output_shape") or "").lower() == "time_series"
         or re.search(r"\b(?:trend|over\s+time|by\s+(?:day|week|month|quarter|year))\b", question, re.I)
     )
-    select_sql = f"{formula} AS {metric_alias}"
-    group_sql = ""
+    # A total of a quantity is kept per unit of measure (core/units_of_measure),
+    # as the grouped compiler keeps it: eaches and feet do not add up, and the
+    # validator refuses a window total that adds them. The item's unit is a
+    # lookup, outer where the question's graph did not resolve the edge.
+    from core.units_of_measure import unit_for_total
+
+    unit_join = unit_select = unit_group = ""
+    measure_unit = unit_for_total(formula, fact_table, plan.get("unit_policies"), db_type)
+    if measure_unit:
+        unit_ref = f"fact_rows.{qcol(str(measure_unit['column']))}"
+        if measure_unit["join"]:
+            unit_table = str(measure_unit["table"])
+            join_type = _graph_join_type(context, fact_table, unit_table, unresolved="LEFT JOIN")
+            if join_type is None:
+                return ""
+            unit_join = (
+                f"\n    {join_type} {_quote_table_for_count(unit_table, db_type)} AS unit_item"
+                f"\n      ON fact_rows.{qcol(str(measure_unit['join']['fact_column']))}"
+                f" = unit_item.{qcol(str(measure_unit['join']['key']))}"
+            )
+            unit_ref = f"unit_item.{qcol(str(measure_unit['column']))}"
+        unit_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(measure_unit["column"])).upper()
+        unit_select = f"{unit_ref} AS {unit_alias},\n    "
+        unit_group = unit_ref
+    select_sql = f"{unit_select}{formula} AS {metric_alias}"
+    group_sql = f"\nGROUP BY {unit_group}" if unit_group else ""
     order_sql = ""
     if is_trend:
         grain = str(policy.get("requested_grain") or unit).lower()
@@ -2079,11 +2139,11 @@ def compile_governed_temporal_metric_sql(
         )
         if not bucket:
             return ""
-        select_sql = f"{bucket} AS PERIOD,\n    {formula} AS {metric_alias}"
-        group_sql = f"\nGROUP BY {bucket}"
+        select_sql = f"{bucket} AS PERIOD,\n    {unit_select}{formula} AS {metric_alias}"
+        group_sql = f"\nGROUP BY {bucket}" + (f", {unit_group}" if unit_group else "")
         order_sql = "\nORDER BY PERIOD"
 
-    main_from = from_sql
+    main_from = from_sql + unit_join
     main_where = where_sql
     ctes: list[str] = []
     if window_kind == "latest_n_observed":
@@ -2121,7 +2181,7 @@ def compile_governed_temporal_metric_sql(
         main_where = literal_window_predicate
     else:
         ctes.append(f"anchor AS (\n    SELECT MAX({date_ref}) AS max_business_date\n    FROM {from_sql}\n)")
-        main_from = f"{from_sql}\nCROSS JOIN anchor"
+        main_from = f"{from_sql}{unit_join}\nCROSS JOIN anchor"
     # Stock and balances: the last snapshot of the window, or of each period
     # of a series -- never their sum across the window's snapshots.
     snapshot = _snapshot_measures([metric])
