@@ -22,12 +22,6 @@
 .pu-name{color:var(--text);font-weight:var(--weight-semibold)}
 .pu-uid{font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
 .pu-platform{display:inline-block;padding:1px 6px;border-radius:4px;font-size:var(--font-2xs);font-weight:var(--weight-bold);background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em}
-.pu-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:var(--font-xs);font-weight:var(--weight-bold);cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
-.pu-btn:hover{background:var(--surface-3,var(--surface-2));color:var(--text)}
-.pu-btn-approve{border-color:color-mix(in srgb, var(--success) 40%, transparent);color:var(--success)}
-.pu-btn-approve:hover{background:color-mix(in srgb, var(--success) 10%, transparent)}
-.pu-btn-reject{border-color:color-mix(in srgb, var(--danger) 40%, transparent);color:var(--danger)}
-.pu-btn-reject:hover{background:color-mix(in srgb, var(--danger) 10%, transparent)}
 .pu-stats{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem}
 .pu-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
 .pu-stat-n{font-size:var(--font-2xl);font-weight:var(--weight-bold);color:var(--text)}
@@ -108,7 +102,7 @@
   {% for u in pending_users %}
   <tr class="pu-row" data-uid="{{ u.id }}">
     <td>
-      <button type="button" class="pu-btn" style="padding:2px 6px;font-size:var(--font-2xs)"
+      <button type="button" class="btn btn-secondary btn-xs btn-icon"
         onclick="togglePuDetail('{{ u.id|int }}')">+</button>
     </td>
     <td><span class="pu-name">{{ u.display_name or '—' }}</span></td>
@@ -149,7 +143,7 @@
               <label class="field-label">Note (optional)</label>
               <input type="text" name="reviewer_note" class="detail-note-input"
                 placeholder="e.g. Sales team member">
-              <button type="submit" class="pu-btn pu-btn-approve">Approve access</button>
+              <button type="submit" class="btn btn-soft-success btn-xs">Approve access</button>
             </form>
           </div>
 
@@ -161,7 +155,7 @@
               <label class="field-label">Reason (optional — sent to user)</label>
               <input type="text" name="reviewer_note" class="detail-note-input"
                 placeholder="e.g. Not an active employee">
-              <button type="submit" class="pu-btn pu-btn-reject">Reject request</button>
+              <button type="submit" class="btn btn-soft-danger btn-xs">Reject request</button>
             </form>
           </div>
 
@@ -177,18 +171,18 @@
           </div>
           <div style="display:flex;gap:0.5rem">
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/toggle-active">
-              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--text)">
+              <button type="submit" class="btn btn-secondary btn-xs">
                 {% if u.portal_is_active %}Temporarily Stop Access{% else %}Re-activate Access{% endif %}
               </button>
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/reject"
                   id="pu-block-{{ u.id }}">
-              <button type="submit" class="pu-btn pu-btn-reject"
+              <button type="submit" class="btn btn-soft-danger btn-xs"
                 data-confirm-title="Block this user?" data-confirm="They will be silently ignored if they message again. You can unblock them later from the Blocked filter." data-confirm-label="Block user">Block User</button>
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
                   id="pu-del-user-{{ u.id }}">
-              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
+              <button type="submit" class="btn btn-soft-danger btn-xs"
                 data-confirm-title="Delete this user?" data-confirm="Their portal access is removed along with the request. This cannot be undone." data-confirm-label="Delete user">Delete</button>
             </form>
           </div>
@@ -212,11 +206,11 @@
                 <option value="{{ g.id }}">{{ g.name }}</option>
                 {% endfor %}
               </select>
-              <button type="submit" class="pu-btn pu-btn-approve">Approve</button>
+              <button type="submit" class="btn btn-soft-success btn-xs">Approve</button>
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
                   id="pu-del-req-{{ u.id }}">
-              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
+              <button type="submit" class="btn btn-soft-danger btn-xs"
                 data-confirm-title="Delete this request?" data-confirm="The person can sign up again later. This only removes the pending request." data-confirm-label="Delete request">Delete Request</button>
             </form>
           </div>

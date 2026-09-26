@@ -37,14 +37,6 @@
 .sql-preview{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-muted);cursor:pointer}
 .sql-preview:hover{color:var(--text)}
 .candidate-actions{display:flex;gap:.35rem;flex-wrap:wrap}
-.lq-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:var(--font-xs);font-weight:var(--weight-bold);cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
-.lq-btn:hover{background:var(--surface-3);color:var(--text)}
-.lq-btn-approve{border-color:color-mix(in srgb, var(--success) 40%, transparent);color:var(--success)}
-.lq-btn-approve:hover{background:color-mix(in srgb, var(--success) 10%, transparent)}
-.lq-btn-reject{border-color:color-mix(in srgb, var(--danger) 40%, transparent);color:var(--danger)}
-.lq-btn-reject:hover{background:color-mix(in srgb, var(--danger) 10%, transparent)}
-.lq-btn-failure{border-color:color-mix(in srgb, var(--warning) 40%, transparent);color:var(--warning)}
-.lq-btn-failure:hover{background:color-mix(in srgb, var(--warning) 10%, transparent)}
 .expand-detail{display:none}
 .expand-detail.open{display:table-row}
 .detail-panel{background:var(--surface-2);padding:.85rem 1rem;border-radius:var(--radius-sm);border:1px solid var(--border)}
@@ -122,7 +114,7 @@
   </div>
   {% if stats.positive > governed_count %}
   <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/backfill-governed" style="margin:0;align-self:center">
-    <button type="submit" class="lq-btn" style="font-size:var(--font-xs)" title="Sync {{ stats.positive - governed_count }} approved candidate(s) that are not yet in the vector store">
+    <button type="submit" class="btn btn-secondary btn-xs" title="Sync {{ stats.positive - governed_count }} approved candidate(s) that are not yet in the vector store">
       Sync {{ stats.positive - governed_count }} missing →
     </button>
   </form>
@@ -171,7 +163,7 @@
   {% set cid = c.candidate_id %}
   <tr class="lq-row" data-cid="{{ cid }}">
     <td>
-      <button type="button" class="lq-btn" style="padding:2px 6px;font-size:var(--font-2xs)"
+      <button type="button" class="btn btn-secondary btn-xs btn-icon"
         data-candidate="{{ cid }}" onclick="toggleDetail(this.dataset.candidate)">+</button>
     </td>
     <td>
@@ -222,15 +214,15 @@
       <div class="candidate-actions">
         <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/review" style="display:inline">
           <input type="hidden" name="action" value="approve">
-          <button type="submit" class="lq-btn lq-btn-approve">Approve</button>
+          <button type="submit" class="btn btn-soft-success btn-xs">Approve</button>
         </form>
         <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/review" style="display:inline">
           <input type="hidden" name="action" value="reject">
-          <button type="submit" class="lq-btn lq-btn-reject">Reject</button>
+          <button type="submit" class="btn btn-soft-danger btn-xs">Reject</button>
         </form>
         <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/review" style="display:inline">
           <input type="hidden" name="action" value="known_failure">
-          <button type="submit" class="lq-btn lq-btn-failure">Known failure</button>
+          <button type="submit" class="btn btn-soft-warning btn-xs">Known failure</button>
         </form>
       </div>
       {% elif c.status == 'approved' %}
@@ -280,7 +272,7 @@
               <input class="reviewer-note-input" style="flex:1" type="text"
                 name="reviewer_note" placeholder="Reviewer note (optional)"
                 value="{{ c.reviewer_note or '' }}">
-              <button type="submit" class="lq-btn" style="white-space:nowrap">Save corrected SQL</button>
+              <button type="submit" class="btn btn-secondary btn-xs">Save corrected SQL</button>
             </div>
           </form>
         </div>

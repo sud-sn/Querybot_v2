@@ -84,11 +84,6 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 .dr-edit-form .dr-role-phrases{margin-top:.4rem}
 .dr-edit-form .dr-field-help{display:block;margin-top:3px;font-size:var(--font-2xs);line-height:1.35;
   color:var(--text-muted);font-weight:var(--weight-medium)}
-.btn-approve{background:var(--green);color:var(--on-primary);border:none;border-radius:5px;
-  padding:4px 12px;font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;white-space:nowrap}
-.btn-approve:hover{background:var(--green-dark,var(--green));filter:brightness(.9)}
-.btn-approve.approved{background:var(--surface-2);color:var(--green);
-  border:1px solid var(--green);cursor:default}
 .guidance-box{border:1px solid color-mix(in srgb,var(--primary) 20%,var(--border));
   background:color-mix(in srgb,var(--primary-soft) 35%,var(--surface));
   border-radius:var(--radius-sm);padding:.65rem .9rem;font-size:var(--font-sm);
@@ -103,7 +98,6 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 .dr-field input:focus,.dr-field select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
 .dr-span-2{grid-column:span 2}.dr-check{display:flex;align-items:center;gap:.5rem;font-size:var(--font-sm);color:var(--text-soft)}
 .dr-check input{width:16px;height:16px;accent-color:var(--primary)}
-.dr-primary{border:0;border-radius:6px;background:var(--primary);color:var(--on-primary);font-weight:var(--weight-bold);font-size:var(--font-sm);padding:.55rem .85rem;cursor:pointer}
 .dr-binding{padding:.65rem .75rem;border:1px solid var(--border);border-radius:7px;margin-bottom:.55rem;background:var(--surface)}
 .dr-binding:last-child{margin-bottom:0}.dr-binding-top{display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem}
 .dr-binding strong{font-size:var(--font-sm)}.dr-binding-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:.25rem;line-height:1.45}
@@ -252,7 +246,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
             </select>
           </div>
           <label class="dr-check dr-span-2"><input type="checkbox" name="is_default" value="1">Use when the user asks for this metric with a date but gives no context</label>
-          <div class="dr-span-2"><button class="dr-primary" type="submit">Save date context</button></div>
+          <div class="dr-span-2"><button class="btn btn-primary" type="submit">Save date context</button></div>
         </form>
         {% else %}
         <p style="font-size:var(--font-sm);color:var(--text-muted);margin:0">Create a metric and approve at least one discovered date role to add a context binding.</p>
@@ -296,7 +290,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           <div class="dr-field"><label>Role key</label><input name="business_role" required placeholder="e.g. inventory_sales_date"></div>
           <div class="dr-field"><label>Display name</label><input name="name" placeholder="e.g. Inventory Sales Date"></div>
           <div class="dr-field dr-span-2"><label>Role phrases</label><input name="synonyms" placeholder="inventory sales date, stock movement date"></div>
-          <div class="dr-span-2"><button class="dr-primary" type="submit">Add and approve role</button></div>
+          <div class="dr-span-2"><button class="btn btn-primary" type="submit">Add and approve role</button></div>
         </form>
       </div>
     </section>
@@ -346,7 +340,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           </td>
           <td>
             {% if dr.status == "approved" %}
-            <span class="btn-approve approved">{{ ic("check", 12, "qb-icon-lead") }}Approved</span>
+            <span class="badge badge-green">{{ ic("check", 12, "qb-icon-lead") }}Approved</span>
             {% if dr.is_default %}
             <span class="status-pill status-approved" title="Used for generic date questions on this fact table that don't name a specific date">Default</span>
             <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/set-default" style="display:inline">
@@ -401,7 +395,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                          placeholder="invoice date, invoice month, inv dt">
                   <span class="dr-field-help">Comma-separated phrases users may use for this date role.</span>
                 </div>
-                <button type="submit" class="btn-approve" style="margin-top:.35rem">Save edits</button>
+                <button type="submit" class="btn btn-success btn-sm" style="margin-top:.35rem">Save edits</button>
               </form>
             </details>
             {% else %}
@@ -441,7 +435,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                          placeholder="invoice date, invoice month, inv dt">
                   <span class="dr-field-help">Comma-separated phrases users may use for this date role.</span>
                 </div>
-                <button type="submit" class="btn-approve" style="margin-top:.35rem">Approve</button>
+                <button type="submit" class="btn btn-success btn-sm" style="margin-top:.35rem">Approve</button>
               </form>
             </details>
             {% endif %}

@@ -104,13 +104,6 @@ body:has(.portal-app-shell) {
 }
 .portal-user-card .topbar-user-role { color: var(--sidebar-muted); }
 .portal-side-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.portal-side-actions .btn {
-  justify-content: center;
-  box-shadow: none;
-  background: var(--sidebar-surface);
-  border-color: var(--sidebar-border);
-  color: var(--sidebar-text);
-}
 .portal-app-main {
   min-width: 0;
   height: 100vh;

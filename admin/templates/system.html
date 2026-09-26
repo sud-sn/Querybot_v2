@@ -50,12 +50,6 @@
 .az-step-title{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text);margin-bottom:.5rem}
 .az-fetch-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 .az-fetch-row input{flex:1;min-width:180px}
-.btn-fetch{display:inline-flex;align-items:center;gap:.4rem;padding:8px 14px;background:var(--blue);color:var(--on-primary);border:none;border-radius:var(--radius-sm);font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;white-space:nowrap}
-.btn-fetch:hover{filter:brightness(1.1)}
-.btn-fetch:disabled{opacity:.55;cursor:not-allowed}
-.btn-fetch .spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
-.btn-fetch.loading .spinner{display:inline-block}
-.btn-fetch.loading .btn-fetch-label{display:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 #az-fetch-status{font-size:var(--font-sm);margin-top:.5rem}
@@ -69,9 +63,6 @@
 .az-deploy-name{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text)}
 .az-deploy-meta{font-size:var(--font-xs);color:var(--text-muted)}
 .az-deploy-actions{display:flex;gap:.4rem;flex-shrink:0}
-.btn-use{font-size:var(--font-xs);padding:4px 10px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:var(--weight-semibold);white-space:nowrap}
-.btn-use:hover{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
-.btn-use.selected{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
 .az-badge{display:inline-flex;align-items:center;gap:3px;font-size:var(--font-2xs);padding:2px 7px;border-radius:8px;font-weight:var(--weight-semibold)}
 .az-badge.succeeded{background:var(--success-soft);color:var(--success)}
 .az-badge.failed{background:var(--danger-soft);color:var(--danger)}
@@ -121,18 +112,11 @@
 .svc-name{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text);min-width:80px}
 .svc-meta{font-size:var(--font-xs);color:var(--text-muted);flex:1}
 .svc-actions{display:flex;align-items:center;gap:.5rem;flex-shrink:0}
-.btn-svc{font-size:var(--font-xs);padding:5px 12px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:var(--weight-semibold);white-space:nowrap}
-.btn-svc:hover{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
-.btn-svc:disabled{opacity:.5;cursor:not-allowed}
 .svc-result{font-size:var(--font-xs);font-weight:var(--weight-semibold)}
 .svc-result.ok{color:var(--success)}
 .svc-result.err{color:var(--danger)}
 
 /* ── Database backend section ── */
-.db-backend-switch{display:inline-flex;gap:.35rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);box-shadow:var(--shadow)}
-.db-backend-switch button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:var(--weight-bold);font-size:var(--font-sm);border-radius:var(--radius-sm);padding:8px 14px;cursor:pointer}
-.db-backend-switch button:hover{background:var(--surface);color:var(--text)}
-.db-backend-switch button.active{background:var(--blue);border-color:var(--blue);color:var(--on-primary);box-shadow:var(--shadow)}
 .db-panel{display:none;margin-top:1.25rem}
 .db-panel.active{display:block}
 .db-active-status{display:inline-flex;align-items:center;gap:.5rem;font-size:var(--font-sm);padding:.4rem .75rem;border-radius:6px;background:var(--surface-2);border:1px solid var(--border);margin-bottom:1rem}
@@ -140,9 +124,7 @@
 .db-active-status .dot.sqlite{background:var(--text-muted)}
 .db-active-status .dot.postgres{background:var(--success)}
 .db-restart-notice{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);font-size:var(--font-sm);color:var(--warning);margin-top:1rem}
-.btn-restart{margin-left:auto;flex-shrink:0;padding:6px 14px;background:#92400e;color:#fff;border:none;border-radius:var(--radius-sm);font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;white-space:nowrap}
-.btn-restart:hover{filter:brightness(1.15)}
-.btn-restart:disabled{opacity:.55;cursor:not-allowed}
+.db-restart-notice .btn{margin-left:auto;flex-shrink:0}
 .restart-strip{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;font-size:var(--font-sm);margin-top:.5rem}
 .restart-strip.inprogress{background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning)}
 .restart-strip.success{background:#dcfce7;border:1px solid #86efac;color:#166534}
@@ -433,9 +415,8 @@
               Save your credentials first, then click the button to pull the list of model deployments
               directly from your Azure resource. No guessing — pick from what's actually deployed.
             </p>
-            <button type="button" class="btn-fetch" id="az-fetch-btn" onclick="fetchAzureDeployments()" {% if not azure_configured %}disabled{% endif %}>
-              <span class="spinner"></span>
-              <span class="btn-fetch-label">⟳ Fetch deployments from Azure</span>
+            <button type="button" class="btn btn-primary" id="az-fetch-btn" onclick="fetchAzureDeployments()" {% if not azure_configured %}disabled{% endif %}>
+              {{ ic("refresh", 14) }} Fetch deployments from Azure
             </button>
             <div id="az-fetch-status"></div>
             <div id="az-deploy-list"></div>
@@ -522,9 +503,9 @@
       </div>
 
       <!-- Backend toggle -->
-      <div class="db-backend-switch" role="tablist">
-        <button type="button" data-db-btn="sqlite">SQLite</button>
-        <button type="button" data-db-btn="postgres">PostgreSQL</button>
+      <div class="qb-segmented" role="group" aria-label="Database backend">
+        <button type="button" data-db-btn="sqlite" aria-pressed="false">SQLite</button>
+        <button type="button" data-db-btn="postgres" aria-pressed="false">PostgreSQL</button>
       </div>
 
       <!-- Hidden field submitted with the form -->
@@ -583,7 +564,7 @@
           The saved backend differs from what's currently running.
           <strong>Restart the application</strong> to activate the change.
         </span>
-        <button type="button" class="btn-restart" id="restart-btn" onclick="triggerRestart()">
+        <button type="button" class="btn btn-warning btn-sm" id="restart-btn" onclick="triggerRestart()">
           ⟳ Restart now
         </button>
       </div>
@@ -612,7 +593,7 @@
       <span class="svc-name">Qdrant</span>
       <span class="svc-meta" id="qdrant-meta">Checking…</span>
       <div class="svc-actions">
-        <button type="button" class="btn-svc" id="qdrant-restart-btn"
+        <button type="button" class="btn btn-secondary btn-xs" id="qdrant-restart-btn"
                 onclick="restartQdrant()" disabled>
           ⟳ Restart
         </button>
@@ -767,8 +748,8 @@
     const btn    = document.getElementById('az-fetch-btn');
     const status = document.getElementById('az-fetch-status');
     const list   = document.getElementById('az-deploy-list');
-    btn.disabled = true;
-    btn.classList.add('loading');
+    if (btn.getAttribute('aria-busy') === 'true') return;   // a key press while it is working
+    btn.setAttribute('aria-busy', 'true');
     status.className = '';
     status.textContent = '';
     list.innerHTML = '';
@@ -776,8 +757,7 @@
     fetch('/admin/system/azure-deployments')
       .then(function(r){ return r.json(); })
       .then(function(data){
-        btn.disabled = false;
-        btn.classList.remove('loading');
+        btn.removeAttribute('aria-busy');
         if(!data.ok){
           status.className = 'err';
           status.textContent = '✗ ' + data.error;
@@ -795,8 +775,7 @@
         renderDeployments(deploys);
       })
       .catch(function(err){
-        btn.disabled = false;
-        btn.classList.remove('loading');
+        btn.removeAttribute('aria-busy');
         status.className = 'err';
         status.textContent = '✗ Request failed — is the server running? (' + err + ')';
       });
@@ -819,13 +798,13 @@
           '<div class="az-deploy-meta">Model: <strong>' + escHtml(d.model) + '</strong> &nbsp; ' + statusBadge + '</div>' +
         '</div>' +
         '<div class="az-deploy-actions">' +
-          '<button type="button" class="btn-use' + (isQuery?' selected':'') + '" ' +
+          '<button type="button" class="btn btn-secondary btn-xs" aria-pressed="' + (isQuery ? 'true' : 'false') + '" ' +
             'id="btn-query-' + escHtml(d.name) + '" ' +
             'onclick="selectDeployment(\'query\',' + escHtml(JSON.stringify(d.name)) + ')" ' +
             (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
             (isQuery ? '✓ Query' : 'Use for Query') +
           '</button>' +
-          '<button type="button" class="btn-use' + (isKb?' selected':'') + '" ' +
+          '<button type="button" class="btn btn-secondary btn-xs" aria-pressed="' + (isKb ? 'true' : 'false') + '" ' +
             'id="btn-kb-' + escHtml(d.name) + '" ' +
             'onclick="selectDeployment(\'kb\',' + escHtml(JSON.stringify(d.name)) + ')" ' +
             (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
@@ -844,7 +823,7 @@
       if(m) m.value = name;
       document.querySelectorAll('[id^="btn-query-"]').forEach(function(b){
         const isThis = b.id === 'btn-query-' + name;
-        b.classList.toggle('selected', isThis);
+        b.setAttribute('aria-pressed', isThis ? 'true' : 'false');
         b.textContent = isThis ? '✓ Query' : 'Use for Query';
       });
     } else {
@@ -854,7 +833,7 @@
       if(m) m.value = name;
       document.querySelectorAll('[id^="btn-kb-"]').forEach(function(b){
         const isThis = b.id === 'btn-kb-' + name;
-        b.classList.toggle('selected', isThis);
+        b.setAttribute('aria-pressed', isThis ? 'true' : 'false');
         b.textContent = isThis ? '✓ KB' : 'Use for KB';
       });
     }
@@ -952,7 +931,7 @@ function validateSysPw() {
 (function(){
   function syncDb(backend) {
     document.querySelectorAll('[data-db-btn]').forEach(function(b){
-      b.classList.toggle('active', b.dataset.dbBtn === backend);
+      b.setAttribute('aria-pressed', b.dataset.dbBtn === backend ? 'true' : 'false');
     });
     document.querySelectorAll('[data-db-panel]').forEach(function(p){
       p.classList.toggle('active', p.dataset.dbPanel === backend);

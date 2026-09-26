@@ -92,9 +92,15 @@ El.prototype.find = function (pred) {
 };
 El.prototype.byClass = function (c) { return this.find(function (e) { return e.classList.contains(c); }); };
 El.prototype.hasAttribute = function (k) { return this.attributes.hasOwnProperty(k); };
-// Selectors: a tag, .class, [attr] and [attr="value"], compounded (no combinators).
+// Selectors: a tag, .class, [attr] and [attr="value"], compounded, :not(one of
+// those), and a comma list of them (no combinators).
 El.prototype.matches = function (sel) {
-  var el = this, rest = sel.replace(/\[([\w-]+)(?:="([^"]*)")?\]/g, function (_, k, v) {
+  var el = this;
+  if (sel.indexOf(',') >= 0) return sel.split(',').some(function (one) { return el.matches(one.trim()); });
+  var nots = [];
+  sel = sel.replace(/:not\(([^)]*)\)/g, function (_, inner) { nots.push(inner); return ''; });
+  if (nots.some(function (inner) { return el.matches(inner); })) return false;
+  var rest = sel.replace(/\[([\w-]+)(?:="([^"]*)")?\]/g, function (_, k, v) {
     if (!el.hasAttribute(k) && !(k === 'id' && el.id)) { el._miss = true; }
     else if (v !== undefined && el.getAttribute(k) !== v) { el._miss = true; }
     return '';

@@ -172,7 +172,10 @@
     {% endif %}
   </div>
   {% if action_href and action_label %}
-  {% set btn_type = 'warning' if type == 'amber' else ('danger' if type == 'error' else type) %}
+  {# The alert's tone picks a button variant that exists; an info alert's
+     action is a plain (secondary) button. #}
+  {% set btn_type = {'amber': 'warning', 'warning': 'warning', 'error': 'danger', 'danger': 'danger', 'red': 'danger',
+                     'success': 'success', 'green': 'success'}.get(type, 'secondary') %}
   <a href="{{ action_href }}" class="btn btn-sm btn-{{ btn_type }} alert-action">{{ action_label }}</a>
   {% endif %}
 </div>

@@ -112,6 +112,7 @@
   --primary-soft:  #EEF2FE;
   /* Text on a primary fill: 6.8:1 on --primary. */
   --on-primary:    #FFFFFF;
+  --on-status:     #FFFFFF;   /* text on a filled danger, success or warning */
   /* Brand as ink rather than as fill: link text and headings that
      must clear 7:1 on every ground. */
   --primary-ink:   #1E43A9;

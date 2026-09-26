@@ -27,9 +27,6 @@
 .sql-cell code{flex:1;min-width:0;font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .sql-hidden{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0}
-.copy-btn{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);
-  padding:2px 7px;font-size:var(--font-xs);cursor:pointer;flex-shrink:0;line-height:1.4}
-.copy-btn:hover{background:var(--surface-2);color:var(--text)}
 .sql-full{display:none;margin-top:.5rem;padding:.6rem .75rem;background:var(--code-bg);color:var(--code-text);border:1px solid var(--border);
   border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:var(--font-xs);white-space:pre-wrap;word-break:break-word;
   max-height:260px;overflow-y:auto}
@@ -85,8 +82,6 @@
 .health-comp-body{flex:1;min-width:0}
 .health-comp-name{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--gray-700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .health-comp-pts{font-size:var(--font-2xs);color:var(--gray-500);margin-top:1px}
-.health-refresh-btn{font-size:var(--font-2xs);padding:2px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface);cursor:pointer;color:var(--gray-600);margin-left:.35rem;transition:background .12s}
-.health-refresh-btn:hover{background:var(--gray-50);color:var(--gray-900)}
 @media(max-width:900px){.health-score-layout{grid-template-columns:1fr}.health-donut-wrap{margin:0 auto}}
 @media(max-width:640px){.agent-analysis-grid{grid-template-columns:1fr}}
 </style>
@@ -245,8 +240,8 @@
           <span class="badge badge-red">{{ health_score.grade }}</span>
         {% endif %}
         <span id="healthGradeBadge" style="display:none"></span>
-        <button type="button" class="health-refresh-btn" id="healthRefreshBtn"
-                onclick="refreshHealthScore()" title="Refresh health score">↻ Refresh</button>
+        <button type="button" class="btn btn-secondary btn-xs" id="healthRefreshBtn" style="margin-left:.35rem"
+                onclick="refreshHealthScore()" title="Refresh health score">{{ ic("refresh", 12) }} Refresh</button>
       </h3>
       <div class="health-score-layout" id="healthScoreWidget">
         <!-- Donut gauge -->
@@ -540,7 +535,7 @@
           {% if q.sql_generated %}
           <div class="sql-cell">
             <code title="Click to expand" onclick="toggleSql(this)">{{ q.sql_generated[:60] }}{% if q.sql_generated|length > 60 %}…{% endif %}</code>
-            <button type="button" class="copy-btn" onclick="copySql(this)">{{ ic("copy", 11) }} Copy</button>
+            <button type="button" class="btn btn-secondary btn-xs" onclick="copySql(this)">{{ ic("copy", 11) }} Copy</button>
             <textarea class="sql-hidden" readonly>{{ q.sql_generated }}</textarea>
           </div>
           <pre class="sql-full">{{ q.sql_generated }}</pre>
@@ -989,7 +984,7 @@ function toggleError(badgeEl) {
 
   window.refreshHealthScore = async function(){
     const btn = document.getElementById('healthRefreshBtn');
-    if (btn){ btn.textContent = '…'; btn.disabled = true; }
+    if (btn) btn.setAttribute('aria-busy', 'true');
     try {
       const resp = await fetch('/admin/clients/{{ client.account_id | tojson }}/health-score',
                                { credentials: 'same-origin' });
@@ -1031,7 +1026,7 @@ function toggleError(badgeEl) {
     } catch(e) {
       console.warn('Health score refresh failed:', e);
     } finally {
-      if (btn){ btn.textContent = '↻ Refresh'; btn.disabled = false; }
+      if (btn) btn.removeAttribute('aria-busy');
     }
   };
 })();

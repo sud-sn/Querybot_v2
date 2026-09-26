@@ -124,20 +124,7 @@ body {
   gap: .4rem;
   flex-shrink: 0;
 }
-.sidebar-foot .btn-secondary {
-  width: 100%;
-  justify-content: center;
-  background: transparent;
-  border-color: color-mix(in srgb, white 14%, transparent);
-  color: color-mix(in srgb, white 60%, transparent);
-  font-size: var(--font-xs);
-  box-shadow: none;
-}
-.sidebar-foot .btn-secondary:hover {
-  background: color-mix(in srgb, white 8%, transparent);
-  color: #fff;
-  transform: none;
-}
+.sidebar-foot .btn { width: 100%; }
 /* ── Main content wrapper ── */
 .shell-main {
   flex: 1;

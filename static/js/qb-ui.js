@@ -50,6 +50,11 @@
      puts the choice back. Options a script replaces, a value it
      sets and the select's disabled state are followed.
 
+   Submitting a form (both consoles, every form but
+   data-no-loading) marks the pressed button aria-busy, which .btn
+   draws as a spinner, and holds a second submit until the page
+   leaves (or 15 s). A form a page's own script stops is left alone.
+
    All text is set as text, never as markup. Labels come from
    window.qbT when the page has it (the portal, in French too).
    ============================================================ */
@@ -593,6 +598,44 @@
   }
 
   global.qbSelect = qbSelect;
+
+  /* ── A submitted form's button says it is working ─────────── */
+  var BUSY_MS = 15000;
+  var busyNow = [];
+
+  function settle(form, btn) {
+    form.removeAttribute('data-qb-submitting');
+    if (btn) btn.removeAttribute('aria-busy');
+    busyNow = busyNow.filter(function (pair) { return pair[0] !== form; });
+  }
+
+  doc.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || !form.getAttribute || form.hasAttribute('data-no-loading')) return;
+    // A second press while the first is in flight sends nothing.
+    if (form.getAttribute('data-qb-submitting') === '1') { e.preventDefault(); return; }
+    // The button pressed, not the form's first: a form with Approve and
+    // Reject must not spin the other one.
+    var btn = e.submitter && e.submitter.form === form ? e.submitter
+      : form.querySelector('[type="submit"], button:not([type])');
+    if (btn && btn.hasAttribute('data-no-loading')) btn = null;
+    // Decided once every listener has run: a form a page's script stopped
+    // (a check that failed, a request it sends itself) is not in flight.
+    // The button is not disabled: a disabled submitter drops its
+    // name=value from what the form sends.
+    later(function () {
+      if (e.defaultPrevented) return;
+      form.setAttribute('data-qb-submitting', '1');
+      if (btn) btn.setAttribute('aria-busy', 'true');
+      busyNow.push([form, btn]);
+      later(function () { settle(form, btn); }, BUSY_MS);
+    }, 0);
+  });
+  // Back to a page the browser kept in memory: nothing on it is in flight.
+  global.addEventListener('pageshow', function (e) {
+    if (!e || !e.persisted) return;
+    busyNow.slice().forEach(function (pair) { settle(pair[0], pair[1]); });
+  });
 
   function setUp() {
     Array.prototype.forEach.call(doc.querySelectorAll('[data-qb-tabs]'), function (list) { qbTabs(list); });

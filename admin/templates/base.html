@@ -10,14 +10,14 @@
 <link rel="icon" type="image/svg+xml" href="/static/img/logo-mark-sm.svg?v=20260926-navy-1">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260926-inter-1">
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-ui-3">
-<link rel="stylesheet" href="/static/css/base.css?v=20260926-ui-3">
-<link rel="stylesheet" href="/static/css/admin.css?v=20260926-ui-3">
+<link rel="stylesheet" href="/static/css/tokens.css?v=20260926-ui-4">
+<link rel="stylesheet" href="/static/css/base.css?v=20260926-ui-4">
+<link rel="stylesheet" href="/static/css/admin.css?v=20260926-ui-4">
 <script src="/static/js/qb-icons.js?v=20260926-lucide-1"></script>
-<script src="/static/js/qb-ui.js?v=20260926-ui-3"></script>
+<script src="/static/js/qb-ui.js?v=20260926-ui-4"></script>
 {% block head %}{% endblock %}
-<link rel="stylesheet" href="/static/css/production.css?v=20260926-ui-3">
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-ui-3">
+<link rel="stylesheet" href="/static/css/production.css?v=20260926-ui-4">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260926-ui-4">
 </head>
 <body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
@@ -86,7 +86,7 @@
     </nav>
 
     <div class="sidebar-foot">
-      <a href="/admin/logout" class="btn btn-secondary btn-sm">Logout</a>
+      <a href="/admin/logout" class="btn btn-shell btn-sm">Logout</a>
     </div>
 
   </aside>
@@ -126,22 +126,6 @@ function closeSidebar(){
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('sidebarOverlay').classList.remove('show');
 }
-</script>
-
-{# ── Universal form submit loading state ── #}
-<script>
-(function(){
-  document.addEventListener('submit', function(e){
-    var form = e.target;
-    if(form.dataset.noLoading) return;
-    var btn = form.querySelector('[type="submit"]:not([data-no-loading])');
-    if(!btn || btn.classList.contains('loading')) return;
-    btn.classList.add('loading');
-    btn.disabled = true;
-    /* Re-enable after 15s as a safety net if the response never arrives */
-    setTimeout(function(){ btn.classList.remove('loading'); btn.disabled = false; }, 15000);
-  }, true);
-})();
 </script>
 
 {# ── Live notifications WebSocket ── #}

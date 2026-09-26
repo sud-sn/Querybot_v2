@@ -30,20 +30,6 @@ body { background: var(--bg); letter-spacing: 0; }
 .metric-editor-card > .card-header,
 .chart-card-header { background: var(--surface); }
 
-.btn {
-  min-height: 36px;
-  padding: 8px 13px;
-  border-radius: var(--radius-sm);
-  box-shadow: none;
-  letter-spacing: 0;
-}
-.btn:hover,
-.icon-btn:hover { transform: none; box-shadow: none; }
-.btn-primary { border: 1px solid var(--primary); }
-.btn-secondary { border-color: var(--border-strong); }
-.btn-sm { min-height: 32px; padding: 6px 10px; }
-.btn-xs { min-height: 28px; padding: 4px 8px; }
-.icon-btn { width: 36px; height: 36px; box-shadow: none; }
 
 .form-group input:not([type="checkbox"]):not([type="radio"]),
 .form-group select,
@@ -151,8 +137,7 @@ body { background: var(--bg); letter-spacing: 0; }
   box-shadow: inset 3px 0 0 var(--sidebar-accent);
 }
 .portal-nav a.active svg { color: var(--sidebar-accent); }
-.portal-user-card,
-.portal-side-actions .btn {
+.portal-user-card {
   background: var(--sidebar-surface);
   border-color: var(--sidebar-border);
 }

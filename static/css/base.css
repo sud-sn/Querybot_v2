@@ -103,54 +103,150 @@ textarea:focus-visible, a:focus-visible {
   color: var(--text-muted);
 }
 
-/* ── Buttons ── */
+/* ── Buttons ───────────────────────────────────────────────
+   One button for both consoles. A variant sets only its colours,
+   as --btn-* properties; size, shape, focus, disabled, pressed and
+   busy belong to .btn, so every variant has every state.
+     .btn-primary    the one main action of a view
+     .btn-secondary  any other action (also plain .btn)
+     .btn-ghost      a quiet action in a toolbar or a table row
+     .btn-link       an action that reads as a link
+     .btn-danger     deletes or revokes; ask first (data-confirm)
+     .btn-success / .btn-warning   approve / hold, filled
+     .btn-soft-success / -danger / -warning   the same, outlined,
+                     for approve / reject side by side in a queue
+     .btn-shell      on the navy shell (sidebar actions)
+   Sizes .btn-xs, .btn-sm, (default), .btn-lg; .btn-icon is square.
+   aria-pressed="true" marks the chosen one of a set; aria-busy
+   ="true" (set by qb-ui.js on a submitted form's button) shows a
+   spinner in the button's own ink. */
 .btn {
+  --btn-bg: var(--surface-raised);   --btn-ink: var(--text);       --btn-line: var(--line-control);
+  --btn-bg-hover: var(--hover-on-surface); --btn-ink-hover: var(--btn-ink); --btn-line-hover: var(--btn-line);
+  position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 14px;
-  border-radius: var(--radius);
+  min-height: 36px;
+  padding: 8px 13px;
+  border: 1px solid var(--btn-line);
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  color: var(--btn-ink);
   font-size: var(--font-sm);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  border: none;
-  text-decoration: none;
-  box-shadow: var(--shadow);
+  font-weight: var(--weight-semibold);
   line-height: 1;
-  transition: background .15s, border-color .15s, color .15s, transform .15s, box-shadow .15s;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
-.btn:hover { text-decoration: none; transform: translateY(-1px); box-shadow: var(--shadow-md); }
-.btn:active { transform: translateY(0); }
-.btn-primary { background: var(--primary); color: var(--on-primary); }
-.btn-primary:hover { background: var(--primary-hover); color: var(--on-primary); }
-.btn-danger  { background: var(--danger); color: #fff; }
-.btn-danger:hover  { background: #B91C1C; color: #fff; }
-.btn-success { background: var(--success); color: #fff; }
-.btn-secondary {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text-soft);
+.btn:hover { background: var(--btn-bg-hover); border-color: var(--btn-line-hover); color: var(--btn-ink-hover); text-decoration: none; }
+.btn-primary {
+  --btn-bg: var(--primary); --btn-ink: var(--on-primary); --btn-line: var(--primary);
+  --btn-bg-hover: var(--primary-hover); --btn-line-hover: var(--primary-hover);
 }
-.btn-secondary:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-  color: var(--text);
-}
+.btn-secondary { /* the .btn defaults */ }
 .btn-ghost {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-soft);
-  box-shadow: none;
+  --btn-bg: transparent; --btn-ink: var(--text-secondary); --btn-line: transparent;
+  --btn-bg-hover: var(--hover-on-surface); --btn-ink-hover: var(--text);
 }
-.btn-ghost:hover {
-  background: var(--surface-2);
-  border-color: var(--border);
-  color: var(--text);
-  box-shadow: none;
+.btn-link {
+  --btn-bg: transparent; --btn-ink: var(--primary-ink); --btn-line: transparent;
+  --btn-bg-hover: transparent; --btn-ink-hover: var(--primary-hover);
+  min-height: 0; padding: 0;
+}
+.btn-link:hover { text-decoration: underline; }
+.btn-danger {
+  --btn-bg: var(--danger); --btn-ink: var(--on-status); --btn-line: var(--danger);
+  --btn-bg-hover: var(--danger-strong); --btn-line-hover: var(--danger-strong);
+}
+.btn-success {
+  --btn-bg: var(--success); --btn-ink: var(--on-status); --btn-line: var(--success);
+  --btn-bg-hover: var(--success-strong); --btn-line-hover: var(--success-strong);
+}
+.btn-warning {
+  --btn-bg: var(--warning); --btn-ink: var(--on-status); --btn-line: var(--warning);
+  --btn-bg-hover: var(--warning-strong); --btn-line-hover: var(--warning-strong);
+}
+.btn-soft-success {
+  --btn-bg: var(--surface-raised); --btn-ink: var(--success); --btn-line: var(--success-line);
+  --btn-bg-hover: var(--success-soft); --btn-ink-hover: var(--success-strong); --btn-line-hover: var(--success);
+}
+.btn-soft-danger {
+  --btn-bg: var(--surface-raised); --btn-ink: var(--danger); --btn-line: var(--danger-line);
+  --btn-bg-hover: var(--danger-soft); --btn-ink-hover: var(--danger-strong); --btn-line-hover: var(--danger);
+}
+.btn-soft-warning {
+  --btn-bg: var(--surface-raised); --btn-ink: var(--warning); --btn-line: var(--warning-line);
+  --btn-bg-hover: var(--warning-soft); --btn-ink-hover: var(--warning-strong); --btn-line-hover: var(--warning);
+}
+.btn-shell {
+  --btn-bg: var(--shell-surface); --btn-ink: var(--shell-text); --btn-line: var(--shell-line);
+  --btn-bg-hover: var(--shell-selected); --btn-line-hover: var(--shell-accent);
+}
+.btn-xs { min-height: 28px; padding: 4px 8px;  font-size: var(--font-xs); }
+.btn-sm { min-height: 32px; padding: 6px 10px; font-size: var(--font-xs); }
+.btn-lg { min-height: 44px; padding: 10px 18px; font-size: var(--font-base); }
+.btn-icon { width: 36px; padding: 0; }
+.btn-icon.btn-sm { width: 32px; }
+.btn-icon.btn-xs { width: 28px; }
+.btn[aria-pressed="true"] {
+  --btn-bg: var(--state-selected); --btn-ink: var(--primary-ink); --btn-line: var(--state-selected-line);
+  --btn-bg-hover: var(--state-selected-hover);
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  background: var(--state-disabled);
+  border-color: var(--state-disabled);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.btn[aria-busy="true"] { pointer-events: none; color: transparent; }
+.btn[aria-busy="true"]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--btn-ink) 30%, transparent);
+  border-top-color: var(--btn-ink);
+  border-radius: 50%;
+  animation: qb-spin .6s linear infinite;
+}
+/* A choice of two or three shown as one control: aria-pressed
+   marks the chosen one. (Content that changes with the choice is
+   a tab bar, .qb-tabs, instead.) */
+.qb-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+}
+.qb-segmented > button {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.qb-segmented > button:hover { background: var(--hover-on-alt); color: var(--text); }
+.qb-segmented > button[aria-pressed="true"] {
+  background: var(--surface-raised);
+  border-color: var(--line);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-sm);
 }
 .icon-btn {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -159,16 +255,13 @@ textarea:focus-visible, a:focus-visible {
   background: var(--surface);
   color: var(--text-soft);
   cursor: pointer;
-  transition: background .15s, border-color .15s, color .15s, transform .12s;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
 }
 .icon-btn:hover {
   background: var(--surface-2);
   border-color: var(--border-strong);
   color: var(--text);
-  transform: translateY(-1px);
 }
-.btn-sm { padding: 5px 10px; font-size: var(--font-xs); }
-.btn-xs { padding: 4px 8px;  font-size: var(--font-xs); }
 
 /* ── Forms ── */
 .form-group { margin-bottom: 1rem; }
@@ -599,26 +692,6 @@ textarea:focus-visible, a:focus-visible {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Loading spinner utility ── */
-.btn { position: relative; }
-.btn.loading { pointer-events: none; opacity: .72; color: transparent !important; }
-.btn.loading::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255,255,255,.4);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: qb-spin .6s linear infinite;
-}
-.btn-secondary.loading::after {
-  border-color: color-mix(in srgb, var(--primary) 22%, transparent);
-  border-top-color: var(--primary);
-}
-
 /* ── Micro-interaction fixes ── */
 .table td { transition: background .1s; }
 .breadcrumb a { transition: color .12s; }
@@ -629,12 +702,6 @@ textarea:focus-visible, a:focus-visible {
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
   border-color: var(--border-strong);
-}
-.btn-success:hover { background: #047857; color: #fff; }
-.btn-warning { background: var(--warning); color: #fff; }
-.btn-warning:hover {
-  background: color-mix(in srgb, var(--warning) 85%, #000);
-  color: #fff;
 }
 
 /* ── Tab pane & modal appear ── */

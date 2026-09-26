@@ -16,7 +16,7 @@
   <div class="card">
     <div class="card-body login-card-body">
       {% if error %}{{ alert(error, 'error', 'x-circle') }}{% endif %}
-      <form method="post" action="/portal/login" data-loading data-brand-loading data-brand-target="portalAuthMark">
+      <form method="post" action="/portal/login" data-brand-loading data-brand-target="portalAuthMark">
         <div class="form-group">
           <label for="login-account">{{ t('ui.auth.account_id') }}</label>
           <input id="login-account" type="text" name="account_id" autofocus required
