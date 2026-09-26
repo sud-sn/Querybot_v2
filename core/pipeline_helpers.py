@@ -827,6 +827,73 @@ def _gate_question(context: dict) -> str:
                or (context or {}).get("question") or "")
 
 
+# Aggregates a question can ask of a measure, by the words that ask for them
+# in the canonical question. core/question_normalizer.py folds "moyen(ne)(s)"
+# into "average" and "médiane" into "median"; it leaves "minimal(e)" and
+# "maximal(e)" as they are, so their forms are listed here.
+_REQUESTED_AGGREGATES = (
+    ("AVG", re.compile(r"\b(?:average|avg|mean)\b", re.I)),
+    ("MEDIAN", re.compile(r"\bmedian\b", re.I)),
+    ("MIN", re.compile(r"\b(?:min|minimum|minimal|minimale|minimales|minimaux)\b", re.I)),
+    ("MAX", re.compile(r"\b(?:max|maximum|maximal|maximale|maximales|maximaux)\b", re.I)),
+)
+_OUTER_CALL = re.compile(r"^\s*([A-Za-z_]+)\s*\(", re.S)
+
+
+def _outer_aggregate(formula: str) -> str:
+    """The function a formula applies last, when one call wraps all of it:
+    SUM(x) -> SUM, AVG(x - y) -> AVG, SUM(a) / SUM(b) -> ''."""
+    text = str(formula or "").strip()
+    match = _OUTER_CALL.match(text)
+    if not match:
+        return ""
+    depth = 0
+    for i in range(match.end() - 1, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return match.group(1).upper() if not text[i + 1:].strip() else ""
+    return ""
+
+
+def unmet_aggregates(question: str, metrics: list[dict]) -> list[str]:
+    """Aggregates the question asks for that none of its metrics computes.
+
+    "Total and average revenue" over a Revenue metric of SUM(amount) asks for
+    an average the metric does not compute. The compilers below used to answer
+    with the metric's own formula alone -- the total, labelled as if it were
+    the answer -- so an average, a minimum or a maximum was dropped without a
+    word. Such a question now goes to the governed planner, which writes what
+    was asked.
+    """
+    # A metric's own name asks for the metric: "average order value" over an
+    # Average Order Value ratio asks for no second aggregate. Its name and
+    # synonyms are taken out of the question -- as written and folded the way
+    # the question was, so "Panier moyen" leaves "panier average" -- before
+    # the aggregate words are read.
+    from core.question_normalizer import canonicalise
+
+    remainder = str(question or "")
+    for metric in metrics or []:
+        synonyms = metric.get("synonyms") or []
+        if isinstance(synonyms, str):
+            synonyms = synonyms.split(",")
+        for phrase in [metric.get("name"), *synonyms]:
+            phrase = str(phrase or "").strip()
+            for form in {phrase, canonicalise(phrase)} if phrase else ():
+                remainder = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", " ", remainder, flags=re.I)
+    asked = [name for name, pattern in _REQUESTED_AGGREGATES if pattern.search(remainder)]
+    if not asked:
+        return []
+    computed = {
+        _outer_aggregate(str(metric.get("sql_template") or metric.get("formula") or ""))
+        for metric in metrics or []
+    }
+    return [name for name in asked if name not in computed]
+
+
 def _compile_governed_grouped_request_sql(
     db_type: str,
     known_tables: set[str],
@@ -1437,6 +1504,10 @@ def compile_governed_temporal_metric_sql(
     from core.contextual_dates import format_date_value_expression, format_period_bucket_expression
     from core.validator import validate_sql_detailed
 
+    if unmet_aggregates(_gate_question(semantic_context or {}),
+                        (semantic_context or {}).get("metric_formulas") or []):
+        return ""
+
     grouped = _compile_governed_grouped_request_sql(
         db_type,
         known_tables,
@@ -1872,6 +1943,8 @@ def attempt_governed_temporal_metric_repair(
         and str(metric.get("sql_template") or "").strip()
     ]
     if len(policies) != 1 or len(metrics) != 1:
+        return ""
+    if unmet_aggregates(_gate_question(context), metrics):
         return ""
     if not re.search(r"\b(?:compare|comparison|versus|vs\.?|difference|change)\b", question, re.I):
         return ""
