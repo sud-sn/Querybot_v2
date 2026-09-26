@@ -99,6 +99,7 @@ from core.contextual_dates import (
     describe_date_role_evidence,
     enrich_date_binding_calendar_attributes,
     find_explicit_date_roles,
+    keep_only_the_resolved_dates,
     question_has_snapshot_intent,
     requested_temporal_grain,
     date_resolution_trace,
@@ -730,18 +731,24 @@ def count_clarification_question(entity: str, option_count: int,
 
 
 def date_clarification_question(*, ambiguous: bool, allow_free_text: bool,
-                                lang: str | None = None) -> str:
+                                lang: str | None = None, named_date: str = "",
+                                measures: str = "") -> str:
     """Which form of "which business date?" to ask.
 
     Three questions, because three situations read differently to the person
     answering: several connected events each carrying a default; no approved
     default at all, where they may type one; and a metric with several valid
-    dates and no free text.
+    dates and no free text. A fourth when the reader named a date the measure
+    is not recorded by (``named_date``): the card offers the measure's own
+    dates, and says why the one they named is not among them.
 
     Lifted out of the pipeline because it was three English literals buried in
     a branch nothing could execute, which is how the card came to be French
     around an English question.
     """
+    if named_date:
+        return _t("clar.date.named_date_not_on_measure", lang=lang,
+                  date=named_date, measures=measures)
     if ambiguous:
         return _t("clar.date.several_defaults", lang=lang)
     if allow_free_text:
@@ -4430,6 +4437,43 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     duration_ms=int(time.time() * 1000) - start_ms,
                 )
                 return
+            if _date_context_resolution.get("status") == "named_date_not_on_measure":
+                # The reader named a date that lives on another table, and the
+                # measure has no date of its own to offer instead. Binding the
+                # other table's date is what this used to do: the measure
+                # joined fact to fact and dated by rows it does not have.
+                _reader_lang = (portal_user or {}).get("lang") or "en"
+                _named_elsewhere = list(
+                    _date_context_resolution.get("named_elsewhere") or [{}])
+                await adapter.send_message(
+                    event,
+                    _t("clar.date.named_date_and_no_other", lang=_reader_lang,
+                       date=date_option_label(_named_elsewhere[0], lang=_reader_lang),
+                       measures=" / ".join(
+                           str(m.get("name")) for m in _matched_metrics if m.get("name"))
+                       or _t("clar.date.these_measures", lang=_reader_lang)),
+                )
+                _trace_step(
+                    trace_id,
+                    "date_context_resolution",
+                    output_summary=date_resolution_trace(
+                        _date_context_resolution,
+                        fact_scope=_date_fact_scope,
+                        metric_names=[
+                            m.get("name") for m in _matched_metrics if m.get("name")
+                        ],
+                        date_binding_count=len(_date_bindings),
+                        date_role_count=len(_date_roles),
+                    ),
+                )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="clarification",
+                    final_answer_summary="The named date is not on the measure's table",
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                return
             if _date_context_resolution.get("status") == "unsupported_grain":
                 _requested = str(
                     _date_context_resolution.get("requested_grain") or "requested"
@@ -4618,10 +4662,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _option["business_suggestions"] = list(
                         _business_date_suggestions
                     )
+                _named_elsewhere = list(
+                    _date_context_resolution.get("named_elsewhere") or [])
                 _date_question = date_clarification_question(
                     ambiguous=_date_fact_inference.get("status") == "ambiguous",
                     allow_free_text=bool(
                         _date_context_resolution.get("allow_free_text")),
+                    named_date=(date_option_label(_named_elsewhere[0])
+                                if _named_elsewhere else ""),
+                    measures=" / ".join(
+                        str(m.get("name")) for m in _matched_metrics if m.get("name")),
                 )
                 if event.user_id and _date_options:
                     _pending_temporal_window = detect_temporal_window(
@@ -4737,6 +4787,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         if _date_context_resolution.get("status") == "selected_many"
                         else [_date_context_resolution.get("binding") or {}]
                     )
+                    _semantic_plan = keep_only_the_resolved_dates(
+                        _semantic_plan, _selected_date_bindings)
                     if any(
                         str(binding.get("resolution_source") or "")
                         == "thread_date_preference"

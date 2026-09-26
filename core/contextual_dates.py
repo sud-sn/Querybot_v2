@@ -673,6 +673,86 @@ def find_explicit_date_roles(question: str, date_roles: list[dict] | None) -> li
     return _governed_explicit_role_matches(question, list(date_roles or []))
 
 
+def _measure_tables(metrics: list[dict] | None) -> set[str]:
+    """The tables the question's measures read: each metric's base table, or
+    the tables its formula resolved to when it names none."""
+    tables: set[str] = set()
+    for metric in metrics or []:
+        own = ([metric.get("base_table")] if metric.get("base_table")
+               else list(metric.get("_resolved_source_tables") or []))
+        tables.update(_table_identity(table)[0] for table in own if table)
+    return tables - {""}
+
+
+def keep_only_the_resolved_dates(plan: dict, bindings: list[dict]) -> dict:
+    """Drop the date roles the lexical planner matched but the resolver did not choose.
+
+    build_runtime_semantic_plan adds a field, a join and a key policy for every
+    date role whose name the question contains, on any table. On a rival fact
+    they are demoted to optional, and still reached the prompt under "Required
+    join path": "net sales by order date and shipment date" told the model to
+    join the shipments fact. Once the resolver has chosen the question's dates,
+    those are the governed ones; the planner's other matches are dropped.
+    """
+    from core.semantic_plan_utils import required_semantic_tables
+
+    chosen = {
+        (_table_identity(binding.get("fact_table"))[0], str(binding.get("fact_column") or "").upper())
+        for binding in bindings or [] if binding
+    }
+    if not chosen or not isinstance(plan, dict) or not plan.get("enabled"):
+        return plan
+
+    def unchosen(table: Any, column: Any) -> bool:
+        return (_table_identity(table)[0], str(column or "").upper()) not in chosen
+
+    kept = dict(plan)
+    kept["fields"] = [
+        field for field in plan.get("fields") or []
+        if not (field.get("source") == "semantic_model_date_role"
+                and unchosen(field.get("source_table"), field.get("source_key_column")))
+    ]
+    kept["joins"] = [
+        join for join in plan.get("joins") or []
+        if not (join.get("source") == "semantic_model_date_role"
+                and unchosen(join.get("from"), ((join.get("conditions") or [("", "")])[0] or ("", ""))[0]))
+    ]
+    kept["date_key_policies"] = [
+        policy for policy in plan.get("date_key_policies") or []
+        if "resolution_source" in policy or not unchosen(policy.get("table"), policy.get("column"))
+    ]
+    kept["required_tables"] = sorted(required_semantic_tables(kept))
+    return kept
+
+
+def _named_date_not_on_measure(
+    question: str, named: list[dict], metrics: list[dict], roles: list[dict], scope: set[str],
+) -> dict:
+    """The question names a date its measure is not recorded by.
+
+    Offer the measure's own dates, saying which date was asked for and why it
+    is not among them; with none to offer, say so.
+    """
+    named_elsewhere = [_role_as_binding(role, source="explicit_date_role") for role in named]
+    own = _relevant_discovered_date_roles(
+        question, matched_metrics=metrics, date_roles=roles, required_fact_tables=scope)
+    if not own:
+        return {
+            "status": "named_date_not_on_measure",
+            "reason": "the date named in the question is not on the measure's table, which has no dates",
+            "named_elsewhere": named_elsewhere,
+            "options": [],
+        }
+    options = [_role_as_binding(role, source="discovered_date_role") for role in own]
+    return {
+        "status": "ambiguous",
+        "reason": "the date named in the question is not one of the measure's dates",
+        "named_elsewhere": named_elsewhere,
+        "options": options[:4],
+        "all_options": options,
+    }
+
+
 def _role_as_binding(role: dict, *, source: str) -> dict:
     return {
         "id": 0,
@@ -758,7 +838,11 @@ def _relevant_discovered_date_roles(
         for metric in metrics
         if metric.get("base_table")
     }
-    fact_scope |= metric_tables
+    # A measure's dates are the ones on the tables it reads. The question's
+    # scope also holds whatever fact the graph pulled in beside it, and a date
+    # offered from there -- another fact's Shipment Date on the card for Net
+    # Sales -- is a sales figure dated by another table's rows once picked.
+    fact_scope = _measure_tables(metrics) or (fact_scope | metric_tables)
     if not fact_scope:
         return []
 
@@ -1080,12 +1164,21 @@ def resolve_contextual_date_binding(
     } | metric_tables
     candidates = list(bindings or [])
 
-    if fact_scope:
+    # A date the question names is read on the measure's own table. Not on
+    # every fact in scope: the graph pulls in whichever fact a named date lives
+    # on, so the scope cannot vouch for it. And never, as this used to, on any
+    # table at all when none of the named dates is in scope -- that bound "net
+    # sales by ship date" to the shipments fact's Ship Date: sales dated by
+    # another table's rows, joined fact to fact.
+    named_scope = _measure_tables(metrics) or fact_scope
+    if named_scope and explicit:
         scoped = [
             role for role in explicit
-            if any(_same_table(role.get("fact_table"), table) for table in fact_scope)
+            if any(_same_table(role.get("fact_table"), table) for table in named_scope)
         ]
-        explicit = scoped or explicit
+        if not scoped:
+            return _named_date_not_on_measure(question, explicit, metrics, roles, named_scope)
+        explicit = scoped
     if len(explicit) == 1:
         explicit_grain = _role_temporal_grain(explicit[0])
         if not _grain_is_compatible(explicit_grain, requested_grain):

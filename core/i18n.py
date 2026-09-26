@@ -2687,6 +2687,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cet indicateur a plusieurs dates métier valides. "
               "Quel contexte de date dois-je utiliser ?",
     },
+    # The question named a date that belongs to another table: offered the
+    # measure's own dates instead, the reader is told why the one they named
+    # is not among them.
+    "clar.date.named_date_not_on_measure": {
+        "en": "**{date}** is not a date of **{measures}**. Which of its dates should I use?",
+        "fr": "**{date}** n’est pas une date de **{measures}**. Laquelle de ses dates dois-je utiliser ?",
+    },
+    "clar.date.named_date_and_no_other": {
+        "en": ("**{date}** is not a date of **{measures}**, and it has no other date to "
+               "use. Ask for it without a date, or ask an administrator to add one."),
+        "fr": ("**{date}** n’est pas une date de **{measures}**, qui n’a pas d’autre date "
+               "utilisable. Posez la question sans date, ou demandez à un administrateur "
+               "d’en ajouter une."),
+    },
 
     # ── Business date roles ──────────────────────────────────────────────────
     # The clarification card offers these as chips. They were the role
