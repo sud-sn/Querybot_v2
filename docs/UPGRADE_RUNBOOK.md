@@ -260,3 +260,10 @@ password reset by an admin ends a portal user's, and
 `QUERYBOT_API_KEY` is set in the service's environment; callers send the same
 value as `api_key`. It answers without per-user restrictions, so keep the key
 as carefully as the admin password.
+
+Teams messages are accepted only with a token the Bot Connector signed for
+this bot's app id, checked against Microsoft's published keys: the server
+must be able to reach `https://login.botframework.com`. If it cannot, every
+Teams message is refused and the log says "could not fetch the Bot Framework
+signing keys". Zoom requests more than five minutes old are refused, so the
+server's clock must be right (NTP).

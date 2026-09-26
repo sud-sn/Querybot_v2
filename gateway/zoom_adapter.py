@@ -12,6 +12,7 @@ import hmac
 import json
 import logging
 import tempfile
+import time
 import os
 from typing import Optional
 
@@ -42,6 +43,18 @@ class ZoomAdapter(PlatformAdapter):
     async def verify_request(self, body: bytes, headers: dict) -> bool:
         timestamp = headers.get("x-zm-request-timestamp", "")
         signature = headers.get("x-zm-signature", "")
+        # A signed request is only good for five minutes, as Slack's is: the
+        # signature covers the timestamp, so a captured request replayed later
+        # would otherwise verify forever.
+        try:
+            sent = float(timestamp)
+        except (ValueError, TypeError):
+            return False
+        if sent > 1e11:  # milliseconds
+            sent /= 1000
+        if abs(time.time() - sent) > 300:
+            log.warning("Zoom: refused a request with a stale timestamp")
+            return False
         msg      = f"v0:{timestamp}:{body.decode()}"
         expected = "v0=" + hmac.new(
             self._webhook_secret.encode(), msg.encode(), hashlib.sha256

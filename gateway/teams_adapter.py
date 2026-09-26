@@ -5,8 +5,8 @@ Microsoft Teams adapter via the Bot Framework.
 
 Incoming:  Teams sends Activity JSON to your endpoint
 Outgoing:  POST to the Activity's serviceUrl with a reply Activity
-Auth:      JWT token from Microsoft identity platform, verified via HMAC on App Password
-           OR via the Bot Framework connector's JWT public keys
+Auth:      the Bot Connector's signed JWT, verified against Microsoft's published
+           keys (gateway/bot_framework_auth.py)
 
 Feature parity with the portal's internal chat UI:
   • send_message       — plain text with markdown
@@ -32,6 +32,7 @@ from typing import Optional
 
 import httpx
 
+from gateway import bot_framework_auth
 from gateway.base import PlatformAdapter, PlatformEvent
 from gateway.session_state import GovernedChannelSessionMixin
 
@@ -54,21 +55,23 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
         self._tenant_id    = credentials.get("tenant_id", "common")
 
     # ── Signature / auth verification ─────────────────────────────────────────
-    # Teams uses JWT Bearer tokens on incoming requests.
-    # Full verification requires fetching Microsoft's JWKS and validating the
-    # token signature, audience, and issuer.
-    # For initial integration we validate the token is present and structurally
-    # valid; full JWKS verification is a hardening step.
+    # The Bot Connector's signed token, checked in full: see
+    # gateway/bot_framework_auth.py. Replies go to the activity's serviceUrl
+    # with this bot's token attached, so an unverified activity could send
+    # both anywhere.
 
     async def verify_request(self, body: bytes, headers: dict) -> bool:
-        auth_header = headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
-            log.warning("Teams: missing Bearer token")
+        try:
+            activity = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            log.warning("Teams: refused a request whose body is not JSON")
             return False
-        # Structural check — full JWT validation recommended for production
-        parts = auth_header[7:].split(".")
-        if len(parts) != 3:
-            log.warning("Teams: malformed JWT")
+        if not isinstance(activity, dict):
+            return False
+        problem = await bot_framework_auth.refusal(
+            headers.get("authorization", ""), activity, self._app_id)
+        if problem:
+            log.warning("Teams: refused a request: %s", problem)
             return False
         return True
 
