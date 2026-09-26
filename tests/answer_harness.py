@@ -353,7 +353,8 @@ _asked = 0
 def ask(warehouse: Warehouse, question: str, lang: str = "en") -> dict:
     """One question through the real pipeline. Returns what the warehouse
     ran (``executed``: sql and rows), whether the model was asked to write
-    SQL (``model_wrote_sql``) and every reply."""
+    SQL (``model_wrote_sql``) and the prompts it was given (``prompts``),
+    and every reply."""
     global _asked
     import core.llm as llm
     import core.query_pipeline as qp
@@ -371,7 +372,7 @@ def ask(warehouse: Warehouse, question: str, lang: str = "en") -> dict:
         return found
 
     async def model(system, user, *args, **kwargs):
-        model_calls.append(str(system)[:120])
+        model_calls.append(str(system))
         return (f"SELECT '{MARKER}' AS marker" if SQL_WRITER in str(system)[:400] else ""), 1, 1
 
     reader = store.get_user_by_email(ACCOUNT, "reader@harness.example")
@@ -398,7 +399,8 @@ def ask(warehouse: Warehouse, question: str, lang: str = "en") -> dict:
         "executed": answers,
         "rows": answers[-1]["rows"] if answers else [],
         "sql": answers[-1]["sql"] if answers else "",
-        "model_wrote_sql": any(SQL_WRITER in call for call in model_calls),
+        "model_wrote_sql": any(SQL_WRITER in call[:400] for call in model_calls),
+        "prompts": [call for call in model_calls if SQL_WRITER in call[:400]],
         "replies": channel.replies,
     }
 

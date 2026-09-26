@@ -2187,8 +2187,16 @@ def build_contextual_date_plan(
     question: str = "",
     *,
     temporal_window: dict | None = None,
+    snapshot: bool | None = None,
 ) -> dict:
-    """Compile a selected binding into validator-enforced semantic fields."""
+    """Compile a selected binding into validator-enforced semantic fields.
+
+    ``snapshot`` is the caller's decision that the question reads a level --
+    stock, a balance -- from the resolved metric and measure as well as the
+    wording (question_has_snapshot_intent with both). Omitted, the wording
+    alone decides, and "available quantity by warehouse" names none of the
+    words: its latest-snapshot rule never reached the prompt or the validator.
+    """
     fact_table = str(binding.get("fact_table") or "")
     fact_column = str(binding.get("fact_column") or "")
     dimension_table = str(binding.get("dimension_table") or "")
@@ -2300,7 +2308,7 @@ def build_contextual_date_plan(
         # "for March 2, 2026" with MAX(snapshot date) and report the newest
         # snapshot as though it were the requested one.
         and not question_has_explicit_date_filter(question)
-        and question_has_snapshot_intent(question)
+        and (question_has_snapshot_intent(question) if snapshot is None else snapshot)
     ):
         window = {
             "kind": "latest_snapshot",
@@ -2522,6 +2530,7 @@ def build_contextual_date_plan_many(
     question: str = "",
     *,
     temporal_window: dict | None = None,
+    snapshot: bool | None = None,
 ) -> dict:
     """Compile multiple explicit role-playing dates into one exact plan."""
     plans = [
@@ -2529,6 +2538,7 @@ def build_contextual_date_plan_many(
             binding,
             question,
             temporal_window=temporal_window,
+            snapshot=snapshot,
         )
         for binding in bindings or []
     ]

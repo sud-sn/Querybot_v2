@@ -4755,17 +4755,27 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             all_columns,
                         )
                     )
+                # Whether the question reads a level is the resolved metric's
+                # and measure's to say as well as the wording's: "available
+                # quantity" is a balance whatever it is called.
+                _reads_a_level = question_has_snapshot_intent(
+                    _semantic_plan_question,
+                    matched_metrics=_matched_metrics,
+                    measure_fields=list((_semantic_plan or {}).get("fields") or []),
+                )
                 if _date_context_resolution.get("status") == "selected_many":
                     _date_plan = build_contextual_date_plan_many(
                         _date_context_resolution.get("bindings") or [],
                         _semantic_plan_question,
                         temporal_window=_structured_temporal_window,
+                        snapshot=_reads_a_level,
                     )
                 else:
                     _date_plan = build_contextual_date_plan(
                         _date_context_resolution.get("binding") or {},
                         _semantic_plan_question,
                         temporal_window=_structured_temporal_window,
+                        snapshot=_reads_a_level,
                     )
                 _expected_temporal_window = (
                     _structured_temporal_window
