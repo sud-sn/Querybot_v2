@@ -264,6 +264,10 @@ def update_user(
         fields.append("role=?"); params.append(role)
     if is_active is not None:
         fields.append("is_active=?"); params.append(is_active)
+        if not is_active:
+            # Deactivation ends the user's open sessions; reactivating does
+            # not bring them back.
+            fields.append("session_version=session_version+1")
     if not fields:
         return
     fields.append("updated_at=datetime('now')")
@@ -277,7 +281,7 @@ def change_password(user_id: int, new_password: str, is_temp: bool = False) -> N
     with get_db() as conn:
         conn.execute(
             "UPDATE portal_user SET password_hash=?, is_temp_pw=?, temp_pw_expires_at=?, "
-            "updated_at=datetime('now') WHERE id=?",
+            "session_version=session_version+1, updated_at=datetime('now') WHERE id=?",
             (_hash_pw(new_password), 1 if is_temp else 0, expires, user_id)
         )
 

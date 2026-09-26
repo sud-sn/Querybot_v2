@@ -200,7 +200,9 @@ class TestChoosingTheirOwn:
         user = fresh_store.get_user(user_id)
         assert not user["is_temp_pw"] and user["temp_pw_expires_at"] is None
         assert fresh_store.verify_password(user, "my-own-password")
-        assert routes._get_portal_user(_request(cookie))["id"] == user_id
+        # The change re-issues this browser's session (the old cookie ended
+        # with the temporary password), and the new one reaches everything.
+        assert routes._get_portal_user(_request(_cookie_from(done)))["id"] == user_id
 
 
 class TestASettledUser:

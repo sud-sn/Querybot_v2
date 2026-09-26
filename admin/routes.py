@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sys
 import threading
 import time
@@ -149,24 +150,21 @@ def _session_secret() -> str:
     return env_secret_or_random(
         "ADMIN_SESSION_SECRET", "SESSION_SECRET", purpose="admin_session")
 
-def _sign_admin_session() -> str:
-    payload = b"admin"
+# An admin session lasts at most this long, and a password change ends it
+# sooner (admin/credentials.py). Every sign-in used to get the same cookie --
+# a signature of the word "admin" -- which never expired and survived any
+# password change.
+_ADMIN_SESSION_HOURS = 8
+
+
+def _sign_admin_session(*, issued: int | None = None) -> str:
+    """A cookie for one admin sign-in: the session version, when, and a nonce."""
+    stamp = int(time.time()) if issued is None else int(issued)
+    payload = (f"admin:{admin_credentials.session_version()}:{stamp}:"
+               f"{secrets.token_hex(8)}").encode()
     sig = hmac.new(_session_secret().encode(), payload, hashlib.sha256).hexdigest()
     token = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     return f"{token}.{sig}"
-
-def _is_auth(request: Request) -> bool:
-    raw = request.cookies.get(_COOKIE, "")
-    if not raw:
-        return False
-    try:
-        token, sig = raw.split(".", 1)
-        padding = "=" * (-len(token) % 4)
-        payload = base64.urlsafe_b64decode((token + padding).encode())
-        expected = hmac.new(_session_secret().encode(), payload, hashlib.sha256).hexdigest()
-        return payload == b"admin" and hmac.compare_digest(sig, expected)
-    except Exception:
-        return False
 
 def _is_admin_cookie(raw: str) -> bool:
     if not raw:
@@ -176,9 +174,17 @@ def _is_admin_cookie(raw: str) -> bool:
         padding = "=" * (-len(token) % 4)
         payload = base64.urlsafe_b64decode((token + padding).encode())
         expected = hmac.new(_session_secret().encode(), payload, hashlib.sha256).hexdigest()
-        return payload == b"admin" and hmac.compare_digest(sig, expected)
+        if not hmac.compare_digest(sig, expected):
+            return False
+        kind, version, issued, _nonce = payload.decode().split(":")
+        return (kind == "admin"
+                and int(version) == admin_credentials.session_version()
+                and time.time() - int(issued) <= _ADMIN_SESSION_HOURS * 3600)
     except Exception:
         return False
+
+def _is_auth(request: Request) -> bool:
+    return _is_admin_cookie(request.cookies.get(_COOKIE, ""))
 
 def _is_ws_auth(websocket: WebSocket) -> bool:
     return _is_admin_cookie(websocket.cookies.get(_COOKIE, ""))
@@ -187,6 +193,7 @@ def _set_admin_cookie(resp: RedirectResponse, request: Request) -> None:
     resp.set_cookie(
         _COOKIE,
         _sign_admin_session(),
+        max_age=_ADMIN_SESSION_HOURS * 3600,
         httponly=True,
         samesite="lax",
         secure=request.url.scheme == "https",
@@ -1207,25 +1214,31 @@ async def system_password(
     request: Request,
     new_password:     str = Form(...),
     confirm_password: str = Form(...),
+    current_password: str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     cfg = store.get_all_system()
     masked = {k: (store.mask(v) if "key" in k or "password" in k else v)
               for k, v in cfg.items()}
+
+    def refuse(message: str):
+        return _resp(request, "system.html", {
+            "cfg": masked, "query_models": QUERY_MODELS, "kb_models": KB_MODELS,
+            "error": message,
+        })
+
+    # A session alone is not enough to change the password: a borrowed or
+    # stolen one could otherwise lock the real admin out.
+    if not admin_credentials.verify(current_password):
+        return refuse("Current password is incorrect")
     if new_password != confirm_password:
-        return _resp(request, "system.html", {
-            "cfg": masked, "query_models": QUERY_MODELS, "kb_models": KB_MODELS,
-            "error": "Passwords do not match",
-        })
-    if len(new_password) < 8:
-        return _resp(request, "system.html", {
-            "cfg": masked, "query_models": QUERY_MODELS, "kb_models": KB_MODELS,
-            "error": "Password must be at least 8 characters",
-        })
-    new_hash = _hash(new_password)
-    store.set_system("admin_password_hash", new_hash)
-    resp = RedirectResponse("/admin/system?saved=1", status_code=303)
+        return refuse("Passwords do not match")
+    if len(new_password) < admin_credentials.MIN_LENGTH:
+        return refuse("Password must be at least 8 characters")
+    # Ends every admin session issued before; this browser gets a new one.
+    admin_credentials.set_password(new_password)
+    resp = RedirectResponse("/admin/system?saved=password", status_code=303)
     _set_admin_cookie(resp, request)
     return resp
 

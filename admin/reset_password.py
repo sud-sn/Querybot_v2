@@ -42,7 +42,8 @@ def main(argv: list[str] | None = None, *, prompt=getpass.getpass, stdin=None) -
 
     store.init_db()
     credentials.set_password(password)
-    print("The admin password is set. Sign in at /admin/login.")
+    print("The admin password is set and every admin session is signed out. "
+          "Sign in at /admin/login.")
     return 0
 
 

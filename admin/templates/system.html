@@ -160,7 +160,7 @@
 </div>
 
 {% if saved %}
-  {% set saved_message = "Default provider saved. Continue with the matching credentials below." if saved == 'defaults' else ("Credentials saved. Verify the saved connection before using it for client workloads." if saved == 'credentials' else ("Database settings saved." if saved == 'database' else "Settings saved successfully.")) %}
+  {% set saved_message = "Default provider saved. Continue with the matching credentials below." if saved == 'defaults' else ("Credentials saved. Verify the saved connection before using it for client workloads." if saved == 'credentials' else ("Database settings saved." if saved == 'database' else ("Admin password changed. Every other admin session is signed out." if saved == 'password' else "Settings saved successfully."))) %}
   {{ alert(message=saved_message, type="success", icon_name="check-circle") }}
 {% endif %}
 {% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
@@ -629,10 +629,17 @@
     <form method="post" action="/admin/system/password" id="pw-change-form">
       <div class="form-grid">
         <div class="form-group">
+          <label for="sys_cur_pw">Current password</label>
+          <div class="input-reveal-wrap">
+            <input type="password" id="sys_cur_pw" name="current_password" required autocomplete="current-password">
+            <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_cur_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+          </div>
+        </div>
+        <div class="form-group">
           <label for="sys_new_pw">New password</label>
           <div class="input-reveal-wrap">
             <input type="password" id="sys_new_pw" name="new_password" minlength="8" required
-                   oninput="validateSysPw()">
+                   autocomplete="new-password" oninput="validateSysPw()">
             <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_new_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
           </div>
         </div>
@@ -640,7 +647,7 @@
           <label for="sys_conf_pw">Confirm password</label>
           <div class="input-reveal-wrap">
             <input type="password" id="sys_conf_pw" name="confirm_password" minlength="8" required
-                   oninput="validateSysPw()">
+                   autocomplete="new-password" oninput="validateSysPw()">
             <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_conf_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
           </div>
           <p class="form-note" id="sys-pw-msg" style="display:none"></p>

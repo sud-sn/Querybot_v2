@@ -32,10 +32,10 @@ A portal password was shared in plain text during testing. Treat it as
 compromised.
 
 1. Admin → the workspace → **Users**. For each account that used it, press
-   **Deactivate** (the eye icon). This takes effect at once and puts no
-   password anywhere.
+   **Deactivate** (the eye icon). This takes effect at once, puts no
+   password anywhere, and ends every session the account had open.
 2. If the admin password was the same one, change it now:
-   Admin → **System** → Password.
+   Admin → **System** → Password. That signs out every other admin session.
 
 Do **not** reset the password on the old build. It puts the new password in
 the redirect URL (`temp_pw=…`), and the service's access log writes that URL
@@ -91,7 +91,9 @@ the startup lines for errors before going on.
 2. The page shows the temporary password **once**, with no password in the
    URL. Give it to the user over a separate channel (not the one the old
    password leaked on). They must choose their own at first sign-in.
-3. **Activate** the account again (the eye icon).
+3. **Activate** the account again (the eye icon). Sessions opened before the
+   deactivation stay closed: reactivating lets the user sign in again, with
+   the new password, and brings back nothing issued under the old one.
 4. Check that the old password no longer signs in.
 
 ## 5. Settings that must be right before rediscovery
@@ -218,6 +220,8 @@ on the server, as the service's user, from the application directory:
 cd /home/azureuser/querybot
 venv/bin/python -m admin.reset_password     # asks twice, without echo
 ```
+
+It also signs out every admin session.
 
 If the service sets `QUERYBOT_DB_PATH`, `DATABASE_URL` or `QUERYBOT_KEY_FILE`,
 export the same values first, or the command writes to a different store.

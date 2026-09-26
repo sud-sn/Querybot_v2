@@ -1380,6 +1380,10 @@ def _run_migrations() -> None:
         # %H:%M:%S'). NULL for a password the user chose. Before this, a
         # temporary password worked forever. Declared HERE ONLY, as above.
         ("portal_user", "temp_pw_expires_at", "TEXT DEFAULT NULL"),
+        # Bumped by a password change, a reset and a deactivation; a portal
+        # session cookie carries the version it was issued under, so each of
+        # those ends every session the user had. Declared HERE ONLY, as above.
+        ("portal_user", "session_version", "INTEGER NOT NULL DEFAULT 1"),
         # Egress posture: cloud | private | airgapped. See
         # core/compliance/egress.py. Empty rather than 'cloud' as the column
         # default, so "never chosen" stays distinguishable from "chose cloud"

@@ -145,6 +145,9 @@ SYSTEM_KEYS = {
     "default_llm_model",           # model name or Azure deployment name
     "kb_llm_model",                # used once for KB generation
     "admin_password_hash",
+    # A number admin session cookies carry. A password change bumps it, which
+    # ends every admin session issued before (admin/credentials.py).
+    "admin_session_version",
 }
 
 

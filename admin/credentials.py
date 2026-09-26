@@ -15,6 +15,11 @@ database lets only one request win.
 When the password is lost, or cannot be read because the key changed, the way
 back is ``python -m admin.reset_password`` on the server: only someone with a
 shell there can use it.
+
+Every admin session cookie carries the session version it was issued under.
+Setting a password -- from the System page or from the server -- bumps it, so
+a password change ends every admin session but the one that made it, which
+gets a new cookie.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ import hmac
 import store
 
 ADMIN_PASSWORD_KEY = "admin_password_hash"
+SESSION_VERSION_KEY = "admin_session_version"
 MIN_LENGTH = 8
 
 
@@ -53,4 +59,13 @@ def verify(password: str) -> bool:
 
 
 def set_password(password: str) -> None:
+    """Set the admin password, and end every admin session issued before."""
     store.set_system(ADMIN_PASSWORD_KEY, hash_password(password))
+    store.set_system(SESSION_VERSION_KEY, str(session_version() + 1))
+
+
+def session_version() -> int:
+    try:
+        return int(store.get_system(SESSION_VERSION_KEY, "") or 1)
+    except ValueError:
+        return 1

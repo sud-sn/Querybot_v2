@@ -77,18 +77,25 @@ class PortalSessionDeactivationTests(unittest.TestCase):
         store.update_user(self.user_id, is_active=0)
         self.assertIsNone(routes._get_portal_user_from_socket(websocket))
 
-    def test_reactivating_restores_access(self):
-        # Symmetric to the "Re-activate Access" admin action -- must not be
-        # a one-way lock.
+    def test_reactivating_lets_the_user_sign_in_again_but_revives_no_old_session(self):
+        # Symmetric to the "Re-activate Access" admin action -- must not be a
+        # one-way lock: a session issued after reactivation works. But the
+        # sessions open when the account was deactivated stay closed. This
+        # test used to assert the opposite, and the runbook's rotation --
+        # deactivate, reset, reactivate -- therefore brought back every
+        # cookie issued under the leaked password.
         import portal.routes as routes
-        cookie = self._cookie()
+        old_cookie = self._cookie()
         request = MagicMock()
-        request.cookies.get.return_value = cookie
+        request.cookies.get.return_value = old_cookie
 
         store.update_user(self.user_id, is_active=0)
         self.assertIsNone(routes._get_portal_user(request))
 
         store.update_user(self.user_id, is_active=1)
+        self.assertIsNone(routes._get_portal_user(request))
+
+        request.cookies.get.return_value = self._cookie()
         self.assertIsNotNone(routes._get_portal_user(request))
 
     def test_ws_chat_closes_deactivated_users_socket(self):

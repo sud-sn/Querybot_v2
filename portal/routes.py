@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -220,14 +221,35 @@ def _session_secret() -> str:
         "PORTAL_SESSION_SECRET", "SESSION_SECRET", purpose="portal_session")
 
 
-def _sign_session_value(user_id: int) -> str:
-    payload = str(user_id).encode()
+# A portal session lasts at most this long. A password change, a reset or a
+# deactivation ends it sooner: each bumps portal_user.session_version, and a
+# cookie carries the version it was issued under.
+_SESSION_DAYS = 7
+
+
+def _current_session_version(user_id: int) -> int:
+    try:
+        user = store.get_user(int(user_id))
+    except Exception:
+        user = None
+    return int((user or {}).get("session_version") or 1)
+
+
+def _sign_session_value(user_id: int, *, issued: int | None = None) -> str:
+    """A portal cookie: the user, the session version it was issued under, and when."""
+    stamp = int(time.time()) if issued is None else int(issued)
+    payload = f"{int(user_id)}:{_current_session_version(user_id)}:{stamp}".encode()
     sig = hmac.new(_session_secret().encode(), payload, hashlib.sha256).hexdigest()
     token = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     return f"{token}.{sig}"
 
 
-def _read_session_value(raw: str) -> int | None:
+def _read_session(raw: str) -> tuple[int, int, int] | None:
+    """(user id, session version, issued at) from a genuine cookie, else None.
+
+    A cookie from before sessions carried a version -- the bare user id -- is
+    not genuine any more: it signs that user in once again after a sign-in.
+    """
     try:
         token, sig = raw.split(".", 1)
         padding = "=" * (-len(token) % 4)
@@ -235,9 +257,15 @@ def _read_session_value(raw: str) -> int | None:
         expected = hmac.new(_session_secret().encode(), payload, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None
-        return int(payload.decode())
+        user_id, version, issued = payload.decode().split(":")
+        return int(user_id), int(version), int(issued)
     except Exception:
         return None
+
+
+def _read_session_value(raw: str) -> int | None:
+    parsed = _read_session(raw)
+    return parsed[0] if parsed else None
 
 
 def _cookie_secure(request: Request) -> bool:
@@ -248,6 +276,7 @@ def _set_portal_cookie(resp: RedirectResponse, request: Request, user_id: int) -
     resp.set_cookie(
         _COOKIE,
         _sign_session_value(user_id),
+        max_age=_SESSION_DAYS * 86400,
         httponly=True,
         samesite="lax",
         secure=_cookie_secure(request),
@@ -275,14 +304,21 @@ def _session_user(raw: str | None, *, pending_change_ok: bool = False) -> dict |
     """
     if not raw:
         return None
-    user_id = _read_session_value(raw)
-    if not user_id:
+    parsed = _read_session(raw)
+    if not parsed:
+        return None
+    user_id, version, issued = parsed
+    if time.time() - issued > _SESSION_DAYS * 86400:
         return None
     try:
         user = store.get_user(int(user_id))
     except Exception:
         return None
     if not user or not user.get("is_active"):
+        return None
+    # Issued before the user's password changed, was reset, or they were
+    # deactivated: that session is over, even if they are active again.
+    if int(user.get("session_version") or 1) != version:
         return None
     if user.get("is_temp_pw"):
         if not pending_change_ok or store.temporary_password_expired(user):
@@ -1590,7 +1626,11 @@ async def change_pw_submit(
         return refuse("ui.auth.error.same_as_current")
 
     store.change_password(user["id"], new_pw, is_temp=False)
-    return RedirectResponse("/portal/dashboard", status_code=303)
+    # The change ended every session this user had, this one included; this
+    # browser gets a new one, the others sign in again.
+    resp = RedirectResponse("/portal/dashboard", status_code=303)
+    _set_portal_cookie(resp, request, user["id"])
+    return resp
 
 
 # ══════════════════════════════════════════════════════════════════════════════
