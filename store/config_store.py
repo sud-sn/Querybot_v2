@@ -1607,21 +1607,27 @@ def _metric_phrases(metric: dict) -> list[str]:
 
 def _metric_tokens(text: str) -> set[str]:
     import re
+
+    from core.word_forms import base_form
     stop = {
         "a", "an", "and", "are", "as", "at", "by", "for", "from", "how",
         "in", "is", "me", "of", "on", "or", "per", "show", "the", "to",
         "total", "what", "with",
     }
     return {
-        token
+        base_form(token)
         for token in re.findall(r"[a-z0-9]+", (text or "").lower().replace("_", " "))
         if len(token) > 2 and token not in stop
     }
 
 
 def _score_metric_for_question(metric: dict, question: str) -> int:
+    from core.word_forms import without_grain_or_window
+
     q = (question or "").lower().replace("_", " ")
-    q_tokens = _metric_tokens(q)
+    # As core.metric_scope scores it: a grain or a window is not evidence of
+    # which measure, though an exact phrase is read on the whole question.
+    q_tokens = _metric_tokens(without_grain_or_window(q))
     if not q_tokens:
         return 0
 

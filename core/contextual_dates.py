@@ -2287,25 +2287,37 @@ def read_named_period(question: str) -> dict:
     period the question names is the one read; a fiscal period is left to the
     calendar-basis planner.
     """
+    return _named_period_reading(question)[0]
+
+
+def named_period_words(question: str) -> set[str]:
+    """The words a question names its period with ("premier", "semestre",
+    "2022"), lower-cased and without accents; none when it names none."""
+    return _named_period_reading(question)[1]
+
+
+def _named_period_reading(question: str) -> tuple[dict, set[str]]:
     text = " ".join(
         unicodedata.normalize("NFKD", str(question or "").replace("\u2019", "'"))
         .encode("ascii", "ignore").decode().lower().split()
     )
     if not text or _FISCAL_WORDS.search(text) or _COMPARED.search(text):
-        return {}
+        return {}, set()
     found = [
         (match.span(), _period_bounds(kind, match))
         for kind, pattern in _NAMED_PERIOD_PATTERNS
         for match in pattern.finditer(text)
     ]
     periods: dict[tuple, dict] = {}
+    words: set[str] = set()
     for span, bounds in found:
         # "March 2025" inside "January to March 2025" is part of that period,
         # and "January 2025" inside "March to January 2025" is not a period.
         if any(other != span and other[0] <= span[0] and span[1] <= other[1] for other, _ in found):
             continue
         if bounds is None:
-            return {}
+            return {}, set()
+        words.update(re.findall(r"[a-z0-9]+", text[span[0]:span[1]]))
         start_year, start_month, end_year, end_month, grain, label = bounds
         periods.setdefault((start_year, start_month, end_year, end_month), {
             "kind": "named_period",
@@ -2317,7 +2329,7 @@ def read_named_period(question: str) -> dict:
         })
     # Two periods are a comparison or a list, the planner's to shape: read as
     # the first alone, "2022 vs 2021" would be 2022.
-    return next(iter(periods.values())) if len(periods) == 1 else {}
+    return (next(iter(periods.values())), words) if len(periods) == 1 else ({}, set())
 
 
 def stated_period(question: str, calendar_basis: str = "unresolved") -> dict:

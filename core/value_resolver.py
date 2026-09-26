@@ -77,7 +77,28 @@ _META_WORDS = frozenset({
     "month", "months", "year", "years", "week", "weeks", "quarter",
     "quarters", "days", "date", "dates", "today", "yesterday", "tomorrow",
     "last", "first", "next", "previous", "current", "recent", "latest",
-    "earliest",
+    "earliest", "half", "halves", "semester", "semesters", "period", "periods",
+    "fiscal",
+    # The same in French, as the reader types it -- the resolver reads the raw
+    # question: "le mois le plus récent" offered "plus" and "récent" as members
+    # once the measure's own words ("unités achetées") no longer filled the
+    # candidate list.
+    "quel", "quelle", "quels", "quelles", "combien", "comment", "pourquoi",
+    "quand", "notre", "votre", "leur", "leurs", "nous", "vous", "avons", "avez",
+    "sont", "était", "etait", "étaient", "etaient", "montre", "montrez",
+    "affiche", "donne", "liste", "chaque", "tous", "toutes", "tout", "avec",
+    "sans", "dans", "pour", "entre", "depuis", "pendant", "durant", "avant",
+    "après", "apres", "selon", "plus", "moins", "moyen", "moyenne", "somme",
+    "nombre", "comparer", "comparaison", "pourcentage", "répartition",
+    "repartition", "tendance", "tendances", "évolution", "evolution", "mois",
+    "année", "annee", "années", "annees", "semaine", "semaines", "trimestre",
+    "trimestres", "semestre", "semestres", "jour", "jours", "aujourd", "hier",
+    "demain", "mensuel", "mensuelle", "hebdomadaire", "quotidien", "quotidienne",
+    "annuel", "annuelle", "trimestriel", "trimestrielle", "dernier", "dernière",
+    "derniere", "derniers", "dernières", "dernieres", "précédent", "precedent",
+    "précédente", "precedente", "prochain", "prochaine", "récent", "récente",
+    "recente", "récents", "recents", "courant", "courante", "actuel", "actuelle",
+    "début", "debut",
 })
 
 
@@ -123,6 +144,16 @@ def build_known_terms(account_id: str, all_columns: dict | None) -> set[str]:
                     terms.update(phrase.split())
     except Exception as exc:
         log.debug("Business-term known-terms lookup skipped: %s", exc)
+    try:
+        import store
+        # A measure's own words are the question's measure, never a member:
+        # "units sold by month" fuzzy-matched "sold" to a product group whose
+        # name begins with it, and the question was taken to name that group.
+        for metric in store.list_metrics(account_id):
+            for phrase in [metric.get("name", ""), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]:
+                terms.update(word.lower() for word in re.findall(r"\w+", phrase or "") if len(word) > 2)
+    except Exception as exc:
+        log.debug("Metric known-terms lookup skipped: %s", exc)
     return terms
 
 

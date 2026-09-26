@@ -67,7 +67,10 @@ SCHEMA = {
 
 _PLACEHOLDER = "NULL value provided"
 WAREHOUSES = {0: ("0", _PLACEHOLDER), 1: ("N01", "NORTH DEPOT"), 2: ("S02", "SOUTH DEPOT")}
-GROUPS = {0: ("0", _PLACEHOLDER), 10: ("FIT", "FITTINGS"), 20: ("PIP", "PIPE")}
+# Two groups with no items yet, named like words a question uses for its
+# measure ("sold") and its period ("premier semestre").
+GROUPS = {0: ("0", _PLACEHOLDER), 10: ("FIT", "FITTINGS"), 20: ("PIP", "PIPE"), 30: ("SLD", "SOLDER"),
+          40: ("PRM", "PREMIER FITTINGS")}
 # key: (code, name, group, unit)
 ITEMS = {0: ("0", _PLACEHOLDER, 0, ""), 101: ("BE-1", "BRASS ELBOW", 10, "EA"), 102: ("ST-2", "STEEL TEE", 10, "EA"),
          201: ("CP-9", "COPPER PIPE", 20, "FT"), 202: ("PX-4", "PEX PIPE", 20, "FT")}

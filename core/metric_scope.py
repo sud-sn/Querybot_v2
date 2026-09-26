@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.source_resolution import GENERIC_MEASURE_WORDS
+from core.word_forms import base_form, without_grain_or_window
 
 
 _STOP_WORDS = {
@@ -38,7 +39,7 @@ def _norm(text: str) -> str:
 
 def _tokens(text: str) -> set[str]:
     return {
-        tok
+        base_form(tok)
         for tok in re.findall(r"[a-z0-9]+", _norm(text))
         if len(tok) > 1 and tok not in _STOP_WORDS
     }
@@ -82,7 +83,10 @@ def _phrase_score(metric: dict[str, Any], question: str, *, reader_question: str
 
 def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
     q = _norm(question)
-    q_tokens = _tokens(question)
+    # A grain or a window is not evidence of which measure: the exact phrase
+    # below still reads the whole question ("revenue this month" authored for a
+    # month-to-date metric is a phrase), the word overlap does not.
+    q_tokens = _tokens(without_grain_or_window(question))
     if not q_tokens:
         return 0
     best = 0

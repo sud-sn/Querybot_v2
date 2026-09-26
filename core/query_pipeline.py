@@ -518,24 +518,36 @@ def _table_matches_policy_scope(table: str, scope: set[str]) -> bool:
     )
 
 
-def _without_the_stated_period(resolved: dict, question: str) -> dict:
+def _without_the_stated_period(resolved: dict, question: str, reader_question: str = "") -> dict:
     """The value matches, less any that is the question's own stated period.
 
     "Units sold in March 2025" names a period, and "March 2025" is also a row
     of a period table's descriptions. Matched there, it made that table a join
     the answer had to make and a member to filter on, beside the date plan that
     keeps the period already (core.contextual_dates.read_named_period), so the
-    compiled answer was refused for a join it did not need.
+    compiled answer was refused for a join it did not need. A word of the
+    period's own phrase is the period's too: "premier" of "premier semestre
+    2022" fuzzy-matched a product group named "... Premier". The words are
+    read on the canonical question and on the reader's own ("mars 2025").
     """
-    from core.contextual_dates import read_named_period
+    import re
+    import unicodedata
+
+    from core.contextual_dates import named_period_words, read_named_period
 
     stated = read_named_period(question)
     if not stated:
         return resolved
+    period_words = named_period_words(question) | named_period_words(reader_question)
 
     def is_the_period(item: object) -> bool:
-        reading = read_named_period(str((item or {}).get("phrase") or "")) if isinstance(item, dict) else {}
-        return bool(reading) and (reading["start"], reading["end"]) == (stated["start"], stated["end"])
+        phrase = str((item or {}).get("phrase") or "") if isinstance(item, dict) else ""
+        reading = read_named_period(phrase)
+        if reading and (reading["start"], reading["end"]) == (stated["start"], stated["end"]):
+            return True
+        plain = unicodedata.normalize("NFKD", phrase).encode("ascii", "ignore").decode().lower()
+        words = set(re.findall(r"[a-z0-9]+", plain))
+        return bool(words) and words <= period_words
 
     return {
         bucket: [item for item in items if not is_the_period(item)] if isinstance(items, list) else items
@@ -2889,6 +2901,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     known_terms=_known_terms,
                 ),
                 _analysis_question,
+                question,
             )
             # Read before the compliance filter below: these are the reader's
             # own words, they reach no prompt, and a member named on a column
