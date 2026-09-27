@@ -1566,6 +1566,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 or _confirmed_join_path.get("value")
             )
         ).strip()
+    # The graph reads the question in the detectors' English as well as in the
+    # reader's own words: "par classe ABC (volume)" names the volume class's
+    # relationship only as "by abc class (volume)", and was joined through the
+    # first of the four classes instead.
+    _graph_english = canonical_question(
+        _graph_resolution_question, (portal_user or {}).get("lang"),
+    )
+    if _graph_english != _graph_resolution_question:
+        _graph_resolution_question = f"{_graph_resolution_question}\n{_graph_english}"
 
     if not db_cfg:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No database assigned")

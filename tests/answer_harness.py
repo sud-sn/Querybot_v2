@@ -49,7 +49,8 @@ SCHEMA = {
         "ITM_BAL_DLY_FCT_KEY", ("ITM_BAL_DLY_FCT_KEY", "bigint"), ("WHS_DMS_KEY", "int"), ("ITM_DMS_KEY", "int"),
         ("BYR_PTY_DMS_KEY", "int"), ("ITM_BAL_EFC_DT_DMS_KEY", "int"), ("ITM_WHS_CRN_DT_DMS_KEY", "int"),
         ("ON_HND_QTY", "decimal"), ("ALC_ON_HND_QTY", "decimal"), ("ITM_CST", "decimal"), ("UNT_OF_MSR", "nvarchar"),
-        ("RSV_QTY", "decimal"), ("RSV_BCK_ORD_QTY", "decimal"), ("ITM_STK_STS_DMS_KEY", "int")),
+        ("RSV_QTY", "decimal"), ("RSV_BCK_ORD_QTY", "decimal"), ("ITM_STK_STS_DMS_KEY", "int"),
+        ("SLR_PTY_DMS_KEY", "int")),
     "WH.MART.ITM_BAL_PRD_FCT": _table(
         "ITM_BAL_PRD_FCT_KEY", ("ITM_BAL_PRD_FCT_KEY", "bigint"), ("WHS_DMS_KEY", "int"), ("ITM_DMS_KEY", "int"),
         ("PRD_DMS_KEY", "int"), ("SLD_QTY", "decimal"), ("PCH_QTY", "decimal"), ("NUM_OF_RCT", "int"),
@@ -110,6 +111,9 @@ RESERVED = [5, 0, 30, 10, 0]
 BACK_ORDERED = [0, 4, 0, 10, 0]
 # And each row's stock status, row for row with STOCK.
 STOCK_STATUS = [1, 1, 2, 1, 2]
+# And its seller: a second party each row names beside its buyer, so the party
+# table is reached from the snapshot by two keys, each with its own role.
+SELLER = [2, 2, 1, 1, 1]
 # The monthly facts: (warehouse, item, yyyymm, sold, purchased, receipts, cost)
 MOVES = [
     (1, 101, 202501, 10, 30, 2, 2.50), (1, 101, 202502, 15, 0, 0, 2.50), (1, 201, 202502, 200, 500, 1, 3.10),
@@ -149,7 +153,7 @@ def rows() -> dict[str, list[tuple]]:
             if snapshot != LATEST:
                 reserved, back_ordered = reserved + 100, back_ordered + 100
             daily.append((len(daily) + 1, whs, itm, byr, snapshot, created, qty, allocated, cost, ITEMS[itm][3],
-                          reserved, back_ordered, STOCK_STATUS[n]))
+                          reserved, back_ordered, STOCK_STATUS[n], SELLER[n]))
     data["ITM_BAL_DLY_FCT"] = daily
     data["ITM_BAL_PRD_FCT"] = [
         (n + 1, whs, itm, prd, sold, bought, receipts, None, cost, "")

@@ -221,6 +221,14 @@ _LEXICON: dict[str, str] = {
     "part": "share",
     "pourcentage": "percentage",
     "contribution": "contribution",
+    # How a classification was made: "classe ABC (manuelle)" is the manual
+    # class, "(fréquence)" the frequency class.
+    "manuelles": "manual",
+    "manuelle": "manual",
+    "manuels": "manual",
+    "manuel": "manual",
+    "frequences": "frequencies",
+    "frequence": "frequency",
     "valeurs aberrantes": "outliers",
     "valeur aberrante": "outlier",
     "anomalie": "anomaly",
