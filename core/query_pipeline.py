@@ -1313,6 +1313,44 @@ def anchor_row_scope(context: Any, policy: dict | None) -> str:
         return f"unscoped:{getattr(context, 'user_id', '') or 'unknown'}"
 
 
+def _periods_read_from_siblings(
+    candidates: list[dict],
+    metrics: list[dict],
+    matched: list[dict],
+    period: dict,
+    date_roles: list[dict],
+    bindings: list[dict],
+    keeps,
+) -> tuple[list[dict], list[dict]]:
+    """Each matched metric whose own table keeps no row in the stated period,
+    read from a sibling's that does (core/period_siblings.py).
+
+    Returns the metric candidates with the sibling in the metric's place --
+    carrying the reader's words for it, so both metric scopes resolve to it --
+    and one note per metric read that way.
+    """
+    from core.period_siblings import read_as, sibling_for_period
+
+    reads: list[dict] = []
+    replaced: dict[str, dict] = {}
+    for metric in matched:
+        found = sibling_for_period(metric, metrics, period, date_roles, bindings, keeps)
+        if found:
+            replaced[str(metric.get("name") or "").casefold()] = read_as(found["metric"], metric)
+            reads.append({"metric": str(metric.get("name") or ""),
+                          "sibling": str(found["metric"].get("name") or ""),
+                          "period": str(period.get("label") or ""),
+                          "table": str(found["metric"].get("base_table") or "")})
+    if not replaced:
+        return candidates, []
+    siblings = {str(sibling.get("name") or "").casefold() for sibling in replaced.values()}
+    kept = [
+        candidate for candidate in candidates
+        if str(candidate.get("name") or "").casefold() not in set(replaced) | siblings
+    ]
+    return list(replaced.values()) + kept, reads
+
+
 def resolve_common_business_anchor(policies, *, resolve_one) -> dict:
     """The date through which EVERY fact in this question has data.
 
@@ -3556,6 +3594,57 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             reader_question=_reader_plan_question,
             limit=6,
         )
+        # A period the metric's own table does not keep is read from the
+        # table that keeps it: "units in stock at the end of 2024" from the
+        # month-end snapshot where the daily one starts after 2024. Both
+        # scopes then resolve to the sibling, and the reader is told.
+        _stated_for_siblings = stated_period(_semantic_plan_question, _analytical_plan.calendar_basis)
+        if _stated_for_siblings and _early_metric_scope.metrics and not _early_metric_scope.ambiguous:
+            try:
+                from core.period_siblings import keeps_period
+                from core.semantic_planner import metric_formula_columns
+
+                _sibling_pool = [
+                    metric for metric in (
+                        _contract_metrics if _contract_metrics is not None else store.list_metrics(account_id)
+                    ) or []
+                    if store.metric_is_answerable(metric)
+                ]
+                _metric_candidates, _period_reads = _periods_read_from_siblings(
+                    list(_metric_candidates or []),
+                    _sibling_pool,
+                    list(_early_metric_scope.metrics),
+                    _stated_for_siblings,
+                    list((_source_model or {}).get("date_roles") or []),
+                    store.list_metric_date_contexts(account_id),
+                    lambda date, metric: keeps_period(
+                        account_id, date, _stated_for_siblings,
+                        lambda probe_sql: _execute_with_policy(probe_sql).rows,
+                        db_cfg.get("db_type", "azure_sql"),
+                        anchor_row_scope(compliance_context, date),
+                        tuple(metric_formula_columns(metric)),
+                    ),
+                )
+            except Exception as _sibling_exc:
+                _period_reads = []
+                log.warning("Period sibling check skipped for %s: %s", account_id, _sibling_exc)
+            for _read in _period_reads:
+                log.info("Period read from a sibling for %s: %s", account_id, _read)
+                _trace_step(trace_id, "metric_read_from_sibling", output_summary=_read)
+                await adapter.send_message(event, _t(
+                    "disclosure.metric.period_from_sibling",
+                    lang=(portal_user or {}).get("lang") or "en",
+                    metric=_read["metric"], sibling=_read["sibling"], period=_read["period"],
+                ))
+            if _period_reads:
+                _early_metric_scope = resolve_metric_scope(
+                    _metric_candidates,
+                    _semantic_plan_question,
+                    all_columns,
+                    selected_schema=schema_hint,
+                    reader_question=_reader_plan_question,
+                    limit=6,
+                )
         _early_metric_tables: set[str] = set()
         if not _early_metric_scope.ambiguous:
             for _early_metric in _early_metric_scope.metrics:

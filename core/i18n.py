@@ -3710,6 +3710,14 @@ MESSAGES: dict[str, dict[str, str]] = {
                "valeur globale et ne peut pas être ventilée par dimension. "
                "Voici le résultat global :"),
     },
+    # core/period_siblings.py: the period asked for is read from the table
+    # that keeps it.
+    "disclosure.metric.period_from_sibling": {
+        "en": ("ℹ️ **{metric}** has no figures for {period}; they are read from "
+               "**{sibling}**, which keeps them."),
+        "fr": ("ℹ️ **{metric}** n’a pas de chiffres pour {period} ; ils sont lus "
+               "dans **{sibling}**, qui les conserve."),
+    },
     "disclosure.metric.this_metric": {
         "en": "This metric", "fr": "Cet indicateur",
     },
