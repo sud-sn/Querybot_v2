@@ -162,6 +162,31 @@ def _shown(language: str, twin: dict) -> bool:
     return twin["language"] == language
 
 
+def reader_label_expression(
+    alias: str, table: str, column: str, semantic_plan: dict | None, db_type: str = "azure_sql",
+) -> str:
+    """How a governed compiler shows one label column to the plan's reader, or
+    "" when the column is shown as it is -- its table keeps no twin of it.
+
+    The validator refuses a label in the other language, so a compiler that
+    wrote the column the plan named had its answer thrown away: "quel article
+    a le plus de stock en main ?" was compiled on the item's English name,
+    refused for a French reader, and left to the model.
+    """
+    plan = semantic_plan or {}
+    language = str(plan.get("label_language") or "en")
+    for policy in plan.get("label_policies") or []:
+        if not isinstance(policy, dict) or _bare(policy.get("table", "")) != _bare(table):
+            continue
+        for twin in policy.get("twins") or []:
+            if str(column).upper() not in {str(twin.get("base") or "").upper(), str(twin.get("twin") or "").upper()}:
+                continue
+            if _shown(language, twin):
+                return label_expression(alias, twin, db_type)
+            return f"{alias}.{_quote(twin['base'], db_type)}"
+    return ""
+
+
 def _language_name(language: str) -> str:
     return {"fr": "French", "en": "English"}.get(language, language)
 

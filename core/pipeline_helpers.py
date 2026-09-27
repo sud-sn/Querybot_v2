@@ -1322,7 +1322,13 @@ def _compile_governed_grouped_request_sql(
         table_alias = alias_for(str(dimension["table"]))
         if not table_alias:
             return ""
-        dimension_ref = f"{table_alias}.{qcol(str(dimension['column']))}"
+        # In the reader's language where the warehouse keeps the label twice
+        # (core/label_language.py): the validator refuses the other one.
+        from core.label_language import reader_label_expression
+
+        dimension_ref = reader_label_expression(
+            table_alias, str(dimension["table"]), str(dimension["column"]), plan, db_type,
+        ) or f"{table_alias}.{qcol(str(dimension['column']))}"
 
     # A total of a quantity is kept per unit of measure (core/units_of_measure):
     # eaches and feet do not add up, and the validator refuses a query that

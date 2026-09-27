@@ -55,7 +55,7 @@ SCHEMA = {
         ("CUR_ON_HND_QTY", "decimal"), ("ITM_CST", "decimal"), ("UNT_OF_MSR", "nvarchar")),
     "WH.MART.WHS_DMS": _table("WHS_DMS_KEY", ("WHS_DMS_KEY", "int"), ("WHS_CD", "nvarchar"), ("WHS_DSC", "nvarchar")),
     "WH.MART.ITM_DMS": _table("ITM_DMS_KEY", ("ITM_DMS_KEY", "int"), ("ITM_CD", "nvarchar"), ("ITM_NM", "nvarchar"),
-                              ("ITM_GRP_DMS_KEY", "int"), ("UNT_OF_MSR", "nvarchar")),
+                              ("ITM_GRP_DMS_KEY", "int"), ("UNT_OF_MSR", "nvarchar"), ("ITM_FR_NM", "nvarchar")),
     "WH.MART.ITM_GRP_DMS": _table("ITM_GRP_DMS_KEY", ("ITM_GRP_DMS_KEY", "int"), ("ITM_GRP_CD", "nvarchar"),
                                   ("ITM_GRP_DSC", "nvarchar")),
     "WH.MART.PTY_DMS": _table("PTY_DMS_KEY", ("PTY_DMS_KEY", "int"), ("PTY_CD", "nvarchar"), ("PTY_NM", "nvarchar")),
@@ -77,6 +77,9 @@ GROUPS = {0: ("0", _PLACEHOLDER), 10: ("FIT", "FITTINGS"), 20: ("PIP", "PIPE"), 
 # key: (code, name, group, unit)
 ITEMS = {0: ("0", _PLACEHOLDER, 0, ""), 101: ("BE-1", "BRASS ELBOW", 10, "EA"), 102: ("ST-2", "STEEL TEE", 10, "EA"),
          201: ("CP-9", "COPPER PIPE", 20, "FT"), 202: ("PX-4", "PEX PIPE", 20, "FT")}
+# An item's French name, where the warehouse keeps one: blank for two of them,
+# as a French twin often is.
+ITEM_FR_NAMES = {101: "COUDE EN LAITON", 102: "", 201: "TUYAU DE CUIVRE", 202: ""}
 PARTIES = {0: ("0", _PLACEHOLDER), 1: ("ALO", "ANA LOPEZ"), 2: ("BOK", "BEN OKAFOR")}
 _MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
               "November", "December"]
@@ -104,7 +107,7 @@ def rows() -> dict[str, list[tuple]]:
     data: dict[str, list[tuple]] = {
         "WHS_DMS": [(k, c, n) for k, (c, n) in WAREHOUSES.items()],
         "ITM_GRP_DMS": [(k, c, n) for k, (c, n) in GROUPS.items()],
-        "ITM_DMS": [(k, c, n, g, u) for k, (c, n, g, u) in ITEMS.items()],
+        "ITM_DMS": [(k, c, n, g, u, ITEM_FR_NAMES.get(k, "")) for k, (c, n, g, u) in ITEMS.items()],
         "PTY_DMS": [(k, c, n) for k, (c, n) in PARTIES.items()],
     }
     days = []
