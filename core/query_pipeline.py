@@ -1410,12 +1410,34 @@ def ranked_relationship_disclosure(ranked, *, lang) -> str:
     ]
     if not chosen or not alternatives:
         return ""
+    # The dimension as the reader knows it, never its table ("ITM_GRP_DMS").
+    target = str((ranked or {}).get("target_label") or (ranked or {}).get("target") or "")
+    alternative = alternatives[0]
+    if "redirect" in (ranked or {}):
+        # "Ask again naming X" only where naming X takes the other path
+        # (graph_resolver names the word, if there is one).
+        alternative = str(ranked.get("redirect") or "")
+        if not alternative:
+            # No word takes the other path: the reader is told where the
+            # value was read from, not asked to name what has no name.
+            options = [option for option in ranked.get("options") or [] if isinstance(option, dict)]
+            chosen_from = str(options[0].get("from_label") or "") if options else ""
+            other_from = str(options[1].get("from_label") or "") if len(options) > 1 else ""
+            if not chosen_from or not other_from or chosen_from.casefold() == other_from.casefold():
+                chosen_from, other_from = chosen, alternatives[0]
+            return _t(
+                "disclosure.relationship.ranked_from",
+                lang=lang,
+                target=target,
+                chosen=chosen_from,
+                alternative=other_from,
+            )
     return _t(
         "disclosure.relationship.ranked",
         lang=lang,
         chosen=chosen,
-        target=str((ranked or {}).get("target") or ""),
-        alternative=alternatives[0],
+        target=target,
+        alternative=alternative,
     )
 
 

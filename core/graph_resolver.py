@@ -898,6 +898,47 @@ def _selected_path_matches(path: list[dict], selected_edge_ids) -> bool:
     return bool(selected) and selected == actual
 
 
+def _entity_words(entity: dict | None) -> str:
+    """An entity as a reader knows it: its own name where that is words
+    ("Creation Date"), else its table read through the tenant's vocabulary
+    ("Item Group"), never the physical name cut at the underscores ("Itm Grp
+    Dms"), which is what a display name copied from the table is."""
+    entity = entity or {}
+    display = str(entity.get("display_name") or entity.get("entity_name") or "").strip()
+    table = str(entity.get("table_name") or entity.get("entity_name") or "").strip()
+    if display and display.replace(" ", "_").upper() != table.upper():
+        return display
+    if not table:
+        return display
+    try:
+        from core.source_resolution import _business_source_label
+        from core.vocab_packs import get_active_vocab
+
+        schema = str(entity.get("schema_name") or "").strip()
+        return _business_source_label(
+            {"qualified_name": f"{schema}.{table}" if schema else table, "entity": display or table},
+            vocab=get_active_vocab(),
+        ) or display
+    except Exception as exc:  # noqa: BLE001 - a name in words costs a label, never a path
+        log.warning("Graph: %s left unspelled: %s", table, exc)
+        return display
+
+
+def _reached_from(edge: dict) -> str:
+    """The entity a path's edge was walked from: a graph edge keeps its own
+    orientation, and a path walks it either way."""
+    if edge.get("_direction", "forward") == "backward":
+        return str(edge.get("to_entity") or "")
+    return str(edge.get("from_entity") or "")
+
+
+def _reached_to(edge: dict) -> str:
+    """The entity a path's edge was walked to."""
+    if edge.get("_direction", "forward") == "backward":
+        return str(edge.get("from_entity") or "")
+    return str(edge.get("to_entity") or "")
+
+
 def _path_label(path: list[dict], entities: list[dict] | None = None) -> str:
     """A business-readable name for one join path.
 
@@ -912,31 +953,39 @@ def _path_label(path: list[dict], entities: list[dict] | None = None) -> str:
     a bare physical name when a display name exists; collapse consecutive
     repeats; and describe intermediate hops with "via".
     """
-    display_by_entity = {
-        str(entity.get("entity_name") or ""): str(
-            entity.get("display_name") or entity.get("entity_name") or ""
-        ).strip()
+    entity_by_name = {
+        str(entity.get("entity_name") or ""): entity
         for entity in entities or []
         if entity.get("entity_name")
     }
 
     def _name(entity_name: Any) -> str:
         key = str(entity_name or "")
-        return display_by_entity.get(key) or key
+        return _entity_words(entity_by_name.get(key)) or key
 
-    labels: list[str] = []
+    # A step with a name of its own is told by it; steps with none are told by
+    # the tables they walk, each named once and in the order it is walked
+    # ("Item Balance via Item via Item Group", never "... via Item via Item
+    # via ..."), and a walk that goes on from a named step's table names only
+    # the tables after it.
+    parts: list[str] = []
+    reached = ""
     for edge in path:
         label = str(edge.get("label") or "").strip()
         if not label:
             label = str(edge.get("business_role") or "").strip()
-        if not label:
-            label = f"{_name(edge.get('from_entity'))} via {_name(edge.get('to_entity'))}"
-        # Role-playing edges through one dimension repeat the same business
-        # role; saying it twice adds nothing.
-        if labels and labels[-1].casefold() == label.casefold():
-            continue
-        labels.append(label)
-    return " via ".join(labels)
+        start, end = _name(_reached_from(edge)), _name(_reached_to(edge))
+        if label:
+            # Role-playing edges through one dimension repeat the same
+            # business role; saying it twice adds nothing.
+            if not (parts and parts[-1].casefold() == label.casefold()):
+                parts.append(label)
+        elif parts and reached == start:
+            parts.append(end)
+        else:
+            parts.append(f"{start} via {end}")
+        reached = end
+    return " via ".join(parts)
 
 
 def _question_edge_weight(edge: dict, question: str) -> float:
@@ -1199,6 +1248,24 @@ def find_join_path_with_diagnostics(
                     "label": label,
                     "value": label,
                     "edge_ids": _path_selection_ids(path),
+                    # What a reader can name to take this path: its edges'
+                    # own labels and roles, the only words a question is
+                    # weighed by (_question_edge_weight).
+                    "names": list(dict.fromkeys(
+                        phrase
+                        for edge in path
+                        for phrase in (
+                            str(edge.get("label") or "").strip(),
+                            str(edge.get("business_role") or "").strip(),
+                        )
+                        if phrase
+                    )),
+                    # And the table the target is read from on it, in words.
+                    "from_label": _entity_words(next(
+                        (entity for entity in _graph_entities
+                         if entity.get("entity_name") == _reached_from(path[-1])),
+                        {"entity_name": _reached_from(path[-1])},
+                    )) if path else "",
                 })
             if len(_path_options) > 1:
                 diagnostics["ambiguous_targets"].append({
@@ -1742,10 +1809,22 @@ def _resolve_on_graph(
         alternatives = [
             str(option.get("label") or "") for option in options[1:] if option
         ]
+        # The word that takes the other path, if one does: a question is
+        # weighed by the words of a path's own edges, so a word the path taken
+        # carries too, or one the question already says, redirects nothing.
+        taken_names = {str(name).casefold() for name in (options[0] or {}).get("names") or []} if options else set()
+        redirects = [
+            str(name)
+            for name in ((options[1] or {}).get("names") or [] if len(options) > 1 else [])
+            if str(name).casefold() not in taken_names
+            and not _phrase_in_question(str(name), _tokens(question), _normalize(question))
+        ]
         ambiguity_note = {
             "target": ambiguity.get("target"),
+            "target_label": _entity_words(entities_map.get(str(ambiguity.get("target") or ""))),
             "chosen": chosen_label,
             "alternatives": alternatives,
+            "redirect": redirects[0] if redirects else "",
             "options": options,
         }
         log.info(

@@ -3696,6 +3696,12 @@ MESSAGES: dict[str, dict[str, str]] = {
                "{target}. Posez la question à nouveau en nommant "
                "*{alternative}* pour utiliser l’autre."),
     },
+    # A tie between two paths no word can choose between: the reader is told
+    # where the value was read from, and not asked to name what has no name.
+    "disclosure.relationship.ranked_from": {
+        "en": "ℹ️ {target} is read from **{chosen}**, not from *{alternative}*.",
+        "fr": "ℹ️ {target} provient de **{chosen}**, et non de *{alternative}*.",
+    },
     "disclosure.metric.query_not_groupable": {
         "en": ("ℹ️ **{metric}** is a fixed SQL query — it returns an overall "
                "value and cannot be broken down by individual dimensions. "
