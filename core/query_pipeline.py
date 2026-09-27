@@ -3741,7 +3741,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # An attribute its entity's own table keeps -- "the average item gross
         # weight" -- is read on that table, over its members: no fact holds it,
         # and which fact to read is no question to put to the reader.
-        if not _early_metric_scope.metrics and not _analytical_plan.population_entity:
+        from core.analytical_request_plan import ATTRIBUTE_SOURCE, metrics_asked_for
+
+        if not metrics_asked_for(_semantic_plan_question, _early_metric_scope.metrics) and not (
+            _analytical_plan.population_entity
+        ):
             try:
                 from core.analytical_request_plan import aggregated_attribute
 
@@ -3769,7 +3773,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "selected_facts": [],
                     "candidates": [],
                     "source_kind": "master",
-                    "reason": "an attribute its entity's own table keeps",
+                    "reason": ATTRIBUTE_SOURCE,
                 }
                 log.info(
                     "Attribute aggregate for %s: %s(%s) on %s",
@@ -4552,17 +4556,20 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _metric["_resolved_source_tables"] = sorted(_resolved_metric_tables)
         _metric_formula_tables.update(_resolved_metric_tables)
     # "How many products do we have" is every product: a metric that counts
-    # them on another table -- the ones sold -- is not that count.
-    from core.analytical_request_plan import metrics_on_the_population
+    # them on another table -- the ones sold -- is not that count. Nor is it
+    # the average of an attribute their own table keeps.
+    from core.analytical_request_plan import metrics_on_the_attributes_table, metrics_on_the_population
 
-    _population_metrics = metrics_on_the_population(_semantic_plan, _analytical_plan.to_dict(), _matched_metrics)
-    if len(_population_metrics) < len(_matched_metrics):
+    _master_metrics = metrics_on_the_attributes_table(
+        _source_scope, metrics_on_the_population(_semantic_plan, _analytical_plan.to_dict(), _matched_metrics),
+    )
+    if len(_master_metrics) < len(_matched_metrics):
         log.info(
-            "Metrics that read another table than the population's left out for %s: %s",
+            "Metrics that read another table than the population's or attribute's left out for %s: %s",
             account_id,
-            ", ".join(str(m.get("name")) for m in _matched_metrics if m not in _population_metrics),
+            ", ".join(str(m.get("name")) for m in _matched_metrics if m not in _master_metrics),
         )
-        _matched_metrics = _population_metrics
+        _matched_metrics = _master_metrics
         _metric_formula_tables = {
             str(table) for metric in _matched_metrics for table in metric["_resolved_source_tables"]
         }

@@ -385,16 +385,56 @@ def metrics_on_the_population(
     master = str((((plan.get("count_target") or {}).get("selected")) or {}).get("table") or "")
     if not str((intent_plan or {}).get("population_entity") or "") or not master:
         return metrics
+    return [metric for metric in metrics if _reads_only(metric, master)]
 
-    def reads_only_the_population(metric: dict[str, Any]) -> bool:
-        sources = list(
-            metric.get("_resolved_source_tables")
-            or metric.get("source_tables")
-            or ([metric.get("base_table")] if metric.get("base_table") else [])
-        )
-        return all(_same_table(source, master) for source in sources)
 
-    return [metric for metric in metrics if reads_only_the_population(metric)]
+def _reads_only(metric: dict[str, Any], table: str) -> bool:
+    sources = list(
+        metric.get("_resolved_source_tables")
+        or metric.get("source_tables")
+        or ([metric.get("base_table")] if metric.get("base_table") else [])
+    )
+    return all(_same_table(source, table) for source in sources)
+
+
+ATTRIBUTE_SOURCE = "an attribute its entity's own table keeps"
+_COUNT_ASKED = re.compile(r"\b(?:how\s+many|number\s+of|counts?|counted|counting|combien|nombre)\b", re.I)
+
+
+def metrics_asked_for(question: str, matched_metrics: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Of the metrics a question's words matched, those it asks for: not
+    counts of the members it names, where it asks an average, a minimum or a
+    maximum none of them computes, and no count.
+
+    "What is the average yearly income of our customers?" matched Number of
+    Buying Customers by "customers" alone. It asks for no count of them: the
+    average is of their yearly income, which their own table keeps.
+    """
+    from core.pipeline_helpers import _outer_aggregate, unmet_aggregates
+
+    metrics = list(matched_metrics or [])
+    if (
+        metrics
+        and all(_outer_aggregate(str(m.get("sql_template") or m.get("formula") or "")) == "COUNT" for m in metrics)
+        and unmet_aggregates(question, metrics)
+        and not _COUNT_ASKED.search(str(question or ""))
+    ):
+        return []
+    return metrics
+
+
+def metrics_on_the_attributes_table(
+    source_scope: dict[str, Any] | None,
+    matched_metrics: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Of the metrics a question matched, those that read only the table an
+    attribute it averages is kept on, where that table is its source."""
+    metrics = list(matched_metrics or [])
+    scope = source_scope or {}
+    table = str(scope.get("selected_fact") or "")
+    if scope.get("reason") != ATTRIBUTE_SOURCE or not table:
+        return metrics
+    return [metric for metric in metrics if _reads_only(metric, table)]
 
 
 def demote_what_the_question_does_not_compute(
