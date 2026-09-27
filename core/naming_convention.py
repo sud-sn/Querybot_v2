@@ -626,14 +626,35 @@ ENTITY_PREFIX_VOCABULARY: dict[str, str] = {
 
 # ── Matching helpers ───────────────────────────────────────────────────────────
 
+# The suffix rules are written in a warehouse's short forms. A name that
+# spells its last word out is read as the short form too: SalesAmount ends as
+# SALES_AMT does, OrderQuantity as ORDER_QTY, UnitsBalance as UNITS_BAL.
+_SPELLED_OUT_SUFFIXES = {
+    "AMOUNT": "AMT", "COST": "CST", "PROFIT": "PFT", "REVENUE": "REV", "QUANTITY": "QTY", "COUNT": "CNT",
+    "VOLUME": "VOL", "WEIGHT": "WGT", "PERCENT": "PCT", "PERCENTAGE": "PCT", "BALANCE": "BAL",
+    "INVENTORY": "INV", "NUMBER": "NUM", "STATUS": "STS", "TYPE": "TYP", "GROUP": "GRP", "FLAG": "FLG",
+    "INDICATOR": "IND",
+}
+
+
 def match_column_suffix(column: str) -> SuffixRule | None:
     """
     Return the first matching SuffixRule for this column name.
     Longer suffixes are tested before shorter ones (list is ordered).
+
+    A camel-case name is read as its words (ProductKey as PRODUCT_KEY), and a
+    last word spelled out as its short form.
     """
+    from core.identifier_intelligence import identifier_words
+
     col_upper = (column or "").upper()
+    words = identifier_words(column or "")
+    head, _, last = words.rpartition("_")
+    names = [col_upper, words]
+    if head and last in _SPELLED_OUT_SUFFIXES:
+        names.append(f"{head}_{_SPELLED_OUT_SUFFIXES[last]}")
     for rule in COLUMN_SUFFIX_RULES:
-        if col_upper.endswith(rule.suffix.upper()):
+        if any(name.endswith(rule.suffix.upper()) for name in names):
             return rule
     return None
 

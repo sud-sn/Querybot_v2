@@ -564,7 +564,10 @@ def strip_dimension_key_suffix(column: Any, vocab: "MergedVocab | None" = None) 
     Longest suffix first, so _DMS_KEY is stripped whole rather than leaving a
     stray "_DMS" behind once "_KEY" is also in the set.
     """
-    col = str(column or "").strip().strip('[]"`').upper()
+    from core.identifier_intelligence import identifier_words
+
+    # Read as words: ProductKey is a PRODUCT_KEY.
+    col = identifier_words(str(column or ""))
     for suffix in dimension_key_suffixes(vocab):
         if col.endswith(suffix) and len(col) > len(suffix):
             return col[: -len(suffix)]

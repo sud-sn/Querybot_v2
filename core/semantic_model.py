@@ -182,7 +182,13 @@ def _infer_table_grain(table: str, columns: list[str], table_type: str) -> tuple
 
 
 def _entity_name(table: str) -> str:
+    from core.identifier_intelligence import identifier_words
+
     bare = table.split(".")[-1]
+    # A camel-case name is read as its words: DimProductCategory is the
+    # Product Category.
+    if re.search(r"[a-z][A-Z]", bare):
+        bare = identifier_words(bare)
     for suffix in ("_FCT", "_DMS", "_DIM"):
         if bare.upper().endswith(suffix):
             bare = bare[: -len(suffix)]
@@ -195,8 +201,11 @@ def _entity_name(table: str) -> str:
 
 
 def _display_field_for_columns(columns: list[str], prefix: str = "") -> str:
+    from core.identifier_intelligence import identifier_words
     from core.vocab_packs import strip_dimension_key_suffix
-    upper_to_raw = {c.upper(): c for c in columns}
+    # Each column by its words: EnglishProductName is a _NAME.
+    upper_to_raw = {identifier_words(c): c for c in columns}
+    prefix = identifier_words(prefix) if prefix else prefix
     prefixes = [prefix.upper()] if prefix else []
     # The entity prefix is whatever remains once the key suffix is removed, in
     # whichever convention this tenant uses. Stripping only "_DMS_KEY" meant
@@ -214,18 +223,30 @@ def _display_field_for_columns(columns: list[str], prefix: str = "") -> str:
         candidates.extend([f"{p}_DSC", f"{p}_DESC", f"{p}_DESCRIPTION", f"{p}_NM", f"{p}_NAME"])
     candidates.extend([c for c in upper_to_raw if c.endswith(("_DSC", "_DESC", "_DESCRIPTION", "_NM", "_NAME"))])
     for candidate in candidates:
-        if candidate in upper_to_raw:
+        if candidate in upper_to_raw and not _part_of_a_name(candidate):
             return upper_to_raw[candidate]
     for c in columns:
         rule = match_column_suffix(c)
-        if rule and rule.role == "display":
+        if rule and rule.role == "display" and not _part_of_a_name(identifier_words(c)):
             return c
     return ""
 
 
+# A person's first or last name names no one alone: grouped by it, two
+# customers called Alex are one. It is never what a member is shown by.
+_NAME_PARTS = frozenset({"FIRST", "LAST", "MIDDLE", "GIVEN", "FAMILY", "SUR", "SURNAME"})
+
+
+def _part_of_a_name(words: str) -> bool:
+    tokens = words.split("_")
+    return "SURNAME" in tokens or (tokens[-1] in {"NAME", "NM"} and bool(_NAME_PARTS & set(tokens[:-1])))
+
+
 def _code_field_for_columns(columns: list[str], prefix: str = "") -> str:
+    from core.identifier_intelligence import identifier_words
     from core.vocab_packs import strip_dimension_key_suffix
-    upper_to_raw = {c.upper(): c for c in columns}
+    upper_to_raw = {identifier_words(c): c for c in columns}
+    prefix = identifier_words(prefix) if prefix else prefix
     prefixes = [prefix.upper()] if prefix else []
     _stripped = strip_dimension_key_suffix(prefix)
     if _stripped:
@@ -244,6 +265,13 @@ def _code_field_for_columns(columns: list[str], prefix: str = "") -> str:
         rule = match_column_suffix(c)
         if rule and rule.role == "code":
             return c
+    # The source system's own key for a member (CustomerAlternateKey) is its
+    # code -- unless it is a person's official number, which is no label.
+    for words, c in upper_to_raw.items():
+        if words.endswith(("_ALTERNATE_KEY", "_BUSINESS_KEY", "_NATURAL_KEY")) and not (
+            set(words.split("_")) & {"NATIONAL", "SSN", "SOCIAL", "TAX", "PASSPORT"}
+        ):
+            return c
     return ""
 
 
@@ -254,8 +282,10 @@ def _business_role_from_column(column: str) -> str:
     entity = match_entity_prefix(column)
     if entity:
         return re.sub(r"[^a-z0-9]+", "_", entity.lower()).strip("_")
+    from core.identifier_intelligence import identifier_words
     from core.vocab_packs import strip_dimension_key_suffix
-    col = column.upper()
+    # Read as words: ProductKey keys the product.
+    col = identifier_words(column)
     # Strip the tenant's own dimension-key marker first, whichever it is, so a
     # two-part suffix comes off whole rather than leaving a stray fragment.
     col = strip_dimension_key_suffix(col) or col

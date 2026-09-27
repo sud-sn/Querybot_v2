@@ -19,6 +19,7 @@ from core.date_roles import date_role_terms, detect_date_role
 from core.erp_column_dict import ERP_COLUMN_DICT
 from core.identifier_intelligence import (
     analyze_identifier,
+    identifier_words,
     resolve_governed_column_code,
     tokenize_identifier,
 )
@@ -531,8 +532,15 @@ def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> lis
 _NUMERIC_TYPE_TOKENS = ("INT", "NUMBER", "NUMERIC", "DECIMAL", "FLOAT", "DOUBLE", "REAL", "MONEY")
 
 
+# A number named by one of these words is an amount or a quantity, however
+# the warehouse spells the rest of the name (SalesAmount, UnitsBalance).
+_MEASURE_WORDS = frozenset({"AMOUNT", "QUANTITY", "COST", "PRICE", "REVENUE", "PROFIT", "BALANCE", "UNITS"})
+_BUSINESS_KEY_SUFFIXES = ("_ALTERNATE_KEY", "_BUSINESS_KEY", "_NATURAL_KEY")
+
+
 def _role_for_column(column: str, data_type: str = "", distinct_values: str = "", vocab=None) -> tuple[str, list[str], list[str], str]:
-    col = _clean_identifier(column).upper()
+    # Read as its words: ProductKey is a PRODUCT_KEY, SalesAmount a SALES_AMOUNT.
+    col = identifier_words(_clean_identifier(column))
     ctype = (data_type or "").upper()
     distinct = distinct_values or ""
     v = _active_vocab(vocab)
@@ -571,6 +579,19 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         evidence.append("dimension key suffix")
         warnings.append("Dimension key values may be displayed with separators; SQL filters should use raw unformatted literals.")
         return "dimension_key", evidence, warnings, default_filter
+    # The source system's own key for a member (CustomerAlternateKey) is the
+    # member's business code, never a key to another table.
+    if col.endswith(_BUSINESS_KEY_SUFFIXES):
+        evidence.append("business key naming pattern")
+        return "identifier", evidence, warnings, default_filter
+    # A key in any convention (CUSTOMER_KEY, ProductKey, customer_id): a whole
+    # number keys a dimension's row; text is a business key.
+    if col.endswith(("_KEY", "_SK", "_FK", "_ID")):
+        if not ctype or any(t in ctype for t in ("INT", "NUMBER", "NUMERIC")):
+            evidence.append("key naming pattern")
+            return "dimension_key", evidence, warnings, default_filter
+        evidence.append("business key naming pattern")
+        return "identifier", evidence, warnings, default_filter
     if governed_code in getattr(v, "raw_status_codes", set()):
         if record_prefix:
             evidence.append(f"M3 record prefix {record_prefix}={record_table}")
@@ -584,6 +605,9 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
     if governed_code in v.raw_measure_codes or any(s in col for s in ("_AMT", "_QTY", "_CST", "_PFT", "_PCE", "_RATE")):
         if record_prefix:
             evidence.append(f"M3 record prefix {record_prefix}={record_table}")
+        evidence.append("measure naming pattern")
+        return "measure", evidence, warnings, default_filter
+    if set(col.split("_")) & _MEASURE_WORDS and (not ctype or any(t in ctype for t in _NUMERIC_TYPE_TOKENS)):
         evidence.append("measure naming pattern")
         return "measure", evidence, warnings, default_filter
     # A count of events (NUM_OF_RCT, receipts in the period) and an aging

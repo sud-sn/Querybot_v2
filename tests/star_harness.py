@@ -87,8 +87,9 @@ PRODUCTS = {
     5: ("HE-1", "Canyon Helmet", "Casque Canyon", 4, 80.0, 44.0), 6: ("HE-2", "Peak Helmet", "Casque Peak", 4, 130.0, 70.0),
     7: ("JA-1", "Storm Jacket", "Veste Storm", 5, 300.0, 170.0), 8: ("GL-1", "Grip Gloves", "Gants Grip", 6, 35.0, 15.0),
 }
+# Two customers share a first name: a customer is never told apart by it.
 CUSTOMERS = {1: ("C001", "Alex", "Martin", "F", 60000.0), 2: ("C002", "Sam", "Roy", "M", 85000.0),
-             3: ("C003", "Robin", "Lee", "F", 120000.0), 4: ("C004", "Jordan", "Weber", "M", 45000.0)}
+             3: ("C003", "Robin", "Lee", "F", 120000.0), 4: ("C004", "Alex", "Weber", "M", 45000.0)}
 TERRITORIES = {1: ("Northwest", "United States", "North America"), 2: ("Canada", "Canada", "North America"),
                3: ("France", "France", "Europe")}
 
