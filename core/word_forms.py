@@ -4,9 +4,10 @@ One form for each inflection of the verbs a business measure is named by.
 "How many units did we sell" and a metric called "Units sold" shared no word
 but "units" until "sell" and "sold" were the same word, so the question matched
 no metric and was asked which dataset it meant. Only verbs are folded, with
-their own nouns where the noun is the same event ("orders", "deliveries"), and
-"buy" with "purchase", which name one event: a general stemmer would make
-"sales" (revenue) the same word as "sold" (units).
+their own nouns where the noun is the same event ("orders", "deliveries"),
+"buy" with "purchase", which name one event, and "stock" with "inventory",
+which name one thing: a general stemmer would make "sales" (revenue) the same
+word as "sold" (units).
 """
 
 from __future__ import annotations
@@ -29,6 +30,10 @@ for _base, _forms in {
     "transfer": ("transfers", "transferring", "transferred"),
     "invoice": ("invoices", "invoicing", "invoiced"),
     "spend": ("spends", "spending", "spent"),
+    # The goods a business holds, called either. French "stock" is read as
+    # "inventory", and a metric named "reserved stock" shared only "reserved"
+    # with "reserved inventory", as every inventory metric shared "inventory".
+    "inventory": ("inventories", "stock", "stocks"),
 }.items():
     _FORMS[_base] = _base
     for _form in _forms:

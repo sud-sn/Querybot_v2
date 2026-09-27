@@ -43,6 +43,7 @@ _ATOMIC_ALIAS_STOP_WORDS = _GENERIC_TABLE_WORDS | {
     "reference", "surrogate",
 }
 _SURROGATE_FIELD_SUFFIXES = ("_DMS_KEY", "_KEY", "_SK", "_FK")
+_GROUPING_TAIL_RE = re.compile(r"\s+(?:by|per)\s+")
 
 
 def _norm(value: str) -> str:
@@ -333,7 +334,12 @@ def resolve_source_scope(
         )
         if matches:
             best = matches[0]
-            meaningful = [w for w in best.split() if w not in _GENERIC_TABLE_WORDS]
+            # A name that says how its table is cut names the table by what
+            # comes before: "inventory by warehouse" is the inventory table,
+            # and "reserved inventory by warehouse" names inventory, cut by
+            # warehouse -- a subject, not a source the reader chose.
+            head = _GROUPING_TAIL_RE.split(best, maxsplit=1)[0]
+            meaningful = [w for w in head.split() if w not in _GENERIC_TABLE_WORDS]
             if meaningful:
                 score += 5 + min(6, len(meaningful) * 2)
                 evidence_kind = "source" if len(meaningful) > 1 else "subject"
