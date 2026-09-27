@@ -1760,6 +1760,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question,
             calendar_profile=_planner_calendar_profile,
         )
+    # The records a count names are read in the detectors' English, as every
+    # other English detector is: "fiches ... créées" is "records ... created".
+    if (
+        _analysis_question != question
+        and not _analytical_plan.record_count
+        and not _analytical_plan.counted_entity
+        and not _analytical_plan.population_entity
+    ):
+        from core.analytical_intent import detect_record_count
+
+        _record_count, _record_verb = detect_record_count(_analysis_question)
+        if _record_count:
+            _analytical_plan = _dataclass_replace(
+                _analytical_plan, record_count=_record_count, record_verb=_record_verb,
+            )
 
     # Keep an explicit or clarified calendar choice available to later turns
     # in this thread. This stores only calendar metadata, never result values,
@@ -5090,6 +5105,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # authoritative fact scope and resolve the graph again. The resulting
     # graph is the exact object shared by the prompt and validator.
     _planner_alignment: dict = {}
+    # The records a count names are what it counts, never a breakdown of it:
+    # "items created by month" is not grouped by item, nor joined to it.
+    try:
+        from core.analytical_request_plan import demote_counted_records
+
+        demote_counted_records(_semantic_plan, _analytical_plan.to_dict(), _matched_metrics)
+    except Exception as _counted_exc:
+        log.warning("Counted records not taken out of the breakdown for %s: %s", account_id, _counted_exc)
     try:
         from core.semantic_resolution import build_planner_alignment
         _planner_alignment = build_planner_alignment(
@@ -5517,6 +5540,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         analysis_contract=_analysis_contract,
         graph_context=_graph_ctx,
         analytical_intent_plan=_analytical_plan.to_dict(),
+        model=_contract_model,
     )
     _semantic_plan["analytical_request_plan"] = _analytical_request_plan
     # Stamp the model this answer was produced against. Two answers to the

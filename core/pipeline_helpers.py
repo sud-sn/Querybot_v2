@@ -1172,6 +1172,16 @@ def _compile_governed_grouped_request_sql(
             + "_COUNT",
             f"COUNT(DISTINCT fact_rows.{{qcol:{target_column}}})",
         ))
+    if not metric_specs and derived.get("semantics") == "count_records":
+        # The records a named date covers, kept under no key of their own:
+        # the fact's rows.
+        if not _same_physical_table(str(derived.get("target_table") or ""), fact_table):
+            return ""
+        metric_specs.append((
+            re.sub(r"[^A-Za-z0-9_]", "_", str(derived.get("business_entity") or "record")).upper()
+            + "_COUNT",
+            "COUNT(*)",
+        ))
     if not metric_specs or len(metric_specs) > 3:
         return ""
     snapshot = _snapshot_measures(metrics)
@@ -1247,7 +1257,7 @@ def _compile_governed_grouped_request_sql(
     if (
         not unique_dimensions
         and len(metric_specs) == 1
-        and derived.get("semantics") != "count_distinct_business_identifier"
+        and derived.get("semantics") not in {"count_distinct_business_identifier", "count_records"}
         and str(policy.get("kind") or "") in _COMPILABLE_WINDOW_KINDS
     ):
         return ""
@@ -1397,6 +1407,14 @@ def _compile_governed_grouped_request_sql(
             where_parts.append(month_rows_predicate(
                 f"fact_rows.{qcol(str(period_rows.get('fact_column') or ''))}", db_type,
             ))
+    # A periodic snapshot repeats each record under every snapshot: counted,
+    # its records are those of its latest snapshot.
+    snapshot_column = str(derived.get("snapshot_column") or "")
+    if snapshot_column and derived.get("semantics") in {"count_records", "count_distinct_business_identifier"}:
+        where_parts.append(
+            f"fact_rows.{qcol(snapshot_column)} = (\n        SELECT MAX(latest.{qcol(snapshot_column)})"
+            f"\n        FROM {fact_sql} AS latest\n    )"
+        )
     # A ranking of a dimension's members, or a count of the keys that point at
     # one, leaves its placeholder members out (core/unknown_members.py).
     from core.unknown_members import exclusion_predicate
@@ -1430,8 +1448,9 @@ def _compile_governed_grouped_request_sql(
         if not snapshot:
             return ""
     elif policy and str(policy.get("kind") or "") == "all_dates":
-        # Every date the data holds, in the question's grain: no window.
-        pass
+        # Every date the data holds, in the question's grain: no window. A row
+        # with no date belongs to no period.
+        where_parts.append(f"{date_ref} IS NOT NULL")
     elif policy and str(policy.get("kind") or "") == "named_period":
         # A stated period is kept on its literal bounds, with no anchor read. A
         # level in it is read at the last snapshot inside the bounds, below; a

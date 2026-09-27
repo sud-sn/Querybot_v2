@@ -2144,6 +2144,14 @@ def _temporal_anchor_errors(
             value = str(policy.get(key) or "").upper()
             if value:
                 approved.add(value)
+    # A count of a snapshot's records keeps its latest snapshot on the
+    # snapshot's own date, beside the date the question names.
+    snapshot_column = str(
+        (((semantic_context or {}).get("analytical_request_plan") or {}).get("derived_measure") or {})
+        .get("snapshot_column") or ""
+    ).upper()
+    if snapshot_column:
+        approved.add(snapshot_column)
     # "Not the approved key" is only knowable when a policy actually names the
     # approved key. A policy that carries only a calendar column governs the
     # anchor (checked above and in _temporal_anchor_scope_errors) but says
@@ -2248,6 +2256,28 @@ def _source_scope_errors(tree, semantic_context: dict | None) -> list[dict]:
     }]
 
 
+def _latest_snapshot_errors(tree, derived: dict) -> list[dict]:
+    """A count of a periodic snapshot's records reads its latest snapshot: each
+    record repeats under every snapshot, and counted across them it counts once
+    per snapshot."""
+    column = str(derived.get("snapshot_column") or "").strip().upper()
+    if not column:
+        return []
+    for where in tree.find_all(sg_exp.Where):
+        if any(str(node.name or "").upper() == column for node in where.find_all(sg_exp.Column)):
+            return []
+    return [{
+        "code": "derived_measure_mismatch",
+        "message": (
+            f"The compiled request counts the records of the latest snapshot: keep the rows "
+            f"whose {column} is its latest value (MAX over the same table). Across every "
+            "snapshot each record is counted once per snapshot."
+        ),
+        "required_semantics": str(derived.get("semantics") or ""),
+        "snapshot_column": column,
+    }]
+
+
 def _derived_measure_errors(
     tree,
     semantic_context: dict | None,
@@ -2257,6 +2287,24 @@ def _derived_measure_errors(
     """Enforce deterministic measures compiled from ordinary business language."""
     request_plan = (semantic_context or {}).get("analytical_request_plan") or {}
     derived = request_plan.get("derived_measure") or {}
+    if derived.get("semantics") == "count_records":
+        # The records a named date covers, kept under no key of their own.
+        counts_rows = any(
+            isinstance(aggregate.this, sg_exp.Star) and not aggregate.args.get("distinct")
+            for aggregate in tree.find_all(sg_exp.Count)
+        )
+        errors = [] if counts_rows else [{
+            "code": "derived_measure_mismatch",
+            "message": (
+                f"The compiled request counts the {derived.get('business_entity') or 'record'} "
+                f"records of {derived.get('target_table') or 'the selected table'}: COUNT(*) of its "
+                "rows. Do not substitute a distinct count, a sum or another metric."
+            ),
+            "required_semantics": "count_records",
+            "business_entity": str(derived.get("business_entity") or ""),
+            "target_table": str(derived.get("target_table") or ""),
+        }]
+        return errors + _latest_snapshot_errors(tree, derived)
     if derived.get("semantics") != "count_distinct_business_identifier":
         return []
 
@@ -2299,7 +2347,7 @@ def _derived_measure_errors(
         if valid_count:
             break
     if valid_count:
-        return []
+        return _latest_snapshot_errors(tree, derived)
 
     entity = str(derived.get("business_entity") or "business event")
     exact_requirement = (

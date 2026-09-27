@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from core.analytical_intent import _singular
 from core.semantic_model import _is_measure_binding
 
 log = logging.getLogger("querybot.analytical_request_plan")
@@ -59,6 +60,141 @@ def _same_table(left: Any, right: Any) -> bool:
     )
 
 
+def counted_snapshot_key(model: dict[str, Any] | None, fact_table: str, dated_column: str) -> str:
+    """The key of the snapshot a count of a periodic snapshot's records reads:
+    each record repeats under every snapshot, and only its latest is counted.
+    "" for any other table, and when the date the question names is the
+    snapshot's own -- each snapshot's records are then counted in its period."""
+    table = next((
+        t for t in (model or {}).get("tables") or []
+        if isinstance(t, dict) and _same_table(t.get("qualified_name") or t.get("table"), fact_table)
+    ), None)
+    if not table or str(table.get("fact_type") or "") != "periodic_snapshot":
+        return ""
+    key = next((
+        str(role.get("fact_column") or "")
+        for role in (model or {}).get("date_roles") or []
+        if isinstance(role, dict) and role.get("is_default") and role.get("fact_column")
+        and _same_table(role.get("fact_table"), fact_table)
+    ), "")
+    return "" if key.upper() == str(dated_column or "").upper() else key
+
+
+# Words that name a table's rows as such, in either word order: "item-warehouse
+# records", and the French "fiches article-entrepot" read as "records
+# item-warehouse".
+_RECORD_WORDS = frozenset({"record", "row", "line", "entry"})
+
+
+def _counted_words(noun: str) -> set[str]:
+    return {_singular(word) for word in re.split(r"[\s-]+", str(noun or "").casefold()) if word}
+
+
+def _names_rows(noun: str) -> bool:
+    return bool(_counted_words(noun) & _RECORD_WORDS)
+
+
+def _record_key(fields: list[dict[str, Any]], noun: str, fact_table: str) -> str:
+    """The fact's key for the records a count names: "item" is the item key
+    the planner bound "items" through. "" for a noun no field is named for
+    whole: "active items" are not all the items, and "item-warehouse records"
+    are the table's rows."""
+    for field in fields:
+        if _counted_words(str(field.get("term") or "")) != _counted_words(noun):
+            continue
+        key = str(field.get("source_key_column") or "")
+        source = str(field.get("source_key_table") or field.get("source_table") or "")
+        if key and _same_table(source, fact_table):
+            return key
+    return ""
+
+
+_RECORD_COUNT_REASON = "the records a date the question names"
+
+
+def _names_the_counted(field: dict[str, Any], counted: set[str], intent_plan: dict[str, Any] | None) -> bool:
+    """A field that names only the records a count counts: "items" in "items
+    created by month". Never one the question groups by: "warehouse" in
+    "item-warehouse records created in 2025 by warehouse"."""
+    term = _counted_words(str(field.get("term") or ""))
+    grouped = [_counted_words(value) for value in (intent_plan or {}).get("dimensions") or []]
+    return bool(term) and term <= counted and term not in grouped and str(field.get("role") or "").lower() in {
+        "dimension", "display_dimension", "attribute",
+    }
+
+
+def record_count_by_named_date(
+    semantic_plan: dict[str, Any] | None,
+    intent_plan: dict[str, Any] | None,
+    matched_metrics: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The records a date the question names, when that is what it counts.
+
+    "Items created by month in 2025" counts the items whose record was created
+    in each month: the question names the creation date, kept on the request's
+    own fact, asks for no measure, and counts what the fact keeps -- an entity
+    by its key, or the rows it names as records. {} for anything else: a
+    metric, a measure, a date the question did not name or one on another
+    table, and a noun the fact keeps no key of ("sales invoiced by month").
+    """
+    plan = semantic_plan or {}
+    noun = str((intent_plan or {}).get("record_count") or "").strip()
+    if not noun or matched_metrics:
+        return {}
+    fact = str((plan.get("source_scope") or {}).get("selected_fact") or plan.get("fact_anchor") or "")
+    temporal = [p for p in plan.get("temporal_policies") or [] if isinstance(p, dict)]
+    if not fact or len(temporal) != 1:
+        return {}
+    policy = temporal[0]
+    if str(policy.get("resolution_source") or "") != "explicit_date_role" or not _same_table(
+        policy.get("fact_table"), fact
+    ):
+        return {}
+    if any(
+        str(field.get("role") or "").lower() in {"measure", "measure_candidate"}
+        and field.get("enforcement") != "optional"
+        for field in plan.get("fields") or [] if isinstance(field, dict)
+    ):
+        return {}
+    key = _record_key([field for field in plan.get("fields") or [] if isinstance(field, dict)], noun, fact)
+    if not (key or _names_rows(noun)):
+        return {}
+    return {
+        "noun": noun, "fact": fact, "key": key,
+        "dated_by": str(policy.get("business_role") or ""),
+        "dated_column": str(policy.get("fact_column") or ""),
+    }
+
+
+def demote_counted_records(
+    semantic_plan: dict[str, Any] | None,
+    intent_plan: dict[str, Any] | None,
+    matched_metrics: list[dict[str, Any]] | None = None,
+) -> None:
+    """Leave the records a count names out of its breakdown, before the graph
+    is resolved for the plan: the planner bound "items" in "items created by
+    month" to the item's name, and "warehouse" in "item-warehouse records" to
+    the warehouse's, and either would be grouped by and joined."""
+    decision = record_count_by_named_date(semantic_plan, intent_plan, matched_metrics)
+    if not decision:
+        return
+    plan = semantic_plan or {}
+    words = _counted_words(decision["noun"])
+    fields = [field for field in plan.get("fields") or [] if isinstance(field, dict)]
+    counted = [field for field in fields if _names_the_counted(field, words, intent_plan)]
+    for field in counted:
+        field["enforcement"] = "optional"
+        field["demotion_reason"] = "the records the question counts"
+    # And the joins that reached only them.
+    kept = {str(field.get("table") or "") for field in fields if field.get("enforcement") != "optional"}
+    for join in plan.get("joins") or []:
+        target = str(join.get("to") or join.get("to_table") or "")
+        if any(_same_table(target, field.get("table")) for field in counted) and not any(
+            _same_table(target, table) for table in kept
+        ):
+            join["enforcement"] = "optional"
+
+
 def compile_analytical_request_plan(
     question: str,
     semantic_plan: dict[str, Any] | None,
@@ -67,6 +203,7 @@ def compile_analytical_request_plan(
     analysis_contract: dict[str, Any] | None = None,
     graph_context: dict[str, Any] | None = None,
     analytical_intent_plan: dict[str, Any] | None = None,
+    model: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     plan = semantic_plan or {}
     source_scope = plan.get("source_scope") or {}
@@ -259,6 +396,22 @@ def compile_analytical_request_plan(
             ],
         }
 
+    # The records a date the question names, counted. A periodic snapshot
+    # repeats each record under every snapshot, so its latest snapshot alone
+    # is counted.
+    record_count = record_count_by_named_date(plan, intent_plan, matched_metrics)
+    if record_count and not derived_measure and not measures:
+        derived_measure = {
+            "semantics": "count_distinct_business_identifier" if record_count["key"] else "count_records",
+            "business_entity": record_count["noun"],
+            "aggregation": "count_distinct" if record_count["key"] else "count",
+            "target_table": selected_fact,
+            "target_column": record_count["key"],
+            "dated_by": record_count["dated_by"],
+            "snapshot_column": counted_snapshot_key(model, selected_fact, record_count["dated_column"]),
+            "resolution_reason": _RECORD_COUNT_REASON,
+        }
+
     question_text = str(question or "")
     change_direction = ""
     if re.search(r"\b(?:reduced|decreased|declined|fewer|dropped|fell)\b", question_text, re.I):
@@ -319,7 +472,7 @@ def compile_analytical_request_plan(
     ]
     has_measure = bool(measures or registered_metrics or (
         derived_measure.get("target_table") and derived_measure.get("target_column")
-    ))
+    ) or derived_measure.get("semantics") == "count_records")
     temporal_requested = bool(
         intent_plan.get("time_range")
         or intent_plan.get("quarter_periods")

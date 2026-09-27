@@ -197,6 +197,14 @@ def _same_table(left: str, right: str) -> bool:
     return bool(lp and rp and lp[-1] == rp[-1])
 
 
+def _named_dates(question: str, model: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The governed date roles the question names ("created" names the
+    creation date), each with the fact table that keeps it."""
+    from core.contextual_dates import find_explicit_date_roles
+
+    return find_explicit_date_roles(question, list((model or {}).get("date_roles") or []))
+
+
 def _grain_matches(requested: str, table: dict[str, Any]) -> bool:
     if not requested:
         return False
@@ -302,10 +310,20 @@ def resolve_source_scope(
     authoritative_fact_tables = {
         str(value or "").upper() for value in (authoritative_fact_tables or set()) if value
     }
+    named_dates = _named_dates(question, model)
     scored: list[dict[str, Any]] = []
     for table in tables:
         score = 0
         evidence: list[str] = []
+        # A date the question names is kept on the tables that record it:
+        # "items created in the last 12 months" can only be read where the
+        # creation date is. Evidence, not score: it decides below.
+        dated = [
+            str(role.get("name") or "") for role in named_dates
+            if _same_table(_table_identity(table), str(role.get("fact_table") or ""))
+        ]
+        if dated:
+            evidence.append(f"date_role:{dated[0]}")
         matches = sorted(
             (
                 a for a in table_aliases.get(_table_identity(table), set())
@@ -363,7 +381,7 @@ def resolve_source_scope(
             if _grain_matches(grain, table):
                 score += 5
                 evidence.append(f"grain:{grain}")
-        if score:
+        if score or evidence:
             scored.append({
                 "table": _table_identity(table), "score": score,
                 "evidence": evidence, "entity": str(table.get("entity") or ""),
@@ -414,6 +432,21 @@ def resolve_source_scope(
             "candidates": metric_bound, "requested_grain": requested_grain,
             "requested_grains": sorted(requested_grains),
             "reason": "approved metric source binding",
+        }
+
+    # The one source keeping the date the question names outranks a cadence
+    # or a shared subject word, never a measure only another source keeps:
+    # "units sold for items created in 2025" is asked of the table that keeps
+    # units sold, where the creation date is missing and the reader is told so.
+    dated = [item for item in scored if any(e.startswith("date_role:") for e in item["evidence"])]
+    measured = [item for item in scored if any(e.startswith("measure:") for e in item["evidence"])]
+    if len(dated) == 1 and (not measured or dated[0] in measured):
+        top = dated[0]
+        return {
+            "status": "selected", "selected_fact": top["table"],
+            "candidates": dated, "requested_grain": requested_grain,
+            "requested_grains": sorted(requested_grains),
+            "reason": "the only source keeping the date the question names",
         }
 
     top = scored[0]

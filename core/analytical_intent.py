@@ -305,6 +305,11 @@ class AnalyticalPlan:
     measure_semantics: str = ""
     counted_entity: str = ""
     population_entity: str = ""
+    # The records a date names, counted, and the verb that names the date:
+    # ("item", "created"). The request planner decides whether the verb is one
+    # of the tenant's dates.
+    record_count: str = ""
+    record_verb: str = ""
     output: str = "auto"
     top_n: int | None = None
     assumptions: tuple[str, ...] = ()
@@ -334,6 +339,8 @@ class AnalyticalPlan:
             "measure_semantics": self.measure_semantics,
             "counted_entity": self.counted_entity,
             "population_entity": self.population_entity,
+            "record_count": self.record_count,
+            "record_verb": self.record_verb,
             "output": self.output,
             "top_n": self.top_n,
             "assumptions": list(self.assumptions),
@@ -594,6 +601,42 @@ def detect_business_event_count(question: str) -> str:
     return event
 
 
+# "How many items were created in the last 12 months?", "items created by
+# month in 2025": the records a date names, counted. Language only -- whether
+# the verb names one of the tenant's dates, and the records something its
+# table keeps, is the request planner's to decide.
+_RECORD_COUNT_RE = re.compile(
+    r"^\W*(?:(?P<cue>how\s+many|(?:the\s+)?(?:total\s+)?number\s+of|counts?\s+of)\s+"
+    r"(?:(?:distinct|different|unique)\s+)*)?"
+    r"(?P<subject>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,2}?)\s+"
+    r"(?:(?:were|was|are|is|have\s+been|has\s+been|got)\s+)?"
+    r"(?P<verb>[A-Za-z]{3,}ed)\b",
+    re.I,
+)
+_GROUPED_RE = re.compile(r"\b(?:by|per|each|every)\s+[A-Za-z]", re.I)
+
+
+def detect_record_count(question: str) -> tuple[str, str]:
+    """The records a question counts and the verb that dates them: ("item",
+    "created") for "how many items were created in 2025" and for "items
+    created by month", or ("", "") when it counts nothing of the kind.
+
+    A count asks for it, or the records are grouped: "items created in 2025"
+    alone asks for the items. A business event's count and a population's
+    size are read by their own detectors first.
+    """
+    text = str(question or "")
+    match = _RECORD_COUNT_RE.search(text)
+    if not match:
+        return "", ""
+    words = match.group("subject").casefold().split()
+    if any(word in _COUNT_SUBJECT_STOP for word in words):
+        return "", ""
+    if not (match.group("cue") or _GROUPED_RE.search(text, match.end())):
+        return "", ""
+    return " ".join(words[:-1] + [_singular(words[-1])]), match.group("verb").casefold()
+
+
 def detect_population_count(question: str) -> str:
     """Return the entity whose whole population is being asked for, or ``""``.
 
@@ -755,6 +798,9 @@ def plan_analytical_intent(
     # counted entity once the semantic layer resolves it to a master
     # table, so an unresolvable noun costs nothing.
     population_entity = "" if counted_entity else detect_population_count(text)
+    record_count, record_verb = (
+        ("", "") if counted_entity or population_entity else detect_record_count(text)
+    )
     if counted_entity:
         business_concepts.append(f"{counted_entity} count")
     known_concepts = _matched_catalog_names(text, terms) if concept_match else []
@@ -981,6 +1027,8 @@ def plan_analytical_intent(
         measure_semantics="count_distinct_business_identifier" if counted_entity else "",
         counted_entity=counted_entity,
         population_entity=population_entity,
+        record_count=record_count,
+        record_verb=record_verb,
         output=output,
         top_n=top_n,
         assumptions=tuple(assumptions),

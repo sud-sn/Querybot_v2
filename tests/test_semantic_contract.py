@@ -317,8 +317,10 @@ class ConsumerRepointingTests(unittest.TestCase):
         self.assertIn("metrics=_contract_metrics", src)
         # context + initial plan + authoritative rebuild if a governed count
         # target establishes/corrects the source fact after initial planning
-        # + the same rebuild when a population count anchors on a master table.
-        self.assertEqual(src.count("model=_contract_model"), 4)
+        # + the same rebuild when a population count anchors on a master table
+        # + the request plan, which reads a periodic snapshot's own date key
+        # when it counts the records a named date covers.
+        self.assertEqual(src.count("model=_contract_model"), 5)
         # The default-date-role fact inference used to be a third
         # model=_contract_model consumer (find_default_date_roles); it's
         # since been superseded by the graph-native
