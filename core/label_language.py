@@ -65,9 +65,13 @@ def language_twins(columns) -> list[dict]:
 
     The language token may stand anywhere in the name (ITM_FR_NM, ITM_NM_FR);
     what is left must be a label that exists. Where both copies carry a token
-    (ITM_EN_NM, ITM_FR_NM) the English one stands as the base.
+    (ITM_EN_NM, ITM_FR_NM) the English one stands as the base. A name is read
+    as its words, whatever its case: FrenchProductName is PRODUCT_NAME in
+    French beside EnglishProductName.
     """
-    names = {str(c).upper(): str(c) for c in columns or []}
+    from core.identifier_intelligence import identifier_words
+
+    names = {identifier_words(str(c)): str(c) for c in columns or []}
     twins = []
     for upper, name in names.items():
         tokens = upper.split("_")

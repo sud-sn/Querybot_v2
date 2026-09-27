@@ -54,8 +54,9 @@ class TestTheProductAnswers:
         answer = star.ask(warehouse, question, lang)
         assert answer["model_wrote_sql"] is False
         best = sorted(_totals(4).items(), key=lambda item: -item[1])[:3]
+        # Each product by its name in the reader's language.
         assert [(row["PRODUCT"], row["SALES_AMOUNT"]) for row in answer["rows"]] == [
-            (star.PRODUCTS[key][1], total) for key, total in best]
+            (star.PRODUCTS[key][2 if lang == "fr" else 1], total) for key, total in best]
 
     def test_customers_are_never_told_apart_by_a_first_name(self, warehouse):
         answer = star.ask(warehouse, "Top 3 customers by sales amount")
