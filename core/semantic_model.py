@@ -268,6 +268,47 @@ def _part_of_a_name(words: str) -> bool:
     return "SURNAME" in tokens or (tokens[-1] in {"NAME", "NM"} and bool(_NAME_PARTS & set(tokens[:-1])))
 
 
+# The key the source system gives its own member: CustomerAlternateKey,
+# CUSTOMER_BK, customer_natural_key -- named for the member alone, so an
+# employee's EmployeeNationalIDAlternateKey, a national number, is not one.
+_OWN_KEY_SUFFIXES = ("_ALTERNATE_KEY", "_BUSINESS_KEY", "_NATURAL_KEY", "_BK")
+# First to last: a person's name is read in this order.
+_NAME_PART_ORDER = (("FIRST", "GIVEN"), ("MIDDLE",), ("LAST", "FAMILY", "SUR", "SURNAME"))
+
+
+def _name_part_rank(words: str) -> int:
+    tokens = set(words.split("_"))
+    return next((rank for rank, parts in enumerate(_NAME_PART_ORDER) if tokens & set(parts)), len(_NAME_PART_ORDER))
+
+
+def member_identity(entity: str, columns: list[str], display_key: str = "") -> tuple[str, list[str]]:
+    """How a member with no single name is told apart and shown: the column
+    that is its identity, and the parts of a person's name, first to last,
+    shown beside it.
+
+    A customer is not its first name, nor its first and last names together
+    -- two customers are called Alex Martin -- so it is grouped by the key the
+    source system gives it (CustomerAlternateKey) -- named for the member
+    alone, never a national number -- or else by the dimension's own key, and
+    shown by its name. A member with neither a key of its own
+    nor a name to show is ("", []): no breakdown.
+    """
+    from core.identifier_intelligence import identifier_words
+
+    own = {word for word in identifier_words(entity).upper().split("_") if word}
+    names = sorted(
+        (column for column in columns if _part_of_a_name(identifier_words(column).upper())),
+        key=lambda column: _name_part_rank(identifier_words(column).upper()),
+    )
+    for column in columns:
+        words = identifier_words(column).upper()
+        suffix = next((s for s in _OWN_KEY_SUFFIXES if words.endswith(s)), "")
+        whose = set(words[: -len(suffix)].split("_")) - {""} if suffix else set()
+        if suffix and whose <= own:
+            return column, names
+    return (display_key, names) if display_key and names else ("", [])
+
+
 def _code_field_for_columns(columns: list[str], prefix: str = "") -> str:
     from core.identifier_intelligence import identifier_words
     from core.vocab_packs import strip_dimension_key_suffix
@@ -3227,6 +3268,16 @@ def build_runtime_semantic_plan(
             display_table = str(dimension.get("display_table") or "")
             source_key = str(dimension.get("source_key") or "")
             display_key = str(dimension.get("display_key") or source_key)
+            # A member no single column names -- a customer, an employee -- is
+            # a breakdown only where the question asks by its whole name, and
+            # is then grouped by its identity and shown by its name.
+            label_columns: list[str] = []
+            if not display_col and display_table and source_key and _asks_by_the_member(
+                question, str(dimension.get("name") or ""), spoken_names, _model_table_spellings(model, display_table),
+            ):
+                display_col, label_columns = member_identity(
+                    _entity_name(display_table), _model_table_spellings(model, display_table), display_key,
+                )
             if not display_col or not display_table or not source_key:
                 continue
             name, role_label = _dimension_label(source_key, dimension, display_col)
@@ -3305,6 +3356,7 @@ def build_runtime_semantic_plan(
                     "match_score": score,
                     "source": "semantic_model",
                     "enforcement": "required",
+                    **({"label_columns": label_columns} if label_columns else {}),
                 })
             if source_key and display_key and source_table.upper() != display_table.upper():
                 conditions = ((source_key.upper(), display_key.upper()),)
@@ -4382,6 +4434,43 @@ def patch_metric_approval(
     (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
     (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
     return True
+
+
+def _model_table_spellings(model: dict, table_ref: str) -> list[str]:
+    """The column names of the model table ``table_ref`` names, as spelled."""
+    bare = str(table_ref or "").split(".")[-1].strip('[]"`').upper()
+    for table in model.get("tables") or []:
+        if str(table.get("table") or "").strip('[]"`').upper() == bare:
+            return [str(field.get("column") or "") for field in table.get("fields") or [] if field.get("column")]
+    return []
+
+
+def _asks_by_the_member(question: str, name: str, longer=(), columns=()) -> bool:
+    """Whether the question asks by a member's whole name: "by customer",
+    "for each employee", "which customer", or ranks the members, "top 10
+    customers", "the 10 best customers". A name followed by a word of one of
+    its own table's columns names that column -- "by customer gender" asks
+    for the gender -- and not the member."""
+    from core.identifier_intelligence import identifier_words
+
+    name = str(name or "").strip().lower()
+    if not name:
+        return False
+    phrase = r"\s+".join(re.escape(word) for word in name.split())
+    own_words = {word for column in columns for word in identifier_words(column).lower().split("_") if word}
+    said = (
+        rf"\b(?:by|per|each|every|which|what)\s+(?:the\s+)?{phrase}(?:es|s)?\b"
+        rf"|\b(?:(?:top|bottom)\s+(?:\d+\s+)?|(?:\d+\s+)?(?:best|worst|biggest|largest|smallest)\s+){phrase}(?:es|s)?\b"
+    )
+    for found in re.finditer(said, str(question or ""), re.IGNORECASE):
+        following = re.match(r"\s+([a-z]+)", str(question or "")[found.end():], re.IGNORECASE)
+        if following and following.group(1).lower() in own_words - set(name.split()):
+            continue
+        if not _asked_by(question, name, longer) and not re.match(r"(?:top|bottom|\d|best|worst|biggest|largest|smallest)",
+                                                                   found.group(0), re.IGNORECASE):
+            continue
+        return True
+    return False
 
 
 def _model_table_columns(model: dict, table_ref: str) -> set[str]:

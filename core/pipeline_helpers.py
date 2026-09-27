@@ -1157,6 +1157,20 @@ def _cycle_refs(policy: dict, role_alias: str, plan: dict, db_type: str, date_re
     return number_ref, name_ref
 
 
+def joined_name(parts: list[str], db_type: str) -> str:
+    """A name's parts as one, first to last, a missing part leaving no gap
+    (CONCAT_WS skips a NULL; Snowflake's returns NULL, and Oracle has none)."""
+    if not parts:
+        return ""
+    dialect = str(db_type or "").lower()
+    if dialect == "snowflake":
+        return f"ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT({', '.join(parts)}), ' ')"
+    if dialect == "oracle":
+        spaced = " || ' ' || ".join(parts)
+        return f"TRIM(REGEXP_REPLACE({spaced}, ' +', ' '))"
+    return f"CONCAT_WS(' ', {', '.join(parts)})"
+
+
 _FORMULA_TOKEN_RE = re.compile(r"'(?:[^']|'')*'|\[[^\]]*\]|\"[^\"]*\"|`[^`]*`|[A-Za-z_][A-Za-z0-9_$#]*")
 
 
@@ -1423,6 +1437,7 @@ def _compile_governed_grouped_request_sql(
 
     dimension_ref = ""
     dimension_alias = ""
+    member_name_ref = ""
     if unique_dimensions:
         dimension = unique_dimensions[0]
         dimension_alias = re.sub(
@@ -1438,6 +1453,13 @@ def _compile_governed_grouped_request_sql(
         dimension_ref = reader_label_expression(
             table_alias, str(dimension["table"]), str(dimension["column"]), plan, db_type,
         ) or f"{table_alias}.{qcol(str(dimension['column']))}"
+        # A member no single column names -- a customer -- is grouped by its
+        # identity and shown by its name's parts beside it
+        # (core.semantic_model.member_identity).
+        if dimension.get("label_columns"):
+            member_name_ref = joined_name(
+                [f"{table_alias}.{qcol(str(column))}" for column in dimension["label_columns"]], db_type,
+            )
 
     # A total of a quantity is kept per unit of measure (core/units_of_measure):
     # eaches and feet do not add up, and the validator refuses a query that
@@ -1758,7 +1780,10 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
         group_parts.append(bucket)
     # "By day of the week" also names the calendar's day: one grouping, shown
     # once.
-    if dimension_ref and dimension_ref not in group_parts:
+    if dimension_ref and dimension_ref not in group_parts and member_name_ref:
+        select_parts.extend((f"{member_name_ref} AS {dimension_alias}", f"{dimension_ref} AS {dimension_alias}_ID"))
+        group_parts.extend((dimension_ref, member_name_ref))
+    elif dimension_ref and dimension_ref not in group_parts:
         select_parts.append(f"{dimension_ref} AS {dimension_alias}")
         group_parts.append(dimension_ref)
     if unit_ref:

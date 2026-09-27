@@ -60,7 +60,9 @@ class TestTheProductAnswers:
 
     def test_customers_are_never_told_apart_by_a_first_name(self, warehouse):
         answer = star.ask(warehouse, "Top 3 customers by sales amount")
-        assert "FirstName" not in answer["sql"]
+        # Grouped by each customer's own key, whatever the customer is called.
+        grouped_by = answer["sql"].split("GROUP BY", 1)[-1].split("ORDER BY")[0]
+        assert "CustomerAlternateKey" in grouped_by and "FirstName" not in grouped_by.split(",")[0]
         # Whatever is answered is a customer's own total.
         per_customer = set(_totals(5).values())
         assert all(set(row.values()) & per_customer for row in answer["rows"])
