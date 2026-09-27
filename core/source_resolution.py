@@ -505,6 +505,22 @@ def metrics_on_source(
     ]
 
 
+def siblings_on_source(
+    metrics: list[dict[str, Any]], fact: str, table_columns: dict[str, dict[str, str]] | None,
+) -> list[dict[str, Any]]:
+    """One measure kept twice -- day by day and at each month's end, named
+    alike -- is read once, on the question's source: of two such metrics
+    matched together, the one on ``fact`` is kept. A metric with no such
+    sibling among ``metrics`` is kept whatever its table."""
+    from core.period_siblings import period_siblings
+
+    on_source = metrics_on_source(metrics, fact, table_columns)
+    return [
+        metric for metric in metrics or []
+        if metric in on_source or not any(sibling in on_source for sibling in period_siblings(metric, metrics))
+    ]
+
+
 def source_clarification_options(scope: dict[str, Any]) -> list[dict[str, str]]:
     """Build business-facing choices backed by exact tenant table identities."""
     options: list[dict[str, str]] = []

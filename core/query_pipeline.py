@@ -4364,6 +4364,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _source_scope.get("selected_fact"),
             )
             _metric_scope = dataclasses.replace(_metric_scope, metrics=_on_chosen_source)
+    # One measure kept at two frequencies is one measure. "Stock by month"
+    # matched both "Units in Stock" (the daily snapshot) and "Month-End Units
+    # in Stock"; the source resolved to the month-end snapshot, but both
+    # metrics stayed, both snapshots' dates were governed, and the join plan
+    # failed on the two. Of such siblings, the one on the question's source is
+    # read; metrics of different measures are not touched.
+    elif _source_scope.get("status") == "selected" and len(_metric_scope.metrics) > 1:
+        from core.source_resolution import siblings_on_source
+
+        _one_per_measure = siblings_on_source(
+            _metric_scope.metrics, str(_source_scope.get("selected_fact") or ""), all_columns)
+        if len(_one_per_measure) < len(_metric_scope.metrics):
+            log.info(
+                "One measure kept at two frequencies read on the question's source for %s: %s -- left out %s",
+                account_id, _source_scope.get("selected_fact"),
+                [m.get("name") for m in _metric_scope.metrics if m not in _one_per_measure],
+            )
+            _metric_scope = dataclasses.replace(_metric_scope, metrics=_one_per_measure)
     # A pinned draft IS the user's disambiguation -- they just defined, in this
     # thread, exactly what they want computed. So do not ask which of the
     # registry's rival definitions they meant.
