@@ -323,7 +323,34 @@ _GENERIC_REMAINDERS = frozenset({
 })
 
 
-def _aliases_within_entity(table: str, column: str, vocab=None) -> set[str]:
+# The affixes that name a table a dimension, besides the vocabulary's own:
+# DimCustomer, DIM_CUSTOMER, CUSTOMER_DIM.
+_DIMENSION_AFFIXES = (
+    re.compile(r"^DIM_"), re.compile(r"^DIMENSION_"), re.compile(r"_DIM$"), re.compile(r"_DIMENSION$"),
+)
+
+
+def _dimension_entity(table: str, vocab=None) -> str:
+    """The entity a dimension table is named for, in upper-case words:
+    DimSalesTerritory is SALES_TERRITORY, DIM_CUSTOMER is CUSTOMER. "" where
+    the name carries no dimension affix."""
+    words = _words_form(str(table or "").split(".")[-1]).upper()
+    for pattern in (*_planner_vocab(vocab).dimension_patterns, *_DIMENSION_AFFIXES):
+        found = pattern.search(words)
+        if found and (found.start() == 0 or found.end() == len(words)):
+            return (words[found.end():] if found.start() == 0 else words[:found.start()]).strip("_")
+    return ""
+
+
+def _asked_by_word(word: str, question_norm: str) -> bool:
+    """Whether the question asks by ``word``: "by country", "for each region",
+    "which group" -- not merely uses it ("order lines")."""
+    return bool(re.search(
+        rf"\b(?:by|per|each|every|which|what)\s+(?:the\s+)?{re.escape(word)}(?:es|s)?\b", question_norm or "",
+    ))
+
+
+def _aliases_within_entity(table: str, column: str, vocab=None, question_norm: str = "") -> set[str]:
     """ITM_GRS_WT on the item table is the item's gross weight, and a reader
     asking about items says "gross weight" -- "average gross weight by item",
     "poids brut par article". The column answered only to "item gross weight",
@@ -333,11 +360,19 @@ def _aliases_within_entity(table: str, column: str, vocab=None) -> set[str]:
     ITM_DMS) also answers to the rest of its name, when the rest is read with
     confidence and says something on its own: not one generic word (ITM_NM is
     not "name"), and never for a key, which joins rather than answers.
+
+    A dimension named with a Dim prefix or suffix is read the same way:
+    DimSalesTerritory's SalesTerritoryCountry is the territory's country, and
+    answers to "country". A remainder of one word is thin evidence -- "line"
+    is ProductLine and also the order line -- so it answers only where the
+    question asks by it (``question_norm``): "sales by country".
     """
     bare = _table_bare(table)
     entity = next((bare[: -len(s)] for s in ("_DMS", "_DIM") if bare.endswith(s)), "")
     col = _words_form(column or "").upper()
-    if not entity or not col.startswith(f"{entity}_") or _is_key_column(col):
+    if not entity:
+        return _aliases_after_a_dimensions_entity(table, column, vocab, question_norm)
+    if not col.startswith(f"{entity}_") or _is_key_column(col):
         return set()
     try:
         from core.identifier_intelligence import analyze_identifier
@@ -348,6 +383,31 @@ def _aliases_within_entity(table: str, column: str, vocab=None) -> set[str]:
     if analysis.confidence < 70 or not words or (len(words) == 1 and words[0] in _GENERIC_REMAINDERS):
         return set()
     return {_norm(" ".join(words))}
+
+
+def _aliases_after_a_dimensions_entity(table: str, column: str, vocab=None, question_norm: str = "") -> set[str]:
+    """The rest of a column's name after its Dim-named dimension's entity
+    (_aliases_within_entity), and the entity's head noun with it: the name as
+    a whole read with confidence, never a key, never one generic word, and one
+    word alone only where it is asked by."""
+    entity = _dimension_entity(table, vocab)
+    col = _words_form(column or "").upper()
+    if not entity or not col.startswith(f"{entity}_") or _is_key_column(col):
+        return set()
+    try:
+        from core.identifier_intelligence import analyze_identifier
+        readable = analyze_identifier(str(column or ""), vocab=_planner_vocab(vocab)).confidence >= 70
+    except Exception:
+        return set()
+    words = [w for w in _column_words(col[len(entity) + 1:], vocab=vocab) if w not in {"dimension", "key"}]
+    if not readable or not words or (len(words) == 1 and words[0] in _GENERIC_REMAINDERS):
+        return set()
+    # The entity's head noun with the rest is its own name: SalesTerritoryGroup
+    # is the territory group.
+    aliases = {_norm(" ".join((entity.split("_")[-1].lower(), *words)))}
+    if len(words) > 1 or _asked_by_word(words[0], question_norm):
+        aliases.add(_norm(" ".join(words)))
+    return aliases
 
 
 def _role_for_column(column: str, col_type: str = "", vocab=None) -> str:
@@ -568,7 +628,7 @@ def _find_candidates(
             # emitted physical column remains canonical uppercase.
             spelled = (spellings or {}).get(col_u) or str(col)
             aliases = _aliases_for_column(spelled, vocab=vocab) | _aliases_within_entity(
-                table_u, spelled, vocab=vocab)
+                (spellings or {}).get(table_u) or table_u, spelled, vocab=vocab, question_norm=qn)
             # A key that plays a role answers to the role's name: "buyer" is
             # BYR_PTY_DMS_KEY, whose own words say only "buyer party".
             role = _role_of_key(role_keys, table_u, col_u)
