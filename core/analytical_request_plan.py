@@ -219,6 +219,58 @@ def demote_counted_population(
             join["enforcement"] = "optional"
 
 
+def demote_what_the_question_does_not_compute(
+    semantic_plan: dict[str, Any] | None,
+    intent_plan: dict[str, Any] | None,
+    matched_metrics: list[dict[str, Any]] | None = None,
+    date_bindings: list[dict[str, Any]] | None = None,
+) -> None:
+    """Set aside what a question names but neither computes nor is cut by, in
+    the one order that reads each right: a calendar's time attributes first,
+    since while one is bound as a measure no count of records is read -- "items
+    created by week of year" was answered as a sum of weeks by item -- then the
+    records a count names, and the population it counts."""
+    demote_calendar_measures(semantic_plan, date_bindings)
+    demote_counted_records(semantic_plan, intent_plan, matched_metrics)
+    demote_counted_population(semantic_plan, intent_plan)
+
+
+def demote_calendar_measures(
+    semantic_plan: dict[str, Any] | None,
+    date_bindings: list[dict[str, Any]] | None,
+) -> None:
+    """A calendar's time attributes are how a question is cut, never what it
+    adds up: "items created by week of year" bound the calendar's week number
+    as a measure the answer had to compute, and the query was refused, where
+    "by week of the year" -- which matched the column's name less well -- was
+    answered. The attributes are the ones the chosen date's calendar was
+    found to keep (its year, quarter, month, week, weekday and their names);
+    a flag or a count the calendar keeps is not among them, and stays."""
+    calendars = [
+        (
+            str((binding or {}).get("dimension_table") or ""),
+            {
+                str(column).upper()
+                for attribute, column in ((binding or {}).get("calendar_attributes") or {}).items()
+                if attribute != "date" and column
+            },
+        )
+        for binding in date_bindings or []
+    ]
+    for field in (semantic_plan or {}).get("fields") or []:
+        if (
+            isinstance(field, dict)
+            and field.get("role") == "measure"
+            and field.get("enforcement") != "optional"
+            and any(
+                _same_table(field.get("table"), table) and str(field.get("column") or "").upper() in attributes
+                for table, attributes in calendars
+            )
+        ):
+            field["enforcement"] = "optional"
+            field["demotion_reason"] = "a calendar's time attribute, not a measure"
+
+
 def compile_analytical_request_plan(
     question: str,
     semantic_plan: dict[str, Any] | None,

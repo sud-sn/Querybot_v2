@@ -5172,12 +5172,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # graph is the exact object shared by the prompt and validator.
     _planner_alignment: dict = {}
     # The records a count names are what it counts, never a breakdown of it:
-    # "items created by month" is not grouped by item, nor joined to it.
+    # "items created by month" is not grouped by item, nor joined to it. Nor
+    # is the calendar's week number a measure of "items created by week of
+    # year".
     try:
-        from core.analytical_request_plan import demote_counted_population, demote_counted_records
+        from core.analytical_request_plan import demote_what_the_question_does_not_compute
 
-        demote_counted_records(_semantic_plan, _analytical_plan.to_dict(), _matched_metrics)
-        demote_counted_population(_semantic_plan, _analytical_plan.to_dict())
+        demote_what_the_question_does_not_compute(
+            _semantic_plan, _analytical_plan.to_dict(), _matched_metrics, _selected_date_bindings,
+        )
     except Exception as _counted_exc:
         log.warning("Counted records not taken out of the breakdown for %s: %s", account_id, _counted_exc)
     try:
