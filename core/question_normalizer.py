@@ -190,6 +190,21 @@ _LEXICON: dict[str, str] = {
     "magasin": "store",
     "entrepot": "warehouse",
     "entrepots": "warehouses",
+    # Nouns every warehouse's people, parties and places are kept by. French
+    # puts the head noun first, so a compound is written whole: "type
+    # d'entreprise" is the business type, not "type of business". "Sexe" is
+    # the gender a customer table keeps; "genre" is left out, as it also
+    # means "kind".
+    "sexe": "gender",
+    "etat civil": "marital status",
+    "type d'entreprise": "business type",
+    "types d'entreprise": "business types",
+    "territoire": "territory",
+    "territoires": "territories",
+    "revendeur": "reseller",
+    "revendeurs": "resellers",
+    "representant commercial": "sales representative",
+    "representants commerciaux": "sales representatives",
 
     # ── Analytical intent ────────────────────────────────────────────────────
     "ecart budgetaire": "budget variance",
