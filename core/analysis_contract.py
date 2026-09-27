@@ -14,6 +14,7 @@ from typing import Any
 
 from core.contribution_analysis import detect_composition_intent
 from core.table_role_classifier import is_periodic_snapshot_fact
+from core.units_of_measure import is_unit_column
 
 
 _IDENTIFIER_RE = re.compile(r"(?:^|_)(?:ID|KEY|CODE|NUM|NO|NBR|SEQ)$", re.I)
@@ -264,6 +265,16 @@ def collapse_rows_by_label(
     if len({label for label, _ in pairs}) == len(pairs):
         return pairs
     if measure_class_for_column(measure_name or value_col) != "additive":
+        return None
+    # A quantity kept per unit of measure (core/units_of_measure.py) does not
+    # add up across units: a warehouse's 100 feet and 20 eaches are not 120 of
+    # anything, nor is a total of feet ahead of a total of eaches. Rows grouped
+    # by the unit itself merge per unit.
+    units = {
+        str(value) for row in rows or [] for key, value in row.items()
+        if key != label_col and is_unit_column(key)
+    }
+    if len(units) > 1:
         return None
 
     totals: dict[str, float] = {}

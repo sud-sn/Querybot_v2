@@ -503,7 +503,7 @@ def compute_data_brief(
         # table and the KPI show; measure_name carries the real column so the
         # additivity rule still has something to judge.
         collapsed = collapse_rows_by_label(
-            [{"_l": l, "_v": v} for l, v in zip(labels, values)],
+            [{**r, "_l": l, "_v": v} for r, l, v in zip(rows, labels, values)],
             "_l", "_v", measure_name=value_col)
         if collapsed is None:
             paired = []
