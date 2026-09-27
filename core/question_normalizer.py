@@ -149,6 +149,18 @@ _LEXICON: dict[str, str] = {
     "facture": "invoice",
     "stock": "inventory",
     "stocks": "inventory",
+    # A price is the price it names, read whole: "prix de vente" is the
+    # selling price, not the price of the sales, and "prix catalogue" the
+    # list price.
+    "prix de vente unitaire": "unit selling price",
+    "prix de vente": "selling price",
+    "prix unitaires": "unit price",
+    "prix unitaire": "unit price",
+    "prix de catalogue": "list price",
+    "prix catalogue": "list price",
+    "prix d'achat": "purchase price",
+    "prix d achat": "purchase price",
+    "cout standard": "standard cost",
     "prix": "price",
     "remise": "discount",
     "remises": "discount",

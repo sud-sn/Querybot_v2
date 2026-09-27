@@ -2008,6 +2008,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _analytical_plan = _dataclass_replace(
                 _analytical_plan,
                 intent="ranking",
+                # The members ranked, which its English names: "les 5
+                # meilleurs produits par prix catalogue" ranks the products.
+                entity_grain=_analytical_plan.entity_grain or _english_plan.entity_grain,
                 clarification=_analytical_plan.clarification or _asks_measure,
                 unresolved_slots=tuple(dict.fromkeys(
                     (*_analytical_plan.unresolved_slots, *(("metric",) if _asks_measure else ())),

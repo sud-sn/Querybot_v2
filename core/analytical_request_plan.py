@@ -128,7 +128,8 @@ def _names_the_counted(field: dict[str, Any], counted: set[str], intent_plan: di
 # answers nobody's question.
 _ATTRIBUTE_AGGREGATES = frozenset({"AVG", "MIN", "MAX"})
 _RANKED_BY = re.compile(
-    r"\b(?:top|bottom|highest|lowest|largest|smallest|biggest|greatest|most|least|rank(?:ed|ing)?)\b", re.I,
+    r"\b(?:top|bottom|best|worst|highest|lowest|largest|smallest|biggest|greatest|most|least|rank(?:ed|ing)?)\b",
+    re.I,
 )
 # Tables that define their members rather than record events.
 _MEMBER_TABLE_TYPES = frozenset({"dimension", "master", "reference", "lookup"})
