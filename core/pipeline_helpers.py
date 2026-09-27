@@ -1137,6 +1137,7 @@ def _compile_governed_grouped_request_sql(
     policy = policies[0] if policies else {}
     if policy and str(policy.get("kind") or "") not in {
         "last_n", "latest_n_observed", "today", "yesterday", "latest_snapshot", "named_period",
+        "all_dates",
     }:
         return ""
 
@@ -1428,6 +1429,9 @@ def _compile_governed_grouped_request_sql(
         # that is not a balance has no snapshot to be read at.
         if not snapshot:
             return ""
+    elif policy and str(policy.get("kind") or "") == "all_dates":
+        # Every date the data holds, in the question's grain: no window.
+        pass
     elif policy and str(policy.get("kind") or "") == "named_period":
         # A stated period is kept on its literal bounds, with no anchor read. A
         # level in it is read at the last snapshot inside the bounds, below; a
@@ -1578,6 +1582,7 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
         intent == "trend"
         or str(request.get("output_shape") or "").lower() == "time_series"
         or re.search(r"\b(?:trend|over\s+time|by\s+(?:day|week|month|quarter|year))\b", question, re.I)
+        or str(policy.get("kind") or "") == "all_dates"
     )
     select_parts: list[str] = []
     group_parts: list[str] = []
@@ -1616,7 +1621,8 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
             return ""
     cross_anchor = (
         "\nCROSS JOIN anchor"
-        if policy and str(policy.get("kind") or "") not in {"latest_n_observed", "latest_snapshot", "named_period"}
+        if policy and str(policy.get("kind") or "") not in {
+            "latest_n_observed", "latest_snapshot", "named_period", "all_dates"}
         else ""
     )
     where_sql = "\nWHERE " + "\n  AND ".join(where_parts) if where_parts else ""

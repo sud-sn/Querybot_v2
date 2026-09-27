@@ -1604,6 +1604,13 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                         "  SNAPSHOT RULE: a level is read at the last snapshot inside this period "
                         "(the MAX date within it); do not sum it across the period's dates."
                     )
+            elif policy.get("kind") == "all_dates":
+                lines.append(
+                    f"- {policy.get('business_role') or 'Business date'}: the question asks for a "
+                    f"series by {policy.get('requested_grain') or 'period'} over every date the data "
+                    f"holds. Group by the {policy.get('requested_grain') or 'period'} of {date_ref}; "
+                    "no date filter, no anchor, no clock."
+                )
             elif policy.get("kind") == "latest_n_observed":
                 lines.append(
                     f"- {policy.get('business_role') or 'Business date'}: select exactly the latest "
@@ -1637,7 +1644,7 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                     "required MAX anchor; do not sum inventory/balance values across periods."
                 )
             _anchor = (
-                "" if policy.get("kind") in {"latest_n_observed", "named_period"}
+                "" if policy.get("kind") in {"latest_n_observed", "named_period", "all_dates"}
                 else format_required_anchor(policy, db_type)
             )
             if _anchor:

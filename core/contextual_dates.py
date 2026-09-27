@@ -2496,6 +2496,12 @@ def build_contextual_date_plan(
             "anchor_policy": "latest_available",
             "implicit": True,
         }
+    if not window and requested_grain and not question_has_explicit_date_filter(question):
+        # A grain with no window asks for the series over every date the data
+        # holds: "units sold by month" is each month's units. Without a policy
+        # the compilers had no date to bucket, and the question went to the
+        # model.
+        window = {"kind": "all_dates", "anchor_policy": "none", "implicit": True}
     if window:
         plan["temporal_policies"] = [{
             **window,

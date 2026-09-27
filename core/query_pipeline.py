@@ -1073,6 +1073,14 @@ def _governed_date_anchor_repair_lines(
         date_expression = format_date_value_expression(
             date_table, date_column, key_type, db_type
         )
+        if str(policy.get("kind") or "") == "all_dates":
+            # A series over every date: nothing to filter, nothing to anchor.
+            lines.append(
+                f"- JOIN/FIELD: {join_rule}; group by the "
+                f"{policy.get('requested_grain') or 'period'} of {date_expression}, "
+                "with no date filter."
+            )
+            continue
         if str(policy.get("kind") or "") == "named_period":
             # A stated period has bounds, not an anchor: handing the model a
             # MAX() subquery to copy would move it to the data's newest date.
