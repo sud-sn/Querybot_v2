@@ -371,11 +371,19 @@ def _calendar_column_name(
     or YEAR; treating those as governed calendar attributes would be worse
     than falling back to the approved native date value.
     """
-    by_upper = {str(name).upper(): str(name) for name in columns}
+    # Compared as one word: a calendar spells its columns as the warehouse
+    # does -- DAY_OF_WEEK, DayOfWeek -- and reaches the query upper-cased,
+    # DAYOFWEEK, where a snake-case candidate never met a camel-case column.
+    by_compact = {_compact_name(name): str(name) for name in columns}
     for candidate in candidates:
-        if candidate in by_upper:
-            return by_upper[candidate]
+        found = by_compact.get(_compact_name(candidate))
+        if found:
+            return found
     return ""
+
+
+def _compact_name(name: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(name or "").upper())
 
 
 def infer_calendar_attributes(
@@ -430,34 +438,36 @@ def infer_calendar_attributes(
         "month_number": _calendar_column_name(
             columns,
             ("MONTH_NUMBER", "MONTH_NUM", "MONTH_NO", "MTH_NO", "DMS_MTH",
-             "MONTH", "MTH"),
+             "MONTH_NUMBER_OF_YEAR", "MONTH_OF_YEAR", "MONTH", "MTH"),
         ),
         "month_name": _calendar_column_name(
             columns,
-            ("MONTH_NAME", "MONTH_NM", "DMS_MTH_NM", "MTH_NM"),
+            ("MONTH_NAME", "MONTH_NM", "DMS_MTH_NM", "MTH_NM", "ENGLISH_MONTH_NAME"),
         ),
         "quarter": _calendar_column_name(
             columns,
             ("QUARTER_NUMBER", "QUARTER_NUM", "QUARTER_NO", "QTR_NO",
-             "DMS_QTR", "QUARTER", "QTR"),
+             "DMS_QTR", "CALENDAR_QUARTER", "QUARTER", "QTR"),
         ),
         "week": _calendar_column_name(
             columns,
             ("WEEK_NUMBER", "WEEK_NUM", "WEEK_NO", "WK_OF_YR", "WK_NO",
-             "DMS_WK", "WEEK", "WK"),
+             "DMS_WK", "WEEK_NUMBER_OF_YEAR", "WEEK_OF_YEAR", "WEEK", "WK"),
         ),
         "day": _calendar_column_name(
             columns,
-            ("DAY_OF_MONTH", "DAY_OF_MTH", "DAY_NUMBER", "DAY_NUM", "DMS_DAY",
-             "DAY"),
+            ("DAY_OF_MONTH", "DAY_OF_MTH", "DAY_NUMBER_OF_MONTH", "DAY_NUMBER", "DAY_NUM",
+             "DMS_DAY", "DAY"),
         ),
         "day_of_week": _calendar_column_name(
             columns,
-            ("DAY_OF_WEEK", "DAY_OF_WK", "WEEKDAY_NUMBER", "WEEKDAY_NUM", "WEEKDAY_NO", "DOW"),
+            ("DAY_OF_WEEK", "DAY_OF_WK", "DAY_NUMBER_OF_WEEK", "WEEKDAY_NUMBER", "WEEKDAY_NUM",
+             "WEEKDAY_NO", "DOW"),
         ),
         "day_name": _calendar_column_name(
             columns,
-            ("DAY_NAME", "DAY_NM", "WEEKDAY_NAME", "WEEKDAY_NM", "DAY_OF_WEEK_NAME"),
+            ("DAY_NAME", "DAY_NM", "WEEKDAY_NAME", "WEEKDAY_NM", "DAY_OF_WEEK_NAME",
+             "DAY_NAME_OF_WEEK", "ENGLISH_DAY_NAME_OF_WEEK"),
         ),
     }
     return {key: value for key, value in result.items() if value}
