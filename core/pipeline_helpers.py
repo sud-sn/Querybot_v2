@@ -1438,9 +1438,10 @@ def _compile_governed_grouped_request_sql(
             str(derived.get("target_table") or ""), fact_table,
         ):
             return ""
-        prefix = {"AVG": "AVERAGE", "MIN": "MINIMUM", "MAX": "MAXIMUM"}[aggregation]
+        # Members ranked by their own attribute show it as it is: one value each.
+        prefix = "" if derived.get("ranked") else {"AVG": "AVERAGE_", "MIN": "MINIMUM_", "MAX": "MAXIMUM_"}[aggregation]
         metric_specs.append((
-            f"{prefix}_" + re.sub(r"[^A-Za-z0-9_]", "_", str(derived.get("business_entity") or target_column)).upper(),
+            prefix + re.sub(r"[^A-Za-z0-9_]", "_", str(derived.get("business_entity") or target_column)).upper(),
             f"{aggregation}(fact_rows.{{qcol:{target_column}}})",
         ))
     if not metric_specs and derived.get("semantics") == "count_records":

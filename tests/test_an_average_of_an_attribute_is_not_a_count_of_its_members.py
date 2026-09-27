@@ -48,7 +48,8 @@ class TestTheProductAnswers:
             [len({line[5] for line in star.orders() if line[2].year == 2025})]]
 
 
-_BUYERS = {"name": "Number of Buying Customers", "sql_template": "COUNT(DISTINCT CustomerKey)",
+_BUYERS = {"name": "Number of Buying Customers", "synonyms": "buying customers, active customers",
+           "sql_template": "COUNT(DISTINCT CustomerKey)",
            "_resolved_source_tables": ["DBO.FACTINTERNETSALES"]}
 _SALES = {"name": "Sales Amount", "synonyms": "sales", "sql_template": "SUM(SalesAmount)",
           "_resolved_source_tables": ["DBO.FACTINTERNETSALES"]}

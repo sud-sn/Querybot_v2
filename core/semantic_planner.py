@@ -1468,6 +1468,18 @@ def _unqualified_measure_rivals(
     return []
 
 
+def names_a_measure(question: str, table_columns, vocab=None, spellings=None) -> bool:
+    """Whether a question names a measure the warehouse keeps: "top 3
+    products by list price" names the products' list price, though no
+    registered metric is called that."""
+    plan = build_semantic_field_plan(question, table_columns, vocab=vocab, spellings=spellings)
+    return any(
+        str(field.get("role") or "").lower() in {"measure", "measure_candidate"}
+        and str(field.get("enforcement") or "").lower() != "optional"
+        for field in plan.get("fields") or []
+    )
+
+
 def build_semantic_field_plan(
     question: str,
     table_columns: dict[str, dict[str, str]] | None,

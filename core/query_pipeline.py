@@ -2013,6 +2013,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         output_summary=_analytical_plan.to_dict(),
     )
 
+    # "Top 3 products by list price" names the measure it ranks by -- a
+    # column the warehouse keeps, where no registered metric is called that.
+    if (
+        _analytical_plan.intent == "ranking"
+        and _analytical_plan.clarification
+        and _analytical_plan.clarification.slot == "metric"
+    ):
+        from core.semantic_planner import names_a_measure
+
+        if names_a_measure(_analysis_question, all_columns, vocab=_vocab, spellings=all_spellings):
+            _analytical_plan = _dataclass_replace(
+                _analytical_plan,
+                clarification=None,
+                unresolved_slots=tuple(slot for slot in _analytical_plan.unresolved_slots if slot != "metric"),
+            )
     _planner_has_cached_result = bool(
         _planner_session_id and result_cache.has_result(_planner_session_id)
     )

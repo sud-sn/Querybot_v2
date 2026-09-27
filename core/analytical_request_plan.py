@@ -127,6 +127,9 @@ def _names_the_counted(field: dict[str, Any], counted: set[str], intent_plan: di
 # not among them: "total" also means "all of it", and adding item weights up
 # answers nobody's question.
 _ATTRIBUTE_AGGREGATES = frozenset({"AVG", "MIN", "MAX"})
+_RANKED_BY = re.compile(
+    r"\b(?:top|bottom|highest|lowest|largest|smallest|biggest|greatest|most|least|rank(?:ed|ing)?)\b", re.I,
+)
 # Tables that define their members rather than record events.
 _MEMBER_TABLE_TYPES = frozenset({"dimension", "master", "reference", "lookup"})
 
@@ -162,9 +165,27 @@ def aggregated_attribute(
         and str(field.get("enforcement") or "").lower() != "optional"
         and field.get("table") and field.get("column")
     }
-    if len(asked) != 1 or len(measures) != 1:
+    if len(measures) != 1:
         return {}
     (table, column), field = next(iter(measures.items()))
+    # "Which product has the highest list price", "the 3 customers with the
+    # highest yearly income": members ranked by their own attribute, one value
+    # each -- where nothing else breaks them down.
+    if not asked and _RANKED_BY.search(str(question or "")) and all(
+        _same_table(other.get("table"), table)
+        for other in (semantic_plan or {}).get("fields") or []
+        if str(other.get("role") or "").lower() in {"dimension", "display_dimension", "attribute"}
+        and str(other.get("enforcement") or "").lower() != "optional"
+    ):
+        return {**_attribute_aggregate("MAX", field, column, table, model), "ranked": True} if _attribute_table(
+            table, model) else {}
+    if len(asked) != 1:
+        return {}
+    return _attribute_aggregate(asked[0], field, column, table, model) if _attribute_table(table, model) else {}
+
+
+def _attribute_table(table: str, model: dict[str, Any] | None) -> dict[str, Any]:
+    """The model's entry for a table that defines its members, or {}."""
     entry = next((
         candidate for candidate in (model or {}).get("tables") or []
         if isinstance(candidate, dict)
@@ -172,9 +193,16 @@ def aggregated_attribute(
     ), None)
     if not entry or str(entry.get("type") or "").casefold() not in _MEMBER_TABLE_TYPES:
         return {}
+    return entry
+
+
+def _attribute_aggregate(
+    aggregation: str, field: dict[str, Any], column: str, table: str, model: dict[str, Any] | None,
+) -> dict[str, Any]:
+    entry = _attribute_table(table, model)
     return {
         "semantics": "aggregate_attribute",
-        "aggregation": asked[0],
+        "aggregation": aggregation,
         "business_entity": str(field.get("term") or column),
         "target_table": str(entry.get("qualified_name") or entry.get("table") or table),
         "target_column": column,
@@ -403,20 +431,32 @@ _COUNT_ASKED = re.compile(r"\b(?:how\s+many|number\s+of|counts?|counted|counting
 
 def metrics_asked_for(question: str, matched_metrics: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Of the metrics a question's words matched, those it asks for: not
-    counts of the members it names, where it asks an average, a minimum or a
-    maximum none of them computes, and no count.
+    counts matched by the members' name alone, where the question asks no
+    count and names none of them in full.
 
     "What is the average yearly income of our customers?" matched Number of
-    Buying Customers by "customers" alone. It asks for no count of them: the
-    average is of their yearly income, which their own table keeps.
+    Buying Customers by "customers" alone, and "top 3 products by list price"
+    Number of Products Sold by "products". Neither asks for a count of them:
+    the average is of the customers' yearly income, the ranking by the
+    products' list price, which their own tables keep.
     """
-    from core.pipeline_helpers import _outer_aggregate, unmet_aggregates
+    from core.pipeline_helpers import _outer_aggregate
 
     metrics = list(matched_metrics or [])
+    text = " ".join(re.findall(r"[a-z0-9]+", str(question or "").lower()))
+
+    def named_in_full(metric: dict[str, Any]) -> bool:
+        return any(
+            re.search(rf"\b{re.escape(phrase)}\b", text)
+            for name in [metric.get("name"), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]
+            for phrase in [" ".join(re.findall(r"[a-z0-9]+", str(name or "").lower()))]
+            if phrase
+        )
+
     if (
         metrics
         and all(_outer_aggregate(str(m.get("sql_template") or m.get("formula") or "")) == "COUNT" for m in metrics)
-        and unmet_aggregates(question, metrics)
+        and not any(named_in_full(metric) for metric in metrics)
         and not _COUNT_ASKED.search(str(question or ""))
     ):
         return []
@@ -477,7 +517,9 @@ def demote_beside_an_attribute(
         for field in fields
     ):
         return
-    grouped = [_counted_words(value) for value in (intent_plan or {}).get("dimensions") or []]
+    # The members a ranking ranks are its breakdown: "the top 3 products".
+    ranked = str((intent_plan or {}).get("entity_grain") or "") if (intent_plan or {}).get("intent") == "ranking" else ""
+    grouped = [_counted_words(value) for value in [*((intent_plan or {}).get("dimensions") or []), ranked] if value]
     for field in fields:
         if (
             str(field.get("role") or "").lower() in {"dimension", "display_dimension", "attribute"}
