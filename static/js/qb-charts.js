@@ -106,6 +106,16 @@
     return {};
   }
 
+  // The last word of a column's name is what it holds (core/temporal_columns.py
+  // names_a_count): a count or a quantity is never money.
+  function namesACount(col) {
+    const words = String(col || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
+      .split(/[^a-z0-9]+/).filter(Boolean);
+    const count = /^(count|counts|cnt|number|num|nbr|qty|quantity|quantities|units)$/;
+    return count.test(words[words.length - 1] || '') ||
+      (words.length > 2 && count.test(words[0]) && words[1] === 'of');
+  }
+
   function formatFor(payload, col) {
     const key = normKey(col);
     const explicit = (payload && payload.column_formats) || {};
@@ -115,6 +125,8 @@
     const role = roleOf(payload, col);
     if (role.format) return String(role.format).toLowerCase();
     if (/percent|percentage|pct|rate|ratio|share/i.test(String(col))) return 'percentage';
+    // A count of what money words name is a count: PROFIT_CENTRE_COUNT.
+    if (namesACount(col)) return 'number';
     if (/revenue|sales|amount|amt|charge|cost|cogs|price|profit|salary|usd|balance/i.test(String(col))) return 'currency';
     return 'number';
   }

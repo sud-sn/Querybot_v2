@@ -157,6 +157,12 @@ def _detect_column_format(col_name: str) -> str:
     # another token looks like a currency word (e.g. INVOICEYEAR, ORDER_MONTH).
     if tokens & _DIMENSION_KEYWORDS:
         return "number"
+    # A count of what money words name is a count: PROFIT_CENTRE_COUNT read
+    # "ON leads at $171.00".
+    from core.temporal_columns import names_a_count
+
+    if names_a_count(col_name):
+        return "number"
     if compact.endswith(
         ("amt", "amount", "cost", "price", "revenue", "rev", "salary", "sal")
     ):

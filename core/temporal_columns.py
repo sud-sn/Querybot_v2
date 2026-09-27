@@ -334,6 +334,27 @@ def is_calendar_period_column(col_name: Any, values: list[Any]) -> bool:
     return False
 
 
+# The last word of a column's name is what it holds: PROFIT_CENTRE_COUNT
+# counts profit centres, SALES_QTY is a quantity sold, and neither is money,
+# whatever the words before say.
+_COUNT_HEAD_WORDS = frozenset({
+    "count", "counts", "cnt", "number", "num", "nbr", "qty", "quantity", "quantities", "units",
+})
+
+
+def names_a_count(col_name: Any) -> bool:
+    """Whether a column's name is a count or a quantity: its last word, in any
+    case and separator ("PROFIT_CENTRE_COUNT", "salesQty"), or a count "of"
+    something ("NUMBER_OF_INVOICES")."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(col_name or ""))
+    words = [word for word in re.split(r"[^a-z0-9]+", spaced.lower()) if word]
+    if not words:
+        return False
+    return words[-1] in _COUNT_HEAD_WORDS or (
+        len(words) > 2 and words[0] in _COUNT_HEAD_WORDS and words[1] == "of"
+    )
+
+
 def names_a_measure(col_name: Any) -> bool:
     """Whether a column's name carries a measure token: AMT, QTY, VAL, PCT ...
 

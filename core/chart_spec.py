@@ -15,7 +15,7 @@ from typing import Any
 
 from core.i18n import enum_label, t as _t
 from core.schema_enrichment import display_label
-from core.temporal_columns import is_calendar_period_column, names_a_measure
+from core.temporal_columns import is_calendar_period_column, names_a_count, names_a_measure
 
 
 _ID_SUFFIX_RE = re.compile(
@@ -595,6 +595,9 @@ def _format_for_column(col: str, explicit_formats: dict[str, str]) -> str:
         return explicit
     if _PERCENT_RE.search(col):
         return "percentage"
+    # A count of what money words name is a count (PROFIT_CENTRE_COUNT).
+    if names_a_count(col):
+        return "number"
     if _CURRENCY_RE.search(col):
         return "currency"
     if _is_temporal_name(col):
