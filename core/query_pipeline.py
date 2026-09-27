@@ -3006,8 +3006,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     top_n_intent = detect_top_n_intent(_analysis_question)
     # Candidate metrics are account-wide. We delay injecting/enforcing them
     # until graph + semantic planning has inferred the question's schema/domain.
+    # Read in English and in the reader's own words, as every metric matcher
+    # reads them: "achats par entrepôt" named no metric in French, where
+    # "purchases by warehouse" names the purchased quantity.
     _metric_candidates = store.list_metric_formula_context(
-        account_id, question, limit=10, metrics=_contract_metrics,
+        account_id, _analysis_question, limit=10, metrics=_contract_metrics,
+        reader_question=question,
     )
     # Metric logic this user composed in this thread. Never in metric_registry,
     # so it steers nobody else's answers; its ACL is re-checked on every read,

@@ -115,6 +115,11 @@ _LEXICON: dict[str, str] = {
     "ventes brutes": "gross sales",
     "ventes": "sales",
     "vente": "sales",
+    # "Achats par entrepôt" read "achats by warehouse" and named no measure:
+    # the purchased quantity's French names are "quantité achetée" and
+    # "unités achetées", and nothing read "achats" as purchases.
+    "achats": "purchases",
+    "achat": "purchase",
     # The returns fact has a French name and no English one. Measured:
     # "retours par succursale" resolved to NO metric at all while "returns by
     # branch" resolved to the Returns metric.

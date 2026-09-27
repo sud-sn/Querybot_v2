@@ -1660,6 +1660,7 @@ def _score_metric_for_question(metric: dict, question: str) -> int:
 
 def list_metric_formula_context(
     account_id: str, question: str, limit: int = 6, metrics: list[dict] | None = None,
+    *, reader_question: str = "",
 ) -> list[dict]:
     """
     Return active metric definitions relevant to a user question.
@@ -1668,7 +1669,9 @@ def list_metric_formula_context(
     injects these approved formulas into the SQL prompt so grouped requests
     such as "profit percentage by customer" can use the trusted calculation.
     `metrics` overrides the DB read — the query pipeline passes the compiled
-    semantic contract's metrics section.
+    semantic contract's metrics section. `reader_question` is the reader's own
+    words where `question` is their canonical English: a metric scores the
+    better of the two, so a synonym an admin wrote in either language counts.
     """
     scored: list[tuple[int, dict]] = []
     for metric in (metrics if metrics is not None else list_metrics(account_id)):
@@ -1677,6 +1680,8 @@ def list_metric_formula_context(
         if not metric_is_answerable(metric):
             continue
         score = _score_metric_for_question(metric, question)
+        if reader_question and reader_question != question:
+            score = max(score, _score_metric_for_question(metric, reader_question))
         if score > 0:
             metric = dict(metric)
             metric["_score"] = score
