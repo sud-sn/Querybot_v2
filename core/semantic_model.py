@@ -2490,6 +2490,40 @@ def _dimension_short_names(tables: list[dict[str, Any]]) -> dict[str, str]:
     return {next(iter(owned)): word for word, owned in owners.items() if len(owned) == 1}
 
 
+# The word that makes a column's name the label of its dimension rather than
+# something about it: "branch name" labels the branch, "customer type" does not
+# label a customer.
+_LABEL_WORDS = frozenset({"name", "code", "description", "desc", "label", "number", "id", "identifier"})
+
+
+def _dimension_vocabulary_names(tables: list[dict[str, Any]], vocab) -> dict[str, set[str]]:
+    """{display table: what the vocabulary calls its dimension}.
+
+    A term the tenant's vocabulary gives a dimension's label or code column,
+    less the word that makes it a label: the distribution pack calls the
+    profit center's name column "branch name", so the profit center is a
+    branch, and "inventory value by branch" was answered by no dimension. A
+    name two dimensions are given names neither.
+    """
+    aliases = getattr(vocab, "direct_aliases", None) or {}
+    owners: dict[str, set[str]] = {}
+    for table in tables:
+        for dimension in table.get("dimensions", []) or []:
+            display_table = str(dimension.get("display_table") or "").upper()
+            if not display_table or not dimension.get("source_key") or not dimension.get("display_column"):
+                continue
+            for column in (dimension.get("display_column"), dimension.get("code_column")):
+                for term in aliases.get(str(column or "").upper(), ()) or ():
+                    words = re.sub(r"[^a-z0-9]+", " ", str(term).lower()).split()
+                    if len(words) > 1 and words[-1] in _LABEL_WORDS and words[-2] not in _GENERIC_NAME_WORDS:
+                        owners.setdefault(" ".join(words[:-1]), set()).add(display_table)
+    names: dict[str, set[str]] = {}
+    for name, owned in owners.items():
+        if len(owned) == 1:
+            names.setdefault(next(iter(owned)), set()).add(name)
+    return names
+
+
 def _asked_by(question: str, word: str) -> bool:
     """Whether the question asks by ``word`` -- "by division", "for each
     group", "which division" -- rather than merely using it: "group the stock
@@ -2901,6 +2935,8 @@ def build_runtime_semantic_plan(
                 break
 
     short_names = _dimension_short_names(tables)
+    from core.vocab_packs import get_active_vocab
+    vocabulary_names = _dimension_vocabulary_names(tables, get_active_vocab())
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for dimension in table.get("dimensions", []) or []:
@@ -2932,6 +2968,10 @@ def build_runtime_semantic_plan(
             short_name = short_names.get(display_table.upper(), "")
             if short_name and _asked_by(question, short_name):
                 _match_values.append(short_name)
+            _match_values.extend(
+                name for name in sorted(vocabulary_names.get(display_table.upper(), ()))
+                if _asked_by(question, name)
+            )
             score = _runtime_match_score(q_terms, _match_values)
             if score <= 0:
                 continue
