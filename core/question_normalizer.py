@@ -560,6 +560,13 @@ _LEXICON: dict[str, str] = {
     "recus": "received",
     "payee": "paid",
     "payees": "paid",
+    # "Quantité vendue", "unités vendues", "produits vendus": what was sold,
+    # in any agreement. A count of goods is said in units as in quantity.
+    "vendu": "sold",
+    "vendue": "sold",
+    "vendus": "sold",
+    "vendues": "sold",
+    "unites": "units",
 
     # ── Time ─────────────────────────────────────────────────────────────────
     #

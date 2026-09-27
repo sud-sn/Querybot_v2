@@ -75,6 +75,17 @@ _GRAIN_OR_WINDOW = re.compile(
 )
 
 
+# A count of goods is said in units or in quantity: "quantity sold" is "units
+# sold", "units ordered" the "quantity ordered". Only the plural is a count:
+# a unit price is no quantity.
+_QUANTITY_WORDS = re.compile(r"\b(?:units|quantities|qty|qtys)\b", re.I)
+
+
+def with_one_quantity_word(text: str) -> str:
+    """The text with every word for a count of goods said as "quantity"."""
+    return _QUANTITY_WORDS.sub("quantity", text or "")
+
+
 def without_grain_or_window(question: str) -> str:
     """The question less the words that cut it by a period or bound it to one."""
     return _GRAIN_OR_WINDOW.sub(" ", question or "")

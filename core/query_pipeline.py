@@ -1986,6 +1986,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _english_dimensions = plan_analytical_intent(_analysis_question).dimensions
         if _english_dimensions:
             _analytical_plan = _dataclass_replace(_analytical_plan, dimensions=_english_dimensions)
+    # And the measure it names, where the reader's own words name none of the
+    # metrics' names and the reader would be asked which: "par quantité
+    # vendue" is "by quantity sold", the measure said "units sold".
+    if (
+        _analysis_question != question
+        and _analytical_plan.clarification
+        and _analytical_plan.clarification.slot == "metric"
+    ):
+        from core.analytical_intent import _matched_catalog_names as _catalog_metric_names
+
+        _english_metrics = tuple(_catalog_metric_names(_analysis_question, _planner_metrics))
+        if _english_metrics:
+            _analytical_plan = _dataclass_replace(
+                _analytical_plan,
+                metrics=_english_metrics,
+                clarification=None,
+                unresolved_slots=tuple(slot for slot in _analytical_plan.unresolved_slots if slot != "metric"),
+            )
 
     # Keep an explicit or clarified calendar choice available to later turns
     # in this thread. This stores only calendar metadata, never result values,

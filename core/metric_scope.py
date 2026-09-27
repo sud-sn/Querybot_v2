@@ -15,7 +15,7 @@ from typing import Any
 
 from core.source_resolution import GENERIC_MEASURE_WORDS
 from core.word_forms import (
-    FRENCH_FUNCTION_WORDS, FRENCH_GENERIC_MEASURE_WORDS, base_form, without_grain_or_window,
+    FRENCH_FUNCTION_WORDS, FRENCH_GENERIC_MEASURE_WORDS, base_form, with_one_quantity_word, without_grain_or_window,
 )
 
 
@@ -128,7 +128,9 @@ def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
         if overlap and overlap <= _GENERIC_WORDS:
             overlap = set()
         score = len(overlap) * 10
-        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", q):
+        # The whole phrase, whichever word for a quantity either says it in.
+        if re.search(rf"(?<![a-z0-9]){re.escape(with_one_quantity_word(phrase))}(?![a-z0-9])",
+                     with_one_quantity_word(q)):
             score += 100 + len(phrase_tokens) * 12
         elif len(phrase_tokens) > 1 and overlap == phrase_tokens:
             # Every word of the phrase, in another order, is one more word of

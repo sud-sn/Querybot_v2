@@ -385,7 +385,10 @@ def _catalog_phrases(item: dict[str, Any]) -> list[str]:
 
 
 def _matched_catalog_names(question: str, catalog: Iterable[dict[str, Any]]) -> list[str]:
-    lowered = question.casefold()
+    from core.word_forms import with_one_quantity_word
+
+    # "Quantity sold" asks for the metric said "units sold".
+    lowered = with_one_quantity_word(question.casefold())
     matches: list[str] = []
     for item in catalog:
         canonical = str(item.get("name") or item.get("term") or "").strip()
@@ -393,7 +396,7 @@ def _matched_catalog_names(question: str, catalog: Iterable[dict[str, Any]]) -> 
             continue
         phrases = _catalog_phrases(item) or [canonical]
         if any(
-            re.search(r"\b" + re.escape(phrase.casefold()) + r"\b", lowered)
+            re.search(r"\b" + re.escape(with_one_quantity_word(phrase.casefold())) + r"\b", lowered)
             for phrase in phrases if len(phrase.strip()) >= 2
         ):
             if canonical not in matches:

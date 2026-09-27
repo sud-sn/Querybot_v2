@@ -112,7 +112,7 @@ class TestTheRule:
         _context("Sales by freight carrier", {"fields": [{"term": "freight carrier", "table": "dbo.FactOrders"}]}, _SALES),
         # A metric's French synonym, read as the question was.
         _context("Unités vendues par mois", metrics=[{"name": "Units Sold", "synonyms": "unités vendues"}],
-                 canonical="unites vendues by month"),
+                 canonical="units sold by month"),
         # French rankings, ordinals and "current" narrow nothing.
         _context("Les 10 articles ayant la plus grande valeur de stock",
                  {"fields": [{"term": "item", "table": "dbo.Item"}]}, [{"name": "Inventory Value"}],
