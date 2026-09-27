@@ -63,11 +63,13 @@ SCHEMA = {
     "SalesDW.dbo.DimSalesTerritory": _table(
         "SalesTerritoryKey", ("SalesTerritoryKey", "int"), ("SalesTerritoryRegion", "nvarchar"),
         ("SalesTerritoryCountry", "nvarchar"), ("SalesTerritoryGroup", "nvarchar")),
+    # Each of its dates twice, as a key into the calendar and as a date of its own.
     "SalesDW.dbo.FactInternetSales": _table(
         "SalesOrderNumber", ("ProductKey", "int"), ("OrderDateKey", "int"), ("DueDateKey", "int"),
         ("ShipDateKey", "int"), ("CustomerKey", "int"), ("SalesTerritoryKey", "int"),
         ("SalesOrderNumber", "nvarchar"), ("SalesOrderLineNumber", "tinyint"), ("OrderQuantity", "smallint"),
-        ("UnitPrice", "money"), ("SalesAmount", "money"), ("TotalProductCost", "money")),
+        ("UnitPrice", "money"), ("SalesAmount", "money"), ("TotalProductCost", "money"),
+        ("OrderDate", "datetime"), ("DueDate", "datetime"), ("ShipDate", "datetime")),
 }
 
 _MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -131,8 +133,10 @@ def rows() -> dict[str, list[tuple]]:
     facts = []
     for number, line, placed, shipped, product, customer, territory, quantity in orders():
         _code, _en, _fr, _sub, price, cost = PRODUCTS[product]
-        facts.append((product, _key(placed), _key(placed + dt.timedelta(days=14)), _key(shipped), customer, territory,
-                      number, line, quantity, price, quantity * price, quantity * cost))
+        due = placed + dt.timedelta(days=14)
+        facts.append((product, _key(placed), _key(due), _key(shipped), customer, territory,
+                      number, line, quantity, price, quantity * price, quantity * cost,
+                      f"{placed.isoformat()} 00:00:00", f"{due.isoformat()} 00:00:00", f"{shipped.isoformat()} 00:00:00"))
     return {
         "DimDate": days,
         "DimProductCategory": [(k, en, fr) for k, (en, fr) in CATEGORIES.items()],

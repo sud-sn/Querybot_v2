@@ -762,7 +762,36 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
             "status": "generated" if confidence >= 85 else "needs_review",
             "confidence": confidence,
         })
-    return roles
+    return _one_role_per_event(roles)
+
+
+# The words that make a column a key to something rather than say what it is.
+_KEY_SUFFIX_WORDS = frozenset({"KEY", "ID", "SK", "FK", "DMS", "DIM"})
+
+
+def _event_of(column: str) -> str:
+    """The event a date column dates, by its words less a key's: OrderDateKey
+    and OrderDate both date the order."""
+    from core.identifier_intelligence import identifier_words
+
+    words = identifier_words(column).split("_")
+    while len(words) > 1 and words[-1] in _KEY_SUFFIX_WORDS:
+        words.pop()
+    return "_".join(words)
+
+
+def _one_role_per_event(roles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One business date per event. A table that keeps an event's date twice
+    -- as a key into the calendar and as a date of its own, OrderDateKey beside
+    OrderDate -- was given two date roles for it, both "Order Date", and every
+    question about orders was asked which of the two it meant. The one read
+    through the calendar stands for both: it answers by fiscal period and month
+    name, which the bare date cannot."""
+    joined = {_event_of(role["fact_column"]) for role in roles if role.get("dimension_table")}
+    return [
+        role for role in roles
+        if role.get("dimension_table") or _event_of(role["fact_column"]) not in joined
+    ]
 
 
 _DATE_CANDIDATE_RE = re.compile(
