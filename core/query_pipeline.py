@@ -13,6 +13,7 @@ import asyncio
 import dataclasses
 from dataclasses import replace as _dataclass_replace
 import logging
+import re
 import time
 from typing import Any
 
@@ -148,6 +149,31 @@ from core.label_language import attach_label_policies
 from core.units_of_measure import attach_unit_policies
 
 log = logging.getLogger("querybot")
+
+
+# The names a warehouse keeps a fiscal year by: a table or a column FISCAL_*,
+# FSC_*, *_FY. A bare "Q1" is a question to ask only where one is kept.
+_FISCAL_NAME_RE = re.compile(r"FISCAL|(?:^|_)(?:FSC|FSCL|FISC|FY|FYR)(?:_|$)")
+
+
+def _warehouse_keeps_a_fiscal_year(schema_dir: str) -> bool:
+    """Whether any table or column of the warehouse is named for a fiscal year
+    or period. Unknown -- no schema, or one that cannot be read -- counts as
+    kept, so that the reader is still asked."""
+    from core.schema import load_schema_columns
+
+    try:
+        tables = load_schema_columns(schema_dir) if schema_dir else {}
+    except Exception as exc:  # noqa: BLE001 - asking is the safe side
+        log.warning("Fiscal year evidence unread in %s: %s", schema_dir, exc)
+        return True
+    if not tables:
+        return True
+    return any(
+        _FISCAL_NAME_RE.search(str(name).upper())
+        for table, columns in tables.items()
+        for name in (str(table).split(".")[-1], *columns)
+    )
 
 
 def _calendar_profile_for_request(
@@ -1763,6 +1789,20 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         db_cfg,
         _thread_calendar_preference,
     )
+    # "Calendar or fiscal quarters?" is a choice only where there is a fiscal
+    # year to read a bare "Q1" by. A warehouse that names none anywhere keeps
+    # the calendar's quarters, and the reader who asked for the first quarter
+    # of 2022 is answered, not asked.
+    from core.analytical_intent import names_a_quarter
+
+    if (
+        not _planner_calendar_profile.get("basis")
+        and names_a_quarter(question)
+        and not _warehouse_keeps_a_fiscal_year(str((state or {}).get("schema_dir") or ""))
+    ):
+        _planner_calendar_profile = {
+            **_planner_calendar_profile, "basis": "calendar", "source": "no_fiscal_year_in_the_warehouse",
+        }
     # Initialized before the try so later stages that re-plan (the trend
     # re-grain fallback below) always have these in scope, even when catalog
     # loading failed open.

@@ -289,7 +289,28 @@ class TestAQuarterNeedsItsCalendar:
     @pytest.mark.parametrize("question,lang", [
         ("Units sold in Q1 2025", "en"), ("Unités vendues au premier trimestre 2025", "fr")])
     def test_the_reader_is_asked_which_quarters(self, warehouse, question, lang):
-        answer = harness.ask(warehouse, question, lang)
+        # Where the warehouse keeps a fiscal year to read a quarter by; one
+        # that keeps none has only the calendar's
+        # (tests/test_a_quarter_is_the_calendars_without_a_fiscal_year.py).
+        from unittest.mock import patch
+
+        import core.schema as schema
+
+        original = schema.load_schema_columns
+
+        def with_a_fiscal_year(schema_dir):
+            tables = {name: dict(columns) for name, columns in original(schema_dir).items()}
+            for name in tables:
+                if name.upper().endswith("DT_DMS"):
+                    tables[name]["FSC_YR"] = "int"
+            return tables
+
+        # Nor has an earlier question in the harness's one thread chosen one.
+        from core import query_pipeline
+
+        query_pipeline.conversation_state_store.clear(harness.ACCOUNT, f"{harness.ACCOUNT}:portal:harness")
+        with patch.object(schema, "load_schema_columns", with_a_fiscal_year):
+            answer = harness.ask(warehouse, question, lang)
         assert answer["model_wrote_sql"] is False and answer["executed"] == []
         assert [kind for kind, *_ in answer["replies"]] == ["clarify"]
 

@@ -697,6 +697,12 @@ def _normalise_calendar_profile(profile: dict[str, Any] | None) -> dict[str, Any
     }
 
 
+def names_a_quarter(text: str) -> bool:
+    """Whether a question names a quarter by its number alone: "Q1 2022",
+    "the first quarter", "premier trimestre", "T1 2022"."""
+    return bool(_NAMED_QUARTER_RE.search(text or ""))
+
+
 def _named_quarter(text: str) -> str:
     match = _NAMED_QUARTER_RE.search(text or "")
     if not match:
