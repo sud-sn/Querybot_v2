@@ -1755,7 +1755,7 @@ _DATE_FILTER_COLUMN_RE = re.compile(
 )
 
 
-def _where_has_identity_filter(where) -> bool:
+def _where_has_identity_filter(where, date_typed: frozenset[str] = frozenset()) -> bool:
     """True if a parsed WHERE clause has an equality/IN condition on a
     non-date-like column — an identity/category lookup ("customer_id = 123",
     "status IN (...)") as opposed to a pure time-range filter. Shared by the
@@ -1780,6 +1780,13 @@ def _where_has_identity_filter(where) -> bool:
     is_date_role_column is the canonical, already-governed check for "is
     this column a recognized business date role" -- reuse it rather than
     extending this regex a second time.
+
+    A name is not all there is to know. ``date_typed`` names the columns the
+    schema declares a date or a timestamp (_date_typed_columns): a calendar's
+    date is often named for what it is in the calendar, not for being a date --
+    FullDateAlternateKey reads as a key -- and a stock level read at the last
+    snapshot of 2024, filtered `FullDateAlternateKey IN (the snapshot's date)`,
+    was taken for a lookup and declined.
     """
     from core.date_roles import is_date_role_column
 
@@ -1793,8 +1800,34 @@ def _where_has_identity_filter(where) -> bool:
         name = col_node.name or ""
         if _DATE_FILTER_COLUMN_RE.search(name) or is_date_role_column(name):
             continue
+        if name.strip('[]"`').upper() in date_typed:
+            continue
         return True
     return False
+
+
+# The declared types of a date or a moment: DATE, DATETIME, DATETIME2,
+# SMALLDATETIME, DATETIMEOFFSET, TIMESTAMP and Snowflake's TIMESTAMP_NTZ,
+# _LTZ and _TZ -- never TIME, which is a time of day.
+_DATE_TYPED_RE = re.compile(
+    r"\b(?:date|datetime2?|smalldatetime|datetimeoffset|timestamp(?:_[nlt]?tz)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _date_typed_columns(table_columns: dict[str, dict[str, str]] | None) -> frozenset[str]:
+    """The columns the schema declares a date or a timestamp, upper-cased.
+
+    A name two tables share counts only where every table that has it declares
+    it a date: a filter on it could be on either.
+    """
+    typed: dict[str, bool] = {}
+    for columns in (table_columns or {}).values():
+        for name, declared in (columns or {}).items():
+            key = str(name or "").strip().strip('[]"`').upper()
+            if key:
+                typed[key] = typed.get(key, True) and bool(_DATE_TYPED_RE.search(str(declared or "")))
+    return frozenset(name for name, is_date in typed.items() if is_date)
 
 
 def has_identity_filter(sql: str) -> bool:
@@ -1813,7 +1846,9 @@ def has_identity_filter(sql: str) -> bool:
     return _where_has_identity_filter(where)
 
 
-def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
+def _find_null_aggregate_diagnostic_errors(
+    sql: str, tree, table_columns: dict[str, dict[str, str]] | None = None,
+) -> list[dict]:
     """
     Guard filtered single-row SUM queries from returning a misleading NULL.
 
@@ -1834,7 +1869,7 @@ def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
     if not sql or where is None or tree.find(sg_exp.Group) is not None:
         return []
 
-    if not _where_has_identity_filter(where):
+    if not _where_has_identity_filter(where, _date_typed_columns(table_columns)):
         return []
 
     select = tree.find(sg_exp.Select)
@@ -3621,7 +3656,7 @@ def validate_sql_detailed(
                 metric_formula_errors,
             )
 
-        null_agg_errors = _find_null_aggregate_diagnostic_errors(sql, tree)
+        null_agg_errors = _find_null_aggregate_diagnostic_errors(sql, tree, table_columns)
         if null_agg_errors:
             return SqlValidationResult(
                 False,

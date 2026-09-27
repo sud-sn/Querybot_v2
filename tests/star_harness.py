@@ -33,9 +33,10 @@ CONNECTION = {"db_type": "azure_sql", "name": "star",
 _saved: dict = {}
 
 
-def _table(key: str, *columns: tuple[str, str]) -> dict:
+def _table(key: str | tuple[str, ...], *columns: tuple[str, str]) -> dict:
     return {"columns": [{"name": n, "type": t, "nullable": False, "comment": ""} for n, t in columns],
-            "pk_columns": [key], "row_count": 0, "comment": "", "schema": "dbo", "database": "SalesDW"}
+            "pk_columns": [key] if isinstance(key, str) else list(key), "row_count": 0, "comment": "",
+            "schema": "dbo", "database": "SalesDW"}
 
 
 SCHEMA = {
@@ -72,6 +73,14 @@ SCHEMA = {
         ("SalesOrderNumber", "nvarchar"), ("SalesOrderLineNumber", "tinyint"), ("OrderQuantity", "smallint"),
         ("UnitPrice", "money"), ("SalesAmount", "money"), ("TotalProductCost", "money"),
         ("OrderDate", "datetime"), ("DueDate", "datetime"), ("ShipDate", "datetime")),
+    # Stock, kept twice: day by day for the last quarter of 2025 only, and at
+    # each month's end since January 2024.
+    "SalesDW.dbo.FactProductInventory": _table(
+        ("ProductKey", "DateKey"), ("ProductKey", "int"), ("DateKey", "int"), ("UnitCost", "money"),
+        ("UnitsBalance", "int")),
+    "SalesDW.dbo.FactProductInventoryMonthly": _table(
+        ("ProductKey", "MonthEndDateKey"), ("ProductKey", "int"), ("MonthEndDateKey", "int"),
+        ("UnitCost", "money"), ("UnitsBalance", "int")),
 }
 
 _MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -124,6 +133,20 @@ def orders() -> list[tuple]:
     return found
 
 
+DAILY_STOCK_FROM = dt.date(2025, 10, 1)
+
+
+def units_in_stock(product: int, day: dt.date) -> int:
+    """The units of a product on hand at the end of a day."""
+    return 100 + (product * 37 + day.toordinal()) % 90
+
+
+def month_ends() -> list[dt.date]:
+    """Each month's last day, January 2024 to December 2025."""
+    return [dt.date(year + month // 12, month % 12 + 1, 1) - dt.timedelta(days=1)
+            for year in (2024, 2025) for month in range(1, 13)]
+
+
 def rows() -> dict[str, list[tuple]]:
     days = []
     day = dt.date(2024, 1, 1)
@@ -150,6 +173,13 @@ def rows() -> dict[str, list[tuple]]:
                         for k, (code, first, last, gender, income) in CUSTOMERS.items()],
         "DimSalesTerritory": [(k, *names) for k, names in TERRITORIES.items()],
         "FactInternetSales": facts,
+        "FactProductInventory": [
+            (product, _key(day), PRODUCTS[product][5], units_in_stock(product, day))
+            for product in PRODUCTS
+            for day in (DAILY_STOCK_FROM + dt.timedelta(days=n) for n in range(92))],
+        "FactProductInventoryMonthly": [
+            (product, _key(day), PRODUCTS[product][5], units_in_stock(product, day))
+            for product in PRODUCTS for day in month_ends()],
     }
 
 
@@ -176,6 +206,15 @@ METRICS = [
      "base_table": "dbo.FactInternetSales", "formula_type": "expression", "category": "sales",
      "synonyms": "products sold, distinct products sold, produits vendus",
      "description": "Distinct products on at least one online order line."},
+    # The stock, registered once for each table it is kept on.
+    {"name": "Units in Stock", "sql_template": "SUM(UnitsBalance)", "base_table": "dbo.FactProductInventory",
+     "formula_type": "expression", "category": "inventory",
+     "synonyms": "units in stock, stock on hand, units on hand, unités en stock",
+     "description": "Units on hand at the end of the day."},
+    {"name": "Month-End Units in Stock", "sql_template": "SUM(UnitsBalance)",
+     "base_table": "dbo.FactProductInventoryMonthly", "formula_type": "expression", "category": "inventory",
+     "synonyms": "month-end units in stock, month-end stock, stock en fin de mois",
+     "description": "Units on hand at the end of the month."},
 ]
 
 
@@ -217,8 +256,12 @@ def build_tenant(root: Path) -> harness.Warehouse:
         detect_unknown_members(ACCOUNT)
     write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(schema_dir), account_id=ACCOUNT)
     harness._accept_what_the_data_vouches_for(ACCOUNT)
+    # Each fact's everyday date: the sale's order, the day's snapshot, the month's end.
+    everyday = {"FACTINTERNETSALES": "OrderDateKey", "FACTPRODUCTINVENTORY": "DateKey",
+                "FACTPRODUCTINVENTORYMONTHLY": "MonthEndDateKey"}
     for role in load_semantic_model(str(schema_dir)).get("date_roles") or []:
-        if not str(role.get("fact_table") or "").upper().endswith("FACTINTERNETSALES"):
+        table = str(role.get("fact_table") or "").split(".")[-1].upper()
+        if table not in everyday:
             continue
         patch_date_role(kb_dir=str(schema_dir), fact_table=role["fact_table"], fact_column=role["fact_column"],
                         dimension_table=role.get("dimension_table") or "",
@@ -226,8 +269,8 @@ def build_tenant(root: Path) -> harness.Warehouse:
                         business_role=role.get("business_role") or "", name=role.get("name") or "",
                         date_value_column=role.get("date_value_column") or "",
                         date_key_type=role.get("date_key_type") or "", status="approved")
-        if role["fact_column"] == "OrderDateKey":
-            set_default_date_role(str(schema_dir), role["fact_table"], "OrderDateKey")
+        if role["fact_column"] == everyday[table]:
+            set_default_date_role(str(schema_dir), role["fact_table"], role["fact_column"])
     for metric in METRICS:
         store.save_metric(ACCOUNT, dict(metric))
     write_contract(ACCOUNT, str(schema_dir))

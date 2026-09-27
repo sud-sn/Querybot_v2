@@ -113,7 +113,8 @@ class TestDiscovery:
         assert roles == {"DimDate": "date_dimension", "DimProductCategory": "dimension",
                          "DimProductSubcategory": "dimension", "DimProduct": "dimension",
                          "DimCustomer": "dimension", "DimSalesTerritory": "dimension",
-                         "FactInternetSales": "fact"}
+                         "FactInternetSales": "fact", "FactProductInventory": "fact",
+                         "FactProductInventoryMonthly": "fact"}
 
     def test_the_joins(self):
         from core.schema import build_entity_graph
@@ -127,6 +128,10 @@ class TestDiscovery:
             ("FactInternetSales", "OrderDateKey", "Order Date"),
             ("FactInternetSales", "DueDateKey", "Due Date"),
             ("FactInternetSales", "ShipDateKey", "Shipping Date"),
+            ("FactProductInventory", "ProductKey", "DimProduct"),
+            ("FactProductInventory", "DateKey", "Date"),
+            ("FactProductInventoryMonthly", "ProductKey", "DimProduct"),
+            ("FactProductInventoryMonthly", "MonthEndDateKey", "Month End Date"),
         }
 
     def test_the_tables_names(self):
