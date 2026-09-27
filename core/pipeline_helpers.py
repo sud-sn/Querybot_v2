@@ -1396,6 +1396,15 @@ def _compile_governed_grouped_request_sql(
                 f"{alias_for(str(unique_dimensions[0]['table']))}.{qcol(str(unknown['key_column']))}",
                 unknown,
             ))
+        elif ranking and unit and unit.get("join") and _same_physical_table(unknown.get("table"), unit["table"]):
+            # A quantity's unit is read through its item, and a ranking grouped
+            # by that unit ranks the placeholder item's unit as a group of its
+            # own: "bottom 2 warehouses by stock on hand" was refused for it
+            # and left to the model. Left out by the fact's own key, which
+            # keeps a row whose item matched nothing -- still stock.
+            where_parts.append(exclusion_predicate(
+                f"fact_rows.{qcol(str(unit['join']['fact_column']))}", unknown,
+            ))
         if derived.get("semantics") == "count_distinct_business_identifier" and any(
             _same_physical_table(ref.get("table"), fact_table)
             and str(ref.get("column") or "").upper() == derived_target_column.upper()

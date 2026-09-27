@@ -23,6 +23,18 @@ _NUMBER_WORDS = {
     "hundred": 100,
 }
 
+# The end of a ranking a superlative names, in English and in French as the
+# canonicaliser leaves it ("the plus grande", "the moins of").
+_LOW_SUPERLATIVE = (
+    r"\b(?:smallest|lowest|least|fewest|moins"
+    r"|plus\s+(?:petite?s?|faibles?|bas(?:se)?s?))\b"
+)
+_SUPERLATIVE = (
+    r"(?:\b(?:largest|biggest|greatest|highest|most"
+    r"|plus\s+(?:grande?s?|gros(?:se)?s?|[ée]lev[ée]e?s?|of))\b"
+    rf"|{_LOW_SUPERLATIVE})"
+)
+
 
 @dataclass(frozen=True)
 class TopNIntent:
@@ -52,6 +64,13 @@ def detect_top_n_intent(question: str) -> TopNIntent | None:
     patterns = (
         rf"\b(?:top|bottom|best|worst|highest|lowest|leading)\s+{number}\b",
         rf"\b{number}\s+(?:top|bottom|best|worst|highest|lowest|leading)\b",
+        # A count and a superlative: "the 10 items with the largest inventory
+        # value", "the 3 largest warehouses", and the French as canonicalised
+        # ("the 10 articles ayant the plus grande value", "the 3 warehouses qui
+        # ont the moins of inventory").
+        rf"\bthe\s+{number}\s+(?:[\w'-]+\s+){{1,3}}?"
+        rf"(?:with|having|that\s+have|who\s+have|ayant|qui\s+ont|dont)\s+(?:the\s+)?{_SUPERLATIVE}",
+        rf"\bthe\s+{number}\s+{_SUPERLATIVE}",
     )
     match = next((m for p in patterns if (m := re.search(p, q))), None)
     if match is None:
@@ -62,7 +81,8 @@ def detect_top_n_intent(question: str) -> TopNIntent | None:
     if limit < 1:
         return None
 
-    direction = "ascending" if re.search(r"\b(bottom|worst|lowest)\b", match.group(0)) else "descending"
+    direction = "ascending" if re.search(
+        rf"\b(?:bottom|worst|lowest)\b|{_LOW_SUPERLATIVE}", match.group(0)) else "descending"
     tie_policy = (
         "include_ties"
         if re.search(r"\b(with|include|including|keep)\s+(all\s+)?ties\b", q)
