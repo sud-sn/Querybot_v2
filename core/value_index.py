@@ -102,8 +102,16 @@ def value_index_enabled(state_data: dict | None) -> bool:
 
 # ── Column selection ──────────────────────────────────────────────────────────
 
+def _words(name: str) -> str:
+    """A table's or column's name as its words, upper-case with underscores:
+    DimProduct is DIM_PRODUCT, WarehouseCity WAREHOUSE_CITY."""
+    from core.identifier_intelligence import identifier_words
+
+    return identifier_words(str(name or "")).upper()
+
+
 def _is_dimension_table(bare_table: str) -> bool:
-    upper = (bare_table or "").upper()
+    upper = _words(bare_table)
     return upper.endswith(("_DMS", "_DIM")) or upper.startswith(("DIM_", "DMS_", "D_"))
 
 
@@ -335,7 +343,7 @@ def select_filterable_columns(
             is_display = bool(rule and rule.role in _FILTERABLE_ROLES) and _is_dimension_table(bare_table)
             is_state = bool(rule and rule.role in _FILTERABLE_ANY_TABLE_ROLES)
             is_cat = _is_categorical(name, ctype)
-            is_place = _is_dimension_table(bare_table) and bool(_PLACE_TOKENS & set(upper.split("_")))
+            is_place = _is_dimension_table(bare_table) and bool(_PLACE_TOKENS & set(_words(name).split("_")))
             if not (is_display or is_state or is_cat or is_place):
                 continue
             # The write-time gate. Last check before a column becomes eligible
