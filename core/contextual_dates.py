@@ -1369,6 +1369,19 @@ def _one_date_per_measure_table(
     }
 
 
+# The outcome of a question that asks for no date: no period, no grain, no
+# snapshot and no date named. Nothing downstream may then require one.
+NO_DATE_ASKED = "no temporal intent"
+
+
+def no_date_asked(resolution: dict[str, Any] | None) -> bool:
+    """Whether a date-context resolution says the question asked for no date
+    -- not that a date was asked and could not be settled, nor that resolving
+    it failed."""
+    resolution = resolution or {}
+    return str(resolution.get("status") or "") == "none" and resolution.get("reason") == NO_DATE_ASKED
+
+
 def resolve_contextual_date_binding(
     question: str,
     *,
@@ -1438,7 +1451,7 @@ def resolve_contextual_date_binding(
         and not question_names_a_calendar_period(question)
         and not explicit
     ):
-        return {"status": "none", "reason": "no temporal intent"}
+        return {"status": "none", "reason": NO_DATE_ASKED}
 
     requested_grain = requested_temporal_grain(question)
 

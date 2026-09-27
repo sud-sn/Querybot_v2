@@ -106,6 +106,7 @@ from core.contextual_dates import (
     requested_temporal_grain,
     date_resolution_trace,
     same_date_fact,
+    NO_DATE_ASKED,
     question_names_a_calendar_period,
     resolve_contextual_date_binding,
     stated_period,
@@ -5338,6 +5339,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 output_summary=date_resolution_trace(
                     {"status": "error", "reason": str(_date_ctx_exc)[:200]}),
             )
+    else:
+        _date_context_resolution = {"status": "none", "reason": NO_DATE_ASKED}
 
     # Fetch KB docs for every table referenced by the selected metric formulas.
     # This is deliberately after metric scoping; otherwise a generic metric from

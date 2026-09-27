@@ -273,8 +273,15 @@ def build_planner_alignment(
     # and the pathfinder is obliged to connect it, so an unrelated audit date
     # ends up joined beside the metric's approved date — two edges into the same
     # date dimension, which returns no rows or provokes an irrelevant
-    # clarification. Once a date role IS governed, only that role survives.
+    # clarification. Once a date role IS governed, only that role survives; and
+    # where the question asks for no date at all, none does -- "order quantity
+    # by product category" names the order date's event inside a measure's
+    # name, no period reads it, and the join it would require is one no
+    # compiler writes.
     date_entities_are_governed = bool(governed_date_entities)
+    from core.contextual_dates import no_date_asked
+
+    no_date_is_asked = not date_bindings and no_date_asked(date_context_resolution)
     measure_words = {str(name) for name in named_only_by_a_measure or []}
     dropped_measure_word_entities: set[str] = set()
     for name in detected:
@@ -287,7 +294,7 @@ def build_planner_alignment(
             required_entities.add(name)
             continue
         if (
-            date_entities_are_governed
+            (date_entities_are_governed or no_date_is_asked)
             and name not in governed_date_entities
             and _is_date_entity(entity)
         ):
