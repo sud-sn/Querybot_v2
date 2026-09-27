@@ -104,6 +104,21 @@ def requested_cycle(question: str) -> str:
     return next((cycle for cycle, _grain, pattern in _CYCLES if pattern.search(q)), "")
 
 
+# A breakdown by a calendar unit, the date it is read on named between: "by
+# month", "by ship month", "by order date month", "by fiscal year". A window's
+# words are never the date ("by warehouse last month"), nor is "year to date".
+_BREAKDOWN_GRAIN_RE = re.compile(
+    r"\b(?:by|per)\s+(?:(?!(?:of|the|last|this|next|previous|prior|current|each|every)\b)[a-z]+\s+){0,3}?"
+    r"(day|week|month|quarter|year)s?\b(?!\s*to\s*date)",
+)
+
+
+def breakdown_grain(question: str) -> str:
+    """The calendar unit the question breaks its answer down by, or ""."""
+    found = _BREAKDOWN_GRAIN_RE.search(normalize_date_role_text(question))
+    return found.group(1) if found else ""
+
+
 def requested_temporal_grain(question: str) -> str:
     """Return the finest grain explicitly requested by the user.
 
@@ -151,6 +166,9 @@ def requested_temporal_grain(question: str) -> str:
     ):
         if any(word in q for word in words):
             return grain
+    grain = breakdown_grain(question)
+    if grain:
+        return grain
 
     window = detect_temporal_window(question)
     unit = str(window.get("unit") or "").lower()

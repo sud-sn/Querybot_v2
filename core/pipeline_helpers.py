@@ -1644,10 +1644,13 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
             else:
                 return ""
 
+    from core.contextual_dates import breakdown_grain
+
     is_trend = bool(
         intent == "trend"
         or str(request.get("output_shape") or "").lower() == "time_series"
-        or re.search(r"\b(?:trend|over\s+time|by\s+(?:day|week|month|quarter|year))\b", question, re.I)
+        or re.search(r"\b(?:trend|over\s+time)\b", question, re.I)
+        or breakdown_grain(question)
         or str(policy.get("kind") or "") == "all_dates"
     )
     select_parts: list[str] = []
@@ -2223,10 +2226,13 @@ def compile_governed_temporal_metric_sql(
         re.sub(r"[^A-Za-z0-9_]", "_", str(metric.get("name") or "metric")).upper()
         or "METRIC"
     )
+    from core.contextual_dates import breakdown_grain
+
     is_trend = bool(
         str(request_plan.get("intent") or "").lower() == "trend"
         or str(request_plan.get("output_shape") or "").lower() == "time_series"
-        or re.search(r"\b(?:trend|over\s+time|by\s+(?:day|week|month|quarter|year))\b", question, re.I)
+        or re.search(r"\b(?:trend|over\s+time)\b", question, re.I)
+        or breakdown_grain(question)
     )
     # A total of a quantity is kept per unit of measure (core/units_of_measure),
     # as the grouped compiler keeps it: eaches and feet do not add up, and the
