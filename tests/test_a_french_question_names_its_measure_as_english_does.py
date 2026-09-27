@@ -18,9 +18,7 @@ French words English ones had long stopped counting:
 None of them is evidence now. With "de" gone the two value metrics tied, and
 the tie went to the first name; a phrase whose every word is in the question,
 in another order, now counts a word more than one it half shares, whose other
-words ("fin de mois") name a narrower measure nobody asked for. And reserved
-stock, which the starter metrics call allocated, is asked for by that name in
-both languages.
+words ("fin de mois") name a narrower measure nobody asked for.
 
 A synthetic tenant (tests/answer_harness.py); the warehouse and the model are
 the only stand-ins.
@@ -73,20 +71,6 @@ class TestTheProductAnswersWithTheMeasureAsked:
         (row,) = _rows(answer, "INVENTORY_VALUE")
         assert row["INVENTORY_VALUE"] == pytest.approx(
             sum(on_hand * cost for *_keys, on_hand, _allocated, cost in harness.STOCK))
-
-    @pytest.mark.parametrize("question,lang", [
-        ("Reserved quantity by warehouse", "en"),
-        ("Stock réservé par entrepôt", "fr"),
-    ])
-    def test_reserved_is_allocated(self, warehouse, question, lang):
-        answer = harness.ask(warehouse, question, lang)
-        assert answer["model_wrote_sql"] is False
-        expected: dict = {}
-        for whs, item, _buyer, _created, _on_hand, allocated, _cost in harness.STOCK:
-            key = (harness.WAREHOUSES[whs][1], harness.ITEMS[item][3])
-            expected[key] = expected.get(key, 0) + allocated
-        assert {(row["WAREHOUSE"], row["UNT_OF_MSR"]): row["ALLOCATED_QUANTITY"]
-                for row in _rows(answer, "ALLOCATED_QUANTITY")} == pytest.approx(expected)
 
     def test_month_end_is_still_asked_for_by_name(self, warehouse):
         answer = harness.ask(warehouse, "Valeur du stock en fin de mois", "fr")

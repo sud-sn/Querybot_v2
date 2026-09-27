@@ -102,6 +102,8 @@ EXPECTED = {
     "Stock on hand": (DAILY, "SUM(ON_HND_QTY)"),
     "Inventory value": (DAILY, "SUM(ON_HND_QTY * ITM_CST)"),
     "Allocated quantity": (DAILY, "SUM(ALC_ON_HND_QTY)"),
+    # A part of the stock, never the stock; its own measure.
+    "Reserved quantity": (DAILY, "SUM(RSV_QTY)"),
     "Available quantity": (DAILY, "SUM(ON_HND_QTY) - COALESCE(SUM(ALC_ON_HND_QTY), 0)"),
     "Month-end stock on hand": (MONTHLY, "SUM(CUR_ON_HND_QTY)"),
     "Month-end inventory value": (MONTHLY, "SUM(CUR_ON_HND_QTY * ITM_CST)"),
@@ -142,6 +144,7 @@ EXPECTED_B = {
     "Stock on hand": (SNAPSHOT_B, "SUM(ON_HAND_QTY)"),
     "Inventory value": (SNAPSHOT_B, "SUM(ON_HAND_QTY * STD_UNIT_CST)"),
     "Allocated quantity": (SNAPSHOT_B, "SUM(ALLOC_OH_QTY)"),
+    "Reserved quantity": (SNAPSHOT_B, "SUM(RSV_OH_QTY)"),
     "Available quantity": (SNAPSHOT_B, "SUM(ON_HAND_QTY) - COALESCE(SUM(ALLOC_OH_QTY), 0)"),
     "Purchased quantity": (SNAPSHOT_B, "SUM(PURCHASED_QTY)"),
     "Units sold": (SNAPSHOT_B, "SUM(SOLD_QTY)"),

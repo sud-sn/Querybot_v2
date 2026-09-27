@@ -54,6 +54,12 @@ _OTHER_POSITION_TOKENS = frozenset({
     "BUDGET", "PLN", "PLAN",
 })
 _ALLOCATED_TOKENS = frozenset({"ALC", "ALLOC", "ALLOCATED"})
+# Reserved and back-ordered stock are parts of their own, beside the
+# allocated part: a warehouse can keep all three, and on the sample tenant it
+# did (RSV_QTY, RSV_BCK_ORD_QTY, ALC_QTY), with a reserved total no allocated
+# column comes near.
+_RESERVED_TOKENS = frozenset({"RSV", "RSRV", "RESERVED"})
+_BACK_ORDER_TOKENS = frozenset({"BCK", "BKO", "BACKORDER", "BACKORDERED"})
 _COST_TOKENS = frozenset({"CST", "COST"})
 _AVERAGE_TOKENS = frozenset({"AVG", "AVERAGE"})
 _PURCHASE_TOKENS = frozenset({"PCH", "PURCH", "PURCHASE", "PURCHASED", "PURCHASES"})
@@ -147,6 +153,17 @@ def _allocated(columns: list[str]) -> tuple[str, list[str]]:
     return _pick(on_hand or candidates, _CURRENT_TOKENS), candidates
 
 
+def _part(columns: list[str], kind: frozenset[str], unlike: frozenset[str] = frozenset()) -> tuple[str, list[str]]:
+    """The quantity of a part of the stock that its name says it is."""
+    candidates = [
+        name for name in columns
+        if _tokens(name) & kind
+        and _tokens(name) & _QUANTITY_TOKENS
+        and not _tokens(name) & (_FIGURE_TOKENS | _OTHER_POSITION_TOKENS | unlike)
+    ]
+    return _pick(candidates, _CURRENT_TOKENS), candidates
+
+
 def _movement(columns: list[str], kind: frozenset[str]) -> tuple[str, list[str]]:
     candidates = [
         name for name in columns
@@ -173,6 +190,8 @@ def _metrics_for(base: str, columns: list[str], monthly: bool) -> list[StarterMe
     on_hand, on_hand_all = _on_hand(columns)
     cost, cost_all = _unit_cost(columns)
     allocated, allocated_all = _allocated(columns)
+    reserved, reserved_all = _part(columns, _RESERVED_TOKENS, unlike=_BACK_ORDER_TOKENS)
+    back_ordered, back_ordered_all = _part(columns, _BACK_ORDER_TOKENS)
     purchased, purchased_all = _movement(columns, _PURCHASE_TOKENS)
     sold, sold_all = _movement(columns, _SOLD_TOKENS)
 
@@ -208,10 +227,26 @@ def _metrics_for(base: str, columns: list[str], monthly: bool) -> list[StarterMe
         found.append(StarterMetric(
             "allocated", "Allocated quantity", f"SUM({allocated})", base, (allocated,),
             ("allocated quantity", "allocated stock", "quantity allocated",
-             "reserved quantity", "reserved stock", "quantity reserved",
-             "quantité allouée", "stock alloué", "quantité réservée", "stock réservé"),
+             "quantité allouée", "stock alloué"),
             f"Units of stock allocated to orders {at} ({allocated}). {level}",
             (f"{allocated}: allocated stock by name." + _others(allocated, allocated_all),),
+        ))
+    if reserved:
+        found.append(StarterMetric(
+            "reserved", "Reserved quantity", f"SUM({reserved})", base, (reserved,),
+            ("reserved quantity", "reserved stock", "quantity reserved",
+             "quantité réservée", "stock réservé"),
+            f"Units of stock reserved {at} ({reserved}). {level}",
+            (f"{reserved}: reserved stock by name, not back-ordered." + _others(reserved, reserved_all),),
+        ))
+    if back_ordered:
+        found.append(StarterMetric(
+            "back_ordered", "Back-ordered quantity", f"SUM({back_ordered})", base, (back_ordered,),
+            ("back-ordered quantity", "backordered quantity", "back orders", "backorders",
+             "quantity on back order", "commandes en souffrance",
+             "reliquats de commande"),
+            f"Units on back order {at} ({back_ordered}). {level}",
+            (f"{back_ordered}: back-ordered stock by name." + _others(back_ordered, back_ordered_all),),
         ))
     if on_hand and allocated:
         found.append(StarterMetric(

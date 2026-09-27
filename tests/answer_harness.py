@@ -48,7 +48,8 @@ SCHEMA = {
     "WH.MART.ITM_BAL_DLY_FCT": _table(
         "ITM_BAL_DLY_FCT_KEY", ("ITM_BAL_DLY_FCT_KEY", "bigint"), ("WHS_DMS_KEY", "int"), ("ITM_DMS_KEY", "int"),
         ("BYR_PTY_DMS_KEY", "int"), ("ITM_BAL_EFC_DT_DMS_KEY", "int"), ("ITM_WHS_CRN_DT_DMS_KEY", "int"),
-        ("ON_HND_QTY", "decimal"), ("ALC_ON_HND_QTY", "decimal"), ("ITM_CST", "decimal"), ("UNT_OF_MSR", "nvarchar")),
+        ("ON_HND_QTY", "decimal"), ("ALC_ON_HND_QTY", "decimal"), ("ITM_CST", "decimal"), ("UNT_OF_MSR", "nvarchar"),
+        ("RSV_QTY", "decimal"), ("RSV_BCK_ORD_QTY", "decimal")),
     "WH.MART.ITM_BAL_PRD_FCT": _table(
         "ITM_BAL_PRD_FCT_KEY", ("ITM_BAL_PRD_FCT_KEY", "bigint"), ("WHS_DMS_KEY", "int"), ("ITM_DMS_KEY", "int"),
         ("PRD_DMS_KEY", "int"), ("SLD_QTY", "decimal"), ("PCH_QTY", "decimal"), ("NUM_OF_RCT", "int"),
@@ -94,6 +95,10 @@ STOCK = [
     (2, 101, 2, 20250722, 60, 60, 2.50),
     (2, 202, 2, 20251105, 350, 0, 1.40),
 ]
+# Reserved and back-ordered stock at the newest snapshot, row for row with
+# STOCK: parts of the stock of their own, beside the allocated part.
+RESERVED = [5, 0, 30, 10, 0]
+BACK_ORDERED = [0, 4, 0, 10, 0]
 # The monthly facts: (warehouse, item, yyyymm, sold, purchased, receipts, cost)
 MOVES = [
     (1, 101, 202501, 10, 30, 2, 2.50), (1, 101, 202502, 15, 0, 0, 2.50), (1, 201, 202502, 200, 500, 1, 3.10),
@@ -127,7 +132,11 @@ def rows() -> dict[str, list[tuple]]:
             # The earlier snapshot holds different quantities: adding it in
             # would change every total.
             qty = on_hand if snapshot == LATEST else on_hand + 1000
-            daily.append((len(daily) + 1, whs, itm, byr, snapshot, created, qty, allocated, cost, ITEMS[itm][3]))
+            reserved, back_ordered = RESERVED[n], BACK_ORDERED[n]
+            if snapshot != LATEST:
+                reserved, back_ordered = reserved + 100, back_ordered + 100
+            daily.append((len(daily) + 1, whs, itm, byr, snapshot, created, qty, allocated, cost, ITEMS[itm][3],
+                          reserved, back_ordered))
     data["ITM_BAL_DLY_FCT"] = daily
     data["ITM_BAL_PRD_FCT"] = [
         (n + 1, whs, itm, prd, sold, bought, receipts, None, cost, "")
