@@ -981,6 +981,168 @@ _TIMELINESS = re.compile(
 )
 
 
+# The words that may stand before what a question counts or breaks down
+# without narrowing it: "how many products", "our top 5 customers", "sales
+# for each category", "list products", "last month's orders". Any other word
+# there says which of them it means -- "red products", "female customers",
+# "new customers" -- and no governed compiler writes that.
+_READ_MODIFIERS = frozenset("""
+    a an the all any each every either neither both no none not only just also some several own
+    of for in on at to from by per with within without into across over under above below between than
+    and or but as like such via vs versus
+    our my your their its his her we us they them it you i me
+    this that these those which what whose who whom how many much more most less least fewer few
+    top bottom best worst highest lowest biggest largest smallest greatest first last next previous prior
+    second third fourth fifth half halves
+    current same other different distinct unique individual separate total overall average avg mean
+    median sum number count counts amount amounts share percent percentage ratio rate
+    maximum minimum max min maximal minimal recent latest newest oldest earliest
+    reduced decreased declined dropped fell increased grew grown rose rising changed
+    show list give get find display compare rank sort group break split plot chart graph see view tell
+    return analyze analyse explain calculate compute sum total tally
+    do does did done have has had having is are was were be been being can could would should will
+    sell sold selling buy bought buying order ordered ordering ship shipped shipping place placed make made
+    receive received keep kept hold held carry carried stock stocked hire hired
+    create created deliver delivered invoice invoiced bill billed pay paid post posted record recorded
+    purchase purchased produce produced count counted move moved transfer transferred issue issued
+    book booked enter entered register registered return returned
+    day days daily week weeks weekly month months monthly quarter quarters quarterly year years yearly
+    annual annually fiscal calendar ytd mtd qtd wtd today yesterday tomorrow ago since until during
+    january february march april may june july august september october november december
+    monday tuesday wednesday thursday friday saturday sunday
+    there here then now please ever
+""".split())
+# French words the canonicaliser leaves as they are that narrow nothing.
+_READ_FRENCH = frozenset("""
+    qui que dont ou sont est etaient etait ont avons avez a au aux du de des les la le un une
+    ayant etant avoir etre y il ils elle elles on
+    en dans chez entre depuis pendant durant avant apres vers selon
+    plus moins tres grand grande grands grandes petit petite petits petites gros grosse grosses
+    meilleur meilleure meilleurs meilleures pire pires haut haute hauts hautes bas basse basses
+    eleve elevee eleves elevees faible faibles fort forte forts fortes
+    premier premiere premiers premieres deuxieme second seconde troisieme quatrieme
+    dernier derniere derniers dernieres prochain prochaine prochains prochaines
+    precedent precedente precedents precedentes actuel actuelle actuels actuelles
+    courant courante courants courantes
+    nos notre vos votre leurs leur ces cette ce cet tous toutes tout toute chaque par pour sur avec sans
+""".split())
+_BE = r"(?:are|is|were|was|sont|est|etaient|etait)"
+_PERIOD_ANCHORS = frozenset({"date", "dates", "day", "days", "week", "weeks", "month", "months",
+                             "quarter", "quarters", "year", "years", "period", "periods", "time"})
+_ARTICLE = r"(?:(?:des|of|les|la|le|un|une|a|an|the)\s+)?"
+
+
+def _anchor_pattern(phrase: str) -> re.Pattern | None:
+    words = re.findall(r"[a-z0-9]+", phrase.lower())
+    if not words:
+        return None
+    last = words[-1]
+    last = (rf"{re.escape(last[:-1])}(?:y|ies)" if last.endswith("y") and len(last) > 2
+            else rf"{re.escape(last.rstrip('s'))}(?:s|es)?")
+    return re.compile(r"(?<![a-z0-9])" + r"\s+".join([*map(re.escape, words[:-1]), last]) + r"(?![a-z0-9])")
+
+
+def _unread_qualifier(context: dict) -> str:
+    """A word that says which of the things a question names it means, and
+    that nothing in its plan reads -- or "".
+
+    "How many customers are female?" was answered with every buying customer,
+    "sales of red products" with every product's sales: the governed compilers
+    write a measure, its breakdowns and its period, and a word that narrows
+    what is counted was dropped without a sign. Such a word stands before a
+    thing the question names ("red products", "clients actifs" after it in
+    French) or after it is said to be ("customers are female", "that are
+    red"). A word a matched metric or field is named by is read.
+    """
+    context = context or {}
+    question = " ".join(re.findall(r"[a-z0-9]+", _gate_question(context).lower()))
+    plan = context.get("semantic_plan") or {}
+    derived = (context.get("analytical_request_plan") or {}).get("derived_measure") or {}
+    from core.question_normalizer import canonicalise
+
+    # A metric is named as the question was read: "unités vendues" is
+    # "unites sold".
+    metric_phrases = [
+        form for metric in context.get("metric_formulas") or []
+        for phrase in [metric.get("name"), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]
+        if str(phrase or "").strip()
+        for form in {str(phrase), canonicalise(str(phrase))}
+    ]
+    phrases = [
+        *(field.get("term") for field in plan.get("fields") or []),
+        *metric_phrases,
+        derived.get("business_entity"),
+    ]
+    heads = [str(phrase or "").lower().replace("_", " ").split()[-1:] for phrase in phrases]
+    patterns = [
+        pattern for pattern in {
+            *(_anchor_pattern(str(phrase or "").replace("_", " ")) for phrase in phrases if phrase),
+            *(_anchor_pattern(head[0]) for head in heads if head),
+        } if pattern is not None
+    ]
+    anchors = [match.span() for pattern in patterns for match in pattern.finditer(question)]
+    named = set(" ".join(str(phrase or "") for phrase in metric_phrases).lower().replace("_", " ").split())
+    # The table a field is read on names whose it is: "customer gender" --
+    # by its words, or inside a name spelled all in capitals (DIMCUSTOMER).
+    tables = [str(field.get("table") or "") for field in plan.get("fields") or []]
+    named |= {word for table in tables for word in _table_words(table)}
+    squeezed = [re.sub(r"[^a-z]", "", table.split(".")[-1].lower()) for table in tables]
+    french = _gate_question(context) != str(context.get("question") or _gate_question(context))
+
+    def covered(start: int, end: int) -> bool:
+        return any(a <= start and end <= b for a, b in anchors)
+
+    def narrows(word: str, start: int) -> bool:
+        return not (
+            word.isdigit() or word in _READ_MODIFIERS or word in named or covered(start, start + len(word))
+            or (french and word in _READ_FRENCH)
+            or (len(word) > 3 and any(word.rstrip("s") in name for name in squeezed))
+        )
+
+    for start, end in anchors:
+        before = re.search(r"([a-z]+)\s+$", question[:start])
+        # The word before a date names which date: "shipment date", read by
+        # the date plan.
+        if before and question[start:end] not in _PERIOD_ANCHORS and narrows(before.group(1), before.start(1)):
+            return before.group(1)
+        said = re.match(rf"\s+(?:(?:that|who|which|qui)\s+)?{_BE}\s+{_ARTICLE}([a-z]+)", question[end:])
+        if said and narrows(said.group(1), end + said.start(1)):
+            return said.group(1)
+        after = re.match(r"\s+([a-z]+)", question[end:]) if french else None
+        if after and narrows(after.group(1), end + after.start(1)) and after.group(1) not in _ENGLISH_READ():
+            return after.group(1)
+    for said in re.finditer(rf"\b(?:that|who|which|qui)\s+{_BE}\s+{_ARTICLE}([a-z]+)", question):
+        if narrows(said.group(1), said.start(1)):
+            return said.group(1)
+    return ""
+
+
+def _table_words(table: str) -> set[str]:
+    """The words a table is called by: its own name's and its business name's."""
+    bare = table.split(".")[-1].strip("[]\"`")
+    if not bare:
+        return set()
+    from core.identifier_intelligence import identifier_words
+
+    names = [identifier_words(bare)]
+    try:
+        from core.source_resolution import _business_source_label
+        from core.vocab_packs import get_active_vocab
+
+        names.append(_business_source_label({"qualified_name": table, "entity": bare}, vocab=get_active_vocab()))
+    except Exception as exc:  # noqa: BLE001 - an unread name leaves the word to be read elsewhere
+        log.warning("Qualifier check: %s left unnamed: %s", table, exc)
+    return {word for name in names for word in str(name or "").lower().replace("_", " ").split()}
+
+
+def _ENGLISH_READ() -> frozenset:
+    """The English the canonicaliser writes for French: a word it wrote is
+    not one it left untranslated."""
+    from core.question_normalizer import _REPLACEMENTS
+
+    return frozenset(word for target in _REPLACEMENTS.values() for word in str(target).split())
+
+
 def _metric_words(metric: dict) -> str:
     """A metric's name and synonyms, lower-cased: what it says it counts."""
     return " ".join((
@@ -1012,6 +1174,9 @@ def _left_to_the_planner(context: dict) -> str:
         for metric in (context or {}).get("metric_formulas") or []
     ):
         return "states whether rows kept their time"
+    unread = _unread_qualifier(context)
+    if unread:
+        return f"narrows what it asks by a word nothing reads ({unread!r})"
     return ""
 
 
