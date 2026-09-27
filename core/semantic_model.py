@@ -283,7 +283,9 @@ def _table_lookup(schema: dict[str, Any]) -> dict[str, tuple[str, dict[str, Any]
     return lookup
 
 
-def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[str, dict[str, Any]] | None:
+def _find_dimension_for_key(
+    schema: dict[str, Any], source_key: str, source_table: str = "",
+) -> tuple[str, dict[str, Any]] | None:
     """Resolve the dimension a surrogate key points AT.
 
     A key identifies the dimension where it is the PRIMARY key. A dimension
@@ -302,6 +304,12 @@ def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[st
     early return meant it was never reached.
 
     Priority: primary key, then the name convention, then containment.
+
+    Containment never answers with the table the key sits on (``source_table``):
+    a key its own table carries but is not keyed by points at a dimension the
+    schema does not have. The item's product-group key, with no product-group
+    table of its own, made the item a "Product Group" dimension that showed
+    item names, and "top 5 product groups" was answered with items.
     """
     source_upper = source_key.upper()
     # Same prefix derivation as everywhere else: whatever remains once this
@@ -330,9 +338,17 @@ def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[st
             or table_upper.endswith(f".{source_prefix}_DMS")
         ):
             named = (fqn, meta)
-        if has_column and contains is None:
+        if has_column and contains is None and not (
+            source_table and _same_table(fqn, meta, source_table)
+        ):
             contains = (fqn, meta)
     return keyed or named or contains
+
+
+def _same_table(fqn: str, meta: dict[str, Any], table: str) -> bool:
+    """Whether a schema entry is ``table``, however either is qualified."""
+    bare = str(table or "").upper().split(".")[-1].strip("[]\"")
+    return bool(bare) and _schema_table_name(fqn, meta).upper().split(".")[-1].strip("[]\"") == bare
 
 
 # Measures whose value is a level rather than a flow. Summing these across
@@ -453,7 +469,7 @@ def _dimension_candidates(
         role = field.get("role")
         naming_role = field.get("naming_role")
         if role == "dimension_key" or naming_role == "surrogate_fk":
-            dim = _find_dimension_for_key(schema, field["column"])
+            dim = _find_dimension_for_key(schema, field["column"], table_fqn)
             dim_fqn = dim[0] if dim else ""
             dim_meta = dim[1] if dim else {}
             dim_cols = _column_names(dim_meta) if dim_meta else []

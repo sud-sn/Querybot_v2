@@ -56,8 +56,11 @@ SCHEMA = {
         ("PRD_DMS_KEY", "int"), ("SLD_QTY", "decimal"), ("PCH_QTY", "decimal"), ("NUM_OF_RCT", "int"),
         ("CUR_ON_HND_QTY", "decimal"), ("ITM_CST", "decimal"), ("UNT_OF_MSR", "nvarchar")),
     "WH.MART.WHS_DMS": _table("WHS_DMS_KEY", ("WHS_DMS_KEY", "int"), ("WHS_CD", "nvarchar"), ("WHS_DSC", "nvarchar")),
+    # The item carries a product-group key whose table this warehouse does not
+    # have: a key into a dimension that is not here.
     "WH.MART.ITM_DMS": _table("ITM_DMS_KEY", ("ITM_DMS_KEY", "int"), ("ITM_CD", "nvarchar"), ("ITM_NM", "nvarchar"),
-                              ("ITM_GRP_DMS_KEY", "int"), ("UNT_OF_MSR", "nvarchar"), ("ITM_FR_NM", "nvarchar")),
+                              ("ITM_GRP_DMS_KEY", "int"), ("UNT_OF_MSR", "nvarchar"), ("ITM_FR_NM", "nvarchar"),
+                              ("PRU_GRP_DMS_KEY", "int")),
     "WH.MART.ITM_GRP_DMS": _table("ITM_GRP_DMS_KEY", ("ITM_GRP_DMS_KEY", "int"), ("ITM_GRP_CD", "nvarchar"),
                                   ("ITM_GRP_DSC", "nvarchar")),
     "WH.MART.PTY_DMS": _table("PTY_DMS_KEY", ("PTY_DMS_KEY", "int"), ("PTY_CD", "nvarchar"), ("PTY_NM", "nvarchar")),
@@ -127,7 +130,7 @@ def rows() -> dict[str, list[tuple]]:
     data: dict[str, list[tuple]] = {
         "WHS_DMS": [(k, c, n) for k, (c, n) in WAREHOUSES.items()],
         "ITM_GRP_DMS": [(k, c, n) for k, (c, n) in GROUPS.items()],
-        "ITM_DMS": [(k, c, n, g, u, ITEM_FR_NAMES.get(k, "")) for k, (c, n, g, u) in ITEMS.items()],
+        "ITM_DMS": [(k, c, n, g, u, ITEM_FR_NAMES.get(k, ""), 7 if k else 0) for k, (c, n, g, u) in ITEMS.items()],
         "PTY_DMS": [(k, c, n) for k, (c, n) in PARTIES.items()],
         "ITM_STK_STS_DMS": [(k, c, n) for k, (c, n) in STOCK_STATUSES.items()],
     }
