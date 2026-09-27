@@ -70,6 +70,23 @@ _QUANTITY_TOKENS = frozenset({"QTY", "QUANTITY", "UNITS"})
 _CURRENT_TOKENS = frozenset({"CUR", "CURRENT", "END", "ENDING", "CLOSING", "EOP", "EOM"})
 
 
+# Counts of events a row keeps (NUM_OF_RCT: the receipts in the period), each
+# named for its event. Summed, they answer "how many receipts"; read as a
+# count of receipt identifiers, which no snapshot keeps, the question had no
+# measure at all.
+_EVENT_COUNTS: tuple[tuple[str, frozenset[str], str, tuple[str, ...]], ...] = (
+    ("receipts", frozenset({"RCT", "RCPT", "RECEIPT", "RECEIPTS"}), "Number of receipts",
+     ("number of receipts", "receipt count", "receipts", "nombre de réceptions", "réceptions")),
+    ("returns", frozenset({"RET", "RTN", "RETURN", "RETURNS"}), "Number of returns",
+     ("number of returns", "return count", "returns", "nombre de retours", "retours")),
+    ("deliveries", frozenset({"DLV", "DELIVERY", "DELIVERIES"}), "Number of deliveries",
+     ("number of deliveries", "delivery count", "deliveries", "nombre de livraisons", "livraisons")),
+    ("physical_counts", frozenset({"PHY", "PHYSICAL"}), "Number of physical inventory counts",
+     ("number of physical inventory counts", "physical inventory counts", "physical counts",
+      "stock counts", "nombre d'inventaires physiques", "inventaires physiques")),
+)
+
+
 def _tokens(name: str) -> set[str]:
     return {part.upper() for part in _TOKEN_SPLIT_RE.split(str(name or "")) if part}
 
@@ -171,6 +188,17 @@ def _movement(columns: list[str], kind: frozenset[str]) -> tuple[str, list[str]]
         and _tokens(name) & kind
         and _tokens(name) & _QUANTITY_TOKENS
         and not _tokens(name) & (_FIGURE_TOKENS | _OTHER_POSITION_TOKENS)
+    ]
+    return _pick(candidates), candidates
+
+
+def _event_count(columns: list[str], kind: frozenset[str]) -> tuple[str, list[str]]:
+    """A count of one kind of event, by name: NUM_OF_RCT counts receipts."""
+    candidates = [
+        name for name in columns
+        if measure_additivity(name)[1] == "event_count"
+        and _tokens(name) & kind
+        and not _tokens(name) & _OTHER_POSITION_TOKENS
     ]
     return _pick(candidates), candidates
 
@@ -281,6 +309,16 @@ def _metrics_for(base: str, columns: list[str], monthly: bool) -> list[StarterMe
             (f"{sold}: a sales movement by name." + _others(sold, sold_all),),
             confidence=75,
         ))
+    for key, kind, name, synonyms in _EVENT_COUNTS:
+        counted, counted_all = _event_count(columns, kind)
+        if counted:
+            events = name.split(" of ", 1)[-1]
+            found.append(StarterMetric(
+                key, name, f"SUM({counted})", base, (counted,), synonyms,
+                f"The {events} in the period ({counted}), counted on each row. {_MOVEMENT_NOTE}",
+                (f"{counted}: a count of {events} by name." + _others(counted, counted_all),),
+                confidence=75,
+            ))
     return found
 
 
