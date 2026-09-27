@@ -38,7 +38,13 @@ class MetricScopeResult:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    """The text's words, lower-case and without accents: "unités vendues" is
+    "unites vendues". Shredded at the accent instead, it was "unit s
+    vendues", and its "unit" matched every "unit price" asked for."""
+    import unicodedata
+
+    folded = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", folded.lower()).strip()
 
 
 def _tokens(text: str) -> set[str]:
