@@ -911,7 +911,7 @@ class TestThePage(RealWorkspace):
             "url": type("U", (), {"path": f"/admin/clients/{self.account_id}/mapping"})(),
             "query_params": {}})()
         payload = {"client": {"account_id": self.account_id,
-                              "client_name": "EMCO", "state": "READY"}}
+                              "client_name": "Sample", "state": "READY"}}
         payload.update(ctx)
         return env.get_template("client_mapping.html").render(
             request=request, **payload)

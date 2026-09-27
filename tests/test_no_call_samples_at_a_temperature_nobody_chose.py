@@ -57,7 +57,7 @@ from core.knowledge import _KB_TEMPERATURE, _kb_complete, kb_doc_token_budget  #
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 AZURE_KWARGS = {
-    "azure_endpoint": "https://emco.openai.azure.com",
+    "azure_endpoint": "https://sample.openai.azure.com",
     "azure_api_version": "2024-02-01",
 }
 
@@ -83,7 +83,7 @@ class TestTheDefaultIsNoLongerSomethingNobodyChose(unittest.IsolatedAsyncioTestC
         recorder = _Recorder()
         with patch.object(llm, "_azure_openai_complete", recorder.azure()):
             await llm.llm_complete(
-                "sys", "user", "azure_openai", "emco-prod", "key",
+                "sys", "user", "azure_openai", "sample-prod", "key",
                 max_tokens=512, **AZURE_KWARGS)
         self.assertEqual(recorder.temperatures, [0.0])
 
@@ -94,7 +94,7 @@ class TestTheDefaultIsNoLongerSomethingNobodyChose(unittest.IsolatedAsyncioTestC
         with patch.object(llm, "_azure_openai_complete", recorder.azure()):
             for wanted in (0.0, 0.2, 0.3, 0.5):
                 await llm.llm_complete(
-                    "sys", "user", "azure_openai", "emco-prod", "key",
+                    "sys", "user", "azure_openai", "sample-prod", "key",
                     max_tokens=512, temperature=wanted, **AZURE_KWARGS)
         self.assertEqual(recorder.temperatures, [0.0, 0.2, 0.3, 0.5])
 
@@ -118,7 +118,7 @@ class TestTheKnowledgeBaseIsReproducible(unittest.IsolatedAsyncioTestCase):
         with patch.object(llm, "_azure_openai_complete", recorder.azure()):
             await _kb_complete(
                 "document for CUS_ORD_IVC_FCT", "sys", "user", "azure_openai",
-                "emco-prod", "key", max_tokens=kb_doc_token_budget(121),
+                "sample-prod", "key", max_tokens=kb_doc_token_budget(121),
                 **AZURE_KWARGS, **extra)
         return recorder.temperatures
 
@@ -150,7 +150,7 @@ class TestTheKnowledgeBaseIsReproducible(unittest.IsolatedAsyncioTestCase):
         with patch.object(llm, "_azure_openai_complete", truncates_once):
             text, reason = await _kb_complete(
                 "document for CUS_ORD_IVC_FCT", "sys", "user", "azure_openai",
-                "emco-prod", "key", max_tokens=kb_doc_token_budget(121),
+                "sample-prod", "key", max_tokens=kb_doc_token_budget(121),
                 **AZURE_KWARGS)
         self.assertEqual(reason, "")
         self.assertEqual(recorder.temperatures,
@@ -330,7 +330,7 @@ class TestTheClampIsAnnouncedNowhereBecauseItIsNotAFallback(unittest.TestCase):
             with self.assertNoLogs("querybot.knowledge", level=logging.WARNING):
                 asyncio.run(_kb_complete(
                     "document for CUS_ORD_IVC_FCT", "sys", "user",
-                    "azure_openai", "emco-prod", "key",
+                    "azure_openai", "sample-prod", "key",
                     max_tokens=kb_doc_token_budget(40), **AZURE_KWARGS))
 
 

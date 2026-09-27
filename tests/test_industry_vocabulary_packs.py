@@ -288,23 +288,22 @@ class TestTheStutter(unittest.TestCase):
 
 class TestTheProductDoesNotNameACustomer(unittest.TestCase):
 
-    CUSTOMER = "EMCO"
-
     def test_no_shipped_pack_carries_a_customers_name(self):
+        from tests.customer_names import names_a_customer
+
         for path in sorted((ROOT / "packs").glob("*.json")):
             pack = json.loads(path.read_text(encoding="utf-8"))
             for key in ("abbreviations", "direct_aliases", "column_dict",
                         "table_dict", "entity_prefixes", "record_prefixes"):
-                self.assertNotIn(self.CUSTOMER, {str(k).upper()
-                                                 for k in (pack.get(key) or {})},
+                self.assertEqual([k for k in (pack.get(key) or {}) if names_a_customer(k)], [],
                                  f"{path.name}:{key}")
 
     def test_the_builtin_vocabulary_does_not_either(self):
+        from tests.customer_names import names_a_customer
+
         vocab = _clone_builtin()
-        self.assertNotIn(self.CUSTOMER, vocab.abbreviations)
-        self.assertNotIn(self.CUSTOMER, vocab.planner_abbreviations)
-        self.assertNotIn(f"{self.CUSTOMER}_RGN", ENTITY_PREFIX_VOCABULARY)
-        self.assertNotIn(self.CUSTOMER, ENTITY_PREFIX_VOCABULARY)
+        for keys in (vocab.abbreviations, vocab.planner_abbreviations, ENTITY_PREFIX_VOCABULARY):
+            self.assertEqual([k for k in keys if names_a_customer(k)], [])
 
     def test_a_tenant_can_say_it_themselves_and_it_reaches_the_model(self):
         # The reason the two entries above were in the product: this did not

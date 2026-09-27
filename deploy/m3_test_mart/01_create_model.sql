@@ -1,11 +1,11 @@
 /*
-    QueryBot EMCO-shaped Infor M3 data-mart test model  —  EMDW_DMART
-    ------------------------------------------------------------------
+    QueryBot Infor M3 data-mart test model  —  EMDW_DMART
+    -----------------------------------------------------
     WARNING: drops and recreates objects in EMDW_DMART. Run only in a
     dedicated TEST database. It never touches other schemas.
 
     All customers, items, orders, invoices and amounts seeded by the companion
-    scripts are synthetic and must not be treated as real EMCO records.
+    scripts are synthetic and must not be treated as real client records.
 
     WHY THIS SHAPE
     ==============

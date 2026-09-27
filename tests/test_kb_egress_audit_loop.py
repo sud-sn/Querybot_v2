@@ -4,7 +4,7 @@ tests/test_kb_egress_audit_loop.py
 Found in the live build log on the test server, not in the audit:
 
     WARNING querybot.admin — KB egress log (kb_build) write failed for
-    Emco_test: 'list' object has no attribute 'get'
+    <tenant>: 'list' object has no attribute 'get'
 
 _schema.json holds the discovered tables AND a handful of non-table entries
 alongside them — "__db_fk_constraints__" is a LIST of the database's declared

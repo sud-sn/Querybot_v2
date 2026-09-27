@@ -30,7 +30,7 @@ class ManifestDerivationTests(unittest.TestCase):
         prompt = (
             "You are a SQL generator.\n"
             "VERIFIED FILTER VALUES (matched against actual database contents):\n"
-            "user text 'emco' -> DB.SCH.CUSTOMER.NAME = 'EMCO Corporation'\n"
+            "user text 'zyco' -> DB.SCH.CUSTOMER.NAME = 'ZYCO Corporation'\n"
         )
         m = build_egress_manifest(prompt, "q", None)
         self.assertTrue(m["values_sent"])

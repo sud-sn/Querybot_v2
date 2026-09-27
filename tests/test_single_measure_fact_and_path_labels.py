@@ -77,7 +77,7 @@ PLAN = {
     "enabled": True,
     "fact_anchor": PURCHASE,
     "fields": [
-        {"term": "purchase", "table": f"EMCODW_DEV.{INVENTORY}", "column": "PCH_QTY",
+        {"term": "purchase", "table": f"SAMPLEDW_DEV.{INVENTORY}", "column": "PCH_QTY",
          "role": "measure", "enforcement": None},
         {"term": "purchase order amount", "table": PURCHASE,
          "column": "PCH_ORD_LIN_CAD_AMT", "role": "measure", "enforcement": "required"},

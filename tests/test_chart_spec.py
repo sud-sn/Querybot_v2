@@ -132,7 +132,7 @@ class ChartSpecTests(unittest.TestCase):
     def test_inventory_buildup_uses_warehouse_x_and_derived_measure_y(self):
         rows = [
             {
-                "Warehouse": "EMCO 822 BURNABY",
+                "Warehouse": "SAMPLE 822 BURNABY",
                 "Total_Purchase_Quantity": 179995.8,
                 "Total_Sales_Quantity": 151776.4,
                 "Inventory_Buildup": 28219.4,
@@ -155,7 +155,7 @@ class ChartSpecTests(unittest.TestCase):
         self.assertEqual(payload["chart_type"], "bar")
         self.assertEqual(payload["x_key"], "Warehouse")
         self.assertEqual(payload["y_keys"][0], "Inventory_Buildup")
-        self.assertEqual(payload["rows"][0]["Warehouse"], "EMCO 822 BURNABY")
+        self.assertEqual(payload["rows"][0]["Warehouse"], "SAMPLE 822 BURNABY")
 
     def test_leakage_question_prioritizes_leakage_measure(self):
         rows = [

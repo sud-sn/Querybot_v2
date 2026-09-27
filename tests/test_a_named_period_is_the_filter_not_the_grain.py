@@ -18,7 +18,7 @@ In the same session, "revenue during 2024" generated
 Those are the two halves of one cause. The validator's acceptance set for a
 planned date field is {the planned column} plus that date dimension's
 *calendar attributes*, and `infer_calendar_attributes` matched only fully
-spelled names — CALENDAR_YEAR, MONTH_NUMBER, QUARTER_NO. EMCO's calendar
+spelled names — CALENDAR_YEAR, MONTH_NUMBER, QUARTER_NO. An M3-shaped calendar
 dimension ships CAL_YR, MTH_NO, QTR_NO, WK_OF_YR, DAY_OF_MTH: five of seven
 attributes unresolved. With CAL_YR unacceptable, filtering on it failed
 validation, and the only way to pass was to project the raw date column —
@@ -39,7 +39,7 @@ SCHEMA = "EMDW_DMART"
 FACT = f"{SCHEMA}.CUS_ORD_IVC_FCT"
 DIM = f"{SCHEMA}.DT_DMS"
 
-# The live EMCO calendar dimension, column-for-column.
+# The sample tenant's live calendar dimension, column-for-column.
 TABLE_COLUMNS = {
     FACT: {c: "" for c in [
         "CUS_IVC_DT_DMS_KEY", "CUS_DMS_KEY", "SOP_CUS_IVC_LIN_AMT",

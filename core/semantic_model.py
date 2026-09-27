@@ -390,9 +390,9 @@ def _find_dimension_for_key(
     and binding the term to that table names the wrong business entity.
 
     This used to return the first dimension that merely CONTAINED the column,
-    which on any snowflaked model is decided by iteration order. On the EMCO
-    mart CUS_DMS carries PFT_CTR_DMS_KEY (customers belong to a profit centre)
-    and sorts before PFT_CTR_DMS, so "profit center" bound to CUS_DMS.CUS_NM
+    which on any snowflaked model is decided by iteration order. On the sample
+    tenant's mart CUS_DMS carries PFT_CTR_DMS_KEY (customers belong to a profit
+    centre) and sorts before PFT_CTR_DMS, so "profit center" bound to CUS_DMS.CUS_NM
     and every profit-centre question answered with CUSTOMER NAMES under a
     column headed PROFIT_CENTER -- confidently, with no validation error,
     because the SQL was valid and the joins were all real.
@@ -478,10 +478,11 @@ def _field_entry(
     # evidence keeps the suffix rule's verdict.
     #
     # Semi-additivity was recognised only from a column-name SUFFIX (_BAL,
-    # _INV). EMCO's inventory value is BAL_VAL_AMT, where BAL is a PREFIX, so
-    # it fell through to the _AMT rule and was published as "additive - safe to
-    # SUM across all dimensions". Summing a month-end balance across 18 months
-    # of snapshots overstates inventory eighteen-fold, silently.
+    # _INV). An M3-shaped mart's inventory value is BAL_VAL_AMT, where BAL is
+    # a PREFIX, so it fell through to the _AMT rule and was published as
+    # "additive - safe to SUM across all dimensions". Summing a month-end
+    # balance across 18 months of snapshots overstates inventory eighteen-fold,
+    # silently.
     #
     # The grain is a property of the TABLE, not of how the column happens to be
     # spelled, and the classifier already identifies a periodic snapshot. Trust
@@ -2826,7 +2827,7 @@ def _dimension_label(source_key: str, dimension: dict[str, Any], display_col: st
     """
     role_label = _business_role_from_column(source_key).replace("_", " ") if source_key else ""
     # Both as the tenant's vocabulary spells them: a dimension's name is its
-    # table's, cut at the underscores ("Itm Stk Sts", "Emco Rgn"), and a key
+    # table's, cut at the underscores ("Itm Stk Sts", "Co Rgn"), and a key
     # no entity prefix names reads the same.
     declared = _spelled(str(dimension.get("name") or "").strip())
     prefix = match_entity_prefix(source_key) if source_key else ""
@@ -2920,7 +2921,7 @@ def _demote_joins_not_needed_to_reach_a_required_field(
 
     required_semantic_tables promotes BOTH endpoints of every non-optional join
     into required_tables, and a join was emitted for every dimension that merely
-    SCORED. One mechanism, three symptoms on the EMCO mart:
+    SCORED. One mechanism, three symptoms on the sample tenant's mart:
 
       * "total amount of confirmed purchase orders by profit center" pulled in
         CUS_DMS through the many-to-many bridge PFT_CTR_CUS_DAT. Every
@@ -3376,14 +3377,14 @@ def build_runtime_semantic_plan(
                         # nobody asked to see still dragged its table into the
                         # plan.
                         #
-                        # On EMCO that put CUS_DMS into "total amount of
-                        # confirmed purchase orders by profit center", reached
-                        # through the many-to-many bridge PFT_CTR_CUS_DAT. The
-                        # generator duly joined it, every purchase-order row
-                        # was multiplied by the customers in that profit
-                        # centre, and the total came out roughly 7.5x too
-                        # large. Right label, right filter, valid SQL, no
-                        # error — just a wrong number.
+                        # On the sample tenant that put CUS_DMS into "total
+                        # amount of confirmed purchase orders by profit
+                        # center", reached through the many-to-many bridge
+                        # PFT_CTR_CUS_DAT. The generator duly joined it,
+                        # every purchase-order row was multiplied by the
+                        # customers in that profit centre, and the total came
+                        # out roughly 7.5x too large. Right label, right
+                        # filter, valid SQL, no error — just a wrong number.
                         # Emitted as required; the closure below decides, once every
                         # field and join is known, which actually earn it.
                         # Deciding here cannot work: requirement is

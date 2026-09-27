@@ -15,7 +15,7 @@ finds it. GPT-4o allows 16,384 output tokens from version 2024-08-06 but only
 4,096 on 2024-05-13, and the budget here scales with the column count:
 
     kb_doc_token_budget(40)   ->  4,096     narrow tables, fine either way
-    kb_doc_token_budget(121)  ->  7,984     EMCO's invoice fact
+    kb_doc_token_budget(121)  ->  7,984     the sample tenant's invoice fact
     kb_doc_token_budget(210)  -> 12,256     the measured wide case
 
 So on a 2024-05-13 deployment every table past 40 columns is rejected with
@@ -62,12 +62,12 @@ from core.knowledge import (
 )
 from core.llm import EgressPostureError, is_single_request_rejection
 
-WIDE = ("CUS_ORD_IVC_FCT", 121)      # EMCO's invoice fact, as measured
+WIDE = ("CUS_ORD_IVC_FCT", 121)      # the sample tenant's invoice fact, as measured
 NARROW = ("CUS_RTN_FCT", 40)
 TINY = ("DT_DMS", 12)
 
 AZURE_KWARGS = {
-    "azure_endpoint": "https://emco.openai.azure.com",
+    "azure_endpoint": "https://sample.openai.azure.com",
     "azure_api_version": "2024-02-01",
 }
 
@@ -168,14 +168,14 @@ class TestWhichRejectionsBelongToOneRequest:
                                 "less than or equal to 4096'}}")
                 return _Chat
 
-        key = ("azure", "key", "https://emco.openai.azure.com", "2024-02-01",
+        key = ("azure", "key", "https://sample.openai.azure.com", "2024-02-01",
                llm._llm_timeout_seconds(), llm._llm_max_retries())
         llm._llm_client_cache[key] = _Stub()
         try:
             with pytest.raises(RuntimeError) as caught:
                 asyncio.run(llm._azure_openai_complete(
-                    "sys", "user", "emco-prod", "key", 7_984,
-                    "https://emco.openai.azure.com", "2024-02-01", 0.0))
+                    "sys", "user", "sample-prod", "key", 7_984,
+                    "https://sample.openai.azure.com", "2024-02-01", 0.0))
         finally:
             llm._llm_client_cache.pop(key, None)
 
@@ -196,7 +196,7 @@ class TestOneCallContainsOrPropagates(unittest.IsolatedAsyncioTestCase):
         with patch("core.llm.llm_complete", side_effect=fake):
             outcome = await _kb_complete(
                 f"document for {WIDE[0]}", "sys", "user", "azure_openai",
-                "emco-prod", "key",
+                "sample-prod", "key",
                 max_tokens=kb_doc_token_budget(columns), **AZURE_KWARGS)
         return outcome, calls
 
@@ -304,7 +304,7 @@ class TestTheWholeBuild(unittest.TestCase):
             count = asyncio.run(knowledge.build_kb(
                 schema_dir=self.schema_dir, kb_dir=self.kb_dir,
                 chroma_dir="acct", business_desc="a plumbing distributor",
-                provider="azure_openai", model="emco-prod", api_key="key",
+                provider="azure_openai", model="sample-prod", api_key="key",
                 extra_kwargs=dict(AZURE_KWARGS), account_id="acct"))
         return count, calls
 

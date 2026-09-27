@@ -60,11 +60,11 @@ TABLES = [
 ]
 
 
-def _emco_fields():
+def _sample_fields():
     """The merged plan exactly as production logged it."""
     return [
         # The LLM field planner's guess: "purchase" -> an inventory quantity.
-        {"term": "purchase", "table": f"EMCODW_DEV.{INVENTORY_FACT}",
+        {"term": "purchase", "table": f"SAMPLEDW_DEV.{INVENTORY_FACT}",
          "column": "PCH_QTY", "role": "measure", "enforcement": None},
         # The structured semantic model's governed binding.
         {"term": "purchase order amount", "table": PURCHASE_FACT,
@@ -76,7 +76,7 @@ def _emco_fields():
     ]
 
 
-def _emco_joins():
+def _sample_joins():
     return [{
         "from": PURCHASE_FACT, "to": PROFIT_CENTRE,
         "conditions": [["PFT_CTR_KEY", "PFT_CTR_KEY"]],
@@ -90,7 +90,7 @@ def _emco_joins():
 class TestFactAnchorFollowsTheMeasure(unittest.TestCase):
 
     def test_inferred_source_does_not_override_the_required_measure(self):
-        fields, joins = _emco_fields(), _emco_joins()
+        fields, joins = _sample_fields(), _sample_joins()
         anchor = _scope_plan_to_single_fact(
             fields, joins, TABLES,
             preferred_fact_tables={INVOICE_FACT},
@@ -108,13 +108,13 @@ class TestFactAnchorFollowsTheMeasure(unittest.TestCase):
 
     def test_a_governed_binding_outranks_an_unset_one(self):
         """enforcement="required" is the semantic model; unset is a suggestion."""
-        fields, joins = _emco_fields(), _emco_joins()
+        fields, joins = _sample_fields(), _sample_joins()
         anchor = _scope_plan_to_single_fact(fields, joins, TABLES)
         self.assertEqual(anchor, PURCHASE_FACT)
 
     def test_an_explicitly_named_source_still_wins(self):
         """The user naming the source is a governed decision, not a guess."""
-        fields, joins = _emco_fields(), _emco_joins()
+        fields, joins = _sample_fields(), _sample_joins()
         anchor = _scope_plan_to_single_fact(
             fields, joins, TABLES,
             preferred_fact_tables={INVOICE_FACT},
@@ -123,7 +123,7 @@ class TestFactAnchorFollowsTheMeasure(unittest.TestCase):
         self.assertEqual(anchor, INVOICE_FACT)
 
     def test_a_user_confirmed_source_still_wins(self):
-        fields, joins = _emco_fields(), _emco_joins()
+        fields, joins = _sample_fields(), _sample_joins()
         anchor = _scope_plan_to_single_fact(
             fields, joins, TABLES,
             preferred_fact_tables={INVOICE_FACT},
@@ -133,7 +133,7 @@ class TestFactAnchorFollowsTheMeasure(unittest.TestCase):
 
     def test_a_corroborated_source_wins_however_it_was_chosen(self):
         """When the preferred fact carries the measure there is no conflict."""
-        fields, joins = _emco_fields(), _emco_joins()
+        fields, joins = _sample_fields(), _sample_joins()
         anchor = _scope_plan_to_single_fact(
             fields, joins, TABLES,
             preferred_fact_tables={PURCHASE_FACT},
@@ -151,8 +151,8 @@ class TestRequestPlanMeasureFact(unittest.TestCase):
     def _plan(self, *, reason, fact_anchor=""):
         semantic = {
             "enabled": True,
-            "fields": _emco_fields(),
-            "joins": _emco_joins(),
+            "fields": _sample_fields(),
+            "joins": _sample_joins(),
             "fact_anchor": fact_anchor,
             "source_scope": {
                 "status": "selected",
@@ -183,8 +183,8 @@ class TestRequestPlanMeasureFact(unittest.TestCase):
     def test_an_agreeing_source_is_left_alone(self):
         semantic = {
             "enabled": True,
-            "fields": _emco_fields(),
-            "joins": _emco_joins(),
+            "fields": _sample_fields(),
+            "joins": _sample_joins(),
             "source_scope": {
                 "status": "selected", "selected_fact": PURCHASE_FACT,
                 "reason": "approved metric source binding",

@@ -224,9 +224,9 @@ class TestTheKbBuilderCanActuallyFindIt(_Base):
 class TestItReachesTheKnowledgeBase(_Base):
 
     def test_the_table_description_is_in_the_kb_context(self):
-        text = _build_table_business_desc("EMCO distributes plumbing supplies.",
+        text = _build_table_business_desc("ZYCO distributes plumbing supplies.",
                                           "EMDW_DMART", PROSE, "inventory, stock balance")
-        self.assertIn("EMCO distributes plumbing supplies.", text)
+        self.assertIn("ZYCO distributes plumbing supplies.", text)
         self.assertIn("Never sum across months.", text)
         self.assertIn("inventory, stock balance", text)
 
@@ -287,12 +287,12 @@ class TestWhichTablesCountAsBuilt(_Base):
     """"New" must mean "selected since the last KB build", not "we have no
     audit row for it".
 
-    Live on EMCO, 2026-09-02: all fourteen tables displayed "new — not yet
-    built" under a banner reading "14 tables added since the last Knowledge
-    Base build", on a client whose KB was fully built. The lookup read
-    kb_data_egress_log for operation='kb_build' -- an audit trail of what was
-    sent to the model, and therefore empty for any KB built before that logging
-    existed. The KB documents themselves are the authority.
+    Live on the sample tenant, 2026-09-02: all fourteen tables displayed "new —
+    not yet built" under a banner reading "14 tables added since the last
+    Knowledge Base build", on a client whose KB was fully built. The lookup
+    read kb_data_egress_log for operation='kb_build' -- an audit trail of what
+    was sent to the model, and therefore empty for any KB built before that
+    logging existed. The KB documents themselves are the authority.
     """
 
     def _built(self, kb_dir):
@@ -340,7 +340,7 @@ class TestWhichTablesCountAsBuilt(_Base):
 class TestColumnTermsMakeAQuestionAnswerable(_Base):
     """Table terms route a question; column terms let it be answered.
 
-    Live on EMCO: an admin added "stockholding" as a term for
+    Live on the sample tenant: an admin added "stockholding" as a term for
     ITM_BAL_PRD_FCT, and "what is my stockholding value by warehouse" still
     returned "I cannot compile a trusted query until the semantic layer
     resolves the governed measure" -- while "inventory value by warehouse"

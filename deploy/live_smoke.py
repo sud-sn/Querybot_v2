@@ -10,7 +10,7 @@ Run it on the box the service runs on:
 
     pip install playwright && playwright install chromium
     export QB_EMAIL='tester@example.com' QB_PASSWORD='...'
-    python deploy/live_smoke.py http://20.63.92.31:8001 Emco_test \
+    python deploy/live_smoke.py http://20.63.92.31:8001 Sample_test \
         --ask "total sales by warehouse"
 
 Credentials come from the environment, never the command line, so they do not

@@ -1,7 +1,7 @@
-# EMCO-shaped test mart — `EMDW_DMART`
+# M3-shaped test mart — `EMDW_DMART`
 
 A synthetic Infor M3 data mart that reproduces the **structural** characteristics
-of the EMCO warehouse, so every failure we have hit can be tested without
+of the client's M3 warehouse, so every failure we have hit can be tested without
 touching the client's data.
 
 Deliberately small (~34k fact rows). The point is to exercise planning logic, not

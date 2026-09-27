@@ -1,10 +1,10 @@
 """
-tests/test_the_emco_rehearsal_stays_honest.py
+tests/test_the_sample_rehearsal_stays_honest.py
 
 The rehearsal harness must fail when the product regresses, and its own bugs
 must not read as product failures.
 
-evals/emco_rehearsal.py drives 56 EMCO questions through the deterministic
+evals/sample_rehearsal.py drives 56 sample questions through the deterministic
 pipeline in both languages. It is only worth running if two things hold: it
 reports a real regression, and it does not report one that is not there. The
 first version of it did the latter twice --
@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from evals.emco_rehearsal import (
+from evals.sample_rehearsal import (
     CORPUS,
     DATE_ROLES,
     _role_for,
@@ -160,10 +160,11 @@ class TestTheGapsItFoundStayClosed:
         ("ventes nettes par date d'annulation", "cancelled_order_date"),
     ])
     def test_a_french_reader_can_name_the_date_role(self, french, role):
-        """EMCO's invoice fact carries four role-playing dates on one dimension,
-        so which date a question means IS the answer. Not one French phrasing
-        reached the role vocabulary, so every French question silently took the
-        default role -- invoice-dated sales for a shipment-date question."""
+        """An M3-shaped invoice fact carries four role-playing dates on one
+        dimension, so which date a question means IS the answer. Not one French
+        phrasing reached the role vocabulary, so every French question silently
+        took the default role -- invoice-dated sales for a shipment-date
+        question."""
         assert _role_for(canonical_question(french, "fr"))[0] == role
         assert role in DATE_ROLES
 
@@ -239,9 +240,9 @@ class TestTheGapsItFoundStayClosed:
 class TestTheHarnessRunsTheWayItIsDocumented(unittest.TestCase):
     """A rehearsal tool that only runs one way does not get run.
 
-    `python3 evals/emco_rehearsal.py` puts evals/ on sys.path and not the repo
+    `python3 evals/sample_rehearsal.py` puts evals/ on sys.path and not the repo
     root, so every `import store` and `import core.*` inside raised
-    ModuleNotFoundError. Only `python -m evals.emco_rehearsal` worked, and the
+    ModuleNotFoundError. Only `python -m evals.sample_rehearsal` worked, and the
     difference is invisible until the person preparing a customer release types
     the path instead of the module -- which is the moment it matters most.
 
@@ -252,7 +253,7 @@ class TestTheHarnessRunsTheWayItIsDocumented(unittest.TestCase):
     """
 
     REPO = Path(__file__).resolve().parents[1]
-    SCRIPT = REPO / "evals" / "emco_rehearsal.py"
+    SCRIPT = REPO / "evals" / "sample_rehearsal.py"
 
     def _run(self, argv, cwd):
         return subprocess.run(
@@ -261,7 +262,7 @@ class TestTheHarnessRunsTheWayItIsDocumented(unittest.TestCase):
         )
 
     def test_it_runs_as_a_path_from_inside_the_repo(self):
-        done = self._run(["evals/emco_rehearsal.py", "--only", "role"], self.REPO)
+        done = self._run(["evals/sample_rehearsal.py", "--only", "role"], self.REPO)
         self.assertEqual(done.returncode, 0, done.stderr[-1500:])
         self.assertIn("as expected", done.stdout)
 
@@ -272,6 +273,6 @@ class TestTheHarnessRunsTheWayItIsDocumented(unittest.TestCase):
         self.assertIn("as expected", done.stdout)
 
     def test_it_still_runs_as_the_module_the_docstring_names(self):
-        done = self._run(["-m", "evals.emco_rehearsal", "--only", "role"], self.REPO)
+        done = self._run(["-m", "evals.sample_rehearsal", "--only", "role"], self.REPO)
         self.assertEqual(done.returncode, 0, done.stderr[-1500:])
         self.assertIn("as expected", done.stdout)

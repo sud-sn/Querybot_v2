@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Three EMCO investigations, run end to end through the real loop.
+"""Three sample-tenant investigations, run end to end through the real loop.
 
 core/investigation_planner.py's own suite proves the loop's mechanics in
 the abstract; this proves it against the three shapes it was built for --
@@ -78,8 +78,8 @@ class TestScrapByWorkCentre:
         ])
         with patch.object(investigation, "run_query_tool", _scripted_tool(outcomes)):
             outcome = _run(run_investigation(
-                objective=self.OBJECTIVE, account_id="acct-emco", portal_user={"id": 7},
-                run_id="emco-scrap", max_steps=4, complete=planner,
+                objective=self.OBJECTIVE, account_id="acct-sample", portal_user={"id": 7},
+                run_id="sample-scrap", max_steps=4, complete=planner,
             ))
         assert outcome.phrasing == "llm"
         assert len(outcome.steps) == 3
@@ -98,8 +98,8 @@ class TestScrapByWorkCentre:
         ])
         with patch.object(investigation, "run_query_tool", _scripted_tool(outcomes)):
             outcome = _run(run_investigation(
-                objective=self.OBJECTIVE, account_id="acct-emco", portal_user={"id": 7},
-                run_id="emco-scrap-2", max_steps=3, complete=planner,
+                objective=self.OBJECTIVE, account_id="acct-sample", portal_user={"id": 7},
+                run_id="sample-scrap-2", max_steps=3, complete=planner,
             ))
         assert outcome.phrasing == "template"
         assert "4200" in outcome.synthesis
@@ -113,28 +113,28 @@ class TestOnTimeInFullByCustomer:
         outcomes = {
             self.OBJECTIVE: ToolResult(
                 ok=True, kind="query", question=self.OBJECTIVE,
-                brief="Mode: ranking\nLowest: EMCO Corp EU, OTIF 68.5%, 210 orders."),
-            "on-time-in-full rate for EMCO Corp EU by month last quarter": ToolResult(
-                ok=True, kind="query", question="on-time-in-full rate for EMCO Corp EU by month last quarter",
-                brief="Mode: time_series\nOTIF for EMCO Corp EU fell from 81.2% to 68.5% over the quarter."),
+                brief="Mode: ranking\nLowest: ZYCO Corp EU, OTIF 68.5%, 210 orders."),
+            "on-time-in-full rate for ZYCO Corp EU by month last quarter": ToolResult(
+                ok=True, kind="query", question="on-time-in-full rate for ZYCO Corp EU by month last quarter",
+                brief="Mode: time_series\nOTIF for ZYCO Corp EU fell from 81.2% to 68.5% over the quarter."),
         }
         planner = _scripted_planner([
-            '{"action": "query", "question": "on-time-in-full rate for EMCO Corp EU by month last quarter", "reason": "see whether the low rate is a trend or one bad month"}',
-            '{"action": "finish", "synthesis": "EMCO Corp EU had the worst OTIF rate last quarter at 68.5% across 210 orders, and it fell steadily from 81.2% over the quarter rather than one bad month."}',
+            '{"action": "query", "question": "on-time-in-full rate for ZYCO Corp EU by month last quarter", "reason": "see whether the low rate is a trend or one bad month"}',
+            '{"action": "finish", "synthesis": "ZYCO Corp EU had the worst OTIF rate last quarter at 68.5% across 210 orders, and it fell steadily from 81.2% over the quarter rather than one bad month."}',
         ])
         with patch.object(investigation, "run_query_tool", _scripted_tool(outcomes)):
             outcome = _run(run_investigation(
-                objective=self.OBJECTIVE, account_id="acct-emco", portal_user={"id": 7},
-                run_id="emco-otif", max_steps=4, complete=planner,
+                objective=self.OBJECTIVE, account_id="acct-sample", portal_user={"id": 7},
+                run_id="sample-otif", max_steps=4, complete=planner,
             ))
         assert outcome.phrasing == "llm"
-        assert "68.5%" in outcome.synthesis and "EMCO Corp EU" in outcome.synthesis
+        assert "68.5%" in outcome.synthesis and "ZYCO Corp EU" in outcome.synthesis
 
     def test_a_quoted_customer_name_the_steps_never_returned_is_refused(self, allowed):
         outcomes = {
             self.OBJECTIVE: ToolResult(
                 ok=True, kind="query", question=self.OBJECTIVE,
-                brief="Lowest: EMCO Corp EU, OTIF 68.5%, 210 orders."),
+                brief="Lowest: ZYCO Corp EU, OTIF 68.5%, 210 orders."),
         }
         import json as _json
 
@@ -145,11 +145,11 @@ class TestOnTimeInFullByCustomer:
         planner = _scripted_planner([quoted_synthesis])
         with patch.object(investigation, "run_query_tool", _scripted_tool(outcomes)):
             outcome = _run(run_investigation(
-                objective=self.OBJECTIVE, account_id="acct-emco", portal_user={"id": 7},
-                run_id="emco-otif-2", max_steps=3, complete=planner,
+                objective=self.OBJECTIVE, account_id="acct-sample", portal_user={"id": 7},
+                run_id="sample-otif-2", max_steps=3, complete=planner,
             ))
         assert outcome.phrasing == "template"
-        assert "EMCO Corp EU" in outcome.synthesis
+        assert "ZYCO Corp EU" in outcome.synthesis
 
     def test_a_bare_unquoted_customer_name_is_a_known_gap_not_a_silent_one(self, allowed):
         """verify_synthesis catches a figure that was not computed and a
@@ -162,15 +162,15 @@ class TestOnTimeInFullByCustomer:
         outcomes = {
             self.OBJECTIVE: ToolResult(
                 ok=True, kind="query", question=self.OBJECTIVE,
-                brief="Lowest: EMCO Corp EU, OTIF 68.5%, 210 orders."),
+                brief="Lowest: ZYCO Corp EU, OTIF 68.5%, 210 orders."),
         }
         planner = _scripted_planner([
             '{"action": "finish", "synthesis": "Acme Distribution had the worst rate at 68.5%."}',
         ])
         with patch.object(investigation, "run_query_tool", _scripted_tool(outcomes)):
             outcome = _run(run_investigation(
-                objective=self.OBJECTIVE, account_id="acct-emco", portal_user={"id": 7},
-                run_id="emco-otif-3", max_steps=3, complete=planner,
+                objective=self.OBJECTIVE, account_id="acct-sample", portal_user={"id": 7},
+                run_id="sample-otif-3", max_steps=3, complete=planner,
             ))
         assert outcome.phrasing == "llm"
         assert "Acme Distribution" in outcome.synthesis
@@ -191,8 +191,8 @@ class TestMarginByProductLine:
         ])
         with patch.object(investigation, "run_query_tool", _scripted_tool(outcomes)):
             outcome = _run(run_investigation(
-                objective=self.OBJECTIVE, account_id="acct-emco", portal_user={"id": 7},
-                run_id="emco-margin", max_steps=3, complete=planner,
+                objective=self.OBJECTIVE, account_id="acct-sample", portal_user={"id": 7},
+                run_id="sample-margin", max_steps=3, complete=planner,
             ))
         assert outcome.steps[0].result.ok is False
         # A synthesis that only restates the failure, adding no invented
@@ -215,8 +215,8 @@ class TestMarginByProductLine:
         ])
         with patch.object(investigation, "run_query_tool", _scripted_tool(outcomes)):
             outcome = _run(run_investigation(
-                objective=self.OBJECTIVE, account_id="acct-emco", portal_user={"id": 7},
-                run_id="emco-margin-2", max_steps=2, complete=planner,
+                objective=self.OBJECTIVE, account_id="acct-sample", portal_user={"id": 7},
+                run_id="sample-margin-2", max_steps=2, complete=planner,
             ))
         assert len(outcome.steps) == 2
         assert outcome.phrasing == "template"

@@ -132,7 +132,7 @@ class TestTrend(unittest.TestCase):
 class TestConcentration(unittest.TestCase):
 
     LEADER_DOMINATED = [
-        ("EMCO", 6200), ("Acme", 900), ("Borel", 700), ("Duval", 500),
+        ("ZYCO", 6200), ("Acme", 900), ("Borel", 700), ("Duval", 500),
         ("Fabre", 400), ("Gide", 300), ("Hugo", 200), ("Ivry", 100),
         ("Jarry", 50), ("Kern", 20),
     ]
@@ -148,7 +148,7 @@ class TestConcentration(unittest.TestCase):
             _categories(self.LEADER_DOMINATED), "REVENUE", "CUSTOMER")
         leader = [f for f in found if f.kind == CONCENTRATION_LEADER]
         self.assertEqual(len(leader), 1)
-        self.assertEqual(leader[0].labels["leader"], "EMCO")
+        self.assertEqual(leader[0].labels["leader"], "ZYCO")
         self.assertAlmostEqual(leader[0].numbers["share"], 66.2, places=1)
         self.assertEqual(leader[0].numbers["value"], 6200.0)
 
@@ -511,7 +511,7 @@ class TestBuildEvidence(unittest.TestCase):
 
     def test_the_dominant_leaders_own_row_is_not_also_reported_as_an_outlier(self):
         rows = _categories([
-            ("EMCO", 6200), ("Acme", 90), ("Borel", 70), ("Duval", 50),
+            ("ZYCO", 6200), ("Acme", 90), ("Borel", 70), ("Duval", 50),
             ("Fabre", 40), ("Gide", 30), ("Hugo", 20), ("Ivry", 10),
         ])
         evidence = build_evidence(rows)

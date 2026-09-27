@@ -2380,7 +2380,7 @@ def azure_deployment_name(sys_cfg: dict, client: dict, purpose: str) -> str:
 
     Azure routes on a DEPLOYMENT name the tenant chose, not on a model id. The
     two are unrelated strings: a resource can serve GPT-4o under the name
-    ``emco-prod`` and have nothing called ``gpt-4o`` at all. So the only usable
+    ``sample-prod`` and have nothing called ``gpt-4o`` at all. So the only usable
     sources are the ones an admin actually typed, and ``_default_model``'s guess
     is deliberately not one of them.
 

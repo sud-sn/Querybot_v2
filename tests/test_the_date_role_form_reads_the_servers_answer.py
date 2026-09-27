@@ -73,7 +73,7 @@ TEMPLATE = (Path(__file__).resolve().parents[1] / "admin" / "templates"
 FACT = "EMDW_DMART.CUS_ORD_IVC_FCT"
 DIM = "EMDW_DMART.DT_DMS"
 
-# EMCO's shape: surrogate date keys on the fact, one shared date dimension.
+# An M3-shaped mart: surrogate date keys on the fact, one shared date dimension.
 SCHEMA = {
     FACT: {"columns": [
         {"name": "CUS_IVC_DT_DMS_KEY", "type": "int"},
@@ -116,7 +116,7 @@ def model_from(schema: dict) -> dict:
 MODEL = model_from(SCHEMA)
 
 
-class TestTheServerResolvesEmcosKeysToTheDimension:
+class TestTheServerResolvesM3KeysToTheDimension:
     """Not the fix under test -- the ground truth the fix has to agree with."""
 
     @pytest.mark.parametrize("column", SURROGATE_KEYS)
@@ -386,7 +386,7 @@ def _request(query: dict | None = None):
 class TestThePageHandsTheFormTheAnswer(_OnDisk):
 
     def _context(self, query=None):
-        client = {"account_id": "acct-dr", "client_name": "EMCO",
+        client = {"account_id": "acct-dr", "client_name": "Sample",
                   "state": "READY", "state_data": "{}"}
         with patch.object(routes, "_is_auth", return_value=True), \
                 patch.object(routes.store, "get_client", return_value=client), \
@@ -419,7 +419,7 @@ class TestThePageHandsTheFormTheAnswer(_OnDisk):
 
     def test_a_broken_suggestion_does_not_take_the_page_down(self):
         """Fail-open, but the page must still render a usable form."""
-        client = {"account_id": "acct-dr", "client_name": "EMCO",
+        client = {"account_id": "acct-dr", "client_name": "Sample",
                   "state": "READY", "state_data": "{}"}
         with patch.object(routes, "_is_auth", return_value=True), \
                 patch.object(routes.store, "get_client", return_value=client), \
@@ -475,7 +475,7 @@ class TestTheRouteTellsTheAdmin(_OnDisk):
             date_key_type="yyyymmdd_integer",
         )
         payload.update(form)
-        client = {"account_id": "acct-dr", "client_name": "EMCO",
+        client = {"account_id": "acct-dr", "client_name": "Sample",
                   "state": "READY", "state_data": "{}"}
         with patch.object(routes, "_is_auth", return_value=True), \
                 patch.object(routes.store, "get_client", return_value=client), \
@@ -528,7 +528,7 @@ class _FakeRequest:
 def render(**overrides) -> str:
     """The page as Jinja actually emits it."""
     context = {
-        "client": {"account_id": "acct-dr", "client_name": "EMCO",
+        "client": {"account_id": "acct-dr", "client_name": "Sample",
                    "state": "READY", "state_data": "{}"},
         "date_roles": [], "has_model": True,
         "semantic_tables": [

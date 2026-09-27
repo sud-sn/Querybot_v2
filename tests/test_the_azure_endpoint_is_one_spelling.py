@@ -6,14 +6,14 @@ and the SDK appends that suffix itself, so the value saved in Admin → System h
 to be the resource BASE and nothing else. Admins do not paste the base. They
 paste what the Azure portal shows them, which is the target URI:
 
-    https://emco.openai.azure.com/openai/deployments/gpt-4o-emco/chat/completions?api-version=2024-02-01
+    https://sample.openai.azure.com/openai/deployments/gpt-4o-sample/chat/completions?api-version=2024-02-01
 
 ``admin/routes.py`` knew that. Both of its Azure routes cut the ``/openai`` path
 off before testing, so "Test selected deployment" came back green. The runtime
 client did not: ``_get_azure_client`` only stripped a trailing slash, so every
 real question went to
 
-    https://emco.openai.azure.com/openai/openai/deployments/gpt-4o-emco/...
+    https://sample.openai.azure.com/openai/openai/deployments/gpt-4o-sample/...
 
 and got a 404. The admin had a green tick and a bot that could not answer, and
 nothing connected the two. A host with no scheme was worse still -- the SDK
@@ -51,23 +51,23 @@ from core.llm import (  # noqa: E402
     resolve_provider,
 )
 
-RESOURCE = "https://emco.openai.azure.com"
-DEPLOYMENT = "gpt-4o-emco"
+RESOURCE = "https://sample.openai.azure.com"
+DEPLOYMENT = "gpt-4o-sample"
 
 # Every way the same Azure OpenAI resource is written down in the wild. Pinned
 # as literals rather than generated from the implementation: a list derived from
 # the code under test shrinks whenever the code does.
 SPELLINGS = [
-    "https://emco.openai.azure.com",
-    "https://emco.openai.azure.com/",
-    "https://emco.openai.azure.com/openai",
-    "https://emco.openai.azure.com/openai/",
-    "https://emco.openai.azure.com/OpenAI",
-    "https://emco.openai.azure.com/openai/deployments/gpt-4o-emco",
-    "https://emco.openai.azure.com/openai/deployments/gpt-4o-emco/chat/completions"
+    "https://sample.openai.azure.com",
+    "https://sample.openai.azure.com/",
+    "https://sample.openai.azure.com/openai",
+    "https://sample.openai.azure.com/openai/",
+    "https://sample.openai.azure.com/OpenAI",
+    "https://sample.openai.azure.com/openai/deployments/gpt-4o-sample",
+    "https://sample.openai.azure.com/openai/deployments/gpt-4o-sample/chat/completions"
     "?api-version=2024-02-01",
-    "emco.openai.azure.com",
-    "  https://emco.openai.azure.com/  ",
+    "sample.openai.azure.com",
+    "  https://sample.openai.azure.com/  ",
 ]
 
 
@@ -109,8 +109,8 @@ class TestOneResourceOneBase:
         assert _url_the_sdk_builds(spelling).count("/openai/") == 1
 
     def test_a_host_with_no_scheme_does_not_land_in_the_url_twice(self):
-        url = _url_the_sdk_builds("emco.openai.azure.com")
-        assert url.count("emco.openai.azure.com") == 1
+        url = _url_the_sdk_builds("sample.openai.azure.com")
+        assert url.count("sample.openai.azure.com") == 1
         assert url.startswith("https://")
 
     def test_one_resource_spelled_two_ways_is_one_cached_client(self):
@@ -137,7 +137,7 @@ class TestWhatMustSurvive:
     def test_a_foundry_project_path_is_kept(self):
         """`admin/routes.py`'s deployment listing needs `/api/projects/<name>`;
         dropping it is how the fetch button stops finding anything."""
-        endpoint = "https://proj.services.ai.azure.com/api/projects/emco"
+        endpoint = "https://proj.services.ai.azure.com/api/projects/sample"
         assert normalize_azure_endpoint(endpoint) == endpoint
 
     def test_a_foundry_v1_base_is_not_doubled_either(self):
@@ -246,8 +246,8 @@ class TestTheButtonAndTheProductAgree(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_portal_target_uri_tests_what_the_product_calls(self):
         """This is the pair that disagreed. Before the fix the button posted to
-        .../openai/deployments/gpt-4o-emco/chat/completions and the product
-        posted to .../openai/openai/deployments/gpt-4o-emco/chat/completions."""
+        .../openai/deployments/gpt-4o-sample/chat/completions and the product
+        posted to .../openai/openai/deployments/gpt-4o-sample/chat/completions."""
         endpoint = (f"{RESOURCE}/openai/deployments/{DEPLOYMENT}"
                     "/chat/completions?api-version=2024-02-01")
         tested = await self._url_the_admin_button_tests(endpoint)

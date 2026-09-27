@@ -1838,7 +1838,7 @@ def match_metric(account_id: str, question: str, *, lang: str = "") -> dict | No
     # question it was written for. A stored SELECT SUM(...) is one number over
     # all time, and these words each ask for something a single number cannot be:
     # two numbers and a difference, a ranking, a distribution, a projection, a
-    # cause. Found by evals/emco_rehearsal.py, which asked "what is the
+    # cause. Found by evals/sample_rehearsal.py, which asked "what is the
     # difference in net sales" and got the all-time total -- the template matched
     # on the measure name and neither existing guard had anything to say, because
     # the question names no breakdown and no window.

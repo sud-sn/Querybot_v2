@@ -2393,7 +2393,9 @@ class GovernedTemporalCompilerTests(unittest.TestCase):
         self.assertIn(
             "DATEFROMPARTS(YEAR(invoice_date.[CALENDAR_DATE]), MONTH(invoice_date.[CALENDAR_DATE]), 1)", sql,
         )
-        self.assertNotIn("EMCO", sql.upper())
+        from tests.customer_names import names_a_customer
+
+        self.assertFalse(names_a_customer(sql))
 
     def test_rolling_total_compiles_directly_without_redundant_grouping(self):
         columns, binding, _plan, context = self._context()

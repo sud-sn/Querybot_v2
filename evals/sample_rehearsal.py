@@ -1,13 +1,13 @@
 """
-evals/emco_rehearsal.py
+evals/sample_rehearsal.py
 
-Drive every way an EMCO reader asks, in both languages, through the real
-pipeline stages — without a warehouse.
+Drive every way a reader of the sample tenant asks, in both languages, through
+the real pipeline stages — without a warehouse.
 
-    python -m evals.emco_rehearsal
-    python -m evals.emco_rehearsal --html /tmp/emco.html
-    python -m evals.emco_rehearsal --json --only followup
-    python -m evals.emco_rehearsal --lang fr --verbose
+    python -m evals.sample_rehearsal
+    python -m evals.sample_rehearsal --html /tmp/sample.html
+    python -m evals.sample_rehearsal --json --only followup
+    python -m evals.sample_rehearsal --lang fr --verbose
 
 What this is for
 ────────────────
@@ -37,8 +37,8 @@ credential, an index or a row count. The compiled SQL is parsed and validated,
 not run. Everything past that — actual rows, actual latency, actual freshness —
 needs the VM and is the rehearsal this cannot replace.
 
-The schema is the shape of EMCO's mart rather than a copy of it: four
-role-playing date keys on the invoice fact, a separate returns fact, a
+The schema is the shape of the sample tenant's mart rather than a copy of it:
+four role-playing date keys on the invoice fact, a separate returns fact, a
 semi-additive balance fact, and one shared DT_DMS dimension. Column names follow
 their M3 conventions because the naming conventions are half of what the
 deterministic layers read.
@@ -60,18 +60,18 @@ from typing import Any
 
 import yaml
 
-# `python3 evals/emco_rehearsal.py` puts evals/ on sys.path, not the repo root,
+# `python3 evals/sample_rehearsal.py` puts evals/ on sys.path, not the repo root,
 # so every `import store` / `import core.*` below failed with ModuleNotFoundError
-# — the harness ran only as `python -m evals.emco_rehearsal`. It is the tool for
+# — the harness ran only as `python -m evals.sample_rehearsal`. It is the tool for
 # checking a release before it goes back to the customer, and a tool that fails
 # on the obvious invocation is a tool that does not get run.
 _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-CORPUS = Path(__file__).resolve().parent / "emco_questions.yaml"
+CORPUS = Path(__file__).resolve().parent / "sample_questions.yaml"
 
-# ── The mart, in EMCO's shape ────────────────────────────────────────────────
+# ── The mart, in the sample tenant's shape ───────────────────────────────────
 
 SALES = "EMDW_DMART.CUS_ORD_IVC_FCT"
 RETURNS = "EMDW_DMART.CUS_RTN_FCT"
@@ -538,7 +538,7 @@ def print_report(results: list[CaseResult], cards: list[dict],
             print(f"      -> {r.fr.canonical}")
 
     print()
-    print("── the answer card on EMCO-shaped rows ──")
+    print("── the answer card on M3-shaped rows ──")
     for card in cards:
         print(f"  {card['shape']}")
         print(f"    mode={card['mode']}  measure={card['measure']}  "
@@ -599,7 +599,7 @@ def write_html(results: list[CaseResult], cards: list[dict], path: Path) -> None
     report = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EMCO rehearsal</title>
+<title>Sample rehearsal</title>
 <style>
 :root{{--bg:#fbfbfa;--fg:#20201e;--dim:#6b6b66;--line:#e3e3df;
 --ok:#1a7f4b;--bad:#b3261e;--card:#fff;--accent:#2f6feb}}
@@ -643,7 +643,7 @@ font-weight:600}}
 h2{{font-size:15px;margin:34px 0 10px}}
 .foot{{color:var(--dim);font-size:12px;margin-top:28px;max-width:78ch}}
 </style></head><body><div class="wrap">
-<h1>EMCO rehearsal — the deterministic pipeline, both languages</h1>
+<h1>Sample rehearsal — the deterministic pipeline, both languages</h1>
 <p class="sub">Each row is one question asked two ways. The four decision columns
 show <strong>English / French</strong>; a highlighted cell means the two
 languages decided differently, which on stage means the same question gets two
@@ -659,7 +659,7 @@ different answers. No model was called and no query was executed.</p>
 <th>metric template</th><th>follow-up</th>
 <th>notes</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div>
-<h2>The answer card, on EMCO-shaped rows</h2>
+<h2>The answer card, on M3-shaped rows</h2>
 <div class="scroll"><table>
 <thead><tr><th>shape</th><th>mode</th><th>measure</th><th>axis</th>
 <th>top-3 share</th><th>callouts</th><th>decision signal (EN / FR)</th></tr></thead>
@@ -667,7 +667,7 @@ different answers. No model was called and no query was executed.</p>
 <p class="foot">Boundaries: the LLM and the warehouse. The compiled SQL is parsed
 with sqlglot and run through the validator, not executed &mdash; so nothing here
 proves a credential, an index, a row count or data freshness. Run
-<code>python -m evals.emco_rehearsal</code> after any change to the
+<code>python -m evals.sample_rehearsal</code> after any change to the
 canonicaliser, the window detector, the metric registry, the governed compilers
 or the follow-up router.</p>
 </div></body></html>"""
@@ -685,14 +685,14 @@ def run(only: str = "", verbose: bool = False) -> list[CaseResult]:
         cases = [c for c in cases
                  if needle in c["id"].lower() or needle in c["intent"].lower()]
 
-    workdir = tempfile.mkdtemp(prefix="qb-emco-rehearsal-")
+    workdir = tempfile.mkdtemp(prefix="qb-sample-rehearsal-")
     saved = {k: os.environ.get(k) for k in ("DB_PATH", "QUERYBOT_DB_PATH")}
     db_path = os.path.join(workdir, "rehearsal.db")
     os.environ["DB_PATH"] = db_path
     os.environ["QUERYBOT_DB_PATH"] = db_path
     try:
         store.init_db()
-        account_id = f"emco-rehearsal-{uuid.uuid4().hex[:8]}"
+        account_id = f"sample-rehearsal-{uuid.uuid4().hex[:8]}"
         store.upsert_client(account_id, "portal")
         store.save_metric(account_id, dict(NET_SALES_TEMPLATE))
 

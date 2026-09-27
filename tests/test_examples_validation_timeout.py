@@ -497,7 +497,7 @@ class StaleNullDiagnosticExampleFilterTests(unittest.TestCase):
     _STALE_SQL = (
         "SELECT COUNT_BIG(*) AS MatchedRows, COUNT(SOP_CUS_IVC_LIN_AMT) AS NonNullMetricRows, "
         "COALESCE(SUM(SOP_CUS_IVC_LIN_AMT), 0) AS TOTAL_SALES "
-        "FROM EMCODW_DEV.EMDW_DMART.CUS_ORD_IVC_FCT "
+        "FROM SAMPLEDW_DEV.EMDW_DMART.CUS_ORD_IVC_FCT "
         "WHERE CUS_ORD_DT_DMS_KEY >= 20260101"
     )
     _LEGIT_SQL = (

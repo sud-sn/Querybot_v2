@@ -23,8 +23,8 @@ the word that had to be recognised alongside it was "average".
 A second, independent defect in the same module, and it is not about English at
 all. Cached VALUES were compared with `[^a-z0-9]+` over casefolded text, which
 does not strip an accent -- it SHREDS it. "Montréal" flattened to "montr" + "al"
-while "Montreal" flattened to "montreal", so on EMCO's own branch names the two
-never met, in BOTH directions:
+while "Montreal" flattened to "montreal", so on the sample tenant's own branch
+names the two never met, in BOTH directions:
 
     cached warehouse   reader typed    matched
     Montréal           Montreal        no

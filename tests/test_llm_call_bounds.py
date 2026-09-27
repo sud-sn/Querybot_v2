@@ -8,8 +8,8 @@ explicit retry policy, so each inherited the vendor SDK default of 600 s per
 request with 2 automatic retries -- roughly 30 minutes for a single call. The
 SQL path issues up to four sequential calls (generate, recovery, retry,
 progressive repair) and the pipeline bounds none of them. That is the most
-likely explanation for the 800 s question observed on the EMCO server, and it
-is indistinguishable from a hung product to the person waiting.
+likely explanation for the 800 s question observed on the sample tenant's
+server, and it is indistinguishable from a hung product to the person waiting.
 
 The fix sets an explicit timeout and retry count on all three clients, both
 env-overridable and clamped, and folds them into the client cache key so a

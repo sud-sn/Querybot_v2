@@ -310,7 +310,7 @@ if __name__ == "__main__":
 class MonthBucketsAreDeclaredDatesTests(unittest.TestCase):
     """A month bucket must not be displayed as the first of the month.
 
-    Live defect, tenant Emco_test, 2026-08-25: "what is my revenue by month
+    Live defect, on the sample tenant, 2026-08-25: "what is my revenue by month
     this year" returned six correct monthly rows whose period cells rendered
     as "2026-01-01", "2026-02-01" ... A month displayed as a specific day
     reads as one day's figure.
@@ -476,11 +476,11 @@ class MonthBucketsAreDeclaredDatesTests(unittest.TestCase):
 class NarrationShowsTheSamePeriodAsTheTableTests(unittest.TestCase):
     """Periods reach the user through THREE paths, not two.
 
-    Live on EMCO, 2026-09-02: one answer's KPI headline read "2026-06 closed at
-    $7,439,558.42" while its Key insights, three lines below, read "trended flat
-    0.7% from 2026-01-01 to 2026-06-01". The table and KPI go through the
-    display formatter via column_formats; the sentences written ABOUT the
-    series never did.
+    Live on the sample tenant, 2026-09-02: one answer's KPI headline read
+    "2026-06 closed at $7,439,558.42" while its Key insights, three lines
+    below, read "trended flat 0.7% from 2026-01-01 to 2026-06-01". The table
+    and KPI go through the display formatter via column_formats; the sentences
+    written ABOUT the series never did.
 
     These execute `narrative_period_labels`, the function both narrators now
     build their label list from.

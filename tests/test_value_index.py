@@ -27,31 +27,31 @@ from core.value_index import (
 
 def _schema():
     return {
-        "EMCODW.EMDW_DMART.CUS_DMS": {
+        "SAMPLEDW.EMDW_DMART.CUS_DMS": {
             "columns": [
                 {"name": "CUS_DMS_KEY", "type": "int"},
                 {"name": "CUS_NM", "type": "varchar(100)"},
                 {"name": "CUS_EMAIL", "type": "varchar(100)"},   # PII by name
             ],
-            "schema": "EMDW_DMART", "database": "EMCODW",
+            "schema": "EMDW_DMART", "database": "SAMPLEDW",
             "masked_fields": [], "mask_mode": "partial",
         },
-        "EMCODW.EMDW_DMART.ITM_DMS": {
+        "SAMPLEDW.EMDW_DMART.ITM_DMS": {
             "columns": [
                 {"name": "ITM_DSC", "type": "varchar(200)"},
                 {"name": "ITM_SECRET", "type": "varchar(50)"},
             ],
-            "schema": "EMDW_DMART", "database": "EMCODW",
+            "schema": "EMDW_DMART", "database": "SAMPLEDW",
             "masked_fields": ["ITM_SECRET"], "mask_mode": "partial",
         },
-        "EMCODW.EMDW_DMART.HR_DMS": {
+        "SAMPLEDW.EMDW_DMART.HR_DMS": {
             "columns": [{"name": "EMP_NM", "type": "varchar(100)"}],
-            "schema": "EMDW_DMART", "database": "EMCODW",
+            "schema": "EMDW_DMART", "database": "SAMPLEDW",
             "masked_fields": [], "mask_mode": "all",              # whole table masked
         },
-        "EMCODW.EMDW_DMART.FNN_FCT": {
+        "SAMPLEDW.EMDW_DMART.FNN_FCT": {
             "columns": [{"name": "PAY_AMT", "type": "decimal"}],
-            "schema": "EMDW_DMART", "database": "EMCODW",
+            "schema": "EMDW_DMART", "database": "SAMPLEDW",
             "masked_fields": [], "mask_mode": "partial",
         },
     }
@@ -60,7 +60,7 @@ def _schema():
 def _fake_run_query(creds, db_type, sql, max_rows=200):
     if "CUS_NM" in sql:
         return [{"CUS_NM": v} for v in [
-            "EMCO Corporation", "EMCO Corp EU", "EMCO Corp USA",
+            "ZYCO Corporation", "ZYCO Corp EU", "ZYCO Corp USA",
             "Acme Industries", "Beta Traders",
             "bad\nvalue", "x" * 300,
         ]]
@@ -87,14 +87,14 @@ class SelectFilterableColumnsTests(unittest.TestCase):
         # dimension tables, so status values were never indexed and got no
         # grounding and no zero-row explanation.
         schema = {
-            "EMCODW.EMDW_DMART.ORD_FCT": {
+            "SAMPLEDW.EMDW_DMART.ORD_FCT": {
                 "columns": [
                     {"name": "ORD_STS", "type": "varchar(20)"},
                     {"name": "ORD_TYP", "type": "varchar(20)"},
                     {"name": "ITM_GRP", "type": "varchar(20)"},
                     {"name": "ORD_NM", "type": "varchar(100)"},  # display on a FACT: excluded
                 ],
-                "schema": "EMDW_DMART", "database": "EMCODW",
+                "schema": "EMDW_DMART", "database": "SAMPLEDW",
                 "masked_fields": [], "mask_mode": "partial",
             },
         }
@@ -170,15 +170,15 @@ class BuildValueIndexTests(unittest.TestCase):
                 "acct3", {}, "azure_sql", str(self.schema_dir),
                 run_query_fn=rq, base_dir=self.base, per_column_cap=10,
             )
-        self.assertIn("EMCODW.EMDW_DMART.CUS_DMS.CUS_NM", stats["truncated_columns"])
+        self.assertIn("SAMPLEDW.EMDW_DMART.CUS_DMS.CUS_NM", stats["truncated_columns"])
 
     def test_lookup_exact_case_insensitive_then_normalized(self):
         self._build()
-        hits = lookup_exact("acct", "emco corporation", base_dir=self.base)
-        self.assertEqual(hits[0]["value"], "EMCO Corporation")
+        hits = lookup_exact("acct", "zyco corporation", base_dir=self.base)
+        self.assertEqual(hits[0]["value"], "ZYCO Corporation")
         self.assertEqual(hits[0]["method"], "exact")
-        hits2 = lookup_exact("acct", "  EMCO, Corporation.  ", base_dir=self.base)
-        self.assertEqual(hits2[0]["value"], "EMCO Corporation")
+        hits2 = lookup_exact("acct", "  ZYCO, Corporation.  ", base_dir=self.base)
+        self.assertEqual(hits2[0]["value"], "ZYCO Corporation")
         self.assertEqual(hits2[0]["method"], "normalized")
 
     def test_lookup_fuzzy_typo_and_threshold(self):
@@ -186,8 +186,8 @@ class BuildValueIndexTests(unittest.TestCase):
         vals = [m["value"] for m in lookup_fuzzy("acct", "acme industry", base_dir=self.base)]
         self.assertIn("Acme Industries", vals)
         # first-syllable typo still reaches the scorer via the 2-char prefix probe
-        loose = lookup_fuzzy("acct", "emko corpp", base_dir=self.base, min_score=0.55)
-        self.assertTrue(any("EMCO" in m["value"] for m in loose))
+        loose = lookup_fuzzy("acct", "zyko corpp", base_dir=self.base, min_score=0.55)
+        self.assertTrue(any("ZYCO" in m["value"] for m in loose))
         # default threshold keeps typo matches out of the injection path
         strict = lookup_fuzzy("acct", "zzz qqq", base_dir=self.base)
         self.assertEqual(strict, [])
@@ -209,7 +209,7 @@ class BuildValueIndexTests(unittest.TestCase):
 
 class FlagAndNormalizeTests(unittest.TestCase):
     def test_normalize_value(self):
-        self.assertEqual(normalize_value("  EMCO, Corp.  "), "emco corp")
+        self.assertEqual(normalize_value("  ZYCO, Corp.  "), "zyco corp")
         self.assertEqual(normalize_value("A-B_C  D"), "a b c d")
 
     def test_value_index_enabled_default_on_with_opt_out(self):

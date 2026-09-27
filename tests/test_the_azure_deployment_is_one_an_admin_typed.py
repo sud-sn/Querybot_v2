@@ -3,7 +3,7 @@
 
 Azure OpenAI does not route on a model id. It routes on a DEPLOYMENT name the
 tenant chose, and the two are unrelated strings: a resource can serve GPT-4o
-under the name ``emco-prod`` and have nothing called ``gpt-4o`` at all.
+under the name ``sample-prod`` and have nothing called ``gpt-4o`` at all.
 
 ``resolve_provider`` knew that and preferred the deployment fields. What it did
 when they were blank was the defect. It fell through to ``_default_model``,
@@ -53,7 +53,7 @@ from core.llm import (  # noqa: E402
     resolve_provider,
 )
 
-ENDPOINT = "https://emco.openai.azure.com"
+ENDPOINT = "https://sample.openai.azure.com"
 BASE = {
     "default_llm_provider": "azure_openai",
     "azure_openai_api_key": "key",
@@ -83,8 +83,8 @@ class TestTheDefectItself:
     """A blank deployment field must not silently choose a model tier."""
 
     def test_only_the_kb_name_is_set_and_queries_no_longer_get_mini(self):
-        saved = {**BASE, "azure_kb_deployment_name": "emco-prod"}
-        assert _resolved(saved, "query") == "emco-prod"
+        saved = {**BASE, "azure_kb_deployment_name": "sample-prod"}
+        assert _resolved(saved, "query") == "sample-prod"
         assert _resolved(saved, "query") != GUESSED_FAST
 
     def test_the_two_purposes_never_disagree_by_accident(self):
@@ -101,10 +101,10 @@ class TestTheDefectItself:
         """An admin who picks two deployments gets two deployments. The fix is
         about accidents, not about forcing one model on everyone."""
         saved = {**BASE,
-                 "azure_query_deployment_name": "emco-fast",
-                 "azure_kb_deployment_name": "emco-kb"}
-        assert _resolved(saved, "query") == "emco-fast"
-        assert _resolved(saved, "kb") == "emco-kb"
+                 "azure_query_deployment_name": "sample-fast",
+                 "azure_kb_deployment_name": "sample-kb"}
+        assert _resolved(saved, "query") == "sample-fast"
+        assert _resolved(saved, "kb") == "sample-kb"
 
     def test_the_guess_is_gone_from_the_defaults_table(self):
         """_default_model is still right for providers that route on model ids;
@@ -121,54 +121,54 @@ class TestEveryConfigurationThatWorkedStillWorks:
 
     def test_both_deployment_names(self):
         saved = {**BASE,
-                 "azure_query_deployment_name": "emco-prod",
-                 "azure_kb_deployment_name": "emco-prod"}
-        assert _resolved(saved, "query") == "emco-prod"
-        assert _resolved(saved, "kb") == "emco-prod"
+                 "azure_query_deployment_name": "sample-prod",
+                 "azure_kb_deployment_name": "sample-prod"}
+        assert _resolved(saved, "query") == "sample-prod"
+        assert _resolved(saved, "kb") == "sample-prod"
 
     def test_a_workspace_that_only_ever_set_the_generic_model(self):
         """This configuration worked before -- default_llm_model was already
         being used as the query deployment name -- so it must keep working."""
-        saved = {**BASE, "default_llm_model": "emco-prod"}
-        assert _resolved(saved, "query") == "emco-prod"
+        saved = {**BASE, "default_llm_model": "sample-prod"}
+        assert _resolved(saved, "query") == "sample-prod"
 
     def test_and_its_kb_build_borrows_that_name_rather_than_refusing(self):
-        saved = {**BASE, "default_llm_model": "emco-prod"}
-        assert _resolved(saved, "kb") == "emco-prod"
+        saved = {**BASE, "default_llm_model": "sample-prod"}
+        assert _resolved(saved, "kb") == "sample-prod"
 
     def test_a_kb_only_model_setting(self):
-        saved = {**BASE, "kb_llm_model": "emco-kb"}
-        assert _resolved(saved, "kb") == "emco-kb"
-        assert _resolved(saved, "query") == "emco-kb"
+        saved = {**BASE, "kb_llm_model": "sample-kb"}
+        assert _resolved(saved, "kb") == "sample-kb"
+        assert _resolved(saved, "query") == "sample-kb"
 
     def test_a_per_tenant_override_still_wins_over_the_system_default(self):
-        saved = {**BASE, "default_llm_model": "emco-shared"}
+        saved = {**BASE, "default_llm_model": "sample-shared"}
         assert _resolved(saved, "query",
-                         {"account_id": "", "llm_model": "emco-tenant"}) == "emco-tenant"
+                         {"account_id": "", "llm_model": "sample-tenant"}) == "sample-tenant"
 
     def test_the_deployment_field_outranks_the_generic_model(self):
         saved = {**BASE,
-                 "azure_query_deployment_name": "emco-prod",
+                 "azure_query_deployment_name": "sample-prod",
                  "default_llm_model": "gpt-4o"}
-        assert _resolved(saved, "query") == "emco-prod"
+        assert _resolved(saved, "query") == "sample-prod"
 
 
 class TestBorrowingIsAnnounced(unittest.TestCase):
     """A silent fallback is how the original defect survived. This one talks."""
 
     def test_the_warning_names_the_field_to_fill(self):
-        saved = {**BASE, "azure_kb_deployment_name": "emco-prod"}
+        saved = {**BASE, "azure_kb_deployment_name": "sample-prod"}
         with self.assertLogs("querybot.llm", level=logging.WARNING) as captured:
-            self.assertEqual(_resolved(saved, "query"), "emco-prod")
+            self.assertEqual(_resolved(saved, "query"), "sample-prod")
         blob = "\n".join(captured.output)
         self.assertIn("azure_query_deployment_name", blob)
-        self.assertIn("emco-prod", blob)
+        self.assertIn("sample-prod", blob)
 
     def test_a_fully_configured_workspace_says_nothing(self):
         """A warning on every question would be noise nobody reads."""
         saved = {**BASE,
-                 "azure_query_deployment_name": "emco-prod",
-                 "azure_kb_deployment_name": "emco-kb"}
+                 "azure_query_deployment_name": "sample-prod",
+                 "azure_kb_deployment_name": "sample-kb"}
         with patch.object(sys.modules["store"], "get_all_system",
                           return_value=dict(saved)):
             with self.assertNoLogs("querybot.llm", level=logging.WARNING):
@@ -197,7 +197,7 @@ class TestTheRefusalIsUseful(unittest.TestCase):
         """The key check sits after the branch, so the deployment resolution
         must not have already refused for a workspace that has both names."""
         saved = {k: v for k, v in BASE.items() if k != "azure_openai_api_key"}
-        saved["azure_query_deployment_name"] = "emco-prod"
+        saved["azure_query_deployment_name"] = "sample-prod"
         with self.assertRaises(RuntimeError) as caught:
             _resolved(saved, "query")
         self.assertIn("API key", str(caught.exception))
@@ -221,17 +221,17 @@ class TestTheResolverOnItsOwn:
 
     def test_a_name_is_stripped_before_it_goes_on_the_wire(self):
         assert azure_deployment_name(
-            {"azure_query_deployment_name": "  emco-prod \n"}, {}, "query"
-        ) == "emco-prod"
+            {"azure_query_deployment_name": "  sample-prod \n"}, {}, "query"
+        ) == "sample-prod"
 
     @pytest.mark.parametrize("purpose", ["query", "kb"])
     def test_an_unknown_purpose_is_treated_as_a_query(self, purpose):
         """Only "kb" is special; everything else is a question. Pinned so a new
         purpose string cannot quietly start reading the KB deployment."""
-        cfg = {"azure_query_deployment_name": "emco-fast",
-               "azure_kb_deployment_name": "emco-kb"}
-        assert azure_deployment_name(cfg, {}, "report") == "emco-fast"
-        assert azure_deployment_name(cfg, {}, "") == "emco-fast"
+        cfg = {"azure_query_deployment_name": "sample-fast",
+               "azure_kb_deployment_name": "sample-kb"}
+        assert azure_deployment_name(cfg, {}, "report") == "sample-fast"
+        assert azure_deployment_name(cfg, {}, "") == "sample-fast"
 
 
 if __name__ == "__main__":  # pragma: no cover

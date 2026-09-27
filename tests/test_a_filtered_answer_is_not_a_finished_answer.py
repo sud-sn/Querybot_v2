@@ -62,7 +62,7 @@ from core.llm import (  # noqa: E402
 )
 from core.llm_audit import llm_audit_scope  # noqa: E402
 
-ENDPOINT = "https://emco.openai.azure.com"
+ENDPOINT = "https://sample.openai.azure.com"
 API_VERSION = "2024-02-01"
 
 
@@ -127,7 +127,7 @@ async def _azure_async(response, max_tokens=768):
     key = _install(response, "azure")
     try:
         return await llm._azure_openai_complete(
-            "sys", "user", "emco-prod", "key", max_tokens,
+            "sys", "user", "sample-prod", "key", max_tokens,
             ENDPOINT, API_VERSION, 0.0)
     finally:
         llm._llm_client_cache.pop(key, None)
@@ -340,7 +340,7 @@ class TestWhatTheRestOfTheProductDoesWithIt(unittest.IsolatedAsyncioTestCase):
         with patch("core.llm.llm_complete", side_effect=filtered):
             text, reason = await _kb_complete(
                 "document for CUS_ORD_IVC_FCT", "sys", "user", "azure_openai",
-                "emco-prod", "key", max_tokens=kb_doc_token_budget(121),
+                "sample-prod", "key", max_tokens=kb_doc_token_budget(121),
                 azure_endpoint=ENDPOINT, azure_api_version=API_VERSION)
         self.assertIsNone(text)
         self.assertIn("ContentFiltered", reason)
@@ -379,7 +379,7 @@ class TestWhatTheRestOfTheProductDoesWithIt(unittest.IsolatedAsyncioTestCase):
                     result_question="net sales by region",
                     account_id="acct_1",
                     provider="azure_openai",
-                    model="emco-prod",
+                    model="sample-prod",
                     api_key="key",
                     azure_endpoint=ENDPOINT,
                     azure_api_version=API_VERSION,
@@ -404,7 +404,7 @@ class TestTheLogIsTheOnlySignal(unittest.TestCase):
                 _azure(_Response([_Choice("half an answer", "content_filter")]))
         blob = "\n".join(captured.output)
         self.assertIn("content filter", blob)
-        self.assertIn("emco-prod", blob)
+        self.assertIn("sample-prod", blob)
 
 
 if __name__ == "__main__":  # pragma: no cover

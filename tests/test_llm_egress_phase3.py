@@ -28,8 +28,8 @@ from core.value_resolver import (
 def _resolved():
     return {
         "verified": [
-            {"phrase": "emco", "table_fqn": "DB.SCH.CUSTOMER", "column": "NAME",
-             "value": "EMCO Corporation"},
+            {"phrase": "zyco", "table_fqn": "DB.SCH.CUSTOMER", "column": "NAME",
+             "value": "ZYCO Corporation"},
             {"phrase": "lipitor", "table_fqn": "DB.SCH.PRODUCT", "column": "DRUG_NAME",
              "value": "Lipitor 40mg"},
         ],
@@ -129,7 +129,7 @@ class AssembledPromptNegativeSpaceTests(unittest.TestCase):
             out, _ = filter_resolved_for_compliance("acct", _resolved())
         block = build_verified_values_injection(out)
         self.assertNotIn("Lipitor 40mg", block)
-        self.assertNotIn("EMCO Corporation", block)
+        self.assertNotIn("ZYCO Corporation", block)
         self.assertNotIn("ACME EU", block)
         self.assertEqual(block, "", "no values cleared, so no block should be emitted")
 
@@ -138,7 +138,7 @@ class AssembledPromptNegativeSpaceTests(unittest.TestCase):
         with patch("core.compliance.policy_engine.is_regulated", return_value=False):
             out, _ = filter_resolved_for_compliance("acct", _resolved())
         block = build_verified_values_injection(out)
-        self.assertIn("EMCO Corporation", block)
+        self.assertIn("ZYCO Corporation", block)
 
 
 class ExampleLiteralScrubTests(unittest.TestCase):

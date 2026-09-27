@@ -334,9 +334,10 @@ class TestTheFormulaIsStillEnforcedInFrench:
 
 
 class TestTheMeasureNounsAFrenchReaderActuallyTypes:
-    """The canonicaliser knew "ventes" and not "ventes nettes", so EMCO's
-    headline measure came out "sales nettes" -- matching no synonym, no KB field
-    and no BM25 token. The returns fact had no English name at all."""
+    """The canonicaliser knew "ventes" and not "ventes nettes", so the sample
+    tenant's headline measure came out "sales nettes" -- matching no synonym,
+    no KB field and no BM25 token. The returns fact had no English name at
+    all."""
 
     @pytest.mark.parametrize("french,expected", [
         ("ventes nettes", "net sales"),

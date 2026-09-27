@@ -286,7 +286,7 @@ One governed query returns one row per revenue category with `NET_AMOUNT_2024`, 
 ## Standing constraints (product owner)
 
 - Do not relax the SQL validators.
-- Do not hardcode tenant table names — EMCO is the client, the fix must be generic.
+- Do not hardcode tenant table names — the sample tenant is one client, the fix must be generic.
 - Do not bypass graph validation.
 - Do not create direct fact-to-fact joins.
 - Every SQL execution goes through `execute_governed_query` with its
@@ -298,6 +298,6 @@ One governed query returns one row per revenue category with `NET_AMOUNT_2024`, 
 ## Step 10 cannot be done in a cloud session
 
 It needs a live tenant: `.env` is gitignored, so a clone carries no database
-credentials and no route to the EMCO server. Steps 6-9 are ordinary repo work
+credentials and no route to the sample tenant's server. Steps 6-9 are ordinary repo work
 and can be done anywhere. Step 10 must be run by the owner, and the defect is
 not fixed until it is — the hint persuades the model, it does not compel it.

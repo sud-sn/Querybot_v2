@@ -52,7 +52,7 @@ Ranked by risk to a regulated tenant.
 ### A1 — Value index injects verbatim cell values into the SQL prompt · HIGH · by design
 `core/value_resolver.py:281-289` emits a block headed
 `VERIFIED FILTER VALUES (matched against actual database contents)` containing lines like
-`user text 'emco' -> DB.SCH.CUSTOMER.NAME = 'EMCO Corporation'`, injected at
+`user text 'zyco' -> DB.SCH.CUSTOMER.NAME = 'ZYCO Corporation'`, injected at
 `core/query_pipeline.py:1394-1409` / `:1486`. `_sanitize` (`value_resolver.py:272`) only strips
 newlines and caps length — no redaction.
 

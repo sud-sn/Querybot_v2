@@ -110,7 +110,7 @@ _LEXICON: dict[str, str] = {
     # folded lowercase text precisely so accents cannot be relied on either.
     # "ventes nettes" before "ventes": the lexicon is applied longest-first, and
     # "sales nettes" matches no metric synonym, no KB field and no BM25 token.
-    # It is the measure an EMCO reader asks for by name.
+    # It is the measure a reader of the sample tenant asks for by name.
     "ventes nettes": "net sales",
     "ventes brutes": "gross sales",
     "ventes": "sales",
@@ -489,8 +489,8 @@ _LEXICON: dict[str, str] = {
     "derniers": "bottom",
 
     # ── Naming a date ROLE ───────────────────────────────────────────────────
-    # EMCO's invoice fact carries four role-playing dates reaching one DT_DMS
-    # dimension, so which date a question means IS the answer: invoice-dated
+    # An M3-shaped invoice fact carries four role-playing dates reaching one
+    # DT_DMS dimension, so which date a question means IS the answer: invoice-dated
     # sales and shipment-dated sales are different numbers over the same rows.
     # core/date_roles.py picks the role from ENGLISH phrases -- "invoice date",
     # "ship date", "cancelled order date" -- and not one French phrasing reached

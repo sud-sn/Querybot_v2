@@ -17,7 +17,7 @@ The retained rows are not a sample. build_boxplot_sql_hint asks the model for
 5000 if the table is large" -- a limit run_query ignored. So the rows kept are
 the sorted head of one group. Measured against a 10,000-row population whose
 true median is 4,999.5, the pre-fix code reported 99.5: 98% low, with no
-caveat and no flag. On the EMCO mart that population is 9.2M rows.
+caveat and no flag. On the sample tenant's mart that population is 9.2M rows.
 
 The fix detects truncation exactly (overfetch by one, rather than guessing
 from len(rows) == cap, which false-alarms on a complete 200-row result) and

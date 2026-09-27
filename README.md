@@ -40,7 +40,7 @@ The product includes an administrator workspace for onboarding, Knowledge Base g
 - Every computed sentence comes from one message catalogue with an English and a French value, including number formatting (a non-breaking thin space and a decimal comma in French). Model-written prose is written in the reader's language through a rule in the prompt; column names and category values from the client's database are quoted as they are.
 - A French reader can command the result card in French: *trier par montant décroissant*, *exclure Paris*, *garder les 3 premiers*, *montrer en camembert*, *annuler la dernière modification* are canonicalised into the verbs the card's parser reads. Elided counts ("nombre d'ordres", "combien d'articles") and the words for time ("au fil du temps") canonicalise too.
 - A terminology pack can carry French terms (`terms_fr`). The nouns of a trade -- *ordre de fabrication*, *rebut*, *centre de charge* -- are read as their English before the lexicon runs, longest phrase first, and only for a tenant that selected the pack, so a distributor's *gamme* stays a product range.
-- `python -m evals.emco_rehearsal` drives a client's demo questions through the real pipeline stages in both languages without a warehouse and reports each stage's decision, so a question that quietly answers something else is visible before a demo rather than during it.
+- `python -m evals.sample_rehearsal` drives a client's demo questions through the real pipeline stages in both languages without a warehouse and reports each stage's decision, so a question that quietly answers something else is visible before a demo rather than during it.
 
 ### Knowledge Base and retrieval
 
@@ -301,7 +301,7 @@ python -m pip install -r requirements.lock -r requirements-dev.txt
 ruff check .                                  # rules and why: [tool.ruff] in pyproject.toml
 mypy                                          # scope and type-debt list: [tool.mypy]
 python -m pytest -q                           # never opens data/querybot.db
-python -m evals.emco_rehearsal --strict       # EMCO questions, English and French
+python -m evals.sample_rehearsal --strict     # sample questions, English and French
 ```
 
 Configure `.env`, start Qdrant, and then run:
@@ -394,8 +394,8 @@ stages over a client's question set in both languages and compares every
 stage's decision with the expected one:
 
 ```bash
-python -m evals.emco_rehearsal
-python -m evals.emco_rehearsal --lang fr --verbose
+python -m evals.sample_rehearsal
+python -m evals.sample_rehearsal --lang fr --verbose
 ```
 
 High-value focused suites include:

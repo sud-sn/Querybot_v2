@@ -7,13 +7,13 @@ with source_fact_mismatch, and the SQL it refused was CORRECT:
     requires EMDW_DMART.PCH_ORD_RCT_FCT as measure fact source(s),
     but the SQL scans EMDW_DMART.ITM_BAL_PRD_FCT, EMDW_DMART.WHS_DMS
 
-The plan was wrong, not the SQL. EMCO registers two metrics and neither is
-about inventory, but "Purchase Order Amount" carries the synonym "purchase
-order value". The question and that synonym share exactly one token — "value"
-— which scored 10, and the only floor anywhere in the matcher is `score > 0`.
-That one token made Purchase Order Amount the sole matched metric, its base
-table became the authoritative fact, the compiled plan declared it the measure
-fact source, and the validator then rejected the model's correct SQL.
+The plan was wrong, not the SQL. The sample tenant registers two metrics and
+neither is about inventory, but "Purchase Order Amount" carries the synonym
+"purchase order value". The question and that synonym share exactly one token —
+"value" — which scored 10, and the only floor anywhere in the matcher is
+`score > 0`. That one token made Purchase Order Amount the sole matched metric,
+its base table became the authoritative fact, the compiled plan declared it the
+measure fact source, and the validator then rejected the model's correct SQL.
 
 A generic quantity word is not evidence about WHICH metric was meant: every
 metric in every registry is a value, an amount and a total of something. Real
@@ -34,7 +34,7 @@ from core.metric_scope import _phrase_score, resolve_metric_scope
 from core.source_resolution import GENERIC_MEASURE_WORDS
 
 
-# The two metrics Emco_test actually has, verbatim from the live registry.
+# The two metrics the sample tenant actually has, verbatim from the live registry.
 PURCHASE_ORDER_AMOUNT = {
     "name": "Purchase Order Amount",
     "synonyms": (
@@ -56,7 +56,7 @@ REVENUE = {
     "base_table": "EMDW_DMART.CUS_ORD_IVC_FCT",
     "category": "SALES",
 }
-EMCO_METRICS = [PURCHASE_ORDER_AMOUNT, REVENUE]
+SAMPLE_METRICS = [PURCHASE_ORDER_AMOUNT, REVENUE]
 
 COLUMNS = {
     "EMDW_DMART.PCH_ORD_RCT_FCT": {"PCH_ORD_LIN_CAD_AMT": "decimal"},
@@ -67,7 +67,7 @@ COLUMNS = {
 
 
 def _matched_names(question: str) -> list[str]:
-    result = resolve_metric_scope(EMCO_METRICS, question, COLUMNS)
+    result = resolve_metric_scope(SAMPLE_METRICS, question, COLUMNS)
     return [str(metric.get("name") or "") for metric in result.metrics]
 
 

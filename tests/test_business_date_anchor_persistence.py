@@ -6,9 +6,9 @@ LOAD, not of a process. It was held only in a module-level dict, so every
 restart, redeploy or crash threw it away and the next relative-date question
 re-ran the probe.
 
-Measured on the live EMCO warehouse: 800 seconds. A user asked "what is my
-revenue for the last 2 days" and watched a spinner for thirteen minutes, with
-no indication that anything was happening. That is what made the system
+Measured on the sample tenant's live warehouse: 800 seconds. A user asked "what
+is my revenue for the last 2 days" and watched a spinner for thirteen minutes,
+with no indication that anything was happening. That is what made the system
 unusable when handed to a client for unattended testing — not the SQL, which
 was correct throughout.
 

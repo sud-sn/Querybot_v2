@@ -7,8 +7,8 @@ An AZERTY layout, macOS, Word, Google Docs, Outlook and every mobile keyboard
 substitute the typographic apostrophe for the ASCII one. The lexicon in
 core/question_normalizer.py is written with ASCII apostrophes, matching runs on
 folded text, and folding did not touch the apostrophe -- so the two spellings
-shared not one key. Measured before the fix, on the exact questions an EMCO
-reader types:
+shared not one key. Measured before the fix, on the exact questions a reader
+of the sample tenant types:
 
     chiffre d'affaires par succursale   -> 'revenue by succursale'
     chiffre d’affaires par succursale   -> 'chiffre d’affaires by succursale'

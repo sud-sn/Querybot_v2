@@ -8423,8 +8423,8 @@ async def date_role_refresh_anchor(request: Request, account_id: str):
 
     The anchor is the newest date that actually has fact rows. It is resolved
     with a query no shape can make cheap on an unindexed fact -- 800 seconds on
-    the EMCO warehouse -- so it is probed once and persisted rather than
-    recomputed per process. A maximum age bounds how stale it can get on its
+    the sample tenant's warehouse -- so it is probed once and persisted rather
+    than recomputed per process. A maximum age bounds how stale it can get on its
     own, but a warehouse that reloads off-schedule needs a way to say "the data
     moved, look again" without waiting for that age out.
     """
@@ -9291,9 +9291,9 @@ def _kb_built_tables(account_id: str) -> set[str]:
     This originally read kb_data_egress_log for operation='kb_build', which was
     wrong in a way that showed up immediately on a real client. That log is an
     AUDIT TRAIL of what was sent to the model, so it is empty for any KB built
-    before the logging existed -- and EMCO, with fourteen built tables, had
-    every one of them reported as "new, not yet built" above a banner claiming
-    fourteen tables had just been added.
+    before the logging existed -- and the sample tenant, with fourteen built
+    tables, had every one of them reported as "new, not yet built" above a
+    banner claiming fourteen tables had just been added.
 
     The egress log is still unioned in: a table whose document has been tidied
     away but which the audit says was built is still a table we have built.

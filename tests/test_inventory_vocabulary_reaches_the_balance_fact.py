@@ -54,7 +54,7 @@ SNAPSHOT = "EMDW_DMART.ITM_BAL_PRD_FCT"
 INVOICE = "EMDW_DMART.CUS_ORD_IVC_FCT"
 PURCHASE = "EMDW_DMART.PCH_ORD_RCT_FCT"
 
-# The mart as deploy/emco_dmart/01_create_model.sql declares it.
+# The mart as deploy/m3_test_mart/01_create_model.sql declares it.
 TABLES = {
     SNAPSHOT: {
         "ITM_DMS_KEY": "int", "WHS_DMS_KEY": "int", "PRD_DMS_KEY": "int",

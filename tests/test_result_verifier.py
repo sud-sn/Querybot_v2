@@ -215,7 +215,7 @@ def test_explicit_cached_chart_type_is_preserved_for_portal_renderer():
 # A grain word asks for a SHAPE, not for a column called "month"
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# Live defect, captured 2026-08-25 on tenant Emco_test: "what is my revenue by
+# Live defect, captured 2026-08-25 on the sample tenant: "what is my revenue by
 # month this year" returned six correct monthly rows and carried the watch-out
 #
 #     Requested dimension is not visible in the output columns: month

@@ -6,8 +6,8 @@ Per-client index of filterable column values for literal grounding.
 Schema discovery only captures distinct values for categorical-looking columns
 and silently drops anything with more than ~30 distinct values — so customer
 names, item descriptions, and other high-cardinality filter columns have zero
-value representation in the KB. When a user asks "sales for Emco corp" the LLM
-must guess the WHERE literal; the data may say 'EMCO Corporation' and the
+value representation in the KB. When a user asks "sales for Zyco corp" the LLM
+must guess the WHERE literal; the data may say 'ZYCO Corporation' and the
 query returns zero rows with no explanation.
 
 This module builds a SQLite value index at discovery time
@@ -296,8 +296,8 @@ def select_filterable_columns(
         # PAT_NM slipping past patterns written in spelled-out English -- but
         # the bare-name rule is `(?<![a-z])name(?![a-z])`, so "warehouse name",
         # "region name" and "profit centre name" all match it too. Measured on
-        # the EMCO mart, expansion blocked WHS_NM, RGN_NM, PFT_CTR_NM and
-        # ITM_DSC: every dimension display column, which is the whole index.
+        # the sample tenant's mart, expansion blocked WHS_NM, RGN_NM, PFT_CTR_NM
+        # and ITM_DSC: every dimension display column, which is the whole index.
         #
         # The abbreviated-PHI risk it was meant to address is already closed
         # one layer up: a regulated tenant indexes only columns an admin has
@@ -659,7 +659,7 @@ def lookup_fuzzy(
         first = tokens[0]
         # Three probes: first-token prefix (fast path), longest-token
         # containment, and a 2-char prefix so first-syllable typos still
-        # reach the scorer ("emko corp" must find "emco corporation").
+        # reach the scorer ("zyko corp" must find "zyco corporation").
         # Short rows first keeps the most comparable candidates inside the
         # LIMIT when a 2-char prefix is common.
         candidates = conn.execute(
@@ -679,7 +679,7 @@ def lookup_fuzzy(
             continue
         seen.add(key)
         score = SequenceMatcher(None, norm, vn).ratio()
-        # Containment bonus: "emco" inside "emco corporation" is a strong
+        # Containment bonus: "zyco" inside "zyco corporation" is a strong
         # signal SequenceMatcher under-scores for length-mismatched strings.
         if norm and norm in vn:
             score = max(score, 0.60 + 0.40 * (len(norm) / max(len(vn), 1)))

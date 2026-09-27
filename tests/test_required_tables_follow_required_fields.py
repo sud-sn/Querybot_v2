@@ -1,7 +1,7 @@
 """
 tests/test_required_tables_follow_required_fields.py
 
-One defect, three symptoms, all observed on the EMCO-shaped mart.
+One defect, three symptoms, all observed on the M3-shaped mart.
 
 required_semantic_tables promotes BOTH endpoints of every non-optional join
 into required_tables. build_runtime_semantic_plan emitted a join for every

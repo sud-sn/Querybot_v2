@@ -88,6 +88,7 @@ Suffixes encode the **role** of a column and the **correct way to use it in SQL*
 
 | Prefix | Business Entity |
 | --- | --- |
+| `CO_RGN_` | Company Region |
 | `CUS_` | Customer |
 | `CUS_IVC_` | Customer Invoice |
 | `CUS_ORD_` | Customer Order |
@@ -97,7 +98,6 @@ Suffixes encode the **role** of a column and the **correct way to use it in SQL*
 | `DLV_TER_` | Delivery Territory |
 | `DT_` | Date / Calendar |
 | `DVN_` | Division |
-| `EMCO_RGN_` | Company Region |
 | `FCY_` | Facility / Factory |
 | `ITM_` | Item / Product |
 | `ITM_BUS_ARA_` | Item Business Area |

@@ -74,9 +74,10 @@ def _edge(id_, source, target, left, right):
     }
 
 
-# EMCO's mart in shape: three facts, a snowflaked product dimension, and one
-# date dimension played as three roles. Names are M3's, because the naming
-# conventions are half of what the deterministic layers read.
+# The sample tenant's mart in shape: three facts, a snowflaked product
+# dimension, and one date dimension played as three roles. Names are M3's,
+# because the naming conventions are half of what the deterministic layers
+# read.
 GRAPH = {
     "entities": [
         _entity("Invoice", "CUS_ORD_IVC_FCT", "fact"),

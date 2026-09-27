@@ -943,9 +943,9 @@ function buildSidebar() {
 
   // Several entities over ONE physical table is a role-playing dimension: the
   // same calendar joined once per business date, once per address type, and so
-  // on. EMCO has thirteen date roles over DT_DMS, so half this list was one
-  // table wearing different hats and the actual table-to-table joins were
-  // buried among them.
+  // on. The sample tenant has thirteen date roles over DT_DMS, so half this
+  // list was one table wearing different hats and the actual table-to-table
+  // joins were buried among them.
   //
   // Keyed on the physical table rather than on anything date-shaped, because
   // the pattern is not about dates -- a role-playing party or location

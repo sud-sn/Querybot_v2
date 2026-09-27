@@ -3,8 +3,8 @@ core/value_resolver.py
 
 Question-time literal grounding against the per-client value index.
 
-Before the LLM writes SQL, user-typed filter phrases ("Emco corp") are
-resolved to exact database values ("EMCO Corporation") via
+Before the LLM writes SQL, user-typed filter phrases ("Zyco corp") are
+resolved to exact database values ("ZYCO Corporation") via
 core/value_index.py, and a VERIFIED FILTER VALUES block is injected into the
 prompt. After a zero-row result, the same index explains WHERE literals that
 match nothing and suggests the closest real values.
@@ -13,8 +13,8 @@ Resolution tiers (deliberately conservative — a wrong "verified" value would
 silently rewrite the user's intent, which is worse than doing nothing):
   verified — exact/normalized hit, or a fuzzy hit >= FUZZY_VERIFIED that is
              the ONLY candidate (or leads the runner-up by a wide margin)
-  in_list  — 2–5 fuzzy candidates on the SAME column ("EMCO Corp EU" /
-             "EMCO Corp USA"): inject all with an IN (...) suggestion —
+  in_list  — 2–5 fuzzy candidates on the SAME column ("ZYCO Corp EU" /
+             "ZYCO Corp USA"): inject all with an IN (...) suggestion —
              cheaper than a clarification round-trip and usually what the
              user meant
   clarify  — candidates spread across DIFFERENT columns/tables: ask the user
@@ -39,8 +39,8 @@ from core.value_index import (
 log = logging.getLogger("querybot.value_resolver")
 
 # A fuzzy-verified match must beat the runner-up by this much, otherwise the
-# candidates go to the in_list/clarify buckets instead ("EMCO Corp EU" 0.90 vs
-# "EMCO Corporation" 0.83 is ambiguous, not a verification).
+# candidates go to the in_list/clarify buckets instead ("ZYCO Corp EU" 0.90 vs
+# "ZYCO Corporation" 0.83 is ambiguous, not a verification).
 _FUZZY_SOLO_GAP = 0.12
 
 _MAX_PHRASES = 4
@@ -130,7 +130,7 @@ def build_known_terms(account_id: str, all_columns: dict | None) -> set[str]:
     like "customer" or "warehouse" is not itself a column name (the real
     columns are CUS_NM, WHS_DMS...), so without this it gets extracted as a
     candidate phrase and fuzzy-matched against real indexed VALUES that
-    happen to contain it as a substring ("Internal customer", "#864 EMCO PL
+    happen to contain it as a substring ("Internal customer", "#864 ZYCO PL
     - BC WAREHOUSE") — hijacking a grouping/dimension question ("across each
     customer", "which warehouse has...") into a bogus filter-value
     disambiguation. Reusing the entity-prefix vocabulary (this account's
@@ -219,7 +219,7 @@ def extract_candidate_phrases(
       1. spans  — quoted spans and capitalized multi-word spans (explicit
                   user intent; swallow anything they contain)
       2. grams  — adjacent-token 2/3-grams of non-excluded words, grounding
-                  unquoted lowercase multi-word values ("emco corp",
+                  unquoted lowercase multi-word values ("zyco corp",
                   "steel rod 10mm") that single tokens under-score against
                   the fuzzy thresholds
       3. tokens — single tokens >= 4 chars
@@ -332,7 +332,7 @@ def uncovered_phrase_tokens(phrase: str, value: str) -> list[str]:
     """Words in the user's phrase that the matched value does not account for.
 
     A fuzzy match rewrites what the user typed. That is right when the phrase
-    is a misspelling or an abbreviation of the value — "emco corp" means "EMCO
+    is a misspelling or an abbreviation of the value — "zyco corp" means "ZYCO
     Corporation", and nothing is lost. It is wrong when the phrase carries a
     qualifier the value does not have: "Acme Industries East" against an
     indexed "Acme Industries" scores highly for exactly the reason it must not
@@ -473,7 +473,7 @@ def resolve_literals(
             first = fuzzy[0]
             # The same check accept_fuzzy makes, for the same reason. An IN list
             # is honest when the phrase is genuinely ambiguous between values
-            # that all account for the user's words ("emco corp" -> EMCO Corp
+            # that all account for the user's words ("zyco corp" -> ZYCO Corp
             # EU / USA). It is not when every candidate drops a qualifier the
             # user typed: "STEEL ROD 11MM" against 10MM and 12MM offered the
             # model two rods nobody asked about, under a heading that calls them

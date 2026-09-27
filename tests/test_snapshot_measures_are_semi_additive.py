@@ -4,9 +4,9 @@ tests/test_snapshot_measures_are_semi_additive.py
 Catalogue check B4 — "show me the inventory value by warehouse" must use
 ITM_BAL_PRD_FCT without summing a balance across periods.
 
-Semi-additivity was recognised only from a column-name SUFFIX (_BAL, _INV).
-EMCO's inventory value column is BAL_VAL_AMT, where BAL is a PREFIX, so
-endswith("_BAL") is False, it fell through to the _AMT rule, and the KB
+Semi-additivity was recognised only from a column-name SUFFIX (_BAL, _INV). An
+M3-shaped mart's inventory value column is BAL_VAL_AMT, where BAL is a PREFIX,
+so endswith("_BAL") is False, it fell through to the _AMT rule, and the KB
 published it as "additive — safe to SUM across all dimensions".
 
 Summing a month-end balance across 18 months of snapshots overstates inventory
@@ -228,7 +228,8 @@ if __name__ == "__main__":
 
 
 class TestTheColumnDecidesNotTheWording(unittest.TestCase):
-    """Live on EMCO, 2026-09-02, and the worst answer the product has produced:
+    """Live on the sample tenant, 2026-09-02, and the worst answer the product
+    has produced:
 
         what is my stockholding value by warehouse
         Halifax Branch Store   13,557,410      High confidence 100/100
@@ -305,10 +306,11 @@ class TestAStaleModelCannotReintroduceTheError(unittest.TestCase):
     """The fix above was correct and still did nothing, live.
 
     `aggregation` is machine-derived and PERSISTED into the semantic model, and
-    EMCO's model predates the classifier learning abbreviated ERP names. It
-    said "additive" for BAL_VAL_AMT, `_measure_class` gives a declared value
-    precedence, and the snapshot was summed across eighteen months exactly as
-    before -- the answer stayed 13,557,410 after deploying the fix.
+    the sample tenant's model predates the classifier learning abbreviated ERP
+    names. It said "additive" for BAL_VAL_AMT, `_measure_class` gives a
+    declared value precedence, and the snapshot was summed across eighteen
+    months exactly as before -- the answer stayed 13,557,410 after deploying
+    the fix.
 
     A KB rebuild would have corrected the data, but a safety property that
     prevents a sixteen-fold error must not depend on when the KB was last

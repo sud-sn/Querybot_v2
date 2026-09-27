@@ -15,9 +15,9 @@ how to redirect it:
 
 An instruction nobody can read is the same as no disclosure at all -- so in
 French the join path was chosen silently, which is exactly what ranking instead
-of escalating was supposed to stop being. On EMCO's shape this fires often: one
-fact reaches the shared DT_DMS dimension through several role aliases, so there
-is nearly always an alternative to name.
+of escalating was supposed to stop being. On an M3-shaped mart this fires
+often: one fact reaches the shared DT_DMS dimension through several role
+aliases, so there is nearly always an alternative to name.
 
 The other two: the fixed-SQL-metric warning that explains why a "par succursale"
 was ignored, and the notice that identifiers were removed from the question. Both

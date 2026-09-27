@@ -179,7 +179,8 @@ class TestTheForecastBlockExecutes:
 
     def test_the_live_eighteen_month_series_gets_a_forecast(self):
         """The exact series the server returned, which produced nothing at all
-        because of the NameError: 2025-01 to 2026-06 of EMCO revenue."""
+        because of the NameError: 2025-01 to 2026-06 of the sample tenant's
+        revenue."""
         values = [7379419.76, 6867159.02, 7548077.20, 7307544.65, 7523942.04,
                   7381519.76, 7670171.04, 7710319.55, 7444167.07, 7639739.52,
                   7332990.06, 7540560.84, 7489655.63, 6903766.55, 7639510.50,

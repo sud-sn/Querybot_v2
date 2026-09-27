@@ -517,7 +517,7 @@ def dimension_key_suffixes(vocab: "MergedVocab | None" = None) -> tuple[str, ...
     Infor M3's "_DMS_KEY" into Python -- deciding whether a column is a
     dimension key, whether a relationship exists, which prefix names a
     dimension's label column -- so a warehouse using _SK or _DIM_KEY had those
-    branches silently fail while EMCO's took them.
+    branches silently fail while an M3-shaped warehouse's took them.
     """
     v = vocab if vocab is not None else get_active_vocab()
     return tuple(sorted(

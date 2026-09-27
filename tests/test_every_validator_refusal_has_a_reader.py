@@ -29,9 +29,9 @@ multi_fact_not_aggregated, multi_fact_shared_cte, multi_fact_cte_contract,
 multi_fact_missing_subplan, temporal_anchor_ungoverned, observed_period_shape,
 select_star.
 
-Several are exactly what an EMCO question hits: a fact joined to another fact,
-"sales and returns last quarter" needing each totalled separately, a window that
-did not anchor on the approved business date.
+Several are exactly what a question on the sample tenant hits: a fact joined to
+another fact, "sales and returns last quarter" needing each totalled
+separately, a window that did not anchor on the approved business date.
 
 Two fixes, because either alone leaves a hole. All sixteen now have a business
 reason and, where a reader can act on it, a next step. And the gate no longer

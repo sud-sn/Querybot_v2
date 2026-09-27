@@ -5,8 +5,8 @@ Azure OpenAI admits a request against a tokens-per-minute quota using the
 ``max_tokens`` the request ASKED for, not the tokens it ends up spending. The
 knowledge-base build is therefore the workload in this product most likely to
 exhaust one: two calls per table, issued back to back with no pacing, each
-asking for a ceiling derived from the table's width -- 7,984 for EMCO's
-121-column invoice fact, up to 16,000 for anything wider.
+asking for a ceiling derived from the table's width -- 7,984 for the sample
+tenant's 121-column invoice fact, up to 16,000 for anything wider.
 
 The SDK client is built with ``max_retries=1``, deliberately: a question in the
 chat window has a reader watching a spinner, and the retry count multiplies the
@@ -65,7 +65,7 @@ from core.knowledge import (  # noqa: E402
 from core.llm import is_rate_limited, is_single_request_rejection  # noqa: E402
 
 AZURE_KWARGS = {
-    "azure_endpoint": "https://emco.openai.azure.com",
+    "azure_endpoint": "https://sample.openai.azure.com",
     "azure_api_version": "2024-02-01",
 }
 
@@ -155,7 +155,7 @@ class TestOneCompletionWaitsItOut(unittest.IsolatedAsyncioTestCase):
         with provider.install():
             return await _kb_complete(
                 "document for CUS_ORD_IVC_FCT", "sys", "user", "azure_openai",
-                "emco-prod", "key", max_tokens=kb_doc_token_budget(columns),
+                "sample-prod", "key", max_tokens=kb_doc_token_budget(columns),
                 stop_event=stop_event, **AZURE_KWARGS)
 
     async def test_one_rate_limit_costs_a_wait_not_the_document(self):
@@ -192,7 +192,7 @@ class TestOneCompletionWaitsItOut(unittest.IsolatedAsyncioTestCase):
                           rate_limited_then_truncated):
             text, reason = await _kb_complete(
                 "document for CUS_ORD_IVC_FCT", "sys", "user", "azure_openai",
-                "emco-prod", "key", max_tokens=kb_doc_token_budget(121),
+                "sample-prod", "key", max_tokens=kb_doc_token_budget(121),
                 **AZURE_KWARGS)
         self.assertEqual(text, "## Overview\nfinished\n")
         self.assertEqual(seen, [7_984, 7_984, _KB_DOC_MAX_TOKENS])
@@ -215,7 +215,7 @@ class TestOneCompletionWaitsItOut(unittest.IsolatedAsyncioTestCase):
             # A label already at the cap has only one ceiling to try.
             with at_cap.install():
                 await _kb_complete(
-                    "vocabulary", "sys", "user", "azure_openai", "emco-prod",
+                    "vocabulary", "sys", "user", "azure_openai", "sample-prod",
                     "key", max_tokens=_KB_DOC_MAX_TOKENS, **AZURE_KWARGS)
         self.assertEqual(len(provider.ceilings), len(at_cap.ceilings))
 
@@ -318,7 +318,7 @@ class TestTheWholeBuild(unittest.TestCase):
             count = asyncio.run(knowledge.build_kb(
                 schema_dir=self.schema_dir, kb_dir=self.kb_dir,
                 chroma_dir="acct", business_desc="a plumbing distributor",
-                provider="azure_openai", model="emco-prod", api_key="key",
+                provider="azure_openai", model="sample-prod", api_key="key",
                 extra_kwargs=dict(AZURE_KWARGS), account_id="acct"))
         return count, calls
 
@@ -376,7 +376,7 @@ class TestTheQueryPathStillDoesNotWait(unittest.IsolatedAsyncioTestCase):
         with patch.object(llm, "_azure_openai_complete", rate_limited):
             with self.assertRaises(RuntimeError):
                 await llm.llm_complete(
-                    "sys", "user", "azure_openai", "emco-prod", "key",
+                    "sys", "user", "azure_openai", "sample-prod", "key",
                     max_tokens=768, **AZURE_KWARGS)
         self.assertEqual(len(calls), 1, "the query path retried a rate limit")
         self.assertLess(time.time() - started, 1.0)

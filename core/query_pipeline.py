@@ -3117,8 +3117,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         context,
         allowed_tables=query_scope_tables,
     )
-    # Value grounding: resolve user-typed filter literals ("emco corp") to
-    # exact database values ("EMCO Corporation") via the per-client value
+    # Value grounding: resolve user-typed filter literals ("zyco corp") to
+    # exact database values ("ZYCO Corporation") via the per-client value
     # index, so the LLM writes WHERE literals that actually exist. The index
     # covers high-cardinality display columns that schema discovery's
     # 30-distinct-value cap excludes from the KB entirely.
@@ -3295,7 +3295,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # every stage — one 90 kB fact document went in four times on the live trace.
     _injected_kb_tables: set[str] = set(_preloaded_tables)
 
-    # Value-resolution ambiguity across DIFFERENT columns ("Emco" matches a
+    # Value-resolution ambiguity across DIFFERENT columns ("Zyco" matches a
     # customer name AND an item description) can't be settled deterministically
     # or by the LLM — ask the user, mirroring the metric-scope clarification.
     if _value_clarify and can_request_clarification(event, "value_resolver"):

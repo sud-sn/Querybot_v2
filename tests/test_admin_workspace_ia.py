@@ -71,7 +71,7 @@ def _render_nav(account_id: str, segment: str) -> str:
     request = type("R", (), {"url": type("U", (), {"path": path})()})()
     return env.get_template("_client_workspace_nav.html").render(
         request=request,
-        client={"account_id": account_id, "client_name": "EMCO", "state": "READY"},
+        client={"account_id": account_id, "client_name": "Sample", "state": "READY"},
     )
 
 

@@ -239,8 +239,8 @@ def build_key_order_check_sql(policy: dict | None, db_type: str = "azure_sql") -
     anchor can then be read as MAX(fact.key) -- a single-column aggregate with
     no join at all -- rather than a semi-join over millions of rows.
 
-    On the EMCO mart DT_DMS_KEY is 20250417 for 2025-04-17, so this returns 0
-    and the cheap path applies. On a warehouse with genuinely arbitrary
+    On the sample tenant's mart DT_DMS_KEY is 20250417 for 2025-04-17, so this
+    returns 0 and the cheap path applies. On a warehouse with genuinely arbitrary
     surrogates it returns non-zero and the semi-join is used, unchanged.
 
     A NULL date is counted as a violation. LAG comparisons silently skip NULLs

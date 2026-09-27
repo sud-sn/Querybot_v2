@@ -87,7 +87,7 @@ def test_metric_source_tables_collapse_bare_two_and_three_part_aliases():
         {
             "CUS_ORD_IVC_FCT": {"SOP_CUS_IVC_LIN_AMT": "decimal"},
             "EMDW_DMART.CUS_ORD_IVC_FCT": {"SOP_CUS_IVC_LIN_AMT": "decimal"},
-            "EMCODW_DEV.EMDW_DMART.CUS_ORD_IVC_FCT": {"SOP_CUS_IVC_LIN_AMT": "decimal"},
+            "SAMPLEDW_DEV.EMDW_DMART.CUS_ORD_IVC_FCT": {"SOP_CUS_IVC_LIN_AMT": "decimal"},
         },
     )
     assert tables == {"EMDW_DMART.CUS_ORD_IVC_FCT"}

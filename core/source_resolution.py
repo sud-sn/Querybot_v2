@@ -2,7 +2,7 @@
 
 Source vocabulary is derived from each tenant's compiled semantic model and
 active terminology pack.  Core runtime code therefore does not need to know
-about M3, SAP, EMCO, or any other product/client naming convention.
+about M3, SAP, or any other product/client naming convention.
 """
 
 from __future__ import annotations

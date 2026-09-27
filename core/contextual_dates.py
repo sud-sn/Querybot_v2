@@ -277,9 +277,9 @@ def measures_are_semi_additive(measure_fields: list[dict] | None) -> bool:
         # An ADMIN's declaration is authoritative and overrides everything.
         # `aggregation`, by contrast, is machine-derived and PERSISTED into the
         # semantic model, so it is only as good as the build that wrote it --
-        # EMCO's said "additive" for BAL_VAL_AMT because the model predates the
-        # classifier learning abbreviated ERP names, and that stale guess was
-        # enough to keep summing a snapshot across eighteen months.
+        # the sample tenant's said "additive" for BAL_VAL_AMT because the model
+        # predates the classifier learning abbreviated ERP names, and that stale
+        # guess was enough to keep summing a snapshot across eighteen months.
         #
         # So a stale machine verdict does not get to overrule a fresh one. Both
         # are guesses; when they disagree the safer reading wins, because the
@@ -428,7 +428,7 @@ def infer_calendar_attributes(
             ),
         ),
         # The abbreviated spellings below are the ones an M3-shaped warehouse
-        # actually ships: EMCO's DT_DMS holds CAL_YR, MTH_NO, QTR_NO, WK_OF_YR
+        # actually ships: its DT_DMS holds CAL_YR, MTH_NO, QTR_NO, WK_OF_YR
         # and DAY_OF_MTH, of which only MTH_NM and DMS_DT were recognised. An
         # unrecognised attribute is not a cosmetic miss — the validator's
         # acceptance set is {planned date column} plus these, so correct SQL

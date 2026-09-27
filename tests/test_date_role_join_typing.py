@@ -5,7 +5,7 @@ Role-playing date entities exist to carry a JOIN to a date dimension. Both the
 entity-graph builder and the KB join-map builder selected the columns for that
 join by NAME alone, never consulting the column's storage type.
 
-On the EMCO-shaped Infor M3 mart that let the infrastructure audit column
+On the M3-shaped test mart that let the infrastructure audit column
 AZ_LST_UPD_TS (datetime2) match the modified-date pattern, so the graph offered
 
     CUS_ORD_IVC_FCT.AZ_LST_UPD_TS = DT_DMS.DT_DMS_KEY      -- datetime2 = int
@@ -167,21 +167,21 @@ class TestTheGraphIsBuiltWithTheAccountVocabulary(unittest.TestCase):
         vocab = _m3_vocab()
         seen = {}
         with patch.object(autopop, "log"),                 patch("core.vocab_packs.vocab_for_account", return_value=vocab):
-            with autopop._account_vocab("Emco_test"):
+            with autopop._account_vocab("Sample_test"):
                 seen["active"] = get_active_vocab()
         self.assertIs(seen["active"], vocab)
 
     def test_the_previous_vocabulary_is_restored_afterwards(self):
         before = get_active_vocab()
         with patch("core.vocab_packs.vocab_for_account", return_value=_m3_vocab()):
-            with autopop._account_vocab("Emco_test"):
+            with autopop._account_vocab("Sample_test"):
                 pass
         self.assertIs(get_active_vocab(), before)
 
     def test_a_pack_failure_is_logged_loudly_not_swallowed(self):
         with patch("core.vocab_packs.vocab_for_account",
                    side_effect=RuntimeError("pack missing")),                 patch.object(autopop, "log") as log:
-            with autopop._account_vocab("Emco_test"):
+            with autopop._account_vocab("Sample_test"):
                 pass
         self.assertTrue(log.warning.called, "silent fallback to builtin vocabulary")
 

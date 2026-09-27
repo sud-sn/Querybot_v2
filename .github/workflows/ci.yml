@@ -1,4 +1,4 @@
-# CI -- lint, types, the full test suite and the EMCO rehearsal, on every push
+# CI -- lint, types, the full test suite and the sample rehearsal, on every push
 # to main and every pull request. All four must pass; a CI that is allowed to be
 # red is noise.
 #
@@ -53,7 +53,7 @@ jobs:
       - run: mypy
 
   test:
-    name: Tests + EMCO rehearsal
+    name: Tests + sample rehearsal
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -97,5 +97,5 @@ jobs:
         run: python -m pytest -q
 
       # Without --strict the rehearsal exits 0 whatever it finds.
-      - name: EMCO rehearsal (EN + FR)
-        run: python -m evals.emco_rehearsal --strict
+      - name: Sample rehearsal (EN + FR)
+        run: python -m evals.sample_rehearsal --strict

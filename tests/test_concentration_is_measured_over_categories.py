@@ -23,8 +23,8 @@ Calgary hold 91.9% of the total:
     decision signal            "Volume is spread across the field — no single
                                 entry exceeds 45%; broadly diversified."
 
-The advisory line told EMCO their business was diversified while three
-warehouses carried 92% of it. And on three categories, where the raw and the
+The advisory line told the sample tenant their business was diversified while
+three warehouses carried 92% of it. And on three categories, where the raw and the
 collapsed numbers happen to agree, the claim itself is vacuous: the top three of
 three is 100% of the total by construction, and the card announced "100.0% of
 total — highly concentrated" as a finding.

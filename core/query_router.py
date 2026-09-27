@@ -102,10 +102,10 @@ def _flat(value: object) -> str:
     Folding is what lets a reader reference their own data. The comparison was
     `[^a-z0-9]+` over casefolded text, which does not strip an accent -- it
     SHREDS it, so "Montréal" flattened to "montr" + "al" while "Montreal"
-    flattened to "montreal" and the two never met. Measured on EMCO's own branch
-    names, in BOTH directions: a reader typing "Montreal" could not reference a
-    warehouse called Montréal, and a reader typing "Montréal" could not
-    reference one called Montreal.
+    flattened to "montreal" and the two never met. Measured on the sample
+    tenant's own branch names, in BOTH directions: a reader typing "Montreal"
+    could not reference a warehouse called Montréal, and a reader typing
+    "Montréal" could not reference one called Montreal.
     """
     from core.question_normalizer import _fold
 
