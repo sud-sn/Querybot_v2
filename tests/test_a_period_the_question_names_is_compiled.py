@@ -236,9 +236,18 @@ class TestTheLatestAndTheLast:
 class TestTheModelIsToldTheBounds:
 
     def test_a_member_in_a_named_period(self, warehouse):
-        # A member is the planner's to filter on: the model writes this one,
-        # told the period's bounds rather than to anchor on the data.
+        # A member the value index finds in one column is filtered on by the
+        # governed compiler, inside the period's bounds.
         answer = harness.ask(warehouse, "Units sold for BRASS ELBOW in March 2025")
+        sold = sum(move[3] for move in harness.MOVES if move[1] == 101 and move[2] == 202503)
+        assert answer["model_wrote_sql"] is False
+        assert [(row["UNT_OF_MSR"], row["UNITS_SOLD"]) for row in answer["rows"]] == [("EA", sold)]
+
+    def test_members_the_planner_filters_in_a_named_period(self, warehouse):
+        # Two members of one column are the planner's to filter on: the model
+        # writes this one, told the period's bounds rather than to anchor on
+        # the data.
+        answer = harness.ask(warehouse, "Units sold for BRASS ELBOW and STEEL TEE in March 2025")
         assert answer["model_wrote_sql"] is True
         prompt = answer["prompts"][0]
         assert "'2025-03-01'" in prompt and "'2025-04-01'" in prompt

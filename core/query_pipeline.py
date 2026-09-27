@@ -607,12 +607,48 @@ def _without_the_stated_period(resolved: dict, question: str, reader_question: s
             return True
         plain = unicodedata.normalize("NFKD", phrase).encode("ascii", "ignore").decode().lower()
         words = set(re.findall(r"[a-z0-9]+", plain))
-        return bool(words) and words <= period_words
+        if words and words <= period_words:
+            return True
+        # A member read with the period beside it: "Summit Tent 2025" is the
+        # product "Summit Tent", found on its own, and the year.
+        dropped = {
+            word for text in (item or {}).get("dropped") or [] for word in re.findall(
+                r"[a-z0-9]+", unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode().lower())
+        }
+        return bool(dropped) and dropped <= period_words
 
     return {
         bucket: [item for item in items if not is_the_period(item)] if isinstance(items, list) else items
         for bucket, items in (resolved or {}).items()
     }
+
+
+def _verified_members(resolved: dict) -> list[dict]:
+    """The members the value index found as one column's value, as the
+    governed compiler filters by them: {phrase, table, column, value}. A
+    value a label and its twin in another language both keep -- "Camping",
+    a category's English and French name -- is one member, read on the
+    label."""
+    from core.label_language import language_twins
+
+    members = [
+        {"phrase": str(item.get("phrase")), "table": str(item.get("table_fqn") or ""),
+         "column": str(item.get("column") or ""), "value": str(item.get("value") or "")}
+        for item in (resolved or {}).get("verified") or []
+        if item.get("phrase") and item.get("table_fqn") and item.get("column") and item.get("value")
+    ]
+    for item in (resolved or {}).get("several") or []:
+        columns = item.get("columns") or []
+        tables = {str(column.get("table_fqn") or "") for column in columns}
+        names = [str(column.get("column") or "") for column in columns]
+        twins = language_twins(names)
+        if (
+            len(tables) == 1 and len(names) == 2 and item.get("phrase") and item.get("value")
+            and len(twins) == 1 and {twins[0]["base"], twins[0]["twin"]} == set(names)
+        ):
+            members.append({"phrase": str(item["phrase"]), "table": tables.pop(), "column": twins[0]["base"],
+                            "value": str(item["value"])})
+    return members
 
 
 def _graph_entities_for_verified_values(resolved: dict, graph: dict) -> set[str]:
@@ -636,6 +672,11 @@ def _graph_entities_for_verified_values(resolved: dict, graph: dict) -> set[str]
             ref = ref.replace("[", "").replace("]", "").replace('"', "").strip()
             if ref:
                 table_refs.add(ref)
+    # And a member a label and its twin both keep: one member, on one table.
+    for member in _verified_members(resolved):
+        ref = str(member.get("table") or "").upper().replace("[", "").replace("]", "").replace('"', "").strip()
+        if ref:
+            table_refs.add(ref)
 
     matched: set[str] = set()
     for entity in (graph or {}).get("entities") or []:
@@ -3223,6 +3264,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _resolved_values, _value_egress = filter_resolved_for_compliance(
                 account_id, _resolved_values
             )
+            # A population the members it names narrow: "how many products are
+            # in Climbing" counts the products, the category filtering them --
+            # not the products sold there.
+            if (
+                _named_members
+                and not _analytical_plan.population_entity
+                and not _analytical_plan.counted_entity
+                and not _analytical_plan.record_count
+                and {str(item.get("phrase")) for item in _resolved_values.get("verified") or []}
+                >= set(_named_members)
+            ):
+                from core.analytical_intent import population_in_members
+
+                _member_population = population_in_members(_analysis_question, [
+                    {"phrase": str(item.get("phrase")), "table": str(item.get("table_fqn") or "")}
+                    for item in _resolved_values.get("verified") or []
+                ])
+                if _member_population:
+                    _analytical_plan = _dataclass_replace(_analytical_plan, population_entity=_member_population)
             verified_values_hint = build_verified_values_injection(_resolved_values)
             _value_clarify = _resolved_values.get("clarify") or []
             if verified_values_hint or _value_clarify or _value_egress.get("dropped"):
@@ -6270,6 +6330,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # governed compilers write no member filter, so they leave such a
         # question to the planner.
         "named_members": _named_members,
+        # Each member the index found in one column only, as the governed
+        # compiler filters by it: {phrase, table, column, value}.
+        "verified_members": _verified_members(_resolved_values),
         "production_sql": True,
         "graph_context": _graph_ctx,
         "semantic_plan": _semantic_plan,

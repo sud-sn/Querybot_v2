@@ -672,6 +672,36 @@ def detect_population_count(question: str) -> str:
     return "" if entity in _NON_ENTITY_COUNT_SUBJECT else entity
 
 
+def population_in_members(question: str, members: list[dict]) -> str:
+    """The population a question counts where all that narrows it is the
+    members it names: "how many products are in Climbing" and "... in the
+    Climbing category" count the products, the category filtering them.
+    ``members`` are {phrase, table}; a word after a member's name that names
+    its table ("category") is the member's. "" otherwise."""
+    text = str(question or "")
+    for member in members or []:
+        phrase = str(member.get("phrase") or "").strip()
+        if not phrase:
+            continue
+        table = str(member.get("table") or "").split(".")[-1]
+        table_words = {word.casefold() for word in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])", table)}
+        pattern = re.compile(
+            r"\s+(?:(?:are|is)\s+)?(?:in|from|at|of|within)\s+(?:the\s+|our\s+)?"
+            + re.escape(phrase) + r"(?:\s+(?P<noun>[A-Za-z]+))?(?=\W*$|\s)",
+            re.I,
+        )
+        match = pattern.search(text)
+        if not match:
+            return ""
+        noun = match.group("noun")
+        # A word after the member that is not its table's names something the
+        # member narrows other than the population: "in Climbing stores".
+        if noun and _singular(noun.casefold()) not in {_singular(word) for word in table_words}:
+            return ""
+        text = (text[:match.start()] + " " + text[match.end():]).strip()
+    return detect_population_count(text) if members else ""
+
+
 def _latest_clarification(question: str) -> str:
     matches = _CLARIFICATION_RE.findall(question or "")
     return matches[-1].strip() if matches else ""

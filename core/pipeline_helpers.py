@@ -1086,6 +1086,12 @@ def _unread_qualifier(context: dict) -> str:
     # by its words, or inside a name spelled all in capitals (DIMCUSTOMER).
     tables = [str(field.get("table") or "") for field in plan.get("fields") or []]
     named |= {word for table in tables for word in _table_words(table)}
+    # A member the grouped compiler filters by is read: "sales of Climbing
+    # products" is the Climbing category's.
+    named |= {
+        word for member in verified_member_filters(context) or []
+        for word in re.findall(r"[a-z0-9]+", str(member.get("phrase") or "").lower())
+    }
     squeezed = [re.sub(r"[^a-z]", "", table.split(".")[-1].lower()) for table in tables]
     french = _gate_question(context) != str(context.get("question") or _gate_question(context))
 
@@ -1151,19 +1157,70 @@ def _metric_words(metric: dict) -> str:
     )).lower()
 
 
-def _left_to_the_planner(context: dict) -> str:
+_SUMMED_COLUMN = re.compile(
+    r"\bSUM\s*\(\s*((?:\[?[A-Za-z_][A-Za-z0-9_]*\]?\s*\.\s*)?\[?[A-Za-z_][A-Za-z0-9_]*\]?)\s*\)", re.I,
+)
+
+
+def _null_safe_sums(expression: str) -> str:
+    """Each SUM of an expression, 0 where it adds nothing up."""
+    return re.sub(
+        r"\bSUM\s*\(((?:[^()]|\([^()]*\))*)\)",
+        lambda match: f"COALESCE(SUM({match.group(1)}), 0)",
+        expression,
+        flags=re.I,
+    )
+
+
+def _member_literal(value: str, db_type: str) -> str:
+    """A member's value as a string literal: its quotes doubled, and national
+    on SQL Server so an accented name is compared as it is kept."""
+    quoted = "'" + str(value).replace("'", "''") + "'"
+    return "N" + quoted if db_type == "azure_sql" else quoted
+
+
+def verified_member_filters(context: dict) -> list[dict] | None:
+    """The members the question names, each one value of one column the
+    value index found it in, as a filter: [{phrase, table, column, value}].
+    [] where it names none; None where it names one the index found in
+    several columns, among several values, or not whole."""
+    named = [str(phrase) for phrase in (context or {}).get("named_members") or []]
+    verified: dict[str, list[dict]] = {}
+    for member in (context or {}).get("verified_members") or []:
+        verified.setdefault(str(member.get("phrase") or ""), []).append(member)
+    filters = []
+    for phrase in dict.fromkeys(named):
+        found = verified.get(phrase) or []
+        if len(found) != 1:
+            return None
+        filters.append(found[0])
+    # Two members of one column are either or both -- "BRASS ELBOW and STEEL
+    # TEE" -- never one row that is each: the planner's to read.
+    for index, member in enumerate(filters):
+        if any(
+            _same_physical_table(member.get("table"), other.get("table"))
+            and str(member.get("column") or "").upper() == str(other.get("column") or "").upper()
+            for other in filters[:index]
+        ):
+            return None
+    return filters
+
+
+def _left_to_the_planner(context: dict, *, members_filtered: bool = False) -> str:
     """Why no governed compiler may answer this question, or "".
 
-    They write no member filter and no condition on a value, so they would
-    answer for every member: "stock on hand for BRASS ELBOW EA" came back as
-    every item's stock. A member the question names is found in the value
-    index before planning (core/value_resolver.py) and carried here.
+    Only the grouped compiler writes a member filter (``members_filtered``),
+    and only a member the value index found as one column's value; the
+    others would answer for every member: "stock on hand for BRASS ELBOW EA"
+    came back as every item's stock. A member the question names is found
+    in the value index before planning (core/value_resolver.py) and carried
+    here. No compiler writes any other condition on a value.
 
     Nor do they write whether a row kept its time: "how many orders were
     shipped late" was answered with every order. A metric defined for it
     ("Late Orders") writes it, and is answered.
     """
-    if (context or {}).get("named_members"):
+    if (context or {}).get("named_members") and not (members_filtered and verified_member_filters(context)):
         return "names a member"
     question = _gate_question(context)
     if _VALUE_CONDITION.search(question):
@@ -1524,9 +1581,24 @@ def _compile_governed_grouped_request_sql(
     from core.contextual_dates import ranked_period_grain
 
     ranked_period = bool(policy) and not unique_dimensions and bool(ranked_period_grain(question))
+    # A breakdown by the column a named member is read on is that member,
+    # written as its filter: "sales by product for the Climbing category" is
+    # broken down by product alone.
+    members = verified_member_filters(context)
+    if members is None:
+        return ""
+    member_fields = [{"table": member["table"], "column": member["column"]} for member in members]
+    unique_dimensions = [
+        field for field in unique_dimensions
+        if not any(
+            _same_physical_table(field.get("table"), member["table"])
+            and str(field.get("column") or "").upper() == str(member["column"]).upper()
+            for member in member_fields
+        )
+    ]
     if (
         len(unique_dimensions) > 1
-        or _unwritten_display_fields(plan, unique_dimensions)
+        or _unwritten_display_fields(plan, unique_dimensions + member_fields)
         or _requested_breakdowns(question) - int(ranked_period) > len(unique_dimensions)
     ):
         return ""
@@ -1541,6 +1613,8 @@ def _compile_governed_grouped_request_sql(
         and len(metric_specs) == 1
         and derived.get("semantics") not in {"count_distinct_business_identifier", "count_records"}
         and str(policy.get("kind") or "") in _COMPILABLE_WINDOW_KINDS
+        # A member to filter by is this helper's: the scalar compiler writes none.
+        and not verified_member_filters(context)
     ):
         return ""
 
@@ -1565,6 +1639,10 @@ def _compile_governed_grouped_request_sql(
     requested_targets: list[tuple[str, str]] = []
     if unique_dimensions:
         requested_targets.append((str(unique_dimensions[0]["table"]), "business_dimension"))
+    # The members the question names are read where the index found them,
+    # joined as any breakdown is.
+    for index, member in enumerate(members):
+        requested_targets.append((str(member["table"]), f"named_member_{index + 1}"))
     date_target = str(policy.get("dimension_table") or "") if policy else ""
     date_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(policy.get("role_alias") or "business_date"))
     if date_target:
@@ -1687,6 +1765,13 @@ def _compile_governed_grouped_request_sql(
 
     from_sql = "\n    ".join(from_lines)
     where_parts: list[str] = []
+    for member in members:
+        member_alias = alias_for(str(member["table"]))
+        if not member_alias:
+            return ""
+        where_parts.append(
+            f"{member_alias}.{qcol(str(member['column']))} = {_member_literal(str(member['value']), db_type)}"
+        )
     # A period table keeps a row for each whole year beside that year's months
     # (core/period_rows.py). A date window leaves the year rows out on its own,
     # their key decoding to no date; without one, only this does.
@@ -1964,8 +2049,19 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     # ambiguous to the warehouse, which refused it. The metric is the fact's.
     fact_columns = next(
         (cols for name, cols in (table_columns or {}).items() if _same_physical_table(name, fact_table)), {})
-    select_parts.extend(
-        f"{formula_read_on(formula, fact_columns)} AS {alias}" for alias, formula in metric_specs)
+    measures_read = [(alias, formula_read_on(formula, fact_columns)) for alias, formula in metric_specs]
+    if members and not group_parts:
+        # One total of the members a question names tells no rows from rows
+        # with no value: beside it, how many rows matched and how many held
+        # one, and a total of none is 0.
+        measures_read = [(alias, _null_safe_sums(expression)) for alias, expression in measures_read]
+        select_parts.append(("COUNT_BIG(*)" if db_type == "azure_sql" else "COUNT(*)") + " AS MatchedRows")
+        for column in dict.fromkeys(
+            column for _alias, expression in measures_read for column in _SUMMED_COLUMN.findall(expression)
+        ):
+            name = re.sub(r"[^A-Za-z0-9]", "", column.split(".")[-1])
+            select_parts.append(f"COUNT({column}) AS NonNull{name}Rows")
+    select_parts[len(select_parts):] = [f"{expression} AS {alias}" for alias, expression in measures_read]
 
     top_clause = ""
     try:
@@ -2198,7 +2294,7 @@ def compile_governed_temporal_metric_sql(
         if aggregate != computed_by_the_plan
     ]:
         return ""
-    reason = _left_to_the_planner(semantic_context or {})
+    reason = _left_to_the_planner(semantic_context or {}, members_filtered=True)
     if reason:
         log.info("Governed compilers leave this question to the planner: it %s", reason)
         return ""
@@ -2212,6 +2308,10 @@ def compile_governed_temporal_metric_sql(
     )
     if grouped:
         return grouped
+    # Only the grouped compiler filters by a member the question names.
+    if verified_member_filters(semantic_context or {}):
+        log.info("Governed compilers leave this question to the planner: its members filter no grouped answer")
+        return ""
 
     context = semantic_context or {}
     plan = context.get("semantic_plan") or {}
