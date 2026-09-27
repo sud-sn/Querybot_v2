@@ -5547,9 +5547,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _named_only_by_a_measure: set[str] = set()
     try:
         from core.graph_resolver import detect_entities
-        from core.semantic_model import without_measure_names
+        from core.semantic_model import without_measure_field_names, without_measure_names
 
-        _graph_question_less_measures = without_measure_names(_graph_resolution_question, _matched_metrics)
+        # A measure the plan binds by a name of its own is the measure's too:
+        # "sales and total product cost by year" joins no product.
+        _graph_question_less_measures = without_measure_field_names(
+            without_measure_names(_graph_resolution_question, _matched_metrics),
+            (_semantic_plan or {}).get("fields") or [],
+        )
         if _graph_question_less_measures != _graph_resolution_question and _full_graph.get("entities"):
             _named_only_by_a_measure = set(detect_entities(_graph_resolution_question, _full_graph)) - set(
                 detect_entities(_graph_question_less_measures, _full_graph))

@@ -429,6 +429,22 @@ ATTRIBUTE_SOURCE = "an attribute its entity's own table keeps"
 _COUNT_ASKED = re.compile(r"\b(?:how\s+many|number\s+of|counts?|counted|counting|combien|nombre)\b", re.I)
 
 
+def grain_asked_for(question: str, grain: str, plan: dict[str, Any] | None) -> str:
+    """The members the question is about, unless it names them only inside
+    the name of a measure its plan binds: "sales and product cost by year"
+    is about no product. "" where it names them only there."""
+    grain = str(grain or "").strip()
+    if not grain:
+        return ""
+    from core.semantic_model import without_measure_field_names
+
+    less = without_measure_field_names(str(question or ""), (plan or {}).get("fields") or [])
+    if less == str(question or ""):
+        return grain
+    words = {_singular(word) for word in re.findall(r"[a-z0-9]+", less.lower())}
+    return grain if _singular(grain.lower()) in words else ""
+
+
 def metrics_asked_for(question: str, matched_metrics: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Of the metrics a question's words matched, those it asks for: not
     counts matched by the members' name alone, where the question asks no
@@ -931,7 +947,7 @@ def compile_analytical_request_plan(
         "quarter_periods": list(intent_plan.get("quarter_periods") or []),
         "calendar_basis": str(intent_plan.get("calendar_basis") or ""),
         "comparison": str(intent_plan.get("comparison") or ""),
-        "entity_grain": str(intent_plan.get("entity_grain") or ""),
+        "entity_grain": grain_asked_for(question, str(intent_plan.get("entity_grain") or ""), plan),
         "top_n": intent_plan.get("top_n"),
         "output_shape": output_shape,
         "prohibitions": [

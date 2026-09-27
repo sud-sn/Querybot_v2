@@ -311,6 +311,12 @@ def _aliases_for_column(column: str, vocab=None) -> set[str]:
             words = words[:-1]
             if words:
                 aliases.add(" ".join(words))
+    # A total is said without its "total": TotalProductCost is asked for as
+    # "product cost". A bare "total cost" keeps it -- "cost" alone is any
+    # cost's.
+    words = _norm(" ".join(_column_words(name, vocab=v))).split()
+    if len(words) > 2 and words[0] == "total":
+        aliases.add(" ".join(words[1:]))
     return {a for a in aliases if a}
 
 
@@ -1297,11 +1303,26 @@ def demote_measures_governed_by_a_metric(
     if not governed:
         return []
 
+    # The words the metrics are asked by. A measure the question names in
+    # two words or more none of them shares -- the product cost of "sales and
+    # product cost by year" -- is a second measure asked for, not a rival
+    # reading of the metric's. One word is not: the "order" of "customers who
+    # placed an order" names no order quantity.
+    metric_words = {
+        word
+        for metric in metrics or []
+        for phrase in [str(metric.get("name") or ""), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]
+        for word in _content_words(phrase)
+    }
     demoted: list[str] = []
     for field in fields or []:
         if str(field.get("enforcement") or "") == "optional":
             continue
         if str(field.get("role") or "") != "measure":
+            continue
+        term = str(field.get("term") or "")
+        own_words = _content_words(term)
+        if len(term.split()) > 1 and own_words and not own_words & metric_words:
             continue
         table = str(field.get("table") or "").split(".")[-1].upper()
         column = str(field.get("column") or "").upper()
@@ -1309,6 +1330,19 @@ def demote_measures_governed_by_a_metric(
             field["enforcement"] = "optional"
             demoted.append(f"{field.get('table')}.{field.get('column')}")
     return demoted
+
+
+def _content_words(phrase: str) -> set[str]:
+    """A measure name's words that say what is measured, each in the
+    singular: "Total Product Costs" is {"product", "cost"}."""
+    from core.source_resolution import GENERIC_MEASURE_WORDS
+
+    words = re.findall(r"[a-z0-9]+", str(phrase or "").lower())
+    return {
+        word[:-1] if word.endswith("s") and len(word) > 3 and not word.endswith("ss") else word
+        for word in words
+        if word not in GENERIC_MEASURE_WORDS
+    }
 
 
 def _said_in(term: str, phrase: str) -> bool:

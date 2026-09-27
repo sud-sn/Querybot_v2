@@ -104,7 +104,48 @@ def _measure_aliases(field: dict[str, Any], vocab=None) -> set[str]:
             words = words[:-1]
             if words:
                 derived.add(" ".join(words))
-    return aliases | derived
+    return aliases | derived | {form for alias in aliases for form in _without_total(alias)}
+
+
+def _without_total(phrase: str) -> set[str]:
+    """A total's name as it is said without its "total": "total product
+    cost" is asked for as "product cost". A bare "total cost" keeps it."""
+    words = _norm(phrase).split()
+    return {" ".join(words[1:])} if len(words) > 2 and words[0] == "total" else set()
+
+
+def _table_measure_names(table: dict[str, Any], vocab=None) -> set[str]:
+    """Every name a fact's measures answer to."""
+    names: set[str] = set()
+    for field in table.get("fields", []) or []:
+        if str(field.get("role") or "").lower() in {"measure", "measure_candidate"}:
+            names |= _measure_aliases(field, vocab=vocab)
+    for measure in table.get("measures", []) or []:
+        for value in [measure.get("name"), measure.get("column"), *(measure.get("synonyms") or [])]:
+            if value:
+                names |= {_norm(value), *_without_total(value)} - {""}
+    return names
+
+
+def _longest_said(question: str, names) -> str:
+    """The longest of ``names`` the question says; "" for none."""
+    return max(
+        (name for name in names if name and _contains_phrase(question, name)),
+        key=lambda name: (len(name.split()), len(name), name), default="",
+    )
+
+
+def _without_measure_names_holding(question: str, alias: str, measure_names) -> str:
+    """The question less every measure name it says that holds all of
+    ``alias``'s words and more: the product of "total product cost by year"
+    is the measure's, not a table's."""
+    words = set(_norm(alias).split())
+    text = _norm(question)
+    for name in sorted(measure_names, key=lambda other: (-len(other.split()), other)):
+        name_words = name.split()
+        if len(name_words) > len(words) and words <= set(name_words):
+            text = re.sub(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", " ", text)
+    return text
 
 
 def _table_aliases(table: dict[str, Any], vocab=None) -> set[str]:
@@ -316,6 +357,21 @@ def resolve_source_scope(
         for alias in aliases:
             alias_counts[alias] = alias_counts.get(alias, 0) + 1
 
+    # The names of the measures each fact keeps that the question says. A
+    # table is not named by a word said only inside another's measure: the
+    # product of "total product cost by year" names no product stock table.
+    said_measures = {
+        _table_identity(table): {
+            name for name in _table_measure_names(table, vocab=vocab) if _contains_phrase(question, name)
+        }
+        for table in tables
+    }
+    said_anywhere = set().union(*said_measures.values())
+
+    def _names(alias: str, table: dict[str, Any]) -> bool:
+        others = said_anywhere - said_measures.get(_table_identity(table), set())
+        return _contains_phrase(_without_measure_names_holding(question, alias, others), alias)
+
     requested_grain = _requested_grain(question)
     requested_grains = _requested_grains(question)
     authoritative_fact_tables = {
@@ -338,7 +394,7 @@ def resolve_source_scope(
         matches = sorted(
             (
                 a for a in table_aliases.get(_table_identity(table), set())
-                if alias_counts.get(a, 0) == 1 and _contains_phrase(question, a)
+                if alias_counts.get(a, 0) == 1 and _names(a, table)
             ),
             key=len, reverse=True,
         )
@@ -357,7 +413,7 @@ def resolve_source_scope(
         shared_matches = sorted(
             (
                 a for a in table_aliases.get(_table_identity(table), set())
-                if alias_counts.get(a, 0) > 1 and _contains_phrase(question, a)
+                if alias_counts.get(a, 0) > 1 and _names(a, table)
             ),
             key=len,
             reverse=True,
@@ -381,17 +437,24 @@ def resolve_source_scope(
         for field in table.get("fields", []) or []:
             if str(field.get("role") or "").lower() not in {"measure", "measure_candidate"}:
                 continue
-            hit = next((a for a in _measure_aliases(field, vocab=vocab) if _contains_phrase(question, a)), "")
+            hit = _longest_said(question, _measure_aliases(field, vocab=vocab))
             if hit:
                 measure_hits.add(hit)
         for measure in table.get("measures", []) or []:
             values = [measure.get("name"), measure.get("column"), *(measure.get("synonyms") or [])]
-            hit = next((_norm(v) for v in values if v and _contains_phrase(question, _norm(v))), "")
+            hit = _longest_said(question, {form for v in values if v for form in [_norm(v), *_without_total(v)]})
             if hit:
                 measure_hits.add(hit)
         if measure_hits:
             score += 5 + min(4, len(measure_hits))
             evidence.append("measure:" + ",".join(sorted(measure_hits)[:3]))
+            # A measure named in words of its own, not a word any measure
+            # might answer to, is strong evidence: "total product cost by
+            # year" is read where the total product cost is. Two facts that
+            # keep it stay tied.
+            if any(len(hit.split()) > 1 for hit in measure_hits):
+                score += 2
+                evidence.append("measure_named_in_full")
 
         for grain in requested_grains or ({requested_grain} if requested_grain else set()):
             if _grain_matches(grain, table):

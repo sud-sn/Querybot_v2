@@ -2795,6 +2795,16 @@ def _measure_names(metrics) -> set[str]:
     } - {""}
 
 
+def _measure_phrase_forms(phrase) -> set[str]:
+    """A measure's name in words, and without the "total" it often begins
+    with: "total product cost" is also said "product cost"."""
+    words = re.sub(r"[^a-z0-9]+", " ", str(phrase or "").lower()).split()
+    forms = {" ".join(words)} if words else set()
+    if len(words) > 2 and words[0] == "total":
+        forms.add(" ".join(words[1:]))
+    return forms
+
+
 def without_measure_names(question: str, metrics) -> str:
     """The question less every name of two words or more that one of
     ``metrics`` is asked for by, said in full: the customers of "buying
@@ -3284,8 +3294,17 @@ def build_runtime_semantic_plan(
         name for names in vocabulary_names.values() for name in names
     }
     # And every name a measure is asked for by: "reseller sales by business
-    # type" asks for no reseller.
-    measure_names = _measure_names(metrics)
+    # type" asks for no reseller -- a registered metric's, or a measure a
+    # table keeps, with or without its "total": "sales and product cost by
+    # year" asks for no product.
+    measure_names = _measure_names(metrics) | {
+        name
+        for table in tables
+        for measure in table.get("measures", []) or []
+        if isinstance(measure, dict)
+        for phrase in [measure.get("name"), *(measure.get("synonyms") or [])]
+        for name in _measure_phrase_forms(phrase)
+    }
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for dimension in table.get("dimensions", []) or []:
