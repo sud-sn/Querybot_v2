@@ -480,6 +480,16 @@ def infer_calendar_attributes(
             ("DAY_NAME", "DAY_NM", "WEEKDAY_NAME", "WEEKDAY_NM", "DAY_OF_WEEK_NAME",
              "DAY_NAME_OF_WEEK", "ENGLISH_DAY_NAME_OF_WEEK"),
         ),
+        # The warehouse's own fiscal year and quarter: a fiscal period is read
+        # from them as the calendar numbers it (fiscal_period_window).
+        "fiscal_year": _calendar_column_name(
+            columns,
+            ("FISCAL_YEAR", "FISCAL_YR", "FSCL_YR", "FSC_YR", "FY"),
+        ),
+        "fiscal_quarter": _calendar_column_name(
+            columns,
+            ("FISCAL_QUARTER", "FISCAL_QTR", "FSCL_QTR", "FSC_QTR", "FQ"),
+        ),
     }
     return {key: value for key, value in result.items() if value}
 
@@ -2492,6 +2502,89 @@ def stated_period(question: str, calendar_basis: str = "unresolved") -> dict:
     return period
 
 
+# A fiscal year named outright: "fiscal year 2025", "fiscal 2025", "financial
+# year 2025", "FY2025", "FY 25". French "exercice 2025" is read in English as
+# "fiscal year 2025", and as typed.
+_FISCAL_YEAR_RE = re.compile(
+    r"\b(?:fiscal(?:\s+year)?|financial\s+year|exercice(?:\s+fiscal)?)\s+(?:of\s+|de\s+|du\s+)?"
+    r"((?:19|20)\d{2})\b"
+    r"|\bfy\s?((?:19|20)\d{2}|\d{2})\b"
+)
+# A quarter in it: "Q1", "FQ1", "quarter 1", "the first (fiscal) quarter".
+_FISCAL_QUARTER_RE = re.compile(
+    rf"\bf?q([1-4])\b|\bquarter\s+([1-4])\b|\b({_PERIOD_ORDINAL})\s+(?:fiscal\s+)?(?:quarter|trimestre)\b"
+)
+# The year a quarter is of, where it follows it: "Q1 2025", "first quarter of 2025".
+_QUARTER_YEAR_RE = re.compile(r"\s+(?:of\s+|de\s+|du\s+)?(?:the\s+)?(?:year\s+)?((?:19|20)\d{2})\b")
+
+
+def read_fiscal_period(question: str, calendar_basis: str = "unresolved") -> dict:
+    """The one fiscal year -- and quarter within it -- a question names, or {}:
+    {"fiscal_year": 2025, "fiscal_quarter": 1 or 0, "label": "FY2025 Q1"}.
+
+    A fiscal period is named by its fiscal words ("fiscal year 2025", "FY25",
+    "fiscal Q1 2025"), or, once the reader has said quarters are fiscal, by a
+    bare quarter ("Q1 2025"); a bare year is the calendar's on any basis. Two
+    periods, or a comparison, are the planner's to shape, and read as none.
+    """
+    text = " ".join(
+        unicodedata.normalize("NFKD", str(question or "").replace("\u2019", "'"))
+        .encode("ascii", "ignore").decode().lower().split()
+    )
+    named = bool(_FISCAL_WORDS.search(text) or re.search(r"\bfq[1-4]\b", text))
+    if not text or _COMPARED.search(text) or not (named or calendar_basis == "fiscal"):
+        return {}
+    years: set[int] = set()
+    for match in _FISCAL_YEAR_RE.finditer(text):
+        written = match.group(1) or match.group(2)
+        years.add(int(written) if len(written) == 4 else 2000 + int(written))
+    quarters: set[int] = set()
+    for match in _FISCAL_QUARTER_RE.finditer(text):
+        quarters.add(int(match.group(1) or match.group(2) or 0) or _PERIOD_ORDINALS.get(match.group(3) or "", 0))
+        following = _QUARTER_YEAR_RE.match(text, match.end())
+        if following:
+            years.add(int(following.group(1)))
+    # A calendar year said beside it is a second period: "fiscal year 2024 and 2025".
+    stated_years = {int(year) for year in re.findall(r"\b((?:19|20)\d{2})\b", text)}
+    if len(years) != 1 or stated_years - years or len(quarters) > 1 or 0 in quarters:
+        return {}
+    year, quarter = next(iter(years)), next(iter(quarters), 0)
+    return {
+        "fiscal_year": year,
+        "fiscal_quarter": quarter,
+        "label": f"FY{year}" + (f" Q{quarter}" if quarter else ""),
+    }
+
+
+def fiscal_period_window(
+    question: str,
+    calendar_attributes: dict[str, str] | None,
+    calendar_basis: str = "unresolved",
+) -> dict:
+    """The named period of a fiscal year or quarter, read from the calendar's
+    own fiscal columns, or {} where the calendar keeps none for it.
+
+    The warehouse's calendar says which dates are its fiscal year 2025 -- and
+    by which convention it names that year -- so no start month is asked for
+    and none is guessed: the period is kept as `<fiscal year> = 2025` on the
+    date's calendar (the compiler's calendar_filter)."""
+    period = read_fiscal_period(question, calendar_basis)
+    if not period:
+        return {}
+    calendar_filter = {"fiscal_year": period["fiscal_year"]}
+    if period["fiscal_quarter"]:
+        calendar_filter["fiscal_quarter"] = period["fiscal_quarter"]
+    if not all((calendar_attributes or {}).get(attribute) for attribute in calendar_filter):
+        return {}
+    return {
+        "kind": "named_period",
+        "anchor_policy": "stated",
+        "period_grain": "fiscal_quarter" if period["fiscal_quarter"] else "fiscal_year",
+        "label": period["label"],
+        "calendar_filter": calendar_filter,
+    }
+
+
 def build_contextual_date_plan(
     binding: dict,
     question: str = "",
@@ -2616,6 +2709,8 @@ def build_contextual_date_plan(
     window = (
         dict(temporal_window or {}) or detect_temporal_window(question)
         or stated_period(question, calendar_basis)
+        or (fiscal_period_window(question, calendar_attributes, calendar_basis)
+            if date_key_type == "surrogate_fk" else {})
     )
     if window.get("kind") == "named_period" and reads_a_level:
         # A level in a named period is read at the last snapshot inside it:

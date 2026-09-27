@@ -40,11 +40,13 @@ def _table(key: str | tuple[str, ...], *columns: tuple[str, str]) -> dict:
 
 
 SCHEMA = {
+    # The calendar keeps a fiscal year that starts in July and is numbered by
+    # the year it ends in: fiscal 2025 is July 2024 to June 2025.
     "SalesDW.dbo.DimDate": _table(
         "DateKey", ("DateKey", "int"), ("FullDateAlternateKey", "date"), ("DayNumberOfWeek", "tinyint"),
         ("EnglishDayNameOfWeek", "nvarchar"), ("FrenchDayNameOfWeek", "nvarchar"), ("MonthNumberOfYear", "tinyint"),
         ("EnglishMonthName", "nvarchar"), ("FrenchMonthName", "nvarchar"), ("CalendarQuarter", "tinyint"),
-        ("CalendarYear", "smallint")),
+        ("CalendarYear", "smallint"), ("FiscalQuarter", "tinyint"), ("FiscalYear", "smallint")),
     "SalesDW.dbo.DimProductCategory": _table(
         "ProductCategoryKey", ("ProductCategoryKey", "int"), ("EnglishProductCategoryName", "nvarchar"),
         ("FrenchProductCategoryName", "nvarchar")),
@@ -154,7 +156,8 @@ def rows() -> dict[str, list[tuple]]:
     while day <= dt.date(2025, 12, 31):
         days.append((_key(day), day.isoformat(), day.isoweekday() % 7 + 1, _DAYS_EN[day.weekday()],
                      _DAYS_FR[day.weekday()], day.month, _MONTHS_EN[day.month - 1], _MONTHS_FR[day.month - 1],
-                     (day.month - 1) // 3 + 1, day.year))
+                     (day.month - 1) // 3 + 1, day.year, (day.month + 5) % 12 // 3 + 1,
+                     day.year + (day.month >= 7)))
         day += dt.timedelta(days=1)
     facts = []
     for number, line, placed, shipped, product, customer, territory, quantity in orders():

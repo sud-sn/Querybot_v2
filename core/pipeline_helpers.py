@@ -1526,6 +1526,19 @@ def _compile_governed_grouped_request_sql(
         # Every date the data holds, in the question's grain: no window. A row
         # with no date belongs to no period.
         where_parts.append(f"{date_ref} IS NOT NULL")
+    elif policy and str(policy.get("kind") or "") == "named_period" and policy.get("calendar_filter"):
+        # A fiscal period is the calendar's own: its fiscal year (and quarter)
+        # as the warehouse numbers them, on the date's calendar.
+        from core.contextual_dates import format_calendar_attribute_ref
+
+        calendar_alias = alias_for(date_target) if key_type == "surrogate_fk" else ""
+        for attribute, value in dict(policy["calendar_filter"]).items():
+            attribute_ref = format_calendar_attribute_ref(
+                calendar_alias, policy.get("calendar_attributes") or {}, attribute, db_type,
+            )
+            if not calendar_alias or not attribute_ref:
+                return ""
+            where_parts.append(f"{attribute_ref} = {int(value)}")
     elif policy and str(policy.get("kind") or "") == "named_period":
         # A stated period is kept on its literal bounds, with no anchor read. A
         # level in it is read at the last snapshot inside the bounds, below; a

@@ -697,7 +697,25 @@ def _normalise_calendar_profile(profile: dict[str, Any] | None) -> dict[str, Any
         "basis": basis,
         "fiscal_year_start_month": start_month or None,
         "source": str(raw.get("source") or "").strip(),
+        # The fiscal columns the warehouse's calendar keeps (fiscal_year,
+        # fiscal_quarter): a fiscal period is read from them, not asked about.
+        "fiscal_attributes": tuple(
+            str(name) for name in (raw.get("fiscal_attributes") or ())
+            if str(name) in {"fiscal_year", "fiscal_quarter"}
+        ),
     }
+
+
+def _calendar_keeps_the_fiscal_period(text: str, profile: dict[str, Any]) -> bool:
+    """Whether the fiscal period the question names is one the warehouse's
+    calendar keeps: its fiscal year, and its fiscal quarter where a quarter is
+    named. Only then is the start month not asked for -- a relative fiscal
+    period ("last fiscal year") names no year to read, and is asked about."""
+    from core.contextual_dates import read_fiscal_period
+
+    period = read_fiscal_period(text, "fiscal")
+    needed = {"fiscal_year", "fiscal_quarter"} if period.get("fiscal_quarter") else {"fiscal_year"}
+    return bool(period) and needed <= set(profile.get("fiscal_attributes") or ())
 
 
 def names_a_quarter(text: str) -> bool:
@@ -998,6 +1016,14 @@ def plan_analytical_intent(
             ),
             reason="The workspace has no approved calendar basis for a bare quarter reference.",
         )
+    elif (
+        calendar_basis == "fiscal"
+        and (named_quarter or explicit_fiscal)
+        and not fiscal_start_month
+        and clarification is None
+        and _calendar_keeps_the_fiscal_period(text, profile)
+    ):
+        assumptions.append("Read the fiscal period from the calendar's own fiscal year and quarter.")
     elif (
         calendar_basis == "fiscal"
         and (named_quarter or explicit_fiscal)

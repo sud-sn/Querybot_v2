@@ -1846,8 +1846,23 @@ def has_identity_filter(sql: str) -> bool:
     return _where_has_identity_filter(where)
 
 
+def _plan_calendar_columns(semantic_context: dict | None) -> frozenset[str]:
+    """The columns of the calendar the plan's governed dates join, upper-cased:
+    its year, quarter, month, fiscal year -- core.contextual_dates'
+    calendar_attributes. A filter on one keeps a period, never a record."""
+    plan = (semantic_context or {}).get("semantic_plan") or {}
+    return frozenset(
+        str(column).strip('[]"`').upper()
+        for policy in plan.get("temporal_policies") or []
+        if isinstance(policy, dict)
+        for column in (policy.get("calendar_attributes") or {}).values()
+        if column
+    )
+
+
 def _find_null_aggregate_diagnostic_errors(
     sql: str, tree, table_columns: dict[str, dict[str, str]] | None = None,
+    calendar_columns: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """
     Guard filtered single-row SUM queries from returning a misleading NULL.
@@ -1869,7 +1884,7 @@ def _find_null_aggregate_diagnostic_errors(
     if not sql or where is None or tree.find(sg_exp.Group) is not None:
         return []
 
-    if not _where_has_identity_filter(where, _date_typed_columns(table_columns)):
+    if not _where_has_identity_filter(where, _date_typed_columns(table_columns) | calendar_columns):
         return []
 
     select = tree.find(sg_exp.Select)
@@ -3656,7 +3671,9 @@ def validate_sql_detailed(
                 metric_formula_errors,
             )
 
-        null_agg_errors = _find_null_aggregate_diagnostic_errors(sql, tree, table_columns)
+        null_agg_errors = _find_null_aggregate_diagnostic_errors(
+            sql, tree, table_columns, _plan_calendar_columns(semantic_context),
+        )
         if null_agg_errors:
             return SqlValidationResult(
                 False,

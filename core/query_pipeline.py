@@ -109,6 +109,7 @@ from core.contextual_dates import (
     NO_DATE_ASKED,
     question_names_a_calendar_period,
     resolve_contextual_date_binding,
+    read_fiscal_period,
     stated_period,
 )
 from core.metric_scope import metric_source_tables, resolve_metric_scope
@@ -175,6 +176,36 @@ def _warehouse_keeps_a_fiscal_year(schema_dir: str) -> bool:
         for table, columns in tables.items()
         for name in (str(table).split(".")[-1], *columns)
     )
+
+
+_DATE_TYPE_RE = re.compile(r"\b(?:date|datetime2?|smalldatetime|datetimeoffset|timestamp\w*)\b", re.I)
+
+
+def _calendar_fiscal_attributes(schema_dir: str) -> list[str]:
+    """The fiscal attributes -- fiscal_year, fiscal_quarter -- that every
+    calendar of the warehouse keeps: a table with a date and a year, calendar
+    or fiscal (core.contextual_dates.infer_calendar_attributes). A calendar
+    without them, or a schema that cannot be read, keeps none, and the reader
+    is asked as before."""
+    from core.contextual_dates import infer_calendar_attributes
+    from core.schema import load_schema_columns
+
+    try:
+        tables = load_schema_columns(schema_dir) if schema_dir else {}
+    except Exception as exc:  # noqa: BLE001 - asking is the safe side
+        log.warning("Calendar fiscal attributes unread in %s: %s", schema_dir, exc)
+        return []
+    calendars = []
+    for table, columns in tables.items():
+        # A calendar's date is often named for what it is, not for being a
+        # date (FullDateAlternateKey): its declared type says so.
+        typed_date = next((str(name) for name, declared in (columns or {}).items()
+                           if _DATE_TYPE_RE.search(str(declared or ""))), "")
+        attributes = infer_calendar_attributes(table, {table: columns}, date_value_column=typed_date)
+        if attributes.get("date") and any(name in attributes for name in ("year", "fiscal_year")):
+            calendars.append(attributes)
+    kept = [name for name in ("fiscal_year", "fiscal_quarter") if calendars and all(name in c for c in calendars)]
+    return kept
 
 
 def _calendar_profile_for_request(
@@ -1108,6 +1139,17 @@ def _governed_date_anchor_repair_lines(
                 f"of {date_expression}, with no date filter."
             )
             continue
+        if str(policy.get("kind") or "") == "named_period" and policy.get("calendar_filter"):
+            # A fiscal period is the calendar's own fiscal year and quarter.
+            lines.append(
+                f"- JOIN/FIELD: {join_rule}; filter on "
+                + " and ".join(
+                    f"{date_table}.{(policy.get('calendar_attributes') or {}).get(attribute)} = {int(value)}"
+                    for attribute, value in policy["calendar_filter"].items()
+                )
+                + f" (the period {policy.get('label')}, as the calendar numbers it)."
+            )
+            continue
         if str(policy.get("kind") or "") == "named_period":
             # A stated period has bounds, not an anchor: handing the model a
             # MAX() subquery to copy would move it to the data's newest date.
@@ -1864,6 +1906,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _planner_calendar_profile = {
             **_planner_calendar_profile, "basis": "calendar", "source": "no_fiscal_year_in_the_warehouse",
         }
+    # A calendar that keeps its own fiscal year says which dates are fiscal
+    # 2025: the reader is not asked which month the fiscal year starts.
+    _planner_calendar_profile = {
+        **_planner_calendar_profile,
+        "fiscal_attributes": _calendar_fiscal_attributes(str((state or {}).get("schema_dir") or "")),
+    }
     # Initialized before the try so later stages that re-plan (the trend
     # re-grain fallback below) always have these in scope, even when catalog
     # loading failed open.
@@ -5166,6 +5214,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         _semantic_plan_question,
                         temporal_window=_plan_window,
                         snapshot=_reads_a_level,
+                        calendar_basis=_analytical_plan.calendar_basis,
                     )
                 else:
                     _date_plan = build_contextual_date_plan(
@@ -5173,10 +5222,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         _semantic_plan_question,
                         temporal_window=_plan_window,
                         snapshot=_reads_a_level,
+                        calendar_basis=_analytical_plan.calendar_basis,
                     )
+                # A fiscal period no start month was asked for is one only the
+                # date's calendar can keep: where it keeps none, nothing is.
                 _expected_temporal_window = (
                     _structured_temporal_window
                     or detect_temporal_window(_semantic_plan_question)
+                    or (
+                        read_fiscal_period(_semantic_plan_question, _analytical_plan.calendar_basis)
+                        if not _analytical_plan.fiscal_year_start_month else {}
+                    )
                 )
                 if (
                     _expected_temporal_window
