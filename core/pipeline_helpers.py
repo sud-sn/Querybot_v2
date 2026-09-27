@@ -1386,6 +1386,16 @@ def _compile_governed_grouped_request_sql(
 
     from_sql = "\n    ".join(from_lines)
     where_parts: list[str] = []
+    # A period table keeps a row for each whole year beside that year's months
+    # (core/period_rows.py). A date window leaves the year rows out on its own,
+    # their key decoding to no date; without one, only this does.
+    from core.period_rows import month_rows_predicate
+
+    for period_rows in plan.get("period_row_policies") or []:
+        if _same_physical_table(str(period_rows.get("fact_table") or ""), fact_table):
+            where_parts.append(month_rows_predicate(
+                f"fact_rows.{qcol(str(period_rows.get('fact_column') or ''))}", db_type,
+            ))
     # A ranking of a dimension's members, or a count of the keys that point at
     # one, leaves its placeholder members out (core/unknown_members.py).
     from core.unknown_members import exclusion_predicate
