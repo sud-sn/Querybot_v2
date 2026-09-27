@@ -43,6 +43,7 @@ class CrossChannelSqlPlanReuseTests(unittest.TestCase):
                 allowed_tables_snapshot TEXT,
                 db_type TEXT,
                 contract_version TEXT,
+                code_release TEXT DEFAULT '',
                 sql_validation_status TEXT,
                 status TEXT,
                 query_row_count INTEGER DEFAULT 0,

@@ -3008,6 +3008,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _contract_version = (_contract.get("meta") or {}).get("contract_version", "")
     if _contract_version:
         _trace_update(trace_id, contract_version=_contract_version)
+    # And the release that plans it: its SQL is reused only under this one.
+    from core.release import code_release
+
+    _trace_update(trace_id, code_release=code_release())
     _contract_model = _contract.get("model") if _contract else None
     _contract_metrics = _contract.get("metrics") if _contract else None
     _contract_terms = _contract.get("terms") if _contract else None
@@ -6155,6 +6159,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             allowed_tables=sorted(effective),
             db_type=db_cfg["db_type"],
             contract_version=_contract_version,
+            code_release=code_release(),
         )
     except Exception as _plan_exc:
         _reused_plan = None

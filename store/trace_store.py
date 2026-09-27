@@ -75,7 +75,7 @@ def update_answer_trace(trace_id: int | None, **fields: Any) -> None:
         "completion_tokens", "generated_sql", "sql_validation_status",
         "sql_validation_error", "db_type", "query_row_count", "query_duration_ms",
         "answer_type", "final_answer_summary", "error_message", "status",
-        "result_rows", "policy_version_at_query", "contract_version",
+        "result_rows", "policy_version_at_query", "contract_version", "code_release",
     }
     assignments, params = [], []
     for key, value in fields.items():
@@ -250,6 +250,7 @@ def find_reusable_validated_sql_plan(
     allowed_tables: Any,
     db_type: str,
     contract_version: str,
+    code_release: str = "",
     limit: int = 100,
 ) -> dict | None:
     """Find successful SQL reusable under the current governance scope.
@@ -259,6 +260,9 @@ def find_reusable_validated_sql_plan(
     may retain the validation status of an initial failed draft even though the
     repaired SQL in query_log executed successfully, so execution success is the
     historical eligibility gate and current validation is the safety gate.
+
+    A plan is reused only under the release that made it (core/release.py):
+    SQL an earlier release wrote may be SQL this one would not.
     """
     question_key = _normalized_question(question)
     if not account_id or not question_key:
@@ -268,6 +272,7 @@ def find_reusable_validated_sql_plan(
     expected_schema = str(selected_schema or "").upper().strip()
     expected_db = str(db_type or "").lower()
     expected_contract = str(contract_version or "")
+    expected_release = str(code_release or "")
 
     with get_db() as conn:
         # The question filter has to run INSIDE the query. It used to be applied
@@ -284,7 +289,7 @@ def find_reusable_validated_sql_plan(
                    q.question_id, q.created_at,
                    a.id AS trace_id, a.selected_schema,
                    a.allowed_tables_snapshot, a.db_type,
-                   a.contract_version, a.sql_validation_status, a.status,
+                   a.contract_version, a.code_release, a.sql_validation_status, a.status,
                    a.query_row_count, a.request_source
               FROM query_log q
               JOIN answer_trace a
@@ -320,6 +325,8 @@ def find_reusable_validated_sql_plan(
         if str(candidate.get("db_type") or "").lower() != expected_db:
             continue
         if str(candidate.get("contract_version") or "") != expected_contract:
+            continue
+        if str(candidate.get("code_release") or "") != expected_release:
             continue
         return candidate
     return None

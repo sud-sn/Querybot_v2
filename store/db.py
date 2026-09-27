@@ -1325,6 +1325,9 @@ def _run_migrations() -> None:
         # stamped with the contract version it ran under so quality can be
         # correlated with exact semantic states.
         ("answer_trace", "contract_version",       "TEXT NOT NULL DEFAULT ''"),
+        # The release that planned the answer (core/release.py): a validated
+        # plan is reused only under the release that made it.
+        ("answer_trace", "code_release",           "TEXT NOT NULL DEFAULT ''"),
         ("learning_candidate", "contract_version", "TEXT NOT NULL DEFAULT ''"),
         # v34: eval runs record what approval triggered them and whether the
         # pass rate regressed vs the previous run of the same case file.
