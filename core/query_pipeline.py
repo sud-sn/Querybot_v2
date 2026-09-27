@@ -4459,15 +4459,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         and can_request_clarification(event, "metric_scope")
     ):
         options = _metric_scope.options or []
-        clarifying_q = (
-            "I found more than one revenue definition. Which one should I use?"
+        # The reader's own word, in the reader's language: "sales" was asked
+        # about as "revenue", and a French reader in English.
+        from core.metric_scope import ambiguous_metric_question
+
+        clarifying_q, _ambiguous_term = ambiguous_metric_question(
+            question, (portal_user or {}).get("lang") or "en",
         )
         if event.user_id and options:
             _save_pending_clarification(
                 question,
                 context_with_terms,
                 {
-                    "term": "revenue",
+                    "term": _ambiguous_term,
                     "options": [{"label": opt, "value": opt} for opt in options],
                     "source": "metric_scope",
                 },

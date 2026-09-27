@@ -301,6 +301,18 @@ def _schemas_from_semantic_plan(semantic_plan: dict[str, Any] | None) -> set[str
     return schemas
 
 
+def ambiguous_metric_question(reader_question: str, lang: str = "en") -> tuple[str, str]:
+    """The question asked when a bare measure word has more than one
+    definition, in the reader's language, and the term it asks about: the
+    reader's own word -- "sales", "ventes", "revenue" -- never a word the
+    reader did not use. Only a bare measure question is ambiguous
+    (_is_generic_metric_question), so its words are the term."""
+    from core.i18n import t
+
+    term = " ".join(re.sub(r"[?!.\u00bf\u00a1:;]+", " ", str(reader_question or "")).split())[:60]
+    return t("clar.metric_scope", lang=lang, term=term), term
+
+
 def _is_generic_metric_question(question: str) -> bool:
     q_tokens = _tokens(question)
     return bool(q_tokens) and q_tokens <= {"revenue", "sales", "amount", "charge"}

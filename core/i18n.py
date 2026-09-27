@@ -2688,6 +2688,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "What measure should I use to rank them?",
         "fr": "Quel indicateur dois-je utiliser pour établir ce classement ?",
     },
+    "clar.metric_scope": {
+        "en": "I found more than one definition of “{term}”. Which one should I use?",
+        "fr": "J’ai trouvé plusieurs définitions de « {term} ». Laquelle dois-je utiliser ?",
+    },
     "clar.business_definition": {
         "en": "How should I define '{concept}' for this analysis? Please include the business rule or threshold to use.",
         "fr": "Comment dois-je définir « {concept} » pour cette analyse ? Indiquez la règle métier ou le seuil à utiliser.",
