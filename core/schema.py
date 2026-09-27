@@ -598,6 +598,38 @@ def load_schema_columns(schema_dir: str) -> dict[str, dict[str, str]]:
     return result
 
 
+def load_schema_spellings(schema_dir: str) -> dict[str, str]:
+    """Every table and column name of _schema.json, upper-cased, mapped to the
+    name as the warehouse spells it: SALESTERRITORYCOUNTRY is
+    SalesTerritoryCountry.
+
+    load_schema_columns keys everything upper-case, which is how names are
+    compared and emitted; a camel-case name read from that form has lost the
+    humps that say where its words begin. This is what reading a name as its
+    words needs, and nothing else. A name spelled two ways keeps the first.
+    """
+    p = Path(schema_dir) / "_schema.json"
+    if not p.exists():
+        return {}
+    try:
+        master = _normalize_schema(json.loads(p.read_text(encoding="utf-8")))
+    except Exception:
+        return {}
+    spellings: dict[str, str] = {}
+    for key, info in master.items():
+        if str(key).startswith("__") or not isinstance(info, dict):
+            continue
+        parts = str(key).split(".")
+        for variant in {str(key), parts[-1], ".".join(parts[-2:])}:
+            spellings.setdefault(variant.upper(), variant)
+        for col in info.get("columns", []) or []:
+            if isinstance(col, dict):
+                name = str(col.get("name") or col.get("COLUMN_NAME") or col.get("column_name") or "")
+                if name:
+                    spellings.setdefault(name.upper(), name)
+    return spellings
+
+
 def _normalize_schema(master: dict) -> dict:
     """Old _schema.json stored columns as a plain list; new format wraps in {"columns": [...]}. Normalise to the new format."""
     return {

@@ -481,6 +481,7 @@ class TestThePipelineActuallyTakesTheBranch:
             "account_id": "acct",
             "_semantic_plan_question": question,
             "all_columns": {},
+            "all_spellings": {},
             "query_scope_tables": set(),
             "schema_hint": "",
             "_vocab": None,

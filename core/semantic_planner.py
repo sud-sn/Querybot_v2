@@ -206,6 +206,18 @@ def _planner_vocab(vocab=None):
     return get_active_vocab()
 
 
+def _words_form(column: str) -> str:
+    """A column's name as its words, upper-case with underscores: SalesAmount
+    is SALES_AMOUNT. A name already upper-case is its own, so an underscore
+    warehouse reads exactly as it did."""
+    name = str(column or "")
+    if name == name.upper():
+        return name
+    from core.identifier_intelligence import identifier_words
+
+    return identifier_words(name)
+
+
 def _column_words(column: str, vocab=None) -> list[str]:
     abbreviations = _planner_vocab(vocab).planner_abbreviations
     words: list[str] = []
@@ -225,6 +237,7 @@ def _column_words(column: str, vocab=None) -> list[str]:
 # pair ambiguous, and ambiguous_source demotes both to optional -- weakening
 # bindings that work today to fix ones that do not.
 _DISPLAY_COLUMN_SUFFIXES = ("_NAME", "_DESCRIPTION", "_DESC", "_DSC", "_NM")
+_PERSON_NAME_PARTS = frozenset({"FIRST", "LAST", "MIDDLE", "GIVEN", "FAMILY", "SUR", "MAIDEN", "NICK"})
 
 
 def _entity_noun_alias(column: str) -> str:
@@ -240,29 +253,38 @@ def _entity_noun_alias(column: str) -> str:
     no plan at all, and case 7 had no dimension field for the display-name
     upgrade to attach to.
     """
-    col = (column or "").upper()
+    col = _words_form(column or "").upper()
     for suffix in _DISPLAY_COLUMN_SUFFIXES:
         if col.endswith(suffix) and len(col) > len(suffix):
+            # A part of a person's name labels no entity: LastName is not the
+            # label of a "last", and "over the last six months" asks for none.
+            if set(col[: -len(suffix)].split("_")) <= _PERSON_NAME_PARTS:
+                return ""
             return col[: -len(suffix)]
     return ""
 
 
 def _aliases_for_column(column: str, vocab=None) -> set[str]:
+    """The phrases a column answers to, read from its name as the warehouse
+    spells it: SalesTerritoryCountry is "sales territory country", where its
+    upper-case form, SALESTERRITORYCOUNTRY, has no words to read."""
     v = _planner_vocab(vocab)
-    col = (column or "").upper()
-    aliases = {_norm(col), _norm(" ".join(_column_words(col, vocab=v)))}
+    name = str(column or "")
+    col = name.upper()
+    words_form = _words_form(name)
+    aliases = {_norm(col), _norm(" ".join(_column_words(name, vocab=v)))}
     aliases.update(_norm(a) for a in v.direct_aliases.get(col, set()))
     # Pack-governed identifier intelligence supplies ERP physical aliases.
     # For Infor M3 this maps record-prefixed fields such as OBORNO/MBWHLO to
     # their business terms while remaining inert for other naming packs.
     try:
         from core.identifier_intelligence import analyze_identifier
-        analysis = analyze_identifier(col, vocab=v)
+        analysis = analyze_identifier(name, vocab=v)
         if analysis.confidence >= 70:
             aliases.update(_norm(a) for a in analysis.aliases)
     except Exception:
         pass
-    entity = _entity_noun_alias(col)
+    entity = _entity_noun_alias(name)
     if entity:
         aliases.add(_norm(entity))
         aliases.add(_norm(" ".join(_column_words(entity, vocab=v))))
@@ -270,7 +292,7 @@ def _aliases_for_column(column: str, vocab=None) -> set[str]:
     # business alias for every dataset (INVENTORY_VALUE -> "inventory")
     # instead of adding product/client-specific entries to Python.
     if any(
-        col.endswith(suffix)
+        words_form.endswith(suffix)
         for suffix in (
             "_AMOUNT", "_AMT", "_VALUE", "_QUANTITY", "_QTY", "_COUNT",
             "_TOTAL", "_COST", "_CST", "_PROFIT", "_PFT", "_MARGIN",
@@ -284,7 +306,7 @@ def _aliases_for_column(column: str, vocab=None) -> set[str]:
         # as "invoice amount" may intentionally be qualified; stripping it to
         # bare "invoice" would make a transaction noun look like a measure and
         # hard-require the wrong field.
-        words = _norm(" ".join(_column_words(col, vocab=v))).split()
+        words = _norm(" ".join(_column_words(name, vocab=v))).split()
         while len(words) > 1 and words[-1] in generic_suffixes:
             words = words[:-1]
             if words:
@@ -314,7 +336,7 @@ def _aliases_within_entity(table: str, column: str, vocab=None) -> set[str]:
     """
     bare = _table_bare(table)
     entity = next((bare[: -len(s)] for s in ("_DMS", "_DIM") if bare.endswith(s)), "")
-    col = (column or "").upper()
+    col = _words_form(column or "").upper()
     if not entity or not col.startswith(f"{entity}_") or _is_key_column(col):
         return set()
     try:
@@ -329,7 +351,8 @@ def _aliases_within_entity(table: str, column: str, vocab=None) -> set[str]:
 
 
 def _role_for_column(column: str, col_type: str = "", vocab=None) -> str:
-    col = (column or "").upper()
+    # Read as words: ProductKey is a PRODUCT_KEY, and a key, not a quantity.
+    col = _words_form(column or "").upper()
     ctype = (col_type or "").upper()
     v = _planner_vocab(vocab)
     try:
@@ -366,7 +389,8 @@ def _role_for_column(column: str, col_type: str = "", vocab=None) -> str:
         return "dimension"
     if governed_code in v.raw_measure_codes or any(suffix in col for suffix in ("_AMT", "_QTY", "_CST", "_PFT")):
         return "measure"
-    if any(token in ctype for token in ("INT", "DECIMAL", "NUMBER", "NUMERIC", "FLOAT")):
+    # Money is a number: a list price or an income is what an average reads.
+    if any(token in ctype for token in ("INT", "DECIMAL", "NUMBER", "NUMERIC", "FLOAT", "MONEY", "REAL", "DOUBLE")):
         return "measure"
     return "attribute"
 
@@ -519,6 +543,7 @@ def _find_candidates(
     selected_schema: str = "",
     vocab=None,
     role_keys: list[dict] | None = None,
+    spellings: dict[str, str] | None = None,
 ) -> list[dict]:
     qn = _norm(question)
     qc = _compact(question)
@@ -539,10 +564,11 @@ def _find_candidates(
                 continue
         for col, col_type in (cols or {}).items():
             col_u = str(col).upper()
-            # Preserve the original casing for camel/Pascal tokenization while
-            # the emitted physical column remains canonical uppercase.
-            aliases = _aliases_for_column(str(col), vocab=vocab) | _aliases_within_entity(
-                table_u, str(col), vocab=vocab)
+            # The name as the warehouse spells it is read for its words; the
+            # emitted physical column remains canonical uppercase.
+            spelled = (spellings or {}).get(col_u) or str(col)
+            aliases = _aliases_for_column(spelled, vocab=vocab) | _aliases_within_entity(
+                table_u, spelled, vocab=vocab)
             # A key that plays a role answers to the role's name: "buyer" is
             # BYR_PTY_DMS_KEY, whose own words say only "buyer party".
             role = _role_of_key(role_keys, table_u, col_u)
@@ -555,7 +581,7 @@ def _find_candidates(
                 "term": term,
                 "table": table_u,
                 "column": col_u,
-                "role": _role_for_column(col_u, str(col_type), vocab=vocab),
+                "role": _role_for_column(spelled, str(col_type), vocab=vocab),
                 "aliases": sorted(aliases),
             })
     return _drop_compound_modifier_matches(candidates, qn)
@@ -1321,6 +1347,7 @@ def _unqualified_measure_rivals(
     selected_schema: str,
     vocab,
     limit: int = 6,
+    spellings: dict[str, str] | None = None,
 ) -> list[str]:
     """Measure columns that share the bare business word the question used.
 
@@ -1357,9 +1384,10 @@ def _unqualified_measure_rivals(
             continue
         for col, col_type in (cols or {}).items():
             col_u = str(col).upper()
-            if _role_for_column(col_u, str(col_type), vocab=vocab) != "measure":
+            spelled = (spellings or {}).get(col_u) or col_u
+            if _role_for_column(spelled, str(col_type), vocab=vocab) != "measure":
                 continue
-            for alias in _aliases_for_column(col_u, vocab=vocab):
+            for alias in _aliases_for_column(spelled, vocab=vocab):
                 words = alias.split()
                 # Only a QUALIFIED alias counts: the head of "net revenue" is
                 # the word the user typed, and the modifier is what they left
@@ -1389,6 +1417,7 @@ def build_semantic_field_plan(
     fact_tables: set[str] | None = None,
     preferred_fact_tables: set[str] | None = None,
     role_keys: list[dict] | None = None,
+    spellings: dict[str, str] | None = None,
 ) -> dict:
     """Build a conservative field-source plan from exact known schema columns.
 
@@ -1396,7 +1425,9 @@ def build_semantic_field_plan(
     measure's fact can be locked (Phase 3). Omitting it preserves the previous
     behaviour exactly — no anchoring is attempted without table roles.
     `role_keys` are the keys the join graph names a role for
-    (graph_resolver.role_keys): "by buyer" is one of them.
+    (graph_resolver.role_keys): "by buyer" is one of them. `spellings` maps
+    each upper-case name to the warehouse's own spelling
+    (core.schema.load_schema_spellings), which is read for the name's words.
     """
     vocab = _planner_vocab(vocab)
     normalized_columns = {
@@ -1405,6 +1436,7 @@ def build_semantic_field_plan(
     }
     candidates = _find_candidates(
         question, normalized_columns, allowed_tables, selected_schema, vocab=vocab, role_keys=role_keys,
+        spellings=spellings,
     )
     fields = _choose_fields(question, candidates, preferred_fact_tables)
     fields = _apply_display_dimension_fields(
@@ -1412,7 +1444,7 @@ def build_semantic_field_plan(
     )
     if not fields:
         rival_measures = _unqualified_measure_rivals(
-            question, normalized_columns, allowed_tables, selected_schema, vocab,
+            question, normalized_columns, allowed_tables, selected_schema, vocab, spellings=spellings,
         )
         if rival_measures:
             log.info(

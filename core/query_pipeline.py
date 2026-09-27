@@ -41,6 +41,7 @@ from core.analytical_request_plan import compile_analytical_request_plan
 from core.schema import (
     load_known_tables,
     load_schema_columns,
+    load_schema_spellings,
     query_wait_timeout_seconds as _query_wait_timeout,
     run_query,
 )
@@ -1747,6 +1748,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     allowed_tables = store.get_allowed_tables(portal_user) if portal_user else None
     all_known      = load_known_tables(state.get("schema_dir", ""))
     all_columns    = load_schema_columns(state.get("schema_dir", ""))
+    # The names as the warehouse spells them, read by the field planner for
+    # their words.
+    all_spellings  = load_schema_spellings(state.get("schema_dir", ""))
 
     if allowed_tables is None:
         effective = all_known  # admin — unrestricted
@@ -3751,6 +3755,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         vocab=_vocab,
                         fact_tables=_planner_fact_tables,
                         role_keys=_planner_role_keys,
+                        spellings=all_spellings,
                     ),
                     _source_model,
                 )
@@ -3826,6 +3831,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             fact_tables=_planner_fact_tables,
             preferred_fact_tables=_preferred_facts,
             role_keys=_planner_role_keys,
+            spellings=all_spellings,
         )
         _semantic_plan["source_scope"] = _source_scope
         if _semantic_plan.get("enabled"):
@@ -4073,6 +4079,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     fact_tables=_planner_fact_tables,
                     preferred_fact_tables=_preferred_facts,
                     role_keys=_planner_role_keys,
+                    spellings=all_spellings,
                 )
                 _replanned_model = build_runtime_semantic_plan(
                     state.get("kb_dir", ""),
@@ -4189,6 +4196,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         fact_tables=_planner_fact_tables,
                         preferred_fact_tables={_population_table},
                         role_keys=_planner_role_keys,
+                        spellings=all_spellings,
                     ),
                     build_runtime_semantic_plan(
                         state.get("kb_dir", ""),
