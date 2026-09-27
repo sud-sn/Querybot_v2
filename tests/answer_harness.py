@@ -60,7 +60,7 @@ SCHEMA = {
     # have: a key into a dimension that is not here.
     "WH.MART.ITM_DMS": _table("ITM_DMS_KEY", ("ITM_DMS_KEY", "int"), ("ITM_CD", "nvarchar"), ("ITM_NM", "nvarchar"),
                               ("ITM_GRP_DMS_KEY", "int"), ("UNT_OF_MSR", "nvarchar"), ("ITM_FR_NM", "nvarchar"),
-                              ("PRU_GRP_DMS_KEY", "int")),
+                              ("PRU_GRP_DMS_KEY", "int"), ("ITM_GRS_WT", "decimal")),
     "WH.MART.ITM_GRP_DMS": _table("ITM_GRP_DMS_KEY", ("ITM_GRP_DMS_KEY", "int"), ("ITM_GRP_CD", "nvarchar"),
                                   ("ITM_GRP_DSC", "nvarchar")),
     "WH.MART.PTY_DMS": _table("PTY_DMS_KEY", ("PTY_DMS_KEY", "int"), ("PTY_CD", "nvarchar"), ("PTY_NM", "nvarchar")),
@@ -91,6 +91,9 @@ ITEMS = {0: ("0", _PLACEHOLDER, 0, ""), 101: ("BE-1", "BRASS ELBOW", 10, "EA"), 
 # An item's French name, where the warehouse keeps one: blank for two of them,
 # as a French twin often is.
 ITEM_FR_NAMES = {101: "COUDE EN LAITON", 102: "", 201: "TUYAU DE CUIVRE", 202: ""}
+# Each item's gross weight, kept on the item's own row: one item has none
+# recorded, and the placeholder item's is a zero no item weighs.
+ITEM_WEIGHTS = {0: 0.0, 101: 0.45, 102: 1.2, 201: 12.5, 202: None}
 PARTIES = {0: ("0", _PLACEHOLDER), 1: ("ALO", "ANA LOPEZ"), 2: ("BOK", "BEN OKAFOR")}
 STOCK_STATUSES = {0: ("0", _PLACEHOLDER), 1: ("CAT", "CATALOGUED"), 2: ("UNC", "UNCATALOGUED")}
 _MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -130,7 +133,8 @@ def rows() -> dict[str, list[tuple]]:
     data: dict[str, list[tuple]] = {
         "WHS_DMS": [(k, c, n) for k, (c, n) in WAREHOUSES.items()],
         "ITM_GRP_DMS": [(k, c, n) for k, (c, n) in GROUPS.items()],
-        "ITM_DMS": [(k, c, n, g, u, ITEM_FR_NAMES.get(k, ""), 7 if k else 0) for k, (c, n, g, u) in ITEMS.items()],
+        "ITM_DMS": [(k, c, n, g, u, ITEM_FR_NAMES.get(k, ""), 7 if k else 0, ITEM_WEIGHTS[k])
+                    for k, (c, n, g, u) in ITEMS.items()],
         "PTY_DMS": [(k, c, n) for k, (c, n) in PARTIES.items()],
         "ITM_STK_STS_DMS": [(k, c, n) for k, (c, n) in STOCK_STATUSES.items()],
     }

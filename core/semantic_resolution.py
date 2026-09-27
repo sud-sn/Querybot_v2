@@ -250,11 +250,19 @@ def build_planner_alignment(
     dropped_date_entities: set[str] = set()
     # A population is counted on its own table: "number of items by item
     # group" reads the item table and its group, and no fact the first pass
-    # found beside them.
+    # found beside them. So is an attribute that table keeps aggregated: "the
+    # average gross weight by item type" reads the item table and its type.
     count_table = _table_key((((semantic_plan.get("count_target") or {}).get("selected")) or {}).get("table"))
-    counted_on_a_dimension = bool(count_table) and str(
-        entities_by_name.get(table_to_entity.get(count_table, ""), {}).get("entity_type") or ""
-    ).lower() not in {"", "fact"}
+    source_scope = semantic_plan.get("source_scope") or {}
+    member_table = _table_key(source_scope.get("selected_fact")) if str(
+        source_scope.get("source_kind") or ""
+    ).casefold() == "master" else ""
+    counted_on_a_dimension = any(
+        bool(table) and str(
+            entities_by_name.get(table_to_entity.get(table, ""), {}).get("entity_type") or ""
+        ).lower() not in {"", "fact"}
+        for table in (count_table, member_table)
+    )
 
     # The first graph pass is deliberately broad so it can help metric scoping.
     # Its lexical date-role guesses must not become authoritative requirements

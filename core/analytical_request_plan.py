@@ -123,6 +123,65 @@ def _names_the_counted(field: dict[str, Any], counted: set[str], intent_plan: di
     }
 
 
+# The aggregates an attribute is asked for by name. A total of an attribute is
+# not among them: "total" also means "all of it", and adding item weights up
+# answers nobody's question.
+_ATTRIBUTE_AGGREGATES = frozenset({"AVG", "MIN", "MAX"})
+# Tables that define their members rather than record events.
+_MEMBER_TABLE_TYPES = frozenset({"dimension", "master", "reference", "lookup"})
+
+
+def aggregated_attribute(
+    question: str,
+    semantic_plan: dict[str, Any] | None,
+    model: dict[str, Any] | None,
+    matched_metrics: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The aggregate a question asks of an attribute its entity's own table
+    keeps, or {}.
+
+    "What is the average item gross weight?" averages the item table's gross
+    weight over its items. No fact holds it: an item's weight is on the item's
+    own row, and read through a fact it would be averaged over the fact's rows
+    -- an item counted once for every row it has there -- after the reader was
+    asked which of two facts to read. A registered metric the question names is
+    its measure instead.
+    """
+    if matched_metrics:
+        return {}
+    from core.pipeline_helpers import _REQUESTED_AGGREGATES
+
+    asked = [
+        name for name, pattern in _REQUESTED_AGGREGATES
+        if name in _ATTRIBUTE_AGGREGATES and pattern.search(str(question or ""))
+    ]
+    measures = {
+        (str(field.get("table") or ""), str(field.get("column") or "").upper()): field
+        for field in (semantic_plan or {}).get("fields") or []
+        if str(field.get("role") or "").lower() in {"measure", "measure_candidate"}
+        and str(field.get("enforcement") or "").lower() != "optional"
+        and field.get("table") and field.get("column")
+    }
+    if len(asked) != 1 or len(measures) != 1:
+        return {}
+    (table, column), field = next(iter(measures.items()))
+    entry = next((
+        candidate for candidate in (model or {}).get("tables") or []
+        if isinstance(candidate, dict)
+        and _same_table(candidate.get("qualified_name") or candidate.get("table"), table)
+    ), None)
+    if not entry or str(entry.get("type") or "").casefold() not in _MEMBER_TABLE_TYPES:
+        return {}
+    return {
+        "semantics": "aggregate_attribute",
+        "aggregation": asked[0],
+        "business_entity": str(field.get("term") or column),
+        "target_table": str(entry.get("qualified_name") or entry.get("table") or table),
+        "target_column": column,
+        "resolution_reason": "an attribute its entity's own table keeps",
+    }
+
+
 def record_count_by_named_date(
     semantic_plan: dict[str, Any] | None,
     intent_plan: dict[str, Any] | None,
@@ -233,6 +292,43 @@ def demote_what_the_question_does_not_compute(
     demote_calendar_measures(semantic_plan, date_bindings)
     demote_counted_records(semantic_plan, intent_plan, matched_metrics)
     demote_counted_population(semantic_plan, intent_plan)
+    demote_beside_an_attribute(semantic_plan, intent_plan)
+
+
+def demote_beside_an_attribute(
+    semantic_plan: dict[str, Any] | None,
+    intent_plan: dict[str, Any] | None,
+) -> None:
+    """An attribute its entity's own table keeps is read on that table.
+
+    Its breakdowns are joined from that table, not from a fact: "the average
+    gross weight by item type" joined the item type to the daily snapshot, and
+    the graph read the type there. And the members it is aggregated over are
+    no breakdown of it unless the question asks by them: "the gross weight
+    average of items" is one average, "by item" one for each item."""
+    plan = semantic_plan or {}
+    scope = plan.get("source_scope") or {}
+    member = str(scope.get("selected_fact") or "")
+    if str(scope.get("source_kind") or "").casefold() != "master" or not member or plan.get("count_target"):
+        return
+    fields = [field for field in plan.get("fields") or [] if isinstance(field, dict)]
+    if not any(
+        str(field.get("role") or "").lower() in {"measure", "measure_candidate"} and _same_table(field.get("table"), member)
+        for field in fields
+    ):
+        return
+    grouped = [_counted_words(value) for value in (intent_plan or {}).get("dimensions") or []]
+    for field in fields:
+        if (
+            str(field.get("role") or "").lower() in {"dimension", "display_dimension", "attribute"}
+            and _same_table(field.get("table"), member)
+            and _counted_words(str(field.get("term") or "")) not in grouped
+        ):
+            field["enforcement"] = "optional"
+            field["demotion_reason"] = "the members the attribute is aggregated over"
+    for join in plan.get("joins") or []:
+        if isinstance(join, dict) and not _same_table(join.get("from") or join.get("from_table"), member):
+            join["enforcement"] = "optional"
 
 
 def demote_calendar_measures(
@@ -487,6 +583,13 @@ def compile_analytical_request_plan(
             "snapshot_column": counted_snapshot_key(model, selected_fact, record_count["dated_column"]),
             "resolution_reason": _RECORD_COUNT_REASON,
         }
+
+    # An attribute its entity's own table keeps is aggregated over that
+    # table's members, where the source is that table.
+    if not derived_measure and _governed_master_source and not counted_entity:
+        attribute = aggregated_attribute(question, plan, model, matched_metrics)
+        if attribute and _same_table(attribute["target_table"], selected_fact):
+            derived_measure = attribute
 
     question_text = str(question or "")
     change_direction = ""

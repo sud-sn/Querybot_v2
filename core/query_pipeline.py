@@ -3596,6 +3596,42 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     account_id,
                     _confirmed_source_table,
                 )
+        # An attribute its entity's own table keeps -- "the average item gross
+        # weight" -- is read on that table, over its members: no fact holds it,
+        # and which fact to read is no question to put to the reader.
+        if not _early_metric_scope.metrics and not _analytical_plan.population_entity:
+            try:
+                from core.analytical_request_plan import aggregated_attribute
+
+                _attribute = aggregated_attribute(
+                    _semantic_plan_question,
+                    build_semantic_field_plan(
+                        _semantic_plan_question,
+                        all_columns,
+                        query_scope_tables,
+                        selected_schema=schema_hint,
+                        vocab=_vocab,
+                        fact_tables=_planner_fact_tables,
+                        role_keys=_planner_role_keys,
+                    ),
+                    _source_model,
+                )
+            except Exception as _attribute_exc:
+                _attribute = {}
+                log.warning("Attribute aggregate not read for %s: %s", account_id, _attribute_exc)
+            if _attribute:
+                _source_scope = {
+                    "status": "selected",
+                    "selected_fact": _attribute["target_table"],
+                    "selected_facts": [],
+                    "candidates": [],
+                    "source_kind": "master",
+                    "reason": "an attribute its entity's own table keeps",
+                }
+                log.info(
+                    "Attribute aggregate for %s: %s(%s) on %s",
+                    account_id, _attribute["aggregation"], _attribute["target_column"], _attribute["target_table"],
+                )
         _preferred_facts = ({str(_source_scope.get("selected_fact") or "")} | {
             str(value) for value in (_source_scope.get("selected_facts") or [])
         }) - {""}

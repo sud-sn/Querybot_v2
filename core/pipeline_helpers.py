@@ -1198,6 +1198,20 @@ def _compile_governed_grouped_request_sql(
             + "_COUNT",
             f"COUNT(DISTINCT fact_rows.{{qcol:{target_column}}})",
         ))
+    if not metric_specs and derived.get("semantics") == "aggregate_attribute":
+        # An attribute of the members the fact's own table defines -- the
+        # items' gross weight -- aggregated over them.
+        aggregation = str(derived.get("aggregation") or "").upper()
+        target_column = str(derived.get("target_column") or "")
+        if aggregation not in {"AVG", "MIN", "MAX"} or not target_column or not _same_physical_table(
+            str(derived.get("target_table") or ""), fact_table,
+        ):
+            return ""
+        prefix = {"AVG": "AVERAGE", "MIN": "MINIMUM", "MAX": "MAXIMUM"}[aggregation]
+        metric_specs.append((
+            f"{prefix}_" + re.sub(r"[^A-Za-z0-9_]", "_", str(derived.get("business_entity") or target_column)).upper(),
+            f"{aggregation}(fact_rows.{{qcol:{target_column}}})",
+        ))
     if not metric_specs and derived.get("semantics") == "count_records":
         # The records a named date covers, kept under no key of their own:
         # the fact's rows.
@@ -1466,12 +1480,12 @@ def _compile_governed_grouped_request_sql(
             for ref in unknown.get("references") or []
         ):
             where_parts.append(exclusion_predicate(f"fact_rows.{qcol(derived_target_column)}", unknown))
-        elif derived.get("semantics") == "count_distinct_business_identifier" and _same_physical_table(
-            unknown.get("table"), fact_table,
+        elif derived.get("semantics") in {"count_distinct_business_identifier", "aggregate_attribute"} and (
+            _same_physical_table(unknown.get("table"), fact_table)
         ):
             # A population counted on its own table: "how many warehouses do
             # we have" counts the warehouse table's rows, and a placeholder row
-            # is no warehouse.
+            # is no warehouse -- nor is its gross weight an item's.
             where_parts.append(exclusion_predicate(f"fact_rows.{qcol(str(unknown['key_column']))}", unknown))
     anchor_sql = ""
     if policy and str(policy.get("kind") or "") == "latest_snapshot":
@@ -1895,8 +1909,18 @@ def compile_governed_temporal_metric_sql(
     from core.contextual_dates import format_date_value_expression, format_period_bucket_expression
     from core.validator import validate_sql_detailed
 
-    if unmet_aggregates(_gate_question(semantic_context or {}),
-                        (semantic_context or {}).get("metric_formulas") or []):
+    # An aggregate the plan's own measure computes -- an attribute's average
+    # over its members -- is met.
+    derived = ((semantic_context or {}).get("analytical_request_plan") or {}).get("derived_measure") or {}
+    computed_by_the_plan = (
+        str(derived.get("aggregation") or "").upper() if derived.get("semantics") == "aggregate_attribute" else ""
+    )
+    if [
+        aggregate for aggregate in unmet_aggregates(
+            _gate_question(semantic_context or {}), (semantic_context or {}).get("metric_formulas") or [],
+        )
+        if aggregate != computed_by_the_plan
+    ]:
         return ""
     reason = _left_to_the_planner(semantic_context or {})
     if reason:
