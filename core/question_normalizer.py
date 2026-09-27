@@ -549,6 +549,12 @@ _LEXICON: dict[str, str] = {
     "commandee": "ordered",
     "commandees": "ordered",
     "commandes passees": "orders placed",
+    # One order is an order: "ont passé une commande" is "placed an order".
+    # A named kind of order is one of that kind, read whole: "une commande en
+    # souffrance" is a back order, not an order overdue.
+    "une commande": "an order",
+    "une commande en souffrance": "a back order",
+    "une commande annulee": "a cancelled order",
     "recue": "received",
     "recues": "received",
     "recus": "received",

@@ -106,7 +106,7 @@ class TestTheRule:
     @pytest.mark.parametrize("question,read", [
         ("Combien de clients ont acheté en 2025 ?", "how many customers bought en 2025 ?"),
         ("Combien de clients ont commandé en 2025 ?", "how many customers ordered en 2025 ?"),
-        ("Combien de clients ont passé une commande ?", "how many customers placed a orders ?"),
+        ("Combien de clients ont passé une commande ?", "how many customers placed an order ?"),
     ])
     def test_in_french(self, question, read):
         from core.question_normalizer import canonical_question
