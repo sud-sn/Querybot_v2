@@ -441,7 +441,7 @@ def question_has_temporal_intent(question: str) -> bool:
         return False
 
     temporal_terms = {
-        "date", "dates", "day", "days", "daily", "week", "weeks", "weekly",
+        "date", "dates", "day", "days", "daily", "weekday", "weekdays", "week", "weeks", "weekly",
         "month", "months", "monthly", "quarter", "quarters", "quarterly",
         "year", "years", "yearly", "period", "periods", "time", "timeline",
         "trend", "trends", "when", "latest", "earliest", "recent", "previous",

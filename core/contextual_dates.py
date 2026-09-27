@@ -52,6 +52,58 @@ def _question_requests_unbounded_available_scope(question: str) -> bool:
     return not temporal_breakdown
 
 
+# A grain that comes round again -- the days of the week, the weeks or months
+# of the year -- groups each such day, week or month across every date the
+# question covers: "items created by day of the week" is seven numbers, not
+# one a day. Each rests on the grain it repeats, which is what a date must
+# keep to answer it.
+_CYCLES = (
+    ("day_of_week", "day", re.compile(
+        r"\b(?:by|per|each|every|for each)\s+(?:the\s+)?(?:days?\s+of\s+(?:the\s+)?week|weekdays?)\b")),
+    ("week_of_year", "week", re.compile(
+        r"\b(?:by|per|each|every|for each)\s+(?:the\s+)?(?:weeks?\s+of\s+(?:the\s+)?year|week\s+numbers?)\b")),
+    ("month_of_year", "month", re.compile(
+        r"\b(?:by|per|each|every|for each)\s+(?:the\s+)?months?\s+of\s+(?:the\s+)?year\b")),
+)
+
+
+# The calendar attributes a cycle is grouped by (infer_calendar_attributes):
+# its number, and the name it is shown by where the calendar keeps one.
+_CYCLE_ATTRIBUTES = {
+    "day_of_week": ("day_of_week", "day_name"),
+    "week_of_year": ("week", ""),
+    "month_of_year": ("month_number", "month_name"),
+}
+
+
+def cycle_attributes(cycle: str) -> tuple[str, str]:
+    """The calendar attributes of a cycle's number and of its name."""
+    return _CYCLE_ATTRIBUTES.get(str(cycle or ""), ("", ""))
+
+
+def format_cycle_rule(
+    cycle: str, role_alias: str, calendar_attributes: dict[str, str] | None, db_type: str = "azure_sql",
+) -> str:
+    """How a cycle is grouped, for the SQL writer: "" when the calendar keeps
+    no number for it."""
+    number_key, name_key = cycle_attributes(cycle)
+    number = format_calendar_attribute_ref(role_alias, calendar_attributes, number_key, db_type) if number_key else ""
+    if not number:
+        return ""
+    name = format_calendar_attribute_ref(role_alias, calendar_attributes, name_key, db_type) if name_key else ""
+    shown = f" and show {name}" if name else ""
+    return (f"group by the {cycle.replace('_', ' ')}, {number}{shown}, ordered by {number}; "
+            "every date the question covers falls in one of them")
+
+
+def requested_cycle(question: str) -> str:
+    """"day_of_week", "week_of_year" or "month_of_year" when the question
+    groups by one, else "". French arrives in the canonical English:
+    "par jour de la semaine" is "by day of week"."""
+    q = normalize_date_role_text(question)
+    return next((cycle for cycle, _grain, pattern in _CYCLES if pattern.search(q)), "")
+
+
 def requested_temporal_grain(question: str) -> str:
     """Return the finest grain explicitly requested by the user.
 
@@ -66,6 +118,10 @@ def requested_temporal_grain(question: str) -> str:
     monthly and "this year" alone still means yearly.
     """
     q = normalize_date_role_text(question)
+    # "By weekday" is a day's grain, not the week's its letters begin with.
+    cycle = requested_cycle(question)
+    if cycle:
+        return next(grain for name, grain, _pattern in _CYCLES if name == cycle)
     # Period-close wording ("month-end inventory", "end of month balance") is
     # as explicit a monthly-grain request as "monthly". Omitting it left
     # `requested_temporal_grain` blank for "Show month-end inventory value for
@@ -376,6 +432,14 @@ def infer_calendar_attributes(
             columns,
             ("DAY_OF_MONTH", "DAY_OF_MTH", "DAY_NUMBER", "DAY_NUM", "DMS_DAY",
              "DAY"),
+        ),
+        "day_of_week": _calendar_column_name(
+            columns,
+            ("DAY_OF_WEEK", "DAY_OF_WK", "WEEKDAY_NUMBER", "WEEKDAY_NUM", "WEEKDAY_NO", "DOW"),
+        ),
+        "day_name": _calendar_column_name(
+            columns,
+            ("DAY_NAME", "DAY_NM", "WEEKDAY_NAME", "WEEKDAY_NM", "DAY_OF_WEEK_NAME"),
         ),
     }
     return {key: value for key, value in result.items() if value}
@@ -2433,6 +2497,7 @@ def build_contextual_date_plan(
                 "role_alias": role_alias,
                 "calendar_attributes": calendar_attributes,
                 "requested_grain": requested_grain,
+                "cycle": requested_cycle(question),
             }
         ],
         "joins": joins,
@@ -2530,6 +2595,7 @@ def build_contextual_date_plan(
             "inference_source": binding.get("inference_source") or "",
             "calendar_attributes": calendar_attributes,
             "requested_grain": requested_grain,
+            "cycle": requested_cycle(question),
         }]
     return plan
 

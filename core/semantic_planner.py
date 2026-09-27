@@ -1435,6 +1435,7 @@ def _format_supersession_only(plan: dict) -> str:
 
 def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
     from core.contextual_dates import (
+        format_cycle_rule,
         format_date_value_expression,
         format_period_bucket_expression,
         format_required_anchor,
@@ -1533,7 +1534,12 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
             )
         lines.append(f"- {field['term']}: {expr}{role_hint}")
         requested_grain = str(field.get("requested_grain") or "").strip()
-        if requested_grain and field.get("role") == "contextual_date":
+        cycle_rule = format_cycle_rule(
+            str(field.get("cycle") or ""), role_alias, field.get("calendar_attributes") or {}, db_type,
+        ) if field.get("role") == "contextual_date" else ""
+        if cycle_rule:
+            lines.append(f"  REQUIRED GROUPING: {cycle_rule}.")
+        elif requested_grain and field.get("role") == "contextual_date":
             bucket = format_period_bucket_expression(
                 expr,
                 requested_grain,
@@ -1607,9 +1613,10 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
             elif policy.get("kind") == "all_dates":
                 lines.append(
                     f"- {policy.get('business_role') or 'Business date'}: the question asks for a "
-                    f"series by {policy.get('requested_grain') or 'period'} over every date the data "
-                    f"holds. Group by the {policy.get('requested_grain') or 'period'} of {date_ref}; "
-                    "no date filter, no anchor, no clock."
+                    f"series by {str(policy.get('cycle') or policy.get('requested_grain') or 'period').replace('_', ' ')} "
+                    f"over every date the data holds. Group by the "
+                    f"{str(policy.get('cycle') or policy.get('requested_grain') or 'period').replace('_', ' ')} "
+                    f"of {date_ref}; no date filter, no anchor, no clock."
                 )
             elif policy.get("kind") == "latest_n_observed":
                 lines.append(

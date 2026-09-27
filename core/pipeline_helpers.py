@@ -986,7 +986,7 @@ def _left_to_the_planner(context: dict) -> str:
 
 
 # A period is the compilers' own grain; "across all units" is a total.
-_PERIOD_WORDS = frozenset({"day", "date", "week", "month", "quarter", "year", "period", "hour", "time"})
+_PERIOD_WORDS = frozenset({"day", "date", "weekday", "week", "month", "quarter", "year", "period", "hour", "time"})
 _WHICH = re.compile(
     r"\bwhich\s+(?!(?:of|is|are|was|were|one|ones|the|a|an|do|does|did|has|have)\b)[a-z][a-z0-9_-]+",
     re.I,
@@ -1099,6 +1099,32 @@ def _last_snapshot_cte(date_ref: str, from_sql: str, where_sql: str, bucket: str
     cte = (f"snapshot_dates AS (\n    SELECT MAX({date_ref}) AS snapshot_date\n"
            f"    FROM {from_sql}{where_sql}{group}\n)")
     return cte, f"{date_ref} IN (SELECT snapshot_date FROM snapshot_dates)"
+
+
+def _cycle_refs(policy: dict, role_alias: str, plan: dict, db_type: str, date_ref: str) -> tuple[str, str]:
+    """The number and the name of the policy's cycle on the calendar joined
+    as ``role_alias``: ("", "") when the calendar keeps no number for it.
+
+    A month of the year is read from the date itself where the calendar keeps
+    none -- a period key decoded to its month has no calendar. A weekday's or
+    a week's number is the calendar's own: a server's settings number them
+    differently."""
+    from core.contextual_dates import cycle_attributes, format_calendar_attribute_ref
+    from core.label_language import reader_label_expression
+
+    cycle = str(policy.get("cycle") or "")
+    attributes = policy.get("calendar_attributes") or {}
+    number, name = cycle_attributes(cycle)
+    number_ref = format_calendar_attribute_ref(role_alias, attributes, number, db_type) if number else ""
+    if not number_ref and cycle == "month_of_year":
+        number_ref = (f"MONTH({date_ref})" if db_type in {"azure_sql", "sqlserver", "mssql"}
+                      else f"EXTRACT(MONTH FROM {date_ref})")
+    name_column = str(attributes.get(name) or "") if name and number_ref else ""
+    name_ref = (
+        reader_label_expression(role_alias, str(policy.get("dimension_table") or ""), name_column, plan, db_type)
+        or format_calendar_attribute_ref(role_alias, attributes, name, db_type)
+    ) if name_column else ""
+    return number_ref, name_ref
 
 
 def _compile_governed_grouped_request_sql(
@@ -1605,7 +1631,21 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     )
     select_parts: list[str] = []
     group_parts: list[str] = []
-    if is_trend:
+    cycle_order = ""
+    if is_trend and str(policy.get("cycle") or ""):
+        # A day of the week, a week or a month of the year: grouped by the
+        # calendar's own number for it and shown by its name, in the reader's
+        # language where the calendar keeps two, in the calendar's order. A
+        # level has no reading on "each Tuesday".
+        if not date_ref or snapshot:
+            return ""
+        number_ref, name_ref = _cycle_refs(policy, alias_for(date_target) or date_alias, plan, db_type, date_ref)
+        if not number_ref:
+            return ""
+        select_parts.append(f"{name_ref or number_ref} AS PERIOD")
+        group_parts.extend([number_ref] + ([name_ref] if name_ref else []))
+        cycle_order = number_ref
+    elif is_trend:
         if not date_ref:
             return ""
         grain = str(policy.get("requested_grain") or policy.get("unit") or "day").lower()
@@ -1620,7 +1660,9 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
             return ""
         select_parts.append(f"{bucket} AS PERIOD")
         group_parts.append(bucket)
-    if dimension_ref:
+    # "By day of the week" also names the calendar's day: one grouping, shown
+    # once.
+    if dimension_ref and dimension_ref not in group_parts:
         select_parts.append(f"{dimension_ref} AS {dimension_alias}")
         group_parts.append(dimension_ref)
     if unit_ref:
@@ -1664,7 +1706,7 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
         direction = str((context.get("top_n") or {}).get("direction") or ranking_direction(question))
         order_sql = f"\nORDER BY {metric_specs[0][0]} {'ASC' if direction == 'ascending' else 'DESC'}"
     elif is_trend:
-        order_sql = "\nORDER BY PERIOD"
+        order_sql = f"\nORDER BY {cycle_order or 'PERIOD'}"
     limit_sql = f"\nFETCH FIRST {limit} ROWS ONLY" if ranking and limit > 0 and db_type == "oracle" else ""
     if ranking and limit > 0 and db_type == "snowflake":
         limit_sql = f"\nLIMIT {limit}"

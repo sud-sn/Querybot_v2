@@ -61,7 +61,8 @@ SCHEMA = {
                                   ("ITM_GRP_DSC", "nvarchar")),
     "WH.MART.PTY_DMS": _table("PTY_DMS_KEY", ("PTY_DMS_KEY", "int"), ("PTY_CD", "nvarchar"), ("PTY_NM", "nvarchar")),
     "WH.MART.DT_DMS": _table("DT_DMS_KEY", ("DT_DMS_KEY", "int"), ("DMS_DT", "date"), ("YR", "int"), ("QR", "int"),
-                             ("MTH", "int"), ("MTH_NM", "nvarchar"), ("MTH_FR_NM", "nvarchar")),
+                             ("MTH", "int"), ("MTH_NM", "nvarchar"), ("MTH_FR_NM", "nvarchar"), ("WK_OF_YR", "int"),
+                             ("DAY_OF_WK", "int"), ("DAY_NM", "nvarchar"), ("DAY_FR_NM", "nvarchar")),
     "WH.MART.PRD_DMS": _table("PRD_DMS_KEY", ("PRD_DMS_KEY", "int"), ("PRD_DSC", "nvarchar"),
                               ("PRD_FR_DSC", "nvarchar"), ("PRD_YR", "int"), ("PRD_MTH", "int")),
 }
@@ -84,6 +85,8 @@ ITEM_FR_NAMES = {101: "COUDE EN LAITON", 102: "", 201: "TUYAU DE CUIVRE", 202: "
 PARTIES = {0: ("0", _PLACEHOLDER), 1: ("ALO", "ANA LOPEZ"), 2: ("BOK", "BEN OKAFOR")}
 _MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
               "November", "December"]
+_DAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_DAYS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 _MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
               "novembre", "décembre"]
 
@@ -120,7 +123,8 @@ def rows() -> dict[str, list[tuple]]:
     while day <= dt.date(2026, 3, 31):
         key = int(day.strftime("%Y%m%d"))
         days.append((key, day.isoformat(), day.year, (day.month - 1) // 3 + 1, day.month,
-                     _MONTHS_EN[day.month - 1], _MONTHS_FR[day.month - 1]))
+                     _MONTHS_EN[day.month - 1], _MONTHS_FR[day.month - 1], day.isocalendar()[1],
+                     day.isoweekday(), _DAYS_EN[day.weekday()], _DAYS_FR[day.weekday()]))
         day += dt.timedelta(days=1)
     data["DT_DMS"] = days
     periods = [(202500, "Year 2025", "Année 2025", 2025, 0)]

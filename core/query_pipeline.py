@@ -1077,8 +1077,8 @@ def _governed_date_anchor_repair_lines(
             # A series over every date: nothing to filter, nothing to anchor.
             lines.append(
                 f"- JOIN/FIELD: {join_rule}; group by the "
-                f"{policy.get('requested_grain') or 'period'} of {date_expression}, "
-                "with no date filter."
+                f"{str(policy.get('cycle') or policy.get('requested_grain') or 'period').replace('_', ' ')} "
+                f"of {date_expression}, with no date filter."
             )
             continue
         if str(policy.get("kind") or "") == "named_period":
