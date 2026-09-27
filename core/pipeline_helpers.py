@@ -1127,6 +1127,28 @@ def _cycle_refs(policy: dict, role_alias: str, plan: dict, db_type: str, date_re
     return number_ref, name_ref
 
 
+_FORMULA_TOKEN_RE = re.compile(r"'(?:[^']|'')*'|\[[^\]]*\]|\"[^\"]*\"|`[^`]*`|[A-Za-z_][A-Za-z0-9_$#]*")
+
+
+def formula_read_on(formula: str, columns, alias: str = "fact_rows") -> str:
+    """``formula`` with each bare reference to one of ``columns`` read on
+    ``alias``: SUM(SalesAmount) is SUM(fact_rows.SalesAmount). A reference
+    already qualified, a function's name and a string are left as written."""
+    wanted = {str(column).strip().strip('[]"`').upper() for column in columns or []}
+    parts: list[str] = []
+    last = 0
+    for match in _FORMULA_TOKEN_RE.finditer(formula or ""):
+        token = match.group()
+        if token.startswith("'") or token.strip('[]"`').upper() not in wanted:
+            continue
+        if formula[:match.start()].rstrip().endswith(".") or formula[match.end():].lstrip().startswith((".", "(")):
+            continue
+        parts.append(formula[last:match.start()] + f"{alias}.")
+        last = match.start()
+    parts.append((formula or "")[last:])
+    return "".join(parts)
+
+
 def _compile_governed_grouped_request_sql(
     db_type: str,
     known_tables: set[str],
@@ -1692,7 +1714,13 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     if unit_ref:
         select_parts.append(f"{unit_ref} AS {unit_alias}")
         group_parts.append(unit_ref)
-    select_parts.extend(f"{formula} AS {alias}" for alias, formula in metric_specs)
+    # A fact and the dimensions it is broken down by often share their keys'
+    # names: COUNT(DISTINCT ProductKey) beside a join to the product table is
+    # ambiguous to the warehouse, which refused it. The metric is the fact's.
+    fact_columns = next(
+        (cols for name, cols in (table_columns or {}).items() if _same_physical_table(name, fact_table)), {})
+    select_parts.extend(
+        f"{formula_read_on(formula, fact_columns)} AS {alias}" for alias, formula in metric_specs)
 
     top_clause = ""
     try:

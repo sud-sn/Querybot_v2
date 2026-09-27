@@ -237,7 +237,7 @@ class TestWhatTheCompilersLeaveToThePlanner:
         context = self._stock_by_warehouse("stock on hand")
         context["semantic_plan"]["fields"][0].update(
             enforcement="optional", demotion_reason="event modifier is not requested output grain")
-        assert "SUM(ON_HND_QTY) AS STOCK_ON_HAND" in _compile(context)
+        assert "SUM(fact_rows.ON_HND_QTY) AS STOCK_ON_HAND" in _compile(context)
 
 
 class TestTheWindowCompilerToo:

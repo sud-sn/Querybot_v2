@@ -108,7 +108,7 @@ class GovernedGroupedSqlCompilerTests(unittest.TestCase):
 
         self.assertTrue(sql)
         self.assertIn("TOP (10)", sql)
-        self.assertIn("SUM(NET_REVENUE_AMOUNT) AS REVENUE", sql)
+        self.assertIn("SUM(fact_rows.NET_REVENUE_AMOUNT) AS REVENUE", sql)
         self.assertIn("business_dimension.[WAREHOUSE_NAME] AS WAREHOUSE", sql)
         self.assertIn(
             "fact_rows.[WAREHOUSE_SK] = business_dimension.[WAREHOUSE_SK]", sql,
@@ -189,8 +189,8 @@ class GovernedGroupedSqlCompilerTests(unittest.TestCase):
         sql = self._compile(context)
 
         self.assertTrue(sql)
-        self.assertIn("SUM(NET_REVENUE_AMOUNT) AS REVENUE", sql)
-        self.assertIn("SUM(GROSS_MARGIN_AMOUNT) AS GROSS_MARGIN", sql)
+        self.assertIn("SUM(fact_rows.NET_REVENUE_AMOUNT) AS REVENUE", sql)
+        self.assertIn("SUM(fact_rows.GROSS_MARGIN_AMOUNT) AS GROSS_MARGIN", sql)
         self.assertEqual(sql.upper().count("OPS].[F_SALES"), 2)  # anchor and result only
         self.assertNotIn("JOIN [OPS].[F_SALES]", sql.upper())
 

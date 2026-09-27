@@ -409,7 +409,7 @@ class TestTheLiveQuestion:
         assert model_calls == 0
         assert not any("could not build a trusted query" in text for text in sent), sent
         answer = executed[-1]
-        assert "SUM(CUR_ON_HND_QTY) AS STOCK_ON_HAND" in answer and "BAL_TS" not in answer
+        assert "SUM(fact_rows.CUR_ON_HND_QTY) AS STOCK_ON_HAND" in answer and "BAL_TS" not in answer
         newest = "MAX(TRY_CONVERT(date, CONVERT(varchar(6), fact_rows.[PRD_DMS_KEY]) + '01', 112))"
         assert newest in answer and "IN (SELECT snapshot_date FROM snapshot_dates)" in answer
         assert any("What is our total stock on hand?" in text for text in sent), sent
