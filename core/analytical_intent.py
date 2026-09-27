@@ -229,13 +229,13 @@ _POPULATION_COUNT_RE = re.compile(
     r"how\s+many|(?:total\s+)?number\s+of|counts?\s+of)\s+"
     r"(?:(?:active|different|distinct|individual|separate|total|unique)\s+)*"
     r"(?P<entity>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,2}?)"
-    r"(?:\s+(?:do|does|did)\s+(?:we|you|i|they)\s+(?:currently\s+)?(?:have|hold))?"
+    r"(?:\s+(?:do|does|did)\s+(?:we|you|i|they)\s+(?:currently\s+)?(?:have|hold|sell|offer|carry))?"
     r"(?:\s+(?:are|is)\s+there)?"
     r"(?:\s+(?:exist|exists))?"
     r"(?:\s+in\s+(?:total|the\s+(?:system|database|data|business|company)|"
     r"our\s+(?:system|database|data)))?"
     r"(?:\s+(?:overall|altogether|currently))?"
-    r"(?:\s+(?:by|per|for\s+each|grouped\s+by|split\s+by|across)\s+"
+    r"(?:\s+(?:by|per|for\s+each|for\s+every|in\s+each|in\s+every|grouped\s+by|split\s+by|across)\s+"
     r"[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,3})?"
     r"\W*$",
     re.I,
@@ -258,8 +258,11 @@ _OUTPUT_RE = re.compile(
     r"table|kpi|dashboard)\b",
     re.I,
 )
+# "In each country" and "for every store" ask for a breakdown as "by country"
+# does -- the commonest way to ask a head count per member.
 _DIMENSION_RE = re.compile(
-    r"\b(?:by|per|across|grouped\s+by|split\s+by|for\s+each)\s+"
+    r"\b(?:by|per|across|grouped\s+by|split\s+by|for\s+each|for\s+every|in\s+each|in\s+every|"
+    r"within\s+each)\s+"
     r"([a-z][a-z0-9 _-]{1,45}?)(?=\s+(?:for|in|during|where|with|from|"
     r"on|today|yesterday|this|last|latest|versus|vs\.?|as\s+a)\b|[?.!,]|$)",
     re.I,

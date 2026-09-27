@@ -414,6 +414,9 @@ _LEXICON: dict[str, str] = {
     # "are there" for "y a-t-il", which also opens a count of its own.
     "avons-nous": "do we have",
     "avons nous": "do we have",
+    # "Combien de produits vendons-nous ?" -- the catalogue, as "do we sell".
+    "vendons-nous": "do we sell",
+    "vendons nous": "do we sell",
     "y a-t-il": "are there",
     "y a t il": "are there",
     "combien y a-t-il de": "how many",
