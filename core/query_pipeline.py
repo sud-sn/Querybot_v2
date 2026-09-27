@@ -4373,6 +4373,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _demoted_measures = demote_measures_governed_by_a_metric(
             _semantic_plan.get("fields") or [], _matched_metrics,
         )
+        # A measure the question names by a matched metric's own words is that
+        # metric's: the table the field plan found it on by the column's name
+        # is not in the question.
+        from core.semantic_planner import measure_tables_named_by_a_metric, without_tables
+
+        _named_elsewhere = measure_tables_named_by_a_metric(_semantic_plan.get("fields") or [], _matched_metrics)
+        if _named_elsewhere:
+            _left_out = without_tables(_semantic_plan, _named_elsewhere)
+            log.info(
+                "Measure named by a metric's words left out for %s -- the metric reads "
+                "another table: %s", account_id, ", ".join(_left_out),
+            )
         if _demoted_measures:
             log.info(
                 "Measure fields demoted for %s — an approved metric already "

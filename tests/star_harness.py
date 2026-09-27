@@ -74,10 +74,11 @@ SCHEMA = {
         ("UnitPrice", "money"), ("SalesAmount", "money"), ("TotalProductCost", "money"),
         ("OrderDate", "datetime"), ("DueDate", "datetime"), ("ShipDate", "datetime")),
     # Stock, kept twice: day by day for the last quarter of 2025 only, and at
-    # each month's end since January 2024.
+    # each month's end since January 2024 -- the daily count named for what it
+    # is, the month-end one as a balance.
     "SalesDW.dbo.FactProductInventory": _table(
         ("ProductKey", "DateKey"), ("ProductKey", "int"), ("DateKey", "int"), ("UnitCost", "money"),
-        ("UnitsBalance", "int")),
+        ("UnitsInStock", "int")),
     "SalesDW.dbo.FactProductInventoryMonthly": _table(
         ("ProductKey", "MonthEndDateKey"), ("ProductKey", "int"), ("MonthEndDateKey", "int"),
         ("UnitCost", "money"), ("UnitsBalance", "int")),
@@ -207,7 +208,7 @@ METRICS = [
      "synonyms": "products sold, distinct products sold, produits vendus",
      "description": "Distinct products on at least one online order line."},
     # The stock, registered once for each table it is kept on.
-    {"name": "Units in Stock", "sql_template": "SUM(UnitsBalance)", "base_table": "dbo.FactProductInventory",
+    {"name": "Units in Stock", "sql_template": "SUM(UnitsInStock)", "base_table": "dbo.FactProductInventory",
      "formula_type": "expression", "category": "inventory",
      "synonyms": "units in stock, stock on hand, units on hand, unités en stock",
      "description": "Units on hand at the end of the day."},

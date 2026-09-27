@@ -1225,6 +1225,95 @@ def demote_measures_governed_by_a_metric(
     return demoted
 
 
+def _said_in(term: str, phrase: str) -> bool:
+    """The term, written as one word ("unitsinstock") or several, is a run of
+    the phrase's own words ("month end units in stock")."""
+    import unicodedata
+
+    compact = re.sub(r"[^a-z0-9]+", "", str(term or "").lower())
+    folded = unicodedata.normalize("NFKD", str(phrase or "")).encode("ascii", "ignore").decode().lower()
+    words = re.findall(r"[a-z0-9]+", folded)
+    if not compact:
+        return False
+    for start in range(len(words)):
+        run = ""
+        for word in words[start:]:
+            run += word
+            if run == compact:
+                return True
+            if len(run) >= len(compact):
+                break
+    return False
+
+
+def _table_key(table) -> tuple[str, ...]:
+    return tuple(part.strip().strip('[]"`').upper() for part in str(table or "").split(".") if part.strip())[-2:]
+
+
+def _same_table(left, right) -> bool:
+    a, b = _table_key(left), _table_key(right)
+    if not a or not b:
+        return False
+    return a == b if len(a) == len(b) else a[-1] == b[-1]
+
+
+def measure_tables_named_by_a_metric(fields: list[dict], metrics: list[dict] | None) -> list[str]:
+    """Tables a measure field was found on only because the question said a
+    matched metric's words.
+
+    The field plan reads the question against column names before metric
+    matching runs: "month-end units in stock at the end of 2024" found
+    UnitsInStock on the daily snapshot, and the plan then required the daily
+    snapshot beside the month-end one the approved metric reads -- two facts
+    the confirmed relationships do not join, and the question was refused as
+    a join plan it could not build. A measure the question names by a matched
+    metric's name or synonym is that metric's, on the metric's own table.
+    """
+    metric_tables: list[str] = []
+    phrases: list[str] = []
+    for metric in metrics or []:
+        metric_tables += list(metric.get("_resolved_source_tables") or []) or (
+            [metric.get("base_table")] if metric.get("base_table") else [])
+        phrases += [str(metric.get("name") or "")]
+        phrases += [item for item in re.split(r"[,;\n]+", str(metric.get("synonyms") or "")) if item.strip()]
+    if not metric_tables:
+        return []
+    found: list[str] = []
+    for field in fields or []:
+        if str(field.get("role") or "") != "measure":
+            continue
+        table = str(field.get("table") or "")
+        if not table or any(_same_table(table, own) for own in metric_tables):
+            continue
+        if any(_said_in(str(field.get("term") or ""), phrase) for phrase in phrases):
+            if not any(_same_table(table, other) for other in found):
+                found.append(table)
+    return found
+
+
+def without_tables(plan: dict, tables: list[str]) -> list[str]:
+    """The plan less the fields and joins it found on ``tables``, and less a
+    measure anchor there. Returns what was left out."""
+    from core.semantic_plan_utils import required_semantic_tables
+
+    def left(table) -> bool:
+        return any(_same_table(table, other) for other in tables)
+
+    ends = ("from", "to", "from_table", "to_table")
+    left_out = [f"{field.get('table')}.{field.get('column')}" for field in plan.get("fields") or []
+                if left(field.get("table"))]
+    if left(plan.get("fact_anchor")):
+        left_out.append(f"{plan.get('fact_anchor')} (the measure's table)")
+        plan["fact_anchor"] = ""
+    joins_left = [join for join in plan.get("joins") or [] if any(left(join.get(end)) for end in ends)]
+    if not left_out and not joins_left:
+        return []
+    plan["fields"] = [field for field in plan.get("fields") or [] if not left(field.get("table"))]
+    plan["joins"] = [join for join in plan.get("joins") or [] if not any(left(join.get(end)) for end in ends)]
+    plan["required_tables"] = sorted(required_semantic_tables(plan))
+    return left_out
+
+
 def _unqualified_measure_rivals(
     question: str,
     normalized_columns: dict[str, dict[str, str]],
