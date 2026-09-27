@@ -200,7 +200,7 @@ def _entity_name(table: str) -> str:
     return " ".join(part.capitalize() for part in bare.split("_") if part)
 
 
-def _display_field_for_columns(columns: list[str], prefix: str = "") -> str:
+def _display_field_for_columns(columns: list[str], prefix: str = "", entity: str = "") -> str:
     from core.identifier_intelligence import identifier_words
     from core.vocab_packs import strip_dimension_key_suffix
     # Each column by its words: EnglishProductName is a _NAME.
@@ -217,19 +217,45 @@ def _display_field_for_columns(columns: list[str], prefix: str = "") -> str:
     if prefix and "_" in prefix:
         prefixes.append(prefix.upper().split("_")[0])
     prefixes = [p for p in dict.fromkeys(prefixes) if p]
+    # Whose name a label may be: the member's own -- its table's entity, or
+    # what its key is named for.
+    own = {word for word in identifier_words(entity).split("_") if word} if entity else set()
+    if own and prefix:
+        own |= set(prefix.split("_"))
 
     candidates: list[str] = []
     for p in prefixes:
         candidates.extend([f"{p}_DSC", f"{p}_DESC", f"{p}_DESCRIPTION", f"{p}_NM", f"{p}_NAME"])
+    # A column called just Name names the member of its own table.
+    candidates.extend(["NAME", "NM", "DESCRIPTION", "DSC", "DESC"])
     candidates.extend([c for c in upper_to_raw if c.endswith(("_DSC", "_DESC", "_DESCRIPTION", "_NM", "_NAME"))])
     for candidate in candidates:
-        if candidate in upper_to_raw and not _part_of_a_name(candidate):
+        if candidate in upper_to_raw and not _part_of_a_name(candidate) and not _names_another(candidate, own):
             return upper_to_raw[candidate]
     for c in columns:
         rule = match_column_suffix(c)
-        if rule and rule.role == "display" and not _part_of_a_name(identifier_words(c)):
+        words = identifier_words(c)
+        if rule and rule.role == "display" and not _part_of_a_name(words) and not _names_another(words, own):
             return c
     return ""
+
+
+# Words that say which copy of a member's own name a label is -- its language,
+# how full it is -- not whose name it is.
+_NAME_COPIES = frozenset({
+    "ENGLISH", "FRENCH", "EN", "FR", "ENG", "FRA", "FULL", "SHORT", "LONG", "LEGAL", "DISPLAY", "TRADE",
+    "OFFICIAL", "COMMON", "PREFERRED", "LOCAL",
+})
+
+
+def _names_another(words: str, own: set[str]) -> bool:
+    """Whether a label, by its words, names something other than the member
+    it is on: the department of an employee's DepartmentName, the state of a
+    geography's StateProvinceName, the month of a calendar's EnglishMonthName.
+    Many members share one: grouped by it, every employee of a department is
+    one. With no entity to read it against, nothing is ruled out."""
+    whose = set(words.split("_")[:-1]) - _NAME_COPIES
+    return bool(own) and bool(whose) and not whose <= own
 
 
 # A person's first or last name names no one alone: grouped by it, two
@@ -503,7 +529,9 @@ def _dimension_candidates(
             dim_fqn = dim[0] if dim else ""
             dim_meta = dim[1] if dim else {}
             dim_cols = _column_names(dim_meta) if dim_meta else []
-            display = _display_field_for_columns(dim_cols, field["column"]) if dim else ""
+            display = _display_field_for_columns(
+                dim_cols, field["column"], _entity_name(_schema_table_name(dim_fqn, dim_meta)),
+            ) if dim else ""
             code = _code_field_for_columns(dim_cols, field["column"]) if dim else ""
             dimensions.append({
                 "name": _entity_name(_schema_table_name(dim_fqn, dim_meta)) if dim else field.get("expanded_name", field["column"]),
@@ -530,7 +558,7 @@ def _dimension_candidates(
             })
 
     if _table_type(table, meta, schema) in {"dimension", "date_dimension"}:
-        display = _display_field_for_columns(columns)
+        display = _display_field_for_columns(columns, entity=_entity_name(table))
         code = _code_field_for_columns(columns)
         if display or code:
             dimensions.insert(0, {
@@ -841,7 +869,7 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             dim_fqn, dim_meta = dim
             dim_cols = _column_names(dim_meta)
-            display_col = _display_field_for_columns(dim_cols, col)
+            display_col = _display_field_for_columns(dim_cols, col, _entity_name(_schema_table_name(dim_fqn, dim_meta)))
             code_col = _code_field_for_columns(dim_cols, col)
             role = _business_role_from_column(col)
             dim_key = col if col.upper() in {c.upper() for c in dim_cols} else ""
