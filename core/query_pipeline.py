@@ -3665,23 +3665,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             or ""
         ).strip()
         if _confirmed_source_table:
-            _known_source_candidates = {
-                str(candidate.get("table") or "").strip()
-                for candidate in (_source_scope.get("candidates") or [])
-            }
-            _known_fact_tables = {
-                str(table.get("qualified_name") or table.get("table") or "").strip()
-                for table in (_source_model.get("tables") or [])
-                if str(table.get("type") or "").lower() == "fact"
-            }
-            if (
-                _confirmed_source_table in _known_source_candidates
-                or _confirmed_source_table in _known_fact_tables
-            ):
+            # The choice is kept as the card offered it (DBO.FACTRESELLERSALES)
+            # and the model spells its facts as the warehouse does
+            # (dbo.FactResellerSales): matched by spelling, a governed fact
+            # the reader chose was "no longer a governed fact", the choice was
+            # dropped, and the question failed after the reader had answered.
+            from core.source_resolution import governed_source_fact
+
+            _confirmed_fact = governed_source_fact(_confirmed_source_table, _source_scope, _source_model)
+            if _confirmed_fact:
                 _source_scope = {
                     **_source_scope,
                     "status": "selected",
-                    "selected_fact": _confirmed_source_table,
+                    "selected_fact": _confirmed_fact,
                     "reason": "user-confirmed governed source",
                 }
             else:
@@ -4349,6 +4345,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         reader_question=question,
         limit=6,
     )
+    # A dataset the reader chose is the one read. "Stock by product category"
+    # asked which of two inventory snapshots to read; the answer settled the
+    # table, but both snapshots' stock metrics still matched the question, both
+    # their dates were governed, and the join plan failed on the date of the
+    # table the reader had turned down -- "the confirmed relationships do not
+    # connect Date to the rest of the question".
+    if _source_scope.get("reason") == "user-confirmed governed source" and _metric_scope.metrics:
+        from core.source_resolution import metrics_on_source
+
+        _on_chosen_source = metrics_on_source(
+            _metric_scope.metrics, str(_source_scope.get("selected_fact") or ""), all_columns)
+        if len(_on_chosen_source) < len(_metric_scope.metrics):
+            log.info(
+                "Metrics on the datasets the reader turned down left out for %s: %s -- %s was chosen",
+                account_id,
+                [m.get("name") for m in _metric_scope.metrics if m not in _on_chosen_source],
+                _source_scope.get("selected_fact"),
+            )
+            _metric_scope = dataclasses.replace(_metric_scope, metrics=_on_chosen_source)
     # A pinned draft IS the user's disambiguation -- they just defined, in this
     # thread, exactly what they want computed. So do not ask which of the
     # registry's rival definitions they meant.

@@ -65,6 +65,16 @@ def _table_bare(table_name: str) -> str:
     return str(table_name or "").upper().split(".")[-1]
 
 
+def _table_words(table: dict[str, Any]) -> str:
+    """The table's own name read as its words, in the case it was declared
+    in: FactResellerSales is FACT_RESELLER_SALES, where the upper-cased
+    identity the model matches on is one word."""
+    from core.identifier_intelligence import identifier_words
+
+    name = str(table.get("qualified_name") or table.get("table") or "").split(".")[-1]
+    return identifier_words(name.strip().strip('[]"`'))
+
+
 def _expanded_identifier(value: str, vocab=None) -> str:
     try:
         from core.identifier_intelligence import tokenize_identifier
@@ -245,12 +255,12 @@ def _business_source_label(table: dict[str, Any], vocab=None) -> str:
         # Read through the tenant's vocabulary it is words ("Item Balance
         # Dly"), and a code an admin confirms on the Business Meanings page
         # joins them ("Item Balance Daily").
-        spelled = _expanded_identifier(_without_table_kind(bare), vocab=vocab) or entity
+        spelled = _expanded_identifier(_without_table_kind(_table_words(table)), vocab=vocab) or entity
         if cadence and cadence.lower() in spelled.lower().split():
             cadence = ""
         label = " ".join(part for part in (cadence, spelled) if part)
         return label.strip().title()
-    expanded = _expanded_identifier(bare, vocab=vocab)
+    expanded = _expanded_identifier(_table_words(table), vocab=vocab)
     return (expanded or bare.replace("_", " ")).strip().title()
 
 
@@ -465,6 +475,34 @@ def resolve_source_scope(
         "requested_grains": sorted(requested_grains),
         "reason": "tenant semantic model and terminology evidence",
     }
+
+
+def governed_source_fact(table: str, scope: dict[str, Any] | None, model: dict[str, Any] | None) -> str:
+    """The governed fact a reader chose, named as the scope names its facts,
+    whatever case or qualification the choice was kept in; "" when no
+    governed fact is that table."""
+    if not str(table or "").strip():
+        return ""
+    for candidate in (scope or {}).get("candidates") or []:
+        if _same_table(candidate.get("table"), table):
+            return str(candidate.get("table") or "")
+    for fact in (model or {}).get("tables") or []:
+        if str(fact.get("type") or "").lower() == "fact" and _same_table(_table_identity(fact), table):
+            return _table_identity(fact)
+    return ""
+
+
+def metrics_on_source(
+    metrics: list[dict[str, Any]], fact: str, table_columns: dict[str, dict[str, str]] | None,
+) -> list[dict[str, Any]]:
+    """The metrics read on ``fact``: a reader who chose a dataset asked for
+    its figures, not for those of the datasets they turned down."""
+    from core.metric_scope import metric_source_tables
+
+    return [
+        metric for metric in metrics or []
+        if any(_same_table(table, fact) for table in metric_source_tables(metric, table_columns))
+    ]
 
 
 def source_clarification_options(scope: dict[str, Any]) -> list[dict[str, str]]:

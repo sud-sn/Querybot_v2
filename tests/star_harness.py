@@ -283,8 +283,8 @@ def saved_connection() -> dict:
     return {"id": _saved.get("id"), **CONNECTION}
 
 
-def ask(warehouse: harness.Warehouse, question: str, lang: str = "en") -> dict:
-    return harness.ask(warehouse, question, lang, account=ACCOUNT, connection=saved_connection())
+def ask(warehouse: harness.Warehouse, question: str, lang: str = "en", *, choose: str | None = None) -> dict:
+    return harness.ask(warehouse, question, lang, account=ACCOUNT, connection=saved_connection(), choose=choose)
 
 
 _built: dict = {}

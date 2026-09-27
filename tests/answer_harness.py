@@ -447,13 +447,43 @@ class _Retriever:
 _asked = 0
 
 
+def _answer_the_question_asked(account: str, event, channel: _Channel, label: str):
+    """The reader's answer to the question the pipeline asked, as the portal
+    sends it: the option whose label is ``label``, combined with the question
+    and carried as structured state. None when nothing was asked."""
+    from core.clarification import (attach_clarification_resolution, clear_pending,
+                                    combine_with_clarification, get_pending)
+    from gateway.base import PlatformEvent
+
+    pending = get_pending(account, event.user_id, session_id=channel.session_id)
+    if not pending:
+        return None
+    meta = pending.get("clarification_meta") or {}
+    options = meta.get("options") or []
+    selected = next(option for option in options if str(option.get("label")) == label)
+    combined, hint = combine_with_clarification(
+        pending["original_q"], str(selected.get("value") or selected.get("label") or "").strip(), meta,
+        selected_option_id=str(selected.get("id") or "") or None)
+    if hint:
+        combined = f"{combined}\n\n{hint}"
+    chosen = PlatformEvent(account, event.user_id, event.channel_id, combined, "portal", raw={})
+    if meta.get("source") and options:
+        chosen.raw["_clarification_selected_source"] = meta.get("source")
+        chosen.raw["_clarification_selected_option"] = dict(selected)
+    attach_clarification_resolution(chosen, pending)
+    clear_pending(account, event.user_id, session_id=channel.session_id)
+    return chosen
+
+
 def ask(warehouse: Warehouse, question: str, lang: str = "en", *, account: str = ACCOUNT,
-        connection: dict | None = None) -> dict:
+        connection: dict | None = None, choose: str | None = None) -> dict:
     """One question through the real pipeline. Returns what the warehouse
     ran (``executed``: sql and rows), whether the model was asked to write
     SQL (``model_wrote_sql``) and the prompts it was given (``prompts``),
     and every reply. Asked of this module's tenant unless another tenant's
-    ``account`` and saved ``connection`` are given."""
+    ``account`` and saved ``connection`` are given. Where the pipeline asks
+    the reader to choose, ``choose`` is the label of the option the reader
+    picks, and what is returned is the turn that follows."""
     global _asked
     import core.llm as llm
     import core.query_pipeline as qp
@@ -494,6 +524,13 @@ def ask(warehouse: Warehouse, question: str, lang: str = "en", *, account: str =
         stack.enter_context(patch.object(schema_module, "_run_azure_sql", run_azure_sql))
         stack.enter_context(patch.object(qp, "get_client_db", lambda *args, **kwargs: connection))
         asyncio.run(qp._handle_query_impl(account, event, channel, question, user))
+        if choose is not None:
+            chosen = _answer_the_question_asked(account, event, channel, choose)
+            if chosen is not None:
+                channel.replies.clear()
+                executed.clear()
+                model_calls.clear()
+                asyncio.run(qp._handle_query_impl(account, chosen, channel, chosen.text, user, is_clarification=True))
     answers = [e for e in executed if MARKER not in e["sql"]]
     return {
         "executed": answers,
