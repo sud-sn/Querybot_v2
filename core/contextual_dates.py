@@ -727,6 +727,14 @@ def _explicit_role_matches(
             }:
                 stem = " ".join(tokens[:-1]).strip()
                 if stem:
+                    event_variants = _event_word_forms(stem)
+                    # "Ship date" names the Shipping Date as surely as
+                    # "shipping date" does: a form of the event's word before
+                    # the grain is the date's name, and a longer one than
+                    # "date" alone -- which named a calendar role called just
+                    # "Date" on another table, and the reader was asked which
+                    # of the sales' dates that one was.
+                    other_forms = sorted((form for form in event_variants if form != stem), key=len, reverse=True)
                     for grain in ("date", "day", "month", "week", "quarter", "year"):
                         # "billing month", and French word order as the
                         # canonical question carries it: "mois de facturation"
@@ -738,7 +746,8 @@ def _explicit_role_matches(
                         # stock" is neither a month of End Date nor, in French
                         # order, "mois de fin".
                         for variant in (f"{stem} {grain}", f"{grain} of {stem}",
-                                        f"{grain} of {_plural(stem)}", f"{grain} {stem}"):
+                                        f"{grain} of {_plural(stem)}", f"{grain} {stem}",
+                                        *(f"{form} {grain}" for form in other_forms)):
                             span = _phrase_span(event_text, variant)
                             if span:
                                 role_matches.append((span[0], span[1], variant, _NAMED))
@@ -747,7 +756,6 @@ def _explicit_role_matches(
                     # "orders by month", "shipped last week". Keep this
                     # word-boundary based so "order" does not match unrelated
                     # text such as "reorder".
-                    event_variants = _event_word_forms(stem)
                     for variant in sorted(event_variants, key=len, reverse=True):
                         event_match = re.search(rf"\b{re.escape(variant)}\b", event_text)
                         if event_match:
