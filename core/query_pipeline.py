@@ -1403,6 +1403,44 @@ def metric_not_groupable_disclosure(metric, *, lang) -> str:
     )
 
 
+def graph_block_response(graph_ctx, *, lang, model=None, vocab=None) -> str:
+    """The reply when the join graph cannot reach what the question asks for.
+
+    Extracted from _handle_query_impl so it can be executed. It was English
+    whatever the reader's language, and named what it could not reach by the
+    table's code in the warehouse. It says what happened, what could not be
+    reached in words and what to do, in the reader's language; the graph's own
+    account stays in the trace. Not the diagnostic card: the portal draws that
+    only around a query that was tried, and none was.
+    """
+    from core.source_resolution import _business_source_label, _table_bare, _table_identity
+
+    tables = {
+        _table_bare(_table_identity(table)): table
+        for table in (model or {}).get("tables") or []
+        if _table_identity(table)
+    }
+
+    def _words(name: str) -> str:
+        # A date role's entity is its own name; a table's is its code.
+        if " " in name:
+            return name
+        table = tables.get(name.upper()) or {"qualified_name": name, "entity": name}
+        return _business_source_label(table, vocab=vocab)
+
+    names = [
+        _words(name) for name in dict.fromkeys(
+            str(entity) for entity in (graph_ctx or {}).get("missing_entities") or [] if entity
+        )
+    ]
+    return "\n\n".join([
+        _t("fail.graph.headline", lang=lang),
+        _t("fail.graph.reason", lang=lang, names=", ".join(names)) if names
+        else _t("fail.graph.reason_unnamed", lang=lang),
+        _t("fail.graph.next_step", lang=lang),
+    ])
+
+
 def planner_metrics_in_scope(account_id: str, effective) -> list[dict]:
     """The registry metrics the analytical planner may bind for this question:
     answerable ones (store.metric_is_answerable -- a formula that failed
@@ -5224,24 +5262,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _graph_ctx.get("reason")
                 or "The confirmed entity graph does not contain a safe path for every requested business entity."
             ).strip()
-            _missing_graph_entities = list(
-                _graph_ctx.get("missing_entities") or []
-            )
-            _graph_block_message = (
-                "I couldn't build a trusted join plan for this question. "
-                + _graph_reason
-            )
-            if _missing_graph_entities:
-                _graph_block_message += (
-                    "\n\nMissing governed path for: "
-                    + ", ".join(str(name) for name in _missing_graph_entities)
-                    + "."
-                )
-            _graph_block_message += (
-                "\n\nAsk an administrator to confirm the required relationship "
-                "in the Entity Graph, then try the question again."
-            )
-            await adapter.send_message(event, _graph_block_message)
+            await adapter.send_message(event, graph_block_response(
+                _graph_ctx, lang=(portal_user or {}).get("lang") or "en",
+                model=_contract_model, vocab=_vocab,
+            ))
             _trace_finish(
                 trace_id,
                 status="error",

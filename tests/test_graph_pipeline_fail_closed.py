@@ -18,7 +18,8 @@ def test_blocked_graph_plan_stops_before_sql_generation():
     guard_return = PIPELINE_SOURCE.index("            return", blocked_guard)
 
     assert blocked_guard < guard_return < sql_generation
-    assert "I couldn't build a trusted join plan" in PIPELINE_SOURCE[blocked_guard:guard_return]
+    # The reply itself is executed in tests/test_a_join_refusal_reads_in_the_readers_language.py.
+    assert "graph_block_response(" in PIPELINE_SOURCE[blocked_guard:guard_return]
 
 
 def test_ambiguous_graph_path_is_persisted_as_resumable_clarification():

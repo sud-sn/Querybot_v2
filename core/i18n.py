@@ -1562,6 +1562,25 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Try rephrasing the question, or contact your administrator.",
         "fr": "Reformulez la question ou contactez votre administrateur.",
     },
+    # The join graph cannot reach part of the question. The reader's words
+    # for what it cannot reach go in {names}; the graph's own account stays in
+    # the trace.
+    "fail.graph.headline": {
+        "en": "I couldn't build a trusted join plan for this question.",
+        "fr": "Je n'ai pas pu établir un plan de jointure fiable pour cette question.",
+    },
+    "fail.graph.reason": {
+        "en": "The confirmed relationships do not connect {names} to the rest of the question, so no query was run.",
+        "fr": "Les relations confirmées ne relient pas {names} au reste de la question ; aucune requête n'a été exécutée.",
+    },
+    "fail.graph.reason_unnamed": {
+        "en": "The confirmed relationships do not connect everything the question asks for, so no query was run.",
+        "fr": "Les relations confirmées ne relient pas tout ce que demande la question ; aucune requête n'a été exécutée.",
+    },
+    "fail.graph.next_step": {
+        "en": "Ask your administrator to confirm the relationship this question needs in the Entity Graph, then ask again.",
+        "fr": "Demandez à votre administrateur de confirmer dans le graphe d'entités la relation dont cette question a besoin, puis posez-la de nouveau.",
+    },
     "fail.phrased_note": {
         "en": "Wording by the model; the diagnosis is the system's.",
         "fr": "Formulation par le modèle ; le diagnostic est celui du système.",
