@@ -155,11 +155,11 @@ class ResolutionTierTests(unittest.TestCase):
     def test_weak_typo_dropped_silently(self):
         r = resolve_literals("acct", "sales for 'Emko Corpp'", base_dir=self.base)
         self.assertEqual({k: len(v) for k, v in r.items()},
-                         {"verified": 0, "in_lists": 0, "clarify": 0, "narrowed": 0})
+                         {"verified": 0, "in_lists": 0, "clarify": 0, "narrowed": 0, "several": 0})
 
     def test_no_index_returns_empty(self):
         r = resolve_literals("ghost", "sales for Acme Industries", base_dir=self.base)
-        self.assertEqual(r, {"verified": [], "in_lists": [], "clarify": [], "narrowed": []})
+        self.assertEqual(r, {"verified": [], "in_lists": [], "clarify": [], "narrowed": [], "several": []})
 
 
 class NarrowerPhraseIsNotAVerificationTests(unittest.TestCase):

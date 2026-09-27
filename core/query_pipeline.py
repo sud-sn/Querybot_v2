@@ -3053,7 +3053,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             # nobody has reviewed is still a member.
             _named_members = [
                 str(item.get("phrase"))
-                for bucket in ("verified", "in_lists", "narrowed", "clarify")
+                for bucket in ("verified", "in_lists", "narrowed", "clarify", "several")
                 for item in (_resolved_values.get(bucket) or [])
                 if item.get("phrase")
             ]

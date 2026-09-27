@@ -397,18 +397,20 @@ def resolve_literals(
     stops a run of words from being tried whole, a word of vocabulary does not.
 
     Returns {"verified": [...], "in_lists": [...], "clarify": [...],
-    "narrowed": [...]} where each verified entry is {phrase, table_fqn, column,
+    "narrowed": [...], "several": [...]} where each verified entry is {phrase, table_fqn, column,
     business_name, value, method, score}, each in_lists entry is {phrase,
     table_fqn, column, business_name, values: [...]}, each clarify entry is
     {phrase, options: [{table_fqn, column, business_name, value}]}, and each
     narrowed entry is a near-miss the resolver refuses to substitute —
-    {phrase, table_fqn, column, business_name, value, dropped: [words]}.
+    {phrase, table_fqn, column, business_name, value, dropped: [words]}, and
+    each several entry is a value found verbatim in more than one column —
+    {phrase, value, columns: [{table_fqn, column, business_name}]}.
     """
-    empty = {"verified": [], "in_lists": [], "clarify": [], "narrowed": []}
+    empty = {"verified": [], "in_lists": [], "clarify": [], "narrowed": [], "several": []}
     if not index_exists(account_id, base_dir=base_dir):
         return empty
 
-    result = {"verified": [], "in_lists": [], "clarify": [], "narrowed": []}
+    result = {"verified": [], "in_lists": [], "clarify": [], "narrowed": [], "several": []}
 
     def accept_fuzzy(phrase: str, match: dict) -> None:
         """Verify a fuzzy match, unless it would discard the user's own words."""
@@ -436,10 +438,19 @@ def resolve_literals(
             columns = {(m["table_fqn"], m["column"]) for m in exact}
             if len(columns) == 1:
                 result["verified"].append({"phrase": phrase, **exact[0]})
-            # Exact hits on multiple columns: the value exists verbatim in
-            # several places (e.g. a code reused across dimensions) — the
-            # LLM's table choice resolves it; injecting is more likely to
-            # mislead than help, so skip.
+            else:
+                # Verbatim in several columns: a country the customer's
+                # address and the sales territory both keep, a name beside its
+                # French twin. Which one the question means is the SQL
+                # writer's to decide -- but the member is named, and no answer
+                # may leave it out. Skipped, "Online sales in Canada" was
+                # answered with every country's sales.
+                result["several"].append({
+                    "phrase": phrase,
+                    "value": exact[0]["value"],
+                    "columns": [{"table_fqn": m["table_fqn"], "column": m["column"],
+                                 "business_name": m.get("business_name")} for m in exact],
+                })
             continue
 
         fuzzy = lookup_fuzzy(account_id, phrase, allowed_tables, limit=6, base_dir=base_dir)
@@ -578,13 +589,14 @@ def filter_resolved_for_compliance(account_id: str, resolved: dict) -> tuple[dic
             # compliance setup is incomplete.
             evidence["reason"] = "no_policy_pack"
             dropped = dict(resolved)
-            for bucket in ("verified", "in_lists", "narrowed"):
+            for bucket in ("verified", "in_lists", "narrowed", "several"):
                 items = resolved.get(bucket) or []
                 evidence["dropped"] += len(items)
                 for item in items:
-                    ref = f"{item.get('table_fqn', '?')}.{item.get('column', '?')}"
-                    if ref not in evidence["dropped_columns"]:
-                        evidence["dropped_columns"].append(ref)
+                    for place in item.get("columns") or [item]:
+                        ref = f"{place.get('table_fqn', '?')}.{place.get('column', '?')}"
+                        if ref not in evidence["dropped_columns"]:
+                            evidence["dropped_columns"].append(ref)
                 dropped[bucket] = []
             if evidence["dropped"]:
                 log.warning(
@@ -614,6 +626,21 @@ def filter_resolved_for_compliance(account_id: str, resolved: dict) -> tuple[dic
                         evidence["dropped_columns"].append(ref)
             evidence["kept"] += len(kept_items)
             filtered[bucket] = kept_items
+        # A value in several columns keeps only the columns cleared to show it.
+        kept_several = []
+        for item in (resolved.get("several") or []):
+            places = [p for p in (item.get("columns") or [])
+                      if _cleared(p.get("table_fqn", ""), p.get("column", ""))]
+            for place in item.get("columns") or []:
+                if place not in places:
+                    evidence["dropped"] += 1
+                    ref = f"{place.get('table_fqn', '?')}.{place.get('column', '?')}"
+                    if ref not in evidence["dropped_columns"]:
+                        evidence["dropped_columns"].append(ref)
+            if places:
+                kept_several.append({**item, "columns": places})
+                evidence["kept"] += 1
+        filtered["several"] = kept_several
 
         if evidence["dropped"]:
             log.info(
@@ -637,6 +664,7 @@ def filter_resolved_for_compliance(account_id: str, resolved: dict) -> tuple[dic
         # them names it so the model is told what NOT to substitute. Same
         # egress, same suppression.
         blocked["narrowed"] = []
+        blocked["several"] = []
         return blocked, evidence
 
 
@@ -645,7 +673,8 @@ def build_verified_values_injection(resolved: dict) -> str:
     verified = (resolved or {}).get("verified") or []
     in_lists = (resolved or {}).get("in_lists") or []
     narrowed = (resolved or {}).get("narrowed") or []
-    if not verified and not in_lists and not narrowed:
+    several = (resolved or {}).get("several") or []
+    if not verified and not in_lists and not narrowed and not several:
         return ""
 
     lines = [
@@ -681,6 +710,13 @@ def build_verified_values_injection(resolved: dict) -> str:
             f"it answers a different question, and the more specific value may "
             f"exist in the database without being indexed yet. An empty result "
             f"is the correct answer here and will be explained to the user."
+        )
+    for item in several:
+        places = ", ".join(f"{p['table_fqn']}.{p['column']}" for p in item.get("columns") or [])
+        lines.append(
+            f"- user text '{item['phrase']}' is the value '{_sanitize(item['value'])}' in several "
+            f"columns ({places}). Filter on the one that describes what the question is about -- "
+            f"the one its measure's table reaches -- and never leave the filter out."
         )
     block = "\n".join(lines) + "\n"
     if len(block) > _MAX_INJECTION_CHARS:
