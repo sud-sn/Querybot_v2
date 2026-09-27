@@ -52,10 +52,12 @@ SCHEMA = {
         ("FrenchProductSubcategoryName", "nvarchar"), ("ProductCategoryKey", "int")),
     # A product's prices are money on the product's own row -- numbers, but not
     # what the product table holds facts about.
+    # A product's own dates -- when it was first and last sold -- are its, not a sale's.
     "SalesDW.dbo.DimProduct": _table(
         "ProductKey", ("ProductKey", "int"), ("ProductAlternateKey", "nvarchar"), ("EnglishProductName", "nvarchar"),
         ("FrenchProductName", "nvarchar"), ("ProductSubcategoryKey", "int"), ("Color", "nvarchar"),
-        ("StandardCost", "money"), ("ListPrice", "money"), ("DealerPrice", "money")),
+        ("StandardCost", "money"), ("ListPrice", "money"), ("DealerPrice", "money"),
+        ("StartDate", "datetime"), ("EndDate", "datetime")),
     "SalesDW.dbo.DimCustomer": _table(
         "CustomerKey", ("CustomerKey", "int"), ("CustomerAlternateKey", "nvarchar"), ("FirstName", "nvarchar"),
         ("LastName", "nvarchar"), ("Gender", "nvarchar"), ("YearlyIncome", "money")),
@@ -141,7 +143,8 @@ def rows() -> dict[str, list[tuple]]:
         "DimDate": days,
         "DimProductCategory": [(k, en, fr) for k, (en, fr) in CATEGORIES.items()],
         "DimProductSubcategory": [(k, en, fr, c) for k, (en, fr, c) in SUBCATEGORIES.items()],
-        "DimProduct": [(k, code, en, fr, sub, "Black", cost, price, round(price * 0.6, 2))
+        "DimProduct": [(k, code, en, fr, sub, "Black", cost, price, round(price * 0.6, 2),
+                        "2020-01-01 00:00:00", "2030-12-31 00:00:00")
                        for k, (code, en, fr, sub, price, cost) in PRODUCTS.items()],
         "DimCustomer": [(k, code, first, last, gender, income)
                         for k, (code, first, last, gender, income) in CUSTOMERS.items()],

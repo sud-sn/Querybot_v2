@@ -661,6 +661,13 @@ def _measure_phrases(metrics: list[dict] | None) -> list[str]:
     return phrases
 
 
+# A period's close or opening, in either order: "the end of 2024", "month
+# end", "year-end".
+_PERIOD_EDGE_RE = re.compile(
+    r"\b(?:(?:end|start|close)\s+of|(?:day|week|month|quarter|year|period)\s+(?:end|start|close))\b"
+)
+
+
 def _explicit_role_matches(
     question: str,
     date_roles: list[dict],
@@ -680,6 +687,10 @@ def _explicit_role_matches(
     for measure in measure_phrases or []:
         event_text = re.sub(rf"(?<!\w){re.escape(measure)}(?!\w)",
                             lambda found: " " * len(found.group()), event_text)
+    # Nor is a period's own edge an event: "stock at the end of 2024" asks
+    # for the close of 2024, not for a product's End Date, and "stock at
+    # year-end" is not the End Date's year.
+    event_text = _PERIOD_EDGE_RE.sub(lambda found: " " * len(found.group()), event_text)
     matches: list[tuple[int, int, str, dict]] = []
     for role in date_roles or []:
         if str(role.get("status") or "").casefold() not in allowed_statuses:
@@ -722,9 +733,13 @@ def _explicit_role_matches(
                         # is "month of billing", "mois de commande" is "month
                         # of orders", and "semaine d'expédition", its "de"
                         # elided, is "week shipment".
+                        # Read where the event wording is, the measures' names
+                        # and the periods' edges left out: "month-end units in
+                        # stock" is neither a month of End Date nor, in French
+                        # order, "mois de fin".
                         for variant in (f"{stem} {grain}", f"{grain} of {stem}",
                                         f"{grain} of {_plural(stem)}", f"{grain} {stem}"):
-                            span = _phrase_span(q, variant)
+                            span = _phrase_span(event_text, variant)
                             if span:
                                 role_matches.append((span[0], span[1], variant, _NAMED))
                     # Event wording often names the business date implicitly:
