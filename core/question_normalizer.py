@@ -399,6 +399,17 @@ _LEXICON: dict[str, str] = {
     "combien de": "how many",
     "combien d'": "how many ",
     "combien": "how much",
+    # "Combien d'entrepôts avons-nous ?" read "how many warehouses avons-nous"
+    # and asked for no population; the English shape is "do we have", and
+    # "are there" for "y a-t-il", which also opens a count of its own.
+    "avons-nous": "do we have",
+    "avons nous": "do we have",
+    "y a-t-il": "are there",
+    "y a t il": "are there",
+    "combien y a-t-il de": "how many",
+    "combien y a-t-il d'": "how many ",
+    "combien y a t il de": "how many",
+    "combien y a t il d'": "how many ",
 
     # ── Superlatives, which are what carry Top-N ─────────────────────────────
     # detect_top_n_intent matches "<n> best" as readily as "top <n>", and

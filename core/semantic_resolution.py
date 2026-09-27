@@ -248,6 +248,13 @@ def build_planner_alignment(
     detected = {str(name) for name in graph_ctx.get("detected") or [] if str(name)}
     dropped_fact_entities: set[str] = set()
     dropped_date_entities: set[str] = set()
+    # A population is counted on its own table: "number of items by item
+    # group" reads the item table and its group, and no fact the first pass
+    # found beside them.
+    count_table = _table_key((((semantic_plan.get("count_target") or {}).get("selected")) or {}).get("table"))
+    counted_on_a_dimension = bool(count_table) and str(
+        entities_by_name.get(table_to_entity.get(count_table, ""), {}).get("entity_type") or ""
+    ).lower() not in {"", "fact"}
 
     # The first graph pass is deliberately broad so it can help metric scoping.
     # Its lexical date-role guesses must not become authoritative requirements
@@ -260,7 +267,7 @@ def build_planner_alignment(
     for name in detected:
         entity = entities_by_name.get(name, {})
         entity_type = str(entity.get("entity_type") or "").lower()
-        if entity_type == "fact" and authoritative_fact_entities:
+        if entity_type == "fact" and (authoritative_fact_entities or counted_on_a_dimension):
             if name not in authoritative_fact_entities:
                 dropped_fact_entities.add(name)
                 continue

@@ -1798,21 +1798,32 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question,
             calendar_profile=_planner_calendar_profile,
         )
-    # The records a count names are read in the detectors' English, as every
-    # other English detector is: "fiches ... créées" is "records ... created".
+    # A population and the records a count names are read in the detectors'
+    # English, as every other English detector is: "combien d'entrepôts
+    # avons-nous" is "how many warehouses do we have", "fiches ... créées" is
+    # "records ... created".
     if (
         _analysis_question != question
         and not _analytical_plan.record_count
         and not _analytical_plan.counted_entity
         and not _analytical_plan.population_entity
     ):
-        from core.analytical_intent import detect_record_count
+        from core.analytical_intent import detect_population_count, detect_record_count
 
-        _record_count, _record_verb = detect_record_count(_analysis_question)
-        if _record_count:
+        _population_entity = detect_population_count(_analysis_question)
+        _record_count, _record_verb = ("", "") if _population_entity else detect_record_count(_analysis_question)
+        if _population_entity:
+            _analytical_plan = _dataclass_replace(_analytical_plan, population_entity=_population_entity)
+        elif _record_count:
             _analytical_plan = _dataclass_replace(
                 _analytical_plan, record_count=_record_count, record_verb=_record_verb,
             )
+    # And what it is broken down by: "par province" is "by province", which a
+    # count keeps as its grouping rather than setting aside as a modifier.
+    if _analysis_question != question and not _analytical_plan.dimensions:
+        _english_dimensions = plan_analytical_intent(_analysis_question).dimensions
+        if _english_dimensions:
+            _analytical_plan = _dataclass_replace(_analytical_plan, dimensions=_english_dimensions)
 
     # Keep an explicit or clarified calendar choice available to later turns
     # in this thread. This stores only calendar metadata, never result values,
@@ -3523,8 +3534,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _source_scope.get("selected_fact"),
             [f"{c.get('table')}:{c.get('score')}" for c in (_source_scope.get("candidates") or [])[:4]],
         )
+        # A population is counted on its own table, which is no fact: which
+        # fact to read is not a question to put to the reader of "how many
+        # items do we have".
         if (
             _source_scope.get("status") == "ambiguous"
+            and not _analytical_plan.population_entity
             and can_request_clarification(event, "source_scope")
         ):
             _source_options = source_clarification_options(_source_scope)
@@ -3876,7 +3891,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # can start refusing because of this.
     elif _analytical_plan.population_entity:
         _population_resolution = resolve_population_count_target(
-            _analytical_plan.population_entity, _source_model,
+            _analytical_plan.population_entity, _source_model, vocab=_vocab,
         )
         _population_selected = _population_resolution.get("selected") or {}
         _population_table = str(_population_selected.get("table") or "")
@@ -5150,9 +5165,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # The records a count names are what it counts, never a breakdown of it:
     # "items created by month" is not grouped by item, nor joined to it.
     try:
-        from core.analytical_request_plan import demote_counted_records
+        from core.analytical_request_plan import demote_counted_population, demote_counted_records
 
         demote_counted_records(_semantic_plan, _analytical_plan.to_dict(), _matched_metrics)
+        demote_counted_population(_semantic_plan, _analytical_plan.to_dict())
     except Exception as _counted_exc:
         log.warning("Counted records not taken out of the breakdown for %s: %s", account_id, _counted_exc)
     try:

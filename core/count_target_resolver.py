@@ -288,7 +288,7 @@ def _entity_tokens(value: Any) -> tuple[str, ...]:
     return tuple(_singular_token(token) for token in _norm(value).split() if token)
 
 
-def _identifies_exactly(field: dict[str, Any], entity_tokens: tuple[str, ...]) -> str:
+def _identifies_exactly(field: dict[str, Any], entity_tokens: tuple[str, ...], vocab=None) -> str:
     """Return the identifier word by which a field names exactly this entity.
 
     A master table's own key reads as the entity plus an identifier word --
@@ -312,6 +312,15 @@ def _identifies_exactly(field: dict[str, Any], entity_tokens: tuple[str, ...]) -
     for key in ("business_candidates", "synonyms", "approved_synonyms", "aliases"):
         raw = field.get(key) or []
         labels.extend(raw if isinstance(raw, (list, tuple, set)) else [raw])
+    # And as the tenant's vocabulary reads the column today: a pack's terms
+    # ("profit centre" on the profit center code) and a meaning an admin
+    # confirmed after the model was written (SLR read as supplier, where the
+    # model still says seller).
+    if vocab is not None and field.get("column"):
+        from core.source_resolution import _expanded_identifier
+
+        labels.extend(getattr(vocab, "direct_aliases", {}).get(str(field["column"]).upper(), ()) or ())
+        labels.append(_expanded_identifier(str(field["column"]), vocab=vocab))
     suffix_word = _column_identifier_word(field.get("column"))
     for label in labels:
         tokens = _entity_tokens(label)
@@ -349,11 +358,12 @@ def _population_candidate(
     table: dict[str, Any],
     field: dict[str, Any],
     entity_tokens: tuple[str, ...],
+    vocab=None,
 ) -> dict[str, Any] | None:
     column = str(field.get("column") or "").strip()
     if not column:
         return None
-    identifier_word = _identifies_exactly(field, entity_tokens)
+    identifier_word = _identifies_exactly(field, entity_tokens, vocab)
     if not identifier_word:
         return None
     if _norm(field.get("role")) in {"measure", "measure candidate"}:
@@ -396,6 +406,8 @@ def _population_candidate(
 def resolve_population_count_target(
     entity: str,
     model: dict[str, Any] | None,
+    *,
+    vocab=None,
 ) -> dict[str, Any]:
     """Resolve "how many <entity> are there" against the entity's master table.
 
@@ -420,7 +432,7 @@ def resolve_population_count_target(
         and _table_name(table)
         for field in (table.get("fields") or [])
         if isinstance(field, dict)
-        for candidate in [_population_candidate(table, field, entity_tokens)]
+        for candidate in [_population_candidate(table, field, entity_tokens, vocab)]
         if candidate is not None
     ]
     entity_text = " ".join(entity_tokens)

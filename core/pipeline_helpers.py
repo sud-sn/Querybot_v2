@@ -1466,6 +1466,13 @@ def _compile_governed_grouped_request_sql(
             for ref in unknown.get("references") or []
         ):
             where_parts.append(exclusion_predicate(f"fact_rows.{qcol(derived_target_column)}", unknown))
+        elif derived.get("semantics") == "count_distinct_business_identifier" and _same_physical_table(
+            unknown.get("table"), fact_table,
+        ):
+            # A population counted on its own table: "how many warehouses do
+            # we have" counts the warehouse table's rows, and a placeholder row
+            # is no warehouse.
+            where_parts.append(exclusion_predicate(f"fact_rows.{qcol(str(unknown['key_column']))}", unknown))
     anchor_sql = ""
     if policy and str(policy.get("kind") or "") == "latest_snapshot":
         # A balance asked for with no period is read at its newest snapshot --

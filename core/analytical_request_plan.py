@@ -195,6 +195,30 @@ def demote_counted_records(
             join["enforcement"] = "optional"
 
 
+def demote_counted_population(
+    semantic_plan: dict[str, Any] | None,
+    intent_plan: dict[str, Any] | None,
+) -> None:
+    """A population is counted on its own table, and is not also its
+    breakdown: "how many warehouses do we have" bound "warehouses" to the
+    warehouse's name, grouped by it, and joined the warehouse table from a
+    fact that was never read -- the graph then required that join of a count
+    that has none."""
+    plan = semantic_plan or {}
+    entity = str((intent_plan or {}).get("population_entity") or "")
+    master = str((((plan.get("count_target") or {}).get("selected")) or {}).get("table") or "")
+    if not entity or not master:
+        return
+    words = _counted_words(entity)
+    for field in plan.get("fields") or []:
+        if isinstance(field, dict) and _names_the_counted(field, words, intent_plan):
+            field["enforcement"] = "optional"
+            field["demotion_reason"] = "the population the question counts"
+    for join in plan.get("joins") or []:
+        if isinstance(join, dict) and not _same_table(join.get("from") or join.get("from_table"), master):
+            join["enforcement"] = "optional"
+
+
 def compile_analytical_request_plan(
     question: str,
     semantic_plan: dict[str, Any] | None,
