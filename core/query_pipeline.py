@@ -4530,7 +4530,6 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             ])
         except Exception as _usage_exc:
             log.debug("Metric usage increment skipped: %s", _usage_exc)
-    metric_formula_context = _format_metric_formula_context(_matched_metrics, account_id=account_id)
     _metric_formula_tables = set()
     for _metric in _matched_metrics:
         if _metric.get("_adhoc") and _metric.get("_source_tables"):
@@ -4552,6 +4551,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _resolved_metric_tables = metric_source_tables(_metric, all_columns)
         _metric["_resolved_source_tables"] = sorted(_resolved_metric_tables)
         _metric_formula_tables.update(_resolved_metric_tables)
+    # "How many products do we have" is every product: a metric that counts
+    # them on another table -- the ones sold -- is not that count.
+    from core.analytical_request_plan import metrics_on_the_population
+
+    _population_metrics = metrics_on_the_population(_semantic_plan, _analytical_plan.to_dict(), _matched_metrics)
+    if len(_population_metrics) < len(_matched_metrics):
+        log.info(
+            "Metrics that read another table than the population's left out for %s: %s",
+            account_id,
+            ", ".join(str(m.get("name")) for m in _matched_metrics if m not in _population_metrics),
+        )
+        _matched_metrics = _population_metrics
+        _metric_formula_tables = {
+            str(table) for metric in _matched_metrics for table in metric["_resolved_source_tables"]
+        }
+    metric_formula_context = _format_metric_formula_context(_matched_metrics, account_id=account_id)
     # The field plan was built from schema names before metric matching ran, so
     # it could hard-require a measure the registry does not use. Two validators
     # then demand contradictory columns and the repair loop oscillates until it

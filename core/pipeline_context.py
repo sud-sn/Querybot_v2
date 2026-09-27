@@ -434,7 +434,9 @@ def _scope_semantic_plan_to_analytical_request(
             field["enforcement"] = "optional"
             field["demotion_reason"] = "derived event count uses governed identifier"
         elif role in {"dimension", "display_dimension", "attribute"} and term:
-            if term not in requested_dimensions:
+            # A dimension answers to the last words of its name: "in each
+            # category" asks for the product category.
+            if not any(term == wanted or term.endswith(" " + wanted) for wanted in requested_dimensions):
                 field["enforcement"] = "optional"
                 field["demotion_reason"] = "event modifier is not requested output grain"
 

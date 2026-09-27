@@ -365,6 +365,38 @@ def demote_counted_population(
             join["enforcement"] = "optional"
 
 
+def metrics_on_the_population(
+    semantic_plan: dict[str, Any] | None,
+    intent_plan: dict[str, Any] | None,
+    matched_metrics: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Of the metrics a population count matched, those that read only the
+    population's own table.
+
+    "How many products do we have" is every product. Its words match Number
+    of Products Sold, a count of the products on the sales table -- the ones
+    sold -- and with that metric in scope the count on the product table was
+    refused for reading another table than the metric's. A metric that reads
+    any table but the population's is about what its members did, not about
+    how many there are.
+    """
+    metrics = list(matched_metrics or [])
+    plan = semantic_plan or {}
+    master = str((((plan.get("count_target") or {}).get("selected")) or {}).get("table") or "")
+    if not str((intent_plan or {}).get("population_entity") or "") or not master:
+        return metrics
+
+    def reads_only_the_population(metric: dict[str, Any]) -> bool:
+        sources = list(
+            metric.get("_resolved_source_tables")
+            or metric.get("source_tables")
+            or ([metric.get("base_table")] if metric.get("base_table") else [])
+        )
+        return all(_same_table(source, master) for source in sources)
+
+    return [metric for metric in metrics if reads_only_the_population(metric)]
+
+
 def demote_what_the_question_does_not_compute(
     semantic_plan: dict[str, Any] | None,
     intent_plan: dict[str, Any] | None,
