@@ -171,20 +171,27 @@ def rows() -> dict[str, list[tuple]]:
 
 # ── The warehouse ────────────────────────────────────────────────────────────
 
-_DUCK_TYPE = {"int": "INTEGER", "bigint": "BIGINT", "decimal": "DOUBLE", "date": "DATE", "nvarchar": "VARCHAR"}
+_DUCK_TYPE = {"int": "INTEGER", "bigint": "BIGINT", "smallint": "SMALLINT", "tinyint": "SMALLINT",
+              "bit": "SMALLINT", "decimal": "DOUBLE", "money": "DOUBLE", "float": "DOUBLE", "date": "DATE",
+              "datetime": "TIMESTAMP", "nvarchar": "VARCHAR", "nchar": "VARCHAR"}
 
 
 class Warehouse:
-    def __init__(self, path: Path):
+    """DuckDB over ``schema``'s tables holding ``table_rows`` -- this module's
+    mart and rows unless another warehouse's are given."""
+
+    def __init__(self, path: Path, schema: dict | None = None, table_rows: dict | None = None):
         import duckdb
 
         self.path = path
+        schema = SCHEMA if schema is None else schema
+        all_rows = rows() if table_rows is None else table_rows
         con = duckdb.connect(str(path))
-        for fqn, meta in SCHEMA.items():
+        for fqn, meta in schema.items():
             name = fqn.split(".")[-1]
             cols = ", ".join(f'"{c["name"]}" {_DUCK_TYPE[c["type"]]}' for c in meta["columns"])
             con.execute(f'CREATE TABLE "{name}" ({cols})')
-            table_rows = rows()[name]
+            table_rows = all_rows[name]
             if table_rows:
                 marks = ", ".join("?" for _ in meta["columns"])
                 con.executemany(f'INSERT INTO "{name}" VALUES ({marks})', table_rows)
@@ -258,12 +265,13 @@ def _tsql_day_zero(node):
 
 # ── The tenant ───────────────────────────────────────────────────────────────
 
-def _schema_files(schema_dir: Path, warehouse: Warehouse) -> None:
+def _schema_files(schema_dir: Path, warehouse: Warehouse, schema: dict | None = None) -> None:
     from core.schema import _MAX_DISTINCT, _az_md, _is_categorical
 
+    schema = SCHEMA if schema is None else schema
     schema_dir.mkdir(parents=True, exist_ok=True)
-    (schema_dir / "_schema.json").write_text(json.dumps(SCHEMA), encoding="utf-8")
-    for fqn, meta in SCHEMA.items():
+    (schema_dir / "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+    for fqn, meta in schema.items():
         database, schema, name = fqn.split(".")
         columns = [{"COLUMN_NAME": c["name"], "DATA_TYPE": c["type"], "IS_NULLABLE": "YES",
                     "CHARACTER_MAXIMUM_LENGTH": None, "NUMERIC_PRECISION": None, "COMMENT": ""}
@@ -358,7 +366,7 @@ def saved_connection() -> dict:
     return {"id": _saved.get("id"), **CONNECTION}
 
 
-def _accept_what_the_data_vouches_for() -> None:
+def _accept_what_the_data_vouches_for(account: str = ACCOUNT) -> None:
     """The admin's bulk review: the joins the rows confirmed, and the tables."""
     from fastapi import FastAPI
     from starlette.testclient import TestClient
@@ -371,7 +379,7 @@ def _accept_what_the_data_vouches_for() -> None:
     with patch.object(routes, "_is_auth", return_value=True):
         for body in ({"action": "accept", "kinds": ["rel"], "evidence": "data"},
                      {"action": "accept", "kinds": ["entity"]}):
-            response = client.post(f"/admin/clients/{ACCOUNT}/graph/api/review/bulk", json=body)
+            response = client.post(f"/admin/clients/{account}/graph/api/review/bulk", json=body)
             assert response.status_code == 200, response.text
 
 
@@ -382,8 +390,8 @@ class _Channel:
 
     platform = "portal"
 
-    def __init__(self, thread: str):
-        self.session_id = f"{ACCOUNT}:portal:harness"
+    def __init__(self, thread: str, account: str = ACCOUNT):
+        self.session_id = f"{account}:portal:harness"
         self.thread_id = thread
         self.last_result_id = None
         self.replies: list[tuple[str, object]] = []
@@ -439,11 +447,13 @@ class _Retriever:
 _asked = 0
 
 
-def ask(warehouse: Warehouse, question: str, lang: str = "en") -> dict:
+def ask(warehouse: Warehouse, question: str, lang: str = "en", *, account: str = ACCOUNT,
+        connection: dict | None = None) -> dict:
     """One question through the real pipeline. Returns what the warehouse
     ran (``executed``: sql and rows), whether the model was asked to write
     SQL (``model_wrote_sql``) and the prompts it was given (``prompts``),
-    and every reply."""
+    and every reply. Asked of this module's tenant unless another tenant's
+    ``account`` and saved ``connection`` are given."""
     global _asked
     import core.llm as llm
     import core.query_pipeline as qp
@@ -464,14 +474,15 @@ def ask(warehouse: Warehouse, question: str, lang: str = "en") -> dict:
         model_calls.append(str(system))
         return (f"SELECT '{MARKER}' AS marker" if SQL_WRITER in str(system)[:400] else ""), 1, 1
 
-    reader = store.get_user_by_email(ACCOUNT, "reader@harness.example")
+    connection = saved_connection() if connection is None else connection
+    reader = store.get_user_by_email(account, "reader@harness.example")
     if reader is None:
-        store.create_user(ACCOUNT, "Reader", "reader@harness.example", password="a-password-they-chose", role="admin")
-        reader = store.get_user_by_email(ACCOUNT, "reader@harness.example")
+        store.create_user(account, "Reader", "reader@harness.example", password="a-password-they-chose", role="admin")
+        reader = store.get_user_by_email(account, "reader@harness.example")
     user = {"id": reader["id"], "role": "admin", "email": reader["email"], "name": "Reader", "group_name": None,
-            "lang": lang, "account_id": ACCOUNT}
-    channel = _Channel(f"harness-{_asked}")
-    event = PlatformEvent(ACCOUNT, f"harness-{lang}", f"c{_asked}", question, "portal", raw={})
+            "lang": lang, "account_id": account}
+    channel = _Channel(f"harness-{_asked}", account)
+    event = PlatformEvent(account, f"harness-{lang}", f"c{_asked}", question, "portal", raw={})
     original = llm.llm_complete
     with contextlib.ExitStack() as stack:
         for module in list(__import__("sys").modules.values()):
@@ -481,8 +492,8 @@ def ask(warehouse: Warehouse, question: str, lang: str = "en") -> dict:
         stack.enter_context(patch.object(qp, "load_retriever", return_value=_Retriever()))
         stack.enter_context(patch.object(qp, "retrieve_similar_examples", return_value=[]))
         stack.enter_context(patch.object(schema_module, "_run_azure_sql", run_azure_sql))
-        stack.enter_context(patch.object(qp, "get_client_db", lambda *args, **kwargs: saved_connection()))
-        asyncio.run(qp._handle_query_impl(ACCOUNT, event, channel, question, user))
+        stack.enter_context(patch.object(qp, "get_client_db", lambda *args, **kwargs: connection))
+        asyncio.run(qp._handle_query_impl(account, event, channel, question, user))
     answers = [e for e in executed if MARKER not in e["sql"]]
     return {
         "executed": answers,

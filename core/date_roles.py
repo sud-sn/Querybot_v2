@@ -723,14 +723,18 @@ def relationship_matches_date_role(question: str, label: str = "", description: 
 
 
 def is_date_dimension_table(table_name: str, columns: list[dict] | list[str]) -> bool:
+    from core.identifier_intelligence import identifier_words
+
     bare = (table_name or "").split(".")[-1].upper()
-    compact = re.sub(r"[^A-Z0-9]+", "_", bare)
-    # A table named as a fact is never the calendar, whatever it carries.
-    if _is_fact_named(bare):
+    # Names read as their words: DimDate is a DIM_DATE, DateKey a DATE_KEY.
+    compact = identifier_words((table_name or "").split(".")[-1])
+    # A table named as a fact is never the calendar, whatever it carries --
+    # read in its own case, so FactProductInventory is named a fact.
+    if _is_fact_named((table_name or "").split(".")[-1]):
         return False
     if compact in DATE_DIMENSION_TABLE_HINTS or any(h in compact for h in ("DIM_DATE", "DATE_DIM", "CALENDAR")):
         return True
-    col_names = {_column_name(c).upper() for c in columns}
+    col_names = {identifier_words(_column_name(c)) for c in columns}
     # Structural inference requires both a canonical date key and a separate
     # business date value. Merely containing ORDER_DATE_ID must not cause a
     # fact table to be mistaken for the date dimension itself.
@@ -743,7 +747,7 @@ def is_date_dimension_table(table_name: str, columns: list[dict] | list[str]) ->
     # order was then given every date role in the warehouse.
     # A calendar may carry a surrogate key of its own beside its date key, so
     # the rule applies only to a table that describes no calendar at all.
-    if _has_own_key_besides(compact, col_names, find_date_dimension_key(columns)) and (
+    if _has_own_key_besides(compact, col_names, identifier_words(find_date_dimension_key(columns))) and (
         not _has_calendar_attributes(col_names)
     ):
         return False
@@ -868,13 +872,15 @@ def choose_date_dimension(
 
 
 def find_date_dimension_key(columns: list[dict] | list[str]) -> str:
+    from core.identifier_intelligence import identifier_words
+
     col_names = [_column_name(c) for c in columns]
-    upper_to_actual = {c.upper(): c for c in col_names}
+    upper_to_actual = {identifier_words(c): c for c in col_names}
     for hint in DATE_DIMENSION_KEY_HINTS:
         if hint in upper_to_actual:
             return upper_to_actual[hint]
     for col in col_names:
-        up = col.upper()
+        up = identifier_words(col)
         if ("DATE" in up or up.startswith("DT_") or up.startswith("PRD_")) and (up.endswith("_KEY") or up.endswith("_ID")):
             return col
     return col_names[0] if col_names else ""
@@ -882,25 +888,31 @@ def find_date_dimension_key(columns: list[dict] | list[str]) -> str:
 
 def find_date_value_column(columns: list[dict] | list[str]) -> str:
     """Return the business date value column, never the surrogate key."""
+    from core.identifier_intelligence import identifier_words
+
     candidates: list[tuple[int, str]] = []
     for raw in columns:
         name = _column_name(raw)
         if not name:
             continue
-        upper = name.upper()
+        upper = identifier_words(name)
         data_type = ""
         if isinstance(raw, dict):
             data_type = str(
                 raw.get("type") or raw.get("DATA_TYPE") or raw.get("data_type") or ""
             ).lower()
-        if upper in DATE_DIMENSION_KEY_HINTS or upper.endswith(("_KEY", "_ID")):
+        is_date_typed = data_type in {"date", "datetime", "datetime2", "timestamp", "timestamp_ntz", "timestamp_tz"}
+        # A key holds a number that stands for a date; a column typed as a
+        # date holds the date, whatever its name ends with (a calendar's
+        # FullDateAlternateKey is its day).
+        if not is_date_typed and (upper in DATE_DIMENSION_KEY_HINTS or upper.endswith(("_KEY", "_ID"))):
             continue
         # When a row was loaded is not a business date. AZ_LST_UPD_TS scored
         # as one, which is how a balance fact passed for a date dimension.
         if _is_pipeline_column(upper):
             continue
         score = 0
-        if data_type in {"date", "datetime", "datetime2", "timestamp", "timestamp_ntz", "timestamp_tz"}:
+        if is_date_typed:
             score += 100
         if upper in {"DMS_DT", "DT", "DATE", "CALENDAR_DATE", "FULL_DATE", "DATE_VALUE"}:
             score += 90
@@ -972,8 +984,11 @@ def _strip_plumbing_tokens(tokens: list[str]) -> list[str]:
 
 
 def _label_from_column(column: str) -> str:
+    from core.identifier_intelligence import identifier_words
+
     original = (column or "").strip().strip('"`[]')
-    text = original.upper()
+    # Read as words, so DateKey is labelled as DATE_KEY is.
+    text = identifier_words(original)
     text = re.sub(
         r"_(?:DATE|DT)(?:_DMS)?_(?:KEY|ID|SK|FK)$",
         "",

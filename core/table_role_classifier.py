@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from core.identifier_intelligence import identifier_words
+
 
 _NUMERIC_TYPES = (
     "INT", "NUMBER", "NUMERIC", "DECIMAL", "FLOAT", "DOUBLE", "REAL", "MONEY",
@@ -103,9 +105,9 @@ def is_periodic_snapshot_fact(table_name: str) -> bool:
 
 
 def _contains_token(name: str, tokens: Iterable[str]) -> bool:
-    upper = str(name or "").upper()
-    parts = {part for part in upper.replace("-", "_").split("_") if part}
-    return any(token in parts or upper.endswith("_" + token) for token in tokens)
+    # Read as words: SalesAmount holds an amount as SALES_AMT does.
+    parts = {part for part in identifier_words(name).split("_") if part}
+    return any(token in parts for token in tokens)
 
 
 @dataclass(frozen=True)
@@ -195,12 +197,21 @@ def classify_table(
         scores["fact"] += 48
         evidence["fact"].append("approved metric uses this table as its source")
 
-    measure_columns = [name for name in column_names if _contains_token(name, _MEASURE_TOKENS)]
-    descriptive_columns = [name for name in column_names if _contains_token(name, _DESCRIPTIVE_TOKENS)]
     numeric_columns = [
         _column_name(column) for column in columns
         if any(token in _column_type(column) for token in _NUMERIC_TYPES)
     ]
+    # A measure holds a number: SalesTerritoryRegion names sales and is text.
+    # A column whose type is not known is judged by its name alone.
+    textual = {
+        _column_name(column) for column in columns
+        if _column_type(column) and _column_name(column) not in numeric_columns
+    }
+    measure_columns = [
+        name for name in column_names
+        if name not in textual and _contains_token(name, _MEASURE_TOKENS)
+    ]
+    descriptive_columns = [name for name in column_names if _contains_token(name, _DESCRIPTIVE_TOKENS)]
     physical_dates = [
         _column_name(column) for column in columns
         if any(token in _column_type(column) for token in _DATE_TYPES)

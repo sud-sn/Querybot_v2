@@ -677,23 +677,33 @@ def match_table_suffix(table_name: str, vocab=None) -> TableSuffixRule | None:
     classify correctly once a pack is enabled; builtin suffix rules follow.
     """
     tbl_upper = (table_name or "").upper().split(".")[-1]   # bare table name only
+    # A camel-case name is read as its words too: FactInternetSales is a
+    # FACT_ table and ProductDim a _DIM one, as the underscore spellings are.
+    from core.identifier_intelligence import identifier_words
+
+    names = tuple(dict.fromkeys((tbl_upper, identifier_words((table_name or "").split(".")[-1]))))
     v = _nc_vocab(vocab)
-    if tbl_upper in v.fact_tables:
+    if any(name in v.fact_tables for name in names):
         return _PACK_FACT_RULE
-    if tbl_upper in v.dimension_tables:
+    if any(name in v.dimension_tables for name in names):
         return _PACK_DIM_RULE
     for pattern in v.fact_patterns:
-        if pattern.search(tbl_upper):
+        if any(pattern.search(name) for name in names):
             return _PACK_FACT_RULE
     for pattern in v.dimension_patterns:
-        if pattern.search(tbl_upper):
+        if any(pattern.search(name) for name in names):
             return _PACK_DIM_RULE
     for pattern in v.bridge_patterns:
-        if pattern.search(tbl_upper):
+        if any(pattern.search(name) for name in names):
             return _PACK_BRIDGE_RULE
     for rule in TABLE_SUFFIX_RULES:
-        if tbl_upper.endswith(rule.suffix.upper()):
+        if any(name.endswith(rule.suffix.upper()) for name in names):
             return rule
+    # The warehouse-wide prefixes, in any case: FACT_SALES and FactSales,
+    # DIM_CUSTOMER and DimCustomer.
+    for prefixes, suffix in ((("FACT_", "FCT_"), "_FACT"), (("DIM_", "DIMENSION_"), "_DIM")):
+        if names[-1].startswith(prefixes):
+            return next(rule for rule in TABLE_SUFFIX_RULES if rule.suffix == suffix)
     return None
 
 

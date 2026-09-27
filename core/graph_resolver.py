@@ -185,10 +185,10 @@ def is_date_role_entity(entity: dict) -> bool:
     words |= set(_normalize(entity.get("display_name") or "").split())
     if words & _DATE_ENTITY_MARKERS:
         return True
-    table = re.sub(
-        r"[^A-Z0-9]+", "_",
-        str(entity.get("table_name") or "").split(".")[-1].upper(),
-    )
+    from core.identifier_intelligence import identifier_words
+
+    # Read as words: DimDate is a DIM_DATE.
+    table = identifier_words(str(entity.get("table_name") or "").split(".")[-1])
     if table in DATE_DIMENSION_TABLE_HINTS:
         return True
     return any(hint in table for hint in ("DIM_DATE", "DATE_DIM", "CALENDAR"))

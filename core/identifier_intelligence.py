@@ -16,6 +16,7 @@ review item rather than become a confident invented definition.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import math
 import re
 from typing import Any, Iterable
@@ -146,6 +147,19 @@ def _split_case_and_boundaries(raw: str) -> list[str]:
     text = re.sub(r"([A-Za-z])([0-9])", r"\1 \2", text)
     text = re.sub(r"([0-9])([A-Za-z])", r"\1 \2", text)
     return [piece.upper() for piece in re.split(r"[^A-Za-z0-9]+", text) if piece]
+
+
+@lru_cache(maxsize=16384)
+def identifier_words(identifier: str) -> str:
+    """A name as its words, in UPPER_SNAKE form, whatever its case.
+
+    ``ProductKey`` is ``PRODUCT_KEY``, ``DimProduct`` ``DIM_PRODUCT`` and
+    ``SKUCount`` ``SKU_COUNT``; ``ON_HND_QTY`` is its own. Camel humps, runs of
+    digits and separators split, and nothing is expanded or guessed -- so a
+    rule written for underscore names reads a camel-case warehouse the same
+    way, and an underscore warehouse exactly as before.
+    """
+    return "_".join(_split_case_and_boundaries(_clean(identifier)))
 
 
 def _expansion_lexicon(vocab) -> dict[str, str]:

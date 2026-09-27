@@ -1282,8 +1282,13 @@ _DESCRIPTIVE_COLS = frozenset({
 
 
 def _is_surrogate_key_col(col_name: str) -> bool:
-    """Return True if col_name looks like a surrogate / FK key column."""
-    u = col_name.upper()
+    """Return True if col_name looks like a surrogate / FK key column.
+
+    Read as its words, so ProductKey is a key as PRODUCT_KEY is.
+    """
+    from core.identifier_intelligence import identifier_words
+
+    u = identifier_words(col_name)
     if u in _DESCRIPTIVE_COLS or u in _GENERIC_COLS:
         return False
     for pfx in _AUDIT_COL_PREFIXES:
@@ -1458,8 +1463,13 @@ def _infer_pk_column(table_name: str, columns: list) -> str:
 
 
 def _display_name_from_table(table_name: str) -> str:
-    """DIM_CUSTOMER → Customer, FACT_DAILY_SALES → Daily Sales"""
-    bare = table_name.split(".")[-1]
+    """DIM_CUSTOMER → Customer, FACT_DAILY_SALES → Daily Sales, FactInternetSales → Internet Sales"""
+    from core.identifier_intelligence import identifier_words
+
+    raw = table_name.split(".")[-1]
+    # A camel-case name is read as its words; an underscore name is kept as
+    # it is spelled.
+    bare = identifier_words(raw) if re.search(r"[a-z][A-Z]", raw) else raw
     for prefix in ("DIM_", "FACT_", "FCT_", "BRIDGE_", "BRG_", "XREF_", "MAP_", "REL_", "STG_", "VW_", "V_"):
         if bare.upper().startswith(prefix):
             bare = bare[len(prefix):]
@@ -1816,8 +1826,16 @@ def build_entity_graph(master: dict) -> dict:
     # One relationship per (from_entity, to_entity) pair — highest-confidence
     # column match wins.
 
+    # Each table by its name and by its name's words: DimProduct is the
+    # DIM_PRODUCT a ProductKey's stem finds, as DIM_PRODUCT itself is. A date
+    # role's alias is joined by the date roles above and is no key's target:
+    # the calendar's own DateKey is not a key to its "Date" role.
+    from core.identifier_intelligence import identifier_words
+
+    tables = [e for e in entities if e["entity_name"] == e.get("table_name", e["entity_name"])]
     entity_upper_map: dict[str, str] = {
-        e["entity_name"].upper(): e["entity_name"] for e in entities
+        **{identifier_words(e["entity_name"]): e["entity_name"] for e in tables},
+        **{e["entity_name"].upper(): e["entity_name"] for e in tables},
     }
     entity_type_map: dict[str, str] = {
         e["entity_name"]: e["entity_type"] for e in entities
@@ -1860,11 +1878,11 @@ def build_entity_graph(master: dict) -> dict:
             col_name = _col_name(col)
             if not _is_surrogate_key_col(col_name):
                 continue
-            direct = _col_to_target_entity(col_name.upper(), entity_upper_map)
+            direct = _col_to_target_entity(identifier_words(col_name), entity_upper_map)
             if direct:
                 direct_targets.add(direct)
                 continue
-            found = _role_target_entity(col_name.upper(), entity_upper_map)
+            found = _role_target_entity(identifier_words(col_name), entity_upper_map)
             if found and found[0] != e_name:
                 role_candidates[col_name] = (*found, col)
         family = Counter(target for target, _, _, _ in role_candidates.values())
@@ -1887,13 +1905,17 @@ def build_entity_graph(master: dict) -> dict:
 
         for col in tbl_info.get("columns", []):
             col_name  = _col_name(col)
-            col_upper = col_name.upper()
+            col_upper = identifier_words(col_name)
 
             if not _is_surrogate_key_col(col_name):
                 continue
 
             target = _col_to_target_entity(col_upper, entity_upper_map)
             if not target or target == e_name:
+                continue
+            # A date key the date roles above already join to its calendar is
+            # not joined a second time under the calendar's own name.
+            if (e_name, col_name.upper(), table_of_entity.get(target, "").upper()) in role_edge_lookup:
                 continue
 
             t_type = entity_type_map.get(target)
@@ -1912,7 +1934,7 @@ def build_entity_graph(master: dict) -> dict:
                 if col_upper.endswith(sfx):
                     stem = col_upper[:-len(sfx)]
                     break
-            tgt_upper = target.upper()
+            tgt_upper = identifier_words(target)
             if stem == tgt_upper or stem + "_DMS" == tgt_upper:
                 confidence = 95   # WHS_DMS_KEY → WHS_DMS  (exact)
             elif tgt_upper.replace("DIM_", "") == stem or tgt_upper in stem:
@@ -1973,7 +1995,9 @@ def _role_label(stripped: tuple[str, ...], stem: str, column: str, qualified: bo
         if all(_ROLE_QUALIFIERS[token][1] for token in stripped):
             return words
         return f"{words} {display_label(stem)}".strip()
-    key_stem = column.upper()
+    from core.identifier_intelligence import identifier_words
+
+    key_stem = identifier_words(column)
     for sfx in _ROLE_KEY_SUFFIXES:
         if key_stem.endswith(sfx):
             key_stem = key_stem[:-len(sfx)]

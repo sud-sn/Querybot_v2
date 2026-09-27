@@ -191,8 +191,11 @@ class GenericStarSchemaPackTests(unittest.TestCase):
         # Builtin DMS/FCT conventions keep working with the pack active.
         self.assertEqual(match_table_suffix("FNN_FCT", vocab=v).table_type, "fact_table")
         self.assertEqual(match_table_suffix("CUS_DMS", vocab=v).table_type, "dimension_table")
-        # Without the pack, FACT_SALES has no naming-convention rule (legacy).
-        self.assertIsNone(match_table_suffix("FACT_SALES", vocab=builtin_vocab()))
+        # Without the pack, the warehouse-wide prefixes are still read, in
+        # any case; the pack's own patterns (D_, F_...) are not.
+        self.assertEqual(match_table_suffix("FACT_SALES", vocab=builtin_vocab()).table_type, "fact_table")
+        self.assertEqual(match_table_suffix("DimProduct", vocab=builtin_vocab()).table_type, "dimension_table")
+        self.assertIsNone(match_table_suffix("D_CUSTOMER", vocab=builtin_vocab()))
 
     def test_plain_english_date_roles(self):
         from core.date_roles import detect_date_role
