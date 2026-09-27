@@ -67,6 +67,16 @@ def _metric_phrases(metric: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(phrases))
 
 
+def _named_spans(metric: dict[str, Any], question: str) -> list[tuple[int, int]]:
+    """Where the question says one of the metric's own phrases, whole."""
+    q = _norm(question)
+    return [
+        found.span()
+        for phrase in _metric_phrases(metric)
+        for found in re.finditer(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", q)
+    ]
+
+
 def _phrase_score(metric: dict[str, Any], question: str, *, reader_question: str = "") -> int:
     """How strongly this metric's wording matches the question.
 
@@ -366,6 +376,20 @@ def resolve_metric_scope(
     best_score = scored[0][0]
     _TIE_WINDOW = 8
     chosen = [m for score, m, _ in scored if score >= best_score - _TIE_WINDOW]
+    # Each measure the question names in its own words is one it asks for,
+    # however far its score is from the first: "deliveries and physical
+    # inventory counts by month" names two, and the window above -- which
+    # keeps a close second reading of ONE measure -- kept the longer name
+    # alone. A name said where another's already is, is not a second measure.
+    said = [span for metric in chosen for span in _named_spans(metric, question)]
+    for _score, metric, _schemas in scored:
+        if any(metric is kept for kept in chosen):
+            continue
+        spans = _named_spans(metric, question)
+        if spans and not any(start < other_end and other_start < end
+                             for start, end in spans for other_start, other_end in said):
+            chosen.append(metric)
+            said.extend(spans)
     return MetricScopeResult(
         metrics=chosen[: max(1, int(limit or 6))],
         context_schemas=context_schemas,
