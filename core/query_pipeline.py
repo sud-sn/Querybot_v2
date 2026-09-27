@@ -1986,6 +1986,33 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _english_dimensions = plan_analytical_intent(_analysis_question).dimensions
         if _english_dimensions:
             _analytical_plan = _dataclass_replace(_analytical_plan, dimensions=_english_dimensions)
+    # And whether it ranks, where its French reads no more than a measure:
+    # "les 3 meilleurs produits" is "the 3 best products", a ranking, and one
+    # that names no measure is asked which -- not answered with the count of
+    # products sold, one each.
+    if _analysis_question != question and _analytical_plan.intent == "metric_query":
+        _english_plan = plan_analytical_intent(
+            _analysis_question,
+            metrics=_planner_metrics,
+            terms=_planner_terms,
+            calendar_profile=_planner_calendar_profile,
+        )
+        if _english_plan.intent == "ranking":
+            _asks_measure = (
+                _english_plan.clarification
+                if not _analytical_plan.metrics
+                and _english_plan.clarification is not None
+                and _english_plan.clarification.slot == "metric"
+                else None
+            )
+            _analytical_plan = _dataclass_replace(
+                _analytical_plan,
+                intent="ranking",
+                clarification=_analytical_plan.clarification or _asks_measure,
+                unresolved_slots=tuple(dict.fromkeys(
+                    (*_analytical_plan.unresolved_slots, *(("metric",) if _asks_measure else ())),
+                )),
+            )
     # And the measure it names, where the reader's own words name none of the
     # metrics' names and the reader would be asked which: "par quantité
     # vendue" is "by quantity sold", the measure said "units sold".
