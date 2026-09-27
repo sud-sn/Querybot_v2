@@ -970,6 +970,25 @@ _VALUE_CONDITION = re.compile(
 )
 
 
+# Whether a row kept its time: "shipped late", "overdue invoices", "delivered
+# on time", "after their due date". "Late 2024" and "early next year" are
+# periods, not conditions.
+_TIMELINESS = re.compile(
+    r"\b(?:(?:late|early)(?!\s+(?:(?:19|20)\d\d|this|last|next|january|february|march|april|may|june|july"
+    r"|august|september|october|november|december|morning|afternoon|evening)\b)|overdue|delayed|past\s+due"
+    r"|on\s+time|(?:ahead\s+of|behind)\s+schedule|(?:after|before)\s+(?:their|its)\s+(?:[a-z]+\s+){0,2}date)\b",
+    re.I,
+)
+
+
+def _metric_words(metric: dict) -> str:
+    """A metric's name and synonyms, lower-cased: what it says it counts."""
+    return " ".join((
+        str(metric.get("name") or ""),
+        *re.split(r"[,;\n]+", str(metric.get("synonyms") or "")),
+    )).lower()
+
+
 def _left_to_the_planner(context: dict) -> str:
     """Why no governed compiler may answer this question, or "".
 
@@ -977,11 +996,22 @@ def _left_to_the_planner(context: dict) -> str:
     answer for every member: "stock on hand for BRASS ELBOW EA" came back as
     every item's stock. A member the question names is found in the value
     index before planning (core/value_resolver.py) and carried here.
+
+    Nor do they write whether a row kept its time: "how many orders were
+    shipped late" was answered with every order. A metric defined for it
+    ("Late Orders") writes it, and is answered.
     """
     if (context or {}).get("named_members"):
         return "names a member"
-    if _VALUE_CONDITION.search(_gate_question(context)):
+    question = _gate_question(context)
+    if _VALUE_CONDITION.search(question):
         return "states a condition on a value"
+    timeliness = _TIMELINESS.search(question)
+    if timeliness and not any(
+        re.search(rf"\b{re.escape(timeliness.group(0).lower().split()[0])}\b", _metric_words(metric))
+        for metric in (context or {}).get("metric_formulas") or []
+    ):
+        return "states whether rows kept their time"
     return ""
 
 
