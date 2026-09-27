@@ -489,6 +489,7 @@ class TestThePipelineActuallyTakesTheBranch:
             "state": {"kb_dir": ""},
             "_contract_model": model,
             "_planner_terms": [],
+            "_planner_metrics": [],
         }
         exec(self._branch_source(), namespace)
         return namespace

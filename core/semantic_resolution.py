@@ -90,6 +90,7 @@ def build_planner_alignment(
     semantic_plan: dict[str, Any] | None,
     metric_formula_tables: set[str] | list[str] | None = None,
     date_context_resolution: dict[str, Any] | None = None,
+    named_only_by_a_measure: set[str] | list[str] | None = None,
 ) -> dict[str, Any]:
     """Compile the independent planners into authoritative graph inputs.
 
@@ -98,7 +99,9 @@ def build_planner_alignment(
     one or more of those sources names a fact table, unrelated fact entities
     from the earlier question-only graph pass are dropped.  Detected
     dimensions are retained, as are all governed facts for a real multi-fact
-    comparison.
+    comparison -- except a dimension the question names only inside the name
+    of the measure it asks for (``named_only_by_a_measure``): the customers
+    of "buying customers by product category" are the measure's.
 
     This function is pure: it describes the inputs for the final graph pass;
     the caller performs the resolution and supplies that same result to the
@@ -272,6 +275,8 @@ def build_planner_alignment(
     # date dimension, which returns no rows or provokes an irrelevant
     # clarification. Once a date role IS governed, only that role survives.
     date_entities_are_governed = bool(governed_date_entities)
+    measure_words = {str(name) for name in named_only_by_a_measure or []}
+    dropped_measure_word_entities: set[str] = set()
     for name in detected:
         entity = entities_by_name.get(name, {})
         entity_type = str(entity.get("entity_type") or "").lower()
@@ -288,6 +293,9 @@ def build_planner_alignment(
         ):
             dropped_date_entities.add(name)
             continue
+        if name in measure_words and name not in required_entities:
+            dropped_measure_word_entities.add(name)
+            continue
         required_entities.add(name)
 
     previous_anchor = str(graph_ctx.get("anchor") or "")
@@ -300,12 +308,14 @@ def build_planner_alignment(
         "governed_date_entities": sorted(governed_date_entities),
         "dropped_fact_entities": sorted(dropped_fact_entities),
         "dropped_date_entities": sorted(dropped_date_entities),
+        "dropped_measure_word_entities": sorted(dropped_measure_word_entities),
         "governed_measure_fact": governed_measure_fact,
         "dropped_metric_facts": sorted(dropped_metric_facts),
         "previous_anchor": previous_anchor,
         "changed": (
             bool(dropped_fact_entities)
             or bool(dropped_date_entities)
+            or bool(dropped_measure_word_entities)
             or bool(dropped_metric_facts)
             or not required_entities.issubset(detected)
         ),

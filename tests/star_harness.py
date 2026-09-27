@@ -160,6 +160,15 @@ METRICS = [
      "base_table": "dbo.FactInternetSales", "formula_type": "expression", "category": "sales",
      "synonyms": "number of orders, order count, orders, nombre de commandes, commandes",
      "description": "Online orders; an order has one or more lines."},
+    # Measures named for a dimension's members: their names are not a breakdown.
+    {"name": "Number of Buying Customers", "sql_template": "COUNT(DISTINCT CustomerKey)",
+     "base_table": "dbo.FactInternetSales", "formula_type": "expression", "category": "sales",
+     "synonyms": "buying customers, active customers, clients acheteurs",
+     "description": "Distinct customers with at least one online order."},
+    {"name": "Number of Products Sold", "sql_template": "COUNT(DISTINCT ProductKey)",
+     "base_table": "dbo.FactInternetSales", "formula_type": "expression", "category": "sales",
+     "synonyms": "products sold, distinct products sold, produits vendus",
+     "description": "Distinct products on at least one online order line."},
 ]
 
 

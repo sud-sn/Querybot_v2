@@ -2647,6 +2647,72 @@ def _says_first(text: str, name: str) -> bool:
     return bool(re.match(rf"{phrase}(?:es|s)?\b", str(text or ""), re.IGNORECASE))
 
 
+def _either_number(word: str) -> str:
+    """A pattern for ``word`` in either number: category or categories,
+    day or days, product or products."""
+    if word.endswith("y"):
+        return re.escape(word[:-1]) + r"(?:y|ies|ys)"
+    return re.escape(word) + r"(?:es|s)?"
+
+
+def _said_in_full(name: str) -> str:
+    """A pattern for a name of two words or more said in full, in either
+    number and in either order English gives it: "product category",
+    "product categories", "category of products" -- a French "catégorie de
+    produits" read in English."""
+    words = re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).split()
+    if len(words) < 2:
+        return ""
+    direct = r"\s+".join([*(re.escape(word) for word in words[:-1]), _either_number(words[-1])])
+    inverted = _either_number(words[-1]) + r"\s+of\s+(?:the\s+)?" + r"\s+".join(
+        [*(re.escape(word) for word in words[:-2]), _either_number(words[-2])],
+    )
+    return rf"\b(?:{direct}|{inverted})\b"
+
+
+def _without_longer_names(question: str, name: str, names) -> str:
+    """The question less every longer name it says in full that holds all of
+    ``name``'s words: "sales by product category" names no product of its
+    own, nor does "sales by category of products". A name the question also
+    says on its own is still said."""
+    words = {_singular(word) for word in re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).split()}
+    text = str(question or "")
+    if not words:
+        return text
+    for longer in sorted(names or (), key=lambda other: (-len(str(other).split()), str(other))):
+        longer_words = re.sub(r"[^a-z0-9]+", " ", str(longer).lower()).split()
+        if len(longer_words) > len(words) and words <= {_singular(word) for word in longer_words}:
+            text = re.sub(_said_in_full(longer), " ", text, flags=re.IGNORECASE)
+    return text
+
+
+def _measure_names(metrics) -> set[str]:
+    """Every name the registered measures are asked for by, in words."""
+    return {
+        re.sub(r"[^a-z0-9]+", " ", phrase.lower()).strip()
+        for metric in metrics or []
+        if isinstance(metric, dict)
+        for phrase in [str(metric.get("name") or ""), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]
+    } - {""}
+
+
+def without_measure_names(question: str, metrics) -> str:
+    """The question less every name of two words or more that one of
+    ``metrics`` is asked for by, said in full: the customers of "buying
+    customers by product category" are the measure's, not a table to join."""
+    text = str(question or "")
+    for name in sorted(_measure_names(metrics), key=lambda other: (-len(other.split()), other)):
+        if len(name.split()) > 1:
+            text = re.sub(_said_in_full(name), " ", text, flags=re.IGNORECASE)
+    return text
+
+
+def _singular(word: str) -> str:
+    """A word less the "s" of its plural: resellers and customers are
+    reseller and customer."""
+    return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
+
+
 def _dimension_label(source_key: str, dimension: dict[str, Any], display_col: str) -> tuple[str, str]:
     """Business label for a dimension, and the role label behind it.
 
@@ -2861,12 +2927,15 @@ def build_runtime_semantic_plan(
     model: dict[str, Any] | None = None,
     preferred_fact_tables: set[str] | None = None,
     glossary: list[dict[str, Any]] | None = None,
+    metrics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build validator-ready requirements from the structured semantic model.
 
     `model` overrides the file read — the query pipeline passes the compiled
     semantic contract's model section so runtime semantics always come from
-    the single versioned artifact."""
+    the single versioned artifact. `metrics` are the registered measures in
+    scope: a dimension said only inside one's name -- the reseller of
+    "reseller sales" -- is not asked for."""
     model = _model_source(model, kb_dir)
     if not model:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no semantic model"}
@@ -3091,6 +3160,9 @@ def build_runtime_semantic_plan(
     } | {name.lower() for name in tail_names.values()} | {
         name for names in vocabulary_names.values() for name in names
     }
+    # And every name a measure is asked for by: "reseller sales by business
+    # type" asks for no reseller.
+    measure_names = _measure_names(metrics)
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for dimension in table.get("dimensions", []) or []:
@@ -3131,7 +3203,14 @@ def build_runtime_semantic_plan(
                 ]
                 if word and _asked_by(question, word, spoken_names)
             )
-            score = _runtime_match_score(q_terms, _match_values)
+            # A dimension said only inside a longer name the question says in
+            # full is that name's: "sales by product category" asks for no
+            # product.
+            said = _without_longer_names(question, name, spoken_names | measure_names)
+            terms = q_terms if said == question else _glossary_expanded_terms(
+                _vocab_expanded_terms(_terms_for_text(said)), glossary,
+            )
+            score = _runtime_match_score(terms, _match_values)
             if score <= 0:
                 continue
             # A date dimension reached through a date-role key must earn its

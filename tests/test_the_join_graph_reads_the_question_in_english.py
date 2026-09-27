@@ -111,7 +111,10 @@ class TestTheGraphReadsBoth:
 
         with patch.object(query_pipeline, "_graph_resolve", spy):
             harness.ask(warehouse, "Inventory value by buyer")
-        assert asked and all(text.strip() == "Inventory value by buyer" for text in asked)
+        # Once, never beside a copy of itself; the last pass reads it less the
+        # measure's own name (core/semantic_model.py, without_measure_names).
+        assert asked and all("\n" not in text and text.strip().endswith("by buyer") for text in asked)
+        assert any(text.strip() == "Inventory value by buyer" for text in asked)
 
 
 class TestTheWords:

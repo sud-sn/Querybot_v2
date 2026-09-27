@@ -3748,6 +3748,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 str(value) for value in (_source_scope.get("selected_facts") or [])
             }) - {""},
             glossary=_planner_terms,
+            metrics=_planner_metrics,
         )
         _semantic_model_plan["source_scope"] = _source_scope
         if _semantic_model_plan.get("enabled"):
@@ -3942,6 +3943,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     model=_contract_model,
                     preferred_fact_tables=_preferred_facts,
                     glossary=_planner_terms,
+                    metrics=_planner_metrics,
                 )
                 _semantic_plan = _merge_semantic_plans(
                     _replanned_fields,
@@ -4057,6 +4059,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         model=_contract_model,
                         preferred_fact_tables={_population_table},
                         glossary=_planner_terms,
+                        metrics=_planner_metrics,
                     ),
                 )
             except Exception as _population_replan_exc:
@@ -5281,6 +5284,23 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
     except Exception as _counted_exc:
         log.warning("Counted records not taken out of the breakdown for %s: %s", account_id, _counted_exc)
+    # A table the question names only inside the name of the measure it asks
+    # for is the measure's, not one to join: "buying customers by product
+    # category" joins no customer, though the broad first pass found one.
+    _graph_question_less_measures = _graph_resolution_question
+    _named_only_by_a_measure: set[str] = set()
+    try:
+        from core.graph_resolver import detect_entities
+        from core.semantic_model import without_measure_names
+
+        _graph_question_less_measures = without_measure_names(_graph_resolution_question, _matched_metrics)
+        if _graph_question_less_measures != _graph_resolution_question and _full_graph.get("entities"):
+            _named_only_by_a_measure = set(detect_entities(_graph_resolution_question, _full_graph)) - set(
+                detect_entities(_graph_question_less_measures, _full_graph))
+    except Exception as _measure_words_exc:
+        _graph_question_less_measures = _graph_resolution_question
+        log.warning("Tables named inside a measure's name not told apart for %s: %s",
+                    account_id, _measure_words_exc)
     try:
         from core.semantic_resolution import build_planner_alignment
         _planner_alignment = build_planner_alignment(
@@ -5289,13 +5309,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             semantic_plan=_semantic_plan,
             metric_formula_tables=_metric_formula_tables,
             date_context_resolution=_date_context_resolution,
+            named_only_by_a_measure=_named_only_by_a_measure,
         )
         if _full_graph.get("entities") and _planner_alignment.get("enabled"):
             _aligned_graph = _graph_with_exact_date_edges(
                 _full_graph, _selected_date_bindings,
             )
             _aligned_graph_ctx = _graph_resolve(
-                question=_graph_resolution_question,
+                question=_graph_question_less_measures,
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_aligned_graph,

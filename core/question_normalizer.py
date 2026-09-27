@@ -814,6 +814,7 @@ _LEXICON_RE = re.compile(
     + r")"
 )
 _REPLACEMENTS = dict(_ENTRIES)
+_SUB_COMPOUND_RE = re.compile(r"(?<![0-9a-z])sous-([a-z]+)")
 
 # Rules that carry a number, which a flat lexicon cannot express.
 # Applied BEFORE the lexicon, on folded text, so their English output is not
@@ -1030,6 +1031,15 @@ def canonicalise(text: str) -> str:
             folded,
         )
         protected = _spans_to_skip(folded)
+
+    # A "sous-" compound is the English "sub" one, its noun read by the
+    # lexicon: "sous-catégorie" is the subcategory, never the category.
+    folded = _SUB_COMPOUND_RE.sub(
+        lambda m: ("sub" + _REPLACEMENTS.get(m.group(1), m.group(1))
+                   if _outside_quotes(*m.span()) else m.group(0)),
+        folded,
+    )
+    protected = _spans_to_skip(folded)
 
     folded = _LEXICON_RE.sub(
         lambda m: (_REPLACEMENTS[m.group(0)] if _outside_quotes(*m.span())
