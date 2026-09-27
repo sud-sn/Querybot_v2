@@ -58,6 +58,15 @@ _ASKED = (
 )
 
 
+def _is_a_label(words: list[str]) -> bool:
+    """A label's name ends in a label's word, or in one followed by what it
+    names the unit of: DAY_NAME_OF_WEEK is the week's day's name."""
+    return bool(words) and (
+        words[-1] in _LABEL_SUFFIXES
+        or (len(words) >= 3 and words[-2] == "OF" and words[-3] in _LABEL_SUFFIXES)
+    )
+
+
 def language_twins(columns) -> list[dict]:
     """The label columns among `columns` that repeat another of them in a
     second language: ``[{"base": "ITM_GRP_DSC", "twin": "ITM_GRP_FR_DSC",
@@ -78,7 +87,7 @@ def language_twins(columns) -> list[dict]:
         for index, token in enumerate(tokens):
             language = _LANGUAGE_TOKENS.get(token)
             rest = tokens[:index] + tokens[index + 1:]
-            if not language or not rest or rest[-1] not in _LABEL_SUFFIXES:
+            if not language or not _is_a_label(rest):
                 continue
             base = "_".join(rest)
             if base not in names and language == "fr":
