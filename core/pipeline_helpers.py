@@ -1213,7 +1213,11 @@ def _requested_breakdowns(question: str) -> int:
     for match in _DIMENSION_RE.finditer(question or ""):
         for part in re.split(r"\s+(?:and|et)\s+(?:by\s+)?", match.group(1).lower()):
             words = _BREAKDOWN_END.split(part, maxsplit=1)[0].split()
-            if words and words[0] not in {"all", "every", "each"} and words[-1].rstrip("s") not in _PERIOD_WORDS:
+            # "Month of shipment", French "mois d'expédition" -- a period.
+            if (
+                words and words[0] not in {"all", "every", "each"}
+                and words[-1].rstrip("s") not in _PERIOD_WORDS and words[0].rstrip("s") not in _PERIOD_WORDS
+            ):
                 count += 1
     return count + len(_WHICH.findall(question or ""))
 

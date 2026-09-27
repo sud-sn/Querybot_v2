@@ -907,7 +907,24 @@ _RANK_AHEAD = "|".join((
 ))
 
 
+# A date named by its period and its event, in French order: "mois de
+# commande" is the order month, "semaine d'expédition" the shipment week. Read
+# in English order and in the singular, as an English reader says it -- "month
+# of orders" names the orders counted as surely as it names their month.
+_DATE_EVENTS = {
+    "commande": "order", "commandes": "order", "expedition": "shipment", "expeditions": "shipment",
+    "livraison": "delivery", "livraisons": "delivery", "facturation": "billing", "facture": "invoice",
+    "factures": "invoice", "reception": "receipt", "receptions": "receipt", "paiement": "payment",
+    "paiements": "payment", "echeance": "due", "creation": "creation", "vente": "sale", "ventes": "sale",
+}
+_DATE_GRAINS = {"jour": "day", "semaine": "week", "mois": "month", "trimestre": "quarter", "annee": "year"}
+_EVENT_PERIOD_RE = re.compile(
+    rf"\b({'|'.join(_DATE_GRAINS)})\s+(?:de\s+(?:la\s+|l')?|d'|du\s+|des\s+)"
+    rf"({'|'.join(sorted(_DATE_EVENTS, key=len, reverse=True))})\b"
+)
+
 _NUMERIC_RULES: tuple[tuple[re.Pattern[str], object], ...] = (
+    (_EVENT_PERIOD_RE, lambda m: f"{_DATE_EVENTS[m.group(2)]} {_DATE_GRAINS[m.group(1)]}"),
     # "les 6 derniers mois" -> "the last 6 months". The determiner is
     # TRANSLATED, not dropped: analyze_query_intent's time-series pattern is
     # `over\s+the\s+last\s+\d+`, so "over last 30 days" misses it by one word

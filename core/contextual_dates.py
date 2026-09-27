@@ -662,6 +662,13 @@ def _event_word_forms(stem: str) -> dict[str, int]:
         roots.add(root)
         if root[-1] == root[-2]:
             roots.add(root[:-1])                  # shipping -> ship
+    # And the other way: "ship" is named by its "shipment", "pay" by its
+    # "payment", "deliver" by its "delivery".
+    for root in sorted(roots):
+        if not root.endswith(("ment", "ery", "ing", "ed")):
+            for noun in (f"{root}ment", *((f"{root}y",) if root.endswith("er") else ())):
+                forms.setdefault(noun, _EVENT_NOUN)
+                forms.setdefault(_plural(noun), _EVENT_NOUN)
     for root in roots - {stem}:
         forms.setdefault(root, _EVENT_NOUN)
         forms.setdefault(_plural(root), _EVENT_NOUN)
@@ -778,7 +785,9 @@ def _explicit_role_matches(
                         # order, "mois de fin".
                         for variant in (f"{stem} {grain}", f"{grain} of {stem}",
                                         f"{grain} of {_plural(stem)}", f"{grain} {stem}",
-                                        *(f"{form} {grain}" for form in other_forms)):
+                                        *(f"{form} {grain}" for form in other_forms),
+                                        *(f"{grain} of {form}" for form in other_forms),
+                                        *(f"{grain} {form}" for form in other_forms)):
                             span = _phrase_span(event_text, variant)
                             if span:
                                 role_matches.append((span[0], span[1], variant, _NAMED))
