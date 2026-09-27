@@ -2681,6 +2681,8 @@ def attempt_field_plan_repair(
         display_table = field.get("table") or ""
         display_col = (field.get("column") or "").upper()
         key_col = (field.get("source_key_column") or "").upper()
+        # A role key joins its dimension's own key: BYR_PTY_DMS_KEY = PTY_DMS_KEY.
+        display_key = (field.get("display_key_column") or key_col).upper()
         source_table = field.get("source_key_table") or field.get("source_table") or ""
 
         # Locate the SELECT whose scope contains the source (fact) table.
@@ -2725,7 +2727,7 @@ def attempt_field_plan_repair(
                 n += 1
             join_frag = (
                 f"SELECT 1 FROM t JOIN {display_table} AS {disp_alias} "
-                f"ON {src_alias}.{key_col} = {disp_alias}.{key_col}"
+                f"ON {src_alias}.{key_col} = {disp_alias}.{display_key}"
             )
             try:
                 join_expr = sqlglot.parse_one(join_frag, dialect=dialect).find(sg_exp.Join)

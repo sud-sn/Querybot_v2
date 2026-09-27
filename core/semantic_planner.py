@@ -502,12 +502,23 @@ def _column_matches_question(column: str, aliases: set[str], question_norm: str,
     return False, ""
 
 
+def _role_of_key(role_keys: list[dict] | None, table: str, column: str) -> dict | None:
+    """The role a fact's key plays, when the graph names one (graph_resolver.role_keys)."""
+    column_u = str(column or "").upper()
+    return next((
+        role for role in role_keys or []
+        if str(role.get("column") or "").upper() == column_u
+        and _same_physical_table(str(role.get("table") or ""), table)
+    ), None)
+
+
 def _find_candidates(
     question: str,
     table_columns: dict[str, dict[str, str]],
     allowed_tables: set[str] | None,
     selected_schema: str = "",
     vocab=None,
+    role_keys: list[dict] | None = None,
 ) -> list[dict]:
     qn = _norm(question)
     qc = _compact(question)
@@ -532,6 +543,11 @@ def _find_candidates(
             # the emitted physical column remains canonical uppercase.
             aliases = _aliases_for_column(str(col), vocab=vocab) | _aliases_within_entity(
                 table_u, str(col), vocab=vocab)
+            # A key that plays a role answers to the role's name: "buyer" is
+            # BYR_PTY_DMS_KEY, whose own words say only "buyer party".
+            role = _role_of_key(role_keys, table_u, col_u)
+            if role:
+                aliases.add(_norm(str(role.get("label") or "")))
             matched, term = _column_matches_question(col_u, aliases, qn, qc)
             if not matched:
                 continue
@@ -806,16 +822,24 @@ def _apply_display_dimension_fields(
     table_columns: dict[str, dict[str, str]],
     allowed_tables: set[str] | None,
     selected_schema: str = "",
+    role_keys: list[dict] | None = None,
 ) -> list[dict]:
     out: list[dict] = []
     for field in fields:
         col = (field.get("column") or "").upper()
         if field.get("role") == "dimension" and _is_key_column(col):
+            # A role key shows its role's dimension, which keys the row by its
+            # own name: the buyer is the party whose PTY_DMS_KEY the fact's
+            # BYR_PTY_DMS_KEY holds, and no table is named for BYR_PTY.
+            role = _role_of_key(role_keys, str(field.get("table") or ""), col)
             display = _find_display_field_for_key(
-                col,
+                str(role["to_column"]) if role else col,
                 field.get("term") or "",
                 question,
-                table_columns,
+                {
+                    table: cols for table, cols in table_columns.items()
+                    if _same_physical_table(table, str(role["to_table"]))
+                } if role else table_columns,
                 allowed_tables,
                 selected_schema,
             )
@@ -825,10 +849,12 @@ def _apply_display_dimension_fields(
                     "table": display["table"],
                     "column": display["column"],
                     "role": "display_dimension",
-                    "source_key_column": display["source_key_column"],
+                    "source_key_column": col,
                     "source_key_table": field.get("table", ""),
                     "display_required": True,
                 })
+                if role:
+                    upgraded["display_key_column"] = str(role["to_column"])
                 out.append(upgraded)
                 continue
         out.append(field)
@@ -925,6 +951,17 @@ def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str,
         for f in fields
         if f.get("display_required") and f.get("source_key_column")
     }
+    # A role key and its dimension's key share no name, so no shared column
+    # links them: the role's own edge does, and its condition is the pair.
+    role_joins: dict[str, tuple[str, tuple[str, str]]] = {}
+    for f in fields:
+        if not (f.get("display_required") and f.get("display_key_column") and f.get("source_key_table")):
+            continue
+        source, target = str(f["source_key_table"]).upper(), f["table"].upper()
+        pair = (f["source_key_column"].upper(), str(f["display_key_column"]).upper())
+        role_joins[target] = (source, pair)
+        graph.setdefault(source, []).append({"to": target, "conditions": [pair]})
+        graph.setdefault(target, []).append({"to": source, "conditions": [(pair[1], pair[0])]})
 
     joins: list[dict] = []
     seen_edges: set[tuple[str, str]] = set()
@@ -937,7 +974,12 @@ def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str,
                 continue
             seen_edges.add(key)
             target_u = edge["to"].upper()
-            if target_u in display_key_map:
+            if target_u in role_joins:
+                source, pair = role_joins[target_u]
+                if _same_physical_table(edge["from"], source):
+                    edge = dict(edge)
+                    edge["conditions"] = [pair]
+            elif target_u in display_key_map:
                 # Override: use only the single authoritative FK, not all shared keys.
                 edge = dict(edge)
                 key_col = display_key_map[target_u]
@@ -1257,21 +1299,28 @@ def build_semantic_field_plan(
     vocab=None,
     fact_tables: set[str] | None = None,
     preferred_fact_tables: set[str] | None = None,
+    role_keys: list[dict] | None = None,
 ) -> dict:
     """Build a conservative field-source plan from exact known schema columns.
 
     `fact_tables` carries the model's fact classifications so the resolved
     measure's fact can be locked (Phase 3). Omitting it preserves the previous
     behaviour exactly — no anchoring is attempted without table roles.
+    `role_keys` are the keys the join graph names a role for
+    (graph_resolver.role_keys): "by buyer" is one of them.
     """
     vocab = _planner_vocab(vocab)
     normalized_columns = {
         str(t).upper(): {str(c).upper(): str(v) for c, v in (cols or {}).items()}
         for t, cols in (table_columns or {}).items()
     }
-    candidates = _find_candidates(question, normalized_columns, allowed_tables, selected_schema, vocab=vocab)
+    candidates = _find_candidates(
+        question, normalized_columns, allowed_tables, selected_schema, vocab=vocab, role_keys=role_keys,
+    )
     fields = _choose_fields(question, candidates, preferred_fact_tables)
-    fields = _apply_display_dimension_fields(fields, question, normalized_columns, allowed_tables, selected_schema)
+    fields = _apply_display_dimension_fields(
+        fields, question, normalized_columns, allowed_tables, selected_schema, role_keys=role_keys,
+    )
     if not fields:
         rival_measures = _unqualified_measure_rivals(
             question, normalized_columns, allowed_tables, selected_schema, vocab,
@@ -1467,6 +1516,11 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 " [business display field - use this in SELECT and GROUP BY; "
                 f"use {field.get('source_key_column')} only for JOINs unless the user asks for key/id]"
             )
+            if field.get("display_key_column"):
+                role_hint = role_hint[:-1] + (
+                    f"; join {field.get('source_key_table')}.{field.get('source_key_column')} "
+                    f"= {field['table']}.{field['display_key_column']}]"
+                )
         if role_alias and field.get("date_key_type") == "surrogate_fk":
             role_hint += (
                 f" [role-playing date alias: {role_alias}; "

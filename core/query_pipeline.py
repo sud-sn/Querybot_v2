@@ -59,6 +59,7 @@ from core.graph_resolver import (
     entity_name_for_table,
     infer_connected_default_date_fact,
     is_date_role_entity,
+    role_keys as _graph_role_keys,
 )
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
@@ -3340,6 +3341,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _preferred_facts: set[str] = set()
     _source_scope: dict = {"status": "none", "selected_fact": "", "candidates": []}
     _semantic_model_plan: dict = {}
+    # The keys the join graph names a role for: "by buyer" is one of them.
+    _planner_role_keys = _graph_role_keys(_full_graph)
     try:
         # Phase 3: the model's fact classifications let the planner lock the
         # measure's fact. Without them it falls back to prior behaviour.
@@ -3497,6 +3500,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             vocab=_vocab,
             fact_tables=_planner_fact_tables,
             preferred_fact_tables=_preferred_facts,
+            role_keys=_planner_role_keys,
         )
         _semantic_plan["source_scope"] = _source_scope
         if _semantic_plan.get("enabled"):
@@ -3742,6 +3746,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     vocab=_vocab,
                     fact_tables=_planner_fact_tables,
                     preferred_fact_tables=_preferred_facts,
+                    role_keys=_planner_role_keys,
                 )
                 _replanned_model = build_runtime_semantic_plan(
                     state.get("kb_dir", ""),
@@ -3856,6 +3861,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         vocab=_vocab,
                         fact_tables=_planner_fact_tables,
                         preferred_fact_tables={_population_table},
+                        role_keys=_planner_role_keys,
                     ),
                     build_runtime_semantic_plan(
                         state.get("kb_dir", ""),

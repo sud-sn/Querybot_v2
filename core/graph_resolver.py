@@ -194,6 +194,50 @@ def is_date_role_entity(entity: dict) -> bool:
     return any(hint in table for hint in ("DIM_DATE", "DATE_DIM", "CALENDAR"))
 
 
+def role_keys(graph: dict | None) -> list[dict]:
+    """The keys through which a fact reaches a dimension in a named role.
+
+    A labelled edge from a fact to a dimension names the role the dimension
+    plays through that key: BYR_PTY_DMS_KEY reaches the party dimension as its
+    "Buyer". The field planner reads the label as a name of the key, and the
+    dimension's own label column as what the key shows, so "by buyer" groups by
+    the party's name, joined through the buyer key. Date roles are the date
+    plan's; a dimension's own role keys are left to the admin (core/schema.py).
+    """
+    entities = {
+        str(entity.get("entity_name") or ""): entity
+        for entity in (graph or {}).get("entities") or []
+        if entity.get("entity_name")
+    }
+
+    def qualified(entity: dict) -> str:
+        return ".".join(
+            str(part) for part in (entity.get("schema_name"), entity.get("table_name")) if part
+        )
+
+    keys: list[dict] = []
+    for rel in (graph or {}).get("relationships") or []:
+        label = " ".join(str(rel.get("label") or "").split())
+        source = entities.get(str(rel.get("from_entity") or ""))
+        target = entities.get(str(rel.get("to_entity") or ""))
+        if not label or source is None or target is None:
+            continue
+        if str(source.get("entity_type") or "").lower() != "fact":
+            continue
+        if str(target.get("entity_type") or "").lower() != "dimension" or is_date_role_entity(target):
+            continue
+        if not rel.get("from_column") or not rel.get("to_column"):
+            continue
+        keys.append({
+            "table": qualified(source),
+            "column": str(rel["from_column"]).upper(),
+            "to_table": qualified(target),
+            "to_column": str(rel["to_column"]).upper(),
+            "label": label,
+        })
+    return keys
+
+
 def _role_phrase_variants(phrase: str) -> list[str]:
     """Business phrases that authoritatively name one date role.
 

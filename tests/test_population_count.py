@@ -485,6 +485,7 @@ class TestThePipelineActuallyTakesTheBranch:
             "schema_hint": "",
             "_vocab": None,
             "_planner_fact_tables": {"PHARMA_LAB.F_PURCHASE_RECEIPT"},
+            "_planner_role_keys": [],
             "state": {"kb_dir": ""},
             "_contract_model": model,
             "_planner_terms": [],
