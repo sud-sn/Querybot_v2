@@ -2586,14 +2586,35 @@ def _dimension_vocabulary_names(tables: list[dict[str, Any]], vocab) -> dict[str
     return names
 
 
-def _asked_by(question: str, word: str) -> bool:
+def _asked_by(question: str, word: str, longer=()) -> bool:
     """Whether the question asks by ``word`` -- "by division", "for each
     group", "which division" -- rather than merely using it: "group the stock
-    by warehouse" asks for no group."""
-    return bool(re.search(
-        rf"\b(?:by|per|each|every|which|what)\s+(?:the\s+)?{re.escape(word)}s?\b",
-        str(question or ""), re.IGNORECASE,
-    ))
+    by warehouse" asks for no group.
+
+    A word that begins a longer name the question says there in full is that
+    name's: "by product group" asks for the product group, not for the item,
+    which a product also is. ``longer`` is the names the tenant's dimensions
+    are asked for by."""
+    text = str(question or "")
+    for found in re.finditer(
+        rf"\b(?:by|per|each|every|which|what)\s+(?:the\s+)?({re.escape(word)})s?\b", text, re.IGNORECASE,
+    ):
+        said = text[found.start(1):]
+        if not any(
+            len(name.split()) > len(word.split()) and _says_first(said, name) for name in longer
+        ):
+            return True
+    return False
+
+
+def _says_first(text: str, name: str) -> bool:
+    """Whether ``text`` begins with ``name``, word for word, its last word in
+    either number."""
+    words = re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).split()
+    if not words:
+        return False
+    phrase = r"\s+".join(re.escape(word) for word in words)
+    return bool(re.match(rf"{phrase}(?:es|s)?\b", str(text or ""), re.IGNORECASE))
 
 
 def _dimension_label(source_key: str, dimension: dict[str, Any], display_col: str) -> tuple[str, str]:
@@ -3028,6 +3049,18 @@ def build_runtime_semantic_plan(
     tail_names = _dimension_tail_names(tables)
     from core.vocab_packs import get_active_vocab
     vocabulary_names = _dimension_vocabulary_names(tables, get_active_vocab())
+    # Every name a dimension is asked for by, so a word that only begins one of
+    # them ("product" in "product group") is not taken for another dimension.
+    spoken_names = {
+        _dimension_label(
+            str(dimension.get("source_key") or ""), dimension, str(dimension.get("display_column") or ""),
+        )[0].lower()
+        for table in tables
+        for dimension in table.get("dimensions", []) or []
+        if dimension.get("source_key") and dimension.get("display_column")
+    } | {name.lower() for name in tail_names.values()} | {
+        name for names in vocabulary_names.values() for name in names
+    }
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for dimension in table.get("dimensions", []) or []:
@@ -3056,15 +3089,17 @@ def build_runtime_semantic_plan(
             ]
             if role_label and role_label.title() == name:
                 _match_values.insert(1, role_label)
-            short_name = short_names.get(display_table.upper(), "")
-            if short_name and _asked_by(question, short_name):
-                _match_values.append(short_name)
             tail_asked = _asked_by_in_any_form(question, tail_names.get(display_table.upper(), ""))
             if tail_asked:
                 _match_values.append(tail_asked)
+            # Its head noun and what the vocabulary calls it, where the
+            # question asks by them.
             _match_values.extend(
-                name for name in sorted(vocabulary_names.get(display_table.upper(), ()))
-                if _asked_by(question, name)
+                word for word in [
+                    short_names.get(display_table.upper(), ""),
+                    *sorted(vocabulary_names.get(display_table.upper(), ())),
+                ]
+                if word and _asked_by(question, word, spoken_names)
             )
             score = _runtime_match_score(q_terms, _match_values)
             if score <= 0:
