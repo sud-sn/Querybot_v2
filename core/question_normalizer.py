@@ -160,6 +160,8 @@ _LEXICON: dict[str, str] = {
     "categories": "categories",
     "fournisseurs": "suppliers",
     "fournisseur": "supplier",
+    "groupes": "groups",
+    "groupe": "group",
     "acheteurs": "buyers",
     "acheteur": "buyer",
     "receptions": "receipts",

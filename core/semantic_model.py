@@ -2458,6 +2458,48 @@ def _scope_plan_to_single_fact(
     return anchor
 
 
+# Words a dimension's name ends on that name no dimension by themselves: "item
+# type" is not asked for as "by type".
+_GENERIC_NAME_WORDS = frozenset({
+    "name", "code", "description", "number", "date", "type", "status", "flag", "indicator",
+    "value", "amount", "quantity", "identifier", "key", "id",
+})
+
+
+def _dimension_short_names(tables: list[dict[str, Any]]) -> dict[str, str]:
+    """{display table: the last word of its dimension's name} where no other
+    dimension's name ends on that word.
+
+    A dimension is asked for by its head noun -- "receipts by division" for
+    the profit center division -- and was matched only as the whole concept.
+    A word two dimensions end on names neither: "group" for an item group and
+    a product group is a question to ask, not a guess.
+    """
+    owners: dict[str, set[str]] = {}
+    for table in tables:
+        for dimension in table.get("dimensions", []) or []:
+            display_col = str(dimension.get("display_column") or "")
+            display_table = str(dimension.get("display_table") or "").upper()
+            source_key = str(dimension.get("source_key") or "")
+            if not display_col or not display_table or not source_key:
+                continue
+            name, _role = _dimension_label(source_key, dimension, display_col)
+            words = re.sub(r"[^a-z0-9]+", " ", name.lower()).split()
+            if len(words) > 1 and len(words[-1]) > 2 and words[-1] not in _GENERIC_NAME_WORDS:
+                owners.setdefault(words[-1], set()).add(display_table)
+    return {next(iter(owned)): word for word, owned in owners.items() if len(owned) == 1}
+
+
+def _asked_by(question: str, word: str) -> bool:
+    """Whether the question asks by ``word`` -- "by division", "for each
+    group", "which division" -- rather than merely using it: "group the stock
+    by warehouse" asks for no group."""
+    return bool(re.search(
+        rf"\b(?:by|per|each|every|which|what)\s+(?:the\s+)?{re.escape(word)}s?\b",
+        str(question or ""), re.IGNORECASE,
+    ))
+
+
 def _dimension_label(source_key: str, dimension: dict[str, Any], display_col: str) -> tuple[str, str]:
     """Business label for a dimension, and the role label behind it.
 
@@ -2858,6 +2900,7 @@ def build_runtime_semantic_plan(
             if len(avoid_columns) >= 8:
                 break
 
+    short_names = _dimension_short_names(tables)
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for dimension in table.get("dimensions", []) or []:
@@ -2886,6 +2929,9 @@ def build_runtime_semantic_plan(
             ]
             if role_label and role_label.title() == name:
                 _match_values.insert(1, role_label)
+            short_name = short_names.get(display_table.upper(), "")
+            if short_name and _asked_by(question, short_name):
+                _match_values.append(short_name)
             score = _runtime_match_score(q_terms, _match_values)
             if score <= 0:
                 continue
