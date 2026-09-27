@@ -5442,6 +5442,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _graph_question_less_measures = _graph_resolution_question
         log.warning("Tables named inside a measure's name not told apart for %s: %s",
                     account_id, _measure_words_exc)
+    # The members a count of their key counts are the measure's too: "how many
+    # products did we sell" counts ProductKey on the sales, and joins no product.
+    try:
+        from core.analytical_request_plan import COUNTED_MEMBERS
+
+        _named_only_by_a_measure |= {
+            entity_name_for_table(_full_graph, str(field.get("table") or ""))
+            for field in (_semantic_plan or {}).get("fields") or []
+            if field.get("demotion_reason") == COUNTED_MEMBERS
+        } - {""}
+    except Exception as _counted_members_exc:
+        log.warning("Members counted by their key not told apart for %s: %s", account_id, _counted_members_exc)
     try:
         from core.semantic_resolution import build_planner_alignment
         _planner_alignment = build_planner_alignment(
@@ -5468,6 +5480,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _planner_alignment.get("authoritative_fact_tables") or []
                 ),
                 selected_edge_ids=_confirmed_join_path.get("edge_ids") or [],
+                excluded_entities=set(_planner_alignment.get("dropped_measure_word_entities") or []),
             )
             if _aligned_graph_ctx.get("enabled"):
                 _graph_ctx = _aligned_graph_ctx

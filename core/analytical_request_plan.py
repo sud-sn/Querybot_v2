@@ -254,6 +254,53 @@ def demote_counted_records(
             join["enforcement"] = "optional"
 
 
+# Why a field was set aside as the members a count of their key counts.
+COUNTED_MEMBERS = "the members the metric counts"
+_COUNT_OF_A_KEY_RE = re.compile(
+    r"\s*COUNT\s*\(\s*DISTINCT\s+(?:[\w\[\]\"`]+\s*\.\s*)?[\[\"`]?(\w+)[\]\"`]?\s*\)\s*", re.I)
+
+
+def counted_keys(matched_metrics: list[dict[str, Any]] | None) -> set[str]:
+    """The key columns the matched metrics count, one each: "Number of
+    Products Sold" is COUNT(DISTINCT ProductKey)."""
+    return {
+        found.group(1).upper()
+        for found in (
+            _COUNT_OF_A_KEY_RE.fullmatch(str(metric.get("sql_template") or metric.get("formula") or ""))
+            for metric in matched_metrics or []
+        ) if found
+    }
+
+
+def demote_counted_members(
+    semantic_plan: dict[str, Any] | None,
+    intent_plan: dict[str, Any] | None,
+    matched_metrics: list[dict[str, Any]] | None = None,
+) -> None:
+    """The members a count of their key counts are not also its breakdown:
+    "how many products did we sell in 2025" reads "Number of Products Sold",
+    COUNT(DISTINCT ProductKey), and the planner bound "products" to the
+    product's name through that key -- grouped by it, every product counted
+    one. A ranking or a lookup of the members ("top 10 customers", "which
+    customers ...") and a breakdown the question names ("by product") keep
+    it."""
+    if str((intent_plan or {}).get("intent") or "") != "metric_query":
+        return
+    keys = counted_keys(matched_metrics)
+    if not keys:
+        return
+    grouped = [_counted_words(value) for value in (intent_plan or {}).get("dimensions") or []]
+    for field in (semantic_plan or {}).get("fields") or []:
+        if (
+            isinstance(field, dict)
+            and str(field.get("role") or "").lower() in {"dimension", "display_dimension"}
+            and str(field.get("source_key_column") or "").upper() in keys
+            and _counted_words(str(field.get("term") or "")) not in grouped
+        ):
+            field["enforcement"] = "optional"
+            field["demotion_reason"] = COUNTED_MEMBERS
+
+
 def demote_counted_population(
     semantic_plan: dict[str, Any] | None,
     intent_plan: dict[str, Any] | None,
@@ -291,6 +338,7 @@ def demote_what_the_question_does_not_compute(
     records a count names, and the population it counts."""
     demote_calendar_measures(semantic_plan, date_bindings)
     demote_counted_records(semantic_plan, intent_plan, matched_metrics)
+    demote_counted_members(semantic_plan, intent_plan, matched_metrics)
     demote_counted_population(semantic_plan, intent_plan)
     demote_beside_an_attribute(semantic_plan, intent_plan)
 

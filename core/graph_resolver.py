@@ -615,9 +615,12 @@ def detect_entities(
     required_tables: list[str] | set[str] | None = None,
     required_entities: list[str] | set[str] | None = None,
     authoritative_fact_tables: list[str] | set[str] | None = None,
+    excluded_entities: list[str] | set[str] | None = None,
 ) -> list[str]:
     """
     Score each entity against the question and return those that match.
+    An entity in ``excluded_entities`` is not matched by the question's words
+    -- the planner found them to name something else -- unless it is required.
 
     Scoring (no LLM call required):
       entity_name exact word match     → +10
@@ -797,7 +800,8 @@ def detect_entities(
                 scores[ent["entity_name"]] = 1
                 break
 
-    return sorted(scores, key=lambda n: scores[n], reverse=True)
+    excluded = {str(name) for name in excluded_entities or []} - required_entity_names
+    return sorted((name for name in scores if name not in excluded), key=lambda n: scores[n], reverse=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1659,6 +1663,7 @@ def _resolve_on_graph(
     metric_formula_tables,
     authoritative_fact_tables,
     selected_edge_ids=None,
+    excluded_entities=None,
 ) -> dict:
     """Run detection + pathfinding + skeleton build against one graph snapshot."""
     entities     = graph.get("entities", [])
@@ -1708,6 +1713,7 @@ def _resolve_on_graph(
         required_tables=metric_formula_tables,
         required_entities=required_entities,
         authoritative_fact_tables=authoritative_fact_tables,
+        excluded_entities=excluded_entities,
     )
     log.debug("Graph: question=%r detected=%s", question[:60], detected)
 
@@ -1983,6 +1989,7 @@ def resolve_for_question(
     authoritative_fact_tables: Optional[list[str] | set[str]] = None,
     use_suggested: Optional[bool] = None,
     selected_edge_ids: Optional[list] = None,
+    excluded_entities: Optional[list[str] | set[str]] = None,
 ) -> dict:
     """
     Main entry point called before SQL generation.
@@ -2037,7 +2044,7 @@ def resolve_for_question(
         confirmed_result = _resolve_on_graph(
             question, db_type, confirmed, intent,
             required_entities, metric_formula_tables, authoritative_fact_tables,
-            selected_edge_ids,
+            selected_edge_ids, excluded_entities,
         )
         # A confirmed multi-entity join — or a graph with nothing suggested —
         # is final. A confirmed single-entity anchor is retained below unless
@@ -2064,7 +2071,7 @@ def resolve_for_question(
             full_result = _resolve_on_graph(
                 question, db_type, reviewable, intent,
                 required_entities, metric_formula_tables, authoritative_fact_tables,
-                selected_edge_ids,
+                selected_edge_ids, excluded_entities,
             )
             # Prefer the suggested-inclusive result only when it adds value
             # (a join the confirmed graph could not produce).
