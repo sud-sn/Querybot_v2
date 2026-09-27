@@ -63,7 +63,7 @@ SCHEMA = {
         ("StartDate", "datetime"), ("EndDate", "datetime")),
     "SalesDW.dbo.DimCustomer": _table(
         "CustomerKey", ("CustomerKey", "int"), ("CustomerAlternateKey", "nvarchar"), ("FirstName", "nvarchar"),
-        ("LastName", "nvarchar"), ("Gender", "nvarchar"), ("YearlyIncome", "money")),
+        ("LastName", "nvarchar"), ("Gender", "nvarchar"), ("YearlyIncome", "money"), ("DateFirstPurchase", "date")),
     # A territory's names say "sales" and are text: no measure.
     "SalesDW.dbo.DimSalesTerritory": _table(
         "SalesTerritoryKey", ("SalesTerritoryKey", "int"), ("SalesTerritoryRegion", "nvarchar"),
@@ -173,7 +173,7 @@ def rows() -> dict[str, list[tuple]]:
         "DimProduct": [(k, code, en, fr, sub, "Black", cost, price, round(price * 0.6, 2),
                         "2020-01-01 00:00:00", "2030-12-31 00:00:00")
                        for k, (code, en, fr, sub, price, cost) in PRODUCTS.items()],
-        "DimCustomer": [(k, code, first, last, gender, income)
+        "DimCustomer": [(k, code, first, last, gender, income, f"2023-0{k}-15")
                         for k, (code, first, last, gender, income) in CUSTOMERS.items()],
         "DimSalesTerritory": [(k, *names) for k, names in TERRITORIES.items()],
         "FactInternetSales": facts,

@@ -4626,7 +4626,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # and the fact arbitration that consumes it -- is silent when the gate is
     # closed. Record the decision itself so an absent arbitration log can be
     # read as "the gate was shut" rather than "the hook is broken".
-    _temporal_intent = question_has_temporal_intent(_semantic_plan_question)
+    # A measure's own name is no period: "yearly income" is the attribute.
+    from core.semantic_model import without_measure_field_names
+
+    _temporal_intent = question_has_temporal_intent(
+        without_measure_field_names(_semantic_plan_question, (_semantic_plan or {}).get("fields") or []),
+    )
     # The resolved measure column decides this, not the question's wording.
     # "stockholding value by warehouse" resolved to a periodic-snapshot column
     # and summed it across every month on file -- sixteen times the true

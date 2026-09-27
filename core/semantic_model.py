@@ -2806,6 +2806,30 @@ def without_measure_names(question: str, metrics) -> str:
     return text
 
 
+def without_measure_field_names(question: str, fields) -> str:
+    """The question less the name of every measure its plan binds that is of
+    two words or more, said in full: the "yearly" of "the average yearly
+    income of our customers" is the attribute's name, not a year the question
+    asks about."""
+    text = str(question or "")
+    names = {
+        " ".join(re.sub(r"[^a-z0-9]+", " ", str(field.get("term") or "").lower()).split())
+        for field in fields or []
+        if isinstance(field, dict)
+        and str(field.get("role") or "").lower() in {"measure", "measure_candidate"}
+        and str(field.get("enforcement") or "").lower() != "optional"
+    }
+    for name in sorted(names, key=lambda other: (-len(other.split()), other)):
+        # A name whose head is a period -- "fiscal year" -- is a period.
+        if len(name.split()) > 1 and name.split()[-1] not in _PERIOD_HEADS:
+            text = re.sub(_said_in_full(name), " ", text, flags=re.IGNORECASE)
+    return text
+
+
+_PERIOD_HEADS = frozenset({"date", "dates", "day", "days", "week", "weeks", "month", "months", "quarter",
+                           "quarters", "year", "years", "period", "periods", "time"})
+
+
 def _singular(word: str) -> str:
     """A word less the "s" of its plural: resellers and customers are
     reseller and customer."""
