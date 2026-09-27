@@ -16,6 +16,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections import deque
@@ -23,6 +24,8 @@ from pathlib import Path
 
 import store
 from core.semantic_plan_utils import required_semantic_tables
+
+log = logging.getLogger("querybot")
 
 
 # ── File-system ────────────────────────────────────────────────────────────────
@@ -297,6 +300,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
                 continue
             seen_joins.add(key)
             joins.append(join)
+    _one_breakdown_per_phrase(fields)
     if not fields:
         return {
             "enabled": False,
@@ -330,6 +334,60 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "source_scope": source_scope,
         "fact_anchor": fact_anchor,
     }
+
+
+def _phrase(text) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(text or "").casefold()).strip().rstrip("s")
+
+
+def _named_for(table: str, phrase: str) -> bool:
+    """Whether a table's own name, as the tenant's vocabulary spells it, is the
+    phrase: "Product Group" for the product group's table, never for the item
+    group's, whatever else the item group is also called."""
+    bare = str(table or "").split(".")[-1].strip("[]\"`")
+    try:
+        from core.source_resolution import _business_source_label
+        from core.vocab_packs import get_active_vocab
+
+        name = _business_source_label({"qualified_name": str(table or ""), "entity": bare}, vocab=get_active_vocab())
+    except Exception as exc:  # noqa: BLE001 - an unread name costs the preference, never the plan
+        log.warning("Semantic plan: %s left unnamed: %s", table, exc)
+        return False
+    return bool(name) and _phrase(name) == phrase
+
+
+def _one_breakdown_per_phrase(fields: list[dict]) -> None:
+    """One phrase the question asks to see is one breakdown.
+
+    Two planners can read one phrase as two tables. "Top 5 product groups by
+    inventory value": the lexical planner read "product group" as the item
+    group, which a vocabulary also calls that, and the semantic model as the
+    product group's own table. Both were kept, and the answer was asked to
+    group by both; handed two breakdowns for one, the compiler declined and
+    the question went to the model. Where one of the tables is named for the
+    phrase, it is the breakdown and the other readings are set aside; where
+    none is, or several are, nothing is decided here.
+    """
+    readings: dict[str, list[dict]] = {}
+    for field in fields:
+        if str(field.get("role") or "").lower() not in {"display_dimension", "dimension"}:
+            continue
+        if str(field.get("enforcement") or "").lower() == "optional":
+            continue
+        phrase = _phrase(field.get("term"))
+        if phrase:
+            readings.setdefault(phrase, []).append(field)
+    for phrase, rivals in readings.items():
+        tables = {_semantic_table_identity(field.get("table") or "") for field in rivals}
+        if len(tables) < 2:
+            continue
+        named = {table for table in tables if _named_for(table, phrase)}
+        if len(named) != 1:
+            continue
+        for field in rivals:
+            if _semantic_table_identity(field.get("table") or "") not in named:
+                field["enforcement"] = "optional"
+                field["demotion_reason"] = "another table is named for the phrase"
 
 
 def _scope_semantic_plan_to_analytical_request(
