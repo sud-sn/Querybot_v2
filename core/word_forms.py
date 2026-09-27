@@ -45,6 +45,13 @@ def base_form(word: str) -> str:
     return _FORMS.get(word, word)
 
 
+def forms_of(word: str) -> tuple[str, ...]:
+    """Every form of the word a word is a form of, itself among them:
+    "stock" is "inventory", "inventories", "stock" and "stocks"."""
+    base = base_form(word)
+    return tuple(sorted({word, base, *(form for form, of in _FORMS.items() if of == base)}))
+
+
 # How the answer is cut and over what, never which measure: "deliveries and
 # physical inventory counts by month in 2022" scored "month-end inventory
 # value" on the word "month", and was answered with it. The French is read as

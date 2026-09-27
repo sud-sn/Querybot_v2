@@ -238,8 +238,12 @@ class TestItDoesNotOverwriteWhatSomeoneChose(unittest.TestCase):
 
     def test_a_broken_vocabulary_costs_a_label_not_a_plan(self):
         import core.schema_enrichment as se
+        import core.source_resolution as sr
 
-        with patch.object(se, "enrich_columns", side_effect=RuntimeError("boom")):
+        # Both of the vocabulary's roads to a name: the chip's, and the one the
+        # dimension's own name is spelled by.
+        with patch.object(se, "enrich_columns", side_effect=RuntimeError("boom")), \
+                patch.object(sr, "_expanded_identifier", side_effect=RuntimeError("boom")):
             plan = real_plan()
         self.assertTrue(plan["enabled"])
         # Back to the old spelling, and the plan still works.

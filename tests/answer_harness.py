@@ -49,7 +49,7 @@ SCHEMA = {
         "ITM_BAL_DLY_FCT_KEY", ("ITM_BAL_DLY_FCT_KEY", "bigint"), ("WHS_DMS_KEY", "int"), ("ITM_DMS_KEY", "int"),
         ("BYR_PTY_DMS_KEY", "int"), ("ITM_BAL_EFC_DT_DMS_KEY", "int"), ("ITM_WHS_CRN_DT_DMS_KEY", "int"),
         ("ON_HND_QTY", "decimal"), ("ALC_ON_HND_QTY", "decimal"), ("ITM_CST", "decimal"), ("UNT_OF_MSR", "nvarchar"),
-        ("RSV_QTY", "decimal"), ("RSV_BCK_ORD_QTY", "decimal")),
+        ("RSV_QTY", "decimal"), ("RSV_BCK_ORD_QTY", "decimal"), ("ITM_STK_STS_DMS_KEY", "int")),
     "WH.MART.ITM_BAL_PRD_FCT": _table(
         "ITM_BAL_PRD_FCT_KEY", ("ITM_BAL_PRD_FCT_KEY", "bigint"), ("WHS_DMS_KEY", "int"), ("ITM_DMS_KEY", "int"),
         ("PRD_DMS_KEY", "int"), ("SLD_QTY", "decimal"), ("PCH_QTY", "decimal"), ("NUM_OF_RCT", "int"),
@@ -60,6 +60,11 @@ SCHEMA = {
     "WH.MART.ITM_GRP_DMS": _table("ITM_GRP_DMS_KEY", ("ITM_GRP_DMS_KEY", "int"), ("ITM_GRP_CD", "nvarchar"),
                                   ("ITM_GRP_DSC", "nvarchar")),
     "WH.MART.PTY_DMS": _table("PTY_DMS_KEY", ("PTY_DMS_KEY", "int"), ("PTY_CD", "nvarchar"), ("PTY_NM", "nvarchar")),
+    # The item's stock status, a dimension of its own off the snapshot: its
+    # name is cut from the table's ("Itm Stk Sts"), and its key's prefix is the
+    # item's.
+    "WH.MART.ITM_STK_STS_DMS": _table("ITM_STK_STS_DMS_KEY", ("ITM_STK_STS_DMS_KEY", "int"),
+                                      ("ITM_STK_STS_CD", "nvarchar"), ("ITM_STK_STS_DSC", "nvarchar")),
     "WH.MART.DT_DMS": _table("DT_DMS_KEY", ("DT_DMS_KEY", "int"), ("DMS_DT", "date"), ("YR", "int"), ("QR", "int"),
                              ("MTH", "int"), ("MTH_NM", "nvarchar"), ("MTH_FR_NM", "nvarchar"), ("WK_OF_YR", "int"),
                              ("DAY_OF_WK", "int"), ("DAY_NM", "nvarchar"), ("DAY_FR_NM", "nvarchar")),
@@ -83,6 +88,7 @@ ITEMS = {0: ("0", _PLACEHOLDER, 0, ""), 101: ("BE-1", "BRASS ELBOW", 10, "EA"), 
 # as a French twin often is.
 ITEM_FR_NAMES = {101: "COUDE EN LAITON", 102: "", 201: "TUYAU DE CUIVRE", 202: ""}
 PARTIES = {0: ("0", _PLACEHOLDER), 1: ("ALO", "ANA LOPEZ"), 2: ("BOK", "BEN OKAFOR")}
+STOCK_STATUSES = {0: ("0", _PLACEHOLDER), 1: ("CAT", "CATALOGUED"), 2: ("UNC", "UNCATALOGUED")}
 _MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
               "November", "December"]
 _DAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -102,6 +108,8 @@ STOCK = [
 # STOCK: parts of the stock of their own, beside the allocated part.
 RESERVED = [5, 0, 30, 10, 0]
 BACK_ORDERED = [0, 4, 0, 10, 0]
+# And each row's stock status, row for row with STOCK.
+STOCK_STATUS = [1, 1, 2, 1, 2]
 # The monthly facts: (warehouse, item, yyyymm, sold, purchased, receipts, cost)
 MOVES = [
     (1, 101, 202501, 10, 30, 2, 2.50), (1, 101, 202502, 15, 0, 0, 2.50), (1, 201, 202502, 200, 500, 1, 3.10),
@@ -117,6 +125,7 @@ def rows() -> dict[str, list[tuple]]:
         "ITM_GRP_DMS": [(k, c, n) for k, (c, n) in GROUPS.items()],
         "ITM_DMS": [(k, c, n, g, u, ITEM_FR_NAMES.get(k, "")) for k, (c, n, g, u) in ITEMS.items()],
         "PTY_DMS": [(k, c, n) for k, (c, n) in PARTIES.items()],
+        "ITM_STK_STS_DMS": [(k, c, n) for k, (c, n) in STOCK_STATUSES.items()],
     }
     days = []
     day = dt.date(2025, 1, 1)
@@ -140,7 +149,7 @@ def rows() -> dict[str, list[tuple]]:
             if snapshot != LATEST:
                 reserved, back_ordered = reserved + 100, back_ordered + 100
             daily.append((len(daily) + 1, whs, itm, byr, snapshot, created, qty, allocated, cost, ITEMS[itm][3],
-                          reserved, back_ordered))
+                          reserved, back_ordered, STOCK_STATUS[n]))
     data["ITM_BAL_DLY_FCT"] = daily
     data["ITM_BAL_PRD_FCT"] = [
         (n + 1, whs, itm, prd, sold, bought, receipts, None, cost, "")

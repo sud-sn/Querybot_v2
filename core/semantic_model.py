@@ -2490,6 +2490,52 @@ def _dimension_short_names(tables: list[dict[str, Any]]) -> dict[str, str]:
     return {next(iter(owned)): word for word, owned in owners.items() if len(owned) == 1}
 
 
+def _dimension_tail_names(tables: list[dict[str, Any]]) -> dict[str, str]:
+    """{display table: its dimension's name less the first word} where the
+    name has three words or more and no other dimension's name ends the same.
+
+    A dimension's name starts with what it belongs to -- the item's stock
+    status, the item's business area -- and is asked for by the rest: "value by
+    stock status", "by business area". Neither was answered: the whole name
+    shares two words of three with the question, and the head noun ("status",
+    "area") is too generic or too common to name one.
+    """
+    owners: dict[str, set[str]] = {}
+    for table in tables:
+        for dimension in table.get("dimensions", []) or []:
+            display_col = str(dimension.get("display_column") or "")
+            display_table = str(dimension.get("display_table") or "").upper()
+            source_key = str(dimension.get("source_key") or "")
+            if not display_col or not display_table or not source_key:
+                continue
+            name, _role = _dimension_label(source_key, dimension, display_col)
+            words = re.sub(r"[^a-z0-9]+", " ", name.lower()).split()
+            if len(words) > 2 and not set(words[1:]) <= _GENERIC_NAME_WORDS:
+                owners.setdefault(" ".join(words[1:]), set()).add(display_table)
+    return {next(iter(owned)): tail for tail, owned in owners.items() if len(owned) == 1}
+
+
+def _asked_by_in_any_form(question: str, name: str) -> str:
+    """The words the question asks by for ``name`` in any form of its words,
+    as the question writes them, or "": "by inventory status" asks for the
+    stock status, since French "stock" is read as inventory and an English
+    reader says either."""
+    from core.word_forms import forms_of
+
+    words = str(name or "").lower().split()
+    if not words:
+        return ""
+    phrase = r"\s+".join(
+        "(?:" + "|".join(re.escape(form) for form in sorted(forms_of(word), key=len, reverse=True)) + ")"
+        for word in words
+    )
+    found = re.search(
+        rf"\b(?:by|per|each|every|which|what)\s+(?:the\s+)?({phrase})(?:es|s)?\b",
+        str(question or ""), re.IGNORECASE,
+    )
+    return found.group(1) if found else ""
+
+
 # The word that makes a column's name the label of its dimension rather than
 # something about it: "branch name" labels the branch, "customer type" does not
 # label a customer.
@@ -2548,14 +2594,42 @@ def _dimension_label(source_key: str, dimension: dict[str, Any], display_col: st
     while never swapping in an unrelated label the role did not imply.
     """
     role_label = _business_role_from_column(source_key).replace("_", " ") if source_key else ""
-    declared = str(dimension.get("name") or "").strip()
+    # Both as the tenant's vocabulary spells them: a dimension's name is its
+    # table's, cut at the underscores ("Itm Stk Sts", "Emco Rgn"), and a key
+    # no entity prefix names reads the same.
+    declared = _spelled(str(dimension.get("name") or "").strip())
+    prefix = match_entity_prefix(source_key) if source_key else ""
+    if role_label and not prefix:
+        role_label = _spelled(role_label).lower()
     if not role_label:
         return (declared or str(display_col)), ""
-    role_terms = set(re.sub(r"[^a-z0-9]+", " ", role_label.lower()).split())
+    # A prefix a pack names two ways ("Item / Product") is refined by either:
+    # the item stock status is not the item.
+    readings = [
+        set(re.sub(r"[^a-z0-9]+", " ", reading.lower()).split())
+        for reading in (str(prefix).split("/") if "/" in str(prefix) else [role_label])
+    ]
     declared_terms = set(re.sub(r"[^a-z0-9]+", " ", declared.lower()).split())
-    if declared and role_terms and role_terms < declared_terms:
+    if declared and any(reading and reading < declared_terms for reading in readings):
         return declared, role_label
     return role_label.title(), role_label
+
+
+def _spelled(name: str) -> str:
+    """A name cut from a physical one, read through the active vocabulary:
+    "Itm Stk Sts" is "Item Stock Status". A name in words is left as it is."""
+    words = str(name or "").split()
+    if not words:
+        return str(name or "")
+    from core.source_resolution import _expanded_identifier
+    from core.vocab_packs import get_active_vocab
+
+    try:
+        spelled = _expanded_identifier("_".join(words), vocab=get_active_vocab())
+    except Exception as exc:  # noqa: BLE001 - a broken vocabulary costs a label, never a plan
+        log.warning("Dimension name %r left as it is: the vocabulary could not spell it: %s", name, exc)
+        return str(name)
+    return spelled.title() if spelled and spelled.split() != [w.lower() for w in words] else str(name)
 
 
 def _keep_one_binding_per_term(fields: list[dict[str, Any]]) -> list[str]:
@@ -2935,6 +3009,7 @@ def build_runtime_semantic_plan(
                 break
 
     short_names = _dimension_short_names(tables)
+    tail_names = _dimension_tail_names(tables)
     from core.vocab_packs import get_active_vocab
     vocabulary_names = _dimension_vocabulary_names(tables, get_active_vocab())
     for table in tables:
@@ -2968,6 +3043,9 @@ def build_runtime_semantic_plan(
             short_name = short_names.get(display_table.upper(), "")
             if short_name and _asked_by(question, short_name):
                 _match_values.append(short_name)
+            tail_asked = _asked_by_in_any_form(question, tail_names.get(display_table.upper(), ""))
+            if tail_asked:
+                _match_values.append(tail_asked)
             _match_values.extend(
                 name for name in sorted(vocabulary_names.get(display_table.upper(), ()))
                 if _asked_by(question, name)

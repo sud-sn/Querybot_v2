@@ -161,6 +161,8 @@ _LEXICON: dict[str, str] = {
     "pays": "country",
     "secteur": "segment",
     "secteurs": "segments",
+    "statut": "status",
+    "statuts": "statuses",
     "categorie": "category",
     "categories": "categories",
     "fournisseurs": "suppliers",
