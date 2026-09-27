@@ -1304,10 +1304,16 @@ def _compile_governed_grouped_request_sql(
             for existing in unique_dimensions
         ):
             unique_dimensions.append(field)
+    # "Which month of 2025 had the highest sales" ranks the periods the
+    # governed date buckets, not the members of a dimension: its "which month"
+    # is the bucket, written below, and no breakdown left unbound.
+    from core.contextual_dates import ranked_period_grain
+
+    ranked_period = bool(policy) and not unique_dimensions and bool(ranked_period_grain(question))
     if (
         len(unique_dimensions) > 1
         or _unwritten_display_fields(plan, unique_dimensions)
-        or _requested_breakdowns(question) > len(unique_dimensions)
+        or _requested_breakdowns(question) - int(ranked_period) > len(unique_dimensions)
     ):
         return ""
     # Preserve the established scalar/single-series compiler byte-for-byte:
@@ -1326,8 +1332,8 @@ def _compile_governed_grouped_request_sql(
 
     intent = str(request.get("intent") or "").lower()
     top_n = request.get("top_n") or ((context.get("top_n") or {}).get("limit"))
-    ranking = intent == "ranking" or bool(top_n)
-    if ranking and not unique_dimensions:
+    ranking = intent == "ranking" or bool(top_n) or ranked_period
+    if ranking and not unique_dimensions and not ranked_period:
         return ""
     if intent in {"comparison", "distribution", "causal_analysis"}:
         return ""
@@ -1482,7 +1488,7 @@ def _compile_governed_grouped_request_sql(
     from core.unknown_members import exclusion_predicate
 
     for unknown in plan.get("unknown_member_policies") or []:
-        if ranking and _same_physical_table(unknown.get("table"), unique_dimensions[0]["table"]):
+        if ranking and unique_dimensions and _same_physical_table(unknown.get("table"), unique_dimensions[0]["table"]):
             where_parts.append(exclusion_predicate(
                 f"{alias_for(str(unique_dimensions[0]['table']))}.{qcol(str(unknown['key_column']))}",
                 unknown,
@@ -1674,6 +1680,7 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
         or re.search(r"\b(?:trend|over\s+time)\b", question, re.I)
         or breakdown_grain(question)
         or str(policy.get("kind") or "") == "all_dates"
+        or ranked_period
     )
     select_parts: list[str] = []
     group_parts: list[str] = []

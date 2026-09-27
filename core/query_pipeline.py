@@ -8591,6 +8591,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "format_scope": "metric_context",
         "metrics": _matched_metrics,
     }
+    # "Which month had the highest sales" is answered by its months ordered
+    # by their sales: the reader asked for the leader, and a series read in
+    # time order led with the last month instead.
+    from core.contextual_dates import ranked_period_grain
+
+    if ranked_period_grain(_semantic_plan_question):
+        _display_context["result_operation"] = "sort"
     # Only when the widened result actually arrived. The answer surface reads
     # these labels to describe the CHANGE instead of ranking the oldest period,
     # and the formats keep the period columns classified as measures rather

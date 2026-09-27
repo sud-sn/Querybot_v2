@@ -1584,6 +1584,11 @@ def build_answer(
                 "scope_note": scope.get("note", ""),
             }
         best_label, best_value = ordered[0]
+        # A period ranked by its measure -- "which month had the highest
+        # sales" -- is named as the series names it: "2025-10", not the
+        # first day of its bucket.
+        if _looks_temporal(labels) and len(set(labels)) == len(labels):
+            best_label = dict(zip(labels, narrative_period_labels(labels))).get(str(best_label), best_label)
         best_label = str(best_label or _t("answer.top_result"))
         comparison = scope.get("badge") or _t_plural(
             "answer.across_results", len(ordered))

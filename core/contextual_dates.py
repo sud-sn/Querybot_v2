@@ -166,7 +166,7 @@ def requested_temporal_grain(question: str) -> str:
     ):
         if any(word in q for word in words):
             return grain
-    grain = breakdown_grain(question)
+    grain = breakdown_grain(question) or ranked_period_grain(question)
     if grain:
         return grain
 
@@ -175,6 +175,17 @@ def requested_temporal_grain(question: str) -> str:
     if unit in _GRAIN_ORDER:
         return unit
     return ""
+
+
+_RANKED_PERIOD_RE = re.compile(r"\b(?:which|what)\s+(day|week|month|quarter|year)\b", re.IGNORECASE)
+
+
+def ranked_period_grain(question: str) -> str:
+    """The period a question ranks: "which month of 2025 had the highest
+    sales" asks for the months of 2025, ordered by their sales -- the French
+    "quel mois" arrives as "which month". "" where it names no period."""
+    found = _RANKED_PERIOD_RE.search(question or "")
+    return found.group(1).lower() if found else ""
 
 
 def metrics_are_semi_additive(matched_metrics: list[dict] | None) -> bool:
@@ -2364,8 +2375,10 @@ _NAMED_PERIOD_PATTERNS = (
     ("year_range", re.compile(rf"\b(?:between|from)\s+{_PERIOD_YEAR}\s+(?:and|to|through|-)\s+{_PERIOD_YEAR}\b")),
     # A bare year needs a word that makes it a period: "orders over 2000" is
     # an amount (see question_names_a_calendar_period).
+    # "Which month of 2025" names 2025 as the months' year.
     ("year", re.compile(
-        rf"\b(?:in|for|during|throughout|en|pendant|durant|dans|end\s+of|fin(?:\s+(?:of|de|du))?|year(?:\s+of)?|annee)\s+"
+        rf"\b(?:in|for|during|throughout|en|pendant|durant|dans|end\s+of|fin(?:\s+(?:of|de|du))?|year(?:\s+of)?|annee"
+        rf"|(?:day|week|month|quarter)s?\s+(?:of|de|du))\s+"
         rf"(?:the\s+)?(?:year\s+|annee\s+)?{_PERIOD_YEAR}\b(?!\s*(?:-|to|a|and)\s*\d)")),
 )
 
