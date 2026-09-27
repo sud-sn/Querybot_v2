@@ -272,6 +272,45 @@ def counted_keys(matched_metrics: list[dict[str, Any]] | None) -> set[str]:
     }
 
 
+def metrics_counting_the_subject(question: str, matched_metrics: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Of the metrics a count question matched, the one that counts what it
+    counts -- or the metrics as they were.
+
+    "How many customers placed an order in 2025" counts customers; the order
+    is what they did. Its words match Number of Buying Customers, Number of
+    Orders and Order Quantity alike, and with three in scope the plan was
+    left open and refused. The one whose formula counts the customer's own
+    key -- COUNT(DISTINCT CustomerKey) -- is the answer. "How many customers
+    do we have" asks for every customer, not the buying ones, and is left to
+    the population count.
+    """
+    from core.analytical_intent import _count_subject, _singular, detect_population_count
+    from core.identifier_intelligence import identifier_words
+    from core.vocab_packs import strip_dimension_key_suffix
+
+    metrics = list(matched_metrics or [])
+    subject = _count_subject(question)
+    if len(metrics) < 2 or not subject or detect_population_count(question):
+        return metrics
+
+    def counts_the_subject(metric: dict[str, Any]) -> bool:
+        found = _COUNT_OF_A_KEY_RE.fullmatch(str(metric.get("sql_template") or metric.get("formula") or ""))
+        if not found:
+            return False
+        from core.semantic_model import _business_role_from_column
+
+        whose = strip_dimension_key_suffix(found.group(1)) or identifier_words(found.group(1))
+        names = {
+            " ".join(_singular(word) for word in name.lower().replace("_", " ").split())
+            for name in (whose, _business_role_from_column(found.group(1)))
+            if name
+        }
+        return subject in names
+
+    counting = [metric for metric in metrics if counts_the_subject(metric)]
+    return counting if len(counting) == 1 else metrics
+
+
 def demote_counted_members(
     semantic_plan: dict[str, Any] | None,
     intent_plan: dict[str, Any] | None,
@@ -294,7 +333,8 @@ def demote_counted_members(
         if (
             isinstance(field, dict)
             and str(field.get("role") or "").lower() in {"dimension", "display_dimension"}
-            and str(field.get("source_key_column") or "").upper() in keys
+            # Through the fact's key, or the member's own key on its table.
+            and (str(field.get("source_key_column") or field.get("column") or "").upper() in keys)
             and _counted_words(str(field.get("term") or "")) not in grouped
         ):
             field["enforcement"] = "optional"

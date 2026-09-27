@@ -445,6 +445,13 @@ _LEXICON: dict[str, str] = {
     # "Combien de produits vendons-nous ?" -- the catalogue, as "do we sell".
     "vendons-nous": "do we sell",
     "vendons nous": "do we sell",
+    # What the counted did, in the past tense: "combien de clients ont passé
+    # une commande" is how many customers placed an order.
+    "ont passe": "placed",
+    "a passe": "placed",
+    "ont achete": "bought",
+    "a achete": "bought",
+    "ont commande": "ordered",
     "y a-t-il": "are there",
     "y a t il": "are there",
     "combien y a-t-il de": "how many",

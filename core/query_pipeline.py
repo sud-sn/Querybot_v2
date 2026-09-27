@@ -4510,6 +4510,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             m for m in _pinned_adhoc if str(m.get("name") or "").casefold() not in _already
         ] + list(_matched_metrics)
     _matched_metrics = [dict(metric) for metric in _matched_metrics]
+    # "How many customers placed an order" counts customers: of the metrics
+    # its words matched, the one that counts the customer's key.
+    from core.analytical_request_plan import metrics_counting_the_subject
+
+    _matched_metrics = metrics_counting_the_subject(_semantic_plan_question, _matched_metrics)
     if _matched_metrics:
         try:
             # Ad-hoc drafts are not registry rows. increment_metric_usage is an
