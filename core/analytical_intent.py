@@ -107,13 +107,21 @@ _SUPERLATIVE_RE = re.compile(
     r"(?:the\s+)?(?:most|least|fewest|largest|smallest|greatest|biggest)\b"
     # French, as typed and as canonicalised: "quel entrepôt a le moins de
     # stock" reaches the compiler as "which warehouse a the moins of ...".
-    r"|\b(?:quel(?:le)?s?|which)\s+(?:[\w'-]+\s+){1,5}?(?:le|the)\s+(?:plus|moins)\b(?!\s+r[eé]cent)",
+    # The article agrees with its noun -- "la", "les" -- and the superlative
+    # can come late: "quelle catégorie de produits a eu les ventes les plus
+    # faibles".
+    r"|\b(?:quel(?:le)?s?|which)\s+(?:[\w'-]+\s+){1,8}?(?:le|la|les|the)\s+(?:plus|moins)\b(?!\s+r[eé]cent)",
     re.I,
 )
 # The low end of a ranking: sorted smallest first. "At least" is a condition.
+# The French forms agree in gender and number, as core.query_semantics reads
+# them for the SQL: the query read "les ventes les plus faibles" smallest
+# first while the headline, reading only "le plus faible", named the largest
+# row as the leader.
 _LOW_END_RE = re.compile(
     r"\b(?:lowest|fewest|smallest|bottom|worst|minimum)\b|(?<!\bat\s)\bleast\b"
-    r"|\b(?:le|the)\s+moins\b|\b(?:le|the)\s+plus\s+(?:bas|basse|faible|petit|petite)\b",
+    r"|\b(?:le|la|les|the)\s+moins\b"
+    r"|\b(?:le|la|les|the)\s+plus\s+(?:bas|basses?|faibles?|petits?|petites?)\b",
     re.I,
 )
 

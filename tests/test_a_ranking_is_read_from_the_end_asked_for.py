@@ -154,6 +154,23 @@ class TestTheCardNamesTheEndAskedFor:
         card = self._answer("Quel entrepôt a le moins de stock ?", "fr")
         assert card["headline"].startswith("EAST DEPOT est le plus bas")
 
+    @pytest.mark.parametrize("question", [
+        # The article and the adjective agree with their noun, and the
+        # superlative can come late: the query read these smallest first
+        # while the card named the largest row as the leader.
+        "Quelle catégorie de produits a eu les ventes les plus faibles en 2025 ?",
+        "Quels entrepôts ont les stocks les plus bas ?",
+        "Quel entrepôt a la valeur la plus basse ?",
+        "Quels entrepôts ont les stocks les plus petits ?",
+    ])
+    def test_the_lowest_in_french_whatever_the_agreement(self, question):
+        card = self._answer(question, "fr")
+        assert card["headline"].startswith("EAST DEPOT est le plus bas")
+
+    def test_the_highest_in_french_is_unchanged(self):
+        card = self._answer("Quels entrepôts ont les stocks les plus élevés ?", "fr")
+        assert card["headline"].startswith("NORTH DEPOT arrive en tête")
+
     def test_the_highest_is_unchanged(self):
         card = self._answer("Which warehouse has the highest stock?")
         assert card["headline"] == "NORTH DEPOT leads at 900."
