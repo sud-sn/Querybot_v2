@@ -187,8 +187,9 @@ def build_business_rca(
          if isinstance(policy, dict) and policy.get("kind") == "named_period"),
         None,
     )
-    if row_count == 0 and stated and _period_days(stated):
-        start, last = _period_days(stated)
+    stated_days = _period_days(stated) if stated else None
+    if row_count == 0 and stated and stated_days:
+        start, last = stated_days
         date = str(stated.get("business_role") or "").strip()
         technical_notes.append(f"Stated period: {start} to {last}")
         return {

@@ -271,6 +271,12 @@ class TestThePlannersChoiceIsRead:
 class TestAToolWorksOnWhatAStepFound:
 
     def test_a_forecast_projects_the_steps_series_without_asking_again(self):
+        from core.forecast_models import statsmodels_available
+
+        if not statsmodels_available():
+            # The brief names the exponential smoothing model, which needs
+            # statsmodels; without it the forecast falls back to a straight line.
+            pytest.skip("statsmodels not installed; ETS falls back to OLS")
         run = _Run()
         first = run.ask("revenue by month")
         result = run.tool("forecast", {"step": 1, "periods": 3})
