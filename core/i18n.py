@@ -2852,6 +2852,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I need a bit more context to answer that.",
         "fr": "J’ai besoin d’un peu plus de contexte pour répondre.",
     },
+    # Under the options of a Teams clarification card, which sit below it.
+    "clar.pick_option_below": {
+        "en": "Pick an option below, or type your own clarification.",
+        "fr": "Choisissez une option ci-dessous, ou saisissez votre propre précision.",
+    },
     "clar.date.reply_with_option": {
         "en": "_Reply with one of the options above._",
         "fr": "_Répondez en indiquant l’une des options ci-dessus._",
@@ -4457,6 +4462,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.diag.why": {"en": "Why", "fr": "Pourquoi"},
     "ui.chat.diag.technical": {"en": "Technical details", "fr": "Détails techniques"},
     "ui.chat.diag.sql_tried": {"en": "SQL tried", "fr": "SQL tenté"},
+    # A heading as a plain-text channel shows it (core/answer_formatter.py);
+    # French puts a space before the colon.
+    "ui.chat.diag.heading": {"en": "{heading}:", "fr": "{heading} :"},
 
     # ── The clarification and metric-draft cards ─────────────────────────────
     "ui.chat.clar.composed": {"en": "I composed a calculation for this.", "fr": "J'ai composé un calcul pour cela."},

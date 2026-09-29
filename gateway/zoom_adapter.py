@@ -127,6 +127,9 @@ class ZoomAdapter(PlatformAdapter):
     # ── Send message ──────────────────────────────────────────────────────────
 
     async def send_message(self, event: PlatformEvent, text: str) -> None:
+        from core.answer_formatter import readable_diagnostic
+
+        text = readable_diagnostic(text, emphasis="")
         token = await self._get_token()
         payload = {
             "robot_jid":           self._bot_jid,

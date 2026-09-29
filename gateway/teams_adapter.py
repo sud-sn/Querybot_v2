@@ -385,10 +385,13 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
                 }],
             }
         else:
-            # Plain messages (errors, help, status, clarification) — send as markdown
+            # Plain messages (errors, help, status, clarification) — send as
+            # markdown, a diagnostic with its labels in the reader's language.
+            from core.answer_formatter import readable_diagnostic
+
             activity = {
                 "type":       "message",
-                "text":       text,
+                "text":       readable_diagnostic(text),
                 "textFormat": "markdown",
             }
         event_raw = getattr(event, "raw", None)
@@ -621,6 +624,8 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
         # parser will feed `label` back through the clarification resolver so
         # the existing "exact → substring → 2-token overlap" match path still
         # works uniformly.
+        from core.i18n import t
+
         actions = []
         for opt in (options or [])[:5]:  # Teams practical cap; resolver matches any
             label = (opt.get("label") or opt.get("value") or "").strip()
@@ -639,9 +644,7 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
         # Fall back to plain text if no usable options — avoids sending an
         # empty card AND avoids the unnecessary token fetch + POST.
         if not actions:
-            await self.send_message(event,
-                f"❓ {question}\n\n_(Reply in plain language and I'll continue.)_"
-            )
+            await self.send_message(event, f"❓ {question}\n\n{t('clar.reply_in_plain_language')}")
             return
 
         channel_info    = json.loads(event.channel_id)
@@ -660,7 +663,7 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
             "body": [
                 {
                     "type":   "TextBlock",
-                    "text":   "I need a bit more context",
+                    "text":   t("clar.need_more_context"),
                     "weight": "Bolder",
                     "size":   "Medium",
                     "color":  "Accent",
@@ -674,7 +677,7 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
                 },
                 {
                     "type":     "TextBlock",
-                    "text":     "Pick an option below, or type your own clarification.",
+                    "text":     t("clar.pick_option_below"),
                     "isSubtle": True,
                     "size":     "Small",
                     "spacing":  "Small",

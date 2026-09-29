@@ -118,6 +118,9 @@ class SlackAdapter(PlatformAdapter):
     # ── Send message ──────────────────────────────────────────────────────────
 
     async def send_message(self, event: PlatformEvent, text: str) -> None:
+        from core.answer_formatter import readable_diagnostic
+
+        text = readable_diagnostic(text, emphasis="*")  # Slack's bold
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 _POST_MESSAGE,

@@ -107,6 +107,52 @@ def format_failure_business_response(
     return "\n".join(parts)
 
 
+# The wire labels above, each with the heading the portal shows in its place.
+_READABLE_LABELS = {
+    "Most likely reason:": "ui.chat.diag.reason",
+    "Suggested next step:": "ui.chat.diag.next_step",
+    "Why:": "ui.chat.diag.why",
+    "Technical details:": "ui.chat.diag.technical",
+    "Confidence:": "ui.chat.diag.confidence",
+}
+
+
+def readable_diagnostic(text: str, emphasis: str = "**") -> str:
+    """A diagnostic as a plain-text channel shows it, in the reader's language.
+
+    The portal parses the wire labels and renders its own translated headings,
+    but Teams, Slack and Zoom show the message as it is: a French reader there
+    read "Kind: validation", "Most likely reason:" and "Suggested next step:"
+    in English around French text. The machine kind is dropped and each label
+    becomes the portal's heading, set off with ``emphasis`` -- the channel's
+    own mark for bold. Any other message is returned unchanged.
+    """
+    lines = str(text or "").split("\n")
+    if not any(line.startswith("Kind: ") for line in lines):
+        return text
+    readable: list[str] = []
+    for line in lines:
+        if line.startswith("Kind: "):
+            continue
+        label = next((wire for wire in _READABLE_LABELS if line.startswith(wire)), "")
+        if label:
+            heading = _t("ui.chat.diag.heading", heading=_t(_READABLE_LABELS[label]))
+            rest = line[len(label):].strip()
+            readable.append(f"{emphasis}{heading}{emphasis} {rest}" if rest else f"{emphasis}{heading}{emphasis}")
+        elif line.startswith("SQL tried:"):
+            heading = _t("ui.chat.diag.heading", heading=_t("ui.chat.diag.sql_tried"))
+            readable.append(f"{emphasis}{heading}{emphasis}")
+        else:
+            readable.append(line)
+    # The dropped kind leaves its blank separator behind: at most one blank in a row.
+    collapsed: list[str] = []
+    for line in readable:
+        if line == "" and collapsed and collapsed[-1] == "":
+            continue
+        collapsed.append(line)
+    return "\n".join(collapsed).strip("\n")
+
+
 def format_success_confidence_text(confidence: dict[str, Any]) -> str:
     reasons = confidence.get("reasons") or []
     warnings = confidence.get("warnings") or []
