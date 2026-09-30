@@ -160,6 +160,44 @@ Those dates have nothing to review until the rebuild has run.
    report, say), then **Certify** it. Changing a formula, table, grain or date
    later removes the certification.
 
+### 9a. What the live workspace needs after the hotfix release
+
+Five settings the answers now depend on, in this order:
+
+1. **Accept the ordered quantity** (Data & Model → Metrics). A new starter
+   proposal, *Ordered quantity*, reads the daily snapshot's ordered quantity.
+   Its evidence asks whether that is stock on order from suppliers or ordered
+   by customers: confirm with the customer, correct the description if it
+   says the wrong one, accept it and certify it against a figure they trust.
+   Until it is accepted, "orders by warehouse" is answered through SQL the
+   model writes, not a governed metric.
+2. **Set the monthly table's business date** (Data & Model → Dates). Approve
+   the period key as the monthly balance table's date and make it the
+   default.
+3. **Confirm the calendar table** (Data & Model → Graph). Each fact's date
+   key must reach the calendar through a confirmed join.
+4. **Run the join checks** (Data & Model → Graph → Review): press **⟳ Check
+   joins against the data**, then **✓ Accept joins the data confirms**, and
+   review what is left one by one.
+5. **A read-only database login.** The product refuses to write, but only
+   inside itself. The login it connects with must be read-only as well:
+   `SELECT` on the mart's schema and nothing else (no `db_datawriter`,
+   `db_ddladmin` or `db_owner`). Ask the customer's DBA to confirm it, and
+   write down who did.
+
+Then ask these, as an English and a French reader, beside step 11's:
+
+| Question | What the answer should show |
+|---|---|
+| orders by warehouse / commandes par entrepôt | The ordered quantity per warehouse, never the back orders |
+| what is our total stock on hand? | "Stock On Hand by unit of measure: …" and "Quantities in different units are not added together." |
+| top 5 item groups by number of receipts | The five groups, and no "% of total" |
+| quels entrepôts ont les stocks les plus bas ? | The warehouse with the least stock named first |
+| number of profit centres by province | Every profit centre, one with no code included |
+
+A failure asked in Teams, Slack or Zoom now reads in the reader's language,
+with no "Kind:" line.
+
 ## 10. The readiness gate
 
 Open Quality → **What To Model Next**. The card at the top must say **Ready
