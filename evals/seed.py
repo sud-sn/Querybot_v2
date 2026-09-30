@@ -2,9 +2,17 @@
 
 Most clients have no golden_questions.yaml, so the eval gate protects
 nothing. This module harvests the client's most-asked SUCCESSFUL questions
-from answer_trace (validated SQL included, so the cases score offline —
+from answer_trace (validated SQL included, so the cases replay offline —
 no LLM call needed on eval runs) and writes/merges them into
 evals/clients/<account_id>/<schema>/golden_questions.yaml.
+
+Query history holds a question and the SQL that answered it, never what the
+answer should have been. A case was written with its expected tables read off
+that same SQL, so it could only pass: a suite of them reported 100% SQL
+accuracy whatever the answers were. A seeded case now says it came from usage
+and expects nothing; the eval run replays its SQL, says whether it still
+validates, and scores it only once an admin adds an expected answer
+(``expected_rows`` or ``expected_row_count``).
 
 Merge rules: existing cases are never modified or removed — hand-edited
 suites stay authoritative; new auto cases are appended by question hash.
@@ -19,11 +27,6 @@ from pathlib import Path
 
 log = logging.getLogger("querybot.evals.seed")
 
-_TABLE_REF_RE = re.compile(
-    r"\b(?:FROM|JOIN)\s+([A-Za-z_\[\]\"][\w.$\[\]\"]*)",
-    re.IGNORECASE,
-)
-
 _MAX_CASES_PER_SCHEMA = 40
 
 
@@ -33,21 +36,6 @@ def _norm_question(q: str) -> str:
 
 def _case_id(question: str) -> str:
     return "auto_" + hashlib.md5(_norm_question(question).encode("utf-8")).hexdigest()[:10]
-
-
-def extract_tables_from_sql(sql: str) -> list[str]:
-    """FROM/JOIN table references, cleaned of quoting/brackets and aliases.
-    Substring assertions only — no need for full sqlglot parsing here."""
-    tables: list[str] = []
-    for raw in _TABLE_REF_RE.findall(sql or ""):
-        name = raw.strip().strip('"').replace("[", "").replace("]", "")
-        # Skip derived tables / CTE openers the regex may catch
-        if not name or name.upper() in {"SELECT", "("}:
-            continue
-        upper = name.upper()
-        if upper not in tables:
-            tables.append(upper)
-    return tables
 
 
 def harvest_golden_cases(account_id: str, top_n: int = 20) -> dict[str, list[dict]]:
@@ -92,15 +80,15 @@ def harvest_golden_cases(account_id: str, top_n: int = 20) -> dict[str, list[dic
             continue
         seen.add(key)
         schema = (row.get("schema_name") or "").strip() or "default"
-        tables = extract_tables_from_sql(sql)
         case = {
             "id": _case_id(question),
             "question": question,
-            # Offline scoring: the validated SQL that actually answered this
-            # question in production. Eval runs re-validate + re-assert it
-            # against the CURRENT semantic state without any LLM call.
+            # The validated SQL that actually answered this question in
+            # production. Eval runs re-validate it against the CURRENT
+            # semantic state without any LLM call.
             "generated_sql": sql,
-            "expected_tables": tables,
+            # No expected answer yet: the run is not scored until one is added.
+            "origin": "usage",
             "min_score": 0.85,
         }
         bucket = by_schema.setdefault(schema, [])

@@ -50,7 +50,7 @@
     <h2>Run golden-question regression</h2>
     <form method="post" action="/admin/clients/{{ client.account_id }}/evals/seed" style="margin:0">
       <button class="btn btn-secondary btn-sm" type="submit"
-              title="Harvest the most-asked successful questions (with their validated SQL) into the golden suite. Never overwrites hand-edited cases.">
+              title="Harvest the most-asked successful questions (with their validated SQL) into the golden suite. Each is scored once it has an expected answer. Never overwrites hand-edited cases.">
         Build golden suite from query history
       </button>
     </form>

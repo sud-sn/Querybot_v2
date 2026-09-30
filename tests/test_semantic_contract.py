@@ -388,11 +388,38 @@ class EvalGateTests(unittest.TestCase):
         self.assertIn('eval_run.get("passed_cases")', src)
 
     def test_run_suite_records_regression_fields(self):
-        src = _src("evals/run.py")
-        self.assertIn("previous_eval_run(account_id", src)
-        self.assertIn("regressed = pass_rate < prev_pass_rate", src)
-        self.assertIn("trigger_label=trigger", src)
-        self.assertIn("contract_version=contract_version", src)
+        # A run worse than the last run of the same case file is recorded as
+        # a regression, with what triggered it and the contract it ran under.
+        import asyncio
+        import uuid
+        from unittest.mock import patch
+
+        import store
+        from evals.run import run_eval_suite
+
+        store.init_db()
+        acct = f"acct-evregr-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(acct, "portal")
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = Path(tmp) / "cases.json"
+
+            def run(sql: str, trigger: str) -> dict:
+                cases.write_text(json.dumps({"cases": [{
+                    "id": "orders", "question": "How many orders?", "generated_sql": sql,
+                    "expected_tables": ["DBO.ORDERS"]}]}), encoding="utf-8")
+                with patch("evals.run.load_known_tables", return_value={"DBO.ORDERS"}), \
+                        patch("evals.run.load_schema_columns", return_value={}), \
+                        patch("core.semantic_contract.contract_fingerprint", return_value="contract-7"):
+                    _, run_id = asyncio.run(run_eval_suite(
+                        account_id=acct, schema="dbo", cases_path=cases, out_dir=Path(tmp) / "report",
+                        trigger=trigger))
+                return store.get_eval_run(run_id)
+
+            self.assertEqual(run("SELECT COUNT(*) FROM dbo.ORDERS", "")["regressed"], 0)
+            worse = run("SELECT COUNT(*) FROM dbo.RETURNS", "metric 'Orders' updated")
+        self.assertEqual(
+            (worse["regressed"], worse["prev_pass_rate"], worse["trigger_label"], worse["contract_version"]),
+            (1, 1.0, "metric 'Orders' updated", "contract-7"))
 
     def test_latest_regressed_run_clears_after_recovery(self):
         # A regressed run followed by a newer clean run of the same case
@@ -417,16 +444,6 @@ class EvalGateTests(unittest.TestCase):
 
 
 class GoldenSeedTests(unittest.TestCase):
-    def test_extract_tables(self):
-        from evals.seed import extract_tables_from_sql
-        sql = ("SELECT c.NAME, SUM(s.NET_AMT) FROM ERP.SALES_FCT s "
-               "JOIN [ERP].[DIM_CUSTOMER] c ON s.CUST_KEY=c.CUST_KEY "
-               "LEFT JOIN dbo.region r ON r.id=c.region_id")
-        self.assertEqual(
-            extract_tables_from_sql(sql),
-            ["ERP.SALES_FCT", "ERP.DIM_CUSTOMER", "DBO.REGION"],
-        )
-
     def test_seed_merges_never_clobbers(self):
         import yaml
         from evals import seed as seed_mod

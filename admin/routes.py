@@ -2253,8 +2253,9 @@ async def client_evals_seed(request: Request, account_id: str):
     """Build/extend the golden suite from the client's real query history.
 
     Harvests the most-asked successful questions (with their validated SQL,
-    so the cases score offline) into golden_questions.yaml. Never modifies
-    or removes hand-edited cases — new cases are merged in by question hash.
+    so the cases replay offline) into golden_questions.yaml. Each is scored
+    once an admin adds its expected answer. Never modifies or removes
+    hand-edited cases — new cases are merged in by question hash.
     """
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -2268,6 +2269,8 @@ async def client_evals_seed(request: Request, account_id: str):
             msg = (
                 f"Added {summary['added']} golden question(s) from query history"
                 + (f" ({summary['skipped_existing']} already covered)" if summary["skipped_existing"] else "")
+                + ". Each is scored once it has an expected answer: add expected_rows or "
+                "expected_row_count to it in the suite file."
             )
         elif summary["skipped_existing"]:
             msg = "All frequently asked questions are already in the golden suite."

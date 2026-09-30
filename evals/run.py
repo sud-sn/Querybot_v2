@@ -13,7 +13,7 @@ import argparse
 import asyncio
 import html
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -41,6 +41,33 @@ class EvalCaseResult:
     result_match_status: str = "not_configured"
     result_match_error: str = ""
     failures: list[str] | None = None
+    # Replayed but not scored: from query history, with no expected answer
+    # this run checks (has_expected_answer).
+    awaiting_answer: bool = False
+
+
+# What a case seeded from query history (evals/seed.py) can say a right answer
+# is: an expected result, which an admin adds.
+_RESULT_EXPECTATIONS = ("expected_rows", "expected_result", "expected_row_count", "min_row_count", "max_row_count")
+_NO_ANSWER_YET = (
+    "not scored: from query history, with no expected answer checked in this run. Add expected_rows or "
+    "expected_row_count, and run it against the database"
+)
+
+
+def has_expected_answer(case: dict, *, executed: bool = True) -> bool:
+    """Whether ``case`` checks an answer by more than the SQL it replays.
+
+    A case seeded from query history was written with its expected tables
+    read off that same SQL, so it passed whatever the answer was, and a suite
+    of them read as 100% SQL accuracy. One of those checks an answer once an
+    admin adds an expected result, in a run that executes its SQL; until then
+    it is replayed -- its SQL must still validate -- and not scored. A case
+    written by hand says what its author expects of it.
+    """
+    if case.get("origin") != "usage" and not str(case.get("id", "")).startswith("auto_"):
+        return True
+    return executed and any(case.get(key) not in (None, "", [], {}) for key in _RESULT_EXPECTATIONS)
 
 
 def _load_cases(path: Path) -> list[dict]:
@@ -248,19 +275,21 @@ async def _generate_sql(account_id: str, question: str, db_type: str, allowed_ta
 
 def _write_reports(results: list[EvalCaseResult], out_dir: Path, client: str, schema: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    scored = [r for r in results if not r.awaiting_answer]
     payload = {
         "client": client,
         "schema": schema,
         "created_at": datetime.utcnow().isoformat() + "Z",
-        "total": len(results),
-        "passed": sum(1 for r in results if r.passed),
-        "avg_score": round(sum(r.score for r in results) / max(len(results), 1), 2),
+        "total": len(scored),
+        "passed": sum(1 for r in scored if r.passed),
+        "awaiting_answer": len(results) - len(scored),
+        "avg_score": round(sum(r.score for r in scored) / max(len(scored), 1), 2),
         "results": [asdict(r) for r in results],
     }
     (out_dir / "results.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     rows = []
     for r in results:
-        status = "PASS" if r.passed else "FAIL"
+        status = "NO ANSWER YET" if r.awaiting_answer else "PASS" if r.passed else "FAIL"
         failures = "<br>".join(html.escape(f) for f in (r.failures or []))
         rows.append(
             "<tr>"
@@ -273,7 +302,8 @@ def _write_reports(results: list[EvalCaseResult], out_dir: Path, client: str, sc
 <html><head><meta charset="utf-8"><title>QueryBot Eval Report</title>
 <style>body{{font-family:Arial,sans-serif;margin:24px}}table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ddd;padding:8px;vertical-align:top}}pre{{white-space:pre-wrap}}</style></head>
 <body><h1>Eval Report: {html.escape(client)} / {html.escape(schema)}</h1>
-<p>{payload['passed']} / {payload['total']} passed. Average score: {payload['avg_score']}</p>
+<p>{payload['passed']} / {payload['total']} passed. Average score: {payload['avg_score']}.
+{payload['awaiting_answer']} not scored: no expected answer yet.</p>
 <table><thead><tr><th>Status</th><th>ID</th><th>Score</th><th>Question</th><th>SQL</th><th>Failures</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></body></html>"""
     (out_dir / "report.html").write_text(report, encoding="utf-8")
@@ -306,11 +336,13 @@ async def _amain() -> int:
         out_dir=out_dir,
     )
 
-    passed = sum(1 for r in results if r.passed)
-    print(f"{passed}/{len(results)} passed")
+    scored = [r for r in results if not r.awaiting_answer]
+    passed = sum(1 for r in scored if r.passed)
+    print(f"{passed}/{len(scored)} passed; {len(results) - len(scored)} not scored (no expected answer yet)")
     print(f"Eval run id: {run_id}")
     print(f"Report: {out_dir / 'report.html'}")
-    return 0 if passed == len(results) else 1
+    # Nothing scored is not a pass.
+    return 0 if scored and passed == len(scored) else 1
 
 
 async def run_eval_suite(
@@ -375,7 +407,7 @@ async def run_eval_suite(
                 execute_result = ("failed", 0, str(exc)[:500])
 
         result_comparison = compare_result_rows(case, actual_rows) if execute else None
-        results.append(_score_sql(
+        result = _score_sql(
             case,
             sql,
             known_tables,
@@ -383,26 +415,33 @@ async def run_eval_suite(
             db_type,
             execute_result,
             result_comparison,
-        ))
+        )
+        if not has_expected_answer(case, executed=execute):
+            result = replace(result, score=0.0, passed=False, awaiting_answer=True,
+                             failures=[*(result.failures or []), _NO_ANSWER_YET])
+        results.append(result)
 
     if out_dir is None:
         stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         out_dir = Path("evals") / "reports" / account_id / (schema or "default") / stamp
     _write_reports(results, out_dir, account_id, schema or "default")
 
-    passed = sum(1 for r in results if r.passed)
-    avg_score = round(sum(r.score for r in results) / max(len(results), 1), 2)
+    # Only the cases that say what a right answer is are counted: the run's
+    # pass rate is the accuracy the admin pages report.
+    scored = [r for r in results if not r.awaiting_answer]
+    passed = sum(1 for r in scored if r.passed)
+    avg_score = round(sum(r.score for r in scored) / max(len(scored), 1), 2)
 
     # Regression check — compare against the previous run of the SAME case
     # file (fetched before saving this run). A drop is recorded, never
     # blocking: Model Health shows the banner, the admin decides.
-    pass_rate = passed / max(len(results), 1)
+    pass_rate = passed / max(len(scored), 1)
     prev = store.previous_eval_run(account_id, str(cases_path))
     prev_pass_rate: float | None = None
     regressed = False
     if prev and int(prev.get("total_cases") or 0) > 0:
         prev_pass_rate = int(prev.get("passed_cases") or 0) / int(prev["total_cases"])
-        regressed = pass_rate < prev_pass_rate
+        regressed = bool(scored) and pass_rate < prev_pass_rate
 
     from core.semantic_contract import contract_fingerprint
     contract_version = contract_fingerprint(state.get("kb_dir", ""))
@@ -411,10 +450,10 @@ async def run_eval_suite(
         account_id=account_id,
         schema_name=schema or "default",
         case_file=str(cases_path),
-        total_cases=len(results),
+        total_cases=len(scored),
         passed_cases=passed,
         avg_score=avg_score,
-        status="passed" if passed == len(results) else "failed",
+        status="awaiting_answers" if not scored else "passed" if passed == len(scored) else "failed",
         report_path=str(out_dir / "report.html"),
         trigger_label=trigger,
         contract_version=contract_version,

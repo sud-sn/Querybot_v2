@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import store
 from core.kb_quality import load_kb_quality_report
 from core.llm import resolve_provider
-from evals.run import _load_cases
+from evals.run import _load_cases, has_expected_answer
 
 
 @dataclass(frozen=True)
@@ -132,11 +132,14 @@ def evaluate_baseline_readiness(
             cases = _load_cases(case_path)
         except Exception as exc:
             case_error = str(exc)[:220]
+    # A case seeded from query history counts once it has an expected answer.
+    answered = sum(1 for case in cases if has_expected_answer(case))
     checks.append(_check(
         "golden_suite",
-        len(cases) >= minimum_cases,
+        answered >= minimum_cases,
         (
-            f"{len(cases)} cases (minimum {minimum_cases})"
+            f"{answered} cases with an expected answer (minimum {minimum_cases})"
+            + (f"; {len(cases) - answered} still need one" if answered < len(cases) else "")
             if cases else case_error or f"case file missing: {case_path}"
         ),
     ))
