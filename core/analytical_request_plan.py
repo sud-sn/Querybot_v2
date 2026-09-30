@@ -778,6 +778,11 @@ def compile_analytical_request_plan(
             "business_meaning": exact_target.get("business_meaning") or "",
             "confidence": exact_target.get("confidence"),
             "resolution_reason": count_resolution.get("reason") or "",
+            # Counted on the members' own table by their own identifier, where
+            # each row is a member whether or not its code was filled in. Not
+            # another entity's code the table carries: a warehouse with no
+            # region code is no region.
+            "members_table": bool(_governed_master_source and exact_target.get("own_member_key")),
             "forbidden_substitutions": [
                 "registered_metric_without_question_evidence",
                 "amount_or_value_column",

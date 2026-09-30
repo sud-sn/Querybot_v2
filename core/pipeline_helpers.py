@@ -1419,6 +1419,19 @@ def formula_read_on(formula: str, columns, alias: str = "fact_rows") -> str:
     return "".join(parts)
 
 
+def _column_type(table_columns: dict[str, dict[str, str]] | None, table: str, column: str) -> str:
+    """The declared type of ``table``.``column``, or ""."""
+    columns = next(
+        (cols for name, cols in (table_columns or {}).items() if _same_physical_table(name, table)), {},
+    ) or {}
+    wanted = str(column or "").strip().strip('[]"`').upper()
+    return next((str(kind) for name, kind in columns.items() if str(name).upper() == wanted), "")
+
+
+def _is_text_type(declared: str) -> bool:
+    return any(word in str(declared or "").lower() for word in ("char", "text", "string"))
+
+
 def _compile_governed_grouped_request_sql(
     db_type: str,
     known_tables: set[str],
@@ -1485,10 +1498,22 @@ def _compile_governed_grouped_request_sql(
         target_column = str(derived.get("target_column") or "")
         if not target_column or not _same_physical_table(target_table, fact_table):
             return ""
+        counted = f"fact_rows.{{qcol:{target_column}}}"
+        count_sql = f"COUNT(DISTINCT {counted})"
+        if derived.get("members_table"):
+            # On the members' own table a row with no code is still a member:
+            # counted by code, one of 172 profit centres in a province had
+            # none and the answer said 171. Members with a code are counted by
+            # it, so a history table's versions of one member stay one, and
+            # each row without one is counted once more -- COUNT(*) less the
+            # rows with one, which is 0 on an empty table where a SUM is NULL.
+            if _is_text_type(_column_type(table_columns, target_table, target_column)):
+                counted = f"NULLIF(LTRIM(RTRIM({counted})), '')"
+            count_sql = f"(COUNT(DISTINCT {counted}) + COUNT(*) - COUNT({counted}))"
         metric_specs.append((
             re.sub(r"[^A-Za-z0-9_]", "_", str(derived.get("business_entity") or "event")).upper()
             + "_COUNT",
-            f"COUNT(DISTINCT fact_rows.{{qcol:{target_column}}})",
+            count_sql,
         ))
     if not metric_specs and derived.get("semantics") == "aggregate_attribute":
         # An attribute of the members the fact's own table defines -- the

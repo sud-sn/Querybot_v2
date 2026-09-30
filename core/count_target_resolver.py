@@ -396,11 +396,68 @@ def _population_candidate(
         "confidence": max(0, min(100, score)),
         "line_level": False,
         "surrogate": surrogate,
+        "own_member_key": _names_the_tables_own_members(table, field),
         "source_kind": "master",
         "identifier_rank": _IDENTIFIER_WORD_RANK.get(identifier_word, 5),
         "status": str(field.get("status") or "generated"),
         "evidence": evidence,
     }
+
+
+# The one word after the entity's own name that makes a column its members'
+# identifier: WHS_CD beside WHS_DMS_KEY.
+_OWN_IDENTIFIER_WORDS = frozenset({
+    "CD", "CODE", "ID", "IDENTIFIER", "NO", "NUM", "NUMBER", "NBR", "KEY", "SK", "PK",
+})
+# What a key column's name adds to the entity it names: the key itself, and the
+# marks a warehouse puts on a dimension's key.
+_KEY_DECORATION_WORDS = _OWN_IDENTIFIER_WORDS | frozenset({
+    "DMS", "DIM", "DIMENSION", "SURR", "SURROGATE", "DW", "HK", "HASH", "BK", "SID", "SEQ", "SEQUENCE",
+    "HIST", "HISTORY", "VER", "VERSION", "SCD",
+})
+
+
+def _column_words(column: Any) -> list[str]:
+    return [
+        word.upper()
+        for word in re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", str(column or "")) if word
+    ]
+
+
+def _names_the_tables_own_members(table: dict[str, Any], field: dict[str, Any]) -> bool:
+    """Whether ``field`` identifies the members the table's own rows are.
+
+    A master table keeps other entities' codes as well -- the item table its
+    item group's, a warehouse table its region's -- and those identify
+    members of something else: a warehouse with no region is not a region.
+    The table's own members are the ones its grain names: the field is one of
+    the grain columns, or the whole entity they name followed by an identifier
+    -- WHS_CD beside WHS_DMS_KEY. Under the same prefix a longer name is another
+    entity's: WHS_TYP_CD names warehouse types, PFT_CTR_PRV a profit centre's
+    province, and a warehouse with no type is not a type. A shorter one is the
+    parent's: on a table of warehouse locations, keyed WHS_LOC_DMS_KEY, WHS_CD
+    is the warehouse each location belongs to, and a location with no
+    warehouse code is no warehouse.
+    """
+    words = _column_words(field.get("column"))
+    grain = [_column_words(column) for column in table.get("grain_columns") or []]
+    if words in grain:
+        return True
+    entity, identifier = words[:-1], words[-1:]
+    if not entity or not identifier or identifier[0] not in _OWN_IDENTIFIER_WORDS:
+        return False
+    def undecorated(key: list[str]) -> list[str]:
+        # DIM_WHS_KEY is the warehouse's key as WHS_DMS_KEY is.
+        start = 0
+        while start < len(key) - 1 and key[start] in _KEY_DECORATION_WORDS:
+            start += 1
+        return key[start:]
+
+    return any(
+        bare[:len(entity)] == entity and len(bare) > len(entity)
+        and all(word in _KEY_DECORATION_WORDS for word in bare[len(entity):])
+        for bare in (undecorated(key) for key in grain)
+    )
 
 
 def resolve_population_count_target(
