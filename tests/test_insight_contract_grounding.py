@@ -176,34 +176,45 @@ class TestTheTotalIsCarriedAndOnlyWhenItMeansSomething:
         assert breakdown.get("leader_share_pct") == 63.9, breakdown
         assert breakdown.get("top_3_share_pct") == 100.0, breakdown
 
-    @pytest.mark.parametrize("column,label", [
-        ("MARGIN_PCT", "a percentage"),
-        ("STOCK_BALANCE", "a semi-additive balance"),
-    ])
-    def test_a_measure_that_may_not_be_summed_gets_no_total(self, column, label):
+    # A percentage across regions, and a balance across months: three months'
+    # closing stock added together counts the same units three times.
+    _UNSUMMABLE = [
+        ("MARGIN_PCT", "REGION", ("North", "South", "East"), "a percentage"),
+        ("STOCK_BALANCE", "MONTH", ("2026-01", "2026-02", "2026-03"), "a semi-additive balance"),
+    ]
+
+    @pytest.mark.parametrize("column,by,labels,label", _UNSUMMABLE)
+    def test_a_measure_that_may_not_be_summed_gets_no_total(self, column, by, labels, label):
         """collapse_rows_by_label consults this rule, but only when it has rows
         to MERGE -- a result whose labels are already distinct is returned
         untouched "because there is nothing to add". Summing ACROSS those
         distinct labels is a different sum and is subject to the rule again.
         Three regions' margin percentages added together is arithmetic on
         nothing, stated with a number."""
-        rows = [{"REGION": "North", column: 12.0},
-                {"REGION": "South", column: 9.0},
-                {"REGION": "East", column: 7.0}]
-        breakdown = compute_data_brief(rows, f"{label} by region")["category_breakdown"]
+        rows = [{by: name, column: value} for name, value in zip(labels, (12.0, 9.0, 7.0))]
+        breakdown = compute_data_brief(rows, f"{label} by {by.lower()}")["category_breakdown"]
         assert breakdown.get("total") is None, breakdown
 
-    @pytest.mark.parametrize("column", ["MARGIN_PCT", "STOCK_BALANCE"])
-    def test_it_gets_no_shares_either(self, column):
+    @pytest.mark.parametrize("column,by,labels,label", _UNSUMMABLE)
+    def test_it_gets_no_shares_either(self, column, by, labels, label):
         """The shares are quotients of that same total. "North holds 42.8% of
         the total margin percentage" is a sentence with no meaning, and it was
         being stated with two decimal places."""
-        rows = [{"REGION": "North", column: 12.0},
-                {"REGION": "South", column: 9.0},
-                {"REGION": "East", column: 7.0}]
-        breakdown = compute_data_brief(rows, "by region")["category_breakdown"]
+        rows = [{by: name, column: value} for name, value in zip(labels, (12.0, 9.0, 7.0))]
+        breakdown = compute_data_brief(rows, f"by {by.lower()}")["category_breakdown"]
         assert breakdown.get("leader_share_pct") is None, breakdown
         assert breakdown.get("top_3_share_pct") is None, breakdown
+
+    def test_a_balance_adds_up_across_anything_but_time(self):
+        """A balance is semi-additive: three regions' stock at one date is the
+        company's stock, and each region holds its share of it. Withheld like
+        a percentage, "stock by region" had no total, no shares and no
+        contribution chip."""
+        rows = [{"REGION": "North", "STOCK_BALANCE": 12.0},
+                {"REGION": "South", "STOCK_BALANCE": 9.0},
+                {"REGION": "East", "STOCK_BALANCE": 7.0}]
+        breakdown = compute_data_brief(rows, "stock balance by region")["category_breakdown"]
+        assert (breakdown.get("total"), breakdown.get("leader_share_pct")) == (28.0, 42.9), breakdown
 
     def test_the_leader_and_the_ranking_survive(self):
         """Withholding the total must not withhold the ranking: which region

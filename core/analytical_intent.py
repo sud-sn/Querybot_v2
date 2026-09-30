@@ -131,12 +131,176 @@ def asks_for_ranking(question: str) -> bool:
     return bool(_RANKING_RE.search(question or "") or _SUPERLATIVE_RE.search(question or ""))
 
 
+# An order written out reads from the end it names first: "from highest to
+# lowest", "from best to worst" and "de la plus grande à la plus petite" start
+# at the top, "lowest to highest", "du plus bas au plus élevé", "du moins élevé
+# au plus élevé", "in ascending order" and "par ordre croissant" at the
+# bottom. Read for its "lowest", "stock by unit of measure from highest to
+# lowest" was headed by its lowest row. "Increasing" and "croissant" alone
+# are a trend ("warehouses with increasing stock"), not an order.
+_HIGH_END_WORDS = (r"highest|largest|biggest|greatest|most|high|best|top"
+                   r"|plus\s+(?:grande?s?|grands|[eé]lev[eé]e?s?|hauts?|hautes?|forte?s?|forts)")
+_LOW_END_WORDS = (r"lowest|smallest|least|fewest|low|worst|bottom"
+                  r"|plus\s+(?:petite?s?|petits|faibles?|bas(?:se)?s?)|moins(?:\s+[\w-]+)?")
+# "Ascending" and "descending" say an order only in one: "in ascending
+# order", "sorted descending", "par ordre croissant" (canonicalised, "by ordre
+# ascending"). Beside a noun they are a trend -- "une demande croissante" is
+# canonicalised "a demand ascending".
+_ORDER_WORD = r"(?:sorted?|ordered?|order|ordre|rank(?:ed|ing)?|listed?|by)"
+# Two ends that are plain words -- "low to high", "top to bottom" -- are an
+# order where the phrase closes: at the end of the sentence or of a clause, or
+# before a word that opens another ("from low to high for the top 10", "from
+# high to low as of the latest snapshot"). A noun after them makes the two ends
+# the description of something else: "from low season to high season", "moved
+# from low to high priority", "the low-to-high price band" say no order the
+# rows are listed in. Ends that are superlatives -- "highest to lowest",
+# "best to worst", "du plus grand au plus petit" -- are an order wherever the
+# phrase stands ("from highest to lowest revenue").
+_PLAIN_ENDS_RE = re.compile(r"\b(?:high|low|top|bottom)\b", re.I)
+_ORDER_CLOSE_RE = re.compile(
+    r"(?=\s*(?:$|[,;:.!?()\]\"'\u201d])"
+    r"|\s+[-\u2013\u2014]\s"
+    r"|\s+(?:for|in|by|with|among|amongst|on|at|per|and|then|where|that|whose|of|as|since|until|during|over"
+    r"|across|within|between|against|based|using|after|before|from"
+    r"|pour|par|avec|dans|sur|et|puis|de|des|du|en|selon|depuis|entre|chez|lors)\b)",
+    re.I,
+)
+# As typed and as canonicalised, which reads "du plus bas au plus élevé" as
+# "of plus bas to highest" and "de la plus grande à la plus petite" as "of
+# plus grande a the plus petite".
+_ORDER_FROM_RE = re.compile(
+    rf"\b(?:(?:from|of|du|des|de\s+la|de\s+l')\s*)?(?:(?:the|le|la|les)\s+)?"
+    rf"(?:(?P<high>{_HIGH_END_WORDS})|(?P<low>{_LOW_END_WORDS}))(?:\s+[a-z]+)?[\s-]+(?:to|a|à|au|aux)[\s-]+"
+    rf"(?:(?:the|le|la|les)\s+)?(?:{_HIGH_END_WORDS}|{_LOW_END_WORDS})\b"
+    rf"|\b(?P<desc>{_ORDER_WORD}\s+(?:an?\s+)?descending|descending\s+(?:order|ordre|by)"
+    r"|decreasing\s+order|ordre\s+d[eé]croissant)\b"
+    rf"|\b(?P<asc>{_ORDER_WORD}\s+(?:an?\s+)?ascending|ascending\s+(?:order|ordre|by)"
+    r"|increasing\s+order|ordre\s+croissant)\b",
+    re.I,
+)
+# The high end of a ranking, said as the low end is (_LOW_END_RE).
+_HIGH_END_RE = re.compile(
+    r"\b(?:highest|largest|biggest|greatest|best|top|maximum)\b"
+    r"|(?<!\bat\s)\bmost\b(?!\s+(?:recent|current|latest)\b)"
+    r"|\b(?:le|la|les|the)\s+plus\s+(?:grande?s?|grands?|[eé]lev[eé]e?s?|hauts?|hautes?|forte?s?|forts?)\b",
+    re.I,
+)
+
+
+# Two plain ends after the description of a change are no order: "which items
+# went from low to high in 2025", "prices moved from high to low", "stock has
+# gone from low to high", "sales soared from low to high", "stock went up
+# sharply in Q1 from low to high", "whose stock went, in 2025, from low to
+# high". A sentence describes a change where it holds a verb of movement in
+# any of its forms, a word that opens a clause with a verb of its own -- that,
+# which, whose, who, where, when, what -- or a past tense or a participle
+# right before the ends ("transitioned", "was raised", "ticked up",
+# "progressing", "accelerating fast"). Only a semicolon, a colon, "!", "?" or
+# the full stop that ends a sentence ends it: a comma does not, the change goes
+# on after it, nor does the full stop of an abbreviation or an initial ("up
+# vs. Q1", "approx. EUR 100", "at St. Louis", "the U.S. Midwest").
+# What says they are an order after all is a word that sorts right before them
+# ("items that changed, sorted from low to high"), or a sort asked for right
+# before them ("items that changed and sort them from low to high", "then rank
+# from low to high"). A sentence with nothing that describes a change leaves
+# the ends an order, as they were read before this reading existed.
+_MOVED_RE = re.compile(
+    r"\b(?:went|gone|go(?:es|ing)?|came|come|coming|comes|get|got|gotten|gets|getting|mov(?:ed|es|ing|e)"
+    r"|r(?:ose|ise|ises|ising|isen)"
+    r"|f(?:ell|all|alls|alling|allen)|jump(?:ed|s|ing)?|climb(?:ed|s|ing)?|drop(?:ped|s|ping)?|swung|swing(?:s|ing)?"
+    r"|gr(?:ew|ow|ows|owing|own)|shift(?:ed|s|ing)?|chang(?:ed|es|ing|e)|increas(?:ed|es|ing|e)"
+    r"|decreas(?:ed|es|ing|e)|slid(?:e|es|ing)?|dip(?:ped|s|ping)?|turn(?:ed|s|ing)?|switch(?:ed|es|ing)?"
+    r"|(?:up|down)grad(?:e|ed|es|ing)|soar(?:ed|s|ing)?|worsen(?:ed|s|ing)?|recover(?:ed|s|ing)?"
+    r"|rebound(?:ed|s|ing)?"
+    r"|(?:surg|spik|plung|declin|improv|doubl|tripl|halv|evolv|escalat|promot|demot|rang)(?:e|ed|es|ing)"
+    r"|vari(?:ed|es)|vary|varying|trend(?:ed|s|ing)?|ramp(?:ed|s|ing)?|flip(?:ped|s|ping)?"
+    r"|crept|creep(?:s|ing)?|sank|sunk|sink(?:s|ing)?|slip(?:ped|s|ping)?|shot|shoot(?:s|ing)?"
+    r"|leapt|leap(?:ed|s|ing)?)\b",
+    re.I,
+)
+_RELATIVE_RE = re.compile(
+    r"\b(?:that|which|whose|who|whom|where|when|what|quel(?:le)?s?|dont|qui|que|lesquel(?:le)?s|o\u00f9)\b", re.I)
+_PAST_BEFORE_RE = re.compile(
+    r"\b(?!hundred\b)(?![a-z]*eed\b)"
+    r"[a-z]{2,}(?:ed|ing)\s+(?:(?:up|down|back|over|off|out|again|around|fast|hard|sharply|steadily|gradually"
+    r"|quickly|slowly|rapidly|dramatically|significantly|substantially|considerably|strongly|markedly|massively"
+    r"|drastically|abruptly|suddenly|swiftly|smoothly|slightly|modestly|moderately|aggressively|notably)\s+)*$",
+    re.I,
+)
+_SENTENCE_BREAK_RE = re.compile(r"[;!?]|(?<!\d):|:(?!\d)|\.(?=\s+[A-Z]|\s*$)")
+_ABBREVIATIONS = frozenset(
+    "vs approx etc incl excl dept inc co ltd corp st mt ft cf avg est qty wk yr mr mrs ms dr "
+    "jan feb mar apr jun jul aug sep sept oct nov dec".split())
+_LAST_WORD_RE = re.compile(r"([A-Za-z]+)$")
+_SORTED_BEFORE_RE = re.compile(r"\b(?:sorted|ordered|ranked|listed|arranged|presented|displayed|shown)\s+$", re.I)
+# A sort asked for right before the ends, of the rows or of nothing in particular ("and sort them", "then rank").
+_SORT_CUE_RE = re.compile(
+    r"\b(?:and|then|also|please)\s+(?:sort|rank|order|list|arrange)"
+    r"(?:\s+(?:them|it|these|those|all|of|(?:the\s+)?(?:results?|rows|list|output|table|data)))*[\s,]*$", re.I)
+
+
+def _last_sentence(text: str) -> str:
+    """What follows the last break that ends a sentence (_SENTENCE_BREAK_RE), the full stop of an abbreviation or of
+    a single letter being none."""
+    start = 0
+    for stop in _SENTENCE_BREAK_RE.finditer(text):
+        word = _LAST_WORD_RE.search(text[:stop.start()]) if stop.group() == "." else None
+        if word and (len(word.group(1)) == 1 or word.group(1).lower() in _ABBREVIATIONS):
+            continue
+        start = stop.end()
+    return text[start:]
+
+
+def _a_change_not_an_order(before: str) -> bool:
+    """Whether what stands before two plain ends describes a change, not an order."""
+    sentence = _last_sentence(before)
+    if not (_MOVED_RE.search(sentence) or _RELATIVE_RE.search(sentence) or _PAST_BEFORE_RE.search(sentence)):
+        return False
+    if _SORTED_BEFORE_RE.search(sentence):
+        return False
+    return not _SORT_CUE_RE.search(sentence)
+
+
+def _written_order(text: str) -> re.Match | None:
+    """The order the text writes out, if it does (see _PLAIN_ENDS_RE)."""
+    for order in _ORDER_FROM_RE.finditer(text):
+        plain = _PLAIN_ENDS_RE.search(order.group(0))
+        if plain and _a_change_not_an_order(text[:order.start()]):
+            continue
+        if (order.group("desc") or order.group("asc") or not plain
+                or _ORDER_CLOSE_RE.match(text, order.end())):
+            return order
+    return None
+
+
+def writes_an_order(question: str) -> bool:
+    """Does the question write out the order its rows are read in -- "from
+    lowest to highest", "par ordre croissant" -- ranking word or not?"""
+    return _written_order(question or "") is not None
+
+
 def ranking_direction(question: str) -> str:
     """Which end a ranking is read from: "ascending" when the question asks
     for the lowest, the least, the fewest or the bottom; "descending"
     otherwise. "Which warehouse has the lowest stock" was sorted highest
-    first, and its answer named the warehouse with the most."""
-    return "ascending" if _LOW_END_RE.search(question or "") else "descending"
+    first, and its answer named the warehouse with the most.
+
+    An order written out is read as written -- "stock by unit of measure from
+    highest to lowest" is descending -- unless the question asks for a ranking
+    and the rest of it names the opposite end of one ("the lowest cost, from
+    highest to lowest"), which leaves it read as it always was. Where no
+    ranking is asked for, a low word is a condition -- "with a minimum of 10
+    units", "the least expensive items" -- and turns no order round."""
+    text = question or ""
+    order = _written_order(text)
+    if order:
+        rest = f"{text[:order.start()]} , {text[order.end():]}"
+        starts_low = bool(order.group("low") or order.group("asc"))
+        if not asks_for_ranking(text) or not (_HIGH_END_RE if starts_low else _LOW_END_RE).search(rest):
+            return "ascending" if starts_low else "descending"
+    return "ascending" if _LOW_END_RE.search(text) else "descending"
+
+
 _DISTRIBUTION_RE = re.compile(
     r"\b(?:distribution|share|mix|composition|breakdown|split)\b", re.I
 )

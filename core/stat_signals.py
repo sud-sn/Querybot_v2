@@ -147,7 +147,7 @@ def _pareto_ratio(values: list[float]) -> float | None:
 # Core signal computation
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_signals(rows: list[dict]) -> list[dict]:
+def compute_signals(rows: list[dict], *, was_limited: bool = False) -> list[dict]:
     """
     Analyse result rows and return a list of named statistical signal dicts.
 
@@ -156,6 +156,10 @@ def compute_signals(rows: list[dict]) -> list[dict]:
 
     'label' is a short human-readable description used in LLM prompts.
     No raw row values are included.
+
+    ``was_limited``: the rows are the ones a limit kept, not every one, so no
+    share of their total is a share of anything -- the follow-ups offered "Why
+    does X have a 62% share?" of a top five.
     """
     if not rows or len(rows) < 2:
         return []
@@ -170,9 +174,18 @@ def compute_signals(rows: list[dict]) -> list[dict]:
     numeric_cols, text_cols, period_cols = _measure_and_label_cols(
         rows, numeric_cols, text_cols)
     signals: list[dict] = []
+    # A quantity the rows keep in several units of measure has no spread, no
+    # outlier and no share across them: each adds eaches to feet. On stock by
+    # unit the follow-ups offered "Why does 'FT' have a 85% share in Stock On
+    # Hand?" and asked who is "significantly above and below average".
+    from core.units_of_measure import kept_in_several_units
+
+    in_several_units = {col for col in numeric_cols if kept_in_several_units(rows, col)}
 
     # ── Per-numeric-column signals ────────────────────────────────────────────
     for col in numeric_cols:
+        if col in in_several_units:
+            continue
         vals = [_to_float(r.get(col)) for r in rows]
         vals = [v for v in vals if v is not None]
         if len(vals) < 2:
@@ -213,7 +226,7 @@ def compute_signals(rows: list[dict]) -> list[dict]:
             })
 
         # Pareto concentration
-        if par is not None and par > 0.60:
+        if par is not None and par > 0.60 and not was_limited:
             n_top = max(1, len(vals) // 5)
             signals.append({
                 "type": "pareto",
@@ -243,7 +256,7 @@ def compute_signals(rows: list[dict]) -> list[dict]:
             })
 
     # ── Multi-column signals ──────────────────────────────────────────────────
-    if len(numeric_cols) >= 2:
+    if len(numeric_cols) >= 2 and not in_several_units & set(numeric_cols[:2]):
         col_a, col_b = numeric_cols[0], numeric_cols[1]
         # Cross-column direction: check if top-5 rows rank similarly on both cols
         vals_a = [_to_float(r.get(col_a)) or 0.0 for r in rows]
@@ -304,7 +317,13 @@ def compute_signals(rows: list[dict]) -> list[dict]:
         # report rather than a share of a total nobody can compute.
         from core.analysis_contract import collapse_rows_by_label
 
-        collapsed = collapse_rows_by_label(rows, label_col, value_col)
+        # Nor of a balance at several times: stock at the end of three months
+        # is not one stock split three ways (core.insight.adds_up_across).
+        from core.insight import adds_up_across
+
+        collapsed = (None if value_col in in_several_units or was_limited
+                     or not adds_up_across(value_col, label_col, [str(row.get(label_col) or "") for row in rows])
+                     else collapse_rows_by_label(rows, label_col, value_col))
         if collapsed:
             total = sum(value for _, value in collapsed)
             if total > 0 and len(collapsed) >= 2:
@@ -320,8 +339,8 @@ def compute_signals(rows: list[dict]) -> list[dict]:
                         "label": f"{label_col} is dominated by one group ({leader_pct*100:.0f}% share)",
                     })
 
-        # Temporal column
-        if label_col in period_cols or _is_temporal_col(label_col, rows):
+        # Temporal column. No trend across rows kept in different units.
+        if value_col not in in_several_units and (label_col in period_cols or _is_temporal_col(label_col, rows)):
             # ── The series, in period order, or not at all ────────────────────
             # first→last was read straight off the rows in arrival order, and
             # with no check that a period appears once. So "revenue by

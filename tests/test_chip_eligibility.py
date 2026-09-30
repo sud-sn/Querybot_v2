@@ -175,9 +175,12 @@ class ChipEligibilityTimeSeries(unittest.TestCase):
 
 class ChipEligibilityRanking(unittest.TestCase):
 
+    # The share is the brief's (core/insight.compute_data_brief), which has
+    # one only where the rows are the whole, in one unit, and add up.
     def test_contribution_shown_when_leader_share_known(self):
         ctx = _ranking_ctx(row_count=5, leader_share=38.0)
-        chips = compute_chip_eligibility(ctx)
+        brief = {"category_breakdown": {"top_5": [{"label": "North", "value": 38.0}], "leader_share_pct": 38.0}}
+        chips = compute_chip_eligibility(ctx, brief=brief)
         self.assertIn("contribution", _ids(chips))
 
     def test_contribution_hidden_without_leader_share(self):
@@ -187,7 +190,14 @@ class ChipEligibilityRanking(unittest.TestCase):
             "distribution_stats": {"top_3_share_pct": 70.0},
             "comparison_stats": {},  # no leader_share_pct
         }
-        chips = compute_chip_eligibility(ctx)
+        chips = compute_chip_eligibility(ctx, brief={"category_breakdown": {"top_5": []}})
+        self.assertNotIn("contribution", _ids(chips))
+
+    def test_contribution_hidden_where_the_brief_has_no_share(self):
+        # The rows' own sum has one -- a top five the limit cut, feet and
+        # eaches -- but it is no share of the total.
+        ctx = _ranking_ctx(row_count=5, leader_share=69.0)
+        chips = compute_chip_eligibility(ctx, brief={"category_breakdown": {"top_5": [{"label": "FT", "value": 9.0}]}})
         self.assertNotIn("contribution", _ids(chips))
 
 

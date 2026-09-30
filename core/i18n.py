@@ -798,6 +798,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Top-ranked result: {label} at {value}.",
         "fr": "Résultat le mieux classé : {label}, avec {value}.",
     },
+    # A quantity's totals, one per unit of measure: listed, never ranked, as
+    # feet are not ahead of eaches (core/units_of_measure.rows_per_unit).
+    "answer.per_unit": {
+        "en": "{measure} by unit of measure: {values}.",
+        "fr": "{measure} par unité de mesure : {values}.",
+    },
+    "answer.per_unit.all_zero": {
+        "en": "{measure} is 0 in every unit of measure.",
+        "fr": "{measure} est à 0 dans chaque unité de mesure.",
+    },
+    # A unit whose rows hold no figure at all: its total is unknown, not 0.
+    "answer.per_unit.no_value": {"en": "no total in {unit}", "fr": "aucun total en {unit}"},
+    "answer.per_unit.last": {"en": "{values} and {last}", "fr": "{values} et {last}"},
+    "answer.per_unit.more.one": {"en": "{values} and {count} more", "fr": "{values} et {count} autre"},
+    "answer.per_unit.more.other": {"en": "{values} and {count} more", "fr": "{values} et {count} autres"},
+    "answer.per_unit.no_unit": {"en": "with no unit", "fr": "sans unité"},
+    "answer.per_unit.not_added": {
+        "en": "Quantities in different units are not added together.",
+        "fr": "Les quantités de différentes unités ne sont pas additionnées.",
+    },
     "answer.lowest": {
         "en": "{label} is lowest at {value}.", "fr": "{label} est le plus bas avec {value}.",
     },
@@ -3103,6 +3123,10 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     # Framing around the computed sentences.
     "narrative.title": {"en": "What the numbers show", "fr": "Ce que montrent les chiffres"},
+    "narrative.units_mixed": {
+        "en": "These values are in more than one unit of measure, so none is compared with, ranked against or added to another.",
+        "fr": "Ces valeurs sont dans plusieurs unités de mesure ; aucune n'est comparée, classée ni additionnée à une autre.",
+    },
     "narrative.nothing_notable": {
         "en": "Nothing in this result stands out statistically — the values are close to evenly spread.",
         "fr": "Rien ne ressort statistiquement dans ce résultat : les valeurs sont réparties de façon assez uniforme.",
@@ -3254,6 +3278,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "analysis.why.gap": {
         "en": "The leading category is ahead by {gap}, so performance is concentrated rather than evenly distributed across categories.",
         "fr": "La première catégorie devance les autres de {gap} : la performance est concentrée plutôt que répartie uniformément.",
+    },
+    # Every analysis of a quantity's totals, one per unit of measure: there is
+    # no leader, gap, spread or share across them to report.
+    "analysis.per_unit": {
+        "en": "{values}: each total is in its own unit of measure, so none is ranked against, compared with "
+              "or added to another.",
+        "fr": "{values} : chaque total est dans sa propre unité de mesure ; aucun n'est classé, comparé ni "
+              "additionné à un autre.",
     },
     "analysis.why.leader_only": {
         "en": "This identifies the leading category directly, which helps focus follow-up analysis on where performance is strongest or weakest.",

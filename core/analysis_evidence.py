@@ -168,6 +168,10 @@ class AnalysisEvidence:
     label_columns: tuple[str, ...] = ()
     temporal_column: str = ""
     labels_included: bool = True
+    # Quantities the rows keep in several units of measure: nothing is read
+    # across them, and a narrative with no finding says why, not that the
+    # values are evenly spread.
+    units_mixed: tuple[str, ...] = ()
 
     def of_kind(self, kind: str) -> list[Finding]:
         return [f for f in self.findings if f.kind == kind]
@@ -870,12 +874,30 @@ def build_evidence(
     # the leading measures — the same order the renderer displays.
     measures = numeric_cols[:max_numeric_columns]
 
+    # A quantity the rows keep in several units of measure has no share, no
+    # spread, no outlier and no trend across them: each adds eaches to feet.
+    # Stock by unit of measure was summarised as "FT alone accounts for 85% of
+    # the total Stock On Hand", "standard deviation 728.32 against a mean of
+    # 735", and receipts one period in feet and the next in eaches as having
+    # "peaked at 900 and bottomed at 40".
+    from core.insight import adds_up_across
+    from core.units_of_measure import kept_in_several_units
+
+    in_several_units = {col for col in measures if kept_in_several_units(rows, col)}
+
     findings: list[Finding] = []
     for value_col in measures:
+        if value_col in in_several_units:
+            continue
         if temporal_col:
             findings.extend(_guard(trend_findings, rows, value_col, temporal_col))
         for label_col in label_cols[:2]:
             if label_col == temporal_col:
+                continue
+            # A balance at several times is no share of their total: stock at
+            # the end of T1, T2 and T3 is not one stock split three ways, and
+            # "T1 représente à lui seul 35,1 % du total" read it as one.
+            if not adds_up_across(value_col, label_col, [str(row.get(label_col) or "") for row in rows]):
                 continue
             findings.extend(_guard(concentration_findings, rows, value_col, label_col))
         findings.extend(_guard(spread_findings, rows, value_col))
@@ -890,7 +912,7 @@ def build_evidence(
         if not (leader_here and all(f.numbers.get("count") == 1.0 for f in outliers)):
             findings.extend(outliers)
 
-    if len(measures) >= 2:
+    if len(measures) >= 2 and not in_several_units & set(measures[:2]):
         findings.extend(_guard(relationship_findings, rows, measures[0], measures[1]))
 
     if not include_labels:
@@ -912,6 +934,7 @@ def build_evidence(
         label_columns=tuple(label_cols),
         temporal_column=temporal_col,
         labels_included=include_labels,
+        units_mixed=tuple(col for col in measures if col in in_several_units),
     )
 
 
@@ -939,6 +962,7 @@ def redact_labels(evidence: AnalysisEvidence) -> AnalysisEvidence:
         label_columns=evidence.label_columns,
         temporal_column=evidence.temporal_column,
         labels_included=False,
+        units_mixed=evidence.units_mixed,
     )
 
 

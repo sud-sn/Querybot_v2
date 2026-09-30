@@ -1348,9 +1348,13 @@ def infer_result_scope(
     # A question that asks for the low end of a ranking is answered from it:
     # "which warehouse has the lowest stock" was headed by the warehouse with
     # the most.
-    from core.analytical_intent import asks_for_ranking, ranking_direction
+    from core.analytical_intent import asks_for_ranking, ranking_direction, writes_an_order
 
-    scope["ascending"] = asks_for_ranking(question) and ranking_direction(question) == "ascending"
+    # And from the order the question writes out, ranking word or not: "par
+    # ordre croissant" and "du plus bas au plus élevé" were headed by the
+    # largest row, "arrive en tête".
+    scope["ascending"] = (asks_for_ranking(question) or writes_an_order(question)) and (
+        ranking_direction(question) == "ascending")
     if mode == "ranking":
         # A top-N framing needs a limit that bound, or a question that asked
         # for one ("top 5 customers" returning all 3 that exist is still the
@@ -1406,6 +1410,54 @@ def infer_result_scope(
         else note
     )
     return scope
+
+
+def _per_unit_listing(totals: list[tuple[str, float]], missing: list[str], format_value, value_col: str) -> str:
+    """ "220 EA and 1,250 FT": each unit's total, by the unit's name -- the
+    card ranks nothing -- three at most, and the rest counted."""
+    listed = [f"{format_value(value, value_col)} {unit or _t('answer.per_unit.no_unit')}" for unit, value in totals]
+    listed += [_t("answer.per_unit.no_value", unit=unit or _t("answer.per_unit.no_unit")) for unit in missing]
+    if len(listed) > 3:
+        return _t_plural("answer.per_unit.more", len(listed) - 3, values=", ".join(listed[:3]))
+    if len(listed) == 1:
+        return listed[0]
+    return _t("answer.per_unit.last", values=", ".join(listed[:-1]), last=listed[-1])
+
+
+def _per_unit_answer(
+    rows: list[dict], unit_col: str, value_col: str, question: str, value_fmt: str | None,
+    format_value, scope: dict,
+) -> dict | None:
+    """The card for a quantity's totals, one per unit of measure, or None.
+
+    Each is a total in its own unit (core/units_of_measure.rows_per_unit),
+    so none leads, none is above the next, and no one figure is the answer:
+    they are listed, and the card says why they are not added.
+    """
+    from core.units_of_measure import per_unit_totals, rows_per_unit
+
+    if not rows_per_unit(rows, unit_col, value_col, question, measure_format=str(value_fmt or "")):
+        return None
+    found = per_unit_totals(rows, unit_col, value_col)
+    if not found or not found[0]:
+        return None
+    totals, missing = found
+    measure = _display_label(value_col) or _t("answer.total")
+    if not missing and not any(value for _, value in totals):
+        headline = _t("answer.per_unit.all_zero", measure=measure)
+    else:
+        headline = _t("answer.per_unit", measure=measure,
+                      values=_per_unit_listing(totals, missing, format_value, value_col))
+    # Said in the note: the portal prints the comparison only beside a single
+    # value, and this card has none, so "not added together" never showed.
+    note = " ".join(part for part in (scope.get("note", ""), _t("answer.per_unit.not_added")) if part)
+    return {
+        "headline": headline,
+        "short_value": "",
+        "comparison": "",
+        "scope_badge": scope.get("badge", ""),
+        "scope_note": note,
+    }
 
 
 def build_answer(
@@ -1542,6 +1594,12 @@ def build_answer(
         label_col = _narrative_label_column(rows, text_cols)
         value_col = numeric_cols[0]
         value_fmt = column_formats.get(value_col)
+        # A quantity's totals, one per unit of measure, are listed, not
+        # ranked: "What is our total stock on hand?" was headed "FT leads at
+        # 32,402", "19,251 above the next result" -- feet ahead of eaches.
+        per_unit = _per_unit_answer(rows, label_col, value_col, question, value_fmt, format_value, scope)
+        if per_unit:
+            return per_unit
         collapsed = collapse_rows_by_label(rows, label_col, value_col)
         ascending = bool(scope.get("ascending"))
         ordered = sorted(collapsed or [], key=lambda pair: pair[1], reverse=not ascending)
@@ -1763,7 +1821,16 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
         # something else as well, so first and last are two different members
         # of that other dimension -- which is how "+1,437.3% from 2026-03 to
         # 2026-06" was computed between two different warehouses.
-        if _looks_temporal(labels) and len(set(labels)) == len(labels):
+        from core.units_of_measure import kept_in_several_units
+
+        if (_looks_temporal(labels) and len(set(labels)) == len(labels)
+                and kept_in_several_units(rows, value_col)):
+            # Nor is a quantity kept in feet one month and eaches the next a
+            # series of one thing: receipts "trended down 22.2%" from 900 FT to
+            # 700 FT across two months of eaches, and the chips asked what drove
+            # the drop. The periods are listed; nothing is read across them.
+            ctx.update({"mode": "time_series", "several_units": True})
+        elif _looks_temporal(labels) and len(set(labels)) == len(labels):
             first, last = values[0], values[-1]
             pct = _safe_pct_change(first, last)
             diffs = [values[i] - values[i - 1] for i in range(1, len(values))]
@@ -1792,12 +1859,42 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
             ctx.update({"mode": "text_table", "listing": True, "chartable": False})
             ctx.pop("top_items", None)
         else:
+            from core.units_of_measure import kept_in_several_units, per_unit_totals, rows_per_unit
+
             ctx["mode"] = "ranking"
-            total = sum(values)
+            # A quantity's totals, one per unit of measure (_per_unit_answer):
+            # none leads, none is above the next, none is a share of their sum.
+            # The chips and the fallback cards read this context, and on stock
+            # by unit they said "FT is ahead of EA by 1,030" and "Leader share
+            # of returned total: 85.0%".
+            per_unit = (per_unit_totals(rows, label_col, value_col)
+                        if rows_per_unit(rows, label_col, value_col, question) else None)
+            if per_unit and per_unit[0]:
+                ctx.pop("top_items", None)
+                ctx["per_unit"] = {"totals": per_unit[0], "missing": per_unit[1]}
+                ctx["distribution_stats"] = {"category_count": len(per_unit[0]) + len(per_unit[1])}
+                ctx["comparison_stats"] = {}
+                ctx["result_scope"] = infer_result_scope(rows, question, sql, mode="ranking")
+                return ctx
+            # A quantity the rows keep in several units -- items ranked by units
+            # sold, each in its own -- is ranked, and its leader leads by what
+            # it leads by, but its sum adds eaches to feet: no share of it, and
+            # no spread or middle across the rows either.
+            mixed_units = kept_in_several_units(rows, value_col)
+            # Nor any share of a result the limit cut: the returned rows are not
+            # every category, of a rate, or of a balance at several dates
+            # (compute_data_brief). The fallback cards said "Leader share of
+            # returned total: 35.1%" of the inventory value at three month ends.
+            from core.insight import adds_up_across
+
+            scope = infer_result_scope(rows, question, sql, mode="ranking")
+            total = (0.0 if mixed_units or scope.get("was_limited")
+                     or not adds_up_across(value_col, label_col, [str(label) for label in labels])
+                     else sum(values))
             top_items = ctx.get("top_items") or []
             leader = top_items[0] if top_items else None
             runner_up = top_items[1] if len(top_items) > 1 else None
-            ctx["distribution_stats"] = {
+            ctx["distribution_stats"] = {"category_count": len(set(labels))} if mixed_units else {
                 "category_count": len(set(labels)),
                 "spread": round(max(values) - min(values), 2) if values else 0.0,
                 "median_value": round(median(values), 2) if values else 0.0,
@@ -1818,6 +1915,8 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
                     "gap": round(leader["value"] - runner_up["value"], 2),
                 })
             ctx["comparison_stats"] = comparison_stats
+            ctx["result_scope"] = scope
+            return ctx
         ctx["result_scope"] = infer_result_scope(rows, question, sql, mode=ctx["mode"])
         return ctx
 
@@ -1930,9 +2029,15 @@ def compute_chip_eligibility(
 
     # ── ranking chips ────────────────────────────────────────────────────────
     elif mode == "ranking":
-        # contribution: % share breakdown useful for ranking results
-        leader      = cmp_stats.get("leader") or "top item"
-        leader_share = cmp_stats.get("leader_share_pct")
+        # contribution: % share breakdown useful for ranking results. The
+        # brief's share, not one worked out from the rows here: the brief has
+        # none where the rows are not the whole -- a top five the limit cut,
+        # rows in more than one unit, a measure that does not add up -- and
+        # the chip offered "FT holds 69% of total" beside a card saying feet
+        # and eaches are not added together.
+        top5 = cat.get("top_5") or []
+        leader = (top5[0].get("label") if top5 else "") or cmp_stats.get("leader") or "top item"
+        leader_share = cat.get("leader_share_pct")
         if leader_share is not None and row_count >= 2:
             _add(
                 "contribution", _t("chip.contribution"), 78,
@@ -2113,6 +2218,12 @@ def _build_insight_summary(
 
     if mode == "time_series":
         ts = brief.get("time_series") or {}
+        # No statistics of the series, no sentence about it: none is read across
+        # a quantity kept in several units (summarize_result_context), and
+        # where the brief did not read the labels as periods the sentence
+        # named none -- "Inventory Value est resté stable entre  et .".
+        if not ts:
+            return ""
         observation_count = int(
             ts.get("observation_count")
             or brief.get("row_count")
@@ -2223,12 +2334,20 @@ def _second_measure_sentence(rows: list[dict], ctx: dict, label_col: str, format
     if len(measures) < 2 or not label_col:
         return ""
     second = measures[1]
+    from core.units_of_measure import kept_in_several_units, rows_per_unit
+
+    # A quantity's totals, one per unit of measure, have no leader: "FT leads
+    # Units Sold at 380 (91.1% of total)" followed a ranking of sales value by
+    # unit. Kept in several units by another label, it leads with no share.
+    if rows_per_unit(rows, label_col, second, str(ctx.get("question") or "")):
+        return ""
     items = _ranked_items(rows, label_col, second, limit=max(len(rows), 1))
     if not items:
         return ""
     leader = items[0]
     share = ""
-    if measure_class_for_column(second) == "additive":
+    if (measure_class_for_column(second) == "additive" and not kept_in_several_units(rows, second)
+            and not (ctx.get("result_scope") or {}).get("was_limited")):
         total = sum(item["value"] for item in items)
         if total > 0:
             share = _t("answer.note.leader_share",
@@ -2253,7 +2372,14 @@ def _listing_summary(rows: list[dict], ctx: dict, column_formats: dict, format_v
     measures = list(ctx.get("numeric_cols") or [])
     if not measures:
         return ""
-    additive = [c for c in measures if measure_class_for_column(c) == "additive"]
+    from core.units_of_measure import kept_in_several_units
+
+    # A quantity the records keep in several units has no total to state.
+    additive = [
+        c for c in measures
+        if measure_class_for_column(c) == "additive"
+        and not kept_in_several_units(rows, c, measure_format=str((column_formats or {}).get(c) or ""))
+    ]
     # The same name rule the chart uses to tell an amount from a count, so
     # the sentence and the axis agree on which column is the money.
     currency = [
@@ -2264,7 +2390,14 @@ def _listing_summary(rows: list[dict], ctx: dict, column_formats: dict, format_v
     count = len(rows)
     chosen = (currency or additive or [None])[0]
     if chosen is None:
-        col = measures[0]
+        # Nor a range or an average across units.
+        ranged = [
+            c for c in measures
+            if not kept_in_several_units(rows, c, measure_format=str((column_formats or {}).get(c) or ""))
+        ]
+        if not ranged:
+            return ""
+        col = ranged[0]
         values = [_to_float_z(r.get(col)) for r in rows]
         return _t_plural(
             "answer.note.range_summary", count, measure=_display_label(col),
@@ -2600,9 +2733,11 @@ def build_analysis_response(action: str, contract: dict) -> dict:
             bullets = [
                 _t("analysis.detail.category_count",
                    count=stats.get("category_count", contract.get("row_count", 0))),
-                _t("analysis.detail.spread_range",
-                   value=_format_number(stats.get("spread", 0.0))),
             ]
+            # None for rows in several units: a spread across them is no figure,
+            # and a spread of "0" would say the values were all the same.
+            if stats.get("spread") is not None:
+                bullets.append(_t("analysis.detail.spread_range", value=_format_number(stats["spread"])))
             if stats.get("std_dev") is not None:
                 bullets.append(_t("analysis.detail.std_dev",
                                   value=_format_number(stats["std_dev"])))
@@ -2696,6 +2831,15 @@ def build_analysis_response(action: str, contract: dict) -> dict:
         title = _t("analysis.title.default")
         body = _t("analysis.unsupported")
 
+    # A quantity's totals, one per unit of measure (summarize_result_context):
+    # whatever was asked of them, there is no leader, gap, spread or share
+    # across them, only the totals themselves.
+    per_unit = contract.get("per_unit") or {}
+    if per_unit.get("totals") and action in {"explain", "analyze", "compare", "why"}:
+        body = _t("analysis.per_unit", values=_per_unit_listing(
+            per_unit["totals"], per_unit.get("missing") or [], lambda value, _column: _format_number(value), ""))
+        bullets = []
+
     next_step = ""
     if action == "decide":
         next_step = _t("analysis.decide.next_step")
@@ -2712,6 +2856,23 @@ def build_analysis_response(action: str, contract: dict) -> dict:
         "mode": mode,
         "result_scope": scope,
     }
+
+
+def _leading_quantity_per_unit(rows: list[dict]) -> tuple[list[tuple[str, float]], list[str]] | None:
+    """The leading measure's total in each unit of measure, where it is a
+    quantity the rows keep in several: nothing else about it is a figure of
+    anything -- its spread, its leader or its evenness."""
+    from core.units_of_measure import is_unit_column, kept_in_several_units, per_unit_totals
+
+    unit_column = next((column for column in rows[0] if is_unit_column(column)), "") if rows else ""
+    # The first quantity the rows keep in several units, not the first number:
+    # a date key or a count beside it is no quantity of goods.
+    measure = next((column for column in _numeric_cols(rows)
+                    if column != unit_column and kept_in_several_units(rows, column)), "")
+    if not unit_column or not measure:
+        return None
+    found = per_unit_totals(rows, unit_column, measure)
+    return found if found and found[0] else None
 
 
 def _regulated_analysis_fallback(action: str, rows: list[dict] | None = None) -> dict:
@@ -2738,19 +2899,28 @@ def _regulated_analysis_fallback(action: str, rows: list[dict] | None = None) ->
     built — logged at warning, since a silent degradation here is
     indistinguishable from the feature working.
     """
+    # A quantity in several units of measure: its totals, one per unit, first,
+    # and nothing read across them -- the evidence reads nothing there either.
+    # What it finds in the other measures stands beside them: the money of
+    # the same rows adds up across units.
+    per_unit = _leading_quantity_per_unit(rows or [])
+    per_unit_sentence = _t("analysis.per_unit", values=_per_unit_listing(
+        per_unit[0], per_unit[1], lambda value, _column: _format_number(value), "")) if per_unit else ""
     if rows:
         try:
             from core.analysis_evidence import build_evidence
             from core.analysis_narrative import build_narrative
 
             narrative = build_narrative(build_evidence(rows))
-            if narrative.sentences:
+            found = list(narrative.sentences) if narrative.finding_kinds or not per_unit_sentence else []
+            sentences = [per_unit_sentence] * bool(per_unit_sentence) + found
+            if sentences:
                 return {
                     "type": "assistant_analysis",
                     "action": action,
                     "title": narrative.title or _t("narrative.title"),
-                    "body": " ".join(narrative.sentences),
-                    "bullets": list(narrative.sentences),
+                    "body": " ".join(sentences),
+                    "bullets": sentences if found else [],
                     "secondary": _t("narrative.no_values_note"),
                     "computed": True,
                     "evidence_id": narrative.evidence_id,
@@ -2947,6 +3117,7 @@ def build_assistant_response(
         display_question,
         result_scope=ctx.get("result_scope"),
         context=ctx,
+        column_formats=resolved_column_formats,
     )
 
     # ── Insight Layer — pure-stats, zero-latency ─────────────────────────────

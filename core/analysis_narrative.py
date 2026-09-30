@@ -312,8 +312,11 @@ def build_narrative(
     findings = select_findings(evidence, limit=limit)
 
     if not findings:
+        # A quantity kept in several units has had nothing read across it: it
+        # is not "close to evenly spread", its values are in different units.
+        nothing = "narrative.units_mixed" if evidence.units_mixed else "narrative.nothing_notable"
         return Narrative(
-            sentences=(t("narrative.nothing_notable", lang=lang),),
+            sentences=(t(nothing, lang=lang),),
             title=t("narrative.title", lang=lang),
             phrasing=phraser.name,
             evidence_id=evidence_id(evidence),

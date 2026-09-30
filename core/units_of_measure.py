@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 
 log = logging.getLogger("querybot.units_of_measure")
 
@@ -61,6 +62,228 @@ def is_quantity_column(column: str) -> bool:
 
 def question_asks_across_units(*texts: str) -> bool:
     return any(_ASKED_FOR.search(str(text or "")) for text in texts)
+
+
+# A result's measure is a quantity of goods by its name: STOCK_ON_HAND,
+# UNITS_SOLD, TOTAL_QTY, "Quantité disponible". A value, a count, a rate or an
+# average beside a unit column is not: money adds up across units, 3 items
+# counted in eaches are not 3 eaches, and a fill rate is no length.
+_QUANTITY_WORDS = frozenset({
+    "QTY", "QUANTITY", "QUANTITIES", "UNITS", "STOCK", "STOCKS", "STK", "OH", "QOH", "SOH",
+    "ONHAND", "INVENTORY", "QTE", "QUANTITE", "QUANTITES", "UNITES",
+})
+# A movement's participle names a quantity where nothing else says what is
+# counted -- TOTAL_SOLD -- and not beside a count noun: ORDERS_SHIPPED is a
+# number of orders, LINES_RECEIVED one of lines.
+_PARTICIPLES = frozenset({"SOLD", "ORDERED", "PURCHASED", "RECEIVED", "SHIPPED"})
+_COUNT_NOUNS = frozenset({
+    "ORDERS", "LINES", "ITEMS", "CUSTOMERS", "SHIPMENTS", "RECEIPTS", "INVOICES", "DELIVERIES",
+    "TRANSACTIONS", "DOCUMENTS",
+})
+# Only as "on hand": HAND_TOOLS_SALES is the sales of hand tools.
+_ON_HAND = frozenset({"ON", "HAND"})
+_NOT_QUANTITY_WORDS = frozenset({
+    "VALUE", "VAL", "AMT", "AMOUNT", "COST", "CST", "PRICE", "PRC", "REVENUE", "MARGIN",
+    "PROFIT", "PFT", "SPEND", "COUNT", "CNT", "NUMBER", "NBR", "RATE", "RATIO", "PCT",
+    "PERCENT", "PERCENTAGE", "SHARE", "AVG", "AVERAGE", "MEAN", "TURNS", "TURNOVER", "COVERAGE",
+    "USD", "CAD", "EUR", "GBP", "DOLLAR", "DOLLARS",
+    "VALEUR", "MONTANT", "COUT", "PRIX", "NOMBRE", "TAUX", "MOYENNE", "POURCENTAGE",
+})
+# A length of time: WEEKS_ON_HAND, STOCK_COVER_WKS, DAYS_OF_SUPPLY, "jours de
+# stock". A period is not one -- MONTH_END_STOCK_ON_HAND, UNITS_SOLD_THIS_MONTH
+# and "stock fin de mois" are stock and units -- nor is the window a quantity
+# is counted over: UNITS_SOLD_LAST_4_WKS, QTY_SOLD_13_WKS, "ventes 4 dernières
+# semaines".
+_LENGTHS_OF_TIME = frozenset({"DAYS", "WEEKS", "WKS", "MONTHS", "MTHS", "JOURS", "SEMAINES"})
+_A_WINDOW = frozenset({
+    "LAST", "PAST", "PRIOR", "PREVIOUS", "PREV", "ROLLING", "TRAILING", "NEXT",
+    "DERNIERS", "DERNIERES", "PROCHAINS", "PROCHAINES"})
+# Stock cover is a length of time -- STOCK_COVER, "couverture de stock" --
+# unless the name says it is a quantity: COVER_STOCK, COVER_STOCK_QTY.
+_COVER = frozenset({"COVER", "COUVERTURE"})
+# A date, a key or a code, whatever it is named after, where it ends the name:
+# SHIPPED_DATE, SHIPPED_ON_DATE, RECEIVED_DT_KEY, SOLD_TO_ID. Not "to date" or
+# "on time" -- UNITS_SOLD_TO_DATE and QTY_SHIPPED_ON_TIME are units -- nor a
+# word further in: NUM_UNITS, QTY_NO_CHARGE.
+_IDENTIFIER_HEADS = frozenset({
+    "DATE", "DT", "DTE", "KEY", "SK", "ID", "NO", "NUM", "CD", "CODE", "TIME", "TIMESTAMP", "TS",
+})
+_COUNTED_SO_FAR = frozenset({("TO", "DATE"), ("TO", "DT"), ("ON", "TIME")})
+# A quantity for each of something is a ratio: UNITS_PER_CASE, QTY_PER_ORDER,
+# PER_CASE_QTY. PER_END_QTY is the period's end, and QTY_PER_WAREHOUSE one per
+# warehouse.
+_PER_WHAT = frozenset({
+    "CASE", "CS", "PACK", "PK", "PALLET", "PLT", "BOX", "CARTON", "CTN", "BAG", "INNER", "ORDER",
+    "LINE", "DAY", "WEEK", "MONTH", "YEAR", "HOUR", "UNIT", "EACH", "PERSON", "EMPLOYEE", "CUSTOMER",
+    "TRANSACTION", "INVOICE", "SHIPMENT", "SKU", "STORE",
+})
+# The formats a quantity is shown in; a currency, a percentage or a count is
+# not one.
+_QUANTITY_FORMATS = frozenset({"", "number", "quantity", "decimal", "integer"})
+# A reader who ranks the units themselves: "which unit of measure do we sell
+# the most", "the unit of measure with the most stock", "largest unit of
+# measure by stock", "top 2 units of measure", "which unit of measure leads",
+# "order the units of measure by stock", "quelle unité de mesure a le plus de
+# stock", "l'unité de mesure avec le plus de stock", or rows asked for in an
+# order -- "sorted descending", "from highest to lowest", "du plus grand au
+# plus petit", "classement des unités de mesure". Read without accents. The
+# superlative follows the units and what they do, with no preposition between:
+# one after "at", "for" or "pour" is about something else -- "which units of
+# measure have at least 100", "what units do we hold at our largest
+# warehouse", "quelle unité de mesure pour l'entrepôt le plus grand" -- as is
+# one about a time, "the most recent stock by unit of measure", and "units"
+# alone is a quantity: "for the items with the most units sold", "for units
+# with the highest turnover". Nor "ordered by" -- "quantity ordered by unit of
+# measure" is the quantity ordered -- nor the ERP's "order UOM", the unit an
+# item is ordered in: "stock on hand by order UOM". Nor a rank of something
+# else: "for our top-ranked suppliers".
+_UNIT_WORDS = r"(?:units?(?:\s+of\s+measures?)?|uoms?|unites?(?:\s+de\s+mesures?)?)"
+_UOM_WORDS = r"(?:units?\s+of\s+measures?|uoms?|unites?\s+de\s+mesures?)"
+_SUPERLATIVE = r"(?:most|least|largest|smallest|biggest|highest|lowest|greatest|fewest)"
+_NOT_A_RANK = r"(?!\s+(?:recent|recently|up|current|latest|a\s+jour|recente?s?|actuel))"
+_ENDS = r"(?:highest|largest|biggest|greatest|most|lowest|smallest|least|fewest)"
+_FRENCH_ENDS = r"(?:grande?s?|petite?s?|elevee?s?|haute?s?|bas(?:se)?s?|faibles?)"
+# What the units do before the superlative: "has", "do we currently hold",
+# "accounts for", "a le stock en main".
+_THEIR_VERB = (
+    r"(?:accounts?\s+for\s+|(?!(?:at|in|for|from|of|by|on|to|across|within|among|per)\b)[\w'-]+\s+){0,4}")
+_LEUR_VERBE = (
+    r"(?:en\s+(?:main|stock)\s+"
+    r"|(?!(?:pour|dans|au|aux|du|des|de|en|chez|sur|par|entre|parmi)\b)(?![ld]')[\w'-]+\s+){0,4}")
+_RANKS_THE_UNITS = re.compile(
+    rf"\b(?:which|what)\s+(?:of\s+(?:our|the)\s+)?{_UNIT_WORDS}\s+{_THEIR_VERB}(?:the\s+)?{_SUPERLATIVE}\b"
+    rf"{_NOT_A_RANK}"
+    rf"|\b(?:which|what)\s+(?:of\s+(?:our|the)\s+)?{_UNIT_WORDS}\s+(?:leads?|comes?\s+first)\b"
+    rf"|\b{_UOM_WORDS}\s+(?:with|having|holding|that\s+(?:has|have|holds?))\s+(?:the\s+)?{_SUPERLATIVE}\b"
+    rf"{_NOT_A_RANK}"
+    rf"|\b(?:{_SUPERLATIVE}|top|bottom|leading)\s+(?:\d+\s+)?{_UOM_WORDS}\b"
+    rf"|\brank(?:s|ed|ing)?\s+(?:of\s+)?(?:the\s+|our\s+)?{_UNIT_WORDS}\b"
+    rf"|(?:^\s*|[,;:]\s*|\b(?:please|and|then|also|you)\s+)(?:order|sort)\s+(?:the\s+|our\s+)?{_UOM_WORDS}\b"
+    rf"|\bquel(?:le)?s?\s+{_UNIT_WORDS}\s+{_LEUR_VERBE}(?:le|la|les)\s+(?:plus|moins)\b{_NOT_A_RANK}"
+    rf"|\b{_UNIT_WORDS}\s+(?:avec|qui\s+a|ayant)\s+(?:le|la|les)\s+(?:plus|moins)\b{_NOT_A_RANK}"
+    rf"|\b(?:plus|moins)\s+(?:grande?s?|petite?s?)\s+{_UNIT_WORDS}\b"
+    rf"|\b(?:{_ENDS}|high|low)[\s-]+to[\s-]+(?:the\s+)?(?:{_ENDS}|high|low)\b"
+    rf"|\bd(?:u|e\s+la|es)\s+plus\s+{_FRENCH_ENDS}\s+a(?:u|ux|\s+la)\s+plus\s+{_FRENCH_ENDS}\b"
+    r"|(?<!-)\b(?:sorted|ranked)(?=\s+(?:by|from|in|descending|ascending|highest|largest|biggest|lowest|smallest)\b"
+    r"|\s*(?:[,.;:!?]|$))"
+    r"|\b(?:descending|ascending|(?:highest|largest|biggest|lowest|smallest)\s+first"
+    r"|classement|classer|classees?|triees?|decroissant|croissant)\b",
+    re.IGNORECASE,
+)
+
+
+def _word_list(column: str) -> list[str]:
+    """A column's name as its words, in order, without accents."""
+    folded = "".join(
+        ch for ch in unicodedata.normalize("NFD", str(column or "")) if unicodedata.category(ch) != "Mn")
+    return [word.upper() for word in re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", folded) if word]
+
+
+def _not_goods(words: list[str]) -> bool:
+    """A name that says its figure is not a quantity of goods: a value, a
+    count, a rate, a length of time, an identifier, a ratio."""
+    names = set(words)
+    if names & _NOT_QUANTITY_WORDS:
+        return True
+    if any(word in _LENGTHS_OF_TIME and not (index and (words[index - 1].isdigit() or words[index - 1] in _A_WINDOW))
+           for index, word in enumerate(words)):
+        return True
+    if (
+        names & _COVER and not names & {"QTY", "QUANTITY", "QTE", "QUANTITE"}
+        and not ("COVER" in words and set(words[words.index("COVER") + 1:]) & _QUANTITY_WORDS)
+    ):
+        return True
+    pairs = list(zip(words, words[1:]))
+    # "Mois de stock" is months of it; "stock fin de mois" and "stock du mois
+    # de mars" are stock.
+    if words[:2] == ["MOIS", "DE"]:
+        return True
+    if words and words[-1] in _IDENTIFIER_HEADS and tuple(words[-2:]) not in _COUNTED_SO_FAR:
+        return True
+    return any(first == "PER" and second in _PER_WHAT for first, second in pairs)
+
+
+def is_quantity_measure(column: str, measure_format: str = "") -> bool:
+    """A result's measure read as a quantity of goods: STOCK_ON_HAND, UNITS_SOLD,
+    TOTAL_QTY, MONTH_END_STOCK_ON_HAND, UNITS_SOLD_TO_DATE -- not STOCK_VALUE,
+    ITEM_COUNT, FILL_RATE, AVERAGE_DAYS_ON_HAND, STOCK_COVER, UNITS_PER_CASE,
+    SHIPPED_DATE or ORDERS_SHIPPED."""
+    if str(measure_format or "") not in _QUANTITY_FORMATS:
+        return False
+    words = _word_list(column)
+    if _not_goods(words):
+        return False
+    names = set(words)
+    return bool(names & _QUANTITY_WORDS or _ON_HAND <= names
+                or (names & _PARTICIPLES and not names & _COUNT_NOUNS))
+
+
+def unit_of(value) -> str:
+    """A row's unit of measure as the rows are told apart by it: "ea" is "EA",
+    and a blank unit is one unit, however it is blank."""
+    return "" if value is None else str(value).strip().upper()
+
+
+def kept_in_several_units(rows: list[dict], column: str, *, measure_format: str = "") -> bool:
+    """A quantity the rows keep in more than one unit of measure.
+
+    Its sum across them adds eaches to feet, and so do its mean, its spread,
+    its outliers and every share of it: none is a figure of anything.
+    """
+    if not rows or not is_quantity_measure(column, measure_format):
+        return False
+    return len({unit_of(row.get(key)) for row in rows for key in row if is_unit_column(key)}) > 1
+
+
+def per_unit_totals(
+    rows: list[dict], unit_column: str, measure_column: str,
+) -> tuple[list[tuple[str, float]], list[str]] | None:
+    """A quantity's total in each unit of measure, largest first, and the units
+    the rows give no total for, by name.
+
+    Largest first for the reader, and in a set order: a query grouped by unit
+    returns them in none, and a headline names three and folds the rest into
+    "and 9 more" -- by name those three could be 0 BG, 3 BX and 1 CD, with
+    32,402 FT among the rest. The order ranks nothing: the card says each total
+    is in its own unit, and none is ahead of another. Equal totals go by name,
+    and the rows with no unit last.
+
+    Rows of one unit are merged where the measure adds up -- units sold by unit
+    and month -- and None where it does not: a balance kept per month is not
+    summed (core.analysis_contract.collapse_rows_by_label).
+    """
+    from core.analysis_contract import collapse_rows_by_label
+
+    keyed = [{**row, unit_column: unit_of(row.get(unit_column))} for row in rows or []]
+    totals = collapse_rows_by_label(keyed, unit_column, measure_column)
+    if totals is None:
+        return None
+    valued = {unit for unit, _ in totals}
+    missing = {row[unit_column] for row in keyed if row[unit_column] not in valued}
+    return (sorted(totals, key=lambda pair: (pair[0] == "", -pair[1], pair[0])),
+            sorted(missing, key=lambda unit: (unit == "", unit)))
+
+
+def rows_per_unit(
+    rows: list[dict], label_column: str, measure_column: str, question: str = "", *, measure_format: str = "",
+) -> bool:
+    """Rows that are a quantity's totals, one per unit of measure, which the
+    reader did not ask to have ranked.
+
+    A total of a quantity is read per unit, so "what is our total stock on
+    hand?" comes back as a row of feet, one of eaches, one of metres. Each is a
+    total in its own unit and none is ahead of another: 32,402 feet do not lead
+    13,151 eaches, are not 19,251 above them, and are no share of a total of
+    both. A reader who asks which unit holds the most is answered as asked, and
+    money -- a quantity times a cost -- adds up across units, so is ranked too.
+    """
+    if not is_unit_column(label_column):
+        return False
+    if not kept_in_several_units(rows, measure_column, measure_format=measure_format):
+        return False
+    folded = "".join(
+        ch for ch in unicodedata.normalize("NFD", question or "") if unicodedata.category(ch) != "Mn")
+    return not _RANKS_THE_UNITS.search(folded)
 
 
 def _qualified(entity: dict) -> str:

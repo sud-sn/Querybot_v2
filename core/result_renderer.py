@@ -716,11 +716,11 @@ def _build_drilldown_context(
 
 # ── Main result sender ────────────────────────────────────────────────────────
 
-def _result_signals(rows: list[dict]) -> list[dict]:
+def _result_signals(rows: list[dict], result_scope: dict | None = None) -> list[dict]:
     """Statistical signals for follow-up grounding. Never raises."""
     try:
         from core.stat_signals import compute_signals
-        return compute_signals(rows or [])
+        return compute_signals(rows or [], was_limited=bool((result_scope or {}).get("was_limited")))
     except Exception as exc:
         log.warning("Statistical signal detection skipped (%s)", exc)
         return []
@@ -1139,7 +1139,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                     # Computed here because this is where the rows are; the
                     # signal dicts carry labels and column names only, never a
                     # row value, so they cross the PII boundary the rows do not.
-                    signals=_result_signals(rows),
+                    signals=_result_signals(rows, result_scope),
                 )
                 if suggestions:
                     response_payload["follow_up_suggestions"] = suggestions

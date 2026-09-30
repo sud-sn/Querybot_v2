@@ -278,6 +278,58 @@ def _classify_columns(rows: list[dict]) -> tuple[list[str], list[str]]:
     return numeric, text
 
 
+# What a balance may not be added up across: time, said in French as well --
+# the months and days a French reader's labels are written in, and the words a
+# French column is named with. _looks_temporal reads English only; a balance
+# broken down by "janvier, février, mars" is its closing stock three times.
+_FRENCH_TIME_WORDS = frozenset({
+    "janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre",
+    "novembre", "decembre", "janv", "fevr", "avr", "juil", "sept",
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+    "jour", "semaine", "mois", "trimestre", "semestre", "annee", "exercice",
+})
+# A quarter or a half as French labels it, alone or with its year: T1, T2 2025,
+# S1, S2.
+_FRENCH_PART_OF_YEAR = re.compile(r"^(?:t[1-4]|s[12])(?:\s*[-/]?\s*(?:19|20)\d{2})?$")
+_TIME_COLUMN = re.compile(
+    r"(?:^|_)(?:date|dt|day|week|wk|month|quarter|year|yr|fy|period|prd|yyyymm|yyyymmdd|fiscal|calendar"
+    r"|snapshot|asof|as_of|effective|posted|jour|semaine|mois|trimestre|annee|periode|exercice)(?:_|$)",
+    re.I,
+)
+# A year inside a label: FY2025, 31/03/2025, 2025-W01, "janvier 2025".
+_A_YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+
+
+def _across_time(label_column: str, labels: list[str]) -> bool:
+    """Whether the rows are one thing at several times: labels that read as
+    periods in English or French or hold a year, or a column named for a
+    period or a snapshot."""
+    import unicodedata
+
+    def folded(text: str) -> str:
+        return unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode().lower()
+
+    if _looks_temporal(labels) or _TIME_COLUMN.search(folded(label_column)):
+        return True
+    sample = [folded(label) for label in labels[:8]]
+    if sample and all(_A_YEAR.search(label) for label in sample):
+        return True
+    if sample and all(_FRENCH_PART_OF_YEAR.match(label.strip()) for label in sample):
+        return True
+    return bool({word for label in sample for word in re.findall(r"[a-z]+", label)} & _FRENCH_TIME_WORDS)
+
+
+def adds_up_across(value_column: str, label_column: str, labels: list[str]) -> bool:
+    """Whether a measure's values add up across the rows' labels: not a rate,
+    a ratio or an average, and not a balance at several times. The inventory
+    value of each warehouse adds up to the company's; the inventory value at
+    each month's end does not."""
+    from core.analysis_contract import measure_class_for_column
+
+    kind = measure_class_for_column(value_column)
+    return kind != "non_additive" and not (kind == "semi_additive" and _across_time(label_column, labels))
+
+
 def _looks_temporal(labels: list[str]) -> bool:
     sample = " ".join(v.lower() for v in labels[:8] if v)
     # Word-boundary tokens — short abbreviations that could false-positive
@@ -375,6 +427,7 @@ def compute_data_brief(
     *,
     result_scope: dict | None = None,
     context: dict | None = None,
+    column_formats: dict | None = None,
 ) -> dict:
     """
     Compute a statistical data brief from result rows.
@@ -398,6 +451,7 @@ def compute_data_brief(
     """
     from core.metric_semantics import detect_metric_semantics
     from core.response_builder import infer_result_scope, summarize_result_context
+    from core.units_of_measure import kept_in_several_units
 
     ctx = context or summarize_result_context(rows, question)
     scope = result_scope or ctx.get("result_scope") or infer_result_scope(rows, question, mode=ctx.get("mode", "table"))
@@ -470,6 +524,11 @@ def compute_data_brief(
         # and is the only one now published. Removed rather than left in place:
         # a field nobody should read is one a future reader picks up anyway,
         # which is exactly how it outlived the fix that replaced it.
+        # A quantity the rows keep in several units has no total, and no mean,
+        # median, spread or range across them either: those add eaches to feet
+        # too, and the "outlier" a mean of mixed units makes is no outlier.
+        if kept_in_several_units(rows, col, measure_format=str((column_formats or {}).get(col) or "")):
+            s = {"count": len(values)}
         numeric_summaries[col] = s
 
     brief["numeric_summaries"] = numeric_summaries
@@ -488,8 +547,12 @@ def compute_data_brief(
             _narrative_label_column, narrative_period_labels,
         )
 
+        from core.units_of_measure import per_unit_totals, rows_per_unit
+
         label_col = _narrative_label_column(rows, text_cols)
         value_col = numeric_cols[0]
+        value_format = str((column_formats or {}).get(value_col) or "")
+        per_unit = rows_per_unit(rows, label_col, value_col, question, measure_format=value_format)
         # Same formatting the table and KPI apply, so a trend sentence does
         # not print 2026-01-01 beside a headline that says 2026-01.
         labels = narrative_period_labels([r.get(label_col, "") for r in rows])
@@ -526,18 +589,29 @@ def compute_data_brief(
         # untouched, "because there is nothing to add". Summing ACROSS those
         # distinct labels is a different sum, and it is subject to the rule
         # again -- a margin percentage totalled over three regions is
-        # arithmetic on nothing, and so is a stock balance.
+        # arithmetic on nothing, and so is a stock balance over three months.
         #
         # Withheld only where the classifier positively says DO NOT: an
-        # explicit percentage, ratio or average, and a semi-additive balance.
-        # "unknown" is not a refusal -- it means the classifier has no opinion
-        # about the name, which is the answer for ORDERS, GROSS_MARGIN, ARPU
-        # and every column whose name the lexicon has never seen. Testing for
-        # == "additive" treated all of those as unsummable and silently
-        # dropped the total and both shares from ordinary revenue results,
-        # which is a regression rather than a safeguard.
-        _measure_class = measure_class_for_column(value_col)
-        _summable = _measure_class not in {"non_additive", "semi_additive"}
+        # explicit percentage, ratio or average; and a semi-additive balance
+        # across periods. Across anything else a balance adds up -- the
+        # inventory value of each warehouse at one date is the company's, and
+        # "inventory value by warehouse" lost its shares and the % contribution
+        # chip when every balance was withheld. "unknown" is not a refusal --
+        # it means the classifier has no opinion about the name, which is the
+        # answer for ORDERS, GROSS_MARGIN, ARPU and every column whose name the
+        # lexicon has never seen. Testing for == "additive" treated all of
+        # those as unsummable and silently dropped the total and both shares
+        # from ordinary revenue results, which is a regression rather than a
+        # safeguard.
+        _summable = adds_up_across(value_col, label_col, labels)
+        # And only a total the answer saw, in one unit. A top five the limit
+        # cut is not every category: "Top 5 item groups by number of receipts"
+        # said the leader held "62.2% of total", of the five rows returned.
+        # Items ranked by units sold, each in its own unit, have no sum: a
+        # share of it adds eaches to feet. The ranking and the leader's lead
+        # over the runner-up stand; the total and every share of it go.
+        _summable = (_summable and not scope.get("was_limited")
+                     and not kept_in_several_units(rows, value_col, measure_format=value_format))
         total = sum(v for _, v in paired) if _summable else 0.0
         # The most ordinary question anyone asks about a ranking -- "what is
         # the total?" -- and the brief computed the answer here to divide by
@@ -573,7 +647,22 @@ def compute_data_brief(
                 sum(value for _, value in paired[:3]) / total * 100, 1
             )
 
-        brief["category_breakdown"] = cat_breakdown
+        found = per_unit_totals(rows, label_col, value_col) if per_unit else None
+        if found and found[0]:
+            # A quantity's totals, one per unit of measure (see
+            # core/units_of_measure.rows_per_unit): no leader or gap across
+            # them either. On units sold by unit of measure the callout read
+            # "FT holds 91.1% of the total" and the signal "FT alone holds 91%
+            # of the total — a single point of dependency". The totals
+            # themselves are what the analysis is written from.
+            brief["per_unit"] = {
+                "unit_column": label_col,
+                "value_column": value_col,
+                "totals": [{"unit": unit, "value": round(value, 2)} for unit, value in found[0]],
+                "missing": found[1],
+            }
+        else:
+            brief["category_breakdown"] = cat_breakdown
 
         # ── Time series analysis ─────────────────────────────────────────────
         # A repeating label is not a series axis: the result is grouped by
@@ -581,8 +670,12 @@ def compute_data_brief(
         # members of that other dimension.
         if _looks_temporal(labels) and len(set(labels)) == len(labels):
             brief["mode"] = "time_series"
-            ts = _compute_time_series_brief(labels, values)
-            brief["time_series"] = ts
+            # A quantity in feet one period and eaches the next has no trend,
+            # peak, drop or streak across them (summarize_result_context).
+            if kept_in_several_units(rows, value_col, measure_format=value_format):
+                brief["several_units"] = True
+            else:
+                brief["time_series"] = _compute_time_series_brief(labels, values)
         elif ctx.get("listing"):
             # The context read the SQL and found records, not one row per
             # label (core.response_builder._is_listing). A leader among
@@ -766,7 +859,12 @@ def _build_safe_llm_payload(
         "metric_semantics": data_brief.get("metric_semantics", {}),
     }
 
-    if data_brief.get("mode") == "ranking":
+    if data_brief.get("per_unit"):
+        # A quantity's totals, one per unit of measure: the totals, and no
+        # leader, gap or share across them. The ranking stats below were all
+        # None for such a result, and the narration was written with no figure.
+        payload["per_unit_stats"] = data_brief["per_unit"]
+    elif data_brief.get("mode") == "ranking":
         category = data_brief.get("category_breakdown") or {}
         top_5 = category.get("top_5") or []
         leader = top_5[0] if top_5 else {}
@@ -933,7 +1031,7 @@ def build_action_contract(
     # and a narrator with no values has nothing to obey it with. So the
     # action decides the TASK; the result decides the NUMBERS.
     for block in ("distribution_stats", "comparison_stats",
-                  "time_series_stats", "single_value_stats"):
+                  "time_series_stats", "single_value_stats", "per_unit_stats"):
         if payload.get(block) and not contract.get(block):
             contract[block] = payload[block]
 
@@ -1572,6 +1670,22 @@ def build_insight_prompt(
     return system, "\n".join(user_parts)
 
 
+def _per_unit_lines(per_unit: dict) -> list[str]:
+    """A quantity's totals, one per unit of measure, as the prompt states them:
+    each on its own, with the rule that none is added to, ranked against or
+    compared with another (compute_data_brief, brief["per_unit"])."""
+    totals = per_unit.get("totals") or []
+    if not totals:
+        return []
+    listed = [f"{item.get('unit') or 'no unit'}={item.get('value')}" for item in totals]
+    listed += [f"{unit or 'no unit'}=no value" for unit in per_unit.get("missing") or []]
+    return [
+        f"Totals of {per_unit.get('value_column', 'the measure')} per unit of measure "
+        f"({per_unit.get('unit_column', 'unit')}): {', '.join(listed)}",
+        "  Each total is in its own unit: never add them, rank them, compare them or share them out.",
+    ]
+
+
 def _format_brief_for_prompt(brief: dict) -> str:
     """Format a data brief dict into readable text for the LLM prompt."""
     lines = []
@@ -1608,6 +1722,7 @@ def _format_brief_for_prompt(brief: dict) -> str:
             lines.append(f"Comparison stats: {brief.get('comparison_stats')}")
         if brief.get("time_series_stats"):
             lines.append(f"Time-series stats: {brief.get('time_series_stats')}")
+        lines.extend(_per_unit_lines(brief.get("per_unit_stats") or {}))
         if brief.get("safe_next_steps"):
             lines.append(f"Safe next steps: {', '.join(brief['safe_next_steps'])}")
         return "\n".join(lines)
@@ -1622,14 +1737,19 @@ def _format_brief_for_prompt(brief: dict) -> str:
         lines.append("No data returned.")
         return "\n".join(lines)
 
-    # Numeric summaries
+    # Numeric summaries. A quantity kept in several units of measure has no
+    # figure across its rows (compute_data_brief), and reading one here that
+    # was not there ended every "why" asked of such a result in a KeyError.
     for col, stats in brief.get("numeric_summaries", {}).items():
+        figures = [f"{key}={stats[key]}" for key in ("total", "min", "max", "mean", "median") if key in stats]
         lines.append(
-            f"  {col}: total={stats['total']}, min={stats['min']}, "
-            f"max={stats['max']}, mean={stats['mean']}, median={stats['median']}"
+            f"  {col}: {', '.join(figures)}" if figures
+            else f"  {col}: in more than one unit of measure, so not summed, averaged or compared across rows"
         )
         if "std_dev" in stats:
             lines.append(f"    std_dev={stats['std_dev']}")
+
+    lines.extend(_per_unit_lines(brief.get("per_unit") or {}))
 
     # Category breakdown
     cat = brief.get("category_breakdown")
