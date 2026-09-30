@@ -666,8 +666,8 @@
     <div class="eg-modal-body">
       <p style="margin:0 0 .6rem;font-size:var(--font-sm);color:var(--text-muted)">
         Type a question the way a business user would. You'll see which entities the
-        resolver detects and the exact FROM/JOIN skeleton it hands to SQL generation —
-        including whether it had to fall back to unreviewed suggestions.
+        resolver detects and the exact FROM/JOIN skeleton it hands to SQL generation.
+        Only confirmed joins are used: a suggested join shows here once it is confirmed.
       </p>
       <div style="display:flex;gap:.5rem;margin-bottom:.6rem">
         <input aria-label="Question to trace" id="rt-question" class="eg-inp" placeholder="e.g. revenue by prescriber and region"

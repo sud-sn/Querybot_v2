@@ -1602,10 +1602,11 @@ def _reviewable_subgraph(graph: dict) -> dict:
 
 
 def _client_allows_suggested(account_id: str) -> bool:
-    """Per-client toggle: may unreviewed (suggested) graph rows feed SQL generation?
-    Defaults to False. Unreviewed relationships are useful onboarding evidence,
-    but they must not silently become executable join plans for a new tenant.
-    Clients can still opt in explicitly while their graph is being curated."""
+    """Per-client toggle: may unreviewed (suggested) graph rows shape the
+    follow-up questions offered (core/suggestions.py)? Never a SQL join plan:
+    resolve_for_question plans on confirmed rows unless a diagnostic passes
+    use_suggested=True. False when the client row cannot be read; a client row
+    reads 1 unless an admin turned it off."""
     try:
         import store
         client = store.get_client(account_id) or {}
@@ -1999,7 +2000,9 @@ def resolve_for_question(
       2. Admin diagnostics may explicitly preview suggested rows. Rejected
          rows never participate in either normal or diagnostic planning.
 
-    use_suggested: override the per-client toggle (None = read client row).
+    use_suggested: True previews suggested rows, for admin diagnostics only.
+        None or False plans on confirmed rows, which is what every question
+        gets; the client toggle is not read here.
 
     Returns:
       {

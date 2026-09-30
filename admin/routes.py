@@ -4451,7 +4451,9 @@ async def graph_page(request: Request, account_id: str):
 
 @router.post("/clients/{account_id}/graph/toggle-suggested")
 async def graph_toggle_suggested(request: Request, account_id: str):
-    """Toggle whether unreviewed (suggested) graph rows may feed SQL generation."""
+    """Toggle whether unreviewed (suggested) graph rows may shape the follow-up
+    questions offered and the default-date fact inference. They never become a
+    SQL join plan (core.graph_resolver.resolve_for_question)."""
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     client = store.get_client(account_id) or {}

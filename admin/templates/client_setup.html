@@ -141,7 +141,7 @@
   {% set _w5 = _w4 and (graph_pending_reviews | default(0) | int) == 0 %}
   <div class="wizard-step-line {% if _w4 %}done{% endif %}"></div>
   <div class="wizard-step {% if _w5 %}done{% elif _w4 %}active{% endif %}">
-    <div class="wizard-step-circle" title="Review auto-suggested entities, joins and fields — unreviewed suggestions can steer SQL joins">{% if _w5 %}✓{% else %}5{% endif %}</div>
+    <div class="wizard-step-circle" title="Review auto-suggested entities, joins and fields — a suggested join is used in SQL only once it is confirmed">{% if _w5 %}✓{% else %}5{% endif %}</div>
     <div class="wizard-step-label">
       <a href="/admin/clients/{{ client.account_id }}/graph" style="color:inherit;text-decoration:none">
         Semantic Review{% if (graph_pending_reviews | default(0) | int) > 0 %} <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--warning);color:var(--on-primary);font-size:var(--font-2xs);font-weight:var(--weight-bold)">{{ graph_pending_reviews }}</span>{% endif %}
