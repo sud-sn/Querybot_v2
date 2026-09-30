@@ -95,6 +95,10 @@ _TEMPORAL_VALUE_RE = re.compile(
     r"|(?:19|20)\d{2}"                            # 2026
     r"|q[1-4][\s-]?(?:19|20)?\d{2}"               # Q2 2026
     r"|(?:19|20)\d{2}[\s-]?q[1-4]"                # 2026-Q2
+    # T2 2026 as French writes a quarter (trimestre), always beside a whole
+    # year: T100, T1-10 and t250 are codes.
+    r"|t[1-4][\s-](?:19|20)\d{2}"
+    r"|(?:19|20)\d{2}[\s-]t[1-4]"
     r"|(?:" + _MONTHS + r")\.?"
     r"(?:[\s-]+(?:19|20)?\d{2})?"                 # Jun, June 2026
     r"|(?:" + _WEEKDAYS + r")\.?"                  # weekday labels

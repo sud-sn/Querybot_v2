@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import functools
 import json
 import math
 import re
 from datetime import date, datetime
+from decimal import Decimal
 from statistics import mean, median, stdev
 from typing import Any
 
@@ -20,7 +22,8 @@ from core.i18n import (
 )
 from core.clarification import extract_original_question
 from core.query_semantics import detect_top_n_intent
-from core.temporal_columns import infer_series_grain, parse_period_label
+from core.temporal_columns import (
+    infer_series_grain, parse_day_label, parse_month_name, parse_period_label, period_columns)
 
 log = logging.getLogger("querybot.response_builder")
 
@@ -74,7 +77,8 @@ _CURRENCY_NAME_RE = re.compile(
 )
 _PERCENT_NAME_RE = re.compile(r"\b(percent|percentage|pct|rate|ratio|share)\b", re.IGNORECASE)
 _DATE_NAME_RE = re.compile(
-    r"\b(date|dt|period|prd|yyyymm|yyyymmdd|year|month|quarter|week|day)\b",
+    r"\b(date|dt|period|prd|yyyymm|yyyymmdd|year|month|quarter|week|day"
+    r"|mois|periode|p\u00e9riode|trimestre|annee|ann\u00e9e|semaine|jour)\b",
     re.IGNORECASE,
 )
 _VALUE_TOKENS = {
@@ -189,50 +193,469 @@ def _format_display_value(
                     parsed = candidate if 1900 <= candidate.year <= 2199 else None
                 except ValueError:
                     parsed = None
+            if parsed is None:
+                # A period written as its name or its year: 2021 is the year
+                # 2021 -- grouped as a number it read "2,021" -- and "Q2 2025"
+                # stays the quarter it names.
+                part = _period_value(value)
+                if part and part[1] == "year":
+                    return str(part[0].year)
+                if part and part[1] == "quarter":
+                    return _format_date(part[0], "quarter")
+                parsed = part[0] if part else None
         if parsed:
             # strftime("%B") reads the process C locale, which is English on
             # every server this runs on. core/i18n.py owns the month names,
             # because portal_base.html's window.qbDate formats the same
             # columns in the browser and the two must not disagree.
             return _format_date(parsed, spec.get("style") or "iso")
+    if _normalise_result_format(fmt) == "text" and spec.get("type") in (None, "text"):
+        return _text_cell(value)  # a week's or a fiscal period's key: its digits, never "202,530"
     return _format_number(value, fmt, spec)
 
 
-def narrative_period_labels(labels: list) -> list[str]:
-    """Format a series of period labels the way the table and KPI show them.
+# ── A period is shown by its name ────────────────────────────────────────────
+# A month is "March 2025", a quarter "Q2 2025", a year "2025", in the reader's
+# language -- "mars 2025", "T2 2025" -- and the same in the table, the
+# headline, the sentences and the chart. The warehouse groups by 2025-03-01,
+# 202503 or 2025-04-01 for the second quarter; those are how the SQL keys a
+# period, not how a reader names one. The table said "2025-03" under a
+# headline naming the same month "2025-03", a chart axis "Mar 2025", and the
+# second quarter "2025-04" -- April.
+_PERIOD_STYLES = {"month": "month_year_long", "quarter": "quarter", "year": "year", "day": "iso_date"}
+# What a column's name says its periods are, read as words ("OrderMonth" is
+# order month, "CAL_YM" a year and month). A week's or a fiscal period's key
+# is no calendar month -- 202503 is the third week, or the third period of a
+# fiscal year -- and a date named as one stays the day it is.
+_WEEK_NAME_WORDS = frozenset({"week", "weeks", "wk", "wks", "isoweek", "semaine", "semaines"})
+# The periods of a fiscal year, or of the books, are no calendar's months --
+# in French, as an accounting system names them, too: PERIODE_FISCALE,
+# PERIODE_EXERCICE, ACCOUNTING_PERIOD, GL_PERIOD, POSTING_PERIOD.
+_FISCAL_NAME_WORDS = frozenset({"fiscal", "fisc", "fscl", "fp", "fy", "fyp", "fiscale", "fiscales", "fiscaux",
+                                "exercice", "exercices", "accounting", "acct", "gl", "posting",
+                                "comptable", "comptables"})
+_FISCAL_PART_WORDS = frozenset({"period", "periods", "per", "prd", "periode", "month", "months", "mth", "mois",
+                                "quarter", "qtr", "trimestre", "week", "wk"})
+_MONTH_NAME_WORDS = frozenset({"month", "months", "mth", "mths", "mois", "yyyymm", "ym", "yearmonth", "yrmth"})
+_QUARTER_NAME_WORDS = frozenset({"quarter", "quarters", "qtr", "qtrs", "trimestre", "trimestres"})
+_YEAR_NAME_WORDS = frozenset({"year", "years", "yr", "yrs", "yyyy", "annee", "annees", "exercice", "fy"})
+_DAY_NAME_WORDS = frozenset({"date", "dates", "dt", "day", "days", "jour", "jours", "yyyymmdd"})
+
+
+def _column_words(column: str) -> list[str]:
+    """A column's name as its words, lower case and without accents."""
+    import unicodedata
+
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(column or ""))
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return [word for word in re.split(r"[^A-Za-z0-9]+", text.lower()) if word]
+
+
+def _named_grain(column: str) -> str:
+    """The grain a column's name says its periods are at -- "week",
+    "fiscal", "month", "quarter", "year", "day" -- or "" where it says none."""
+    words = set(_column_words(column))
+    if words & _WEEK_NAME_WORDS:
+        return "week"
+    if words & _FISCAL_NAME_WORDS:
+        # A fiscal year is named by its year; a fiscal month or period by no
+        # calendar month.
+        return "fiscal" if words & _FISCAL_PART_WORDS or not words & _YEAR_NAME_WORDS else "year"
+    for grain, names in (("month", _MONTH_NAME_WORDS), ("quarter", _QUARTER_NAME_WORDS),
+                         ("year", _YEAR_NAME_WORDS), ("day", _DAY_NAME_WORDS)):
+        if words & names:
+            return grain
+    return ""
+
+
+# A month or a quarter the question names -- "January revenue for the last 3
+# years", "Q1 revenue for each of the last 3 years" -- is what its periods are:
+# the Januaries, the first quarters. The window's unit ("years") is how far back
+# it reaches, and the plan's grain is that unit. Named so, bare: a month with
+# its year ("since January 2024"), a range ("Jan-Jun") or a bound ("from
+# March") is where a window starts and ends, and names no period.
+_MONTH_NUMBERS = {"january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "april": 4, "apr": 4, "may": 5,
+                  "june": 6, "jun": 6, "july": 7, "jul": 7, "august": 8, "aug": 8, "september": 9, "sept": 9,
+                  "sep": 9, "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12}
+_MONTH_NAMED_RE = re.compile(
+    r"\b(?:january|february|march|april|june|july|august|september|october|november|december"
+    r"|jan|feb|apr|jun|jul|aug|sept?|oct|nov)\b|\b(?:in|for|of|during)\s+may\b", re.I)
+_QUARTER_NAMED_RE = re.compile(
+    r"\bq([1-4])\b|\b(first|second|third|fourth)\s+quarter\b", re.I)
+_WINDOW_BOUND_WORDS = frozenset({"since", "from", "until", "till", "through", "thru", "before", "after", "between",
+                                 "to", "by", "depuis", "jusqu", "avant", "apres"})
+_RANGE_WORDS = (r"(?:january|february|march|april|may|june|july|august|september|october|november|december"
+                r"|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|q[1-4])")
+_RANGE_JOINER = r"\s*(?:-|\u2013|,|\b(?:to|through|thru|and|or|et)\b)\s*"
+# A day may stand beside either month of a range: "January 5 - March 10", "1er March to 31 March".
+_RANGE_DAY = r"\d{1,2}(?:st|nd|rd|th|er)?"
+_RANGE_AFTER_RE = re.compile(rf"(?:\s+{_RANGE_DAY})?" + _RANGE_JOINER + rf"(?:the\s+)?(?:{_RANGE_DAY}\s+)?" + _RANGE_WORDS + r"\b", re.I)
+_RANGE_BEFORE_RE = re.compile(r"\b" + _RANGE_WORDS + rf"(?:\s+{_RANGE_DAY})?" + _RANGE_JOINER + rf"(?:the\s+)?(?:{_RANGE_DAY}\s*)?$", re.I)
+_YEAR_AFTER_RE = re.compile(r"\s*,?\s*(?:of\s+)?(?:19|20)\d{2}\b")
+# A month with a day beside it -- "January 1st", "1er mars", "the first of January" -- is a date, never a
+# period: sales on that day are the day's.
+_DAY_AFTER_RE = re.compile(r"\s*\d{1,2}(?:st|nd|rd|th)?\b", re.I)
+_DAY_BEFORE_RE = re.compile(r"(?:\b\d{1,2}(?:st|nd|rd|th|er)?|\b(?:first|last)\s+day)\s+(?:of\s+)?$|\b(?:first|last)\s+of\s+$", re.I)
+# A month or quarter that qualifies something other than the periods: a cohort, a promotion, a campaign, a plan to
+# compare with -- "revenue from the January cohort", "against the Q1 target" -- what is left out of them --
+# "excluding January", "not counting Q1" -- the event that dates a group of customers -- "who joined in March",
+# "contracts signed in January" -- or when a year starts: "our fiscal year starts in July", "starting April". The rows
+# are not that month's. The words are those the question is canonicalised to, which leaves a French "hors", "sauf",
+# "sans" and "acquis" as they are.
+_QUALIFIES_AFTER_RE = re.compile(
+    r"\s+(?:cohorts?|promotions?|promos?|campaigns?|launch(?:es)?|intakes?|class(?:es)?"
+    r"|forecasts?|targets?|budgets?|plans?|goals?|quotas?|benchmarks?)\b", re.I)
+_LEAVES_OUT = (r"excluding|excl\.?|except|without|minus|less|other\s+than|not\s+counting|not\s+including|but\s+not"
+               r"|save|ex|leaving\s+out|omitting|skipping|ignoring|barring|besides"
+               r"|hors|sauf|sans|mais\s+pas|excepte|a\s+(?:part|share)|en\s+excluant|(?:a\s+)?exclusion\s+of")
+_DATES_A_GROUP = (r"(?:joined|acquired|launched|registered|enrolled|onboarded|hired|arrived|started|began|opened|released"
+                  r"|introduced|signed(?:\s+up)?|created|acquis|arrives|inscrits?)\s+(?:in|en|of)"
+                  r"|(?:cohorts?|cohorte|promotions?|campaigns?|campagne|intakes?)\s+of")
+_STARTS_OR_ENDS = r"(?:starts?|starting|begins?|beginning|ends?|ending|commencant|commence)(?:\s+(?:in|en))?"
+_QUALIFIES_BEFORE_RE = re.compile(
+    rf"\b(?:{_LEAVES_OUT}|{_DATES_A_GROUP}|{_STARTS_OR_ENDS})\s+(?:the\s+)?$", re.I)
+
+
+def _edge_of_a_window(text: str, match: re.Match) -> bool:
+    """Whether a month or quarter the question names is where a window starts or ends -- "since January", "from
+    March", "January 2024", "Jan-Jun" -- and no period of its own."""
+    # A day or an article before the month -- "from 1st March", "since the 15th of June", "until the March report",
+    # "jusqu'au 31 mars" -- is no word of what bounds it.
+    day = _DAY_BEFORE_RE.search(text[:match.start()].lower())
+    words = re.findall(r"[^\W\d_]+", text[:day.start() if day else match.start()].lower())
+    if words[-1:] == ["the"]:
+        words.pop()
+    before = words[-1:]
+    after = text[match.end():]
+    # "jusqu'en mars" is two words, and the bound is the first.
+    return bool((before and before[0] in _WINDOW_BOUND_WORDS) or words[-2:-1] == ["jusqu"] or _YEAR_AFTER_RE.match(after)
+                or _RANGE_AFTER_RE.match(after) or _RANGE_BEFORE_RE.search(text[:match.start()]))
+
+
+def _a_day_beside(text: str, match: re.Match) -> bool:
+    return bool(_DAY_AFTER_RE.match(text[match.end():]) or _DAY_BEFORE_RE.search(text[:match.start()]))
+
+
+def _names_a_day(canonical: str) -> bool:
+    """Whether the question names a day -- "sales on January 1 each year", "le 1er janvier" -- that is no edge of a
+    window: its periods are days, however often it asks for them."""
+    text = canonical or ""
+    return any(_a_day_beside(text, match) and not _edge_of_a_window(text, match) for match in _MONTH_NAMED_RE.finditer(text))
+
+
+def _bare_named_period(canonical: str) -> str:
+    """The month or quarter a question names as what its periods are --
+    "month:1" (January), "quarter:1" (the first quarter) -- or "" where it
+    names none, or more than one, or names one as the edge of a window, as a
+    day's, or as what something else is filtered by."""
+    text = canonical or ""
+    found: set[str] = set()
+    for match in list(_MONTH_NAMED_RE.finditer(text)) + list(_QUARTER_NAMED_RE.finditer(text)):
+        if (_edge_of_a_window(text, match) or _a_day_beside(text, match)
+                or _QUALIFIES_AFTER_RE.match(text[match.end():]) or _QUALIFIES_BEFORE_RE.search(text[:match.start()])):
+            continue
+        word = match.group(0).lower().split()[-1]
+        if word in _MONTH_NUMBERS:
+            found.add(f"month:{_MONTH_NUMBERS[word]}")
+        else:
+            quarter = match.group(1) or ("first", "second", "third", "fourth").index(match.group(2).lower()) + 1
+            found.add(f"quarter:{quarter}")
+    return found.pop() if len(found) == 1 else ""
+
+
+def requested_period_grain(question: str, semantic_plan: dict | None = None) -> str:
+    """The calendar grain the answer's periods were asked at -- "month",
+    "quarter", "year", "week", "day" -- or "".
+
+    The question's own words first, read in English ("par trimestre" is "by
+    quarter" once canonicalised): a grouping it asks for. Then the plan's date
+    disclosures, the grain its SQL was compiled at. A longer window's unit is
+    no grain: "January revenue for the last 3 years" groups its months by
+    nothing. A window in days or weeks is: "sales for the last 3 days" asks
+    about days, and its "Sep-24" is the 24th of September, never September
+    2024.
+
+    A month or quarter the question names as what its periods are -- "January
+    revenue for the last 3 years", "what did Jan sell each year" lists
+    Januaries, whatever the window's unit or the grain asked -- follows the
+    grain after a bar: "year|month:1" (period_grain names the Januaries of a
+    column with it, and only them). Not where it qualifies something else -- "revenue by
+    year for the January cohort", "excluding January" -- nor where the question lists
+    months: the month is then what is filtered, or one of several. A day the
+    question names -- "sales on January 1 each year" -- makes its grain a day."""
+    named = grain = unit = ""
+    try:
+        from core.contextual_dates import detect_temporal_window, explicit_temporal_grain
+        from core.i18n import get_active_language
+        from core.question_normalizer import canonical_question
+
+        canonical = canonical_question(question or "", get_active_language())
+        named = _bare_named_period(canonical)
+        grain = explicit_temporal_grain(canonical) or ""
+        if grain == "year" and _names_a_day(canonical):
+            grain = "day"  # "sales on January 1 each year" are the day's: a year is how often, not what
+        if not grain:
+            unit = str(detect_temporal_window(canonical).get("unit") or "").lower()
+    except Exception as exc:
+        log.warning("The grain a question asks its periods at was not read: %s", exc)
+        unit = ""
+    if not grain:
+        for disclosure in (semantic_plan or {}).get("date_disclosures") or []:
+            grain = str((disclosure or {}).get("requested_grain") or "").strip().lower() if isinstance(
+                disclosure, dict) else ""
+            if grain:
+                break
+    if not grain:
+        grain = unit if unit in {"day", "week"} else ""
+    return f"{grain}|{named}" if named else grain
+
+
+def _period_value(value: Any) -> tuple[date, str] | None:
+    """A period value as the day it starts and the finest part it names:
+    "year" (2025), "quarter" (Q2 2025), "month" (2025-03, 202503, March 2025)
+    or "day" (a date, 2025-03-05, 20250305, a timestamp at midnight). A time
+    of day is no period: 2025-03-05 14:30 is an instant."""
+    if isinstance(value, bool) or isinstance(value, (dict, list, tuple, set)):
+        return None
+    if isinstance(value, datetime):
+        return (value.date(), "day") if value.time() == datetime.min.time() else None
+    if isinstance(value, date):
+        return value, "day"
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        value = int(value)
+    text = str(value if value is not None else "").strip()
+    # A bucket from DATE_TRUNC or a DATETIME column: midnight is the day.
+    text = re.sub(r"^(\d{4}-\d{2}-\d{2})[ T]00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:?00)?$", r"\1", text)
+    if not text:
+        return None
+    compact = re.fullmatch(r"(\d{4})(\d{2})(\d{2})?", text)
+    if compact:
+        parsed = _parse_compact_date_value(text)
+        return (parsed, "day" if compact.group(3) else "month") if parsed else None
+    parsed = parse_period_label(text)
+    if parsed is None:
+        return None
+    if re.fullmatch(r"\d{4}", text):
+        return parsed, "year"
+    if re.fullmatch(r"\d{4}[-/]\d{1,2}", text) or re.fullmatch(r"[^\W\d_]{3,9}\.?(?:[- /]\d{4}|[-/]\d{2})", text):
+        return parsed, "month"
+    if re.search(r"[qQtT][1-4]", text):
+        return parsed, "quarter"
+    return parsed, "day"
+
+
+# A month's word and two digits after a hyphen or a slash: Mar-25 is March
+# 2025 in a monthly report, and Oct-01 the first of October in a daily one.
+_MONTH_OR_DAY_RE = re.compile(r"[^\W\d_]{3,9}\.?[-/]\d{2}")
+
+
+def period_grain(values: list, requested: str = "", column: str = "") -> str:
+    """The calendar grain a column's values are the periods of: "month",
+    "quarter", "year", "day" (a date key only), or "" when they are not all
+    periods, or cannot be told from a day.
+
+    A month or quarter bucket is the first day of its period -- every builder
+    emits DATEFROMPARTS(YEAR(x), MONTH(x), 1) -- so a column of firsts is a
+    column of months, whatever it skips: a month with no sale is no row. Which
+    bucket is said by the grain asked for, then by the column's own name: a
+    MONTH column of January and April is two months, never two quarters. With
+    neither, three or more whole quarters or years in a row are quarters or
+    years; firsts that could be either, and those of a fiscal year or quarter
+    that starts in a month no calendar quarter does (February, May, August,
+    November), are left as the dates they are; and a column named as a date
+    stays its dates unless they step month by month. A
+    week's key and a fiscal period's are no calendar month, and dates that
+    are not all firsts are days: a date key is shown as the day it is, never
+    folded into its month, and a real date already reads as one.
+    """
+    present = [value for value in values if value not in (None, "")]
+    parts = [_period_value(value) for value in present]
+    if not parts or any(part is None for part in parts):
+        return ""
+    requested, _, named_period = (requested or "").partition("|")
+    named = _named_grain(column)
+    precisions = {part[1] for part in parts}
+    starts = sorted({part[0] for part in parts})
+    compact_days = all(re.fullmatch(r"\d{8}", str(value).strip()) for value in present)
+    asked_days = requested in {"week", "day"}
+    if named in {"week", "fiscal"} and not _real_dates(present):
+        # A week's key and a fiscal period's are no calendar month, written
+        # 202530 or "2025-01". A date is one, whatever its column is called:
+        # POSTING_MONTH of the first of each month is those months.
+        return "day" if precisions == {"day"} and compact_days else ""
+    if any(_MONTH_OR_DAY_RE.fullmatch(str(value).strip()) for value in present):
+        # "Sep-30" is September 2030 or the 30th of September, and "Oct-01" the
+        # first of October or October 2001: only the grain asked for, or the
+        # column's own name, says which. With neither the label stays as the
+        # warehouse wrote it -- and a day's is never a month.
+        if asked_days or named == "day" or not (
+                requested in {"month", "quarter", "year"} or named in {"month", "quarter", "year"}):
+            return ""
+    if precisions == {"year"}:
+        return "year"
+    if "quarter" in precisions:
+        return "quarter" if precisions <= {"quarter"} else ""
+    if any(start.day != 1 for start in starts):
+        return "day" if compact_days else ""
+    quarters = all(start.month in (1, 4, 7, 10) for start in starts)
+    januaries = all(start.month == 1 for start in starts)
+    if named_period and named not in {"year", "day"} and _the_named_period_each_year(starts, named_period):
+        return named_period.partition(":")[0]
+    if named_period and named == "day" and _the_named_period_each_year(starts, named_period):
+        return ""  # a column named as a date holds the dates a question names a month of, whatever it asks by
+    for grain in (requested, named):
+        if grain == "month":
+            return "month"
+        if grain == "quarter":
+            if quarters:
+                return "quarter"
+            # Firsts on the same month of the quarter that is no calendar quarter's first -- a fiscal year
+            # that starts in February, May, August or November -- are a fiscal quarter's, not a month's.
+            fiscal = len(starts) > 1 and len({(start.year * 12 + start.month) % 3 for start in starts}) == 1
+            return "" if fiscal else "month"
+        if grain == "year" and januaries:
+            return "year"
+        # A year asked of firsts that are not all Januaries -- quarters, a
+        # fiscal year's July -- says nothing of them: the column's name, else
+        # their values, do.
+    if precisions == {"month"}:
+        # 202503, 2025-03, March 2025: a month by its spelling.
+        return "month"
+    if len(starts) < 2:
+        return ""
+    if named == "day" or asked_days:
+        # A column named as a date, or asked about by the day or the week, stays
+        # its dates unless they step month by month: an ORDER_DATE on the first
+        # of March, June and September, or an EFFECTIVE_DATE each January, is
+        # those days -- and "average daily sales by month" lists months.
+        cadence, consistency = infer_series_grain(starts)
+        return "month" if cadence == "month" and consistency >= 0.8 else ""
+    steps = [(later.year - earlier.year) * 12 + later.month - earlier.month
+             for earlier, later in zip(starts, starts[1:])]
+    # Firsts that step only in whole years or quarters may be those, or the
+    # months that fell on them: years or quarters where three or more come one
+    # after another, else nothing -- a year's total named "January 2024" is as
+    # wrong as a January named "2024".
+    if januaries and all(step % 12 == 0 for step in steps):
+        return "year" if len(starts) >= 3 and set(steps) == {12} else ""
+    if quarters and all(step % 3 == 0 for step in steps):
+        return "quarter" if len(starts) >= 3 and set(steps) == {3} else ""
+    if all(step % 3 == 0 for step in steps):
+        # Quarters or years that start in February, May, August or November, or any other month that is no
+        # calendar quarter's: a fiscal calendar's, which no month name says.
+        return ""
+    return "month"
+
+
+def _the_named_period_each_year(starts: list, named_period: str) -> bool:
+    """Whether firsts are all the month or quarter the question names -- one a
+    year, since they are distinct: the Januaries of "January revenue for the
+    last 3 years", the first quarters of "Q1 revenue for each of the last 3
+    years"."""
+    kind, _, number = named_period.partition(":")
+    month = int(number) if kind == "month" else (int(number) - 1) * 3 + 1
+    return {start.month for start in starts} == {month}
+
+
+def _real_dates(values: list) -> bool:
+    """Values that are dates -- as dates, or as ISO days -- and no key written
+    with a hyphen ("2025-01", the first week of the year)."""
+    return all(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T].*)?", str(value).strip())
+        for value in values if value not in (None, "")
+    )
+
+
+def _whole_numbers(values: list) -> bool:
+    """Values that are whole numbers, as numbers or as digits."""
+    return all(
+        (isinstance(value, (int, float)) and not isinstance(value, bool))
+        or re.fullmatch(r"\d+(?:\.0+)?", str(value).strip()) is not None
+        for value in values if value not in (None, "")
+    )
+
+
+def _period_keys(column: str, values: list) -> bool:
+    """A calendar period column of keys no calendar names -- a week's
+    (WEEK_KEY 202503) or a fiscal period's -- by its name and its values."""
+    from core.temporal_columns import is_calendar_period_column
+
+    present = [value for value in values if value not in (None, "")]
+    return bool(present) and all(
+        re.fullmatch(r"\d{6}(?:\d{2})?(?:\.0+)?", str(value).strip()) for value in present
+    ) and is_calendar_period_column(column, present)
+
+
+def _a_period_axis(column: str, values: list, labels: list, grain: str = "") -> bool:
+    """Whether a label column is the periods of a series: periods named, or
+    keys of a calendar period no calendar names -- WEEK_KEY 202501..202504 is
+    a series of weeks, read by its keys."""
+    return (_looks_temporal(labels) or bool(column_period_grain(values, grain, column))
+            or _period_keys(column, values))
+
+
+def chart_axis_style(rows: list[dict], x_key: str, column_formats: dict, display_formats: dict) -> str:
+    """The style a chart's time axis names its periods in: the column's own
+    (build_display_formats), or "key" for a week's or a fiscal period's key,
+    which no calendar names and the axis leaves as it is."""
+    style = str((display_formats.get(x_key) or {}).get("style") or "")
+    if style:
+        return style
+    if column_formats.get(x_key) == "text" and _period_keys(x_key, [row.get(x_key) for row in rows]):
+        return "key"
+    return ""
+
+
+def column_period_grain(values: list, requested: str = "", column: str = "") -> str:
+    """period_grain, for a column: a whole number (202503, 2025) is a period
+    only where the column's name says it holds periods -- "BUCKET" of 202503
+    is no month, "OrderMonth" and "CAL_YM" are -- so the table, the headline
+    and the sentences name the same column's periods, or none of them do."""
+    if _whole_numbers(values) and not (
+            _DATE_NAME_RE.search(" ".join(_column_words(column))) or _named_grain(column)):
+        return ""
+    return period_grain(values, requested, column)
+
+
+def period_style(grain: str) -> str:
+    """The display style a period of this grain is shown in, or ""."""
+    return _PERIOD_STYLES.get(grain, "")
+
+
+def narrative_period_labels(labels: list, grain: str = "", column: str = "") -> list[str]:
+    """A series' period labels as the table and the headline show them.
 
     Periods reach the user through THREE paths, not two: the rendered table,
-    the KPI headline, and the sentences written about the series. The first two
-    go through the display formatter via column_formats; narration did not, so
-    the same answer said "2026-06 closed at $7.4M" in its headline and
-    "trended flat from 2026-01-01 to 2026-06-01" three lines below it.
+    the KPI headline, and the sentences written about the series. The first
+    two go through the display formatter; narration did not, so the same
+    answer said "2026-06 closed at $7.4M" in its headline and "trended flat
+    from 2026-01-01 to 2026-06-01" three lines below it.
 
-    Same bucket-shape rule as build_column_formats, and for the same reason: a
-    month bucket is always the first day of its period, so day == 1 across the
-    whole series distinguishes a bucket from a real date. Invoices due on the
-    15th and month-end balance dates both step ~30 days and must be left alone.
-
-    Returns the labels unchanged unless every one of them is a month or quarter
-    bucket -- narration is prose, and a half-formatted series reads worse than
-    an unformatted one.
+    ``grain`` is the grain the question asked for (requested_period_grain),
+    which the table is formatted by too; the rule is period_grain's, so a
+    month is "March 2025" here and in the cell beside it. A label that is not
+    a period -- a day, a warehouse -- is returned as it came, and so is a
+    series only partly made of periods: narration is prose, and a
+    half-formatted series reads worse than an unformatted one.
     """
     raw = [str(label) if label is not None else "" for label in labels]
-    if len(raw) < 2:
+    found = column_period_grain(list(labels), grain, column)
+    style = period_style(found)
+    if not style:
         return raw
-    parsed = [parse_period_label(label) for label in raw]
-    if any(value is None or value.day != 1 for value in parsed):
-        return raw
-    ordered = sorted(set(parsed))
-    if len(ordered) < 2:
-        return raw
-    grain, confidence = infer_series_grain(ordered)
-    if confidence < 0.8:
-        return raw
-    if grain == "month" or (
-        grain == "quarter" and all(value.month in (1, 4, 7, 10) for value in ordered)
-    ):
-        return [value.strftime("%Y-%m") for value in parsed]
-    return raw
+    named: list[str] = []
+    for label, text in zip(labels, raw):
+        part = _period_value(label)
+        named.append(_format_date(part[0], style) if part else text)
+    return named
+
+
+def _sentence_start(label: Any) -> Any:
+    """A period's name where it starts a sentence: French writes its months
+    in lower case, and "juin 2025 a terminé à 600." opened the card."""
+    return label[:1].upper() + label[1:] if isinstance(label, str) else label
 
 
 def _numeric_cols(rows: list[dict]) -> list[str]:
@@ -436,6 +859,7 @@ def build_column_formats(
             formats[header] = fmt
 
     ctx = display_context or {}
+    requested = str(ctx.get("period_grain") or "") if isinstance(ctx, dict) else ""
     metrics = ctx.get("metrics") if isinstance(ctx, dict) else []
     if isinstance(metrics, dict):
         metrics = [metrics]
@@ -443,71 +867,45 @@ def build_column_formats(
         metrics = []
     strict = (ctx.get("format_scope") if isinstance(ctx, dict) else "") == "metric_registry"
 
-    # Encoded ERP periods such as 202601/20260131 are semantically dates even
-    # when the database type is INT. Apply a display-only date contract when
-    # both the column name and sampled values support that interpretation.
+    # A column of periods is shown by their names, whatever the warehouse
+    # keeps them as: an ERP key (202601, 20260131, an INT), a bucket date
+    # (2026-01-01, a timestamp at midnight), a year, "Q2 2026" or "Mar-26".
+    # A key is a period only where the column's name says so
+    # (column_period_grain): 202601 is also a customer number.
+    #
+    # Marked only at MONTH, QUARTER or YEAR grain -- and a date KEY at its day
+    # -- each shown by its name in the style build_display_formats gives it,
+    # and this restriction is load-bearing rather than cautious. The date
+    # renderers fall through to `YYYY-MM` for a date with no style
+    # (portal_chat.html), so declaring a DAILY column a date would collapse
+    # every day of a month onto one label and silently merge rows in the
+    # reader's eyes. A day-grain date column already displays correctly.
+    #
+    # The test is the BUCKET SHAPE, not the cadence. A governed month or
+    # quarter bucket is always the FIRST DAY of its period -- every builder
+    # emits DATEFROMPARTS(YEAR(x), MONTH(x), 1), see
+    # core.contextual_dates.format_period_bucket_expression -- so day == 1 is
+    # a shape the server itself created and can recognise. Cadence alone
+    # cannot tell a bucket from a real day, and the difference is destructive:
+    # invoices due on the 15th of each month, and month-END balance dates, both
+    # step ~30 days, and relabelling either one "2026-01" erases the exact
+    # thing the reader needs.
+    #
+    # Checked over EVERY rendered row rather than a sample, because the format
+    # is applied to every row: a page of month buckets followed by a daily
+    # tail would otherwise collapse the tail onto shared labels and silently
+    # merge rows on screen. A row with no period is shown empty.
     for header in headers:
-        if header in formats or not _DATE_NAME_RE.search(header.replace("_", " ")):
+        if header in formats:
             continue
-        values = [
-            row.get(header) for row in rows[:20]
-            if row.get(header) not in (None, "")
-        ]
-        if values and all(_parse_compact_date_value(value) is not None for value in values):
-            formats[header] = "date"
-            continue
-
-        # The branch above only ever recognised a COMPACT ERP integer
-        # (202601 / 20260131 -- the regex admits no separators), so a genuine
-        # DATE column was never marked. It reaches the browser as the ISO
-        # string "2026-01-01", nothing declares it a date, and the portal
-        # prints it verbatim: a month bucket displayed as the first of the
-        # month, which reads as a single day's figure.
-        #
-        # Marked only at MONTH or QUARTER grain, and this restriction is
-        # load-bearing rather than cautious. The portal's date renderer falls
-        # through to `YYYY-MM` for any style it does not recognise
-        # (portal_chat.html), so declaring a DAILY column a date would collapse
-        # every day of a month onto one label and silently merge rows in the
-        # reader's eyes. A day-grain column already displays correctly.
-        #
-        # The test is the BUCKET SHAPE, not the cadence. A governed month or
-        # quarter bucket is always the FIRST DAY of its period -- every builder
-        # emits DATEFROMPARTS(YEAR(x), MONTH(x), 1), see
-        # core.contextual_dates.format_period_bucket_expression -- so day == 1
-        # is a shape the server itself created and can recognise.
-        #
-        # Cadence alone cannot tell a bucket from a real day, and the
-        # difference is destructive: invoices due on the 15th of each month,
-        # and month-END balance dates, both step ~30 days, and relabelling
-        # either one "2026-01" erases the exact thing the reader needs. Both
-        # were declared dates by a cadence test.
-        #
-        # Checked over EVERY rendered row rather than a sample, because the
-        # format is applied to every row: a page of month buckets followed by
-        # a daily tail would otherwise collapse the tail onto shared labels
-        # and silently merge rows on screen.
         column_values = [row.get(header) for row in rows if row.get(header) not in (None, "")]
-        if len(column_values) != len(rows):
-            continue
-        parsed = [parse_period_label(value) for value in column_values]
-        if any(value is None or value.day != 1 for value in parsed):
-            continue
-        # Sorted and de-duplicated so a DESC result and a breakdown that
-        # repeats each period per category both read as one clean series.
-        ordered = sorted(set(parsed))
-        if len(ordered) < 2:
-            continue
-        grain, confidence = infer_series_grain(ordered)
-        if confidence < 0.8:
-            continue
-        # Year grain is excluded deliberately: the shared date renderer has no
-        # style that prints a year as a year by default, so 2026-01-01 would
-        # display as "2026-01" -- no better than the day stamp it replaced.
-        if grain == "month" or (
-            grain == "quarter" and all(value.month in (1, 4, 7, 10) for value in ordered)
-        ):
+        if column_values and column_period_grain(column_values, requested, header) in {
+                "month", "quarter", "year", "day"}:
             formats[header] = "date"
+        elif _period_keys(header, column_values):
+            # A week's or a fiscal period's key is named by no calendar, and
+            # is no amount either: 202503, never "202,503".
+            formats[header] = "text"
 
     for metric in metrics:
         if not isinstance(metric, dict):
@@ -518,6 +916,32 @@ def build_column_formats(
         for header in _columns_for_metric_format(rows, metric, strict=strict):
             formats.setdefault(header, fmt)
 
+    return formats
+
+
+def build_display_formats(
+    rows: list[dict],
+    column_formats: dict[str, str] | None,
+    explicit: dict | None = None,
+    requested_grain: str = "",
+) -> dict[str, dict]:
+    """The display style of each column: what the reader asked for, and for
+    every period column build_column_formats marked a date, its period's name
+    (period_grain): a month "March 2025", a quarter "Q2 2025", a year "2025",
+    a date key its day. The table in the portal, the table in a chat, the
+    headline, the KPI and the chart axis all read these."""
+    headers = list(rows[0].keys()) if rows else []
+    formats: dict[str, dict] = {
+        header: dict(spec) for header, spec in (explicit or {}).items()
+        if header in headers and isinstance(spec, dict)
+    }
+    for header, fmt in (column_formats or {}).items():
+        if fmt != "date" or header in formats or header not in headers:
+            continue
+        values = [row.get(header) for row in rows if row.get(header) not in (None, "")]
+        style = period_style(column_period_grain(values, requested_grain, header))
+        if style:
+            formats[header] = {"type": "date", "style": style}
     return formats
 
 
@@ -632,23 +1056,27 @@ def _looks_temporal(values: list[str]) -> bool:
         "july", "august", "september", "october", "november", "december",
         "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept",
         "oct", "nov", "dec",
-        # French. The product ships French tenants whose warehouses hold French
-        # period labels, which is why core.stat_signals._is_temporal_col has
-        # carried them since it was written and this has not.
-        "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
-        "juillet", "août", "aout", "septembre", "octobre", "novembre",
-        "décembre", "decembre",
         # Grain words, both languages
         "week", "month", "quarter", "year", "date",
         "semaine", "mois", "trimestre", "année", "annee",
     ]
-    from core.temporal_columns import labels_are_bare_years
+    from core.temporal_columns import FRENCH_DAY_LABEL_RE, FRENCH_MONTH_LABEL_RE, labels_are_bare_years
 
+    # The product ships French tenants whose warehouses hold French period
+    # labels ("mars 2025", as core.stat_signals._is_temporal_col has read them
+    # since it was written): a label that is a month and nothing else. A brand
+    # called "Mars Bar" is no month.
+    french = [str(value).strip() for value in values[:8] if value and str(value).strip()]
     return (
-        bool(re.search(r"\b\d{4}[-/]\d{1,2}([-/]\d{1,2})?\b", sample))
+        (bool(french) and all(FRENCH_MONTH_LABEL_RE.fullmatch(label) or FRENCH_DAY_LABEL_RE.fullmatch(label)
+                              for label in french))
+        or bool(re.search(r"\b\d{4}[-/]\d{1,2}([-/]\d{1,2})?\b", sample))
         # Q1 2026, 2026-Q1, T1 2026 (trimestre). Absent entirely before, so a
-        # fiscal-quarter column read as an ordinary business dimension.
-        or bool(re.search(r"\b(?:q|t)[1-4]\b", sample))
+        # fiscal-quarter column read as an ordinary business dimension. A T
+        # is a quarter only beside its year: T1..T4 alone are tiers, and were
+        # narrated "trended down 94.4% from T1 to T4".
+        or bool(re.search(r"\bq[1-4]\b|\bt[1-4]\s*[-/]?\s*(?:19|20)\d{2}\b|(?:19|20)\d{2}\s*[-/]?\s*t[1-4]\b",
+                          sample))
         # A bare year is the coarsest period label there is and was the one
         # shape no classifier read. "Net sales by year" over an M3 mart returns
         # an INTEGER year column, so the series was not merely mis-grained --
@@ -677,6 +1105,14 @@ def _temporal_sort_value(value: Any) -> tuple[int, int, int, int] | None:
         year, month, day = (int(part or 1) for part in match.groups())
         if 1 <= month <= 12 and 1 <= day <= 31:
             return year, month, day, 0
+    # A week's or a fiscal period's key past the twelfth (202530): in order.
+    match = re.fullmatch(r"((?:19|20|21)\d{2})(1[3-9]|[2-5]\d)", text)
+    if match:
+        return int(match.group(1)), int(match.group(2)), 0, 1
+    # A bare year, as the calendar reads one (1900 to 2199): listed newest
+    # first it read "trended down 12.5% from 2025 to 2023" of revenue that rose.
+    if re.fullmatch(r"(?:19|20|21)\d{2}", text):
+        return int(text), 1, 1, 0
     match = re.match(r"^(?:Q([1-4])\s*[-/]?\s*((?:19|20)\d{2})|((?:19|20)\d{2})\s*[-/]?\s*Q([1-4]))$", text, re.I)
     if match:
         quarter = int(match.group(1) or match.group(4))
@@ -688,7 +1124,497 @@ def _temporal_sort_value(value: Any) -> tuple[int, int, int, int] | None:
             return parsed.year, parsed.month, parsed.day, 0
         except ValueError:
             continue
+    # A day written out, in English or French: "4 March 2025", "jeudi 4 mars 2025".
+    day = parse_day_label(text)
+    if day is not None:
+        return day.year, day.month, day.day, 0
+    # The periods the answer names in French -- "mars 2025", "T2 2025" -- and
+    # any other label a period is read from (parse_period_label).
+    parsed = parse_period_label(text)
+    if parsed is not None and (re.search(r"\d{4}", text) or re.fullmatch(r"[^\W\d_]{3,9}\.?[-/]\d{2}", text)):
+        quarter = re.fullmatch(r"(?:[qQtT]([1-4])\s*[-/]?\s*\d{4}|\d{4}\s*[-/]?\s*[qQtT]([1-4]))", text)
+        return parsed.year, parsed.month, parsed.day, int((quarter.group(1) or quarter.group(2))) if quarter else 0
     return None
+
+
+_AGGREGATE_CALL_RE = re.compile(r"\b(?:sum|count|avg|average|min|max|median|stdev|stddev)\s*\(", re.IGNORECASE)
+
+
+def _first_order_key(clause: str) -> str:
+    """The first key of an ORDER BY's clause, without its direction: the text
+    up to the first comma, or the parenthesis that closes what holds the
+    clause (a window's OVER (...), a subquery)."""
+    depth, first = 0, ""
+    for char in clause:
+        depth += (char == "(") - (char == ")")
+        if depth < 0 or (char == "," and depth == 0):
+            break
+        first += char
+    return re.sub(r"\s+(?:ASC|DESC)\b.*$|\s+NULLS\s+(?:FIRST|LAST)\b.*$", "", first.strip(),
+                  flags=re.IGNORECASE | re.DOTALL).strip()
+
+
+def _period_axes(rows: list[dict]) -> list[str]:
+    """The result's columns that hold periods: the axis of a series."""
+    numeric_cols = _numeric_cols(rows)
+    _measures, label_cols, _periods = _measure_and_label_cols(rows, numeric_cols, _text_cols(rows, numeric_cols))
+    return [column for column in label_cols
+            if _a_period_axis(column, [row.get(column) for row in rows], [str(row.get(column, "")) for row in rows])]
+
+
+_DATE_WORDS = frozenset({"date", "dates", "datetime", "dt", "ts", "timestamp", "jour",
+                         "created", "posted", "updated", "modified", "booked"})
+_WORDS_ENDING_IN_DATE = frozenset({"update", "updates", "candidate", "candidates", "mandate", "validate",
+                                   "consolidate"})
+
+
+def _aggregate_calls(text: str) -> list[tuple[str, str]]:
+    """Every aggregate call in an expression -- SUM(x), MAX(DATEFROMPARTS(YEAR(d),
+    MONTH(d), 1)) -- as its name and its argument, read to the parenthesis that
+    closes it however many functions stand inside."""
+    text = re.sub(r"'(?:[^']|'')*'", "''", text)
+    calls = []
+    for match in _AGGREGATE_CALL_RE.finditer(text):
+        depth, end = 1, len(text)
+        for index in range(match.end(), len(text)):
+            depth += (text[index] == "(") - (text[index] == ")")
+            if depth == 0:
+                end = index
+                break
+        calls.append((re.match(r"\w+", match.group(0)).group(0).lower(), text[match.end():end]))
+    return calls
+
+
+def _names_a_date(expression: str) -> bool:
+    """Whether a column or expression is named as a date: order_date, OrderDate,
+    ORDERDATE, DATEKEY, TXN_TS, created_at, INVOICE_DATETIME. Not a word that
+    only holds one: lifetime_value, candidate_score. Nor a time or a day, which
+    is as often a length of time as a date: lead_time, days_to_ship."""
+    words = _column_words(expression)
+    return bool(_DATE_WORDS.intersection(words)) or any(
+        word.startswith("date") or (word.endswith("date") and len(word) > 4 and word not in _WORDS_ENDING_IN_DATE)
+        for word in words)
+
+
+def _period_order(rows: list[dict]) -> str:
+    """How the rows' periods stand in time: "in" where all can be placed and
+    they come in its order or the reverse of it, "out" where all can be placed
+    and they come in no order of it -- the rows are listed by something else --
+    and "" where they cannot all be placed. Labels that cannot be placed --
+    "January", "Week 1", "FY25 Q1" -- say nothing of the kind."""
+    axes = _period_axes(rows)
+    for column in axes:
+        keys = [_temporal_sort_value(row.get(column)) for row in rows]
+        if all(key is not None for key in keys):
+            return "in" if keys == sorted(keys) or keys == sorted(keys, reverse=True) else "out"
+    # Month names with no year -- "January", "mars" -- in the calendar's order, the reverse of it, or one month after
+    # another from any month of it are in time; in any other they may be a fiscal year's, and say nothing.
+    for column in axes:
+        months = [parse_month_name(row.get(column)) for row in rows]
+        if all(month is not None for month in months) and (
+                months == sorted(months) or months == sorted(months, reverse=True)
+                or _months_in_a_row(months) or _months_in_a_row(months[::-1])):
+            return "in"
+    return ""
+
+
+def _months_in_a_row(months: list[int]) -> bool:
+    """Month numbers that each follow the one before across a new year: October to March is 10, 11, 12, 1, 2, 3."""
+    return all((later - earlier) % 12 == 1 for earlier, later in zip(months, months[1:]))
+
+
+def _periods_listed_out_of_time(rows: list[dict]) -> bool:
+    return _period_order(rows) == "out"
+
+
+def _is_a_sequence(rows: list[dict], column: str) -> bool:
+    """A column of whole numbers that runs in equal steps -- 1, 2, 3 ... in
+    whatever order they stand, MONTHNUM 4..9, SORT_ORDER 10..60, PERIOD_KEY
+    301..306, or one number throughout -- is a sort key (SORT_ORDER, MONTHNUM,
+    RN), no figure; so are the keys of months or weeks that run on across a new
+    year (202411, 202412, 202501). Two rows are a run only as 1, 2 or 0, 1."""
+    try:
+        values = [_to_float(row.get(column)) for row in rows]
+        if len(rows) < 2 or any(value is None or value != int(value) for value in values):
+            return False
+        ordered = sorted(int(value) for value in values)
+    except (OverflowError, ValueError):  # NaN or an infinity is no whole number
+        return False
+    if len(ordered) == 2:
+        return ordered in ([1, 2], [0, 1])
+    if len({later - earlier for earlier, later in zip(ordered, ordered[1:])}) == 1:
+        return True
+    if all(190001 <= value <= 219912 and 1 <= value % 100 <= 12 for value in ordered):
+        # A month's key, 202412 then 202501: months in equal steps across a new year.
+        months = [value // 100 * 12 + value % 100 for value in ordered]
+        return len({later - earlier for earlier, later in zip(months, months[1:])}) == 1
+    if all(19001 <= value <= 21994 and 1 <= value % 10 <= 4 for value in ordered):
+        # A quarter's key, 20243 then 20244, 20251: quarters in equal steps across a new year.
+        quarters = [value // 10 * 4 + value % 10 for value in ordered]
+        if len({later - earlier for earlier, later in zip(quarters, quarters[1:])}) == 1:
+            return True
+    return _weeks_in_a_row(ordered)
+
+
+def _weeks_in_a_row(keys: list[int]) -> bool:
+    """Week keys, YYYYWW, that each follow the one before: 202451, 202452, 202501 -- or 202453 where the year has it."""
+    return all(190001 <= key <= 219953 for key in keys) and all(
+        later - earlier == 1 or (earlier % 100 in (52, 53) and later == (earlier // 100 + 1) * 100 + 1)
+        for earlier, later in zip(keys, keys[1:]))
+
+
+# What a statement takes a date's parts with, as the parser names them (YEAR, DATEPART(week, d) and EXTRACT are
+# Extract, DAYOFWEEK is DayOfWeek, FORMAT(d, 'yyyyMM') is TimeToStr) and, where the parser knows no such function, by
+# the name it is called. A date that is one -- DATE_TRUNC, DATEFROMPARTS, EOMONTH -- is no number to list rows by.
+_DATE_PART_NODES = ("Year", "Month", "Day", "Quarter", "Week", "WeekOfYear", "DayOfWeek", "DayOfWeekIso", "DayOfMonth",
+                    "DayOfYear", "Extract", "YearOfWeek", "YearOfWeekIso", "TimeToStr", "ToChar")
+_DATE_PART_NAMES = frozenset({"yearweek", "isoweek", "iso_week", "weekiso", "datepart", "datename", "date_part",
+                              "date_format", "strftime"})
+
+
+def _reads_a_date_part(expression) -> bool:
+    """Whether an expression takes a part of a date anywhere in it -- YEAR(d), DATEPART(week, d), YEAR(d) * 100 + MONTH(d)."""
+    from sqlglot import exp as sg_exp
+
+    parts = tuple(getattr(sg_exp, name) for name in _DATE_PART_NODES if hasattr(sg_exp, name))
+    return expression.find(*parts) is not None or any(
+        str(call.name).lower() in _DATE_PART_NAMES for call in expression.find_all(sg_exp.Anonymous))
+
+
+def _is_the_first_or_last_of_a_date_part(expression) -> bool:
+    """Whether an expression only takes the first or last of parts of dates -- MIN(YEAR(d) * 100 + MONTH(d)),
+    MIN(YEAR(d) * 12 + MONTH(d) - 1), MAX(DATEPART(week, d)) -- which is a key. Not a figure it reads beside one --
+    MAX(CASE WHEN MONTH(d) = 12 THEN amount END) -- nor a length of time between two dates --
+    MAX(YEAR(GETDATE()) - YEAR(birth))."""
+    from sqlglot import exp as sg_exp
+
+    calls = list(expression.find_all(sg_exp.AggFunc))
+    if not calls or any(_reads_a_date_part(sub.this) and _reads_a_date_part(sub.expression)
+                        for sub in expression.find_all(sg_exp.Sub)):
+        return False
+    parts = tuple(getattr(sg_exp, name) for name in _DATE_PART_NODES if hasattr(sg_exp, name))
+
+    def inside_a_part(node) -> bool:
+        parent = node.parent
+        while parent is not None:
+            if isinstance(parent, parts) or (isinstance(parent, sg_exp.Anonymous)
+                                             and str(parent.name).lower() in _DATE_PART_NAMES):
+                return True
+            parent = parent.parent
+        return False
+
+    return all(isinstance(call, (sg_exp.Min, sg_exp.Max)) and _kind_of(call.this) == "date"
+               and all(inside_a_part(column) for column in call.this.find_all(sg_exp.Column)) for call in calls)
+
+
+def _kind_of(expression) -> str:
+    """What a select list's expression is: "aggregate" where it adds rows up (SUM, COUNT, AVG, MAX), "date" where it
+    takes a part of a date and adds up nothing -- YEAR(d), DATEPART(week, d), YEAR(d) * 100 + MONTH(d) -- else
+    "other": a column."""
+    from sqlglot import exp as sg_exp
+
+    if _is_the_first_or_last_of_a_date_part(expression):
+        return "date"
+    if isinstance(expression, sg_exp.Window) and isinstance(expression.this, (sg_exp.Rank, sg_exp.DenseRank, sg_exp.RowNumber)):
+        ordered = expression.args.get("order")
+        if ordered is not None:
+            return _kind_of(ordered)  # RANK() OVER (ORDER BY YEAR(d)) counts the periods, not what they add up to
+    if expression.find(sg_exp.AggFunc) is not None:
+        return "aggregate"
+    return "date" if _reads_a_date_part(expression) else "other"
+
+
+@functools.lru_cache(maxsize=64)
+def _select_definitions(sql: str, db_type: str = "azure_sql") -> dict[str, tuple[str, ...]]:
+    """For each name a statement's select lists give a column -- lower case, in every scope that does -- what that
+    column is (_kind_of): {"y": ("date",), "revenue": ("aggregate",)}. Read, never changed."""
+    tree = _parsed_sql(sql, db_type)
+    return _definitions_of(tree) if tree is not None else {}
+
+
+def _definitions_of(tree) -> dict[str, tuple[str, ...]]:
+    from sqlglot import exp as sg_exp
+
+    found: dict[str, list[str]] = {}
+    for alias in tree.find_all(sg_exp.Alias):
+        found.setdefault(str(alias.alias).lower(), []).append(_kind_of(alias.this))
+    return {name: tuple(kinds) for name, kinds in found.items()}
+
+
+def _named_by(key: str, rows: list[dict]) -> str:
+    """The name an ORDER BY key goes by, in lower case: a qualified or quoted column's own, or -- for a position, ORDER
+    BY 3 -- the name of the result's column in that place."""
+    if key.isascii() and key.isdigit() and rows and 0 < int(key) <= len(rows[0]):
+        key = str(list(rows[0].keys())[int(key) - 1])
+    return re.split(r"\.", key)[-1].strip().strip('"[]`').lower()
+
+
+def _key_is_a_figure(key: str, rows: list[dict], asked: bool = False, definitions=None) -> bool:
+    """Whether an ORDER BY key is a figure of the result -- an aggregate, a
+    numeric column of it, or the position of one -- and no period. The first
+    or last date of a period is a date: MIN(ORDER_DATE) lists months in time.
+    A column the statement defines as a part of a date -- YEAR(d) AS Y,
+    YEAR(d) * 100 + MONTH(d) AS SORT_KEY -- is no figure whatever it is
+    called (``definitions``: what _select_definitions reads). A column that
+    runs in equal steps is a sort key and no figure, unless the question asks
+    for the periods ranked: "top 5 months by number of orders" counts them
+    5, 4, 3, 2, 1."""
+    if not key:
+        return False
+    calls = _aggregate_calls(key)
+    if definitions is not None:
+        defined = (definitions() if callable(definitions) else definitions).get(_named_by(key, rows), ())
+        if defined and all(kind == "date" for kind in defined):
+            return False
+    if calls:
+        if any(name not in ("min", "max") for name, _ in calls):
+            return True  # a sum, a count, an average: a figure
+        # MIN(x) or MAX(x) is the first or last date of a period -- or the
+        # smallest or largest amount in it. A date by its name (ORDERDATE,
+        # TXN_TS, POSTED_ON, created_at) or where it is wrapped in a date
+        # function (MONTH(MIN(order_date))); else said by the rows: periods
+        # that can be placed and run in no order of time are listed by the
+        # amount, and labels that cannot be placed say nothing of the kind.
+        if any(_names_a_date(argument) for _, argument in calls):
+            return False
+        return _periods_listed_out_of_time(rows)
+    columns = list(rows[0].keys())
+    figures = set(_numeric_cols(rows)) - set(period_columns(rows, _numeric_cols(rows)))
+    sort_keys = {column for column in figures if _is_a_sequence(rows, column)}
+    if figures - sort_keys and not asked:
+        figures -= sort_keys  # a count of 3, 2, 1 that is all the result measures is what it ranks by
+    if key.isascii() and key.isdigit():
+        position = int(key) - 1
+        return 0 <= position < len(columns) and columns[position] in figures
+    name = re.split(r"\.", key)[-1].strip().strip('"[]`').lower()
+    return any(column.lower() == name for column in figures)
+
+
+def _ordered_by_a_figure(sql: str, rows: list[dict], asked: bool = False, db_type: str = "azure_sql") -> bool:
+    """Does the SQL list its rows by a figure rather than by their periods?
+
+    "Top 3 months by revenue" and "which months had the highest revenue"
+    come back ORDER BY the revenue: a ranking of periods. Put back in time
+    order and read as a series, the card said "June 2025 closed at 700" and
+    "Revenue trended down 12.5% from January 2025 to June 2025" of three
+    months picked for their revenue. Only the outermost ORDER BY counts -- a
+    window's or a subquery's orders nothing the reader sees -- and only its
+    first key: an aggregate, a numeric column of the result, or the
+    position of one.
+    """
+    text = str(sql or "")
+    if not rows or not text.strip():
+        return False
+    return _key_is_a_figure(_outer_order_key(text), rows, asked, lambda: _select_definitions(text, db_type))
+
+
+def _outer_order_key(sql: str) -> str:
+    """The first key of the statement's outermost ORDER BY, or ""."""
+    clause = ""
+    for match in re.finditer(r"\bORDER\s+BY\b", sql, re.IGNORECASE):
+        before = re.sub(r"'(?:[^']|'')*'", "", sql[:match.start()])
+        if before.count("(") == before.count(")"):
+            clause = sql[match.end():]
+    if not clause:
+        return ""
+    return _first_order_key(re.split(r"\b(?:LIMIT|OFFSET|FETCH)\b|;", clause, maxsplit=1, flags=re.IGNORECASE)[0])
+
+
+def _ordered_by_the_measure(sql: str, rows: list[dict], db_type: str = "azure_sql") -> bool:
+    """Does the outermost ORDER BY list the rows by what they measure -- SUM(x), a COUNT, a column the statement
+    defines as one or, where it defines none, the result's first measure, or the position of a column -- and not by a
+    column that only holds a number: a year, a key?"""
+    key = _outer_order_key(str(sql or ""))
+    if key.isdigit() or _aggregate_calls(key):
+        return True
+    name = re.split(r"\.", key)[-1].strip().strip('"[]`').lower()
+    defined = _select_definitions(str(sql or ""), db_type).get(name, ())
+    if defined:
+        return "aggregate" in defined
+    numeric_cols = _numeric_cols(rows)
+    measures, _labels, _periods = _measure_and_label_cols(rows, numeric_cols, _text_cols(rows, numeric_cols))
+    return measures[0].lower() == name
+
+
+def _parsed_sql(sql: str, db_type: str = "azure_sql"):
+    """The statement's tree, read the way the validator reads it -- and, where
+    that does not parse it, as the other dialects do -- or None."""
+    import sqlglot
+
+    from core.validator import _DIALECT, normalize_generated_sql
+
+    own = _DIALECT.get(db_type, "snowflake")
+    for dialect in dict.fromkeys((own, "tsql", "snowflake", "oracle")):
+        try:
+            return sqlglot.parse_one(normalize_generated_sql(sql, db_type), read=dialect)
+        except Exception:
+            continue
+    return None
+
+
+def _a_selects_own_key(select, key) -> str:
+    """The text of an ORDER BY key of a select. A position -- ORDER BY 3 -- is the select's own column in that place,
+    named as it is: not the column the whole result has there, which a subquery's order has nothing to do with."""
+    from sqlglot import exp as sg_exp
+
+    text = key.sql()
+    if text.isascii() and text.isdigit() and 0 < int(text) <= len(select.expressions) and not any(
+            isinstance(column, sg_exp.Star) for column in select.expressions):
+        column = select.expressions[int(text) - 1]
+        if isinstance(column, (sg_exp.Alias, sg_exp.Column)):
+            return column.alias_or_name
+        return column.sql()  # COUNT(*), SUM(x): the call is what it orders by
+    return text
+
+
+def _cut_by_a_figure(sql: str, rows: list[dict], db_type: str = "azure_sql", asked: bool = True) -> bool:
+    """Is the result cut to its top periods by a figure inside the statement --
+    a subquery's TOP 3 months ... ORDER BY SUM(x) DESC, or a ROW_NUMBER() OVER
+    (ORDER BY SUM(x) DESC) over the months kept to its first three -- whatever
+    the statement outside says? Only a cut of the periods themselves ranks
+    them: the top 5 customers' monthly totals, listed in time, are a series,
+    and cut by the periods' own order ("the last 12 months") it is not a
+    ranking either."""
+    if not rows or not str(sql or "").strip():
+        return False
+    tree = _parsed_sql(sql, db_type)
+    periods = {column.lower() for column in _period_axes(rows)}
+    if tree is None or not periods:
+        return False
+    from sqlglot import exp as sg_exp
+
+    ctes = {str(cte.alias).lower(): cte.this for cte in tree.find_all(sg_exp.CTE)
+            if isinstance(cte.this, sg_exp.Select)}
+
+    def outputs(select, depth: int = 0) -> set[str]:
+        """What a SELECT hands on: its columns, and a star's, which are those of
+        the CTE or subquery it reads."""
+        names = {str(name).lower() for name in select.named_selects}
+        if "*" not in names or depth > 4:
+            return names
+        names.discard("*")
+        for source in (select.args.get("from_") or select.args.get("from"), *(select.args.get("joins") or [])):
+            node = source.this if source is not None else None
+            if isinstance(node, sg_exp.Table) and str(node.name).lower() in ctes:
+                names |= outputs(ctes[str(node.name).lower()], depth + 1)
+            elif isinstance(node, sg_exp.Subquery) and isinstance(node.this, sg_exp.Select):
+                names |= outputs(node.this, depth + 1)
+        return names
+
+    ranking_windows = (sg_exp.RowNumber, sg_exp.Rank, sg_exp.DenseRank)
+    defined = _definitions_of(tree)
+    for select in tree.find_all(sg_exp.Select):
+        if not outputs(select) & periods:
+            continue  # what this cut ranks is not the periods
+        keys = []
+        order = select.args.get("order")
+        if (select.args.get("limit") or select.args.get("fetch")) and order is not None and order.expressions:
+            keys.append(_a_selects_own_key(select, order.expressions[0].this))
+        for window in select.find_all(sg_exp.Window):
+            ordered = window.args.get("order")
+            if (window.find_ancestor(sg_exp.Select) is select and isinstance(window.this, ranking_windows)
+                    and not window.args.get("partition_by")  # ranks inside each group, never the periods
+                    and ordered is not None and ordered.expressions):
+                keys.append(ordered.expressions[0].this.sql())
+        # A key the statement defines as what rows add up to is a figure whether the question asks for the periods
+        # ranked or not: a count of 3, 2, 1 is a count.
+        if any(_key_is_a_figure(key, rows, asked or "aggregate" in defined.get(_named_by(key, rows), ()), defined)
+               for key in keys):
+            return True
+    return False
+
+
+def _listed_by_value(rows: list[dict]) -> bool:
+    """With no SQL to read: are the rows listed by their figure -- periods
+    that can be placed in time but are not in its order, and figures in the
+    order of their values? Where no period can be placed in time nothing says
+    the rows are not a series."""
+    placed = False
+    for column in _period_axes(rows):
+        keys = [_temporal_sort_value(row.get(column)) for row in rows]
+        if any(key is None for key in keys):
+            continue
+        if keys == sorted(keys) or keys == sorted(keys, reverse=True):
+            return False
+        placed = True
+    numeric_cols = _numeric_cols(rows)
+    figures = [column for column in numeric_cols if column not in set(period_columns(rows, numeric_cols))]
+    if not placed or not figures:
+        return False
+    values = [_to_float(row.get(figures[0])) for row in rows]
+    if any(value is None for value in values):
+        return False
+    return values == sorted(values) or values == sorted(values, reverse=True)
+
+
+def _ranked_by_a_figure(question: str, sql: str, rows: list[dict], db_type: str = "azure_sql") -> bool:
+    """Are the periods of these rows a ranking -- listed by a figure, or the
+    top of one -- and no series? Read from the SQL where there is one; else
+    from the rows themselves (_listed_by_value).
+
+    Periods that can be placed in time and come in its order, forwards or
+    backwards, are listed by their period whatever the SQL sorted them by --
+    a sort key that runs in unequal steps, a figure that happens to rise with
+    the months -- unless the question asks for them ranked."""
+    if not rows:
+        return False
+    if not str(sql or "").strip():
+        return _listed_by_value(rows)
+    ranks_periods = _asks_to_rank_periods(question)
+    # The ask makes a sort key a figure only where the periods are not in time order, or are two: "monthly revenue
+    # in our best year" lists its months in time, counted 1, 2, 3 by a MONTH_NUM.
+    asked = ranks_periods and (len(rows) < 3 or _period_order(rows) != "in")
+    if _ordered_by_a_figure(sql, rows, asked, db_type):
+        # What the question asks to rank stands where the rows are out of time or listed by what they measure: months
+        # in time listed by a year, a column that only holds a number, are a series whatever year is asked about.
+        return (ranks_periods and (asked or _ordered_by_the_measure(sql, rows, db_type))) or _period_order(rows) != "in"
+    return _asks_for_ranked_periods(question) and _cut_by_a_figure(sql, rows, db_type, asked)
+
+
+def _question_texts(question: str) -> list[str]:
+    """The question as written and as canonicalised, which reads the French."""
+    from core.i18n import get_active_language
+    from core.question_normalizer import canonical_question
+
+    try:
+        return [question or "", canonical_question(question or "", get_active_language())]
+    except Exception as exc:
+        log.warning("The question was not canonicalised to read its ranked periods: %s", exc)
+        return [question or ""]
+
+
+def _asks_for_ranked_periods(question: str) -> bool:
+    """Does the question ask for a ranking -- "top 3 months by revenue",
+    "which months had the highest revenue", "best months", "les 3 meilleurs
+    mois par revenu"? Of anything: it is periods only where a subquery or a
+    window cuts the months themselves (_cut_by_a_figure)."""
+    from core.analytical_intent import asks_for_ranking
+    from core.contextual_dates import ranked_period_grain
+
+    return any(detect_top_n_intent(text) is not None or asks_for_ranking(text) or bool(ranked_period_grain(text))
+               for text in _question_texts(question))
+
+
+_PERIOD_NOUNS = r"(?:day|week|month|quarter|year)s?"
+_NOT_A_PREPOSITION = r"(?!(?:by|per|each|in|for|of|and|or|with|on|at|to|from|during|over)\b)"
+_RANKS_PERIODS_RE = re.compile(
+    r"\b(?:top|bottom|best|worst|highest|lowest|biggest|largest|smallest|busiest|slowest|fastest|strongest|weakest)"
+    r"(?:-\w+)?\s+"
+    rf"(?:{_NOT_A_PREPOSITION}[\w'-]+\s+)?{_PERIOD_NOUNS}\b"
+    rf"|\brank(?:ed|ing|s)?\s+(?:of\s+)?(?:the\s+|our\s+|all\s+)?{_PERIOD_NOUNS}\b"
+    rf"|\b{_PERIOD_NOUNS}\s+(?:with|that\s+had|having)\s+the\s+"
+    r"(?:most|highest|lowest|least|fewest|best|worst|biggest|largest|smallest)\b", re.I)
+
+
+def _asks_to_rank_periods(question: str) -> bool:
+    """Does the question rank the periods themselves -- "top 3 months by
+    revenue", "which 3 months had the most orders", "the worst week", "rank
+    months by sales" -- and not some other member across them: "monthly
+    revenue for the top 5 customers" and "our best customer by month" list
+    months in time."""
+    from core.contextual_dates import ranked_period_grain
+
+    return any(_RANKS_PERIODS_RE.search(text) or bool(ranked_period_grain(text)) for text in _question_texts(question))
 
 
 def _chronological_analysis_rows(rows: list[dict]) -> list[dict]:
@@ -705,7 +1631,8 @@ def _chronological_analysis_rows(rows: list[dict]) -> list[dict]:
         copied, numeric_cols, _text_cols(copied, numeric_cols))
     for column in label_cols:
         values = [str(row.get(column, "")) for row in copied]
-        if not _looks_temporal(values):
+        # A period key (202501) is a period as its ISO spelling is.
+        if not _a_period_axis(column, [row.get(column) for row in copied], values):
             continue
         keys = [_temporal_sort_value(row.get(column)) for row in copied]
         if all(key is not None for key in keys):
@@ -717,6 +1644,27 @@ def _chronological_analysis_rows(rows: list[dict]) -> list[dict]:
                 )
             ]
     return copied
+
+
+def in_time_order(labels: list, values: list) -> tuple[list, list]:
+    """A series' labels and values, earliest period first: the order the rows
+    came in is the SQL's, and a series listed newest first said "trended down"
+    of figures that rose. Left as they came where a label cannot be placed in
+    time, or is one a day reads as a month ("Sep-30")."""
+    if len(labels) < 2 or any(_MONTH_OR_DAY_RE.fullmatch(str(label).strip()) for label in labels):
+        return labels, values
+    keys = [_temporal_sort_value(label) for label in labels]
+    if any(key is None for key in keys) or keys == sorted(keys):
+        return labels, values
+    order = sorted(range(len(labels)), key=lambda index: (keys[index], index))
+    return [labels[index] for index in order], [values[index] for index in order]
+
+
+def _std_dev(values: list[float]) -> float | None:
+    """The sample standard deviation of three values or more, none of them NaN or infinite: of those it is no number."""
+    if len(values) < 3 or not all(math.isfinite(value) for value in values):
+        return None
+    return round(stdev(values), 2)
 
 
 def _safe_pct_change(first: float, last: float) -> float | None:
@@ -846,10 +1794,14 @@ def _build_kpi_payload(
     column = next(iter(rows[0]))
     value = rows[0].get(column)
     scalar_missing = _is_missing_scalar(value)
+    fmt = column_formats.get(column, "number")
     return {
         "label": _display_label(column),
-        "value": _safe_cell(value),
-        "format": column_formats.get(column, "number"),
+        # As the table's cell is sent: a period as the day it starts, a key as
+        # its digits. "2,021" is no date a browser can name -- it read it as
+        # the 21st of February 2001.
+        "value": _period_cell(value) if fmt == "date" else _text_cell(value) if fmt == "text" else _safe_cell(value),
+        "format": fmt,
         "display_format": dict(display_formats.get(column) or {}),
         "state": "missing" if (null_issue or scalar_missing) else "ready",
         "note": (
@@ -1467,10 +2419,12 @@ def build_answer(
     column_formats: dict | None = None,
     display_formats: dict | None = None,
     period_labels: list[str] | None = None,
+    asked_grain: str | None = None,
 ) -> dict:
     scope = result_scope or infer_result_scope(rows, question)
     column_formats = column_formats or {}
     display_formats = display_formats or {}
+    grain = requested_period_grain(question) if asked_grain is None else asked_grain
 
     def format_value(value: Any, column: str) -> str:
         return _format_display_value(
@@ -1604,7 +2558,11 @@ def build_answer(
         ascending = bool(scope.get("ascending"))
         ordered = sorted(collapsed or [], key=lambda pair: pair[1], reverse=not ascending)
         labels = [str(r.get(label_col, "")) for r in rows]
-        if (_looks_temporal(labels) and len(set(labels)) == len(labels)
+        # A period key is a period too: 202501..202504 is headed "April 2025
+        # closed at", as the sentences below it read the series, not
+        # "202504 leads at".
+        periods = _a_period_axis(label_col, [r.get(label_col) for r in rows], labels, grain)
+        if (periods and len(set(labels)) == len(labels)
                 and scope.get("kind") != "ranking"):
             first = rows[0]
             last = rows[-1]
@@ -1616,7 +2574,8 @@ def build_answer(
             # The period in the words the table and the insight sentence use
             # for it, not through the number formatter, which turned an
             # integer year into "2,025".
-            last_label = narrative_period_labels(labels)[-1] or _t("answer.latest_period")
+            last_label = _sentence_start(narrative_period_labels(labels, grain, label_col)[-1]) or _t(
+                "answer.latest_period")
             headline = _t("answer.series_close", label=last_label,
                           value=format_value(last_val, value_col))
             comparison = scope.get("badge") or _t(
@@ -1645,8 +2604,9 @@ def build_answer(
         # A period ranked by its measure -- "which month had the highest
         # sales" -- is named as the series names it: "2025-10", not the
         # first day of its bucket.
-        if _looks_temporal(labels) and len(set(labels)) == len(labels):
-            best_label = dict(zip(labels, narrative_period_labels(labels))).get(str(best_label), best_label)
+        if periods and len(set(labels)) == len(labels):
+            best_label = _sentence_start(dict(zip(labels, narrative_period_labels(labels, grain, label_col))).get(
+                str(best_label), best_label))
         best_label = str(best_label or _t("answer.top_result"))
         comparison = scope.get("badge") or _t_plural(
             "answer.across_results", len(ordered))
@@ -1753,7 +2713,9 @@ def _is_listing(
     return True
 
 
-def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> dict:
+def summarize_result_context(
+    rows: list[dict], question: str, sql: str = "", *, asked_grain: str | None = None,
+) -> dict:
     numeric_cols = _numeric_cols(rows)
     text_cols = _text_cols(rows, numeric_cols)
     numeric_cols, text_cols, period_cols = _measure_and_label_cols(
@@ -1803,7 +2765,9 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
         # Formatted here, at the one place the series is read, so every
         # sentence written about it downstream inherits the same labels the
         # table and the KPI show.
-        labels = narrative_period_labels([r.get(label_col, "") for r in rows])
+        labels = narrative_period_labels(
+            [r.get(label_col, "") for r in rows],
+            requested_period_grain(question) if asked_grain is None else asked_grain, label_col)
         values = [_to_float_z(r.get(value_col)) for r in rows]
         ctx.update({
             "label_col": label_col,
@@ -1823,14 +2787,21 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
         # 2026-06" was computed between two different warehouses.
         from core.units_of_measure import kept_in_several_units
 
-        if (_looks_temporal(labels) and len(set(labels)) == len(labels)
-                and kept_in_several_units(rows, value_col)):
+        a_series = (_a_period_axis(label_col, [r.get(label_col) for r in rows], labels)
+                    and len(set(labels)) == len(labels)
+                    # Periods listed by a figure are a ranking of them wherever
+                    # the result is read: the card, the analyst's prompt, the
+                    # conversation, the chart's markers.
+                    and not _ranked_by_a_figure(question, sql, rows))
+        if a_series and kept_in_several_units(rows, value_col):
             # Nor is a quantity kept in feet one month and eaches the next a
             # series of one thing: receipts "trended down 22.2%" from 900 FT to
             # 700 FT across two months of eaches, and the chips asked what drove
             # the drop. The periods are listed; nothing is read across them.
             ctx.update({"mode": "time_series", "several_units": True})
-        elif _looks_temporal(labels) and len(set(labels)) == len(labels):
+        elif a_series:
+            labels, values = in_time_order(labels, values)
+            ctx.update({"labels": labels, "values": values})
             first, last = values[0], values[-1]
             pct = _safe_pct_change(first, last)
             diffs = [values[i] - values[i - 1] for i in range(1, len(values))]
@@ -1899,7 +2870,7 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
                 "spread": round(max(values) - min(values), 2) if values else 0.0,
                 "median_value": round(median(values), 2) if values else 0.0,
                 "top_3_share_pct": round(sum(item["value"] for item in top_items[:3]) / total * 100, 1) if total > 0 and top_items else None,
-                "std_dev": round(stdev(values), 2) if len(values) >= 3 else None,
+                "std_dev": _std_dev(values),
             }
             comparison_stats = {}
             if leader:
@@ -1933,7 +2904,7 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
             "median_value": median(values),
             "distribution_stats": {
                 "spread": round(max(values) - min(values), 2),
-                "std_dev": round(stdev(values), 2) if len(values) >= 3 else None,
+                "std_dev": _std_dev(values),
             },
         })
         ctx["result_scope"] = infer_result_scope(rows, question, sql, mode="numeric_table")
@@ -3072,8 +4043,16 @@ def build_assistant_response(
     zero_match = detect_zero_match_result(raw_rows)
     null_issue = detect_null_metric_issue(raw_rows)
     visible_rows = visible_result_rows(raw_rows)
-    analysis_rows = _chronological_analysis_rows(visible_rows)
-    ctx = summarize_result_context(analysis_rows, display_question, sql=sql)
+    # Periods the SQL listed by a figure are a ranking of them, kept in the
+    # order they came (_ordered_by_a_figure); so are those a ranking was asked
+    # of and a subquery or a window cut to the top of a figure.
+    ranked_by_a_figure = _ranked_by_a_figure(display_question, sql, visible_rows, data_source or "azure_sql")
+    analysis_rows = list(visible_rows) if ranked_by_a_figure else _chronological_analysis_rows(visible_rows)
+    # The grain the periods were asked at, read once: the table, the headline
+    # and every sentence name a period by it, so a month is "March 2025" in
+    # all three (period_grain).
+    grain = requested_period_grain(display_question, semantic_plan)
+    ctx = summarize_result_context(analysis_rows, display_question, sql=sql, asked_grain=grain)
     # The periods the user named, published by the pipeline once the widened
     # result actually arrived. Empty for every other answer in the product, and
     # every branch that reads it falls through to its previous behaviour.
@@ -3084,7 +4063,7 @@ def build_assistant_response(
     if _period_labels:
         ctx["period_labels"] = _period_labels
     result_operation = str((display_context or {}).get("result_operation") or "")
-    if (result_operation in {"keep_top", "sort", "contribution"}
+    if ((result_operation in {"keep_top", "sort", "contribution"} or ranked_by_a_figure)
             and ctx.get("mode") == "time_series" and not _period_labels):
         # Period labels sorted by a measure are a ranking, not a chronology.
         # Treating them as a series creates false trend claims from sort order.
@@ -3094,15 +4073,19 @@ def build_assistant_response(
         ctx["result_scope"] = infer_result_scope(visible_rows, display_question, sql, mode="ranking")
     resolved_column_formats = build_column_formats(
         visible_rows,
-        display_context=display_context,
+        display_context={**(display_context or {}), "period_grain": grain},
         explicit_formats=column_formats,
     )
     headers: list[str] = list(visible_rows[0].keys()) if visible_rows else []
-    resolved_display_formats = {
-        header: dict(spec)
-        for header, spec in (display_formats or {}).items()
-        if header in headers and isinstance(spec, dict)
-    }
+    resolved_display_formats = build_display_formats(
+        visible_rows, resolved_column_formats, explicit=display_formats, requested_grain=grain)
+    if isinstance(display_chart, dict):
+        # The chart's time axis names its periods as the table does: the
+        # second quarter is "Q2", not "Apr".
+        x_style = chart_axis_style(
+            visible_rows, str(display_chart.get("x_key") or ""), resolved_column_formats, resolved_display_formats)
+        if x_style:
+            display_chart["x_style"] = x_style
     answer_rows = raw_rows if (zero_match or null_issue) else analysis_rows
     answer = build_answer(
         answer_rows,
@@ -3111,6 +4094,7 @@ def build_assistant_response(
         column_formats=resolved_column_formats,
         display_formats=resolved_display_formats,
         period_labels=_period_labels,
+        asked_grain=grain,
     )
     brief = compute_data_brief(
         analysis_rows,
@@ -3118,6 +4102,7 @@ def build_assistant_response(
         result_scope=ctx.get("result_scope"),
         context=ctx,
         column_formats=resolved_column_formats,
+        asked_grain=grain,
     )
 
     # ── Insight Layer — pure-stats, zero-latency ─────────────────────────────
@@ -3139,9 +4124,15 @@ def build_assistant_response(
     # limited by run_query(max_rows=200).
     display_rows: list[dict] = []
     if visible_rows:
-        # Send formatted string values for reliable frontend display
+        # Send formatted string values for reliable frontend display -- but a
+        # period as its key: 202501 grouped as "202,501" is no date the
+        # browser can name, and the cell showed that number.
+        periods = {header for header, fmt in resolved_column_formats.items() if fmt == "date"}
+        keys = {header for header, fmt in resolved_column_formats.items() if fmt == "text"}
         for r in visible_rows[:_PREVIEW_ROW_CAP]:
-            display_rows.append({h: _safe_cell(r.get(h)) for h in headers})
+            display_rows.append({h: _period_cell(r.get(h)) if h in periods
+                                 else _text_cell(r.get(h)) if h in keys else _safe_cell(r.get(h))
+                                 for h in headers})
     kpi = _build_kpi_payload(
         visible_rows,
         resolved_column_formats,
@@ -3205,6 +4196,27 @@ def build_assistant_response(
         "confidence": confidence or {},
     }
     return sanitize_response_text_fields(payload)
+
+
+def _period_cell(val: Any) -> str:
+    """A period cell as the day its period starts, ISO-written: 2025-03-01
+    for 202503, "Mar-25" and March 2025, 2021-01-01 for the year 2021. The
+    browser names it in the column's style, and reads no period of its own: a
+    bare 2021 it took for midnight UTC, the last day of 2020 west of
+    Greenwich, and "Jan-25" for January 2001. Anything else as any cell."""
+    part = _period_value(val)
+    return part[0].isoformat() if part else _safe_cell(val)
+
+
+def _text_cell(val: Any) -> str:
+    """A cell shown as text: a key as its digits, never grouped."""
+    if isinstance(val, Decimal) and val.is_finite() and val == val.to_integral_value():
+        return str(int(val))
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    if isinstance(val, int) and not isinstance(val, bool):
+        return str(val)
+    return _safe_cell(val)
 
 
 def _safe_cell(val: Any) -> str:

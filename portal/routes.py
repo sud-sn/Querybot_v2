@@ -1321,11 +1321,19 @@ def _refresh_chart(
                 # of the SAME measure on the SAME page rendered "$1,234.50",
                 # because only the chart path ever saw column_formats.
                 from core.response_builder import (
-                    build_column_formats, _format_display_value,
+                    build_column_formats, build_display_formats, requested_period_grain,
+                    _format_display_value,
                 )
-                _display_formats = display_config.get("display_formats") or {}
+                # A period is named as the answer named it: "March 2025",
+                # "Q2 2025", by the grain the tile's question asked for.
+                _grain = requested_period_grain(chart.get("question", ""))
                 _column_formats = build_column_formats(
-                    rows, explicit_formats=display_config.get("column_formats") or {},
+                    rows, display_context={"period_grain": _grain},
+                    explicit_formats=display_config.get("column_formats") or {},
+                )
+                _display_formats = build_display_formats(
+                    rows, _column_formats, explicit=display_config.get("display_formats") or {},
+                    requested_grain=_grain,
                 )
                 result["table_columns"] = list(rows[0].keys())
                 # The <th> of a pinned table tile printed the warehouse's own
@@ -1376,6 +1384,19 @@ def _refresh_chart(
                 if payload:
                     payload["color_palette"] = chart.get("color_palette") or "default"
                     payload["chart_id"] = chart["id"]   # lets dashboard JS call update-chart
+                    # Its time axis names quarters and years as the answer's
+                    # did (core.response_builder.build_assistant_response).
+                    from core.response_builder import (
+                        build_column_formats, build_display_formats, chart_axis_style, requested_period_grain,
+                    )
+
+                    _grain = requested_period_grain(chart.get("question", ""))
+                    _tile_formats = build_column_formats(rows, display_context={"period_grain": _grain})
+                    _x_style = chart_axis_style(
+                        rows, str(payload.get("x_key") or ""), _tile_formats,
+                        build_display_formats(rows, _tile_formats, requested_grain=_grain))
+                    if _x_style:
+                        payload["x_style"] = _x_style
                     result["chart_json"] = json.dumps(payload)
         store.update_chart_refreshed(chart["id"])
     except Exception as e:

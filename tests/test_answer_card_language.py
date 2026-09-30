@@ -191,7 +191,7 @@ class TestATimeSeries:
 
     def test_the_close_is_french(self, french):
         assert build_answer(self.ROWS, "revenue by month")["headline"] == \
-            "2026-03 a terminé à 220."
+            "Mars 2026 a terminé à 220."
 
     def test_the_trend_sentence_is_french(self, french):
         answer = build_answer(self.ROWS, "revenue by month", dict(self.NO_BADGE))
@@ -204,7 +204,7 @@ class TestATimeSeries:
 
     def test_english_is_unchanged(self):
         answer = build_answer(self.ROWS, "revenue by month", dict(self.NO_BADGE))
-        assert answer["headline"] == "2026-03 closed at 220."
+        assert answer["headline"] == "March 2026 closed at 220."
         assert answer["comparison"] == "Trend is up versus 100 at the start"
 
     def test_the_badge_still_wins_when_the_scope_has_one(self):
@@ -330,11 +330,11 @@ class TestTheInsightSummary:
 
     def test_a_falling_series_is_french(self, french):
         assert _card(SERIES, "revenue by month")["insight_summary"] == \
-            "Revenue a reculé de 40,0 % entre 2026-01 et 2026-04. Pic : 100 en 2026-01."
+            "Revenue a reculé de 40,0 % entre janvier 2026 et avril 2026. Pic : 100 en janvier 2026."
 
     def test_english_is_unchanged(self):
         assert _card(SERIES, "revenue by month")["insight_summary"] == \
-            "Revenue trended down 40.0% from 2026-01 to 2026-04. Peak: 100 in 2026-01."
+            "Revenue trended down 40.0% from January 2026 to April 2026. Peak: 100 in January 2026."
 
     def test_a_ranking_is_french(self, french):
         # "sur 3 regions", not "sur 3 region": the label follows a count. It is
@@ -364,12 +364,12 @@ class TestTheAnomalyCallouts:
 
     def test_they_are_french(self, french):
         messages = [c["message"] for c in _card(SERIES, "revenue by month")["anomaly_callouts"]]
-        assert messages == ["Plus forte baisse : 2026-03 → 2026-04 (-25,0 %)",
+        assert messages == ["Plus forte baisse : mars 2026 → avril 2026 (-25,0 %)",
                             "3 périodes de baisse consécutives"]
 
     def test_english_is_unchanged(self):
         messages = [c["message"] for c in _card(SERIES, "revenue by month")["anomaly_callouts"]]
-        assert messages == ["Biggest drop: 2026-03 → 2026-04 (-25.0%)",
+        assert messages == ["Biggest drop: March 2026 → April 2026 (-25.0%)",
                             "3 consecutive periods of decline"]
 
     def test_a_single_period_streak_takes_the_singular(self, french):

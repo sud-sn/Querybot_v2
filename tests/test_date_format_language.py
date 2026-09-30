@@ -47,7 +47,7 @@ from tests.browser_num import preamble  # noqa: E402
 
 STYLES = ("iso", "month_year_short", "month_year_long", "day_month_year",
           "month_day_year", "day_month_name_year", "day_month_short_year",
-          "year", "month_name")
+          "year", "month_name", "quarter", "iso_date")
 DATES = [date(2025, 1, 5), date(2025, 9, 3), date(2025, 12, 31),
          date(2026, 6, 1), date(1999, 10, 12)]
 

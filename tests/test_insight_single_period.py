@@ -61,7 +61,8 @@ class SinglePeriodTimeSeriesTests(unittest.TestCase):
         )
 
         self.assertIsInstance(payload["insight_summary"], str)
-        self.assertIn("2026-06", payload["insight_summary"])
+        # By its name, as the table beside it shows it.
+        self.assertIn("June 2026", payload["insight_summary"])
 
     def test_two_periods_are_compared_not_called_a_trend(self):
         payload = build_assistant_response(
@@ -77,14 +78,15 @@ class SinglePeriodTimeSeriesTests(unittest.TestCase):
         summary = payload["insight_summary"]
         self.assertIsInstance(summary, str)
         self.assertIn("from 100", summary)
-        self.assertIn("2026-01", summary)
+        self.assertIn("January 2026", summary)
         self.assertIn("to 200", summary)
-        self.assertIn("2026-02", summary)
+        self.assertIn("February 2026", summary)
         self.assertNotIn("trended", summary.lower())
         self.assertEqual(payload["anomaly_callouts"], [])
         self.assertEqual(payload["decision_signal"], {})
-        # Analysis uses chronology, but the table keeps the database order.
-        self.assertEqual(payload["data"]["rows"][0]["MONTH"], "2026-02")
+        # Analysis uses chronology, but the table keeps the database order:
+        # February first, sent as the day its month starts.
+        self.assertEqual(payload["data"]["rows"][0]["MONTH"], "2026-02-01")
 
 
 if __name__ == "__main__":

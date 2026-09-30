@@ -119,19 +119,11 @@ def breakdown_grain(question: str) -> str:
     return found.group(1) if found else ""
 
 
-def requested_temporal_grain(question: str) -> str:
-    """Return the finest grain explicitly requested by the user.
-
-    An explicit breakdown wins over the window's own unit, and it has to: they
-    are different things. "Revenue by month this year" asks for twelve numbers
-    over a yearly window, and reading the window's unit first made the answer
-    one number labelled with the year -- the "by month" branch below was
-    unreachable for every question that also named a period, which is most of
-    them.
-
-    The window's unit remains the fallback, so "last 6 months" still means
-    monthly and "this year" alone still means yearly.
-    """
+def explicit_temporal_grain(question: str) -> str:
+    """The grain the question groups its periods by in its own words -- "by
+    month", "monthly", "each quarter", "which week" -- or "". A window's unit
+    is no grain here: "January revenue for the last 3 years" groups nothing
+    by year."""
     q = normalize_date_role_text(question)
     # "By weekday" is a day's grain, not the week's its letters begin with.
     cycle = requested_cycle(question)
@@ -166,10 +158,25 @@ def requested_temporal_grain(question: str) -> str:
     ):
         if any(word in q for word in words):
             return grain
-    grain = breakdown_grain(question) or ranked_period_grain(question)
+    return breakdown_grain(question) or ranked_period_grain(question)
+
+
+def requested_temporal_grain(question: str) -> str:
+    """Return the finest grain explicitly requested by the user.
+
+    An explicit breakdown wins over the window's own unit, and it has to: they
+    are different things. "Revenue by month this year" asks for twelve numbers
+    over a yearly window, and reading the window's unit first made the answer
+    one number labelled with the year -- the "by month" branch below was
+    unreachable for every question that also named a period, which is most of
+    them.
+
+    The window's unit remains the fallback, so "last 6 months" still means
+    monthly and "this year" alone still means yearly.
+    """
+    grain = explicit_temporal_grain(question)
     if grain:
         return grain
-
     window = detect_temporal_window(question)
     unit = str(window.get("unit") or "").lower()
     if unit in _GRAIN_ORDER:
@@ -177,13 +184,28 @@ def requested_temporal_grain(question: str) -> str:
     return ""
 
 
-_RANKED_PERIOD_RE = re.compile(r"\b(?:which|what)\s+(day|week|month|quarter|year)\b", re.IGNORECASE)
+# "Which months" asks what "which month" does, where a verb or a ranking word
+# follows it: "which months had the highest revenue", "what weeks were the
+# busiest", "which 3 months had the most orders". A measure counted in those
+# units is no ranking of them -- "what weeks of supply do we have by
+# warehouse", "what days sales outstanding", "which days are past due", "what
+# weeks on hand" -- nor are the units of a cycle: "which days of the week",
+# "which months of the year" group by the cycle, not by the calendar.
+_RANKED_PERIOD_RE = re.compile(
+    r"\b(?:which|what)\s+(?:(?:\d+|two|three|four|five|six|seven|eight|nine|ten|twelve)\s+)?"
+    r"(day|week|month|quarter|year)(?:s(?=\s+(?:"
+    r"had|have|has|was|were|did|do|does|saw|see|generated|recorded|brought|made|produced|got|came|grew|fell"
+    r"|dropped|declined|improved|ranked|top|best|worst|highest|lowest|most|least|busiest|strongest|weakest"
+    r"|slowest|fastest|biggest|largest|smallest|(?:are|is)\s+(?:the\s+)?(?:best|worst|highest|lowest|top|busiest"
+    r"|strongest|weakest|slowest|fastest|biggest|largest|smallest)|(?:in|of|during)\s+(?:19|20)\d{2}"
+    r"|(?:last|this|past)\s+(?:year|quarter|month)\b)))?\b", re.IGNORECASE)
 
 
 def ranked_period_grain(question: str) -> str:
     """The period a question ranks: "which month of 2025 had the highest
-    sales" asks for the months of 2025, ordered by their sales -- the French
-    "quel mois" arrives as "which month". "" where it names no period."""
+    sales" asks for the months of 2025, ordered by their sales, and "which
+    months" for the same -- the French "quel mois" arrives as "which month".
+    "" where it names no period."""
     found = _RANKED_PERIOD_RE.search(question or "")
     return found.group(1).lower() if found else ""
 

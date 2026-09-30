@@ -407,10 +407,11 @@ def period_order_key(value: object) -> tuple[int, int, int] | None:
     if iso:
         return (int(iso.group(1)), int(iso.group(2)), int(iso.group(3) or 0))
 
-    quarter = re.match(r"^Q([1-4])[\s\-/]*(\d{4})$", text, re.I)
+    # Q2 2025, and T2 2025 as French writes a quarter (trimestre).
+    quarter = re.match(r"^[QT]([1-4])[\s\-/]*(\d{4})$", text, re.I)
     if quarter:
         return (int(quarter.group(2)), (int(quarter.group(1)) - 1) * 3 + 1, 0)
-    quarter = re.match(r"^(\d{4})[\s\-/]*Q([1-4])$", text, re.I)
+    quarter = re.match(r"^(\d{4})[\s\-/]*[QT]([1-4])$", text, re.I)
     if quarter:
         return (int(quarter.group(1)), (int(quarter.group(2)) - 1) * 3 + 1, 0)
 

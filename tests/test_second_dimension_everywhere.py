@@ -210,7 +210,7 @@ class TestTheHeadlineCard(unittest.TestCase):
     def test_a_true_series_still_closes_on_its_last_period(self):
         rows = [{"PERIOD": p, "REVENUE_AMT": v}
                 for p, v in zip(PERIODS, (100.0, 150.0, 200.0, 300.0))]
-        self.assertIn("2026-06", self.answer(rows=rows)["headline"])
+        self.assertIn("June 2026", self.answer(rows=rows)["headline"])
 
     def test_no_fall_is_announced_over_a_repeating_calendar(self):
         # The other half of the same guard. Without it the card takes the first

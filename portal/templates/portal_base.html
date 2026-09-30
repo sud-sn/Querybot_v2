@@ -126,14 +126,21 @@ window.qbPct = function (value, digits) {
 // back the text the cell formatter wrote, so a formatter that groups with a
 // space and points with a comma needs a parser that knows it -- otherwise
 // "1 234,56" coerces to 123456 and the column sorts, and totals, wrong.
-window.qbParseNum = function (value) {
+//
+// `plain` reads the server's own spelling of a number instead -- "12,000",
+// "3,000.5" -- which is English in every language (core.response_builder
+// _safe_cell): what the page WROTE is read in the page's language, what the
+// server SENT in that one.
+window.qbParseNum = function (value, plain) {
   var text = String(value == null ? '' : value).trim();
   if (!text) return NaN;
+  var group = plain ? ',' : window.QB_NUM.group;
+  var decimal = plain ? '.' : window.QB_NUM.decimal;
   // Currency symbols, the percent sign, and every kind of space (the narrow
   // no-break space French groups with is one).
   text = text.replace(/[$€£¥%\s\u00a0\u202f]/g, '');
-  if (window.QB_NUM.group !== '.') text = text.split(window.QB_NUM.group).join('');
-  if (window.QB_NUM.decimal !== '.') text = text.split(window.QB_NUM.decimal).join('.');
+  if (group !== '.') text = text.split(group).join('');
+  if (decimal !== '.') text = text.split(decimal).join('.');
   if (!text || !/^-?\d*\.?\d+$/.test(text)) return NaN;
   return Number(text);
 };
@@ -183,6 +190,8 @@ window.qbDate = function (year, month, day, style) {
   if (style === 'day_month_short_year') return pad(day) + ' ' + window.qbMonth(month, true) + ' ' + year;
   if (style === 'year') return String(year);
   if (style === 'month_name') return window.qbMonth(month, false);
+  if (style === 'quarter') return window.qbT('date.quarter', {quarter: Math.floor((month - 1) / 3) + 1, year: year});
+  if (style === 'iso_date') return year + '-' + pad(month) + '-' + pad(day);
   return year + '-' + pad(month);
 };
 // A wall-clock time. The page read this from the BROWSER's locale, which is a

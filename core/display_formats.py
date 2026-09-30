@@ -15,6 +15,7 @@ from typing import Any
 DATE_STYLES = {
     "month_year_short", "month_year_long", "iso", "day_month_year",
     "month_day_year", "day_month_name_year", "year", "month_name",
+    "quarter", "iso_date",
 }
 NUMBER_STYLES = {"standard", "compact"}
 CURRENCY_CODES = {"USD", "INR", "EUR", "GBP", "CAD", "AUD", "JPY"}

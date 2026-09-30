@@ -22,6 +22,7 @@ consumers only.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from datetime import date, datetime
 from decimal import Decimal
@@ -44,6 +45,32 @@ _MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
+# A month's word, whole or abbreviated, in English and as French writes it,
+# accents folded -- the answer names a French reader's periods "mars 2025",
+# "février 2025", and a French warehouse's labels are written the same way.
+# Looked up whole: read by its first three letters, "Octane 87" was October
+# 2087, "Junior 12" June 2012 and "Marseille 13" March 2013.
+_MONTH_WORDS = {
+    **_MONTHS, "january": 1, "february": 2, "march": 3, "april": 4, "june": 6, "july": 7, "august": 8,
+    "sept": 9, "september": 9, "october": 10, "november": 11, "december": 12,
+    "janvier": 1, "janv": 1, "fevrier": 2, "fevr": 2, "fev": 2, "mars": 3, "avril": 4, "avr": 4,
+    "mai": 5, "juin": 6, "juillet": 7, "juil": 7, "aout": 8, "septembre": 9,
+    "octobre": 10, "novembre": 11, "decembre": 12,
+}
+
+# A French month as a whole label -- "mars", "mars 2025", "févr. 25" -- the way
+# the answer names a French reader's periods. A label that only holds a month's
+# word is no month: a brand called "Mars Bar", a street "Rue de Juin".
+FRENCH_MONTH_LABEL_RE = re.compile(
+    r"(?:janvier|janv|f[ée]vrier|f[ée]vr|mars|avril|avr|mai|juin|juillet|juil|ao[uû]t|septembre|sept"
+    r"|octobre|novembre|d[ée]cembre|d[ée]c)\.?(?:[\s-]+(?:19|20)?\d{2})?", re.I)
+
+# A French day as a whole label -- "1 mars 2025", "1er mars 2025", "jeudi 4 mars
+# 2025" -- a period of a daily series.
+FRENCH_DAY_LABEL_RE = re.compile(
+    r"(?:(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\s+)?\d{1,2}(?:er)?\s+"
+    r"(?:janvier|janv|f[ée]vrier|f[ée]vr|mars|avril|avr|mai|juin|juillet|juil|ao[uû]t|septembre|sept"
+    r"|octobre|novembre|d[ée]cembre|d[ée]c)\.?\s+(?:19|20)\d{2}", re.I)
 
 # Approximate day counts, used only to name the cadence of an observed gap.
 _GRAIN_BY_DAYS: tuple[tuple[str, int, int], ...] = (
@@ -146,9 +173,9 @@ def parse_period_label(value: Any) -> date | None:
         except ValueError:
             return None
 
-    # Q2 2026 / 2026-Q2
-    match = re.fullmatch(r"q([1-4])[ -]?(\d{4})", text, re.I) or re.fullmatch(
-        r"(\d{4})[ -]?q([1-4])", text, re.I
+    # Q2 2026 / 2026-Q2, and T2 2026 as French writes a quarter (trimestre)
+    match = re.fullmatch(r"[qt]([1-4])[ -]?(\d{4})", text, re.I) or re.fullmatch(
+        r"(\d{4})[ -]?[qt]([1-4])", text, re.I
     )
     if match:
         groups = match.groups()
@@ -158,18 +185,56 @@ def parse_period_label(value: Any) -> date | None:
         except ValueError:
             return None
 
-    # Mar 2026 / March 2026
-    match = re.fullmatch(r"([a-z]{3,9})[- /](\d{2,4})", text, re.I)
+    # Mar 2026 / March 2026 / mars 2026 / févr. 2026, and Mar-26 or Mar/26.
+    # Two digits after a space are a day, not a year: "Sep 24" is the 24th of
+    # September, and was read as September 2024 -- three days of sales became
+    # three Septembers, 2024 to 2026.
+    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    match = re.fullmatch(r"([a-z]{3,9})\.?(?:[- /](\d{4})|[-/](\d{2}))", folded, re.I)
     if match:
-        month = _MONTHS.get(match.group(1)[:3].lower())
+        month = _MONTH_WORDS.get(match.group(1).lower())
         if month:
-            year = int(match.group(2))
+            year = int(match.group(2) or match.group(3))
             if year < 100:
                 year += 2000
             try:
                 return _bounded(date(year, month, 1))
             except ValueError:
                 return None
+    return None
+
+
+# A day written out with its year. "Sep 24" is no day to place: it is the 24th of September or September 2024.
+_DAY_LABEL_FORMATS = ("%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y", "%d-%b-%Y", "%d/%b/%Y")
+
+
+def parse_month_name(value: Any) -> int | None:
+    """The month a label names alone -- "March", "Mar", "mars", "janv." -- as 1 to 12, or None."""
+    folded = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
+    return _MONTH_WORDS.get(folded.strip().rstrip(".").lower())
+
+
+def parse_day_label(value: Any) -> date | None:
+    """The day a label names -- "4 March 2025", "March 4, 2025", "1er mars 2025",
+    "jeudi 4 mars 2025" -- or None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if FRENCH_DAY_LABEL_RE.fullmatch(text):
+        found = re.search(r"(\d{1,2})(?:er)?\s+([^\W\d_]+)\.?\s+((?:19|20)\d{2})", text)
+        folded = unicodedata.normalize("NFKD", found.group(2)).encode("ascii", "ignore").decode().lower()
+        month = _MONTH_WORDS.get(folded)
+        if month is None:
+            return None
+        try:
+            return date(int(found.group(3)), month, int(found.group(1)))
+        except ValueError:
+            return None
+    for fmt in _DAY_LABEL_FORMATS:
+        try:
+            return _bounded(datetime.strptime(text, fmt).date())
+        except ValueError:
+            continue
     return None
 
 
@@ -236,7 +301,9 @@ def seasonal_period_for_grain(grain: str) -> int:
 
 _PERIOD_NAME_RE = re.compile(
     r"(?:^|_)(?:date|dt|day|dow|week|wk|month|mth|quarter|qtr|year|yr|"
-    r"period|prd|yyyymm|yyyymmdd|fiscal|fy|calendar)(?:_|$)",
+    r"period|prd|yyyymm|yyyymmdd|ym|fiscal|fy|calendar"
+    # And as French names them: PERIODE, MOIS, ANNEE, TRIMESTRE.
+    r"|periode|mois|annee|an|trimestre|semaine|jour|exercice)(?:_|$)",
     re.I,
 )
 # A column carrying one of these is a measure even when it also carries a period
@@ -253,9 +320,28 @@ _MEASURE_NAME_RE = re.compile(
 # ordinary business measures -- LEAD_TIME_DAY, AGE_WK -- and mistaking one of
 # those for a period would steal the measure, which is the failure being fixed.
 _UNIT_NUMBER_RANGES: tuple[tuple[re.Pattern[str], int, int], ...] = (
-    (re.compile(r"(?:^|_)(?:month|mth)(?:_|$)", re.I), 1, 12),
-    (re.compile(r"(?:^|_)(?:quarter|qtr)(?:_|$)", re.I), 1, 4),
+    (re.compile(r"(?:^|_)(?:month|mth|mois)(?:_|$)", re.I), 1, 12),
+    (re.compile(r"(?:^|_)(?:quarter|qtr|trimestre)(?:_|$)", re.I), 1, 4),
 )
+
+
+# A week's key (202530: the 30th week of 2025) and a fiscal period's (202513:
+# the 13th period of a year kept in thirteen) are a year and the period's
+# number, which runs past 12. Read as a calendar month they were no period at
+# all, and the column a measure. Only a column named for such a period may
+# hold them: CUSTOMER_KEY 202530 is a customer.
+_NUMBERED_KEYS: tuple[tuple[re.Pattern[str], int], ...] = (
+    (re.compile(r"(?:^|_)(?:week|weeks|wk|wks|isoweek|semaine|semaines)(?:_|$)", re.I), 53),
+    (re.compile(r"(?:^|_)(?:fiscal|fisc|fscl|fp|fyp|fiscale|fiscales|exercice|exercices|accounting|acct|posting|gl"
+                r"|comptable|comptables)(?:_|$)", re.I), 17),
+)
+
+
+def _is_a_numbered_key(value: Any, highest: int) -> bool:
+    """A year and a period's number, 1 to ``highest``: 202530."""
+    number = _as_int(value)
+    text = str(number) if number is not None else ""
+    return len(text) == 6 and _MIN_YEAR <= int(text[:4]) <= _MAX_YEAR and 1 <= int(text[4:]) <= highest
 
 
 def _as_int(value: Any) -> int | None:
@@ -311,7 +397,10 @@ def is_calendar_period_column(col_name: Any, values: list[Any]) -> bool:
         DLV_DAY_CNT   [1, 2, 3]             -> False   measure suffix
         LEAD_TIME_DAY [14, 21, 30]          -> False   a duration, not a day
     """
-    name = str(col_name or "")
+    # Read as its words whatever the case and the accents: "OrderMonth" is
+    # ORDER_MONTH, "Période" PERIODE.
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(col_name or ""))
+    name = re.sub(r"[^A-Za-z0-9]+", "_", unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode())
     if not name or not _PERIOD_NAME_RE.search(name):
         return False
     if _MEASURE_NAME_RE.search(name):
@@ -324,6 +413,9 @@ def is_calendar_period_column(col_name: Any, values: list[Any]) -> bool:
         return False
     if all(_is_calendar_period_value(value) for value in sample):
         return True
+    for pattern, highest in _NUMBERED_KEYS:
+        if pattern.search(name) and all(_is_a_numbered_key(value, highest) for value in sample):
+            return True
     for pattern, low, high in _UNIT_NUMBER_RANGES:
         if not pattern.search(name):
             continue

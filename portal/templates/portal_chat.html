@@ -2242,16 +2242,41 @@ function _columnFormatMap(data) {
 function _parseDisplayNumber(v) {
   return window.qbParseNum(v);
 }
+// A number as the server SENT it -- "12,000", "3,000.5", English in every
+// language -- as opposed to one the page wrote (_parseDisplayNumber).
+function _parseServerNumber(v) {
+  return window.qbParseNum(v, true);
+}
+// Whether a column's cells, as the server sent them, hold numbers.
+function _isANumericColumn(rows, header) {
+  return rows.slice(0, 20).map(r => r[header])
+    .some(v => v !== null && v !== '' && !isNaN(_parseServerNumber(v)));
+}
 function _displayFormatSpec(data, column) {
   const specs = data?.display_formats || {};
   const wanted = _normaliseColumnKey(column);
   const key = Object.keys(specs).find(name => _normaliseColumnKey(name) === wanted);
   return key ? (specs[key] || {}) : {};
 }
+// The day a cell's date names, in the reader's own time zone. A date written
+// as digits is read here and never by the browser's parser, which takes
+// "2021" and "2021-01-01" for midnight UTC -- the last day of 2020 anywhere
+// west of Greenwich -- and "Jan-25" for January 2001. A period key, as
+// core.response_builder reads one: 202503 is March 2025 and 20250305 the 5th.
+// A day no calendar has (20250230) is none.
 function _parseDisplayDate(value) {
   const raw = String(value ?? '').trim();
-  let m = raw.match(/^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?/);
-  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3] || 1));
+  const m = raw.match(/^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?/)
+    || raw.match(/^(\d{4})(\d{2})(\d{2})?$/) || raw.match(/^(\d{4})$/);
+  if (m) {
+    const year = Number(m[1]), month = Number(m[2] || 1), day = Number(m[3] || 1);
+    if (year < 1900 || year > 2199) return null;
+    const dt = new Date(year, month - 1, day);
+    return dt.getFullYear() === year && dt.getMonth() === month - 1 && dt.getDate() === day ? dt : null;
+  }
+  // Only a full ISO timestamp goes to the browser's parser: any other string it
+  // reads as it likes ("2,021" is the 21st of February 2001).
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(raw)) return null;
   const parsed = new Date(raw);
   return isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -2310,7 +2335,7 @@ function _formatDisplayValue(value, fmt, spec = {}, column = '') {
     }
   }
   if (fmt === 'currency') {
-    const n = _parseDisplayNumber(raw);
+    const n = _parseServerNumber(raw);
     if (!isNaN(n)) {
       const code = spec.currency_code || 'USD';
       const body = window.qbNum(Math.abs(n), {min: numberOpts.minimumFractionDigits,
@@ -2322,7 +2347,7 @@ function _formatDisplayValue(value, fmt, spec = {}, column = '') {
     }
   }
   if (fmt === 'percentage') {
-    const n = _parseDisplayNumber(raw);
+    const n = _parseServerNumber(raw);
     if (!isNaN(n)) return window.qbNum(spec.scale === 'fraction' ? n * 100 : n,
                                        {min: numberOpts.minimumFractionDigits,
                                         max: numberOpts.maximumFractionDigits,
@@ -2330,7 +2355,7 @@ function _formatDisplayValue(value, fmt, spec = {}, column = '') {
                           + window.QB_NUM.percent_gap + '%';
   }
   if (fmt === 'number') {
-    const n = _parseDisplayNumber(raw);
+    const n = _parseServerNumber(raw);
     if (!isNaN(n)) return window.qbNum(n, {min: numberOpts.minimumFractionDigits,
                                           max: numberOpts.maximumFractionDigits,
                                           grouping: numberOpts.useGrouping !== false});
@@ -2339,8 +2364,8 @@ function _formatDisplayValue(value, fmt, spec = {}, column = '') {
   if (_isPeriodLabel(raw, column)) return raw.trim();
   // Fallback: auto-format plain numeric strings with thousand separators (max 2 dp)
   // Matches SQL DECIMAL/FLOAT columns not yet classified by column_formats.
-  if (!fmt && /^-?\d+(\.\d+)?$/.test(raw.trim())) {
-    const n = Number(raw);
+  if (!fmt && /^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(raw.trim())) {
+    const n = _parseServerNumber(raw);
     if (!isNaN(n)) return window.qbNum(n, {max: 2});
   }
   return raw;
@@ -2361,21 +2386,26 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   // card printed "Warehouse Name" in its prose and "WHS_NM" in the header
   // directly below it.
   const headerLabels = data.header_labels || {};
-  const headHtml = headers.map((h, i) =>
-    `<th data-col="${i}">${escHtml(headerLabels[h] || h)}</th>`
-  ).join('');
+  // The format each column's cells are shown in is carried on its header: the
+  // footer totals no column of text (a week's key, 202530, is no amount).
+  const headHtml = headers.map((h, i) => {
+    const format = colFormats.get(_normaliseColumnKey(h));
+    return `<th data-col="${i}"${format ? ` data-fmt="${escHtml(format)}"` : ''}>${escHtml(headerLabels[h] || h)}</th>`;
+  }).join('');
 
   // Detect numeric columns: their cells take tabular figures and align
   // right, and the footer shows their aggregates.
-  const numCols = headers.filter(h => {
-    const vals = data.rows.slice(0, 20).map(r => r[h]);
-    return vals.some(v => v !== null && v !== '' && !isNaN(_parseDisplayNumber(v)));
-  });
+  const numCols = headers.filter(h => _isANumericColumn(data.rows, h));
   const bodyHtml = data.rows.map((r, rowIndex) =>
     '<tr>' + headers.map(h => {
       const fmt = colFormats.get(_normaliseColumnKey(h));
       const cls = numCols.includes(h) ? ' class="num"' : '';
-      return `<td${cls}>${escHtml(_formatDisplayValue(r[h], fmt, _displayFormatSpec(data, h), h))}</td>`;
+      // A period sorts by the date it is, not by its name: "April" before
+      // "January" is the alphabet.
+      const spec = _displayFormatSpec(data, h);
+      const sortKey = (fmt === 'date' || spec.type === 'date') && r[h] != null
+        ? ` data-sort="${escHtml(String(r[h]))}"` : '';
+      return `<td${cls}${sortKey}>${escHtml(_formatDisplayValue(r[h], fmt, spec, h))}</td>`;
     }).join('') + '</tr>'
   ).join('');
 
@@ -2404,6 +2434,27 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   </div>`;
 }
 
+// What a table cell sorts by: the day its period starts on where it names
+// one -- "April" before "January" is the alphabet -- else its text.
+function _cellSortValue(cell) {
+  const sort = cell && cell.dataset ? cell.dataset.sort : undefined;
+  return sort !== undefined ? String(sort) : String(cell?.textContent ?? '');
+}
+function _compareCellValues(av, bv) {
+  const an = _parseDisplayNumber(av);
+  const bn = _parseDisplayNumber(bv);
+  if (!isNaN(an) && !isNaN(bn)) return an - bn;
+  return av.localeCompare(bv);
+}
+// A column the footer totals: its numbers, never a period's -- the years 2021
+// to 2023 are no amount ("Σ Period: 6,066").
+function _totalledColumn(cells, header) {
+  if (header && header.dataset && header.dataset.fmt === 'text') return false;
+  if (cells.some(cell => cell && cell.dataset && cell.dataset.sort !== undefined)) return false;
+  return cells.slice(0, 20).map(cell => cell?.textContent ?? '')
+    .some(v => v !== '' && !isNaN(_parseDisplayNumber(v)));
+}
+
 function _mountDataTableControls(wrapEl, question) {
   if (!wrapEl) return;
   const table = wrapEl.querySelector('.data-table');
@@ -2416,10 +2467,7 @@ function _mountDataTableControls(wrapEl, question) {
 
   // Infer numeric columns
   let allRows = Array.from(tbody.querySelectorAll('tr'));
-  const numColIndexes = headers.map((_, ci) => {
-    const vals = allRows.slice(0, 20).map(r => r.cells[ci]?.textContent ?? '');
-    return vals.some(v => v !== '' && !isNaN(_parseDisplayNumber(v)));
-  });
+  const numColIndexes = headers.map((th, ci) => _totalledColumn(allRows.map(r => r.cells[ci]), th));
   const dataFormats = (() => {
     const map = new Map();
     try {
@@ -2455,14 +2503,8 @@ function _mountDataTableControls(wrapEl, question) {
   function applySort() {
     if (sortCol < 0) return;
     const rows = Array.from(tbody.querySelectorAll('tr'));
-    rows.sort((a, b) => {
-      const av = a.cells[sortCol]?.textContent ?? '';
-      const bv = b.cells[sortCol]?.textContent ?? '';
-      const an = _parseDisplayNumber(av);
-      const bn = _parseDisplayNumber(bv);
-      if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
-      return av.localeCompare(bv) * sortDir;
-    });
+    rows.sort((a, b) => _compareCellValues(_cellSortValue(a.cells[sortCol]),
+                                           _cellSortValue(b.cells[sortCol])) * sortDir);
     rows.forEach(r => tbody.appendChild(r));
   }
 

@@ -38,8 +38,8 @@ import store
 from core.i18n import format_count as _fmt_count, plural as _plural, t as _t
 from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.response_builder import (
-    build_assistant_response, build_column_formats,
-    detect_null_metric_issue, detect_zero_match_result,
+    build_assistant_response, build_column_formats, build_display_formats,
+    detect_null_metric_issue, detect_zero_match_result, requested_period_grain,
     _display_label, _format_display_value,
 )
 from core.schema_enrichment import display_label
@@ -173,7 +173,7 @@ def _detect_column_format(col_name: str) -> str:
     return "number"
 
 
-def _format_value(val, col_name: str = "", format_hint: str = "") -> str:
+def _format_value(val, col_name: str = "", format_hint: str = "", display_format: dict | None = None) -> str:
     """
     Format a single cell value for clean display.
 
@@ -196,8 +196,16 @@ def _format_value(val, col_name: str = "", format_hint: str = "") -> str:
         # prints "2026-01" and this channel printed "2026-01-01" for the same
         # cell -- the same split b57e03b caused in the other direction, where
         # the server was fixed and the browser was not. Two renderers per
-        # channel is unavoidable; two different answers is not.
-        return _format_display_value(val, "date")
+        # channel is unavoidable; two different answers is not. In the
+        # period's style too (build_display_formats): "March 2025", never the
+        # "2025-03" beneath the portal's "March 2025".
+        return _format_display_value(val, "date", display_format)
+    if hint == "text":
+        # A key no calendar names -- a week's 202530, a fiscal period's -- is
+        # its digits, never "202,530": a text column of numbers is no amount.
+        if isinstance(val, (int, float, _decimal.Decimal)) and not isinstance(val, bool) and float(val) == int(val):
+            return str(int(val))
+        return str(val)
     explicit_format = _FORMAT_ALIASES.get(hint)
     fmt = explicit_format or (
         _FORMAT_ALIASES[_detect_column_format(col_name)]
@@ -255,7 +263,9 @@ def _is_internal_column(name) -> bool:
         return False
 
 
-def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
+def _rows_to_table(
+    rows, column_formats: dict[str, str] | None = None, display_formats: dict[str, dict] | None = None,
+) -> str:
     """Format query results as a clean text table with smart value formatting."""
     if not rows:
         return "(no results)"
@@ -263,6 +273,7 @@ def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
     if not headers:                      # a result of nothing but markers
         headers = list(rows[0].keys())
     column_formats = column_formats or {}
+    display_formats = display_formats or {}
     # The <th> of the browser table has said "Warehouse Name" since the L4
     # work; this table said WHS_NM. It is not the same function as the one
     # that was fixed then -- the else branch at the bottom of _send_results
@@ -272,7 +283,7 @@ def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
     labels = {h: display_label(h) for h in headers}
     formatted = [
         {
-            h: _format_value(r.get(h), h, column_formats.get(h, ""))
+            h: _format_value(r.get(h), h, column_formats.get(h, ""), display_formats.get(h))
             for h in headers
         }
         for r in rows
@@ -758,9 +769,14 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         )
     except Exception as exc:
         log.warning("Placeholder members not relabelled for %s: %s", account_id, exc)
+    # The grain the periods were asked at, as the portal's payload reads it
+    # (core.response_builder.build_assistant_response): a month in this table
+    # is the "March 2025" the portal and the sentences name it.
+    period_grain = requested_period_grain(
+        display_question, (confidence_context or {}).get("semantic_plan") or None)
     column_formats = build_column_formats(
         rows,
-        display_context=display_context,
+        display_context={**(display_context or {}), "period_grain": period_grain},
         explicit_formats=explicit_column_formats,
     )
     if rows:
@@ -795,7 +811,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             rows_truncated=bool((confidence_context or {}).get("rows_truncated")),
         )
 
-    table_text = _rows_to_table(rows, column_formats)
+    display_formats = build_display_formats(rows, column_formats, requested_grain=period_grain)
+    table_text = _rows_to_table(rows, column_formats, display_formats)
     row_word   = "row" if len(rows) == 1 else "rows"
     dur_label  = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
     _has_confidence_context = bool(confidence_context)
@@ -1174,6 +1191,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             rows[0][col_name],
             col_name,
             column_formats.get(col_name, ""),
+            display_formats.get(col_name),
         )
         greeting = f"*{portal_user.get('name', '')}* — " if portal_user and portal_user.get('name') else ""
         reply = (

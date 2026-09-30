@@ -176,19 +176,34 @@
     let m = /^(\d{4})(\d{2})(\d{2})?$/.exec(s) || /^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?(?:[T ].*)?$/.exec(s);
     if (!m) return null;
     const year = Number(m[1]), month = Number(m[2]), day = m[3] ? Number(m[3]) : 0;
-    if (year < 1900 || year > 2199 || month < 1 || month > 12 || day > 31) return null;
+    // A day its month has: 20250230 is none.
+    if (year < 1900 || year > 2199 || month < 1 || month > 12
+        || day > new Date(year, month, 0).getDate()) return null;
     return {year, month, day};
   }
-  function periodLabel(raw, long) {
+  // A period is named as the table names it, in the style the server gave
+  // the column (payload.x_style): a month bucket, 2024-03-01, is "Mar 2024",
+  // not the 1st of March; the second quarter is "Q2 2024", never "Apr 2024",
+  // its first month; a year is its year.
+  const quarterOf = p => Math.floor((p.month - 1) / 3) + 1;
+  const dayOf = (p, style) => (style === 'month_year_long' ? 0 : p.day);
+  function periodLabel(raw, long, style) {
+    // A week's or a fiscal period's key (202501) is no month: the table names
+    // it by its key, and so does the axis.
+    if (style === 'key') return String(raw == null ? '' : raw);
     const p = periodParts(raw);
     if (!p || !global.qbMonth) return String(raw == null ? '' : raw);
+    if (style === 'quarter') return t('date.quarter', {quarter: quarterOf(p), year: p.year});
+    if (style === 'year') return String(p.year);
     const month = global.qbMonth(p.month, !long);
-    return p.day ? `${p.day} ${month} ${p.year}` : `${month} ${p.year}`;
+    const day = dayOf(p, style);
+    return day ? `${day} ${month} ${p.year}` : `${month} ${p.year}`;
   }
   // The axis writes the year once, under the first label of each year, so a
   // twelve-month axis reads "Jan / 2024, Feb, Mar ..." instead of repeating
   // the year twelve times.
-  function periodAxisFormatter(labels, column) {
+  function periodAxisFormatter(labels, column, style) {
+    if (style === 'key') return value => String(value);
     // A month NUMBER on a month column: 1..12 read as Jan..Dec.
     if (MONTH_COLUMN_RE.test(String(column || '')) && labels.length
         && labels.every(v => /^\d{1,2}$/.test(v) && Number(v) >= 1 && Number(v) <= 12) && global.qbMonth) {
@@ -199,9 +214,12 @@
     return (value, index) => {
       const p = parts[index] || periodParts(value);
       if (!p) return String(value);
+      if (style === 'year') return String(p.year);
       const prev = index > 0 ? parts[index - 1] : null;
       const month = global.qbMonth(p.month, true);
-      const head = p.day ? `${p.day} ${month}` : month;
+      const day = dayOf(p, style);
+      const head = style === 'quarter' ? t('date.quarter.short', {quarter: quarterOf(p)})
+        : (day ? `${day} ${month}` : month);
       return (!prev || prev.year !== p.year) ? `${head}\n${p.year}` : head;
     };
   }
@@ -330,6 +348,7 @@
   function buildOption(payload, layout) {
     let rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
     const xKey = payload && payload.x_key;
+    const xStyle = String((payload && payload.x_style) || '');
     let yKeys = Array.isArray(payload && payload.y_keys) ? payload.y_keys.slice() : [];
 
     const palettes = global.QB_PALETTES || {};
@@ -421,7 +440,7 @@
     const monthNumbers = temporal && MONTH_COLUMN_RE.test(String(xKey || ''))
       && labels.every(v => /^\d{1,2}$/.test(v) && Number(v) >= 1 && Number(v) <= 12);
     const shownLabel = raw => (monthNumbers && global.qbMonth ? global.qbMonth(Number(raw), false)
-      : (temporal ? periodLabel(raw, true) : String(raw)));
+      : (temporal ? periodLabel(raw, true, xStyle) : String(raw)));
     const base = {
       color: colors,
       backgroundColor: 'transparent',
@@ -746,7 +765,7 @@
       const forecastName = t('ui.chat.chart.forecast');
       const bandName = t('ui.chat.chart.interval');
       const projColor = colors[1] || colors[0];
-      const axisFmt = periodAxisFormatter(periods, periodKey);
+      const axisFmt = periodAxisFormatter(periods, periodKey, xStyle);
       return Object.assign(base, {
         color: [colors[0], projColor],
         title: trendNote ? {text: '', subtext: trendNote, left: 0, top: 22, padding: 0,
@@ -771,7 +790,7 @@
               lines.push(tipRow(projColor, bandName,
                 `${valueFmt(num(row.forecast_low), metricKey)} – ${valueFmt(num(row.forecast_high), metricKey)}`, c, 'swatch'));
             }
-            return tipHeader(periodLabel(periods[i], true) + (row.is_forecast ? ` · ${forecastName}` : ''), c) + lines.join('');
+            return tipHeader(periodLabel(periods[i], true, xStyle) + (row.is_forecast ? ` · ${forecastName}` : ''), c) + lines.join('');
           },
         }),
         xAxis: {
@@ -898,7 +917,7 @@
     const hasAnnotations = Boolean(payload && payload.annotations
       && (payload.annotations.biggest_period_drop || payload.annotations.biggest_period_gain));
     const zoom = ordered && labels.length > 60;
-    const axisFmt = temporal ? periodAxisFormatter(labels, xKey) : null;
+    const axisFmt = temporal ? periodAxisFormatter(labels, xKey, xStyle) : null;
     const top = legendReserve + capReserve + (hasAnnotations ? 22 : 8);
 
     if (type === 'scatter') {

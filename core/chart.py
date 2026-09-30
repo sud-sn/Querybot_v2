@@ -641,7 +641,18 @@ def build_chart_payload(
             payload["facets"] = panels
 
     if annotations and effective_type in _ANNOTATABLE_TYPES and not grouped_by:
-        known_periods = {str(r.get(x_key, "")) for r in clean_rows}
+        # The brief names a period as the answer does ("February 2025"), the
+        # chart holds it as the warehouse sent it ("2025-02"): the marker goes
+        # where the chart has it.
+        known_periods = {str(r.get(x_key, "")): str(r.get(x_key, "")) for r in clean_rows}
+        try:
+            from core.response_builder import narrative_period_labels, requested_period_grain
+
+            grain = requested_period_grain(question)
+            for raw, named in zip(list(known_periods), narrative_period_labels(list(known_periods), grain, x_key)):
+                known_periods.setdefault(str(named), raw)
+        except Exception as exc:
+            log.warning("The chart's periods were not named for its markers: %s", exc)
         chart_annotations = {}
         for kind in ("biggest_period_drop", "biggest_period_gain"):
             entry = annotations.get(kind)
@@ -651,7 +662,7 @@ def build_chart_payload(
             if period not in known_periods:
                 continue
             chart_annotations[kind] = {
-                "period": period,
+                "period": known_periods[period],
                 "absolute_change": entry.get("absolute_change"),
                 "pct_change": entry.get("pct_change"),
             }

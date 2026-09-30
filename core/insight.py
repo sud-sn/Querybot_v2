@@ -344,7 +344,7 @@ def _looks_temporal(labels: list[str]) -> bool:
         "july", "august", "september", "october", "november", "december",
         "week", "month", "quarter", "year", "date", "day",
     ]
-    from core.temporal_columns import labels_are_bare_years
+    from core.temporal_columns import FRENCH_DAY_LABEL_RE, FRENCH_MONTH_LABEL_RE, labels_are_bare_years
 
     if bool(re.search(r"\b\d{4}[-/]\d{1,2}([-/]\d{1,2})?\b", sample)):
         return True
@@ -360,7 +360,15 @@ def _looks_temporal(labels: list[str]) -> bool:
         return True
     if any(re.search(r"\b" + tok + r"\b", sample) for tok in wb_tokens):
         return True
-    return False
+    # A French quarter, T2 2025, only beside its year: terminals T1 and T2
+    # are no quarters.
+    if re.search(r"\bt[1-4]\s*[-/]?\s*(?:19|20)\d{2}\b", sample):
+        return True
+    # A French month, "mars 2025" as the answer names one: a label that is one
+    # and nothing else. A brand called "Mars Bar" is no month.
+    named = [str(label).strip() for label in labels[:8] if label and str(label).strip()]
+    return bool(named) and all(FRENCH_MONTH_LABEL_RE.fullmatch(label) or FRENCH_DAY_LABEL_RE.fullmatch(label)
+                               for label in named)
 
 
 def _is_sensitive_field(name: str) -> bool:
@@ -428,6 +436,7 @@ def compute_data_brief(
     result_scope: dict | None = None,
     context: dict | None = None,
     column_formats: dict | None = None,
+    asked_grain: str | None = None,
 ) -> dict:
     """
     Compute a statistical data brief from result rows.
@@ -544,7 +553,7 @@ def compute_data_brief(
             collapse_rows_by_label, measure_class_for_column,
         )
         from core.response_builder import (
-            _narrative_label_column, narrative_period_labels,
+            _narrative_label_column, narrative_period_labels, requested_period_grain,
         )
 
         from core.units_of_measure import per_unit_totals, rows_per_unit
@@ -555,7 +564,9 @@ def compute_data_brief(
         per_unit = rows_per_unit(rows, label_col, value_col, question, measure_format=value_format)
         # Same formatting the table and KPI apply, so a trend sentence does
         # not print 2026-01-01 beside a headline that says 2026-01.
-        labels = narrative_period_labels([r.get(label_col, "") for r in rows])
+        labels = narrative_period_labels(
+            [r.get(label_col, "") for r in rows],
+            requested_period_grain(question) if asked_grain is None else asked_grain, label_col)
         values = [_to_float(r.get(value_col)) or 0.0 for r in rows]
 
         # One row per category before anything is ranked or shared. Rows the
@@ -668,7 +679,15 @@ def compute_data_brief(
         # A repeating label is not a series axis: the result is grouped by
         # something else too, so the first and last values belong to different
         # members of that other dimension.
-        if _looks_temporal(labels) and len(set(labels)) == len(labels):
+        # The context has read the rows once (summarize_result_context): a
+        # week's keys, which no calendar names, are a series it reads, and
+        # periods listed by a figure a ranking.
+        series = (ctx.get("mode") == "time_series" if ctx.get("mode") in {"time_series", "ranking"}
+                  else _looks_temporal(labels))
+        if series and len(set(labels)) == len(labels):
+            from core.response_builder import in_time_order
+
+            labels, values = in_time_order(labels, values)
             brief["mode"] = "time_series"
             # A quantity in feet one period and eaches the next has no trend,
             # peak, drop or streak across them (summarize_result_context).

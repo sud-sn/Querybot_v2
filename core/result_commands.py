@@ -1341,7 +1341,7 @@ def _format_label(spec: dict) -> str:
     if kind == "date":
         style = str(spec.get("style") or "")
         known = {"month_year_short", "month_year_long", "iso",
-                 "day_month_year", "month_day_year", "day_month_name_year"}
+                 "day_month_year", "month_day_year", "day_month_name_year", "quarter", "iso_date"}
         return _t(f"reply.rc.label.date.{style}" if style in known
                   else "reply.rc.label.date.other")
     if kind == "currency":

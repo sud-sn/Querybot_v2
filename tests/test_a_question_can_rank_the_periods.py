@@ -51,6 +51,15 @@ def _quarter(day: dt.date) -> dt.date:
     return dt.date(day.year, 3 * ((day.month - 1) // 3) + 1, 1)
 
 
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+           "November", "December")
+
+
+def _named(month: dt.date) -> str:
+    """A month as the answer names it: "October 2025"."""
+    return f"{_MONTHS[month.month - 1]} {month.year}"
+
+
 def _headline(answer: dict) -> str:
     return next(payload["answer"]["headline"] for kind, payload in answer["replies"] if kind == "answer")
 
@@ -62,7 +71,7 @@ class TestTheProductAnswers:
         assert answer["model_wrote_sql"] is False
         expected = sorted(_sales(_month).items(), key=lambda pair: -pair[1])
         assert [(row["PERIOD"], row["SALES_AMOUNT"]) for row in answer["rows"]] == expected
-        assert _headline(answer).startswith(expected[0][0].strftime("%Y-%m") + " ")
+        assert _headline(answer).startswith(_named(expected[0][0]) + " ")
 
     def test_beside_placeholder_members(self, warehouse, monkeypatch):
         # A warehouse that keeps an "unknown" product leaves it out of a
@@ -90,7 +99,7 @@ class TestTheProductAnswers:
     def test_a_series_is_still_in_time_order(self, warehouse):
         answer = star.ask(warehouse, "Sales by month in 2025")
         assert [(row["PERIOD"], row["SALES_AMOUNT"]) for row in answer["rows"]] == sorted(_sales(_month).items())
-        assert _headline(answer).startswith("2025-12 ")
+        assert _headline(answer).startswith("December 2025 ")
 
     def test_members_are_still_ranked(self, warehouse):
         answer = star.ask(warehouse, "Which product had the highest sales in 2025?")

@@ -372,12 +372,17 @@ class MonthBucketsAreDeclaredDatesTests(unittest.TestCase):
         ]
         self.assertEqual(build_column_formats(rows), {})
 
-    def test_a_column_not_named_like_a_date_is_left_alone(self):
-        rows = [
-            {"AMOUNT": _date(2026, month, 1), "REV": Decimal(month)}
-            for month in range(1, 7)
-        ]
+    def test_numbers_in_a_column_not_named_like_a_date_are_left_alone(self):
+        """202601 is a month only where the column says it keeps periods: it
+        is also a customer number."""
+        rows = [{"AMOUNT": 202600 + month, "REV": Decimal(month)} for month in range(1, 7)]
         self.assertEqual(build_column_formats(rows), {})
+
+    def test_month_buckets_are_named_whatever_the_column_is_called(self):
+        """A date is a date by its value: DATE_TRUNC('month', ...) AS BUCKET
+        was headed "June 2026" above a table of "2026-06-01"."""
+        rows = [{"BUCKET": _date(2026, month, 1), "REV": Decimal(month)} for month in range(1, 7)]
+        self.assertEqual(build_column_formats(rows), {"BUCKET": "date"})
 
     def test_plain_numbers_in_a_day_named_column_are_not_dates(self):
         """DAYS_LATE = 5 is a count, not a calendar value."""
@@ -439,18 +444,37 @@ class MonthBucketsAreDeclaredDatesTests(unittest.TestCase):
                 for month in (1, 4, 7, 10)]
         self.assertEqual(build_column_formats(rows), {"PERIOD": "date"})
 
-    def test_weekly_and_year_buckets_are_left_alone(self):
-        """Weekly buckets are not month-firsts; year buckets are, but the
-        shared date renderer would print 2026-01-01 as "2026-01", which is no
-        better than the day stamp it replaced."""
+    def test_weekly_buckets_are_left_alone(self):
+        """Weekly buckets are not month-firsts."""
         weekly = [{"WK_DT": _date(2026, 1, d), "AMT": Decimal(1)} for d in (5, 12, 19, 26)]
-        yearly = [{"YR_DT": _date(y, 1, 1), "AMT": Decimal(1)} for y in (2024, 2025, 2026)]
         self.assertEqual(build_column_formats(weekly), {})
-        self.assertEqual(build_column_formats(yearly), {})
 
-    def test_a_null_in_any_rendered_row_stands_the_column_down(self):
+    def test_year_buckets_are_shown_as_years(self):
+        """Year buckets are month-firsts too. The date renderers printed
+        2026-01-01 as "2026-01", no better than the day stamp, so they were
+        left alone; the year style prints each as its year."""
+        from core.response_builder import build_display_formats
+
+        yearly = [{"YR_DT": _date(y, 1, 1), "AMT": Decimal(1)} for y in (2024, 2025, 2026)]
+        formats = build_column_formats(yearly)
+        self.assertEqual(formats, {"YR_DT": "date"})
+        styles = build_display_formats(yearly, formats)
+        self.assertEqual(styles, {"YR_DT": {"type": "date", "style": "year"}})
+        table = _rows_to_table(yearly, formats, styles)
+        self.assertIn("2024", table)
+        self.assertNotIn("2024-01", table)
+
+    def test_a_row_with_no_period_is_shown_empty(self):
+        """The rest of the column is still its months; the empty cell stays
+        empty."""
         rows = [{"PERIOD": _date(2026, 1, 1), "AMT": Decimal(1)},
                 {"PERIOD": None, "AMT": Decimal(2)},
+                {"PERIOD": _date(2026, 2, 1), "AMT": Decimal(3)}]
+        self.assertEqual(build_column_formats(rows), {"PERIOD": "date"})
+
+    def test_a_day_in_any_rendered_row_stands_the_column_down(self):
+        rows = [{"PERIOD": _date(2026, 1, 1), "AMT": Decimal(1)},
+                {"PERIOD": _date(2026, 1, 17), "AMT": Decimal(2)},
                 {"PERIOD": _date(2026, 2, 1), "AMT": Decimal(3)}]
         self.assertEqual(build_column_formats(rows), {})
 
@@ -463,9 +487,13 @@ class MonthBucketsAreDeclaredDatesTests(unittest.TestCase):
         b57e03b's split in mirror image, and only a test that runs BOTH sides
         catches it.
         """
+        from core.response_builder import build_display_formats
+
         rows = self._monthly()
-        table = _rows_to_table(rows, build_column_formats(rows))
-        self.assertIn("2026-01", table)
+        formats = build_column_formats(rows)
+        table = _rows_to_table(rows, formats, build_display_formats(rows, formats))
+        # By name, in the style the browser is given (month_year_long).
+        self.assertIn("January 2026", table)
         self.assertNotIn("2026-01-01", table)
 
     def test_an_undeclared_day_column_is_untouched_by_the_text_channel(self):
@@ -493,14 +521,14 @@ class NarrationShowsTheSamePeriodAsTheTableTests(unittest.TestCase):
     def test_month_buckets_are_narrated_as_months(self):
         self.assertEqual(
             self._labels([_date(2026, m, 1) for m in range(1, 7)]),
-            ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"],
+            ["January 2026", "February 2026", "March 2026", "April 2026", "May 2026", "June 2026"],
         )
 
     def test_the_iso_string_form_is_covered(self):
         """By narration time the value has usually been stringified."""
         self.assertEqual(
             self._labels([f"2026-{m:02d}-01" for m in range(1, 4)]),
-            ["2026-01", "2026-02", "2026-03"],
+            ["January 2026", "February 2026", "March 2026"],
         )
 
     def test_a_true_daily_series_is_left_alone(self):
@@ -539,7 +567,7 @@ class NarrationShowsTheSamePeriodAsTheTableTests(unittest.TestCase):
         rows = [{"PERIOD": _date(2026, m, 1), "REVENUE": Decimal(1000 * m)}
                 for m in range(1, 7)]
         brief = str(compute_data_brief(rows, "revenue by month") or "")
-        self.assertIn("2026-01", brief)
+        self.assertIn("January 2026", brief)
         self.assertNotIn("2026-01-01", brief)
 
     def test_a_daily_brief_still_shows_the_day(self):

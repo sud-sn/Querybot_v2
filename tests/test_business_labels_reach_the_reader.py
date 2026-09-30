@@ -739,6 +739,11 @@ function _columnFormatMap() { return new Map(); }
 function _displayFormatSpec() { return {}; }
 function _formatDisplayValue(v) { return String(v == null ? '' : v); }
 function _parseDisplayNumber(v) { return Number(v); }
+function _parseServerNumber(v) { return _parseDisplayNumber(v); }
+function _isANumericColumn(rows, header) {
+  return rows.slice(0, 20).map(function (r) { return r[header]; })
+    .some(function (v) { return v !== null && v !== '' && !isNaN(_parseServerNumber(v)); });
+}
 function t(id) { return id; }
 function plural(id, n, v) { return String(n); }
 var _dtIdCounter = 0;

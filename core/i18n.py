@@ -5255,6 +5255,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     # French month names are lower case (a proper noun rule, not a typo) and
     # the abbreviations carry their full stop: "janv.", "sept.". "mars", "mai"
     # and "juin" are already short enough to have none.
+    # A quarter as each language writes it: Q2 2025, T2 2025 (trimestre).
+    "date.quarter": {"en": "Q{quarter} {year}", "fr": "T{quarter} {year}"},
+    # On a chart's axis, which writes each year once beneath its first label.
+    "date.quarter.short": {"en": "Q{quarter}", "fr": "T{quarter}"},
     "date.month.long.1": {"en": "January", "fr": "janvier"},
     "date.month.long.2": {"en": "February", "fr": "février"},
     "date.month.long.3": {"en": "March", "fr": "mars"},
@@ -6521,6 +6525,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "full month and year",
         "fr": "mois et année en toutes lettres",
     },
+    "reply.rc.label.date.quarter": {
+        "en": "quarter and year",
+        "fr": "trimestre et année",
+    },
+    "reply.rc.label.date.iso_date": {
+        "en": "YYYY-MM-DD",
+        "fr": "AAAA-MM-JJ",
+    },
     "reply.rc.label.date.iso": {
         "en": "YYYY-MM",
         "fr": "AAAA-MM",
@@ -7077,6 +7089,13 @@ def format_date(value, style: str = "iso", lang: str | None = None) -> str:
         return f"{year}"
     if style == "month_name":
         return month_name(month, lang=lang)
+    # A quarter by its number, from the month it starts: Q2 2025, T2 2025.
+    if style == "quarter":
+        return t("date.quarter", lang=lang, quarter=(month - 1) // 3 + 1, year=year)
+    # A day, as ISO writes it: a date key (20250305) is the day it names,
+    # never its month.
+    if style == "iso_date":
+        return f"{year}-{month:02d}-{day:02d}"
     return f"{year}-{month:02d}"
 
 

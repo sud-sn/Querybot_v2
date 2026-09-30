@@ -45,15 +45,15 @@ class TestAYearIsAPeriod(unittest.TestCase):
         answer = compose(YEARS, "net sales by year")["answer"]
         self.assertEqual(answer["short_value"], "1,900,000")
 
-    def test_a_month_label_is_untouched(self):
+    def test_a_month_label_is_named(self):
         answer = compose(MONTHS, "net sales by month")["answer"]
-        self.assertEqual(answer["headline"], "2025-12 closed at 136,000.")
+        self.assertEqual(answer["headline"], "December 2025 closed at 136,000.")
 
     def test_a_month_bucket_stored_as_a_date_reads_as_the_month(self):
         """The same rule the table and the insight sentence already apply:
         a first-of-month date series is a month series."""
         answer = compose(MONTH_DATES, "net sales by month")["answer"]
-        self.assertEqual(answer["headline"], "2025-12 closed at 136,000.")
+        self.assertEqual(answer["headline"], "December 2025 closed at 136,000.")
 
 
 if __name__ == "__main__":  # pragma: no cover
