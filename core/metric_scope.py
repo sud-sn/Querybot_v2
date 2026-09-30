@@ -9,6 +9,7 @@ specific schema-local metric such as "Total Revenue USD".
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +19,8 @@ from core.word_forms import (
     FRENCH_FUNCTION_WORDS, FRENCH_GENERIC_MEASURE_WORDS, base_form, with_one_quantity_word, without_grain_or_window,
 )
 
+
+log = logging.getLogger(__name__)
 
 _GENERIC_WORDS = GENERIC_MEASURE_WORDS | FRENCH_GENERIC_MEASURE_WORDS
 
@@ -153,6 +156,61 @@ def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
         str(metric.get("category") or ""),
     ]))
     return best + len(q_tokens & metadata_tokens)
+
+
+def _narrower_than_asked(metric: dict[str, Any], question: str, *, reader_question: str = "") -> set[str]:
+    """The words this metric's matching phrases say and the question does not.
+
+    A phrase that shares a word with the question but says more names a
+    narrower measure than the one asked: "back orders" to "orders by
+    warehouse", "valeur du stock en fin de mois" to "valeur du stock". Empty
+    when any phrase the question shares a word with is said whole -- the
+    metric is then named, not merely neighboured. Generic words for a quantity
+    or a value narrow nothing and are not counted as unsaid.
+    """
+    unsaid_words: set[str] = set()
+    for text in dict.fromkeys(t for t in (question, reader_question) if t):
+        said = _tokens(with_one_quantity_word(text))
+        asked = _tokens(without_grain_or_window(text))
+        for phrase in _metric_phrases(metric):
+            words = _tokens(with_one_quantity_word(phrase))
+            overlap = asked & words
+            if not overlap or overlap <= _GENERIC_WORDS:
+                continue
+            unsaid = words - said - _GENERIC_WORDS
+            if not unsaid:
+                return set()
+            unsaid_words |= unsaid
+    return unsaid_words
+
+
+# The states a quantity of stock or of an order is kept in apart from the
+# quantity itself -- back-ordered, reserved, allocated -- which the starter
+# metrics keep as measures of their own (core/starter_metrics.py). As _tokens
+# reads them: folded, and a verb at its base ("allocated" is "allocate");
+# French "commandes en souffrance" and "reliquats" are back orders, "réservé"
+# and "alloué" their participles.
+_STATE_WORDS = frozenset({
+    "back", "backorder", "backorders", "backordered", "souffrance", "reliquat", "reliquats",
+    "reserved", "reserve", "reservee", "reserves", "reservees",
+    "allocate", "alloue", "allouee", "alloues", "allouees", "commit", "committed",
+})
+
+
+def _measure_columns_in_plan(semantic_plan: dict[str, Any] | None) -> set[str]:
+    """The measure columns the field plan found in the question's own words."""
+    return {
+        str(field.get("column") or "").upper()
+        for field in (semantic_plan or {}).get("fields") or []
+        if str(field.get("role") or "") == "measure" and field.get("column")
+    }
+
+
+def _columns_read_by(metric: dict[str, Any]) -> set[str]:
+    return (
+        _split_required_columns(str(metric.get("required_columns") or ""))
+        | _split_required_columns(str(metric.get("sql_template") or ""))
+    )
 
 
 def _split_required_columns(raw: str) -> set[str]:
@@ -373,6 +431,33 @@ def resolve_metric_scope(
             metric = dict(metric)
             metric["_source_schemas"] = ",".join(sorted(schemas))
         scored.append((score, metric, schemas))
+
+    # A metric for a state the question does not name yields to the measure it
+    # does. "Orders by warehouse" shares only "orders" with "back orders"; the
+    # field plan read "orders" as the order quantity itself, yet the metric
+    # matched, the registry outranked the field, and every orders question --
+    # "ordered quantity" in English, "commandes" in French -- was answered with
+    # the back-ordered quantity. Only a state is a reason: "Net Sales" or
+    # "Total Revenue USD" says more than "sales" or "revenue" too, but it is
+    # the governed reading of what was asked and never yields to a column of
+    # the bare word. Without a measure of the question's own the metric stays
+    # in scope, as it did before.
+    named_measures = _measure_columns_in_plan(semantic_plan)
+    if named_measures:
+        kept: list[tuple[int, dict[str, Any], set[str]]] = []
+        for score, metric, schemas in scored:
+            states = _narrower_than_asked(metric, question, reader_question=reader_question) & _STATE_WORDS
+            reads = _columns_read_by(metric)
+            rivals = sorted(named_measures - reads)
+            # Its own column named too, the question asks for it as well.
+            if states and rivals and not named_measures & reads:
+                log.info(
+                    "Metric %r left out: it names a state the question does not (%s); the question names %s",
+                    metric.get("name"), ", ".join(sorted(states)), ", ".join(rivals),
+                )
+                continue
+            kept.append((score, metric, schemas))
+        scored = kept
 
     scored.sort(key=lambda item: (-item[0], item[1].get("name", "")))
     if not scored:

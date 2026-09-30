@@ -60,6 +60,10 @@ _ALLOCATED_TOKENS = frozenset({"ALC", "ALLOC", "ALLOCATED"})
 # column comes near.
 _RESERVED_TOKENS = frozenset({"RSV", "RSRV", "RESERVED"})
 _BACK_ORDER_TOKENS = frozenset({"BCK", "BKO", "BACKORDER", "BACKORDERED"})
+# The quantity ordered, as the snapshot keeps it. Without a metric of its own,
+# "orders by warehouse" had only the back-ordered metric's "back orders" to
+# match, and was answered with it.
+_ORDER_TOKENS = frozenset({"ORD", "ORDER", "ORDERED", "ORDERS"})
 _COST_TOKENS = frozenset({"CST", "COST"})
 _AVERAGE_TOKENS = frozenset({"AVG", "AVERAGE"})
 _PURCHASE_TOKENS = frozenset({"PCH", "PURCH", "PURCHASE", "PURCHASED", "PURCHASES"})
@@ -220,6 +224,10 @@ def _metrics_for(base: str, columns: list[str], monthly: bool) -> list[StarterMe
     allocated, allocated_all = _allocated(columns)
     reserved, reserved_all = _part(columns, _RESERVED_TOKENS, unlike=_BACK_ORDER_TOKENS)
     back_ordered, back_ordered_all = _part(columns, _BACK_ORDER_TOKENS)
+    ordered, ordered_all = _part(
+        columns, _ORDER_TOKENS,
+        unlike=_BACK_ORDER_TOKENS | _RESERVED_TOKENS | _ALLOCATED_TOKENS | _PURCHASE_TOKENS | _SOLD_TOKENS,
+    )
     purchased, purchased_all = _movement(columns, _PURCHASE_TOKENS)
     sold, sold_all = _movement(columns, _SOLD_TOKENS)
 
@@ -275,6 +283,20 @@ def _metrics_for(base: str, columns: list[str], monthly: bool) -> list[StarterMe
              "reliquats de commande"),
             f"Units on back order {at} ({back_ordered}). {level}",
             (f"{back_ordered}: back-ordered stock by name." + _others(back_ordered, back_ordered_all),),
+        ))
+    if ordered:
+        found.append(StarterMetric(
+            "ordered", "Ordered quantity", f"SUM({ordered})", base, (ordered,),
+            # Not "quantity ordered": after another quantity it is how that
+            # one is sorted ("reserved quantity ordered by warehouse"). The
+            # field plan reads the quantity ordered where it stands alone.
+            ("ordered quantity", "order quantity", "units ordered",
+             "quantité commandée", "quantités commandées"),
+            f"Units ordered, as recorded {at} ({ordered}). {level}",
+            (f"{ordered}: an ordered quantity by name, not back-ordered, reserved, "
+             f"allocated, purchased or sold. Confirm whether it is stock on order "
+             f"from suppliers or ordered by customers." + _others(ordered, ordered_all),),
+            confidence=50,
         ))
     if on_hand and allocated:
         found.append(StarterMetric(

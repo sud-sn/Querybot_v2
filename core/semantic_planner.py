@@ -540,6 +540,58 @@ def _alias_forms(alias_norm: str) -> set[str]:
     return forms
 
 
+_QUANTITY_HEADS = frozenset({"quantity", "qty"})
+# A state of stock or of an order that makes the participle after it another
+# quantity: the "back ordered quantity" is the back-ordered one.
+_STATE_QUALIFIERS = frozenset({"back", "backorder", "reserved", "allocated", "committed"})
+# Words that, standing before "quantity", name another quantity: in "reserved
+# quantity ordered by warehouse" the quantity is the reserved one, and
+# "ordered by" is how it is sorted. Any other word leaves "quantity ordered"
+# the ordered quantity: "the highest", "monthly", "average", "2025", and the
+# French "la plus grande quantité commandée" as the canonicaliser reads it.
+_OTHER_QUANTITIES = _STATE_QUALIFIERS | frozenset({
+    "backordered", "available", "hand", "onhand", "stock", "inventory", "transit", "net", "open",
+    "pending", "physical", "safety",
+    "sold", "purchased", "received", "shipped", "returned", "transferred", "issued",
+    "delivered", "invoiced", "consumed", "produced", "adjusted", "counted", "picked",
+})
+
+
+def _participle_quantity_spans(alias_norm: str, question_norm: str) -> list[tuple[int, int]]:
+    """Where a quantity is asked by its noun's verb: ORD_QTY's "order
+    quantity" is the "ordered quantity" and the "quantity ordered".
+
+    Only a two-word alias whose second word is the quantity is read this way.
+    A participle a state qualifies is left alone: the "back ordered quantity"
+    is the back-ordered one, not the ordered. So is a quantity another word
+    has already named: in "reserved quantity ordered by warehouse" the
+    quantity is the reserved one, and "ordered by" is how it is sorted.
+    """
+    from core.word_forms import base_form
+
+    words = alias_norm.split()
+    if len(words) != 2 or words[1] not in _QUANTITY_HEADS:
+        return []
+    noun = base_form(words[0])
+    tokens = list(re.finditer(r"[a-z0-9]+", question_norm))
+    spans: list[tuple[int, int]] = []
+    for i in range(len(tokens) - 1):
+        first, second = tokens[i].group(), tokens[i + 1].group()
+        before = tokens[i - 1].group() if i else ""
+        after = tokens[i + 2].group() if i + 2 < len(tokens) else ""
+        if second in _QUANTITY_HEADS and base_form(first) == noun:
+            if before in _STATE_QUALIFIERS:
+                continue
+            spans.append((tokens[i].start(), tokens[i + 1].end()))
+        elif first in _QUANTITY_HEADS and base_form(second) == noun:
+            # "Ordered by" is a sort only after another quantity: "the net
+            # quantity ordered in 2025" is the quantity ordered, net.
+            if before in _OTHER_QUANTITIES and after == "by":
+                continue
+            spans.append((tokens[i].start(), tokens[i + 1].end()))
+    return spans
+
+
 def _alias_occurrence_spans(alias: str, question_norm: str) -> list[tuple[int, int]]:
     """Word-boundary spans where the alias (or a plural form) occurs."""
     alias_norm = _norm(alias)
@@ -549,6 +601,9 @@ def _alias_occurrence_spans(alias: str, question_norm: str) -> list[tuple[int, i
     for form in _alias_forms(alias_norm):
         for m in re.finditer(rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", question_norm):
             spans.append(m.span())
+    for span in _participle_quantity_spans(alias_norm, question_norm):
+        if span not in spans:
+            spans.append(span)
     return spans
 
 
@@ -559,6 +614,8 @@ def _contains_alias(alias: str, question_norm: str, question_compact: str) -> bo
     for form in _alias_forms(alias_norm):
         if re.search(rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", question_norm):
             return True
+    if _participle_quantity_spans(alias_norm, question_norm):
+        return True
     alias_compact = _compact(alias_norm)
     # Compact matching is only for long technical forms such as ITMGRPDMSKEY.
     # Short terms must not match inside larger words, e.g. AGE in percentAGE.
