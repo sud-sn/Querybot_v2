@@ -683,6 +683,92 @@ def _numeric_cols(rows: list[dict]) -> list[str]:
 
 from core.analysis_evidence import MIN_CATEGORIES_FOR_CONCENTRATION
 
+# The words a numeric column is named with when it names or orders a row
+# rather than measures one -- CUSTOMER_NO, SOLD_TO_ID, ORDER_NUMBER, ITEM_KEY,
+# ZIP_CODE, SALES_RANK, near core/chart_spec._ID_SUFFIX_RE, which reads them
+# for the chart -- and in French first: "Numéro de commande", "Code article".
+_IDENTIFIER_LAST = frozenset({
+    "ID", "NO", "NUM", "NBR", "NR", "NUMBER", "NUMERO", "KEY", "SK", "PK", "FK", "CD", "CODE", "REF", "SEQ", "RANK"})
+_IDENTIFIER_FIRST = frozenset({"NUMERO", "CODE", "CD", "ID"})
+# Plurals no S ends: CHILDREN_NO is a number of children. Not STAFF: STAFF_NO
+# is an employee's number, and a staff is one team.
+_IRREGULAR_PLURALS = frozenset({"CHILDREN", "PEOPLE", "PERSONS", "MEN", "WOMEN", "PERSONNES", "GENS"})
+# A name that ends in one of these numbers its rows, or may number a figure:
+# PRICE_REF and NET_AMOUNT_NO are prices and amounts, CD_ITEM_NO an item.
+# ID, KEY and CODE after a measure word name a row of it: COST_CENTER_ID,
+# RATE_CODE.
+_WEAK_IDENTIFIER_WORDS = frozenset({"NO", "NUM", "NBR", "NR", "NUMBER", "NUMERO", "REF", "SEQ", "RANK"})
+# A name that says so alone: "ID", "KEY" -- not "NUMBER" or "NO", which a
+# count is named too.
+_IDENTIFIER_ALONE = frozenset({"ID", "KEY", "SK", "PK", "FK", "CODE", "CD", "REF", "SEQ", "RANK"})
+# Words that make a number a count or a figure of one: TOTAL_NUMBER, ID_COUNT,
+# "Nombre de commandes". A count named for its number first -- NUM_OF_RCT,
+# NO_OF_EMPLOYEES, NUM_EMPLOYEES -- is none of _IDENTIFIER_FIRST's.
+_COUNTED_WORDS = frozenset({"COUNT", "CNT", "TOTAL", "TOT", "SUM", "AVG", "AVERAGE", "NB", "NBRE", "NOMBRE"})
+# And the names of a period's number: WEEK_NO, FISCAL_WEEK_NBR, DAY_NO,
+# PERIOD_NO, "Numéro de semaine".
+_PERIOD_WORDS = frozenset({
+    "WEEK", "WEEKS", "WK", "DAY", "DAYS", "PERIOD", "PER", "PRD", "MONTH", "MTH", "YEAR", "YR", "QUARTER", "QTR",
+    "HOUR", "HR", "FISCAL", "FY", "DATE", "DT", "SEMAINE", "JOUR", "MOIS", "ANNEE", "PERIODE", "TRIMESTRE"})
+
+
+def _identifier_columns(rows: list[dict], candidates: list[str]) -> list[str]:
+    """The numeric columns that identify a row: named for a number, a key, a
+    code or a rank, and holding whole numbers. A result that carries a
+    customer's number beside the customer was headed "ZED CO leads at
+    40,101", the number read as the figure, and its analysis totalled
+    customer numbers. Not a count, however it is named (NUM_OF_RCT,
+    NO_OF_EMPLOYEES, NUM_EMPLOYEES, VISITS_NUMBER, TOTAL_NUMBER), nor a
+    period's number (WEEK_NO), nor a figure with a fraction."""
+    from core.analysis_contract import measure_additivity
+    from core.units_of_measure import _COUNT_NOUNS, _QUANTITY_WORDS, _word_list
+
+    from core.temporal_columns import names_a_measure
+
+    def a_plural(word: str) -> bool:
+        return (word.endswith("S") and not word.endswith("SS")) or word in _IRREGULAR_PLURALS or word in {
+            "COUNT", "HEADCOUNT"}  # not ACCOUNT, COUNTY or COUNTER: GL_ACCOUNT_NO numbers an account
+
+    def a_measure_ends(words: list[str]) -> bool:
+        """Money or another measure ends the name (CD_BALANCE, NET_AMT), or
+        stands right before the number word that does (PRICE_REF,
+        NET_AMOUNT_NO). Not COST_CENTER_ID, PRICE_LIST_ID, RATE_CODE: an id
+        names a row of what the measure word qualifies."""
+        return names_a_measure(words[-1]) or (
+            len(words) > 1 and words[-1] in _WEAK_IDENTIFIER_WORDS and names_a_measure(words[-2]))
+
+    found = []
+    for column in candidates:
+        words = _word_list(column)
+        # A quantity, a count or a period's number is a figure whatever else
+        # its name says, and so is money: CD_BALANCE, PRICE_REF, NET_AMOUNT_NO.
+        if not words or set(words) & (_QUANTITY_WORDS | _COUNT_NOUNS | _COUNTED_WORDS | _PERIOD_WORDS) \
+                or a_measure_ends(words):
+            continue
+        if len(words) == 1:
+            named = words[0] in _IDENTIFIER_ALONE
+        else:
+            # A plural beside NUMBER is a count of it: VISITS_NUMBER, CHILDREN_NO.
+            counted = words[-1] in {"NUMBER", "NUM", "NO", "NBR", "NR"} and a_plural(words[-2])
+            named = not counted and (words[-1] in _IDENTIFIER_LAST or words[0] in _IDENTIFIER_FIRST)
+        if not named or measure_additivity(column)[1] == "event_count":
+            continue
+        values = [row.get(column) for row in rows if row.get(column) not in (None, "")]
+        if values and all(_whole_number(value) for value in values):
+            found.append(column)
+    return found
+
+
+def _whole_number(value) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    try:
+        return float(value).is_integer()
+    except (TypeError, ValueError, OverflowError):
+        return False
+
 
 def _measure_and_label_cols(
     rows: list[dict], numeric_cols: list[str], text_cols: list[str],
@@ -703,19 +789,25 @@ def _measure_and_label_cols(
 
     Periods move to the LABEL candidates rather than being dropped, and they go
     after the text columns so a result carrying both a warehouse name and a year
-    still narrates the warehouse.
+    still narrates the warehouse. A row's identifier -- a customer's number, an
+    order's key (_identifier_columns) -- is set aside, neither measure nor
+    label: beside the customer's name it is the same customer again, and
+    alone it is no axis to read.
 
     A result whose numeric columns are ALL periods is left exactly as it was:
     there is no measure to find, and taking the axis away as well would leave
-    nothing to say at all.
+    nothing to say at all. Identifiers that are the only figures left stay the
+    figures.
     """
     from core.temporal_columns import period_columns
 
     period_cols = period_columns(rows, numeric_cols)
-    if not period_cols:
-        return numeric_cols, text_cols, []
-    measures = [column for column in numeric_cols if column not in period_cols]
+    rest = [column for column in numeric_cols if column not in period_cols]
+    identifier_cols = _identifier_columns(rows, rest)
+    measures = [column for column in rest if column not in identifier_cols]
     if not measures:
+        identifier_cols, measures = [], rest
+    if not measures or not (period_cols or identifier_cols):
         return numeric_cols, text_cols, []
     return measures, list(text_cols) + period_cols, period_cols
 
@@ -2684,7 +2776,14 @@ def _is_listing(
     text = str(sql or "")
     if not text.strip():
         return False
-    if not any(_looks_identifier(rows, column) for column in text_cols):
+    # A numeric key set aside from the measures and the labels (a row's
+    # identifier, _measure_and_label_cols) marks records too, where the label
+    # repeats: one customer's invoices.
+    keys = list(text_cols)
+    set_aside = [column for column in (rows[0] if rows else {}) if column not in numeric_cols + text_cols]
+    if text_cols and set_aside and len({str(row.get(text_cols[0])) for row in rows}) < len(rows):
+        keys += set_aside
+    if not any(_looks_identifier(rows, column) for column in keys):
         return False
     if _AGGREGATION_RE.search(text):
         return False
@@ -2714,6 +2813,9 @@ def summarize_result_context(
         # Named so a consumer can tell a period axis from a measure without
         # re-deriving it, and so the split is visible in the trace.
         "period_cols": period_cols,
+        # Every column the result has, a row's identifier set aside from both
+        # lists above included: no "break down by" what is already there.
+        "columns": list(rows[0]) if rows else [],
         "mode": "table",
         "chartable": False,
     }
@@ -3008,7 +3110,7 @@ def compute_chip_eligibility(
     if semantic_plan and semantic_plan.get("enabled") and row_count >= 1:
         result_cols_upper = {
             c.upper()
-            for c in (ctx.get("numeric_cols") or []) + (ctx.get("text_cols") or [])
+            for c in (ctx.get("columns") or (ctx.get("numeric_cols") or []) + (ctx.get("text_cols") or []))
         }
         drill_count = 0
         for dim in (semantic_plan.get("available_dimensions") or []):

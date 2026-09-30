@@ -499,6 +499,10 @@ def compute_data_brief(
     brief["columns"].update({col: "text" for col in text_cols})
     if period_cols:
         brief["columns"].update({col: "period" for col in period_cols})
+    # A row's identifier, set aside from both (core.response_builder
+    # _identifier_columns), is still one of the result's columns.
+    for col in rows[0]:
+        brief["columns"].setdefault(col, "identifier")
 
     # ── Single-value result ──────────────────────────────────────────────────
     if len(rows) == 1 and len(rows[0]) == 1:
