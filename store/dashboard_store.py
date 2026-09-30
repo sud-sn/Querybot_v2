@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .db import get_db
 from .crypto import decrypt_json, encrypt
@@ -648,6 +648,33 @@ def unsubscribe_dashboard(
     return bool(cur.rowcount)
 
 
+# A failed scheduled refresh is tried again five minutes later, then after
+# twice as long each time it fails again, and never less often than the
+# dashboard's own cadence.
+_FIRST_RETRY = timedelta(minutes=5)
+# The owner is told once a refresh has failed this many times in a row: one
+# failure the next attempt recovers from is no news.
+_TELL_OWNER_AFTER = 2
+
+
+def _cadence(schedule: object) -> timedelta:
+    return timedelta(hours=1 if schedule == "hourly" else 24 if schedule == "daily" else 168)
+
+
+_STAMP = "%Y-%m-%d %H:%M:%S"
+
+
+def _utc_now() -> datetime:
+    """Now, in UTC, as the database's datetime('now') gives it.
+
+    Every time the cache keeps is in UTC. A refresh was stamped in UTC and its
+    expiry, its failures and its next attempt in the server's local time, so
+    on a server not on UTC a notice said the data was hours newer than the
+    failures, and an hourly source refreshed a minute ago was due again.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def save_source_cache(
     source: dict,
     rows: list[dict],
@@ -657,7 +684,7 @@ def save_source_cache(
     ttl_seconds: int,
 ) -> None:
     """Encrypt governed release rows for the source owner."""
-    expires = datetime.now() + timedelta(seconds=max(60, int(ttl_seconds or 600)))
+    expires = _utc_now() + timedelta(seconds=max(60, int(ttl_seconds or 600)))
     token = encrypt({"rows": list(rows or [])})
     with get_db() as conn:
         conn.execute(
@@ -672,13 +699,23 @@ def save_source_cache(
                    policy_version=excluded.policy_version,
                    contract_version=excluded.contract_version,
                    status='ready', error_message='',
-                   refreshed_at=datetime('now'), expires_at=excluded.expires_at""",
+                   refreshed_at=datetime('now'), expires_at=excluded.expires_at,
+                   failed_at=NULL, failure_count=0, next_attempt_at=NULL""",
             (
                 int(source["id"]), int(source["dashboard_id"]), source["account_id"],
                 int(source["user_id"]), token, len(rows or []),
                 max(0, int(policy_version or 0)), str(contract_version or "")[:128],
-                expires.strftime("%Y-%m-%d %H:%M:%S"),
+                expires.strftime(_STAMP),
             ),
+        )
+        # The owner was told of this dashboard's failures once; once none of
+        # its sources is failing, the next run of failures is news again.
+        conn.execute(
+            """UPDATE dashboard_source_cache SET owner_notified_at=NULL
+                WHERE dashboard_id=? AND owner_notified_at IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM dashboard_source_cache
+                                   WHERE dashboard_id=? AND failure_count > 0)""",
+            (int(source["dashboard_id"]), int(source["dashboard_id"])),
         )
         conn.execute(
             """UPDATE dashboard_artifact SET last_refreshed_at=datetime('now')
@@ -687,20 +724,91 @@ def save_source_cache(
         )
 
 
-def mark_source_cache_error(source: dict, error: str) -> None:
-    """Keep the last successful token, but surface the latest refresh error."""
+def mark_source_cache_error(source: dict, error: str, *, now: datetime | None = None) -> dict:
+    """Record a refresh of ``source`` that failed, and when to try it again.
+
+    The rows of the last refresh that worked are kept, and so is its time: a
+    failure is not a refresh. It was stamped as one, so rows a day old read as
+    refreshed a moment ago; and a source never refreshed recorded nothing, and
+    was due again at the next tick of the scheduler, every minute, with no one
+    told. Now each failure in a row waits twice as long as the one before it,
+    from five minutes up to the dashboard's own cadence, and a first failure is
+    kept in a row no reader can serve: expired, and with no rows.
+
+    The failure is counted by the first write, so two refreshes failing at
+    once count two. Returns the failures in a row -- ``failure_count``,
+    ``failed_at`` (when the first of them failed) and ``next_attempt_at`` --
+    and ``owner_due``: the run is ``_TELL_OWNER_AFTER`` long or longer and
+    nobody has told the owner of it (claim_owner_notice).
+    """
+    now = now or _utc_now()
+    stamp = now.strftime(_STAMP)
+    source_id, account_id, user_id = int(source["id"]), source["account_id"], int(source["user_id"])
     with get_db() as conn:
-        existing = conn.execute(
-            "SELECT source_id FROM dashboard_source_cache WHERE source_id=?",
-            (int(source["id"]),),
+        conn.execute(
+            """INSERT INTO dashboard_source_cache
+                   (source_id, dashboard_id, account_id, user_id, rows_encrypted, row_count, status,
+                    error_message, refreshed_at, expires_at, failed_at, failure_count)
+               VALUES (?, ?, ?, ?, '', 0, 'error', ?, NULL, ?, ?, 1)
+               ON CONFLICT(source_id) DO UPDATE SET
+                   status='error', error_message=excluded.error_message,
+                   failure_count=dashboard_source_cache.failure_count + 1,
+                   failed_at=COALESCE(dashboard_source_cache.failed_at, excluded.failed_at)
+               WHERE dashboard_source_cache.account_id=excluded.account_id
+                 AND dashboard_source_cache.user_id=excluded.user_id""",
+            (source_id, int(source["dashboard_id"]), account_id, user_id, str(error or "")[:500], stamp, stamp),
+        )
+        row = conn.execute(
+            """SELECT failure_count, failed_at, owner_notified_at FROM dashboard_source_cache
+                WHERE source_id=? AND account_id=? AND user_id=?""",
+            (source_id, account_id, user_id),
         ).fetchone()
-        if existing:
-            conn.execute(
-                """UPDATE dashboard_source_cache
-                      SET status='error', error_message=?, refreshed_at=datetime('now')
-                    WHERE source_id=? AND account_id=? AND user_id=?""",
-                (str(error or "")[:500], int(source["id"]), source["account_id"], int(source["user_id"])),
-            )
+        count = int((row["failure_count"] if row else 0) or 0)
+        wait = min(_FIRST_RETRY * 2 ** min(max(count, 1) - 1, 20), _cadence(source.get("refresh_schedule")))
+        next_attempt = (now + wait).strftime(_STAMP)
+        conn.execute(
+            "UPDATE dashboard_source_cache SET next_attempt_at=? WHERE source_id=? AND account_id=? AND user_id=?",
+            (next_attempt, source_id, account_id, user_id),
+        )
+    return {
+        "failure_count": count,
+        "failed_at": str((row["failed_at"] if row else "") or stamp),
+        "next_attempt_at": next_attempt,
+        "owner_due": bool(row) and count >= _TELL_OWNER_AFTER and not row["owner_notified_at"],
+    }
+
+
+def claim_owner_notice(source: dict, *, now: datetime | None = None) -> str | None:
+    """Claim the one notice a dashboard's owner gets for a run of failed
+    refreshes. The stamp it was claimed under, to release it by if no channel
+    delivers it; None when it is already claimed, by this source or another
+    source of the same dashboard -- a dashboard of three charts sent its owner
+    three notices of the same outage.
+
+    One conditional write, so of two refreshes failing at once, one claims it.
+    """
+    stamp = (now or _utc_now()).strftime(_STAMP)
+    with get_db() as conn:
+        claimed = conn.execute(
+            """UPDATE dashboard_source_cache SET owner_notified_at=?
+                WHERE source_id=? AND account_id=? AND user_id=? AND owner_notified_at IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM dashboard_source_cache
+                                   WHERE dashboard_id=? AND owner_notified_at IS NOT NULL)""",
+            (stamp, int(source["id"]), source["account_id"], int(source["user_id"]), int(source["dashboard_id"])),
+        ).rowcount
+    return stamp if claimed == 1 else None
+
+
+def release_owner_notice(source: dict, stamp: str) -> None:
+    """Give back a claim whose notice no channel delivered -- an owner with no
+    portal page open and no Teams chat -- so that the next failure tries
+    again. It was marked as told in the same write that counted the failure,
+    before anything was sent, and an owner who was away was never told."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE dashboard_source_cache SET owner_notified_at=NULL WHERE source_id=? AND owner_notified_at=?",
+            (int(source["id"]), stamp),
+        )
 
 
 def get_source_cache(
@@ -719,7 +827,14 @@ def get_source_cache(
     if not row:
         return None
     result = dict(row)
-    if not allow_stale and str(result.get("expires_at") or "") <= datetime.now().strftime("%Y-%m-%d %H:%M:%S"):
+    # Rows a failing refresh kept are served until a refresh works: the owner
+    # otherwise saw an error once they expired, while the notice said the
+    # dashboard still showed them. The chart says how old they are.
+    if (
+        not allow_stale
+        and not result.get("failed_at")
+        and str(result.get("expires_at") or "") <= _utc_now().strftime(_STAMP)
+    ):
         return None
     try:
         payload = decrypt_json(result.pop("rows_encrypted"))
@@ -730,13 +845,16 @@ def get_source_cache(
 
 
 def list_due_dashboard_sources(now: datetime | None = None) -> list[dict]:
-    """Return scheduled sources whose owner-scoped cache is due."""
-    now = now or datetime.now()
+    """Return scheduled sources whose owner-scoped cache is due. ``now`` is
+    in UTC, as every time the cache keeps is."""
+    now = now or _utc_now()
     with get_db() as conn:
         rows = conn.execute(
             """SELECT s.*, d.refresh_schedule, d.status AS dashboard_status,
+                      d.name AS dashboard_name,
                       c.refreshed_at AS cache_refreshed_at,
-                      c.expires_at AS cache_expires_at
+                      c.expires_at AS cache_expires_at,
+                      c.next_attempt_at AS cache_next_attempt_at
                  FROM dashboard_data_source s
                  JOIN dashboard_artifact d ON d.id=s.dashboard_id
                  LEFT JOIN dashboard_source_cache c ON c.source_id=s.id
@@ -744,9 +862,13 @@ def list_due_dashboard_sources(now: datetime | None = None) -> list[dict]:
                 ORDER BY s.id"""
         ).fetchall()
     due: list[dict] = []
+    stamp = now.strftime(_STAMP)
     for raw in rows:
         source = dict(raw)
-        if str(source.get("cache_expires_at") or "") <= now.strftime("%Y-%m-%d %H:%M:%S"):
+        # A source whose refresh failed waits for its next attempt.
+        if str(source.get("cache_next_attempt_at") or "") > stamp:
+            continue
+        if str(source.get("cache_expires_at") or "") <= stamp:
             due.append(source)
             continue
         refreshed = source.get("cache_refreshed_at")
@@ -758,9 +880,7 @@ def list_due_dashboard_sources(now: datetime | None = None) -> list[dict]:
         except ValueError:
             due.append(source)
             continue
-        cadence = source.get("refresh_schedule")
-        delta = timedelta(hours=1 if cadence == "hourly" else 24 if cadence == "daily" else 168)
-        if now - last >= delta:
+        if now - last >= _cadence(source.get("refresh_schedule")):
             due.append(source)
     return due
 

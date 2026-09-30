@@ -385,7 +385,14 @@ CREATE TABLE IF NOT EXISTS dashboard_source_cache (
     status        TEXT    NOT NULL DEFAULT 'ready',
     error_message TEXT    NOT NULL DEFAULT '',
     refreshed_at  TEXT    DEFAULT (datetime('now')),
-    expires_at    TEXT    NOT NULL
+    expires_at    TEXT    NOT NULL,
+    -- The refreshes failing since the last that worked: when the first of
+    -- them failed, how many, when the next is tried, and whether the owner
+    -- has been told (store.mark_source_cache_error).
+    failed_at     TEXT    DEFAULT NULL,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT  DEFAULT NULL,
+    owner_notified_at TEXT DEFAULT NULL
 );
 
 -- Presentation-only checkpoints. Snapshots contain dashboard controls and
@@ -1233,6 +1240,12 @@ def _run_migrations() -> None:
         ("dashboard_artifact", "filters_json", "TEXT NOT NULL DEFAULT '[]'"),
         ("dashboard_artifact", "tabs_json", "TEXT NOT NULL DEFAULT '[\"Overview\"]'"),
         ("dashboard_artifact", "last_refreshed_at", "TEXT DEFAULT NULL"),
+        # A scheduled refresh that fails is recorded, tried again later and
+        # told to the owner (store.mark_source_cache_error).
+        ("dashboard_source_cache", "failed_at", "TEXT DEFAULT NULL"),
+        ("dashboard_source_cache", "failure_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("dashboard_source_cache", "next_attempt_at", "TEXT DEFAULT NULL"),
+        ("dashboard_source_cache", "owner_notified_at", "TEXT DEFAULT NULL"),
         # v26: link drill-down result_chat queries to their parent main query
         ("query_log", "question_id",        "TEXT DEFAULT ''"),
         ("query_log", "parent_question_id", "TEXT DEFAULT ''"),

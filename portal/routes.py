@@ -1216,6 +1216,7 @@ def _refresh_chart(
     result["table_truncated"] = False
     result["table_shown"] = 0
     result["from_cache"] = False
+    result["refresh_failed_at"] = ""
     result["filter_warnings"] = []
     result["error_next_step"] = ""
 
@@ -1254,6 +1255,7 @@ def _refresh_chart(
             executed_sql = executed.sql
             result["from_cache"] = executed.from_cache
             result["cache_refreshed_at"] = executed.refreshed_at
+            result["refresh_failed_at"] = executed.refresh_failed_at
             result["applied_filters"] = list(executed.applied_filters)
             result["filter_warnings"] = [
                 f'Filter "{field}" was not applied because it is not returned by this source.'

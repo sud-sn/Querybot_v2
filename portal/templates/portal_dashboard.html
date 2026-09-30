@@ -209,6 +209,7 @@
       {% else %}
       <div class="chart-error">{{ t('ui.dash.no_data') }}</div>
       {% endif %}
+      {% if chart.from_cache and chart.refresh_failed_at %}<div class="chart-warning">{{ t('ui.dash.refresh_failed', since=chart.refresh_failed_at[:16], at=(chart.cache_refreshed_at or '')[:16]) }}</div>{% endif %}
       {% for warning in chart.filter_warnings or [] %}<div class="chart-warning">{{ warning }}</div>{% endfor %}
       <div class="chart-meta">
         <span title="{{ chart.question }}" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ chart.question[:70] }}{% if chart.question|length > 70 %}…{% endif %}</span>

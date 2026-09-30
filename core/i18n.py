@@ -385,8 +385,30 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Showing {shown} of {total} rows",
         "fr": "Affichage de {shown} sur {total} lignes",
     },
-    "ui.dash.cache": {"en": "Protected cache {at}", "fr": "Cache protégé {at}"},
+    # The cache's times are UTC (store/dashboard_store.py), and say so.
+    "ui.dash.cache": {"en": "Protected cache {at} UTC", "fr": "Cache protégé {at} UTC"},
     "ui.dash.live_refresh": {"en": "Live governed refresh", "fr": "Actualisation gouvernée en direct"},
+    # A scheduled refresh that keeps failing: on the chart that still shows the
+    # rows of the last one that worked, and to the dashboard's owner
+    # (core/dashboard_refresh.py).
+    "ui.dash.refresh_failed": {
+        "en": "Scheduled refresh failing since {since} UTC: this is the data from {at} UTC.",
+        "fr": "L'actualisation planifiée échoue depuis le {since} UTC : ces données sont celles du {at} UTC.",
+    },
+    "notify.dashboard_refresh_failed": {
+        "en": "Your dashboard “{name}” could not be refreshed: {count} attempts in a row have failed "
+              "since {since} UTC. It still shows the data from {at} UTC. The next attempt is at {next} UTC.",
+        "fr": "Votre tableau de bord « {name} » n'a pas pu être actualisé : {count} tentatives de suite "
+              "ont échoué depuis le {since} UTC. Il affiche toujours les données du {at} UTC. La prochaine "
+              "tentative aura lieu le {next} UTC.",
+    },
+    "notify.dashboard_refresh_failed_no_data": {
+        "en": "Your dashboard “{name}” could not be refreshed: {count} attempts in a row have failed "
+              "since {since} UTC, and it has no data yet. The next attempt is at {next} UTC.",
+        "fr": "Votre tableau de bord « {name} » n'a pas pu être actualisé : {count} tentatives de suite "
+              "ont échoué depuis le {since} UTC, et il n'a encore aucune donnée. La prochaine tentative aura "
+              "lieu le {next} UTC.",
+    },
     "ui.dash.expand": {"en": "Expand", "fr": "Agrandir"},
     "ui.dash.expand_title": {"en": "Expand chart", "fr": "Agrandir le graphique"},
     "ui.dash.remove": {"en": "Remove", "fr": "Retirer"},

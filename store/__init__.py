@@ -101,6 +101,7 @@ from store.dashboard_store import (
     rename_dashboard, publish_dashboard, mark_dashboard_draft,
     update_dashboard_controls, list_dashboard_versions, rollback_dashboard,
     save_source_cache, mark_source_cache_error, get_source_cache,
+    claim_owner_notice, release_owner_notice,
     list_due_dashboard_sources,
 )
 from store.semantic_store import (
@@ -248,6 +249,7 @@ __all__ = [
     "publish_dashboard","mark_dashboard_draft","update_dashboard_controls",
     "list_dashboard_versions","rollback_dashboard",
     "save_source_cache","mark_source_cache_error","get_source_cache",
+    "claim_owner_notice","release_owner_notice",
     "list_due_dashboard_sources",
     "generate_temp_password",
     # Business semantic layer

@@ -35,17 +35,18 @@ class PortalNotificationHub:
             self._by_user.get(user_id, set()).discard(websocket)
             self._by_account.get(account_id, set()).discard(websocket)
 
-    async def broadcast_to_user(self, user_id: int, payload: dict[str, Any]) -> None:
+    async def broadcast_to_user(self, user_id: int, payload: dict[str, Any]) -> int:
+        """Send to every page the user has open. How many received it."""
         async with self._lock:
             targets = list(self._by_user.get(int(user_id), set()))
-        await self._broadcast(targets, payload)
+        return await self._broadcast(targets, payload)
 
-    async def broadcast_to_account(self, account_id: str, payload: dict[str, Any]) -> None:
+    async def broadcast_to_account(self, account_id: str, payload: dict[str, Any]) -> int:
         async with self._lock:
             targets = list(self._by_account.get(str(account_id), set()))
-        await self._broadcast(targets, payload)
+        return await self._broadcast(targets, payload)
 
-    async def _broadcast(self, targets: list[WebSocket], payload: dict[str, Any]) -> None:
+    async def _broadcast(self, targets: list[WebSocket], payload: dict[str, Any]) -> int:
         stale: list[WebSocket] = []
         for websocket in targets:
             try:
@@ -55,6 +56,7 @@ class PortalNotificationHub:
                 stale.append(websocket)
         for websocket in stale:
             await self.disconnect(websocket)
+        return len(targets) - len(stale)
 
 
 portal_notification_hub = PortalNotificationHub()

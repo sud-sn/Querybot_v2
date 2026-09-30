@@ -17,6 +17,8 @@ class DashboardSourceResult:
     sql: str
     from_cache: bool = False
     refreshed_at: str = ""
+    # Cached rows kept through refreshes that have failed since this time.
+    refresh_failed_at: str = ""
     applied_filters: tuple[str, ...] = ()
     ignored_filters: tuple[str, ...] = ()
 
@@ -62,6 +64,7 @@ def execute_dashboard_source(
                 sql=str(source.get("sql_query") or ""),
                 from_cache=True,
                 refreshed_at=str(cached.get("refreshed_at") or ""),
+                refresh_failed_at=str(cached.get("failed_at") or ""),
             )
 
     db_cfg = store.get_db_config(int(source.get("db_config_id") or 0))
@@ -124,12 +127,62 @@ def refresh_dashboard_source(source: dict) -> bool:
         execute_dashboard_source(source, user, allow_cache=False)
         return True
     except Exception as exc:
-        store.mark_source_cache_error(source, str(exc))
-        log.warning("Dashboard source %s refresh failed: %s", source.get("id"), exc)
+        failure = store.mark_source_cache_error(source, str(exc))
+        log.warning("Dashboard source %s refresh failed (%s in a row; next attempt %s UTC): %s",
+                    source.get("id"), failure["failure_count"], failure["next_attempt_at"], exc)
+        if failure["owner_due"]:
+            _tell_the_owner(source, user, failure)
         return False
+
+
+def _tell_the_owner(source: dict, owner: dict, failure: dict) -> None:
+    """Tell a dashboard's owner, in their language, that its scheduled refresh
+    keeps failing: since when, what the dashboard shows meanwhile, and when it
+    is tried again. Its failures were logged and nothing else.
+
+    Once per dashboard for a run of failures, however many of its sources
+    fail. A notice no channel delivered is not counted as told: the next
+    failure tries again.
+    """
+    import asyncio
+
+    from core.i18n import t
+    from core.notify import send_proactive_notification
+
+    claim = store.claim_owner_notice(source)
+    if not claim:
+        return
+    refreshed = str(source.get("cache_refreshed_at") or "")[:16]
+    message = t(
+        "notify.dashboard_refresh_failed" if refreshed else "notify.dashboard_refresh_failed_no_data",
+        lang=owner.get("lang") or "en",
+        name=source.get("dashboard_name") or source.get("name") or "",
+        count=failure["failure_count"],
+        since=str(failure["failed_at"])[:16],
+        at=refreshed,
+        next=str(failure["next_attempt_at"])[:16],
+    )
+    try:
+        delivered = asyncio.run(send_proactive_notification(str(source["account_id"]), int(owner["id"]), message))
+    except Exception as exc:
+        log.warning("Dashboard source %s: its owner could not be told the refresh is failing: %s",
+                    source.get("id"), exc)
+        delivered = False
+    if not delivered:
+        store.release_owner_notice(source, claim)
+        log.warning("Dashboard source %s: no channel reached its owner (user %s); the next failure tells them",
+                    source.get("id"), owner.get("id"))
 
 
 def run_due_dashboard_refreshes() -> dict:
     due = store.list_due_dashboard_sources()
-    refreshed = sum(1 for source in due if refresh_dashboard_source(source))
+    refreshed = 0
+    for source in due:
+        # One source that cannot even record its failure -- deleted while it
+        # was refreshed -- ended the tick, and every source after it waited.
+        try:
+            refreshed += refresh_dashboard_source(source)
+        except Exception:
+            log.error("Dashboard source %s: its scheduled refresh could not be recorded", source.get("id"),
+                      exc_info=True)
     return {"due": len(due), "refreshed": refreshed, "failed": len(due) - refreshed}
