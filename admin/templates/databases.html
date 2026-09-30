@@ -311,8 +311,12 @@ document.getElementById('test-btn').addEventListener('click', async () => {
       const detailText = data.details
         ? Object.entries(data.details).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(' · ')
         : '';
-      result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--green-light);border:1px solid color-mix(in srgb,var(--green) 28%,transparent);color:var(--green)');
-      result.textContent = detailText ? `${data.message} ${detailText}` : data.message;
+      // A login that can write is still a working connection, told in amber
+      // with the reason: the product only reads.
+      const tone = data.warning ? 'amber' : 'green';
+      result.setAttribute('style', `display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--${tone}-light);border:1px solid color-mix(in srgb,var(--${tone}) 28%,transparent);color:var(--${tone});white-space:pre-line`);
+      const passed = detailText ? `${data.message} ${detailText}` : data.message;
+      result.textContent = data.warning ? `${passed}\n${data.warning}` : passed;
     } else {
       result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)');
       result.textContent = data.message || 'Connection test failed.';

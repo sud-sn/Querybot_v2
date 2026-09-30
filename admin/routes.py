@@ -1603,11 +1603,14 @@ async def database_test(request: Request):
             # the driver can return a real error rather than us cancelling it.
             timeout=25,
         )
-        return JSONResponse({
-            "status": "ok",
-            "message": "Connection successful.",
-            "details": details,
-        })
+        body = {"status": "ok", "message": "Connection successful.", "details": details}
+        write = details.pop("write_permissions", None) if isinstance(details, dict) else None
+        if write:
+            body["warning"] = (
+                "This login can change the database (" + ", ".join(write) + "). QueryBot only reads it: "
+                "connect with a read-only login, so that a leaked password cannot change the warehouse."
+            )
+        return JSONResponse(body)
     except asyncio.TimeoutError:
         return JSONResponse({
             "status": "error",

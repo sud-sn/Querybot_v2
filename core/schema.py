@@ -337,6 +337,36 @@ def discover_and_write(
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
 
+# Rights a login has beyond reading the warehouse. The product only reads --
+# its validator refuses anything else -- but a login that may write is one
+# leaked password away from a changed warehouse. The admin is told when the
+# connection is tested, not stopped: a tenant may run such a login behind
+# controls of its own.
+_AZURE_WRITE_PERMISSIONS = (
+    "INSERT", "UPDATE", "DELETE", "ALTER", "CONTROL", "TAKE OWNERSHIP", "ALTER ANY SCHEMA",
+    "CREATE TABLE", "CREATE VIEW", "CREATE PROCEDURE", "CREATE FUNCTION", "CREATE SCHEMA",
+)
+
+
+def _azure_write_permissions(cur) -> list[str] | None:
+    """The rights beyond reading that the connected login holds on the database
+    or on any of its schemas -- a role's (db_datawriter, db_owner) included --
+    or None where they could not be read."""
+    marks = ", ".join("?" for _ in _AZURE_WRITE_PERMISSIONS)
+    try:
+        cur.execute(
+            f"SELECT permission_name FROM fn_my_permissions(NULL, 'DATABASE') WHERE permission_name IN ({marks}) "
+            "UNION SELECT granted.permission_name FROM sys.schemas AS s "
+            "CROSS APPLY fn_my_permissions(QUOTENAME(s.name), 'SCHEMA') AS granted "
+            f"WHERE granted.permission_name IN ({marks})",
+            (*_AZURE_WRITE_PERMISSIONS, *_AZURE_WRITE_PERMISSIONS),
+        )
+        return sorted({str(row[0]) for row in cur.fetchall()})
+    except Exception as exc:
+        log.warning("Could not read the login's permissions on the database: %s", exc)
+        return None
+
+
 def test_connection(credentials: dict, db_type: str) -> dict:
     """
     Open a read-only smoke-test connection and run a tiny metadata query.
@@ -402,11 +432,15 @@ def test_connection(credentials: dict, db_type: str) -> dict:
             cur = conn.cursor()
             cur.execute("SELECT DB_NAME(), SCHEMA_NAME(), SUSER_SNAME()")
             row = cur.fetchone()
-            return {
+            details: dict = {
                 "database": str(row[0] or ""),
                 "schema": str(row[1] or ""),
                 "user": str(row[2] or ""),
             }
+            write = _azure_write_permissions(cur)
+            if write:
+                details["write_permissions"] = write
+            return details
         finally:
             conn.close()
     else:
