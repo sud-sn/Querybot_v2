@@ -600,27 +600,96 @@ def _without_the_stated_period(resolved: dict, question: str, reader_question: s
         return resolved
     period_words = named_period_words(question) | named_period_words(reader_question)
 
-    def is_the_period(item: object) -> bool:
+    def plain_words(text: object) -> set[str]:
+        plain = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode().lower()
+        return set(re.findall(r"[a-z0-9]+", plain))
+
+    def only_the_period(left_over: object) -> bool:
+        # A member read with the period beside it: "Summit Tent 2025" is the
+        # product "Summit Tent" and the year.
+        dropped = {word for text in (left_over if isinstance(left_over, list) else []) for word in plain_words(text)}
+        return bool(dropped) and dropped <= period_words
+
+    def beside_the_period(item: object) -> bool:
+        return only_the_period((item or {}).get("dropped") if isinstance(item, dict) else None)
+
+    def the_period_itself(item: object) -> bool:
         phrase = str((item or {}).get("phrase") or "") if isinstance(item, dict) else ""
         reading = read_named_period(phrase)
         if reading and (reading["start"], reading["end"]) == (stated["start"], stated["end"]):
             return True
-        plain = unicodedata.normalize("NFKD", phrase).encode("ascii", "ignore").decode().lower()
-        words = set(re.findall(r"[a-z0-9]+", plain))
-        if words and words <= period_words:
-            return True
-        # A member read with the period beside it: "Summit Tent 2025" is the
-        # product "Summit Tent", found on its own, and the year.
-        dropped = {
-            word for text in (item or {}).get("dropped") or [] for word in re.findall(
-                r"[a-z0-9]+", unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode().lower())
-        }
-        return bool(dropped) and dropped <= period_words
+        words = plain_words(phrase)
+        return bool(words) and words <= period_words
 
-    return {
+    def read_by_another_phrase(item: dict) -> bool:
+        # The words of a phrase but for the period's, said again by another
+        # phrase of the question -- "Summit Tent" found whole, or "Summit Tent
+        # XL" found to be no indexed value -- are that phrase's, not a member
+        # to promote beside the period: "Summit Tent 2025" made an IN list of
+        # the product the question names and the family it belongs to.
+        own = plain_words(item.get("phrase")) - period_words
+        return bool(own) and any(
+            isinstance(other, dict) and other.get("phrase") != item.get("phrase")
+            and own <= plain_words(other.get("phrase"))
+            for bucket in ("verified", "several", "narrowed", "in_lists")
+            for other in (resolved or {}).get(bucket) or []
+        )
+
+    def is_the_period(item: object) -> bool:
+        return the_period_itself(item) or beside_the_period(item)
+
+    kept = {
         bucket: [item for item in items if not is_the_period(item)] if isinstance(items, list) else items
         for bucket, items in (resolved or {}).items()
     }
+    # Found by nothing else, the member beside the period is still the member
+    # the question names: in "units did we sell on the selling floor in 2025"
+    # the longer run of words is the only one tried, and the warehouse was
+    # dropped with the year -- the answer covered every warehouse. Where the
+    # words left beside the period name several members -- "copper pipe" in
+    # "units sold of copper pipe in March 2025", the 1/2 and the 3/4 -- they
+    # are those members, as an IN list: the first of them alone would answer
+    # for one size where the question names both.
+    found = {
+        (item.get("table_fqn"), item.get("column"), item.get("value"))
+        for item in kept.get("verified") or [] if isinstance(item, dict)
+    }
+    listed = {
+        (item.get("table_fqn"), item.get("column"), frozenset(item.get("values") or []))
+        for item in kept.get("in_lists") or [] if isinstance(item, dict)
+    }
+    # A narrowed item one of whose candidates is promoted is answered: left
+    # beside it, it told the SQL writer the phrase had no verified match.
+    promoted: set[int] = set()
+    for item in (resolved or {}).get("narrowed") or []:
+        if not isinstance(item, dict) or the_period_itself(item) or read_by_another_phrase(item):
+            continue
+        table, column = item.get("table_fqn"), item.get("column")
+        # Only the candidates that leave nothing over but the period: "copper
+        # tube 2025" is COPPER TUBE 20 and the year, never COPPER TEE 20, which
+        # leaves "tube" over as well.
+        candidates = item.get("candidates") or [{"value": item.get("value"), "dropped": item.get("dropped")}]
+        values = [c.get("value") for c in candidates
+                  if isinstance(c, dict) and c.get("value") and only_the_period(c.get("dropped"))]
+        if not (table and column and values):
+            continue
+        promoted.add(id(item))
+        if len(values) > 1:
+            key = (table, column, frozenset(values))
+            if key not in listed:
+                kept.setdefault("in_lists", []).append({
+                    "phrase": item.get("phrase"), "table_fqn": table, "column": column,
+                    "business_name": item.get("business_name"), "values": values,
+                })
+                listed.add(key)
+        elif (table, column, values[0]) not in found:
+            kept.setdefault("verified", []).append(
+                {**{key: value for key, value in item.items() if key not in {"dropped", "candidates"}},
+                 "value": values[0]})
+            found.add((table, column, values[0]))
+    if promoted and isinstance(kept.get("narrowed"), list):
+        kept["narrowed"] = [item for item in kept["narrowed"] if id(item) not in promoted]
+    return kept
 
 
 def _verified_members(resolved: dict) -> list[dict]:
@@ -3234,7 +3303,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         from core.value_index import value_index_enabled
         from core.value_resolver import (
             resolve_literals, build_verified_values_injection,
-            build_known_terms, build_vocabulary_words, filter_resolved_for_compliance,
+            build_known_terms, build_measure_forms, build_vocabulary_words, filter_resolved_for_compliance,
         )
         if value_index_enabled(state):
             _known_terms = build_known_terms(account_id, all_columns)
@@ -3243,6 +3312,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     account_id, question, allowed_tables=query_scope_tables,
                     known_terms=_known_terms,
                     vocabulary=build_vocabulary_words(account_id, all_columns),
+                    measure_forms=build_measure_forms(account_id),
                 ),
                 _analysis_question,
                 question,

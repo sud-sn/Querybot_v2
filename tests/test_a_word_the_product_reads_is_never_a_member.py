@@ -57,7 +57,11 @@ def _vocabulary(account: str, columns: dict | None) -> dict:
     call time: on a tree without it the words are not excluded, and each test
     fails on what the resolver does rather than on an import."""
     build = getattr(value_resolver, "build_vocabulary_words", None)
-    return {"vocabulary": build(account, columns)} if build else {}
+    forms = getattr(value_resolver, "build_measure_forms", None)
+    passed = {"vocabulary": build(account, columns)} if build else {}
+    if forms:
+        passed["measure_forms"] = forms(account)
+    return passed
 
 
 def _candidates(question: str) -> list[str]:

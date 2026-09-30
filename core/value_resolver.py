@@ -33,7 +33,7 @@ from difflib import SequenceMatcher
 
 from core.value_index import (
     FUZZY_CANDIDATE, FUZZY_VERIFIED,
-    index_exists, lookup_exact, lookup_fuzzy,
+    index_exists, lookup_exact, lookup_fuzzy, normalize_value,
 )
 
 log = logging.getLogger("querybot.value_resolver")
@@ -211,8 +211,35 @@ def build_vocabulary_words(account_id: str, all_columns: dict | None) -> set[str
     return words
 
 
+def build_measure_forms(account_id: str) -> set[str]:
+    """Every form of the words the tenant's measures are named with.
+
+    "How many units did we sell" says the "sold" of "Units sold", and "sell"
+    matched party codes with the letters inside them (GRUSSELL). As a metric
+    spells them the words are known terms (build_known_terms); their other
+    forms -- "sell", "selling", "buying" -- are not, and a verb is no name.
+    resolve_literals looks such a word up whole and never by its letters, so
+    a member that is called "Purchasing" is still found, and "sell" is no
+    party whose code has SELL inside.
+    """
+    forms: set[str] = set()
+    try:
+        import store
+        from core.word_forms import forms_of
+
+        for metric in store.list_metrics(account_id):
+            for phrase in [metric.get("name", ""), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]:
+                for word in re.findall(r"\w+", phrase or ""):
+                    if len(word) > 2:
+                        forms.update(forms_of(word.lower()))
+    except Exception as exc:
+        log.warning("Measure words for member candidates skipped: %s", exc)
+    return forms
+
+
 def extract_candidate_phrases(
     question: str, known_terms: set[str] | None = None, vocabulary: set[str] | None = None,
+    measure_forms: set[str] | None = None, exact_only: list[str] | None = None,
 ) -> list[str]:
     """
     Conservative candidate extraction in three precision tiers:
@@ -226,10 +253,15 @@ def extract_candidate_phrases(
     Grams never swallow tokens: a speculative gram that matches nothing in
     the index must not take the resolving token down with it ("value open"
     must not kill "open" -> ORD_STS = OPEN).
+
+    A single word that is a form of a measure's word ("sell" of "Units
+    sold") is a candidate like any other, but one to look up whole only:
+    ``exact_only``, where given, collects each (build_measure_forms).
     """
     text = question or ""
     known = {t.lower() for t in (known_terms or set())}
     words_of_vocabulary = {t.lower() for t in (vocabulary or set())}
+    forms_of_measures = {t.lower() for t in (measure_forms or set())}
     stop = _stopwords()
 
     def _excluded(word: str) -> bool:
@@ -308,6 +340,8 @@ def extract_candidate_phrases(
         if any(low == t.lower() for t in tokens):
             continue
         tokens.append(token)
+        if exact_only is not None and _forms(low) & forms_of_measures:
+            exact_only.append(token)
 
     return (kept_spans + kept_grams + tokens)[:_MAX_PHRASES]
 
@@ -348,8 +382,6 @@ def uncovered_phrase_tokens(phrase: str, value: str) -> list[str]:
       * identical or near-identical words (plural, tense, small typo), or
       * one word is a prefix of the other and at least three characters long.
     """
-    from core.value_index import normalize_value
-
     phrase_tokens = _TOKEN_RE.findall(normalize_value(phrase))
     value_tokens = _TOKEN_RE.findall(normalize_value(value))
     if not phrase_tokens or not value_tokens:
@@ -380,6 +412,67 @@ def uncovered_phrase_tokens(phrase: str, value: str) -> list[str]:
     return [token for token in phrase_tokens if not covered(token)]
 
 
+# The most words of a member's name looked for round a measure's verb.
+_NAME_RUN_MAX = 4
+# What the question's grammar says before a verb: "do not sell", "available to
+# sell", "we sell" say what is done, not who does it. A run that ends with the
+# verb and holds one of these is no name, whatever status the index holds that
+# reads the same. "No" is left out: "NO SELL" and "NO BUYING" are statuses, and
+# the clauses this is for say "not", "to" or a pronoun. A name that starts with
+# one of these words ("BE PURCHASING") is lost with them.
+_GRAMMAR_BEFORE_A_VERB = frozenset({
+    "do", "does", "did", "don", "doesn", "didn", "t", "not", "to", "we", "you", "they", "i", "can", "cannot",
+    "will", "would", "are", "is", "be", "been", "being"})
+
+
+def _names_written_around(
+    account_id: str,
+    question: str,
+    word: str,
+    allowed_tables: set[str] | None,
+    base_dir: str,
+    lookup=None,
+) -> list[tuple[str, list[dict]]]:
+    """The members whose whole name the question writes with `word` in it, as
+    [(the words of the question, what the index holds under them)], the
+    longest name where one holds another ("selling floor north" is not
+    "selling floor"). A run of words is looked up whole, never by its letters:
+    a verb of a measure ("sell") is not a member whose code has its letters
+    inside, and "the buying group" is one. ``lookup`` (text -> what the index
+    holds under it) is how a caller shares what it has already asked."""
+    words = normalize_value(question).split()
+    target = normalize_value(word)
+    spans: list[tuple[int, int]] = []
+    for at, spelled in enumerate(words):
+        if spelled != target:
+            continue
+        for start in range(max(0, at - _NAME_RUN_MAX + 1), at + 1):
+            # A name may end with the verb ("group purchasing") as well as hold it.
+            for end in range(max(at + 1, start + 2), min(len(words), start + _NAME_RUN_MAX) + 1):
+                if end == at + 1 and _GRAMMAR_BEFORE_A_VERB & set(words[start:at]):
+                    continue
+                spans.append((start, end))
+    looked: dict[str, list[dict]] = {}
+    found: list[tuple[int, int, str]] = []
+    for start, end in spans:
+        run = " ".join(words[start:end])
+        if run not in looked:
+            looked[run] = (lookup or (lambda text: lookup_exact(
+                account_id, text, allowed_tables, base_dir=base_dir)))(run)
+        if looked[run]:
+            found.append((start, end, run))
+    # The longest name where one holds another at the same words: "selling
+    # floor north" is not "selling floor" -- but "the selling floor and the
+    # selling floor north" names both.
+    kept: list[str] = []
+    for start, end, run in found:
+        if any(first <= start and end <= last and (first, last) != (start, end) for first, last, _ in found):
+            continue
+        if run not in kept:
+            kept.append(run)
+    return [(run, looked[run]) for run in kept]
+
+
 def resolve_literals(
     account_id: str,
     question: str,
@@ -388,6 +481,7 @@ def resolve_literals(
     base_dir: str = "clients",
     *,
     vocabulary: set[str] | None = None,
+    measure_forms: set[str] | None = None,
 ) -> dict:
     """
     Resolve candidate phrases from the question against the value index.
@@ -395,6 +489,9 @@ def resolve_literals(
     ``known_terms`` and ``vocabulary`` are words that are never a member on
     their own (build_known_terms, build_vocabulary_words); a known term also
     stops a run of words from being tried whole, a word of vocabulary does not.
+    ``measure_forms`` are the other forms of a measure's words
+    (build_measure_forms): one of them alone is looked up whole, never by its
+    letters.
 
     Returns {"verified": [...], "in_lists": [...], "clarify": [...],
     "narrowed": [...], "several": [...]} where each verified entry is {phrase, table_fqn, column,
@@ -432,25 +529,56 @@ def resolve_literals(
             "value": match.get("value"),
             "dropped": dropped,
         })
-    for phrase in extract_candidate_phrases(question, known_terms, vocabulary):
-        exact = lookup_exact(account_id, phrase, allowed_tables, base_dir=base_dir)
+    def named(phrase: str, exact: list[dict]) -> None:
+        """A member the index holds under exactly this name."""
+        columns = {(m["table_fqn"], m["column"]) for m in exact}
+        if len(columns) == 1:
+            result["verified"].append({"phrase": phrase, **exact[0]})
+        else:
+            # Verbatim in several columns: a country the customer's
+            # address and the sales territory both keep, a name beside its
+            # French twin. Which one the question means is the SQL
+            # writer's to decide -- but the member is named, and no answer
+            # may leave it out. Skipped, "Online sales in Canada" was
+            # answered with every country's sales.
+            result["several"].append({
+                "phrase": phrase,
+                "value": exact[0]["value"],
+                "columns": [{"table_fqn": m["table_fqn"], "column": m["column"],
+                             "business_name": m.get("business_name")} for m in exact],
+            })
+
+    asked: dict[str, list[dict]] = {}
+
+    def held_under(text: str) -> list[dict]:
+        """What the index holds under this exact text, asked once however many
+        runs and candidates the question reads it in, and however it is
+        capitalised."""
+        key = text.casefold()
+        if key not in asked:
+            asked[key] = lookup_exact(account_id, text, allowed_tables, base_dir=base_dir)
+        return asked[key]
+
+    verb_forms: list[str] = []
+    for phrase in extract_candidate_phrases(question, known_terms, vocabulary, measure_forms, exact_only=verb_forms):
+        exact = held_under(phrase)
         if exact:
-            columns = {(m["table_fqn"], m["column"]) for m in exact}
-            if len(columns) == 1:
-                result["verified"].append({"phrase": phrase, **exact[0]})
-            else:
-                # Verbatim in several columns: a country the customer's
-                # address and the sales territory both keep, a name beside its
-                # French twin. Which one the question means is the SQL
-                # writer's to decide -- but the member is named, and no answer
-                # may leave it out. Skipped, "Online sales in Canada" was
-                # answered with every country's sales.
-                result["several"].append({
-                    "phrase": phrase,
-                    "value": exact[0]["value"],
-                    "columns": [{"table_fqn": m["table_fqn"], "column": m["column"],
-                                 "business_name": m.get("business_name")} for m in exact],
-                })
+            named(phrase, exact)
+            continue
+        if phrase in verb_forms:
+            # "sell" is no party whose code has SELL inside -- but a member
+            # whose whole name the question writes with it in is that member,
+            # in a run of up to four words and not one of the grammar that
+            # says what is done: "the buying group", "selling floor only",
+            # "the selling floor in January 2025".
+            held = {(item.get("table_fqn"), item.get("column"), item.get("value"))
+                    for item in result["verified"]}
+            held |= {(column.get("table_fqn"), column.get("column"), item.get("value"))
+                     for item in result["several"] for column in item.get("columns") or []}
+            for run, exact in _names_written_around(
+                    account_id, question, phrase, allowed_tables, base_dir, held_under):
+                if not any((m["table_fqn"], m["column"], m["value"]) in held for m in exact):
+                    named(run, exact)
             continue
 
         fuzzy = lookup_fuzzy(account_id, phrase, allowed_tables, limit=6, base_dir=base_dir)
@@ -499,6 +627,11 @@ def resolve_literals(
                     "business_name": first.get("business_name"),
                     "value": first.get("value"),
                     "dropped": dropped_by_all[0],
+                    # Every candidate with the words it leaves over: whichever
+                    # those words turn out to be, the phrase is the candidates
+                    # that leave only them.
+                    "candidates": [{"value": m.get("value"), "dropped": dropped}
+                                   for m, dropped in zip(fuzzy, dropped_by_all)],
                 })
             else:
                 result["in_lists"].append({
