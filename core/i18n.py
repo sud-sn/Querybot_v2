@@ -59,6 +59,7 @@ Rules this module enforces
 from __future__ import annotations
 
 import re
+import unicodedata
 from contextvars import ContextVar
 
 DEFAULT_LANGUAGE = "en"
@@ -901,7 +902,10 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     "answer.value": {"en": "Value", "fr": "Valeur"},
     "answer.entries": {"en": "entries", "fr": "entrées"},
+    # A French count below two agrees in the singular (core.i18n.count_noun).
+    "answer.entries.one": {"en": "entry", "fr": "entrée"},
     "answer.groups": {"en": "groups", "fr": "groupes"},
+    "answer.groups.one": {"en": "group", "fr": "groupe"},
     "answer.returned_period": {"en": "the returned period", "fr": "la période renvoyée"},
     "answer.first_period": {"en": "the first period", "fr": "la première période"},
     "answer.second_period": {"en": "the second period", "fr": "la deuxième période"},
@@ -7039,6 +7043,139 @@ def grain_label(grain, count=2, lang: str | None = None) -> str:
     if f"{stem}.one" not in MESSAGES:
         return key
     return plural(stem, count, lang=lang)
+
+
+# The things a dimension counts, as French names them, singular and plural:
+# "sur 5 groupes d'articles", never "sur 5 item groups". A column's business
+# name is English wherever the tenant's vocabulary is, and English morphology
+# on it put English grammar inside a French sentence. Keyed by the English
+# singular, and by the French one folded, for a warehouse already named in
+# French. A dimension not listed here is counted in the sentence's own
+# French noun, never in English (count_noun).
+FRENCH_NOUNS: dict[str, tuple[str, str]] = {
+    "warehouse": ("entrepôt", "entrepôts"),
+    "customer": ("client", "clients"),
+    "client": ("client", "clients"),
+    "product": ("produit", "produits"),
+    "item": ("article", "articles"),
+    "item group": ("groupe d'articles", "groupes d'articles"),
+    "product group": ("groupe de produits", "groupes de produits"),
+    "product line": ("gamme de produits", "gammes de produits"),
+    "category": ("catégorie", "catégories"),
+    "subcategory": ("sous-catégorie", "sous-catégories"),
+    "supplier": ("fournisseur", "fournisseurs"),
+    "vendor": ("fournisseur", "fournisseurs"),
+    "region": ("région", "régions"),
+    "country": ("pays", "pays"),
+    "province": ("province", "provinces"),
+    "city": ("ville", "villes"),
+    "store": ("magasin", "magasins"),
+    "territory": ("territoire", "territoires"),
+    "buyer": ("acheteur", "acheteurs"),
+    "sales rep": ("vendeur", "vendeurs"),
+    "salesperson": ("vendeur", "vendeurs"),
+    "employee": ("employé", "employés"),
+    "department": ("service", "services"),
+    "division": ("division", "divisions"),
+    "brand": ("marque", "marques"),
+    "channel": ("canal", "canaux"),
+    "segment": ("segment", "segments"),
+    "profit centre": ("centre de profit", "centres de profit"),
+    "profit center": ("centre de profit", "centres de profit"),
+    "cost centre": ("centre de coûts", "centres de coûts"),
+    "cost center": ("centre de coûts", "centres de coûts"),
+    "unit of measure": ("unité de mesure", "unités de mesure"),
+    "location": ("emplacement", "emplacements"),
+    "site": ("site", "sites"),
+    "plant": ("usine", "usines"),
+    "company": ("société", "sociétés"),
+    "business unit": ("unité d'affaires", "unités d'affaires"),
+    "account": ("compte", "comptes"),
+    "order": ("commande", "commandes"),
+    "invoice": ("facture", "factures"),
+    "project": ("projet", "projets"),
+    "contract": ("contrat", "contrats"),
+    "status": ("statut", "statuts"),
+    "family": ("famille", "familles"),
+    "period": ("période", "périodes"),
+    "month": ("mois", "mois"),
+    "quarter": ("trimestre", "trimestres"),
+    "year": ("année", "années"),
+    "week": ("semaine", "semaines"),
+    "day": ("jour", "jours"),
+}
+# What a label adds to the thing it names: "Warehouse Name" counts warehouses.
+_NOUN_ATTRIBUTES = frozenset({"name", "code", "description", "desc", "id", "number", "no", "key", "label"})
+
+
+def _folded(text: str) -> str:
+    return unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode().lower()
+
+
+_FRENCH_BY_FOLDED = {_folded(forms[0]): forms for forms in FRENCH_NOUNS.values()}
+
+
+def count_noun(label: str, count, fallback_id: str, lang: str | None = None) -> str:
+    """What a count of a dimension's members is said in: "item groups" in
+    English, "groupes d'articles" in French, where the French name is known,
+    and ``fallback_id``'s own noun where it is not -- a French sentence never
+    counts in English. ``label`` is the dimension's business name."""
+    tag = normalise_language(lang if lang is not None else get_active_language())
+    try:
+        # One is singular in English; below two in French ("0,5 entrepôt").
+        one = abs(float(count)) < 2 if tag == "fr" else abs(float(count)) == 1
+    except (TypeError, ValueError):
+        one = False
+    # The French fallback agrees with its count too: "Sur 1 groupes" was the
+    # answer's. English keeps its own words as they were.
+    singular = tag == "fr" and one and f"{fallback_id}.one" in MESSAGES
+    fallback = t(f"{fallback_id}.one" if singular else fallback_id, lang=tag)
+    if not str(label or "").strip():
+        return fallback
+    if tag == "en":
+        return _english_plural(str(label).lower())
+    # "Unité d’affaires" is written with a typographic apostrophe as often as
+    # not, and "Sub-Category" with a hyphen.
+    text = str(label).lower().replace("\u2019", "'").replace("\u02bc", "'")
+    words = [word for word in re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)?", text)]
+    while len(words) > 1 and words[-1] in _NOUN_ATTRIBUTES:
+        words.pop()
+    forms = None
+    for phrase in (" ".join(words), "".join(words), " ".join(words[:-1] + [_singular(words[-1])]) if words else ""):
+        forms = FRENCH_NOUNS.get(phrase) or _FRENCH_BY_FOLDED.get(_folded(phrase))
+        if forms:
+            break
+    if not forms:
+        return fallback
+    return forms[0] if one else forms[1]
+
+
+def _singular(word: str) -> str:
+    """An English plural's singular, as a column label writes one: "Regions",
+    "Categories", "Branches"."""
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith(("ches", "shes", "xes", "sses")):
+        return word[:-2]
+    if word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _english_plural(phrase: str) -> str:
+    """"revenue category" -> "revenue categories". Enough English for a count
+    sentence; a phrase that already reads as plural is left alone."""
+    words = str(phrase or "").split()
+    if not words or words[-1].endswith("s"):
+        return phrase
+    last = words[-1]
+    if len(last) > 1 and last.endswith("y") and last[-2] not in "aeiou":
+        last = last[:-1] + "ies"
+    elif last.endswith(("x", "z", "ch", "sh")):
+        last += "es"
+    else:
+        last += "s"
+    return " ".join(words[:-1] + [last])
 
 
 def month_name(month: int, *, short: bool = False, lang: str | None = None) -> str:

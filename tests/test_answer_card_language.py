@@ -337,18 +337,17 @@ class TestTheInsightSummary:
             "Revenue trended down 40.0% from January 2026 to April 2026. Peak: 100 in January 2026."
 
     def test_a_ranking_is_french(self, french):
-        # "sur 3 regions", not "sur 3 region": the label follows a count. It is
-        # pluralised in English because the label itself is English -- it comes
-        # from expanding a column name, in either language. Translating the
-        # label is a separate gap.
+        # "sur 3 régions": the label follows a count, and is the French noun for
+        # the column, not the English one pluralised. The share is written as a
+        # French reader writes a number.
         assert _card(RANKING, "revenue by region")["insight_summary"] == \
-            "North arrive en tête avec 900 (92.8 % du total), sur 3 regions."
+            "North arrive en tête avec 900 (92,8 % du total), sur 3 régions."
 
     def test_the_french_percent_sign_takes_a_space(self, french):
         """French typography puts a space before %, and the reader notices its
         absence the way an English reader notices "92.8 %"."""
         summary = _card(RANKING, "revenue by region")["insight_summary"]
-        assert "92.8 %" in summary and "92.8%" not in summary
+        assert "92,8 %" in summary and "92,8%" not in summary
 
     def test_a_two_point_series_compares_rather_than_claiming_a_trend(self, french):
         """Two endpoints are one interval. The language must not turn that into
@@ -427,7 +426,7 @@ class TestTheNamedPeriodNote:
         finished."""
         summary = _card(PERIOD, "revenue 2025 vs 2026", period=True)["insight_summary"]
         assert summary.startswith(
-            "Sur 2 categories, 1 a augmenté et 1 a diminué entre 2025 et 2026.")
+            "Sur 2 catégories, 1 a augmenté et 1 a diminué entre 2025 et 2026.")
 
     def test_a_plural_count_conjugates_differently(self, french):
         rows = PERIOD + [{"category": "Seals", "revenue_2025": 10, "revenue_2026": 40},

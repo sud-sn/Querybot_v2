@@ -13,6 +13,7 @@ from typing import Any
 from core.analysis_contract import collapse_rows_by_label
 from core.display_formats import normalize_display_format
 from core.i18n import (
+    count_noun as _count_noun,
     format_date as _format_date,
     format_decimal as _format_decimal,
     format_percent as _format_percent,
@@ -1949,22 +1950,6 @@ def _period_comparison_from_rows(rows: list[dict]) -> dict | None:
     }
 
 
-def _plural(phrase: str) -> str:
-    """"revenue category" -> "revenue categories". Enough English for a count
-    sentence; a phrase that already reads as plural is left alone."""
-    words = str(phrase or "").split()
-    if not words or words[-1].endswith("s"):
-        return phrase
-    last = words[-1]
-    if len(last) > 1 and last.endswith("y") and last[-2] not in "aeiou":
-        last = last[:-1] + "ies"
-    elif last.endswith(("x", "z", "ch", "sh")):
-        last += "es"
-    else:
-        last += "s"
-    return " ".join(words[:-1] + [last])
-
-
 def _safe_category_label(label: Any, label_column: str) -> str:
     """The category's own name, or "" when the value redactor replaced it.
 
@@ -2113,11 +2098,12 @@ def _period_comparison_summary(
     def named(mover: dict) -> str:
         return _safe_category_label(mover["label"], facts["label_column"])
 
-    # _plural is English morphology on a column name. The column name is the
-    # customer's schema in both languages, so it keeps the same treatment
-    # rather than being left bare in one of them.
-    counted = (_plural(_display_label(facts["label_column"]).lower())
-               if facts["label_column"] else _t("answer.groups"))
+    # Counted in the reader's language: "across 5 item groups", "sur 5
+    # groupes d'articles" -- English plural morphology on the column's name
+    # put English inside the French sentence (core.i18n.count_noun).
+    counted = _count_noun(
+        _display_label(facts["label_column"]) if facts["label_column"] else "",
+        facts["row_count"], "answer.groups")
     opening = _t(
         "answer.period.opening", count=facts["row_count"], label=counted,
         grew=_t_plural("answer.period.grew", facts["grew"]),
@@ -3261,17 +3247,18 @@ def _build_insight_summary(
             leader_share = cat.get("leader_share_pct")
             # Pluralised because it follows a count: "across 3 warehouse
             # name" read as broken English the moment the label stopped being
-            # the raw "whs nm" and started being words.
-            label_col = _plural(
-                _display_label(cat.get("label_column") or "").lower())
+            # the raw "whs nm" and started being words -- and in the reader's
+            # language: "sur 3 entrepôts", never "sur 3 warehouses".
             count = cat.get("category_count", row_count)
-            share_str = (_t("answer.note.leader_share", pct=leader_share)
+            label_col = _count_noun(_display_label(cat.get("label_column") or ""), count, "answer.entries")
+            # The share as the reader's language writes a number: "92,8 %
+            # du total", never "92.8 % du total".
+            share_str = (_t("answer.note.leader_share", pct=_format_decimal(leader_share, 1, grouping=False))
                          if leader_share else "")
             sentence = _t(
                 "answer.note.leads_across", leader=leader["label"],
                 value=format_value(leader["value"], ctx.get("value_col") or ""),
-                share=share_str, count=count,
-                label=label_col or _t("answer.entries"))
+                share=share_str, count=count, label=label_col)
             second = _second_measure_sentence(
                 rows, ctx, cat.get("label_column") or "", format_value)
             return f"{sentence} {second}" if second else sentence
@@ -3322,7 +3309,7 @@ def _second_measure_sentence(rows: list[dict], ctx: dict, label_col: str, format
         total = sum(item["value"] for item in items)
         if total > 0:
             share = _t("answer.note.leader_share",
-                       pct=round(leader["value"] / total * 100, 1))
+                       pct=_format_decimal(leader["value"] / total * 100, 1, grouping=False))
     return _t("answer.note.second_measure", leader=leader["label"],
               measure=_display_label(second),
               value=format_value(leader["value"], second), share=share)
@@ -3449,7 +3436,7 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
                 and categories >= MIN_CATEGORIES_FOR_CONCENTRATION):
             callouts.append({
                 "type": "concentration", "icon": "◉",
-                "message": _t("answer.callout.concentration", pct=conc),
+                "message": _t("answer.callout.concentration", pct=_format_decimal(conc, 1, grouping=False)),
                 "severity": "info",
             })
         leader_share = cat.get("leader_share_pct")
@@ -3458,7 +3445,7 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
             callouts.append({
                 "type": "dominance", "icon": "★",
                 "message": _t("answer.callout.dominance",
-                              label=top5[0]["label"], pct=leader_share),
+                              label=top5[0]["label"], pct=_format_decimal(leader_share, 1, grouping=False)),
                 "severity": "info",
             })
 
