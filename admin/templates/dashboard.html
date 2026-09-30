@@ -39,6 +39,21 @@
 ) }}
 {% endif %}
 
+{% if unreadable_credentials %}
+{% set _key_file = unreadable_credentials[0].key_file %}
+{% set _count = unreadable_credentials|length %}
+{% set _saved = _count ~ " saved credential" ~ ("" if _count == 1 else "s")
+   ~ ": " ~ (unreadable_credentials|map(attribute="name")|join(", ")) %}
+{% if _key_file == "unreadable" %}
+{% set _unreadable = "This server cannot open its key file, so it cannot read " ~ _saved
+   ~ ". Let the service's user read the key file and restart the service." %}
+{% else %}
+{% set _unreadable = "This server's key file " ~ ("is missing, so it cannot read " if _key_file == "missing" else "cannot read ")
+   ~ _saved ~ ". Restore the key file they were saved with and restart the service, or enter them again." %}
+{% endif %}
+{{ alert(message=_unreadable, type="error", icon_name="alert-triangle", title="Saved credentials cannot be read") }}
+{% endif %}
+
 {# ── Inbox: the work waiting, before any totals ── #}
 {% with items = inbox, summary = inbox_summary %}
   {% include "_inbox.html" %}

@@ -195,6 +195,11 @@ def claim_system_key(key: str, value: str) -> bool:
         return cur.rowcount == 1
 
 
+# The rows already logged as unreadable. The log-export loop lists every
+# database each minute, and one error line a minute per row buried the rest.
+_TOLD_UNREADABLE: set[tuple[str, object]] = set()
+
+
 def _decrypt_setting(key: str, blob) -> str | None:
     """One stored setting, or None when it cannot be read.
 
@@ -208,16 +213,22 @@ def _decrypt_setting(key: str, blob) -> str | None:
     Skipping is the safe direction: the caller sees the setting as unset, and
     "no API key configured for provider X" is an error an admin can act on.
     Logged at error, not debug, because a silently-dropped credential and a
-    never-entered one are otherwise indistinguishable.
+    never-entered one are otherwise indistinguishable -- once per setting,
+    since settings are read on every question.
     """
+    told = ("setting", key)
     try:
-        return decrypt(blob)
+        value = decrypt(blob)
     except Exception as exc:  # noqa: BLE001 - any cipher failure, same answer
-        log.error(
-            "system_config[%s] could not be decrypted (%s) — treating as unset. "
-            "Re-enter it in Admin \u2192 System.", key, exc.__class__.__name__,
-        )
+        if told not in _TOLD_UNREADABLE:
+            _TOLD_UNREADABLE.add(told)
+            log.error(
+                "system_config[%s] could not be decrypted (%s) — treating as unset. "
+                "Re-enter it in Admin \u2192 System.", key, exc.__class__.__name__,
+            )
         return None
+    _TOLD_UNREADABLE.discard(told)
+    return value
 
 
 def get_system(key: str, default: str = "") -> str:
@@ -251,6 +262,50 @@ PLATFORM_FIELDS: dict[str, list[str]] = {
     "teams": ["app_id", "app_password", "tenant_id"],
     "slack": ["bot_token", "signing_secret", "app_id"],
 }
+
+# The admin console's own password and session counter: nothing connects
+# with them, and no settings page takes them again (python -m
+# admin.reset_password sets the password; the sign-in page says when it
+# cannot be read).
+_NOT_CREDENTIALS = ("admin_password_hash", "admin_session_version")
+
+
+def unreadable_credentials() -> list[dict]:
+    """Every saved secret this server's key cannot read: which one -- a
+    setting, a platform, a database -- and never its value.
+
+    An upgrade that moves the service to another user, or loses the key file,
+    leaves every credential saved before it unreadable. Each shows up only
+    when something uses it: a question that cannot reach the warehouse, a bot
+    that stops answering. So this is read at startup, on /health and on the
+    dashboard. ``key_file`` says why, the same for every row: "missing",
+    "unreadable" (the service may not open it), or "different" (it opens, but
+    is not the key they were saved with).
+    """
+    from store import crypto
+
+    with get_db() as conn:
+        saved = [("setting", row["key"], row["key"], row["value_encrypted"])
+                 for row in conn.execute("SELECT key, value_encrypted FROM system_config ORDER BY key")
+                 if row["key"] not in _NOT_CREDENTIALS]
+        saved += [("platform", row["id"], row["name"], row["credentials_encrypted"])
+                  for row in conn.execute("SELECT id, name, credentials_encrypted FROM platform_config ORDER BY id")]
+        saved += [("database", row["id"], row["name"], row["credentials_encrypted"])
+                  for row in conn.execute("SELECT id, name, credentials_encrypted FROM db_config ORDER BY id")]
+    if not saved:
+        return []
+    problem = crypto.key_file_problem()
+    unreadable = []
+    for kind, row_id, name, blob in saved:
+        if problem is None:
+            try:
+                decrypt(blob)
+                continue
+            except Exception:  # noqa: BLE001 - any cipher failure, same answer
+                pass
+        unreadable.append({"kind": kind, "id": row_id, "name": name, "key_file": problem or "different"})
+    return unreadable
+
 
 PLATFORM_LABELS = {"zoom": "Zoom Team Chat", "teams": "Microsoft Teams", "slack": "Slack"}
 
@@ -307,9 +362,39 @@ def delete_platform(platform_id: int) -> None:
         conn.execute("DELETE FROM platform_config WHERE id=?", (platform_id,))
 
 
+def _readable_credentials(kind: str, row: dict) -> dict | None:
+    """A saved platform's or database's credentials, or None when this
+    server's key cannot read them.
+
+    As with a system setting (_decrypt_setting): one row saved under a key the
+    server no longer holds -- a key file lost or replaced in an upgrade --
+    raised out of every list it was in, so the dashboard and the Databases page
+    died with a cryptography trace and no word of which row. The row now reads
+    as saved without credentials, marked, and logged at error the first time:
+    a connection that fails with nothing said about why looks like a warehouse
+    outage.
+    """
+    told = (kind, row.get("id"))
+    try:
+        credentials = decrypt_json(row.pop("credentials_encrypted"))
+    except Exception as exc:  # noqa: BLE001 - any cipher failure, same answer
+        if told not in _TOLD_UNREADABLE:
+            _TOLD_UNREADABLE.add(told)
+            log.error(
+                "%s %r (id %s): its saved credentials cannot be read with this server's key (%s). "
+                "Restore the key file they were saved with, or enter them again.",
+                kind, row.get("name"), row.get("id"), exc.__class__.__name__,
+            )
+        return None
+    _TOLD_UNREADABLE.discard(told)
+    return credentials
+
+
 def _platform_row(row) -> dict:
     d = dict(row)
-    d["credentials"] = decrypt_json(d.pop("credentials_encrypted"))
+    credentials = _readable_credentials("Platform", d)
+    d["credentials"] = credentials or {}
+    d["credentials_unreadable"] = credentials is None
     d["label"] = PLATFORM_LABELS.get(d["platform_type"], d["platform_type"])
     return d
 
@@ -378,7 +463,9 @@ def delete_db_config(db_id: int) -> None:
 
 def _db_row(row) -> dict:
     d = dict(row)
-    d["credentials"] = decrypt_json(d.pop("credentials_encrypted"))
+    credentials = _readable_credentials("Database", d)
+    d["credentials"] = credentials or {}
+    d["credentials_unreadable"] = credentials is None
     d["dialect"] = DB_DIALECT.get(d["db_type"], "snowflake")
     d["label"]   = DB_LABEL.get(d["db_type"], d["db_type"])
     return d

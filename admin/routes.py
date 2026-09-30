@@ -47,6 +47,7 @@ from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
 from store.config_store import get_db_config
 from core.pipeline_context import save_state
 from core.process_secrets import env_secret_or_random
+from core.release import kb_build_record, kb_rebuild_needed, product_version
 from core.static_assets import asset_url
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.log_export import (
@@ -111,6 +112,7 @@ def _jinja_from_json(value, default=None):
 templates.env.filters["from_json"] = _jinja_from_json
 # Every /static/ link carries a hash of the file it names (core/static_assets.py).
 templates.env.globals["asset"] = asset_url
+templates.env.globals["product_version"] = product_version
 
 _COOKIE = "querybot_session"
 
@@ -714,6 +716,7 @@ async def dashboard(request: Request):
         "clients": clients, "platforms": platforms,
         "dbs": dbs, "stats": stats,
         "inbox": inbox, "inbox_summary": inbox_summary(inbox),
+        "unreadable_credentials": store.unreadable_credentials(),
     })
 
 
@@ -9239,6 +9242,7 @@ async def client_setup_page(request: Request, account_id: str):
 
     return _resp(request, "client_setup.html", {
         "client":               client,
+        "kb_rebuild":           kb_rebuild_needed(client),
         "erp_packs_available":  _list_erp_packs(),
         "client_source_pack":   _setup_source_pack_value(client),
         "client_industry_packs": _client_industry_pack_ids(client),
@@ -11384,6 +11388,10 @@ async def admin_build_kb(
                 "percent": 100,
                 "current_table": "",
             }
+            # The release that wrote these documents, kept from here: an admin
+            # who accepts a blocked build after an upgrade must not stamp the
+            # upgrade's release on what an earlier one wrote.
+            building_state.update(kb_build_record())
             building_state["kb_progress"] = validating_progress
             save_state(account_id, "KB_BUILDING", building_state)
             await notify_kb_build_changed(

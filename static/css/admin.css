@@ -117,6 +117,7 @@ body {
   flex-shrink: 0;
 }
 .sidebar-foot .btn { width: 100%; }
+.sidebar-version { color: var(--shell-muted); font-size: var(--font-xs); text-align: center; }
 /* ── Main content wrapper ── */
 .shell-main {
   flex: 1;

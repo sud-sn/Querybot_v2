@@ -28,10 +28,12 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import store
+from store import crypto
 from store.db import init_db
 from admin import router as admin_router
 from portal import router as portal_router
 from gateway.webhooks import router as webhooks_router
+from core.release import KB_FORMAT, code_release, kb_rebuild_needed, product_version
 from core.web_security import RefuseCrossSiteRequests
 
 logging.basicConfig(
@@ -40,7 +42,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("querybot")
 
-app = FastAPI(title="QueryBot", version="2.0.0")
+app = FastAPI(title="QueryBot", version=product_version())
 app.add_middleware(RefuseCrossSiteRequests)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(admin_router)
@@ -48,9 +50,54 @@ app.include_router(portal_router)
 app.include_router(webhooks_router)
 
 
+def _upgrade_checks() -> None:
+    """What an upgrade can leave behind without a word: saved secrets this
+    server's key cannot read, and knowledge bases a different release built.
+    Each otherwise shows up only when a reader's question fails, or is
+    answered from what the old release wrote."""
+    log.info("QueryBot %s (release %s, knowledge-base format %d)",
+             product_version(), code_release(), KB_FORMAT)
+    unreadable = store.unreadable_credentials()
+    if unreadable:
+        named = ", ".join(f"{item['kind']} {item['name']!r}" for item in unreadable)
+        key_file = unreadable[0]["key_file"]
+        if key_file == "missing":
+            log.critical(
+                "The key file %s does not exist, and %d saved credentials were encrypted with the "
+                "one it held: %s. The first save writes a new key, under which none of them can be "
+                "read. Stop the service and restore the key file (docs/UPGRADE_RUNBOOK.md, sections "
+                "2 and 3), or enter every one of them again.",
+                crypto.KEY_FILE, len(unreadable), named)
+        elif key_file == "unreadable":
+            log.critical(
+                "The key file %s cannot be opened by this service's user, so %d saved credentials "
+                "cannot be read: %s. Let that user read the key file and its directory, or point "
+                "QUERYBOT_KEY_FILE at a copy it can read, and restart.",
+                crypto.KEY_FILE, len(unreadable), named)
+        else:
+            log.error(
+                "%d saved credentials cannot be read with the key at %s: %s. The key file changed "
+                "since they were saved: restore it and restart, or enter them again under Admin > "
+                "Databases, Platforms or System.",
+                len(unreadable), crypto.KEY_FILE, named)
+    for client in store.list_clients():
+        stale = kb_rebuild_needed(client)
+        if stale:
+            log.warning(
+                "Workspace %s: its knowledge base was built by %s (format %d); this release builds "
+                "format %d. Rebuild it: Admin > the workspace > Setup > Rebuild Knowledge Base.",
+                client.get("account_id"), stale["built_version"] or "a release before 2.1.0",
+                stale["built_format"], stale["format"])
+
+
 @app.on_event("startup")
 async def startup() -> None:
     init_db()
+
+    try:
+        _upgrade_checks()
+    except Exception:
+        log.error("The upgrade checks could not run at startup", exc_info=True)
 
     # Warn if session secrets are using insecure defaults
     if not os.getenv("SESSION_SECRET") and not os.getenv("PORTAL_SESSION_SECRET"):
@@ -251,9 +298,14 @@ async def health():
     clients = store.list_clients()
     return {
         "status":  "ok",
-        "version": "2.0.0",
+        "version": product_version(),
+        "release": code_release(),
+        "kb_format": KB_FORMAT,
         "clients": len(clients),
         "ready":   sum(1 for c in clients if c["state"] == "READY"),
+        # Counts, not names: this page answers without signing in.
+        "kb_rebuild_needed": sum(1 for c in clients if kb_rebuild_needed(c)),
+        "unreadable_credentials": len(store.unreadable_credentials()),
     }
 
 

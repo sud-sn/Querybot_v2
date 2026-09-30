@@ -36,6 +36,7 @@ inbox untrustworthy on first read.
 from __future__ import annotations
 
 import store
+from core.release import kb_rebuild_needed
 
 # Rank order for sorting. Lower sorts first.
 _SEVERITY_RANK = {"action": 0, "warn": 1, "info": 2}
@@ -126,6 +127,18 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
             hit(kind, "action", label,
                 "the client cannot answer questions yet",
                 "/setup", cta, account_id)
+
+        # ── An upgrade left the knowledge base behind ────────────────────────
+        # Answers still come, from documents this release no longer writes; a
+        # rollback leaves one a later release wrote. Either way, rebuild.
+        stale = kb_rebuild_needed(client)
+        if stale:
+            newer = stale["newer"]
+            hit("kb-release-newer" if newer else "kb-release", "action",
+                "knowledge base built by a newer release" if newer
+                else "knowledge base built by an earlier release",
+                "answers read what that release wrote until the knowledge base is rebuilt",
+                "/setup", "Rebuild the KB", account_id)
 
         # ── The model is not trustworthy ─────────────────────────────────────
         n = errors.get(account_id, 0)

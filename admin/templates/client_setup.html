@@ -172,6 +172,18 @@
 {% if saved %}{{ alert(message=saved, type="success", icon_name="check-circle") }}{% endif %}
 {% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
 
+{% if kb_rebuild %}
+{{ alert(
+    message=("This knowledge base was built by " ~ (kb_rebuild.built_version or "a release before 2.1.0")
+             ~ " (format " ~ kb_rebuild.built_format ~ "). This release, " ~ kb_rebuild.version
+             ~ ", builds format " ~ kb_rebuild.format
+             ~ ". Answers read what the other release wrote until you rebuild it with Rebuild Knowledge Base below."),
+    type="amber",
+    icon_name="alert-triangle",
+    title="Rebuild the knowledge base"
+) }}
+{% endif %}
+
 {% if state == 'KB_BUILDING' %}
 {{ alert(
     message="Generating business context for each table — takes 5–10 minutes for 10+ tables. This page polls for live progress and will update when the build completes.",

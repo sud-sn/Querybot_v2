@@ -211,7 +211,9 @@
       <td style="font-weight:var(--weight-semibold)">{{ d.name }}</td>
       <td><span class="badge badge-blue">{{ d.label }}</span></td>
       <td style="font-size:var(--font-xs);color:var(--text-muted)">
-        {% if d.db_type == "snowflake" %}
+        {% if d.credentials_unreadable %}
+          <span class="badge badge-red">Credentials cannot be read</span>
+        {% elif d.db_type == "snowflake" %}
           {{ d.credentials.get("account","—") }} / {{ d.credentials.get("database","—") }} / {{ d.credentials.get("schema","PUBLIC") }}
         {% elif d.db_type == "oracle" %}
           {{ d.credentials.get("dsn","—") }}

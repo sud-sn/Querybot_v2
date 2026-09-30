@@ -84,6 +84,23 @@ The store upgrades itself at startup (for example, the business-meaning table
 and the metric certification columns). There is nothing to run by hand. Read
 the startup lines for errors before going on.
 
+`/health` answers for the build now running. Check it before going on:
+
+- `version` is the one this deploy meant to install. `CHANGELOG.md` has its
+  entry, and the upgrade steps it lists are in addition to this runbook.
+- `unreadable_credentials` is 0. Anything else means the service cannot read
+  the key file the credentials were saved with. The startup log names each
+  credential it cannot read, and says first whether the key file is missing,
+  cannot be opened by the service's user, or is a different key. A key file
+  that cannot be opened needs read access for the service's user (or
+  `QUERYBOT_KEY_FILE` pointed at a copy it can read). A missing or different
+  one: stop the service and restore it from step 2's copy before anyone saves
+  a credential, since the first save writes a new key; otherwise enter each
+  credential again.
+- `kb_rebuild_needed` counts the workspaces whose knowledge base another
+  release built. Step 8 rebuilds it. Until then the dashboard's inbox and the
+  setup page both say so.
+
 ## 4. Rotate the password on the new build
 
 1. Admin → the workspace → **Users** → **Reset password** (the circular
@@ -238,7 +255,13 @@ Ask these as an English reader and as a French reader:
 ```bash
 git checkout <the commit from step 2>
 bash deploy.sh
+curl -s http://localhost:8000/health   # the version you rolled back to
 ```
+
+If the release you rolled back from raised the knowledge-base format (its
+entry in `CHANGELOG.md` says so), rebuild the knowledge base under the one now
+running (step 8). A 2.1.0 build or later says so itself: it tells you about a
+knowledge base a newer release built as well as an older one.
 
 The upgrade only adds tables and columns, so the older build runs on the store
 as it is, and the review decisions made since are kept. Restore the backup only

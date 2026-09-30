@@ -52,7 +52,7 @@ from store.config_store import (
     replace_graph_from_snapshot,
     save_platform, get_platform, list_platforms, delete_platform,
     PLATFORM_FIELDS, PLATFORM_LABELS, PLATFORM_SECRET_FIELDS,
-    save_db_config, get_db_config, list_db_configs, delete_db_config,
+    save_db_config, get_db_config, list_db_configs, delete_db_config, unreadable_credentials,
     DB_REQUIRED_FIELDS, DB_DIALECT, DB_LABEL,
     upsert_client, get_client, get_client_state, list_clients, delete_client,
     update_client_state, update_client_meta, get_monthly_query_count,

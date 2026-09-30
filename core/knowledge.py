@@ -696,6 +696,8 @@ async def build_kb(
     import hashlib as _hashlib
     import json as _json
 
+    from core import release as _release
+
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
     kb_path.mkdir(parents=True, exist_ok=True)
@@ -1228,6 +1230,10 @@ async def build_kb(
             "entity_type": entity_type,
             "naming_profile": _naming_profile,
             "vocab_source_packs": list(getattr(_vocab, "source_packs", []) or []),
+            # What a build writes: a release that changes it rewrites every
+            # table, where an unchanged table was skipped and the old kind of
+            # document kept under the new format's record.
+            "kb_format": _release.KB_FORMAT,
         }
         _build_hash = _hashlib.sha256(
             _json.dumps(

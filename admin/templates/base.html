@@ -88,6 +88,7 @@
 
     <div class="sidebar-foot">
       <a href="/admin/logout" class="btn btn-shell btn-sm">Logout</a>
+      {% if product_version is defined %}<span class="sidebar-version">Version {{ product_version() }}</span>{% endif %}
     </div>
 
   </aside>
