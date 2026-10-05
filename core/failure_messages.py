@@ -159,6 +159,37 @@ def _clean_db_error(raw: str) -> str:
     return text
 
 
+# A database that could not answer at all -- unreachable, asleep, out of
+# capacity, refusing the login, out of time -- as each driver reports it:
+# a SQLSTATE of class 08 (connection), HYT00/HYT01 (timeout) or 28000 (the
+# login) where the driver puts one (leading a pyodbc error, or bracketed or
+# in parentheses in its message); a SQL Server number in the "(NNNNN)" slot
+# the ODBC driver ends its message with; Oracle's TNS and logon codes; and
+# their plain wording. Never a bare number in the text, which can be a value
+# from the data ("the nvarchar value '28000-1234'"). Asking the same database
+# another question cannot do better than any of these.
+_UNAVAILABLE_RE = re.compile(
+    r"^\(?\s*['\"]?(?:08[0-9A-Z]{3}|HYT0[01]|28000)['\"]?\s*,"
+    r"|[\[(](?:08[0-9A-Z]{3}|HYT0[01]|28000|57014)[\])]"
+    r"|\((?:40613|40197|40501|40615|40914|47073|49918|49919|49920|10928|10929|4221|4060|18456)\)"
+    r"|\bORA-(?:01017|01033|01034|03113|03114|12154|12170|12505|12514|12516|12520|12537|12541|12543"
+    r"|12545|12547|28000|28001)\b"
+    r"|\bDPY-(?:4011|4024|6\d{3})\b|\bDPI-1067\b"
+    # Snowflake: a statement or warehouse timeout, and no warehouse to run on.
+    r"|\b000630\b|\b000606\b"
+    r"|login timeout|login failed|failed to connect|could not connect|communication link failure"
+    r"|connection (?:was )?(?:closed|reset|refused|broken)|is not currently available"
+    r"|database is paused|is paused for the remainder|timed out|timeout expired|query timeout",
+    re.IGNORECASE,
+)
+
+
+def is_database_unavailable(raw: str) -> bool:
+    """Whether a database error says the database could not answer at all,
+    rather than that the query asked it something it rejected."""
+    return bool(_UNAVAILABLE_RE.search(str(raw or "")))
+
+
 def sanitize_db_error(raw: str) -> dict[str, str]:
     """
     Return {plain_reason, next_step, cleaned} for a raw driver/database error.

@@ -134,6 +134,23 @@ def review_metric_proposal(
         return cur.rowcount > 0
 
 
+def refresh_metric_proposal(account_id: str, proposal_id: int, *, payload: dict, reason: str = "",
+                            confidence_score: int | None = None) -> bool:
+    """Replace what a pending proposal proposes, and its confidence when one
+    is given. Guarded on status='pending': a proposal someone has reviewed
+    says what they reviewed, and stays so."""
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE metric_proposal SET payload_json=?, reason=?,"
+            " confidence_score=COALESCE(?, confidence_score)"
+            " WHERE id=? AND account_id=? AND status='pending'",
+            (json.dumps(payload or {}, default=str), reason,
+             None if confidence_score is None else max(0, min(100, int(confidence_score))),
+             int(proposal_id), account_id),
+        )
+        return cur.rowcount > 0
+
+
 def count_pending_metric_proposals(account_id: str) -> int:
     with get_db() as conn:
         row = conn.execute(

@@ -17,10 +17,22 @@
         makes it a shared metric for everyone and recompiles the semantic contract.
       </p>
     </div>
+    {#- The everyday metrics of the data model -- stock on hand, inventory
+        value, units sold -- one by one were seventeen Accept clicks before a
+        workspace could answer a stock question at all. -#}
+    {% set suggested = proposals | selectattr('generated_by', 'equalto', 'starter_model')
+                                 | selectattr('action', 'equalto', 'create_metric') | list %}
+    <div class="mp-actions">
+      {% if suggested %}
+      <button type="button" class="btn btn-primary btn-sm" onclick="bulkMetrics(this, 'accept-suggested')">Accept all {{ suggested | length }} suggested</button>
+      {% endif %}
+      <button type="button" class="btn btn-secondary btn-sm" onclick="bulkMetrics(this, 'suggest')">Suggest metrics from the data model</button>
+      <span class="mp-status" id="mp-bulk-status" role="status"></span>
+    </div>
   </div>
 
   {% if not proposals %}
-    <div class="mp-empty">Nothing waiting. Requests appear here when a user asks for a calculation they composed to be shared.</div>
+    <div class="mp-empty">Nothing waiting. Requests appear here when a user asks for a calculation they composed to be shared, and suggestions when the data model is read for its everyday metrics.</div>
   {% else %}
     {% for p in proposals %}
     <div class="mp-card" id="mp-{{ p.id }}">
@@ -66,6 +78,35 @@
 </div>
 
 <script>
+async function bulkMetrics(button, path) {
+  const status = document.getElementById('mp-bulk-status');
+  button.disabled = true;
+  status.classList.remove('mp-error');
+  status.textContent = path === 'suggest' ? 'Reading the data model…' : 'Accepting…';
+  try {
+    const res  = await fetch(
+      `/admin/clients/${encodeURIComponent({{ (client.account_id or '')|tojson }})}/metrics/api/proposals/${path}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    );
+    const body = await res.json().catch(() => ({}));
+    if (res.ok && body.status === 'ok') {
+      const notice = path === 'suggest'
+        ? `${body.proposed} new suggestion(s); ${body.waiting} waiting for review.`
+        : `${body.accepted.length} metric(s) accepted.` + (body.refused.length
+            ? ' Not accepted: ' + body.refused.map(r => `${r.name} (${r.detail})`).join('; ') : '')
+          + (body.detail ? ' ' + body.detail : '');
+      location.href = location.pathname + '?notice=' + encodeURIComponent(notice) + '#proposals';
+      return;
+    }
+    status.textContent = body.detail || `Failed (${res.status})`;
+    status.classList.add('mp-error');
+  } catch (err) {
+    status.textContent = 'Request failed';
+    status.classList.add('mp-error');
+  }
+  button.disabled = false;
+}
+
 async function reviewProposal(id, action) {
   const status = document.getElementById('mp-status-' + id);
   status.textContent = action === 'accept' ? 'Accepting…' : 'Rejecting…';

@@ -264,7 +264,7 @@ def _run_default_evals_background(account_id: str) -> None:
         log.warning("Background eval trigger failed for %s: %s", account_id, exc)
 
 
-def _after_semantic_approval(account_id: str, trigger: str = "") -> None:
+def _after_semantic_approval(account_id: str, trigger: str = "") -> str:
     """
     One call for every route that changes approved semantics (metric, field,
     entity, relationship, date role, grain, term, learning-queue approval).
@@ -277,6 +277,8 @@ def _after_semantic_approval(account_id: str, trigger: str = "") -> None:
       2. Fires the client's golden-eval suites in the background so a
          quality regression caused by this approval surfaces on Model
          Health within a minute (warn-only, never blocks the save).
+
+    Returns the published contract version, "" when none was published.
     """
     from core.semantic_contract import governed_recompile_contract
 
@@ -289,7 +291,7 @@ def _after_semantic_approval(account_id: str, trigger: str = "") -> None:
             "Semantic compile after %s for %s finished as %s; active contract unchanged",
             trigger or "approval", account_id, compile_result.get("status") or "unknown",
         )
-        return
+        return ""
     log.info("Semantic contract v%s after %s for %s", version, trigger or "approval", account_id)
     try:
         loop = asyncio.get_running_loop()
@@ -305,6 +307,7 @@ def _after_semantic_approval(account_id: str, trigger: str = "") -> None:
         threading.Thread(
             target=_run_default_evals_background, args=(account_id,), daemon=True,
         ).start()
+    return version
 
 
 def _safe_child_path(base_dir: str, filename: str) -> Path | None:
@@ -7176,7 +7179,7 @@ def _default_date_query(outcome: dict) -> str:
 
 
 def _apply_metric_create(account_id: str, metric: dict, *, db_type: str,
-                         default_date: dict | None = None) -> int:
+                         default_date: dict | None = None, recompile: bool = True) -> int:
     """Save a metric and bring the rest of the semantic layer with it.
 
     Three things have to happen together and in this order, and there are now
@@ -7191,6 +7194,9 @@ def _apply_metric_create(account_id: str, metric: dict, *, db_type: str,
 
     Raises ValueError on a duplicate active name (from ``store.save_metric``);
     the caller decides whether that is a redirect or a 409.
+
+    ``recompile=False`` leaves the recompile to a caller saving several at
+    once, which then recompiles once for all of them.
     """
     name = str(metric.get("name") or "").strip()
     store.save_metric(account_id, metric, db_type=db_type)
@@ -7224,7 +7230,8 @@ def _apply_metric_create(account_id: str, metric: dict, *, db_type: str,
     # detector. This is why no chat handler may call it: a metric is the
     # highest-authority layer, and this is the moment it starts changing
     # answers to questions nobody has asked yet.
-    _after_semantic_approval(account_id, f"metric '{name}' created")
+    if recompile:
+        _after_semantic_approval(account_id, f"metric '{name}' created")
     metric_id = 0
     for row in store.list_metrics(account_id, active_only=False):
         if str(row.get("name") or "").strip().casefold() == name.casefold():
@@ -7285,22 +7292,30 @@ async def metric_proposal_accept(request: Request, account_id: str, proposal_id:
 
     Both chat surfaces write proposals and neither touches the registry, so
     this route is the single place where a bot-composed metric becomes
-    something that changes other people's answers.
+    something that changes other people's answers. (Accept-all reaches the
+    same _accept_metric_proposal, for the suggestions only.)
     """
     if not _is_auth(request):
         return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+    status_code, body, proposal = _accept_metric_proposal(account_id, proposal_id)
+    if status_code == 200:
+        await _notify_metric_proposal_reviewed(account_id, proposal, "accepted")
+    return JSONResponse(body, status_code=status_code)
 
+
+def _accept_metric_proposal(account_id: str, proposal_id: int, *,
+                            recompile: bool = True) -> tuple[int, dict, dict | None]:
+    """Accept one pending proposal: (status code, response body, proposal).
+    ``recompile=False`` leaves the contract recompile to the caller."""
     proposal = store.get_metric_proposal(account_id, proposal_id)
     if not proposal:
-        return JSONResponse({"status": "error", "detail": "Proposal not found"}, status_code=404)
+        return 404, {"status": "error", "detail": "Proposal not found"}, proposal
     if proposal.get("status") != "pending":
-        return JSONResponse(
-            {"status": "error", "detail": f"Already {proposal.get('status')}"}, status_code=409,
-        )
+        return 409, {"status": "error", "detail": f"Already {proposal.get('status')}"}, proposal
 
     payload = dict(proposal.get("payload") or {})
     if not str(payload.get("name") or "").strip():
-        return JSONResponse({"status": "error", "detail": "Proposal has no metric name"}, status_code=400)
+        return 400, {"status": "error", "detail": "Proposal has no metric name"}, proposal
 
     client = store.get_client(account_id) or {}
     db_cfg = store.get_db_config(client.get("db_config_id")) if client.get("db_config_id") else None
@@ -7320,19 +7335,16 @@ async def metric_proposal_accept(request: Request, account_id: str, proposal_id:
         # Do it explicitly instead.
         live = store.get_metric(target_metric_id)
         if not live or str(live.get("account_id") or "") != str(account_id):
-            return JSONResponse(
-                {"status": "error", "detail": "That metric does not exist for this client."},
-                status_code=404,
-            )
+            return 404, {"status": "error", "detail": "That metric does not exist for this client."}, proposal
         drifted, fields = store.metric_has_drifted(live, proposal.get("before"))
         if drifted:
-            return JSONResponse({
+            return 409, {
                 "status": "conflict",
                 "detail": (
                     "This metric changed since the request was made ("
                     + ", ".join(fields) + "). Review it again against the current version."
                 ),
-            }, status_code=409)
+            }, proposal
 
     try:
         # An update proposal was previously handed to the CREATE applier, so
@@ -7343,19 +7355,18 @@ async def metric_proposal_accept(request: Request, account_id: str, proposal_id:
             _apply_metric_update(account_id, target_metric_id, payload, db_type=db_type)
             metric_id = target_metric_id
         else:
-            metric_id = _apply_metric_create(account_id, payload, db_type=db_type)
+            metric_id = _apply_metric_create(account_id, payload, db_type=db_type, recompile=recompile)
     except ValueError as exc:
         # Duplicate active name — a 409, not a 500. Someone very likely created
         # the same metric by hand while this sat in the queue.
-        return JSONResponse({"status": "conflict", "detail": str(exc)}, status_code=409)
+        return 409, {"status": "conflict", "detail": str(exc)}, proposal
 
     store.review_metric_proposal(account_id, proposal_id, "accepted", reviewed_by="admin")
-    await _notify_metric_proposal_reviewed(account_id, proposal, "accepted")
-    return JSONResponse({
+    return 200, {
         "status": "ok",
         "metric_id": metric_id,
         "message": f"'{payload.get('name')}' is now a shared metric.",
-    })
+    }, proposal
 
 
 @router.post("/clients/{account_id}/metrics/api/proposals/{proposal_id}/reject")
@@ -7376,6 +7387,98 @@ async def metric_proposal_reject(request: Request, account_id: str, proposal_id:
         return JSONResponse({"status": "error", "detail": "Proposal is no longer pending"}, status_code=409)
     await _notify_metric_proposal_reviewed(account_id, proposal, "rejected", note=note)
     return JSONResponse({"status": "ok"})
+
+
+@router.post("/clients/{account_id}/metrics/api/proposals/suggest")
+async def metric_proposals_suggest(request: Request, account_id: str):
+    """Suggest the starter metrics from the saved data model now.
+
+    The knowledge base build files them, and a workspace built before they
+    existed -- or by a release that worded them differently -- had no way to
+    have them but a full rebuild. Suggestions still waiting are brought up to
+    this release's definitions; nothing here changes an answer.
+    """
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "detail": "Client not found"}, status_code=404)
+    from core.semantic_model import load_semantic_model
+    from core.starter_metrics import GENERATED_BY, propose_starter_metrics
+
+    kb_dir = (store.get_client_state(account_id) or {}).get("kb_dir") or ""
+    model = load_semantic_model(kb_dir) if kb_dir else None
+    if not (model or {}).get("tables"):
+        return JSONResponse({"status": "error", "detail": "There is no data model yet. Build the knowledge base first."},
+                            status_code=409)
+    db_cfg = store.get_db_config(client.get("db_config_id")) if client.get("db_config_id") else None
+    created = propose_starter_metrics(account_id, model, db_type=(db_cfg or {}).get("db_type", "azure_sql"))
+    waiting = sum(1 for proposal in store.list_metric_proposals(account_id, status="pending")
+                  if proposal.get("generated_by") == GENERATED_BY)
+    return JSONResponse({"status": "ok", "proposed": len(created), "waiting": waiting})
+
+
+@router.post("/clients/{account_id}/metrics/api/proposals/accept-suggested")
+async def metric_proposals_accept_suggested(request: Request, account_id: str):
+    """Accept every metric suggested from the data model, each through the
+    _accept_metric_proposal its own Accept button reaches, and recompile the
+    contract once for all of them: one recompile per metric published a
+    contract version and started an evaluation run for each. On the event
+    loop, as one Accept is: off it, it raced an Accept or a Reject of the same
+    suggestion into a duplicate metric or a rejected one gone live, and chat
+    could read the model file half-written. A request composed in chat is
+    never among them: it was worded for one question, and is reviewed on its
+    own."""
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+    if not store.get_client(account_id):
+        return JSONResponse({"status": "error", "detail": "Client not found"}, status_code=404)
+    from core.starter_metrics import GENERATED_BY
+
+    suggested = sorted(
+        (proposal for proposal in store.list_metric_proposals(account_id, status="pending") or []
+         if proposal.get("generated_by") == GENERATED_BY and proposal.get("action") == "create_metric"),
+        key=lambda proposal: int(proposal["id"]),
+    )
+
+    accepted: list[str] = []
+    refused: list[dict] = []
+    names: set[str] = set()
+    for proposal in suggested:
+        name = str((proposal.get("payload") or {}).get("name") or "")
+        if name.strip().casefold() in names:
+            # The same suggestion twice: the one accepted is the metric.
+            store.review_metric_proposal(account_id, int(proposal["id"]), "rejected", reviewed_by="admin",
+                                         review_note="The same metric as a suggestion accepted with it.")
+            continue
+        try:
+            status_code, body, _proposal = _accept_metric_proposal(
+                account_id, int(proposal["id"]), recompile=False)
+        except Exception as exc:  # noqa: BLE001 -- one bad row keeps the rest
+            log.error("Suggested metric %r not accepted for %s: %s", name, account_id, exc, exc_info=True)
+            status_code, body = 500, {"detail": str(exc)[:200]}
+        if status_code == 200:
+            accepted.append(name)
+            names.add(name.strip().casefold())
+        else:
+            refused.append({"name": name, "detail": str(body.get("detail") or "")})
+    result = {"status": "ok", "accepted": accepted, "refused": refused}
+    if accepted:
+        try:
+            published = _after_semantic_approval(account_id, f"{len(accepted)} suggested metric(s) accepted")
+        except Exception as exc:  # noqa: BLE001
+            log.error("Recompile after accepting suggested metrics failed for %s: %s", account_id, exc,
+                      exc_info=True)
+            published = ""
+        if not published:
+            # Saved, but no contract carries them yet: answers do not use them
+            # until a recompile publishes one, and the page has to say so.
+            result["detail"] = ("The semantic contract was not recompiled, so answers do not use them yet. "
+                                "See Model Health, or rebuild the knowledge base.")
+
+    log.info("Suggested metrics accepted for %s: %d accepted, %d refused",
+             account_id, len(result["accepted"]), len(result["refused"]))
+    return JSONResponse(result)
 
 
 async def _notify_metric_proposal_reviewed(

@@ -451,22 +451,37 @@ def propose_starter_metrics(
     suggestion is not asked again on every rebuild. Skips any definition the
     metric validator refuses, and says so. Nothing here changes an answer: the
     proposal-accept route is the only way into the registry.
+
+    A suggestion still waiting, that nobody has reviewed, is brought up to this
+    release's definition of it. Filed by an earlier release, it would be
+    accepted as that release wrote it: a stock on hand without "stock" or
+    "inventory" among its words leaves "which warehouses have the lowest
+    stock?" asking which measure is meant.
     """
     import store
     from core.metric_validator import validate_metric
 
     if schema_columns is None:
         schema_columns = _model_columns(model)
-    taken = {
+    existing = {
         str(metric.get("name") or "").strip().casefold()
         for metric in store.list_metrics(account_id, active_only=False) or []
     }
+    taken = set(existing)
+    waiting: dict[str, list[dict]] = {}
     for proposal in store.list_metric_proposals(account_id) or []:
+        name = str((proposal.get("payload") or {}).get("name") or "").strip().casefold()
         if proposal.get("status") == "pending" or proposal.get("generated_by") == GENERATED_BY:
-            taken.add(str((proposal.get("payload") or {}).get("name") or "").strip().casefold())
+            taken.add(name)
+        if proposal.get("status") == "pending" and proposal.get("generated_by") == GENERATED_BY:
+            waiting.setdefault(name, []).append(proposal)
     created: list[int] = []
+    refreshed = 0
     for metric in starter_metrics(model):
-        if metric.name.casefold() in taken:
+        # Every one waiting under the name: whichever is accepted is this
+        # release's.
+        unreviewed = [] if metric.name.casefold() in existing else waiting.get(metric.name.casefold(), [])
+        if metric.name.casefold() in taken and not unreviewed:
             continue
         payload = metric.as_metric()
         verdict = validate_metric(payload, db_type=db_type, schema_columns=schema_columns)
@@ -475,6 +490,13 @@ def propose_starter_metrics(
                 "Starter metric %r not proposed for %s: %s",
                 metric.name, account_id, "; ".join(verdict.errors[:3]),
             )
+            continue
+        if unreviewed:
+            for proposal in unreviewed:
+                if proposal.get("payload") != payload and store.refresh_metric_proposal(
+                        account_id, proposal["id"], payload=payload, reason=" ".join(metric.evidence),
+                        confidence_score=metric.confidence):
+                    refreshed += 1
             continue
         created.append(store.create_metric_proposal(
             account_id,
@@ -487,4 +509,6 @@ def propose_starter_metrics(
             dryrun={"status": "skipped",
                     "reason": "suggested from the semantic model when the knowledge base was built"},
         ))
+    if refreshed:
+        log.info("Starter metrics for %s: %d waiting suggestion(s) brought up to date", account_id, refreshed)
     return created

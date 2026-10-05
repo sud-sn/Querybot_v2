@@ -2622,6 +2622,27 @@ def _ora_md(name, meta, columns, sample, owner, distinct_map: dict,
 # Azure SQL
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Azure SQL's transient error numbers: a database resuming from auto-pause or
+# failing over (40613, 40197), a busy service (40501), resource limits (49918-
+# 49920, 10928, 10929) and 4221. The ODBC driver reports them under the generic
+# SQLSTATE HY000, with the number at the end of the message: "Database 'db' ...
+# is not currently available.  Please retry the connection later. ... (40613)
+# (SQLDriverConnect)". Read from the SQLSTATE alone, a database waking from
+# auto-pause was never retried, and the first question after it slept failed.
+_AZURE_TRANSIENT_NUMBERS = frozenset({
+    "40613", "40197", "40501", "49918", "49919", "49920", "10928", "10929", "4221",
+})
+
+
+def _azure_transient_number(error: Exception) -> str:
+    """The transient Azure error number a driver error carries, or ""."""
+    text = " ".join(str(part) for part in getattr(error, "args", ()) or ())
+    for number in re.findall(r"\((\d{4,5})\)", text):
+        if number in _AZURE_TRANSIENT_NUMBERS:
+            return number
+    return ""
+
+
 def _az_connect(cfg: dict, max_retries: int = 4):
     """
     Open Azure SQL connection with retry + backoff.
@@ -2660,7 +2681,9 @@ def _az_connect(cfg: dict, max_retries: int = 4):
         except pyodbc.Error as e:
             last_err = e
             sqlstate = e.args[0] if e.args else ""
-            if sqlstate not in _TRANSIENT_CODES:
+            # Azure's own number, when the driver reports it under HY000.
+            sqlstate = _azure_transient_number(e) or sqlstate
+            if sqlstate not in _TRANSIENT_CODES and sqlstate not in _AZURE_TRANSIENT_NUMBERS:
                 raise  # non-transient — bad credentials, wrong server etc.
             if attempt == max_retries - 1:
                 raise  # exhausted all retries

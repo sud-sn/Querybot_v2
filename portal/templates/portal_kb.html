@@ -18,11 +18,18 @@
 .schema-tab{border:1px solid var(--border);background:var(--surface);color:var(--text-soft);border-radius:999px;padding:8px 13px;font-size:var(--font-sm);font-weight:var(--weight-bold);box-shadow:var(--shadow)}
 .schema-tab.active{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 32%,transparent);color:var(--primary)}
 .semantic-grid{display:grid;grid-template-columns:280px 1fr;gap:1.1rem;align-items:start}
-.table-list{position:sticky;top:76px}
+/* The list stays in view while the tables scroll past it, so it has to fit
+   the window and scroll on its own: a sticky list taller than the window
+   kept its last tables out of reach. */
+.table-list{position:sticky;top:76px;display:flex;flex-direction:column;max-height:calc(100vh - 140px)}
+.table-list-body{overflow-y:auto;min-height:0;overscroll-behavior:contain}
 .table-link{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.7rem .85rem;border-bottom:1px solid var(--border);color:var(--text-soft);text-decoration:none}
+/* A long qualified name wraps rather than pushing the score off the card. */
+.table-link-text{min-width:0}
+.table-link .status-pill{flex-shrink:0}
 .table-link:hover{text-decoration:none;background:var(--surface-2)}
-.table-name{font-family:var(--font-mono);font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text)}
-.table-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:3px}
+.table-name{display:block;font-family:var(--font-mono);font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text);overflow-wrap:anywhere}
+.table-meta{display:block;font-size:var(--font-xs);color:var(--text-muted);margin-top:3px;overflow-wrap:anywhere}
 .semantic-table-card{scroll-margin-top:84px}
 .table-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}
 .table-head h2{font-size:var(--font-md);font-weight:var(--weight-bold);color:var(--text)}
@@ -49,7 +56,7 @@
 .term-chip{display:inline-flex;border-radius:999px;padding:3px 9px;font-size:var(--font-xs);font-weight:var(--weight-bold);background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);color:var(--primary);white-space:nowrap}
 .term-chips-empty{font-size:var(--font-xs);color:var(--text-muted);font-style:italic}
 .review-panel .review-hint{font-size:var(--font-2xs);color:var(--text-muted);margin-top:.3rem}
-@media(max-width:900px){.semantic-hero{flex-direction:column}.semantic-grid{grid-template-columns:1fr}.table-list{position:static}.review-panel{grid-template-columns:1fr}.field-table{display:block;overflow-x:auto}}
+@media(max-width:900px){.semantic-hero{flex-direction:column}.semantic-grid{grid-template-columns:1fr}.table-list{position:static;max-height:none}.review-panel{grid-template-columns:1fr}.field-table{display:block;overflow-x:auto}}
 /* ── Semantic layer search ── */
 .sl-search-wrap{position:relative;margin-bottom:1rem}
 .sl-search{font-size:var(--font-base)}
@@ -113,12 +120,12 @@
 <div class="semantic-grid">
   <aside class="card table-list">
     <div class="card-header"><h2>{{ t('ui.kb.tables_in', schema=selected_schema) }}</h2></div>
-    <div>
+    <div class="table-list-body">
       {% for table in visible_tables %}
       <a class="table-link" href="#table-{{ loop.index }}">
-        <span>
+        <span class="table-link-text">
           <span class="table-name">{{ table.table }}</span>
-          <span class="table-meta">{{ plural('ui.kb.field_count', table.field_count) }} · {{ table.fqn }}</span>
+          <span class="table-meta">{{ plural('ui.kb.field_count', table.field_count) }} · {% for part in table.fqn.split('.') %}{{ part }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</span>
         </span>
         <span class="status-pill {% if table.confidence >= 85 %}success{% elif table.confidence >= 65 %}warning{% else %}danger{% endif %}">{{ table.confidence }}%</span>
       </a>

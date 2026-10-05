@@ -6,7 +6,7 @@ from store.adhoc_metric_store import (
 from store.metric_proposal_store import (
     create_metric_proposal, list_metric_proposals, get_metric_proposal,
     review_metric_proposal, count_pending_metric_proposals,
-    metric_has_drifted, GUARDED_METRIC_FIELDS,
+    metric_has_drifted, refresh_metric_proposal, GUARDED_METRIC_FIELDS,
 )
 from store.table_description_store import (
     get_table_description, list_table_descriptions, save_table_description,

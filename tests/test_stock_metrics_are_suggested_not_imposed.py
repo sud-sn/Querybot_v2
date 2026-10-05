@@ -460,3 +460,152 @@ class TestAcceptingOneMakesItLive:
         assert question_has_snapshot_intent(
             "figures by warehouse", matched_metrics=[live["Stock on hand"]],
         ) is True
+
+
+def _filed_by_an_earlier_release(account, model, *, name="Stock on hand") -> dict:
+    """The suggestion as a release before "stock" and "inventory" were among
+    its words filed it."""
+    payload = dict(_by_name(model)[name].as_metric())
+    payload["synonyms"] = ", ".join(word for word in payload["synonyms"].split(", ")
+                                    if word not in {"stock", "stocks", "inventory", "inventaire"})
+    proposal_id = store.create_metric_proposal(account, payload=payload, generated_by=GENERATED_BY,
+                                               confidence_score=60)
+    return store.get_metric_proposal(account, proposal_id)
+
+
+class TestASuggestionWaitingIsThisReleases:
+
+    def test_one_an_earlier_release_filed_is_brought_up_to_date(self, model, account):
+        old = _filed_by_an_earlier_release(account, model)
+
+        propose_starter_metrics(account, model)
+
+        (now,) = [p for p in store.list_metric_proposals(account) if p["payload"]["name"] == "Stock on hand"]
+        assert now["id"] == old["id"] and now["status"] == "pending"
+        assert now["payload"] == _by_name(model)["Stock on hand"].as_metric()
+        assert "inventory" in now["payload"]["synonyms"].split(", ")
+
+    def test_one_reviewed_says_what_was_reviewed(self, model, account):
+        old = _filed_by_an_earlier_release(account, model)
+        assert store.review_metric_proposal(account, old["id"], "rejected")
+
+        propose_starter_metrics(account, model)
+
+        assert store.get_metric_proposal(account, old["id"])["payload"] == old["payload"]
+        assert "Stock on hand" not in _pending(account)
+
+    def test_one_beside_a_metric_of_its_name_is_left_alone(self, model, account):
+        old = _filed_by_an_earlier_release(account, model)
+        store.save_metric(account, {"name": "Stock on hand", "sql_template": "SUM(QTY)",
+                                    "formula_type": "expression", "base_table": DAILY}, db_type="azure_sql")
+
+        propose_starter_metrics(account, model)
+
+        assert store.get_metric_proposal(account, old["id"])["payload"] == old["payload"]
+
+
+class TestAllTheSuggestionsAtOnce:
+
+    def test_each_is_accepted_through_its_own_route_and_a_chat_request_is_not(self, model, account):
+        from admin import routes
+
+        propose_starter_metrics(account, model)
+        asked = store.create_metric_proposal(
+            account, payload={"name": "Revenue Per Customer", "sql_template": "SUM(AMT)"},
+            generated_by="portal_chat", source_question="revenue per active customer")
+        with patch.object(routes, "_is_auth", return_value=True), \
+                patch.object(routes, "_after_semantic_approval") as recompiled:
+            response = asyncio.run(routes.metric_proposals_accept_suggested(MagicMock(), account))
+
+        body = json.loads(response.body)
+        assert response.status_code == 200 and sorted(body["accepted"]) == sorted(EXPECTED)
+        # One recompile for all of them: one per metric published a contract
+        # version and started an evaluation run for each.
+        assert body["refused"] == [] and recompiled.call_count == 1
+        live = {metric["name"]: metric for metric in store.list_metrics(account)}
+        assert set(live) == set(EXPECTED)
+        assert live["Units sold"]["sql_template"] == "SUM(SLD_QTY)"
+        assert set(_pending(account)) == {"Revenue Per Customer"}
+        assert store.get_metric_proposal(account, asked)["status"] == "pending"
+
+    def test_one_already_a_metric_is_refused_and_said_so(self, model, account):
+        from admin import routes
+
+        propose_starter_metrics(account, model)
+        store.save_metric(account, {"name": "Units sold", "sql_template": "SUM(QTY)",
+                                    "formula_type": "expression", "base_table": MONTHLY}, db_type="azure_sql")
+        with patch.object(routes, "_is_auth", return_value=True), patch.object(routes, "_after_semantic_approval"):
+            body = json.loads(asyncio.run(routes.metric_proposals_accept_suggested(MagicMock(), account)).body)
+
+        assert [refused["name"] for refused in body["refused"]] == ["Units sold"]
+        assert len(body["accepted"]) == len(EXPECTED) - 1
+
+    def test_the_same_suggestion_twice_is_one_metric_as_this_release_defines_it(self, model, account):
+        from admin import routes
+
+        first = _filed_by_an_earlier_release(account, model)
+        second = _filed_by_an_earlier_release(account, model)
+        propose_starter_metrics(account, model)
+        with patch.object(routes, "_is_auth", return_value=True), patch.object(routes, "_after_semantic_approval"):
+            body = json.loads(asyncio.run(routes.metric_proposals_accept_suggested(MagicMock(), account)).body)
+
+        assert body["refused"] == [] and body["accepted"].count("Stock on hand") == 1
+        live = {metric["name"]: metric for metric in store.list_metrics(account)}
+        assert "inventory" in live["Stock on hand"]["synonyms"].split(", ")
+        assert {store.get_metric_proposal(account, p["id"])["status"] for p in (first, second)} == {
+            "accepted", "rejected"}
+
+    def test_a_recompile_that_publishes_nothing_is_said(self, model, account):
+        # Saved, but no contract carries them: answers do not use them yet.
+        from admin import routes
+
+        propose_starter_metrics(account, model)
+        with patch.object(routes, "_is_auth", return_value=True), \
+                patch.object(routes, "_after_semantic_approval", return_value=""):
+            body = json.loads(asyncio.run(routes.metric_proposals_accept_suggested(MagicMock(), account)).body)
+
+        assert len(body["accepted"]) == len(EXPECTED)
+        assert "not recompiled" in body["detail"]
+
+    def test_a_refresh_keeps_the_confidence_it_is_not_given(self, model, account):
+        old = _filed_by_an_earlier_release(account, model)
+        store.refresh_metric_proposal(account, old["id"], payload=dict(old["payload"], description="new"))
+        assert store.get_metric_proposal(account, old["id"])["confidence_score"] == old["confidence_score"]
+
+    def test_a_workspace_that_does_not_exist_is_refused(self):
+        from admin import routes
+
+        with patch.object(routes, "_is_auth", return_value=True):
+            response = asyncio.run(routes.metric_proposals_accept_suggested(MagicMock(), "no-such-workspace"))
+
+        assert response.status_code == 404
+
+    def test_the_page_offers_them_at_once(self, model, account):
+        assert "Accept all" not in _render_metrics_page(account)
+        assert "Suggest metrics from the data model" in _render_metrics_page(account)
+
+        propose_starter_metrics(account, model)
+
+        assert f"Accept all {len(EXPECTED)} suggested" in _render_metrics_page(account)
+
+    def test_suggesting_reads_the_saved_model(self, model, account, tmp_path):
+        from admin import routes
+        from core.semantic_model import MODEL_JSON
+
+        (tmp_path / MODEL_JSON).write_text(json.dumps(model), encoding="utf-8")
+        store.update_client_state(account, "READY", {"kb_dir": str(tmp_path)})
+        old = _filed_by_an_earlier_release(account, model)
+        with patch.object(routes, "_is_auth", return_value=True):
+            body = json.loads(asyncio.run(routes.metric_proposals_suggest(MagicMock(), account)).body)
+
+        assert body == {"status": "ok", "proposed": len(EXPECTED) - 1, "waiting": len(EXPECTED)}
+        assert store.get_metric_proposal(account, old["id"])["payload"] == _by_name(model)["Stock on hand"].as_metric()
+        assert store.list_metrics(account, active_only=False) == []
+
+    def test_suggesting_without_a_model_says_to_build_one(self, account):
+        from admin import routes
+
+        with patch.object(routes, "_is_auth", return_value=True):
+            response = asyncio.run(routes.metric_proposals_suggest(MagicMock(), account))
+
+        assert response.status_code == 409 and "Build the knowledge base first" in json.loads(response.body)["detail"]

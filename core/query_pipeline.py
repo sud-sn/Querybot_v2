@@ -1710,6 +1710,31 @@ def planner_metrics_in_scope(account_id: str, effective) -> list[dict]:
     return metrics
 
 
+async def _send_database_failure(event, adapter, *, failure: str, sql: str, question: str, account_id: str,
+                                 client: dict, provider: str, model: str, api_key: str, az_kwargs: dict,
+                                 semantic_plan: dict | None, db_cfg: dict) -> None:
+    """The failure card for a query the database could not answer at all --
+    the card any other question's execution failure gets, a statement timeout
+    included: it names the index that would make the query fast, not "check
+    the database is reachable", which a query that ran to its timeout was."""
+    from core.answer_formatter import format_failure_business_response
+    from core.failure_messages import build_query_timeout_guidance, is_query_timeout, translate_failure
+    from core.schema import _query_timeout_seconds
+
+    rca = translate_failure(kind="execution", exception_text=failure, sql=sql, question=question)
+    if is_query_timeout(failure):
+        guidance = build_query_timeout_guidance(semantic_plan, timeout_seconds=_query_timeout_seconds(db_cfg))
+        rca["most_likely_reason"] = guidance["reason"]
+        rca["suggested_next_step"] = guidance["next_step"]
+    rca = await phrase_failure(
+        rca, question=question, account_id=account_id, client=client,
+        provider=provider, model=model, api_key=api_key, **az_kwargs,
+    )
+    await adapter.send_message(event, format_failure_business_response(
+        rca=rca, sql=sql, sql_preview_fn=_sql_preview,
+    ))
+
+
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
     # Set from every governed execution below. Row-level statistics (quartiles,
@@ -4588,40 +4613,73 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _listed = None
             log.warning("Listing %r not planned for %s: %s", _listing, account_id, _listing_plan_exc)
     if _listed and _listing_sql:
+        from core.failure_messages import is_database_unavailable
         from core.listing import LIMIT as _LISTING_LIMIT
 
         log.info("Listing %r for %s: %s", _listing, account_id, _listing_sql)
+        _listing_t0 = time.time()
+        governed, _listing_failure = None, ""
         try:
-            _listing_t0 = time.time()
             governed = await asyncio.wait_for(
                 asyncio.get_running_loop().run_in_executor(None, _execute_with_policy, _listing_sql),
                 timeout=_query_wait_timeout(db_cfg),
             )
-            rows = governed.rows
-            # More than shown, by the extra row read or by the executor's own
-            # row cap.
-            if len(rows) > _LISTING_LIMIT or getattr(governed, "truncated", False):
-                rows = rows[:_LISTING_LIMIT]
-                await adapter.send_message(event, _t(
-                    "answer.listing_cut", lang=(portal_user or {}).get("lang") or "en", count=_LISTING_LIMIT))
-            duration_ms = int((time.time() - _listing_t0) * 1000)
-            _trace_update(trace_id, generated_sql=governed.sql, sql_validation_status="governed_listing",
-                          query_row_count=len(rows), query_duration_ms=duration_ms)
-            _trace_step(trace_id, "execute_sql", input_summary=governed.sql, output_summary={"rows": len(rows)},
-                        duration_ms=duration_ms)
-            await _send_results(event, adapter, question, rows, governed.sql, duration_ms, portal_user,
-                                account_id, db_cfg, question_id=audit_request_id,
-                                confidence_context={"validation_code": "governed_listing",
-                                                    "has_semantic_plan": True},
-                                contract_version=_contract_version)
-            _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows),
-                          duration_ms=int(time.time() * 1000) - start_ms,
-                          final_answer_summary="Answered as a listing of one dimension")
-            return
-        except Exception as _listing_exc:
-            # The ordinary path still runs: a refused or failed listing is
-            # answered -- or refused -- as any other question.
+        except asyncio.TimeoutError:
+            _listing_failure = "The listing query timed out."
+        except (ValueError, PolicyDeniedError) as _listing_exc:
+            # Refused before it reached the database: the ordinary path
+            # answers -- or refuses -- it as any other question.
             log.warning("Listing %r not answered directly for %s: %s", _listing, account_id, _listing_exc)
+        except Exception as _listing_exc:
+            log.warning("Listing %r not answered directly for %s: %s", _listing, account_id, _listing_exc)
+            if is_database_unavailable(str(_listing_exc)):
+                _listing_failure = str(_listing_exc)
+        if _listing_failure:
+            # The database could not answer at all: paused, unreachable, out
+            # of time. The ordinary path asks the same database, and for a
+            # list -- which names no measure -- its reply was that the
+            # semantic layer could not resolve a dataset or a measure, which
+            # sends the reader rephrasing a question that was fine. The reader
+            # gets the failure card any other question gets.
+            _log_q(account_id, question, _listing_sql, 0, False, _listing_failure, provider, model, 0, 0,
+                   int(time.time() * 1000) - start_ms, portal_user_id=pu_id, zoom_user_id=zid,
+                   question_id=audit_request_id, error_code="execution_error")
+            _trace_finish(trace_id, status="error", answer_type="error", error_message=_listing_failure,
+                          duration_ms=int(time.time() * 1000) - start_ms)
+            await _send_database_failure(
+                event, adapter, failure=_listing_failure, sql=_listing_sql, question=question,
+                account_id=account_id, client=client, provider=provider, model=model,
+                api_key=api_key, az_kwargs=az_kwargs, semantic_plan=_semantic_plan, db_cfg=db_cfg,
+            )
+            return
+        if governed is not None:
+            try:
+                rows = governed.rows
+                # More than shown, by the extra row read or by the executor's
+                # own row cap.
+                if len(rows) > _LISTING_LIMIT or getattr(governed, "truncated", False):
+                    rows = rows[:_LISTING_LIMIT]
+                    await adapter.send_message(event, _t(
+                        "answer.listing_cut", lang=(portal_user or {}).get("lang") or "en", count=_LISTING_LIMIT))
+                duration_ms = int((time.time() - _listing_t0) * 1000)
+                _trace_update(trace_id, generated_sql=governed.sql, sql_validation_status="governed_listing",
+                              query_row_count=len(rows), query_duration_ms=duration_ms)
+                _trace_step(trace_id, "execute_sql", input_summary=governed.sql, output_summary={"rows": len(rows)},
+                            duration_ms=duration_ms)
+                await _send_results(event, adapter, question, rows, governed.sql, duration_ms, portal_user,
+                                    account_id, db_cfg, question_id=audit_request_id,
+                                    confidence_context={"validation_code": "governed_listing",
+                                                        "has_semantic_plan": True},
+                                    contract_version=_contract_version)
+                _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows),
+                              duration_ms=int(time.time() * 1000) - start_ms,
+                              final_answer_summary="Answered as a listing of one dimension")
+                return
+            except Exception as _listing_exc:
+                # The rows came back but could not be shown: the ordinary path
+                # still runs, and answers -- or refuses -- it as any other
+                # question.
+                log.warning("Listing %r not answered directly for %s: %s", _listing, account_id, _listing_exc)
 
     # Single-fact scoping has to run on the MERGED plan, not just the model
     # plan: the LLM field planner is a second, independent source of required
