@@ -1506,8 +1506,9 @@ def _ordered_by_a_figure(sql: str, rows: list[dict], asked: bool = False, db_typ
     return _key_is_a_figure(_outer_order_key(text), rows, asked, lambda: _select_definitions(text, db_type))
 
 
-def _outer_order_key(sql: str) -> str:
-    """The first key of the statement's outermost ORDER BY, or ""."""
+def _outer_order_clause(sql: str) -> str:
+    """The statement's outermost ORDER BY clause, up to a LIMIT, OFFSET or
+    FETCH, or ""."""
     clause = ""
     for match in re.finditer(r"\bORDER\s+BY\b", sql, re.IGNORECASE):
         before = re.sub(r"'(?:[^']|'')*'", "", sql[:match.start()])
@@ -1515,7 +1516,43 @@ def _outer_order_key(sql: str) -> str:
             clause = sql[match.end():]
     if not clause:
         return ""
-    return _first_order_key(re.split(r"\b(?:LIMIT|OFFSET|FETCH)\b|;", clause, maxsplit=1, flags=re.IGNORECASE)[0])
+    return re.split(r"\b(?:LIMIT|OFFSET|FETCH)\b|;", clause, maxsplit=1, flags=re.IGNORECASE)[0]
+
+
+def _outer_order_key(sql: str) -> str:
+    """The first key of the statement's outermost ORDER BY, or ""."""
+    clause = _outer_order_clause(sql)
+    return _first_order_key(clause) if clause else ""
+
+
+def _outer_order_column(sql: str, rows: list[dict]) -> str:
+    """The result column the outermost ORDER BY sorts by first: named, quoted,
+    by its position in the select list, or -- an aggregate written out --
+    the result's one measure. "" when it cannot be told which."""
+    key = _outer_order_key(str(sql or ""))
+    if not key or not rows:
+        return ""
+    columns = [str(column) for column in rows[0].keys()]
+    if key.isdigit():
+        position = int(key) - 1
+        return columns[position] if 0 <= position < len(columns) else ""
+    if _aggregate_calls(key):
+        numeric_cols = _numeric_cols(rows)
+        measures = _measure_and_label_cols(rows, numeric_cols, _text_cols(rows, numeric_cols))[0]
+        return measures[0] if len(measures) == 1 else ""
+    name = re.split(r"\.", key)[-1].strip().strip('"[]`').lower()
+    return next((column for column in columns if column.lower() == name), "")
+
+
+def _outer_order_descending(sql: str) -> bool:
+    """Whether the outermost ORDER BY's first key puts the highest first."""
+    depth, first = 0, ""
+    for char in _outer_order_clause(sql):
+        depth += (char == "(") - (char == ")")
+        if depth < 0 or (char == "," and depth == 0):
+            break
+        first += char
+    return bool(re.search(r"\bDESC\b", re.sub(r"--[^\n]*", "", first), re.IGNORECASE))
 
 
 def _ordered_by_the_measure(sql: str, rows: list[dict], db_type: str = "azure_sql") -> bool:
@@ -2390,6 +2427,16 @@ def infer_result_scope(
     # largest row, "arrive en tête".
     scope["ascending"] = (asks_for_ranking(question) or writes_an_order(question)) and (
         ranking_direction(question) == "ascending")
+    # Cut at the row cap, the rows are the head of a larger result, and only
+    # a sort of the whole of it by what it measures makes its first row the
+    # whole result's leader (build_answer).
+    if preview_cap_hit and sql:
+        try:
+            scope["sorted_by"] = {"column": _outer_order_column(sql, rows),
+                                  "descending": _outer_order_descending(sql)}
+        except Exception as exc:  # noqa: BLE001 -- unread is unsorted: no leader is named
+            log.warning("The sort of a cut result was not read: %s", exc)
+            scope["sorted_by"] = {"column": "", "descending": False}
     if mode == "ranking":
         # A top-N framing needs a limit that bound, or a question that asked
         # for one ("top 5 customers" returning all 3 that exist is still the
@@ -2696,6 +2743,25 @@ def build_answer(
         collapsed = collapse_rows_by_label(rows, label_col, value_col)
         ascending = bool(scope.get("ascending"))
         ordered = sorted(collapsed or [], key=lambda pair: pair[1], reverse=not ascending)
+        # Cut at the row cap, the rows are the head of a larger result. A
+        # leader named from them is the leader of all of them only when the
+        # statement sorted the whole result by that very figure, that way
+        # round. "Stock on hand by item group" was not sorted: the cap kept
+        # whichever 200 of its 304 rows came back first, and the card named a
+        # different item group from one run to the next, neither the largest.
+        order = scope.get("sorted_by") or {}
+        leader_holds = not scope.get("is_preview") or (
+            str(order.get("column") or "").lower() == str(value_col).lower()
+            and bool(order.get("descending")) == (not ascending))
+        returned_rows = {
+            "headline": _t_plural(
+                "answer.returned_rows", len(rows),
+                question=question.strip().rstrip("?") or _t("answer.this_query")),
+            "short_value": "",
+            "comparison": scope.get("badge", ""),
+            "scope_badge": scope.get("badge", ""),
+            "scope_note": scope.get("note", ""),
+        }
         labels = [str(r.get(label_col, "")) for r in rows]
         # A period key is a period too: 202501..202504 is headed "April 2025
         # closed at", as the sentences below it read the series, not
@@ -2745,7 +2811,7 @@ def build_answer(
                     "scope_badge": scope.get("badge", ""),
                     "scope_note": scope.get("note", ""),
                 }
-            if in_unit:
+            if in_unit and leader_holds:
                 unit, label, value = in_unit
                 return {
                     "headline": _t("answer.lowest_in_unit" if ascending else "answer.leads_in_unit",
@@ -2769,6 +2835,8 @@ def build_answer(
                 "scope_badge": scope.get("badge", ""),
                 "scope_note": scope.get("note", ""),
             }
+        if not leader_holds:
+            return returned_rows
         best_label, best_value = ordered[0]
         # A group with no label -- a fact row whose key matched no row of its
         # dimension, kept by the outer join -- is "Unknown", not "None leads".
