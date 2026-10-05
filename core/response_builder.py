@@ -2492,12 +2492,22 @@ def _leader_in_one_unit(
     # in -- never one where every one is at nothing -- and only then the
     # larger, to settle a tie: the headline is said in one unit, not ranked
     # across them.
-    unit = max(totals, key=lambda u: (sum(1 for v in totals[u].values() if (v < 0 if ascending else v > 0)),
-                                      sum(1 for v in totals[u].values() if v), len(totals[u]),
-                                      sum(abs(v) for v in totals[u].values()), -sorted(totals).index(u)))
+    # Leading, a unit some of them hold any of; lowest, the unit most are
+    # kept in, where a zero is the lowest there is.
+    if ascending:
+        unit = max(totals, key=lambda u: (len(totals[u]), sum(abs(v) for v in totals[u].values()),
+                                          -sorted(totals).index(u)))
+    else:
+        unit = max(totals, key=lambda u: (sum(1 for v in totals[u].values() if v > 0),
+                                          sum(1 for v in totals[u].values() if v), len(totals[u]),
+                                          sum(abs(v) for v in totals[u].values()), -sorted(totals).index(u)))
     if len(totals[unit]) < 2:
         return None
-    label, value = sorted(totals[unit].items(), key=lambda item: (item[1], item[0]), reverse=not ascending)[0]
+    ordered = sorted(totals[unit].items(), key=lambda item: (item[1], item[0]), reverse=not ascending)
+    # A tie at the top leads nothing.
+    if ordered[0][1] == ordered[1][1]:
+        return None
+    label, value = ordered[0]
     return unit, label, value
 
 
@@ -2723,7 +2733,10 @@ def build_answer(
             # feet and eaches are not added up to rank a warehouse.
             in_unit = _leader_in_one_unit(rows, label_col, text_cols, value_col, ascending)
             # Nothing anywhere leads: every one is at nothing.
-            if in_unit and not any(_to_float(row.get(value_col)) for row in rows):
+            from core.units_of_measure import is_quantity_measure, is_unit_column
+
+            if (any(is_unit_column(c) for c in text_cols if c != label_col) and is_quantity_measure(value_col)
+                    and not any(_to_float(row.get(value_col)) for row in rows)):
                 return {
                     "headline": _t("answer.per_unit.all_zero",
                                    measure=_display_label(value_col) or _t("answer.total")),

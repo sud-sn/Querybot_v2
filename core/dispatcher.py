@@ -206,10 +206,14 @@ _ASKED_OF_THE_ASSISTANT_RE = re.compile(
     r"(?:calculated|computed|defined|derived|measured|worked\s+out)"
     r"|explain\s+(?:what|how)\b|password|log\s*in|sign\s*in|refresh(?:ed|es)?|up\s+to\s+date"
     r"|thanks?|thank\s+you|merci|agree"
-    # Help with the product, and asks that are not about the figures.
-    r"|how\s+(?:do|can|should|would)\s+i\b|^\s*(?:do|does|can|could|will|would|are|is)\s+(?:you|querybot)\b"
-    r"|\b(?:write|compose|draft|translate)\s+(?:me\s+)?(?:a|an|the|this|that|it)\b|\b(?:poem|joke|song|story|weather)\b"
-    r"|(?:what|which)\s+tables?\b"
+    # Help with the product, and asks that are not about the figures -- not
+    # "can you list the warehouses?" or "do you have stock of copper pipe?",
+    # which ask for them; nor "sales by weather condition".
+    r"|how\s+(?:do|can|should|would)\s+i\b"
+    r"|^\s*(?:do|does|can|could|will|would|are|is)\s+(?:you|querybot)\b"
+    r"(?!\s+(?:please\s+)?(?:show|list|give|get|pull|find|tell|have|know|break|compare|rank|count|display|see)\b)"
+    r"|\b(?:write|compose|draft|translate)\s+(?:me\s+)?(?:a|an|the|this|that|it)\b|\b(?:poems?|jokes?|songs?)\b"
+    r"|\bweather\b(?!\s+(?:conditions?|types?|categor(?:y|ies)|zones?|data|events?)\b)"
     r"|(?:is|are)\s+(?:\S+\s+){0,6}(?:good|bad|normal|healthy|reasonable|ok(?:ay)?)\s*\??\s*$)",
     re.IGNORECASE,
 )

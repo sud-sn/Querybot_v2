@@ -66,6 +66,10 @@ class TestWhichMeasure:
         ("reserved stock by warehouse", ["Reserved quantity"]),
         # A bare "inventory" beside another measure's word is that measure's.
         ("value of our inventory by warehouse", ["Inventory value"]),
+        ("top 3 warehouses by value of inventory", ["Inventory value"]),
+        ("for each warehouse, what is the value of our inventory?", ["Inventory value"]),
+        ("top 3 items by available inventory", ["Available quantity"]),
+        ("rank warehouses by allocated inventory", ["Allocated quantity"]),
         ("what's the value of our inventory?", ["Inventory value"]),
         ("available inventory by warehouse", ["Available quantity"]),
         ("allocated inventory by warehouse", ["Allocated quantity"]),
@@ -163,6 +167,8 @@ class TestTheFrontDoor:
         "stock on hand by warehouse", "which warehouses have the lowest stock?", "top 10 items by inventory value",
         "best customers", "gross margin %", "units sold last 6 months", "how is the North Depot warehouse doing?",
         "number of receipts by item group", "what is our total stock on hand?",
+        "can you list the warehouses?", "do you have stock of copper pipe?", "do you know our revenue for 2025?",
+        "sales by weather condition",
     ])
     def test_a_question_for_the_data(self, message):
         from core.dispatcher import _plainly_a_business_question
@@ -176,7 +182,7 @@ class TestTheFrontDoor:
         "Can you explain what a KPI is?", "Can you help me reset my account password?", "is 30% margin good?",
         "what does on hand mean?", "Is our data refreshed daily?", "Thank you, see you in 2025", "100% agree",
         "merci by avance", "how do I export orders to Excel?", "do you store customer data?",
-        "write me a poem about inventory", "what's the weather in the city of Toronto", "what tables hold invoices?",
+        "write me a poem about inventory", "what's the weather in the city of Toronto",
     ])
     def test_said_to_the_assistant(self, message):
         from core.dispatcher import _plainly_a_business_question
@@ -229,7 +235,7 @@ class TestTheLineage:
 # ── Whether a turn beside a result is about it ───────────────────────────────
 
 _REVENUE = [{"name": "Revenue", "synonyms": "sales, revenue"}, {"name": "Inventory value", "synonyms": "inventory value"},
-            {"name": "Units sold", "synonyms": "units sold"}]
+            {"name": "Units sold", "synonyms": "units sold"}, {"name": "Stock on hand", "synonyms": "stock on hand, stock, inventory"}]
 
 
 class TestBesideAResult:
@@ -245,6 +251,8 @@ class TestBesideAResult:
         ("what about revenue by product?", ["REGION", "REVENUE"], False),
         # A measure on screen under one of its synonyms is still on screen.
         ("which region has the highest sales?", ["REGION", "NET_SALES"], False),
+        # Not in a column another metric is named in.
+        ("stock on hand by warehouse", ["WAREHOUSE", "INVENTORY_VALUE"], True),
     ])
     def test_a_question_of_its_own(self, question, columns, asked_anew):
         from core.query_router import asks_a_new_question
@@ -330,6 +338,13 @@ class TestWhatTheDataKeeps:
         from core.listing import listing_target
 
         assert listing_target(question) == thing
+
+    def test_a_key_is_never_listed(self):
+        from core.listing import listed_field
+
+        plan = {"fields": [{"term": "customer", "table": "dbo.DimCustomer", "column": "CustomerKey",
+                            "role": "display_dimension"}]}
+        assert listed_field(plan, set(), "customers") is None
 
     def test_a_listing_is_written_for_the_warehouse(self):
         from core.listing import listing_sql

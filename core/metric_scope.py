@@ -96,13 +96,17 @@ def _bare_word_stands_alone(metric: dict[str, Any], metrics: list[dict[str, Any]
     "value of our inventory", "available inventory", "inventory sold" each
     name a measure of their own, and a bare word answered them with the
     stock on hand. Grains and windows are not such words."""
-    # Read in what the question measures, not what it breaks it down by:
-    # "inventory by category of products" breaks the stock down by product,
-    # and "products" is a word of the number of products sold's.
+    # Read in the part of the question that says the bare word -- what it
+    # measures -- not what it breaks it down by: "inventory by category of
+    # products" breaks the stock down by product ("products" is a word of the
+    # number of products sold's), and "top 3 warehouses by value of
+    # inventory" measures the value.
+    bare = _tokens(" ".join(_BARE_STOCK_WORDS))
     asked: set[str] = set()
     for text in texts:
         if text:
-            measured = _BREAKDOWN_MARKER.split(str(text), maxsplit=1)[0]
+            parts = _BREAKDOWN_MARKER.split(str(text))
+            measured = " ".join(part for part in parts if _tokens(without_grain_or_window(part)) & bare) or parts[0]
             asked |= _tokens(without_grain_or_window(measured))
     own = {word for phrase in _metric_phrases(metric) for word in _tokens(phrase)}
     others = {word for other in metrics or [] if other is not metric

@@ -344,14 +344,21 @@ def _names_a_measure_on_screen(canonical: str, metrics: list[dict] | None, cache
     vendue" -- accents folded."""
     text = " ".join(re.findall(r"[a-z0-9%]+", canonical.casefold()))
     columns = [_folded_words(column) for column in cached_col_names or []]
+    names = {id(metric): _folded_words(metric.get("name")) for metric in metrics or []}
     for metric in metrics or []:
         phrases = [metric.get("name"), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]
-        if not any((words := " ".join(re.findall(r"[a-z0-9%]+", str(phrase or "").casefold())))
-                   and re.search(rf"(?<![a-z0-9]){re.escape(words)}(?![a-z0-9])", text) for phrase in phrases):
-            continue
-        for phrase in phrases:
+        # Only the words the question uses for it: "stock on hand" is not on
+        # screen in INVENTORY_VALUE because "inventory" is another of its words.
+        said = [phrase for phrase in phrases
+                if (words := " ".join(re.findall(r"[a-z0-9%]+", str(phrase or "").casefold())))
+                and re.search(rf"(?<![a-z0-9]){re.escape(words)}(?![a-z0-9])", text)]
+        # Nor is it in a column another metric is named in.
+        theirs = [column for column in columns
+                  if not any(other_id != id(metric) and words and words <= column and words != names[id(metric)]
+                             for other_id, words in names.items())]
+        for phrase in said:
             words = _folded_words(phrase)
-            if words and any(words <= column for column in columns):
+            if words and any(words <= column for column in theirs):
                 return True
     return False
 

@@ -108,6 +108,9 @@ def listed_field(semantic_plan: dict | None, fact_tables: set[str] | None, targe
         return None
     if not field.get("table") or not field.get("column"):
         return None
+    # A key is no member's name: "the customers" are not 1, 2, 3, 4.
+    if re.search(r"(?:_?KEY|_?ID|_?SK)$", str(field.get("column")), re.I):
+        return None
     asked = _words(target) - _words(" ".join(_FILLER))
     from core.semantic_planner import _words_form
 

@@ -163,6 +163,22 @@ class TestTheHeadline:
 
         assert _headline(rows, "stock on hand by warehouse") == "In EA, A DEPOT leads at 10 EA."
 
+    def test_the_lowest_is_where_a_zero_is(self):
+        rows = [{"WAREHOUSE": "SOUTH DEPOT", "UNT_OF_MSR": "FT", "ALLOCATED_QUANTITY": 0.0},
+                {"WAREHOUSE": "NORTH DEPOT", "UNT_OF_MSR": "FT", "ALLOCATED_QUANTITY": 100.0},
+                {"WAREHOUSE": "SOUTH DEPOT", "UNT_OF_MSR": "EA", "ALLOCATED_QUANTITY": 60.0},
+                {"WAREHOUSE": "NORTH DEPOT", "UNT_OF_MSR": "EA", "ALLOCATED_QUANTITY": 20.0}]
+
+        assert (_headline(rows, "which warehouse has the lowest allocated quantity?")
+                == "In FT, SOUTH DEPOT is lowest at 0 FT.")
+
+    def test_a_tie_leads_nothing(self):
+        rows = [{"WAREHOUSE": w, "UNT_OF_MSR": "EA", "STOCK_ON_HAND": 1.0} for w in ("W1", "W2", "W3")] + [
+            {"WAREHOUSE": "W1", "UNT_OF_MSR": "FT", "STOCK_ON_HAND": 50000.0},
+            {"WAREHOUSE": "W2", "UNT_OF_MSR": "FT", "STOCK_ON_HAND": 40000.0}]
+
+        assert " leads at " not in _headline(rows, "stock on hand by warehouse")
+
     def test_money_is_not_said_in_a_unit(self):
         rows = [{"WAREHOUSE": row["WAREHOUSE"], "UNT_OF_MSR": row["UNT_OF_MSR"],
                  "INVENTORY_VALUE": row["STOCK_ON_HAND"] * 2.5} for row in _BY_WAREHOUSE]
