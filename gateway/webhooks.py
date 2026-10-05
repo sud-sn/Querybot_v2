@@ -5224,7 +5224,22 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     _guarded_turn(_run_reconcile_chat(_cache_snapshot)))
                 continue
 
-            if is_metadata_result_question(text):
+            # A question of its own beside the result -- "stock by month"
+            # after "units sold by month", "top 10 items by inventory value"
+            # after a breakdown by warehouse -- is asked, not read off it.
+            try:
+                from core.query_router import asks_a_new_question
+
+                _asks_anew = bool(_cache_snapshot) and asks_a_new_question(
+                    text, _cache_columns, store.list_metrics(account_id),
+                    lang=(portal_user or {}).get("lang") or "en",
+                )
+            except Exception as _anew_exc:
+                _asks_anew = False
+                log.warning("New-question check skipped for %s: %s", account_id, _anew_exc)
+            if _asks_anew:
+                _route_cached_analysis = False
+            elif is_metadata_result_question(text):
                 _route_cached_analysis = True
             else:
                 _route_cached_analysis = should_route_to_result_cache(

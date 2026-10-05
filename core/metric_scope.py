@@ -76,17 +76,46 @@ def _metric_phrases(metric: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(phrases))
 
 
-def _named_spans(metric: dict[str, Any], question: str) -> list[tuple[int, int]]:
+# "Stock" and "inventory" said alone: the stock on hand's own words
+# (core/starter_metrics.py), and part of every other stock measure's name.
+_BARE_STOCK_WORDS = ("stock", "stocks", "inventory", "inventories", "inventaire", "inventaires")
+
+
+def _is_bare(phrase: str) -> bool:
+    """A metric phrase that is nothing but a bare word for stock."""
+    words = _tokens(phrase)
+    return bool(words) and words <= _tokens(" ".join(_BARE_STOCK_WORDS))
+
+
+def _bare_word_stands_alone(metric: dict[str, Any], metrics: list[dict[str, Any]], *texts: str) -> bool:
+    """Whether a bare "stock" the question says is this metric's to claim:
+    the question says no word of another metric's that this one does not --
+    "value of our inventory", "available inventory", "inventory sold" each
+    name a measure of their own, and a bare word answered them with the
+    stock on hand. Grains and windows are not such words."""
+    asked: set[str] = set()
+    for text in texts:
+        if text:
+            asked |= _tokens(without_grain_or_window(text))
+    own = {word for phrase in _metric_phrases(metric) for word in _tokens(phrase)}
+    others = {word for other in metrics or [] if other is not metric
+              for phrase in _metric_phrases(other) for word in _tokens(phrase)}
+    return not ((asked & others) - own - _tokens(" ".join(_BARE_STOCK_WORDS)))
+
+
+def _named_spans(metric: dict[str, Any], question: str, *, bare_ok: bool = True) -> list[tuple[int, int]]:
     """Where the question says one of the metric's own phrases, whole."""
     q = _norm(question)
     return [
         found.span()
         for phrase in _metric_phrases(metric)
+        if bare_ok or not _is_bare(phrase)
         for found in re.finditer(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", q)
     ]
 
 
-def _phrase_score(metric: dict[str, Any], question: str, *, reader_question: str = "") -> int:
+def _phrase_score(metric: dict[str, Any], question: str, *, reader_question: str = "",
+                  bare_ok: bool = True) -> int:
     """How strongly this metric's wording matches the question.
 
     Scored against the canonical English AND, when they differ, the reader's own
@@ -98,13 +127,13 @@ def _phrase_score(metric: dict[str, Any], question: str, *, reader_question: str
     made a French-authored synonym unreachable in turn, which is the opposite
     failure on the same axis.
     """
-    best = _phrase_score_one(metric, question)
+    best = _phrase_score_one(metric, question, bare_ok=bare_ok)
     if reader_question and reader_question != question:
-        best = max(best, _phrase_score_one(metric, reader_question))
+        best = max(best, _phrase_score_one(metric, reader_question, bare_ok=bare_ok))
     return best
 
 
-def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
+def _phrase_score_one(metric: dict[str, Any], question: str, *, bare_ok: bool = True) -> int:
     q = _norm(question)
     # A grain or a window is not evidence of which measure: the exact phrase
     # below still reads the whole question ("revenue this month" authored for a
@@ -115,7 +144,7 @@ def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
     best = 0
     for phrase in _metric_phrases(metric):
         phrase_tokens = _tokens(phrase)
-        if not phrase_tokens:
+        if not phrase_tokens or (not bare_ok and _is_bare(phrase)):
             continue
         overlap = q_tokens & phrase_tokens
         # Overlap on nothing but generic quantity words is not evidence about
@@ -135,6 +164,11 @@ def _phrase_score_one(metric: dict[str, Any], question: str) -> int:
         # literally named "Total Value" appearing verbatim in the question IS
         # evidence, and that path requires the whole phrase, not one token.
         if overlap and overlap <= _GENERIC_WORDS:
+            overlap = set()
+        # Nor is a bare "stock" that another metric's word beside it claims:
+        # "inventory sold" shares "inventory" with every stock measure, and
+        # "sold" with the units sold alone.
+        if overlap and not bare_ok and overlap <= _GENERIC_WORDS | _tokens(" ".join(_BARE_STOCK_WORDS)):
             overlap = set()
         score = len(overlap) * 10
         # The whole phrase, whichever word for a quantity either says it in.
@@ -418,8 +452,12 @@ def resolve_metric_scope(
     context_schemas.update(_schemas_from_semantic_plan(semantic_plan))
 
     scored: list[tuple[int, dict[str, Any], set[str]]] = []
+    # By name: a metric is copied below once its schemas are known.
+    bare_ok = {str(metric.get("name") or ""): _bare_word_stands_alone(metric, metrics, question, reader_question)
+               for metric in metrics or []}
     for metric in metrics or []:
-        score = _phrase_score(metric, question, reader_question=reader_question)
+        score = _phrase_score(metric, question, reader_question=reader_question,
+                              bare_ok=bare_ok[str(metric.get("name") or "")])
         if score <= 0:
             continue
         schemas = metric_source_schemas(metric, table_columns, entity_schema_map)
@@ -494,7 +532,11 @@ def resolve_metric_scope(
     # alone, but in the reader's words its "stock" is inside "valeur du
     # stock", and the stock on hand was read beside the value asked for.
     texts = [text for text in dict.fromkeys((question, reader_question)) if text]
-    said = {text: [span for metric in chosen for span in _named_spans(metric, text)] for text in texts}
+
+    def _spans(metric: dict[str, Any], text: str) -> list[tuple[int, int]]:
+        return _named_spans(metric, text, bare_ok=bare_ok.get(str(metric.get("name") or ""), True))
+
+    said = {text: [span for metric in chosen for span in _spans(metric, text)] for text in texts}
 
     def _overlaps(spans: list[tuple[int, int]], others: list[tuple[int, int]]) -> bool:
         return any(start < other_end and other_start < end
@@ -503,7 +545,7 @@ def resolve_metric_scope(
     for _score, metric, _schemas in scored:
         if any(metric is kept for kept in chosen):
             continue
-        spans = {text: _named_spans(metric, text) for text in texts}
+        spans = {text: _spans(metric, text) for text in texts}
         named_alone = any(spans[text] and not _overlaps(spans[text], said[text]) for text in texts)
         inside_another = any(spans[text] and _overlaps(spans[text], said[text]) for text in texts)
         if named_alone and not inside_another:
@@ -514,3 +556,62 @@ def resolve_metric_scope(
         metrics=chosen[: max(1, int(limit or 6))],
         context_schemas=context_schemas,
     )
+
+
+# The figures a business is asked about in money, and the column codes a
+# warehouse keeps any of them under. A question asking for one is asking for
+# money a quantity-only warehouse does not have: "what is my revenue trend",
+# asked of item balances, was asked which date to use.
+_MONEY_WORDS = {
+    "revenue": "revenue", "revenues": "revenue", "turnover": "turnover", "sales": "sales",
+    "profit": "profit", "profits": "profit", "margin": "margin", "margins": "margin",
+    "income": "income", "earnings": "earnings",
+}
+_MONEY_WORD_RE = re.compile(
+    r"\b(" + "|".join(sorted(_MONEY_WORDS, key=len, reverse=True)) + r")\b(?!\s+(?:cent(?:er|re)s?|cent(?:er|re)\b))",
+    re.I,
+)
+_MONEY_COLUMN_TOKENS = frozenset({
+    # Not NET or GRS alone: ITM_NET_WT is a weight. NET_SLS_AMT says SLS.
+    "REV", "RVN", "REVENUE", "SLS", "SALES", "SAL", "SALE", "AMT", "AMOUNT", "IVC",
+    "INVOICE", "TURNOVER", "INCOME", "PRC", "PRICE", "SELL", "PROFIT", "PRFT", "MRG", "MARGIN", "MGN",
+    "EARN", "EARNINGS", "GMV",
+})
+_FLAG_SUFFIXES = ("_IND", "_FLG", "_FLAG", "_KEY", "_ID", "_CD")
+
+
+def measure_the_data_lacks(
+    question: str,
+    metrics: list[dict[str, Any]] | None,
+    table_columns: dict[str, dict[str, str]] | None,
+    fact_tables: set[str] | None = None,
+) -> str:
+    """The money word a question asks for that this workspace has no figure
+    of -- no metric names it and no column of its facts (``fact_tables``,
+    every table when none is known) holds any money a sale is kept in -- or
+    "". ``question`` is read in its canonical English; a profit centre is a
+    place, not a profit."""
+    found = _MONEY_WORD_RE.search(_norm(question))
+    if not found or not table_columns:
+        return ""
+    facts = {_bare_table(table) for table in fact_tables or ()}
+    if facts:
+        table_columns = {table: columns for table, columns in table_columns.items()
+                         if _bare_table(table) in facts}
+    word = _MONEY_WORDS[found.group(1).lower()]
+    for metric in metrics or []:
+        if any(re.search(rf"(?<![a-z0-9]){found.group(1).lower()}(?![a-z0-9])", phrase) or word in phrase
+               for phrase in _metric_phrases(metric)):
+            return ""
+    for columns in table_columns.values():
+        for column in (columns or {}):
+            name = str(column).upper()
+            if name.endswith(_FLAG_SUFFIXES):
+                continue
+            tokens = set(re.split(r"[^A-Z0-9]+", name))
+            if tokens & _MONEY_COLUMN_TOKENS:
+                return ""
+            # A profit centre's key is a place: PFT_CTR.
+            if "PFT" in tokens and "CTR" not in tokens:
+                return ""
+    return word

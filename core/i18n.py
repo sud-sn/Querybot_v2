@@ -3736,6 +3736,26 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": 'I resolved the business event to count, but I could not compile a consistent governed field and join plan for it. No query was run.',
         "fr": "J'ai identifié l'événement métier à compter, mais je n'ai pas pu en compiler un plan de champs et de jointures gouverné et cohérent. Aucune requête n'a été exécutée.",
     },
+    'terminal.name_a_measure': {
+        "en": "Which figure should I look at? This workspace can answer about {measures} -- for example: \u201c{example}\u201d.",
+        "fr": "Quel chiffre dois-je examiner ? Cet espace permet de répondre sur {measures} -- par exemple : \u00ab {example} \u00bb.",
+    },
+    'terminal.measure_not_in_data': {
+        "en": "This workspace's data has no {word} figures, so I can't answer that from it. It can answer questions about {measures} -- for example: \u201c{example}\u201d.",
+        "fr": "Les données de cet espace ne contiennent pas de {word} : je ne peux donc pas répondre à partir d'elles. Elles permettent de répondre sur {measures} -- par exemple : \u00ab {example} \u00bb.",
+    },
+    'terminal.measure_not_in_data_no_metrics': {
+        "en": "This workspace's data has no {word} figures, so I can't answer that from it. It has no approved metrics yet: an administrator can accept the suggested ones under Metrics.",
+        "fr": "Les données de cet espace ne contiennent pas de {word} : je ne peux donc pas répondre à partir d'elles. Aucune mesure n'y est encore approuvée : un administrateur peut accepter celles qui sont suggérées dans Mesures.",
+    },
+    'example.by_month': {"en": "{measure} by month", "fr": "{measure} par mois"},
+    'word.revenue': {"en": "revenue", "fr": "chiffre d'affaires"},
+    'word.turnover': {"en": "turnover", "fr": "chiffre d'affaires"},
+    'word.sales': {"en": "sales", "fr": "ventes"},
+    'word.profit': {"en": "profit", "fr": "bénéfice"},
+    'word.margin': {"en": "margin", "fr": "marge"},
+    'word.income': {"en": "income", "fr": "revenus"},
+    'word.earnings': {"en": "earnings", "fr": "bénéfices"},
     'terminal.analytical_plan_unresolved': {
         "en": 'I understand the analytical request, but I cannot compile a trusted query until the semantic layer resolves {missing}. Please name the business measure or event more specifically, or ask an administrator to approve the missing semantic mapping.',
         "fr": "Je comprends la demande analytique, mais je ne peux pas compiler une requête fiable tant que la couche sémantique n'a pas résolu {missing}. Nommez la mesure ou l'événement métier plus précisément, ou demandez à un administrateur d'approuver le rattachement sémantique manquant.",

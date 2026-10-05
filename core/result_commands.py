@@ -8,7 +8,6 @@ SQL, logs, snapshot metadata, or model prompts.
 
 from __future__ import annotations
 
-import datetime as dt
 import re
 from calendar import month_abbr, month_name
 from dataclasses import dataclass, field
@@ -194,6 +193,8 @@ class ResultCommand:
     # True only for semantic extrema such as "Which one is highest?". Plain
     # positional commands ("keep the first row") must preserve row order.
     infer_metric: bool = False
+    # "just the top 5" ranks; "show the first 5 rows" keeps the rows' order.
+    ranked: bool = False
 
 
 @dataclass
@@ -250,7 +251,7 @@ def parse_result_command(text: str) -> ResultCommand | None:
             "presentation", presentation_type="auto", fallback_allowed=False,
         )
     if _KEEP_TOP_ONE_RE.fullmatch(value):
-        return ResultCommand("keep_top", limit=1)
+        return ResultCommand("keep_top", limit=1, ranked=True)
     match = _ELLIPTICAL_EXTREME_RE.fullmatch(value)
     if match:
         return ResultCommand(
@@ -265,14 +266,15 @@ def parse_result_command(text: str) -> ResultCommand | None:
         limit = 1 if amount == "one" else max(1, min(int(amount), 1000))
         if verb in {"exclude", "remove", "omit", "drop"}:
             return ResultCommand("exclude", target_text=f"{position} {limit}")
-        return ResultCommand("keep_top", limit=limit, direction="asc" if position == "last" else "desc")
+        return ResultCommand("keep_top", limit=limit, direction="asc" if position == "last" else "desc",
+                             ranked=position == "top")
     match = _EXCLUDE_RE.fullmatch(value)
     if match:
         target = _clean_target(match.group(1))
         return ResultCommand("exclude", target_text=target) if target else None
     match = _KEEP_TOP_RE.fullmatch(value)
     if match:
-        return ResultCommand("keep_top", limit=max(1, min(int(match.group(1)), 1000)))
+        return ResultCommand("keep_top", limit=max(1, min(int(match.group(1)), 1000)), ranked=True)
     match = _KEEP_TOP_BY_RE.fullmatch(value)
     if match:
         return ResultCommand(
@@ -652,19 +654,20 @@ def execute_result_command(
                         before,
                         _t("reply.rc.no_measure_to_rank"),
                     )
-            elif command.direction != "asc" and not _holds_periods(rows):
+            elif command.ranked and command.direction != "asc" and not _holds_periods(rows):
                 # "just the top 5" of a breakdown is its five largest, not the
                 # first five rows it happened to be listed in: an answer by
                 # warehouse is listed by warehouse, and its first five were
-                # kept as its "top 5". Ranked by its first measure -- the one
-                # the question asked for. A series over time keeps its order:
-                # its first rows are its first periods. Nor is a quantity kept in
-                # several units ranked across them: 900 feet are not ahead of
-                # 160 eaches.
+                # kept as its "top 5". Only where there is one measure to rank
+                # by -- of several, the rows' own order is the question's --
+                # and never "the first 5 rows". A series over time keeps its
+                # order: its first rows are its first periods. Nor is a
+                # quantity kept in several units ranked across them: 900 feet
+                # are not ahead of 160 eaches.
                 from core.units_of_measure import kept_in_several_units
 
                 candidates = _ranking_measure_columns(rows)
-                if candidates and not kept_in_several_units(rows, candidates[0]):
+                if len(candidates) == 1 and not kept_in_several_units(rows, candidates[0]):
                     order_column = candidates[0]
             descending = command.direction != "asc"
             order_keyword = "DESC" if descending else "ASC"
@@ -1546,19 +1549,14 @@ _RANKING_DIAGNOSTIC_TOKENS = {
 }
 
 
-_PERIOD_TEXT = re.compile(r"^\d{4}-\d{2}")
-
-
 def _holds_periods(rows: list[dict]) -> bool:
-    """Whether a result is a series over time: a column of periods or dates."""
+    """Whether a result is a series over time: a column the chart reads as
+    its time axis -- dates, months, years, period keys (core.chart_spec)."""
     if not rows:
         return False
-    for column, value in rows[0].items():
-        if str(column).upper() in {"PERIOD", "DATE", "MONTH", "YEAR", "QUARTER", "WEEK", "DAY"}:
-            return True
-        if isinstance(value, (dt.date, dt.datetime)) or (isinstance(value, str) and _PERIOD_TEXT.match(value)):
-            return True
-    return False
+    from core.chart_spec import _column_roles
+
+    return any(meta.get("role") == "temporal" for meta in _column_roles(rows[:50]).values())
 
 
 def _ranking_measure_columns(rows: list[dict]) -> list[str]:

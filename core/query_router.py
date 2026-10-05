@@ -314,6 +314,11 @@ _BREAKDOWN_TARGET_RE = re.compile(r"\b(?:by|per|for\s+each)\s+((?:[a-z]+\s+){0,2
 _RANKED_TARGET_RE = re.compile(r"\b(?:top|bottom)\s+\d+\s+((?:[a-z]+\s+){0,2}?[a-z]+)\s+(?:by|per|with|on)\b", re.I)
 
 
+# How a turn that continues the last one starts.
+_CONTINUATION_OPENER_RE = re.compile(
+    r"^\s*(?:and|same|also|but|now|then|instead|what\s+about|how\s+about|just|only|again)\b", re.I)
+
+
 def _names_a_measure(canonical: str, metrics: list[dict] | None) -> bool:
     """Whether the (canonical) question says one of the metrics' names or synonyms."""
     text = " ".join(re.findall(r"[a-z0-9%]+", canonical.casefold()))
@@ -322,6 +327,22 @@ def _names_a_measure(canonical: str, metrics: list[dict] | None) -> bool:
             words = " ".join(re.findall(r"[a-z0-9%]+", str(phrase or "").casefold()))
             if words and re.search(rf"(?<![a-z0-9]){re.escape(words)}(?![a-z0-9])", text):
                 return True
+    return False
+
+
+def _names_a_measure_on_screen(canonical: str, metrics: list[dict] | None, cached_col_names: list[str] | None) -> bool:
+    """Whether a metric the question names is one the result on screen holds
+    -- its column carries the metric's name (UNITS_SOLD for "Units sold")."""
+    text = " ".join(re.findall(r"[a-z0-9%]+", canonical.casefold()))
+    columns = [set(re.findall(r"[a-z0-9]+", str(column).casefold())) for column in cached_col_names or []]
+    for metric in metrics or []:
+        phrases = [metric.get("name"), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]
+        if not any((words := " ".join(re.findall(r"[a-z0-9%]+", str(phrase or "").casefold())))
+                   and re.search(rf"(?<![a-z0-9]){re.escape(words)}(?![a-z0-9])", text) for phrase in phrases):
+            continue
+        name = set(re.findall(r"[a-z0-9]+", str(metric.get("name") or "").casefold()))
+        if name and any(name <= column for column in columns):
+            return True
     return False
 
 
@@ -339,8 +360,21 @@ def asks_about_the_result(question: str, metrics: list[dict] | None, *, lang: st
     and names no measure of its own. Asked as a fresh question it named
     nothing to measure, and was refused: "I cannot compile a trusted query
     until the semantic layer resolves the business event dataset"."""
+    from core.contextual_dates import detect_temporal_window
+    from core.conversation_state import _DEICTIC_RE, _RANK_IN_RESULT_RE
+
     canonical = _spellings(question, lang)[-1]
-    return bool(_ABOUT_THE_RESULT_RE.search(canonical)) and not _names_a_measure(canonical, metrics)
+    if not _ABOUT_THE_RESULT_RE.search(canonical) or _names_a_measure(canonical, metrics):
+        return False
+    # A question of its own -- a breakdown, a top N, a period -- is not one
+    # about the result: "summarize returns by month for 2024".
+    if (_BREAKDOWN_TARGET_RE.search(canonical) or re.search(r"\b(?:top|bottom)\s+\d", canonical, re.I)
+            or str((detect_temporal_window(canonical) or {}).get("kind") or "") not in ("", "none")):
+        return False
+    # And it points at the result: "this", "that", where something stands in
+    # it ("the highest"), or it is short ("explain the result").
+    return bool(_DEICTIC_RE.search(canonical) or _RANK_IN_RESULT_RE.search(canonical)
+                or len(re.findall(r"\w[\w'-]*", canonical)) <= 7)
 
 
 def asks_a_new_question(
@@ -363,11 +397,26 @@ def asks_a_new_question(
     group", "and by supplier?") is still read against the result on screen.
     """
     from core.contextual_dates import detect_temporal_window
+    from core.conversation_state import _DEICTIC_RE
+    from core.result_commands import parse_result_command
 
     canonical = _spellings(question, lang)[-1]
     if not _names_a_measure(canonical, metrics):
         return False
+    # A continuation is not a question of its own, whatever it names: "and the
+    # revenue last quarter?", "same revenue but for last month", "just the top
+    # 5 by sales" -- nor one that points at the result ("this", "these").
+    if (_CONTINUATION_OPENER_RE.match(canonical) or looks_elliptical(canonical)
+            or _DEICTIC_RE.search(canonical) or parse_result_command(canonical) is not None):
+        return False
+    # A measure the result on screen does not hold: "stock by month" asked
+    # after "units sold by month" is the stock's, not the units sold again.
+    if not _names_a_measure_on_screen(canonical, metrics, cached_col_names):
+        return True
+    # What it breaks down or ranks by: a measure after "by" ("top 5 by sales")
+    # is what it ranks on, not a breakdown.
     targets = [m.group(1) for regex in (_BREAKDOWN_TARGET_RE, _RANKED_TARGET_RE) for m in regex.finditer(canonical)]
+    targets = [target for target in targets if not _names_a_measure(target, metrics)]
     if any(not question_mentions_cached_column(target, cached_col_names) for target in targets):
         return True
     window = detect_temporal_window(canonical) or {}

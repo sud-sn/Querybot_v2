@@ -1681,6 +1681,16 @@ def graph_block_response(graph_ctx, *, lang, model=None, vocab=None) -> str:
     ])
 
 
+def answerable_metric_names(account_id: str, limit: int = 5) -> list[str]:
+    """The workspace's answerable metrics a reader can be offered: the most
+    asked first, then the plainest -- "Units sold" before "Month-end
+    allocated quantity"."""
+    metrics = store.list_metrics(account_id, answerable_only=True) or []
+    ordered = sorted(metrics, key=lambda m: (-int(m.get("usage_count") or 0), len(str(m.get("name") or "")),
+                                             str(m.get("name") or "")))
+    return [str(m.get("name")) for m in ordered if m.get("name")][:limit]
+
+
 def planner_metrics_in_scope(account_id: str, effective) -> list[dict]:
     """The registry metrics the analytical planner may bind for this question:
     answerable ones (store.metric_is_answerable -- a formula that failed
@@ -3822,6 +3832,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _source_model: dict = {}
     _preferred_facts: set[str] = set()
     _source_scope: dict = {"status": "none", "selected_fact": "", "candidates": []}
+    _listing = ""
     _semantic_model_plan: dict = {}
     # The keys the join graph names a role for: "by buyer" is one of them.
     _planner_role_keys = _graph_role_keys(_full_graph)
@@ -3887,6 +3898,45 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             reader_question=_reader_plan_question,
             limit=6,
         )
+        # A figure the data does not keep is said so, before any question
+        # about its date or its dataset: "what is my revenue trend", asked of
+        # item balances, was asked which date to use, and "revenue for each
+        # profit centre" was told to approve a semantic mapping.
+        if not _early_metric_scope.metrics and not _early_metric_scope.ambiguous:
+            try:
+                from core.metric_scope import measure_the_data_lacks
+
+                _registry_metrics = (_contract_metrics if _contract_metrics is not None
+                                     else store.list_metrics(account_id))
+                _lacked = measure_the_data_lacks(_semantic_plan_question, _registry_metrics, all_columns,
+                                                 _planner_fact_tables)
+            except Exception as _lacked_exc:
+                _lacked = ""
+                log.warning("Measure coverage not checked for %s: %s", account_id, _lacked_exc)
+            if _lacked:
+                _reader_lang = (portal_user or {}).get("lang") or "en"
+                _answerable = answerable_metric_names(account_id)
+                _example_metric = next((name for name in _answerable if _lacked == "sales" and "sold" in name.lower()),
+                                       _answerable[0] if _answerable else "")
+                log.info("%r asks for %s, which %s's data does not keep", question[:120], _lacked, account_id)
+                await adapter.send_message(
+                    event,
+                    _t("terminal.measure_not_in_data", lang=_reader_lang,
+                       word=_t(f"word.{_lacked}", lang=_reader_lang),
+                       measures=", ".join(_answerable[:5]),
+                       example=_t("example.by_month", lang=_reader_lang, measure=_example_metric))
+                    if _answerable else
+                    _t("terminal.measure_not_in_data_no_metrics", lang=_reader_lang,
+                       word=_t(f"word.{_lacked}", lang=_reader_lang)),
+                )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="semantic_plan_incomplete",
+                    final_answer_summary=f"The data keeps no {_lacked} figures",
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                return
         # A period the metric's own table does not keep is read from the
         # table that keeps it: "units in stock at the end of 2024" from the
         # month-end snapshot where the daily one starts after 2024. Both
@@ -4031,9 +4081,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # A population is counted on its own table, which is no fact: which
         # fact to read is not a question to put to the reader of "how many
         # items do we have".
+        # Nor is it for a plain listing ("list the item names"), which reads
+        # the dimension alone (core.listing).
+        from core.listing import listing_target
+
+        # Unless it names a metric outright: "list the available items" is
+        # the items, though "available" is a word of the available quantity's.
+        from core.metric_scope import _named_spans
+
+        _listing = listing_target(_semantic_plan_question)
+        if _listing and any(_named_spans(metric, _semantic_plan_question)
+                            for metric in _early_metric_scope.metrics):
+            _listing = ""
         if (
             _source_scope.get("status") == "ambiguous"
             and not _analytical_plan.population_entity
+            and not _listing
             and can_request_clarification(event, "source_scope")
         ):
             _source_options = source_clarification_options(_source_scope)
@@ -4501,6 +4564,42 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         len(_semantic_plan.get("joins") or []),
         _semantic_plan.get("required_tables"),
     )
+
+    # A plain listing reads the one dimension column its plan names: its
+    # distinct members, through the governed executor (core.listing).
+    _listed = None
+    if _listing:
+        from core.listing import listed_field, listing_sql
+
+        _listed = listed_field(_semantic_plan, _planner_fact_tables)
+    if _listed:
+        _listing_sql = listing_sql(_listed, db_cfg.get("db_type", "azure_sql"))
+        log.info("Listing %r for %s: %s", _listing, account_id, _listing_sql)
+        try:
+            _listing_t0 = time.time()
+            governed = await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(None, _execute_with_policy, _listing_sql),
+                timeout=_query_wait_timeout(db_cfg),
+            )
+            rows = governed.rows
+            duration_ms = int((time.time() - _listing_t0) * 1000)
+            _trace_update(trace_id, generated_sql=governed.sql, sql_validation_status="governed_listing",
+                          query_row_count=len(rows), query_duration_ms=duration_ms)
+            _trace_step(trace_id, "execute_sql", input_summary=governed.sql, output_summary={"rows": len(rows)},
+                        duration_ms=duration_ms)
+            await _send_results(event, adapter, question, rows, governed.sql, duration_ms, portal_user,
+                                account_id, db_cfg, question_id=audit_request_id,
+                                confidence_context={"validation_code": "governed_listing",
+                                                    "has_semantic_plan": True},
+                                contract_version=_contract_version)
+            _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows),
+                          duration_ms=int(time.time() * 1000) - start_ms,
+                          final_answer_summary="Answered as a listing of one dimension")
+            return
+        except Exception as _listing_exc:
+            # The ordinary path still runs: a refused or failed listing is
+            # answered -- or refused -- as any other question.
+            log.warning("Listing %r not answered directly for %s: %s", _listing, account_id, _listing_exc)
 
     # Single-fact scoping has to run on the MERGED plan, not just the model
     # plan: the LLM field planner is a second, independent source of required
@@ -5920,8 +6019,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 str(field.get("role") or "") in {"measure", "measure_candidate"}
                 for field in (_semantic_plan or {}).get("fields") or [] if isinstance(field, dict)
             )
+            _offered = answerable_metric_names(account_id) if _names_no_measure else []
             await adapter.send_message(
                 event,
+                _t("terminal.name_a_measure", lang=(portal_user or {}).get("lang") or "en",
+                   measures=", ".join(_offered),
+                   example=_t("example.by_month", lang=(portal_user or {}).get("lang") or "en",
+                              measure=_offered[0]))
+                if _offered else
                 _t("terminal.analytical_plan_unresolved",
                    lang=(portal_user or {}).get("lang") or "en",
                    missing=_t("slot.measure", lang=(portal_user or {}).get("lang") or "en"))

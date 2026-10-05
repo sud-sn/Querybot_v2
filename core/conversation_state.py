@@ -610,7 +610,7 @@ _DEICTIC_RE = re.compile(
 )
 # Where something stands in the result: "why is NORTH DEPOT the highest?".
 _RANK_IN_RESULT_RE = re.compile(
-    r"\b(?:highest|lowest|biggest|smallest|largest|top|bottom|best|worst|most|least|first|last)\b",
+    r"\b(?:highest|lowest|biggest|smallest|largest|top|bottom)\b",
     re.I,
 )
 _RESULT_SUPERLATIVE_RE = re.compile(

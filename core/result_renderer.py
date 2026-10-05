@@ -767,9 +767,9 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         rows, members_labelled = label_unknown_members(
             rows, member_labels(account_id), lambda kind: _t(f"member.{kind}"),
         )
-        from core.unknown_members import UNKNOWN, label_blank_members
+        from core.unknown_members import UNKNOWN, grouped_columns, label_blank_members
 
-        rows, blank_labelled = label_blank_members(rows, _t(f"member.{UNKNOWN}"))
+        rows, blank_labelled = label_blank_members(rows, _t(f"member.{UNKNOWN}"), grouped_columns(sql))
         members_labelled += blank_labelled
     except Exception as exc:
         log.warning("Placeholder members not relabelled for %s: %s", account_id, exc)

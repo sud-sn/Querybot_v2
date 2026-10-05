@@ -96,6 +96,10 @@ class TestATrendKeptInSeveralUnits:
         ("INVOICE_MONTH", [1, 2, 3]),
         ("WEEK", [1, 2, 53]),
         ("YEAR", [2024, 2025, 2026]),
+        ("SALES_WEEK", list(range(1, 13))),
+        ("SHIP_YEAR", [2023, 2024, 2025]),
+        ("SHIP_MONTH", list(range(23, 29))),
+        ("SALES_WEEK_NUM", list(range(1, 13))),
     ])
     def test_a_period_is_still_a_period(self, column, values):
         from core.chart_spec import _column_roles
@@ -180,17 +184,29 @@ class TestTheHeadline:
 
 class TestBlankLabels:
 
-    def test_an_empty_label_cell_is_named(self):
-        from core.unknown_members import label_blank_members
+    def test_an_empty_group_label_is_named(self):
+        from core.unknown_members import grouped_columns, label_blank_members
 
+        sql = ("SELECT g.ITM_GRP_DSC AS ITEM_GROUP, CAST(d.DMS_DT AS varchar(10)) AS PERIOD, COUNT(*) AS RECEIPTS "
+               "FROM F f LEFT JOIN G g ON f.G = g.G LEFT JOIN D d ON f.D = d.D "
+               "GROUP BY g.ITM_GRP_DSC, CAST(d.DMS_DT AS varchar(10))")
         rows = [{"ITEM_GROUP": None, "PERIOD": "2026-01-01", "RECEIPTS": 5},
                 {"ITEM_GROUP": "FITTINGS", "PERIOD": None, "RECEIPTS": None}]
-        named, changed = label_blank_members(rows, "Unknown")
+        named, changed = label_blank_members(rows, "Unknown", grouped_columns(sql))
 
+        assert grouped_columns(sql) == {"ITEM_GROUP", "PERIOD"}
         assert changed == 1
         assert [row["ITEM_GROUP"] for row in named] == ["Unknown", "FITTINGS"]
-        # A date column and a measure keep their blanks.
+        # A date and a measure keep their blanks.
         assert named[1]["PERIOD"] is None and named[1]["RECEIPTS"] is None
+
+    def test_a_column_the_query_does_not_group_by_keeps_its_blanks(self):
+        from core.unknown_members import grouped_columns, label_blank_members
+
+        rows = [{"ORDER_ID": "1", "CANCEL_REASON": None}, {"ORDER_ID": "2", "CANCEL_REASON": "late"}]
+
+        assert label_blank_members(rows, "Unknown", grouped_columns(
+            "SELECT TOP 200 ORDER_ID, CANCEL_REASON FROM SALES.ORDERS")) == (rows, 0)
 
 
 # ── The top rows ─────────────────────────────────────────────────────────────
@@ -221,3 +237,23 @@ class TestTheTopRows:
 
     def test_of_a_quantity_in_several_units_are_not_ranked_across_them(self):
         assert [row["UNT_OF_MSR"] for row in self._keep_top(list(_BY_WAREHOUSE))] == ["FT", "EA"]
+
+    def test_the_first_rows_are_the_first_rows(self):
+        rows = [{"WAREHOUSE": "A", "INVENTORY_VALUE": 10.0}, {"WAREHOUSE": "B", "INVENTORY_VALUE": 30.0},
+                {"WAREHOUSE": "C", "INVENTORY_VALUE": 20.0}]
+
+        assert [row["WAREHOUSE"] for row in self._keep_top(rows, "show the first 2 rows")] == ["A", "B"]
+
+    def test_of_several_measures_keep_the_rows_order(self):
+        rows = [{"CUSTOMER": "A", "ORDER_COUNT": 1, "REVENUE": 30.0}, {"CUSTOMER": "B", "ORDER_COUNT": 2, "REVENUE": 20.0},
+                {"CUSTOMER": "D", "ORDER_COUNT": 9, "REVENUE": 1.0}]
+
+        assert [row["CUSTOMER"] for row in self._keep_top(rows)] == ["A", "B"]
+
+    @pytest.mark.parametrize("column, values", [
+        ("FISCAL_YEAR", [2024, 2025, 2023]), ("MONTH", ["January", "February", "March"]), ("PRD_KEY", [202401, 202402, 202403]),
+    ])
+    def test_of_a_series_in_any_period_are_its_first_periods(self, column, values):
+        rows = [{column: value, "UNITS_SOLD": float(10 * (index % 2 + 1))} for index, value in enumerate(values)]
+
+        assert [row[column] for row in self._keep_top(rows)] == values[:2]

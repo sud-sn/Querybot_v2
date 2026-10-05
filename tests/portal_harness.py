@@ -146,3 +146,106 @@ class Conversation:
                     sql=answers[-1]["sql"] if answers else "",
                     model_wrote_sql=any(harness.SQL_WRITER in call[:400] for call in model_calls),
                     asked_the_analyst=any(ANALYST in call[:200] for call in model_calls))
+
+
+class SocketConversation:
+    """One portal thread asked over the real chat socket, /ws/chat: the
+    pre-routing the socket does before the dispatcher -- result commands, the
+    cached-result planner, the "why" insight -- runs as it runs for a reader.
+    Boundaries as ``Conversation``'s; the model answers "" where it is not the
+    SQL writer or the analyst. Use as a context manager."""
+
+    def __init__(self, warehouse, account: str, connection: dict, *, lang: str = "en",
+                 analyst: str = OFFERING_ANALYST, idle_seconds: float = 3.0):
+        import store
+
+        self.warehouse, self.account, self.connection = warehouse, account, connection
+        self.analyst, self.idle_seconds = analyst, idle_seconds
+        email = f"socket-reader-{lang}@harness.example"
+        reader = store.get_user_by_email(account, email)
+        if reader is None:
+            store.create_user(account, "Reader", email, password="a-password-they-chose", role="admin")
+            reader = store.get_user_by_email(account, email)
+        store.set_user_language(int(reader["id"]), lang)
+        self.user_id = int(reader["id"])
+        self.executed: list[dict] = []
+        self.model_calls: list[str] = []
+
+    def __enter__(self):
+        import core.dispatcher as dispatcher
+        import core.llm as llm
+        import core.query_pipeline as qp
+        import core.schema as schema_module
+        import gateway.webhooks as wh
+        import portal.routes as pr
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+
+        def run_azure_sql(cfg, sql, max_rows=200):
+            found = self.warehouse.query(sql, max_rows)
+            self.executed.append({"sql": sql, "rows": found})
+            return found
+
+        async def model(system, user, *args, **kwargs):
+            self.model_calls.append(str(system))
+            if harness.SQL_WRITER in str(system)[:400]:
+                return f"SELECT '{harness.MARKER}' AS marker", 1, 1
+            if ANALYST in str(system)[:200]:
+                return self.analyst, 1, 1
+            return "", 1, 1
+
+        provider = ("azure_openai", "gpt-4o", "k", {})
+        self._stack = contextlib.ExitStack()
+        original = llm.llm_complete
+        for module in list(__import__("sys").modules.values()):
+            if module is not None and getattr(module, "llm_complete", None) is original:
+                self._stack.enter_context(patch.object(module, "llm_complete", model))
+        for module in (qp, dispatcher, wh, llm):
+            if hasattr(module, "resolve_provider"):
+                self._stack.enter_context(patch.object(module, "resolve_provider", return_value=provider))
+        for module in (qp, wh):
+            if hasattr(module, "load_retriever"):
+                self._stack.enter_context(patch.object(module, "load_retriever", return_value=harness._Retriever()))
+            if hasattr(module, "get_client_db"):
+                self._stack.enter_context(patch.object(module, "get_client_db", lambda *a, **k: self.connection))
+        self._stack.enter_context(patch.object(qp, "retrieve_similar_examples", return_value=[]))
+        self._stack.enter_context(patch.object(schema_module, "_run_azure_sql", run_azure_sql))
+        app = FastAPI()
+        app.include_router(wh.router)
+        self._client = TestClient(app)
+        self._client.cookies.set(pr._COOKIE, pr._sign_session_value(self.user_id))
+        self._socket_cm = self._client.websocket_connect(f"/ws/chat/{self.account}?thread_id=t{os.urandom(4).hex()}")
+        self.socket = self._stack.enter_context(self._socket_cm)
+        self._drain()
+        return self
+
+    def __exit__(self, *exc):
+        self._stack.close()
+        return False
+
+    def _drain(self) -> list[dict]:
+        import anyio
+
+        frames = []
+        while True:
+            async def receive():
+                with anyio.fail_after(self.idle_seconds):
+                    return await self.socket._send_rx.receive()
+            try:
+                message = self.socket.portal.call(receive)
+            except Exception:
+                return frames
+            if message.get("type") != "websocket.send" or "text" not in message:
+                return frames
+            frames.append(json.loads(message["text"]))
+
+    def ask(self, question: str) -> Turn:
+        start_executed, start_calls = len(self.executed), len(self.model_calls)
+        self.socket.send_json({"type": "message", "text": question})
+        frames = self._drain()
+        answers = [e for e in self.executed[start_executed:] if harness.MARKER not in e["sql"]]
+        calls = self.model_calls[start_calls:]
+        return Turn(question=question, frames=frames, executed=answers,
+                    sql=answers[-1]["sql"] if answers else "",
+                    model_wrote_sql=any(harness.SQL_WRITER in call[:400] for call in calls),
+                    asked_the_analyst=any(ANALYST in call[:200] for call in calls))

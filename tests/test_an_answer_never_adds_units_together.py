@@ -10,7 +10,9 @@ next. The brief the insights and chart notes are written from did the same, and
 shared out a total of mixed units.
 
 Rows in more than one unit are no longer merged, as a balance across months
-is not: the card says what came back, and the brief leaves the breakdown out.
+is not: the card ranks the warehouses within the unit most of the quantity is
+kept in, and says so ("In FT, NORTH DEPOT leads at 100 FT."), and the brief
+leaves the breakdown out.
 Rows in one unit still merge, rows grouped by the unit itself merge per unit,
 and a result with one row per label -- a ranking of items, each in its own
 unit -- is what the query returned.
@@ -56,7 +58,7 @@ class TestTheProductAnswers:
         assert {row["UNT_OF_MSR"] for row in answer["rows"]} == {"EA", "FT"}
         (card,) = [payload["answer"] for kind, payload in answer["replies"]
                    if isinstance(payload, dict) and payload.get("answer")]
-        assert card["headline"] == "Returned 4 rows for Allocated quantity by warehouse."
+        assert card["headline"] == "In FT, NORTH DEPOT leads at 100 FT."
         assert "above the next result" not in card["comparison"]
 
 
@@ -64,12 +66,13 @@ class TestTheCard:
 
     def test_no_leader_across_units(self):
         card = _card(_BY_UNIT, "Allocated quantity by warehouse")
-        assert card["headline"] == "Returned 4 rows for Allocated quantity by warehouse."
-        assert card["short_value"] == ""
+        # Within one unit, and said in it: never 120, feet and eaches added.
+        assert card["headline"] == "In FT, NORTH DEPOT leads at 100 FT."
+        assert "120" not in card["headline"]
 
     def test_in_french(self):
         card = _card(_BY_UNIT, "Quantité allouée par entrepôt", "fr")
-        assert card["headline"].startswith("4 lignes")
+        assert card["headline"] == "En FT, NORTH DEPOT arrive en tête avec 100 FT."
         assert "120" not in card["headline"]
 
     def test_one_unit_still_leads(self):

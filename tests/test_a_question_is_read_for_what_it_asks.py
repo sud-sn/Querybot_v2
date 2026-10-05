@@ -64,6 +64,12 @@ class TestWhichMeasure:
         ("inventory value by warehouse", ["Inventory value"]),
         ("allocated stock by warehouse", ["Allocated quantity"]),
         ("reserved stock by warehouse", ["Reserved quantity"]),
+        # A bare "inventory" beside another measure's word is that measure's.
+        ("value of our inventory by warehouse", ["Inventory value"]),
+        ("what's the value of our inventory?", ["Inventory value"]),
+        ("available inventory by warehouse", ["Available quantity"]),
+        ("allocated inventory by warehouse", ["Allocated quantity"]),
+        ("reserved inventory by warehouse", ["Reserved quantity"]),
     ])
     def test_in_english(self, question, metrics):
         assert _named(question) == metrics
@@ -95,6 +101,8 @@ class TestNoneOfIt:
         "what about allocated quantity?", "which warehouses have the lowest stock?",
         "number of receipts by item group", "inventory disponible by warehouse", "how many items do we have",
         "is there any stock in North Depot", "in stock by warehouse",
+        "net sales without tax by month", "revenue by region without returns", "total sales without VAT last year",
+        "products not used", "revenue sans taxes by month", "aucun filtre, sales by month",
     ])
     def test_a_question_without_one_is_not_read_as_one(self, question):
         from core.pipeline_helpers import _VALUE_CONDITION
@@ -134,8 +142,8 @@ class TestTheProductAnswers:
             a_measure = harness.ask(warehouse, "stock on hand by warehouse")
 
         (reply,) = [str(payload) for _kind, payload in no_measure["replies"]]
-        assert reply.startswith("I understand the analytical request")
-        assert "the governed measure to calculate" in reply
+        assert reply.startswith("Which figure should I look at? This workspace can answer about ")
+        assert "Stock on hand" in reply
         assert "join plan" not in reply
         (reply,) = [str(payload) for _kind, payload in a_measure["replies"]]
         assert reply.startswith("I couldn't build a trusted join plan for this question.")
@@ -151,19 +159,22 @@ class TestTheFrontDoor:
         "number of receipts by item group", "what is our total stock on hand?",
     ])
     def test_a_question_for_the_data(self, message):
-        from core.dispatcher import _looks_like_data_request
+        from core.dispatcher import _plainly_a_business_question
 
-        assert _looks_like_data_request(message)
+        assert _plainly_a_business_question(message)
 
     @pytest.mark.parametrize("message", [
         "thanks, that is the best", "you are the best", "that was the most helpful", "by the way, thanks",
         "as per your answer that is fine", "hello there", "how are you doing?", "what can you do?",
-        "tell me a joke", "perfect, thanks a lot",
+        "tell me a joke", "perfect, thanks a lot", "What does gross margin mean?", "How is net margin calculated?",
+        "Can you explain what a KPI is?", "Can you help me reset my account password?", "is 30% margin good?",
+        "what does on hand mean?", "Is our data refreshed daily?", "Thank you, see you in 2025", "100% agree",
+        "merci by avance",
     ])
     def test_said_to_the_assistant(self, message):
-        from core.dispatcher import _looks_like_data_request
+        from core.dispatcher import _plainly_a_business_question
 
-        assert not _looks_like_data_request(message)
+        assert not _plainly_a_business_question(message)
 
 
 # ── Which question a follow-up continues ─────────────────────────────────────
@@ -206,3 +217,133 @@ class TestTheLineage:
 
         assert source_question("s", source_result_id="source", cache=cache) == "stock on hand by warehouse"
         assert source_question("s", source_result_id="missing", cache=cache) == ""
+
+
+# ── Whether a turn beside a result is about it ───────────────────────────────
+
+_REVENUE = [{"name": "Revenue", "synonyms": "sales, revenue"}, {"name": "Inventory value", "synonyms": "inventory value"},
+            {"name": "Units sold", "synonyms": "units sold"}]
+
+
+class TestBesideAResult:
+
+    @pytest.mark.parametrize("question, columns, asked_anew", [
+        ("top 10 items by inventory value", ["WAREHOUSE", "INVENTORY_VALUE"], True),
+        ("units sold last 6 months", ["PERIOD", "UNITS_SOLD"], True),
+        ("revenue by product", ["REGION", "REVENUE"], True),
+        ("and the revenue last quarter?", ["REGION", "REVENUE"], False),
+        ("same revenue but for last month", ["REGION", "REVENUE"], False),
+        ("just the top 5 by sales", ["REGION", "REVENUE"], False),
+        ("sort by sales", ["REGION", "REVENUE"], False),
+        ("what about revenue by product?", ["REGION", "REVENUE"], False),
+    ])
+    def test_a_question_of_its_own(self, question, columns, asked_anew):
+        from core.query_router import asks_a_new_question
+
+        assert asks_a_new_question(question, columns, _REVENUE, lang="en") is asked_anew
+
+    @pytest.mark.parametrize("question, lang, about_it", [
+        ("why is that?", "en", True),
+        ("explain this result", "en", True),
+        ("why is North Depot the highest?", "en", True),
+        ("pourquoi North Depot est-il le plus élevé ?", "fr", True),
+        ("summarize returns by month for 2024", "en", False),
+        ("explain what the most important KPI is for a distributor", "en", False),
+        ("analyse the top 10 customers this year", "en", False),
+        ("Why did sales drop last month across all regions?", "en", False),
+        ("what should I focus on first, and why?", "en", False),
+    ])
+    def test_a_question_about_it(self, question, lang, about_it):
+        from core.query_router import asks_about_the_result
+
+        assert asks_about_the_result(question, _REVENUE, lang=lang) is about_it
+
+
+# ── A figure the data does not keep, and a plain list ────────────────────────
+
+class TestWhatTheDataKeeps:
+
+    _INVENTORY = {"MART.ITM_BAL_DLY_FCT": {"ON_HND_QTY": "decimal", "ITM_CST": "decimal", "PFT_CTR_DMS_KEY": "int",
+                                           "STL_PRC_IND": "nvarchar"},
+                  "MART.ITM_DMS": {"ITM_NET_WT": "decimal", "ITM_GRS_WT": "decimal"}}
+    _FACTS = {"MART.ITM_BAL_DLY_FCT"}
+
+    @pytest.mark.parametrize("question, word", [
+        ("what is my revenue trend", "revenue"),
+        ("what is my revenue for each profit centre", "revenue"),
+        ("what is our gross margin?", "margin"),
+        ("sales by month", "sales"),
+        ("stock by profit centre", ""),
+        ("units sold by month", ""),
+    ])
+    def test_a_figure_an_inventory_does_not_keep(self, question, word):
+        from core.metric_scope import measure_the_data_lacks
+
+        metrics = [{"name": "Stock on hand", "synonyms": "stock"}, {"name": "Units sold", "synonyms": "units sold"}]
+        assert measure_the_data_lacks(question, metrics, self._INVENTORY, self._FACTS) == word
+
+    def test_a_workspace_that_keeps_the_money_is_not_told_it_does_not(self):
+        from core.metric_scope import measure_the_data_lacks
+
+        assert measure_the_data_lacks("revenue by month", [], {"MART.SLS_FCT": {"NET_SLS_AMT": "decimal"}}) == ""
+        assert measure_the_data_lacks("revenue by month", [{"name": "Revenue"}], self._INVENTORY, self._FACTS) == ""
+
+    @pytest.mark.parametrize("question, thing", [
+        ("List me the item names", "item names"), ("what are the item groups?", "item groups"),
+        ("show me the suppliers", "suppliers"), ("list warehouses", "warehouses"),
+        ("list the availables items present", "items"), ("list the available items", "items"),
+        ("what items do we have?", "items"), ("which items are available?", "items"),
+        ("which warehouses are there?", "warehouses"),
+        ("show stock by warehouse", ""), ("list items with no stock", ""), ("what are the top 5 items", ""),
+        # Narrowed by a member or a condition: never listed whole.
+        ("list items in the FITTINGS group", ""), ("list customers from Ontario", ""),
+        ("list the items for warehouse 301", ""), ("list items whose name starts with A", ""),
+    ])
+    def test_a_plain_listing(self, question, thing):
+        from core.listing import listing_target
+
+        assert listing_target(question) == thing
+
+    def test_a_listing_is_written_for_the_warehouse(self):
+        from core.listing import listing_sql
+
+        field = {"term": "item name", "table": "WH.MART.ITM_DMS", "column": "ITM_NM"}
+        assert listing_sql(field, "azure_sql") == (
+            "SELECT DISTINCT TOP 200 listed.[ITM_NM] AS [ITEM_NAME] FROM [MART].[ITM_DMS] AS listed "
+            "WHERE listed.[ITM_NM] IS NOT NULL ORDER BY listed.[ITM_NM]")
+        assert "LIMIT 200" in listing_sql(field, "snowflake")
+
+
+class TestTheProductSaysWhatItKeeps:
+
+    def test_revenue_of_an_inventory(self, warehouse):
+        answer = harness.ask(warehouse, "what is my revenue trend")
+
+        (reply,) = [str(payload) for _kind, payload in answer["replies"]]
+        assert reply.startswith("This workspace's data has no revenue figures")
+        assert "Stock on hand" in reply and not answer["model_wrote_sql"]
+
+    def test_in_french(self, warehouse):
+        answer = harness.ask(warehouse, "quel est notre chiffre d'affaires par mois ?", "fr")
+
+        (reply,) = [str(payload) for _kind, payload in answer["replies"]]
+        assert reply.startswith("Les données de cet espace ne contiennent pas de chiffre d'affaires")
+
+    def test_the_item_names(self, warehouse):
+        answer = harness.ask(warehouse, "list item names")
+
+        assert not answer["model_wrote_sql"]
+        assert {row["ITEM_NAME"] for row in answer["rows"]} >= {"BRASS ELBOW", "STEEL TEE", "COPPER PIPE", "PEX PIPE"}
+
+    def test_the_available_items(self, warehouse):
+        answer = harness.ask(warehouse, "list the available items")
+
+        assert not answer["model_wrote_sql"]
+        assert {"BRASS ELBOW", "COPPER PIPE"} <= set(answer["rows"][0].values()) | {
+            value for row in answer["rows"] for value in row.values()}
+
+    def test_the_warehouses_in_french(self, warehouse):
+        answer = harness.ask(warehouse, "liste des entrepôts", "fr")
+
+        assert not answer["model_wrote_sql"]
+        assert {"NORTH DEPOT", "SOUTH DEPOT"} <= {row["WAREHOUSE"] for row in answer["rows"]}

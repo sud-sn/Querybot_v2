@@ -827,19 +827,47 @@ def label_unknown_members(rows: list[dict], labels: dict, label_for) -> tuple[li
 _DATE_TEXT = re.compile(r"^\d{4}-\d{2}(?:-\d{2})?")
 
 
-def label_blank_members(rows: list[dict], label: str) -> tuple[list[dict], int]:
-    """The rows with an empty label cell named ``label``, and how many.
+def grouped_columns(sql: str) -> set[str]:
+    """The result columns a query groups by, upper-cased: the projections of
+    its outermost SELECT that its GROUP BY names. Empty when it groups by
+    nothing, or cannot be read."""
+    import sqlglot
+    from sqlglot import exp
+
+    for dialect in ("tsql", None):
+        try:
+            tree = sqlglot.parse_one(sql or "", read=dialect)
+        except Exception:
+            continue
+        select = tree if isinstance(tree, exp.Select) else tree.find(exp.Select)
+        group = select.args.get("group") if select is not None else None
+        if not group:
+            return set()
+        grouped = {expression.sql(dialect="tsql").upper() for expression in group.expressions}
+        return {
+            projection.alias_or_name.upper() for projection in select.expressions
+            if (projection.unalias().sql(dialect="tsql").upper() in grouped
+                or projection.alias_or_name.upper() in grouped)
+        }
+    return set()
+
+
+def label_blank_members(rows: list[dict], label: str, columns: set[str] | None = None) -> tuple[list[dict], int]:
+    """The rows with an empty group label named ``label``, and how many.
 
     A fact row whose key matches no row of its dimension is kept by the
     outer join every confirmed join with orphaned keys is written as, and
     its group's label is NULL: the answer was headed "None leads at 583",
-    and the chart and the table showed "None". A column is a label where
-    every value it does hold is text and no date; its empty cells are named
-    for what they are."""
-    if not rows:
+    and the chart and the table showed "None". Only a column the query
+    groups by (``columns``, upper-cased -- grouped_columns) is such a label,
+    and only where every value it does hold is text and no date: a cancel
+    reason left empty on an order that was never cancelled is not unknown."""
+    if not rows or not columns:
         return rows, 0
     labels = []
     for column in rows[0]:
+        if str(column).upper() not in columns:
+            continue
         values = [row.get(column) for row in rows]
         held = [value for value in values if value is not None]
         if (held and len(held) < len(values) and all(isinstance(value, str) for value in held)

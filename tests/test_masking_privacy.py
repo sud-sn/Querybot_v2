@@ -494,23 +494,31 @@ class QuestionScrubWiringTests(unittest.TestCase):
 
         adapter = type("A", (), {"send_message": AsyncMock(), "persistent_typing": False})()
         profile = {"mode": "regulated", "industry": "healthcare_pharmacy"}
-        with (
-            patch.object(dispatcher.store, "get_compliance_profile", return_value=profile),
-            patch.object(dispatcher, "_generate_analyst_reply", _fake_analyst),
-            patch("core.query_pipeline.handle_query", _fake_hq),
-            patch("core.masking._get_presidio", return_value=_FakeNerAnalyzer()),
+        # A question about a claim goes straight to the pipeline; one that
+        # names no business figure is put to the analyst first. Either way
+        # every step sees the scrubbed text.
+        for message, steps in (
+            ("why was John Smith's claim denied? email bob@corp.com", ("pipeline_text",)),
+            ("why was John Smith upset? email bob@corp.com", ("classifier_text", "pipeline_text")),
         ):
-            asyncio.run(dispatcher._run_query_with_guard(
-                "acct-1", object(), adapter,
-                "why was John Smith's claim denied? email bob@corp.com",
-                None, {},
-            ))
-        for key in ("classifier_text", "pipeline_text"):
-            self.assertIn(key, seen)
-            self.assertNotIn("John Smith", seen[key], key)
-            self.assertNotIn("bob@corp.com", seen[key], key)
-            self.assertIn("[PERSON]", seen[key], key)
-            self.assertIn("[EMAIL]", seen[key], key)
+            seen.clear()
+            with (
+                patch.object(dispatcher.store, "get_compliance_profile", return_value=profile),
+                patch.object(dispatcher, "_generate_analyst_reply", _fake_analyst),
+                patch("core.query_pipeline.handle_query", _fake_hq),
+                patch("core.masking._get_presidio", return_value=_FakeNerAnalyzer()),
+            ):
+                asyncio.run(dispatcher._run_query_with_guard(
+                    "acct-1", object(), adapter, message, None, {},
+                ))
+            for key in steps:
+                self.assertIn(key, seen, message)
+            for key in ("classifier_text", "pipeline_text"):
+                if key in seen:
+                    self.assertNotIn("John Smith", seen[key], key)
+                    self.assertNotIn("bob@corp.com", seen[key], key)
+                    self.assertIn("[PERSON]", seen[key], key)
+                    self.assertIn("[EMAIL]", seen[key], key)
 
     def test_dispatcher_leaves_standard_tenant_text_untouched(self):
         import asyncio

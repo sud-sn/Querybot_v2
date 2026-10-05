@@ -170,3 +170,40 @@ class TestInFrench:
         _governed(turn)
         assert not turn["asked_the_analyst"]
         assert _analysis_titles(turn) == ["Pourquoi ce schéma ?"]
+
+
+class TestOverTheChatSocket:
+    """The same conversations over /ws/chat, where the socket's own routing --
+    result commands, the cached-result planner, the "why" insight -- runs
+    before the dispatcher, as it does for a reader."""
+
+    def _socket(self, warehouse, lang: str = "en") -> portal.SocketConversation:
+        return portal.SocketConversation(warehouse, harness.ACCOUNT, harness.saved_connection(), lang=lang,
+                                         idle_seconds=2.0)
+
+    def test_a_drill_down_and_why(self, warehouse):
+        with self._socket(warehouse) as conversation:
+            conversation.ask("stock on hand by warehouse")
+            drilled = conversation.ask("break it down by item group")
+            why = conversation.ask("why is that?")
+
+        _governed(drilled)
+        assert {"ITEM_GROUP", "WAREHOUSE"} <= set(_columns(drilled))
+        assert _analysis_titles(why) == ["Why this pattern?"]
+
+    def test_another_measure_by_the_same_grain_is_asked(self, warehouse):
+        with self._socket(warehouse) as conversation:
+            conversation.ask("units sold by month")
+            turn = conversation.ask("stock by month")
+
+        _governed(turn)
+        assert "STOCK_ON_HAND" in _columns(turn)
+
+    def test_in_french(self, warehouse):
+        with self._socket(warehouse, "fr") as conversation:
+            conversation.ask("valeur du stock par entrepôt")
+            top = conversation.ask("seulement les 2 premiers")
+            why = conversation.ask("pourquoi NORTH DEPOT est-il le plus élevé ?")
+
+        assert len(top.rows) == 2 and not top["asked_the_analyst"]
+        assert _analysis_titles(why) == ["Pourquoi ce schéma ?"]

@@ -226,6 +226,18 @@ def _looks_temporal_values(values: list[Any]) -> bool:
     return all(19000101 <= int(v) <= 21001231 for v in numeric)
 
 
+# A level of stock by its name: STOCK_ON_HAND, MONTH_END_INVENTORY, UNITS.
+_LEVEL_NAME_RE = re.compile(r"(?:^|_)(?:stock|hand|hnd|onhand|inventory|units)(?:_|$)", re.I)
+
+
+def _no_period_numbers(values: list[Any]) -> bool:
+    """Numbers no day, week, month, quarter or year is numbered with: a
+    fraction, a negative, or a whole number past a year's."""
+    numbers = [_to_float(v) for v in values if v is not None and str(v).strip()]
+    numbers = [n for n in numbers if n is not None]
+    return any(n != int(n) or n < 0 or n > 9999 for n in numbers)
+
+
 def _named_like_a_measure(col: str) -> bool:
     """Whether the column's NAME says it holds a quantity to plot.
 
@@ -672,16 +684,18 @@ def _column_roles(rows: list[dict], column_formats: dict | None = None) -> dict[
         #
         # A temporal NAME token stays evidence on its own, except beside a
         # measure token: YR_TO_DT_AMT and DLV_DAY_CNT are an amount and a count.
-        # Nor beside a measure's name over numbers no date is written as: the
-        # month-end stock on hand, MONTH_END_STOCK_ON_HAND, is a level, and
-        # read as the time axis it left "month-end stock by month" with no
-        # measure to draw.
+        # Nor beside a measure's name over numbers no period is numbered
+        # with, or a level's name: the month-end stock on hand,
+        # MONTH_END_STOCK_ON_HAND, is a level, and read as the time axis it
+        # left "month-end stock by month" with no measure to draw. SALES_WEEK
+        # holding 1..52 is still a week.
         temporal = (
             explicit_format == "date"
             or (not explicit_measure and (
                 is_calendar_period_column(col, vals)
                 or (_is_temporal_name(col) and not names_a_measure(col)
-                    and not (looks_measure_name and numeric and not _looks_temporal_values(vals)))
+                    and not (looks_measure_name and numeric and not _looks_temporal_values(vals)
+                             and (_LEVEL_NAME_RE.search(col) or _no_period_numbers(vals))))
                 or (not looks_measure_name and _looks_temporal_values(vals))
             ))
         )

@@ -953,6 +953,17 @@ def unmet_aggregates(question: str, metrics: list[dict]) -> list[str]:
     return [name for name in asked if name not in computed]
 
 
+# What "no", "without", "sans" and "aucun" say there is none of, when they
+# are a condition on a value: stock, a quantity, its movements.
+_NONE_OF = (r"(?:stock|inventory|inventaire|on\s+hand|quantit(?:y|ies|e|es)|units?|sales|ventes?|orders?"
+            r"|commandes?|movements?|mouvements?|activity|activite|purchases?|achats?|receipts?|demand)\b")
+
+
+# A breakdown said to replace another: "by supplier instead", "plutôt par
+# fournisseur" as the normaliser leaves it.
+_INSTEAD = re.compile(r"\b(?:instead|rather\s+than|plutot|au\s+lieu)\b", re.I)
+
+
 # A condition on a value: "more than 100 units", "over 5,000", "below
 # average", and the French forms as the normaliser leaves them ("plus of 100",
 # "superieur a 100", "to moins 10"). No governed compiler writes one. A number
@@ -968,13 +979,17 @@ _VALUE_CONDITION = re.compile(
     r"|\b(?:between|entre)\s+(?!(?:19|20)\d\d\b)\d"
     # None of it, or none at all: "items with no stock", "out of stock",
     # "never sold", and in French as the normaliser leaves them ("sans
-    # inventory", "en rupture of inventory", "aucun", "pas of", "nul").
+    # inventory", "en rupture of inventory", "aucun", "pas of", "nul"). Said
+    # of a quantity -- "sales without tax" or "aucun filtre" is no condition.
     # "Items with no stock" was answered with every item's stock.
-    r"|\b(?:with|having|has|have|had)\s+(?:no|zero|0)\b|\bwithout\s+\w"
-    r"|\bout\s+of\s+(?:stock|inventory)\b|\bnot\s+in\s+(?:stock|inventory)\b"
+    r"|\b(?:with|having|has|have|had|without)\s+(?:no\s+|zero\s+|0\s+|any\s+)?" + _NONE_OF
+    + r"|\b(?:with|having|has|have|had)\s+(?:no|zero|0)\s+(?:\w+\s+)?" + _NONE_OF
+    + r"|\bout\s+of\s+(?:stock|inventory)\b|\bnot\s+in\s+(?:stock|inventory)\b"
     r"|\b(?:zero|nil|empty)\s+(?:stock|inventory|balance|quantity|on\s+hand)\b"
-    r"|\b(?:never|not)\s+(?:been\s+)?(?:sold|ordered|received|purchased|bought|shipped|delivered|invoiced|moved|used)\b"
-    r"|\b(?:sans|aucune?s?|rupture|jamais|nul(?:le)?s?)\b|\bpas\s+(?:of|de|d)\b",
+    r"|\b(?:never|not)\s+(?:been\s+)?(?:sold|ordered|received|purchased|bought|shipped|delivered|invoiced)\b"
+    r"|\b(?:sans|aucune?s?|pas\s+(?:of|de|d))\s+(?:\w+\s+)?" + _NONE_OF
+    + r"|\b(?:en\s+)?rupture\b|\bjamais\s+(?:sold|vendue?s?|command\w*|ordered|re[cç]u\w*)"
+    r"|\b(?:stock|inventory|inventaire|quantit\w*|balance|solde)\s+(?:nul(?:le)?s?|zero)\b",
     re.I,
 )
 
@@ -1668,6 +1683,12 @@ def _compile_governed_grouped_request_sql(
     intent = str(request.get("intent") or "").lower()
     top_n = request.get("top_n") or ((context.get("top_n") or {}).get("limit"))
     ranking = intent == "ranking" or bool(top_n) or ranked_period
+    # A ranking over two breakdowns is a ranking within one of them -- "top 3
+    # products by sales in each region" -- which one TOP over the pairs is
+    # not; and "by supplier instead" replaces a breakdown rather than adding
+    # one. Both are left to the planner, as before two breakdowns were read.
+    if len(unique_dimensions) > 1 and (ranking or _INSTEAD.search(question)):
+        return ""
     if ranking and not unique_dimensions and not ranked_period:
         return ""
     if intent in {"comparison", "distribution", "causal_analysis"}:
