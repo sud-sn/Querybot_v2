@@ -1624,6 +1624,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 complete=_complete_metadata_plan,
                 source_result_id=source_result_id,
                 is_clarification=is_clarification,
+                lang=str((portal_user or {}).get("lang") or ""),
             )
 
         if followup.executed and followup.command is not None:

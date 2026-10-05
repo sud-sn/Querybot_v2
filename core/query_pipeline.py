@@ -65,7 +65,7 @@ from core.graph_resolver import (
 )
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
-from core.query_router import should_route_to_result_cache, should_attempt_cache_followup
+from core.query_router import asks_a_new_question, asks_about_the_result, should_route_to_result_cache, should_attempt_cache_followup
 from core.result_regrain import (
     build_regrain_sql,
     parse_trend_regrain_request,
@@ -2473,8 +2473,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     output_summary={"reason": cache_decision.reason_code},
                 )
     _has_cached_result = bool(_session_id and result_cache.has_result(_session_id))
+    _turn_question = question
+    # A question of its own -- its measure, and a breakdown, a ranking or a
+    # period the result on screen does not hold -- is answered as asked, not
+    # from that result (core.query_router.asks_a_new_question).
+    _asks_anew = bool(
+        _has_cached_result and not is_clarification
+        and asks_a_new_question(
+            question, _cached_cols, _planner_metrics, lang=(portal_user or {}).get("lang") or "en",
+        )
+    )
     _regex_routes_to_cache = bool(
         _session_id
+        and not _asks_anew
         and should_route_to_result_cache(
             question,
             _has_cached_result,
@@ -2498,6 +2509,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     )
     _route_to_cached_result = bool(
         _session_id
+        and not _asks_anew
         and should_attempt_cache_followup(
             question, _has_cached_result,
             cached_col_names=_cached_cols,
@@ -2542,6 +2554,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 complete=_complete_cache_plan,
                 source_result_id=getattr(adapter, "last_result_id", None),
                 is_clarification=is_clarification,
+                lang=(portal_user or {}).get("lang") or "",
             )
 
         _trace_step(
@@ -2734,6 +2747,40 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
 
     # Unsupported cache requests continue through the governed source-query pipeline.
+
+    # A question about the answer on screen -- "why is North Depot the highest?",
+    # "explain this result" -- names nothing to measure of its own: it is
+    # that answer's question, asked again, with the analysis the reader asked
+    # for written about it. Asked as itself it named nothing to measure and
+    # was refused; joined to its parent, "why" made it a causal question no
+    # governed compiler writes, and "North Depot" a filter to that one warehouse.
+    _why_question = ""
+    if (
+        _has_cached_result and not _asks_anew and not is_clarification
+        and asks_about_the_result(_turn_question, _planner_metrics, lang=(portal_user or {}).get("lang") or "en")
+    ):
+        from core.governed_result_followup import source_question
+
+        # Whether or not the result on screen was asked first (a "why is
+        # that?" is offered to it, and comes back unanswered). The parent is
+        # asked as it was planned -- itself a follow-up's, where it was one.
+        _parent_question = source_question(_session_id, source_result_id=getattr(adapter, "last_result_id", None))
+        if _parent_question:
+            _why_question = contextualize_source_query_fallback(
+                _turn_question, _session_id, source_result_id=getattr(adapter, "last_result_id", None),
+            )
+            question = _parent_question
+            _analytical_plan = plan_analytical_intent(
+                question,
+                metrics=_planner_metrics,
+                terms=_planner_terms,
+                calendar_profile=_planner_calendar_profile,
+            )
+            _analytical_plan_context = _analytical_plan.prompt_context()
+            _trace_step(trace_id, "source_query_lineage", output_summary={
+                "parent_question_preserved": True, "about_the_result": True, "cached_values_forwarded": False})
+            log.info("A question about the result on screen is answered with that result's question: %r",
+                     question[:200])
 
     # ── Step 2.6: Trend re-grain of the parent answer ────────────────────────
     # "What was my revenue for the past 5 days?" answers with one total. The
@@ -3069,7 +3116,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 await _send_why_insight(
                     adapter, event,
                     action=_analysis_action,
-                    question=question, rows=rows, sql=sql_from_metric,
+                    question=_why_question or question, rows=rows, sql=sql_from_metric,
                     client=client, account_id=account_id, db_cfg=db_cfg,
                     known_tables=all_known,
                     query_executor=lambda _cfg, _s: _execute_with_policy(_s),
@@ -5865,10 +5912,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _graph_ctx.get("reason")
                 or "The confirmed entity graph does not contain a safe path for every requested business entity."
             ).strip()
-            await adapter.send_message(event, graph_block_response(
-                _graph_ctx, lang=(portal_user or {}).get("lang") or "en",
-                model=_contract_model, vocab=_vocab,
-            ))
+            # A question that names no measure has nothing to join to: "how is
+            # the North Depot warehouse doing?" was told to ask an administrator to
+            # confirm a relationship, where "how is North Depot doing?" was asked
+            # for the measure it means.
+            _names_no_measure = not _matched_metrics and not any(
+                str(field.get("role") or "") in {"measure", "measure_candidate"}
+                for field in (_semantic_plan or {}).get("fields") or [] if isinstance(field, dict)
+            )
+            await adapter.send_message(
+                event,
+                _t("terminal.analytical_plan_unresolved",
+                   lang=(portal_user or {}).get("lang") or "en",
+                   missing=_t("slot.measure", lang=(portal_user or {}).get("lang") or "en"))
+                if _names_no_measure else
+                graph_block_response(
+                    _graph_ctx, lang=(portal_user or {}).get("lang") or "en",
+                    model=_contract_model, vocab=_vocab,
+                ),
+            )
             _trace_finish(
                 trace_id,
                 status="error",
@@ -8983,7 +9045,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             adapter, event,
             action=_analysis_action,
             grounding=_answer_grounding,
-            question=question, rows=rows, sql=sql,
+            question=_why_question or question, rows=rows, sql=sql,
             client=client, account_id=account_id, db_cfg=db_cfg,
             # Whichever knowledge base actually reached this question. A
             # preload leaves `context` empty by design, and the result card's

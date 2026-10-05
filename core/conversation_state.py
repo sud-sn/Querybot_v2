@@ -608,6 +608,11 @@ _DEICTIC_RE = re.compile(
     r"\b(?:this|that|these|those|it|them|one|ones|the\s+result|the\s+rows|above|previous)\b",
     re.I,
 )
+# Where something stands in the result: "why is NORTH DEPOT the highest?".
+_RANK_IN_RESULT_RE = re.compile(
+    r"\b(?:highest|lowest|biggest|smallest|largest|top|bottom|best|worst|most|least|first|last)\b",
+    re.I,
+)
 _RESULT_SUPERLATIVE_RE = re.compile(
     r"^\s*(?:which|what)\s+(?:one|ones|row|item)\s+(?:is|are)\s+"
     r"(?:the\s+)?(?:highest|lowest|best|worst|first|second|next)\b",
@@ -670,10 +675,14 @@ def classify_turn(
             0.9,
             "elliptical follow-up with an active governed result",
         )
+    # Words, not tokens: the French "pourquoi NORTH DEPOT est-il le plus élevé
+    # ?" reads "why north depot est-il the highest ?", and its "?" made it one
+    # word too long to be about the result on screen.
     if (
         has_prior
         and _ANALYSIS_RE.search(value)
-        and (_DEICTIC_RE.search(value) or len(value.split()) <= 6)
+        and (_DEICTIC_RE.search(value) or len(re.findall(r"\w[\w'-]*", value)) <= 6
+             or _RANK_IN_RESULT_RE.search(value))
     ):
         return decision(
             TurnIntent.RESULT_GROUNDED_ANALYSIS,

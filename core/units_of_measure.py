@@ -218,10 +218,17 @@ def is_quantity_measure(column: str, measure_format: str = "") -> bool:
                 or (names & _PARTICIPLES and not names & _COUNT_NOUNS))
 
 
+# How the answer card labels a row with no unit (core/unknown_members.py,
+# member.unknown), in each language: a blank unit, however it is shown.
+_NO_UNIT_LABELS = frozenset({"UNKNOWN", "INCONNU"})
+
+
 def unit_of(value) -> str:
     """A row's unit of measure as the rows are told apart by it: "ea" is "EA",
-    and a blank unit is one unit, however it is blank."""
-    return "" if value is None else str(value).strip().upper()
+    and a blank unit is one unit, however it is blank -- labelled "Unknown"
+    for the reader too, which a headline listed as "2,334,820 UNKNOWN"."""
+    unit = "" if value is None else str(value).strip().upper()
+    return "" if unit in _NO_UNIT_LABELS else unit
 
 
 def kept_in_several_units(rows: list[dict], column: str, *, measure_format: str = "") -> bool:

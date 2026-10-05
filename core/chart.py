@@ -556,6 +556,13 @@ def build_chart_payload(
     if (series_col and series_col != x_key and len(y_keys) == 1
             and effective_type in {"bar", "line", "area", "heatmap"}):
         grouped_measure = y_keys[0]
+        # The series the spec drew, when it drew the largest of more than
+        # the palette holds; the table keeps every row.
+        members = (spec.get("series") or {}).get("members")
+        if members:
+            drawn = {str(member) for member in members}
+            rows = [row for row in rows
+                    if ("" if row.get(series_col) is None else str(row.get(series_col))) in drawn]
         rows, y_keys = _pivot_by_series(rows, x_key, series_col, grouped_measure)
         grouped_by = series_col
 

@@ -965,7 +965,16 @@ _VALUE_CONDITION = re.compile(
     r"|(?:superieur|inferieur)(?:e|s|es)?\s+(?:a|to)|(?:au|to|en)[- ]dess(?:us|ous)\s+(?:of|de))\s+"
     r"(?:\$\s*)?(?:\d+(?:[.,]\d+)*\b(?!\s*(?:days?|weeks?|months?|quarters?|years?"
     r"|jours?|semaines?|mois|trimestres?|ans?|annees?)\b)|(?:the\s+)?(?:average|mean|median)\b)"
-    r"|\b(?:between|entre)\s+(?!(?:19|20)\d\d\b)\d",
+    r"|\b(?:between|entre)\s+(?!(?:19|20)\d\d\b)\d"
+    # None of it, or none at all: "items with no stock", "out of stock",
+    # "never sold", and in French as the normaliser leaves them ("sans
+    # inventory", "en rupture of inventory", "aucun", "pas of", "nul").
+    # "Items with no stock" was answered with every item's stock.
+    r"|\b(?:with|having|has|have|had)\s+(?:no|zero|0)\b|\bwithout\s+\w"
+    r"|\bout\s+of\s+(?:stock|inventory)\b|\bnot\s+in\s+(?:stock|inventory)\b"
+    r"|\b(?:zero|nil|empty)\s+(?:stock|inventory|balance|quantity|on\s+hand)\b"
+    r"|\b(?:never|not)\s+(?:been\s+)?(?:sold|ordered|received|purchased|bought|shipped|delivered|invoiced|moved|used)\b"
+    r"|\b(?:sans|aucune?s?|rupture|jamais|nul(?:le)?s?)\b|\bpas\s+(?:of|de|d)\b",
     re.I,
 )
 
@@ -1010,7 +1019,7 @@ _READ_MODIFIERS = frozenset("""
     annual annually fiscal calendar ytd mtd qtd wtd today yesterday tomorrow ago since until during
     january february march april may june july august september october november december
     monday tuesday wednesday thursday friday saturday sunday
-    there here then now please ever
+    there here then now please ever about
 """.split())
 # French words the canonicaliser leaves as they are that narrow nothing.
 _READ_FRENCH = frozenset("""
@@ -1042,6 +1051,9 @@ def _anchor_pattern(phrase: str) -> re.Pattern | None:
     return re.compile(r"(?<![a-z0-9])" + r"\s+".join([*map(re.escape, words[:-1]), last]) + r"(?![a-z0-9])")
 
 
+_FOLLOW_UP_LABEL = re.compile(r"\bfollow-up request\s*:", re.I)
+
+
 def _unread_qualifier(context: dict) -> str:
     """A word that says which of the things a question names it means, and
     that nothing in its plan reads -- or "".
@@ -1055,7 +1067,13 @@ def _unread_qualifier(context: dict) -> str:
     red"). A word a matched metric or field is named by is read.
     """
     context = context or {}
-    question = " ".join(re.findall(r"[a-z0-9]+", _gate_question(context).lower()))
+    # A follow-up reaches the planner under its parent's question, joined by
+    # the label core.clarification gives it ("<parent>\nFollow-up request:
+    # <follow-up>"): the label is the product's, not the reader's, and
+    # "request" narrowed nothing -- "stock on hand by warehouse", asked after
+    # "what is our total stock on hand?", was refused its governed answer for
+    # it.
+    question = " ".join(re.findall(r"[a-z0-9]+", _FOLLOW_UP_LABEL.sub(" ", _gate_question(context)).lower()))
     plan = context.get("semantic_plan") or {}
     derived = (context.get("analytical_request_plan") or {}).get("derived_measure") or {}
     from core.question_normalizer import canonicalise
@@ -1621,8 +1639,12 @@ def _compile_governed_grouped_request_sql(
             for member in member_fields
         )
     ]
+    # Two breakdowns are one grouping by both: "stock on hand by warehouse and
+    # item group", and the drill-down "break it down by item group" asked of
+    # an answer by warehouse, which reaches here as its parent question and
+    # the new breakdown (core.clarification.extract_original_question).
     if (
-        len(unique_dimensions) > 1
+        len(unique_dimensions) > 2
         or _unwritten_display_fields(plan, unique_dimensions + member_fields)
         or _requested_breakdowns(question) - int(ranked_period) > len(unique_dimensions)
     ):
@@ -1662,8 +1684,9 @@ def _compile_governed_grouped_request_sql(
         return ""
 
     requested_targets: list[tuple[str, str]] = []
-    if unique_dimensions:
-        requested_targets.append((str(unique_dimensions[0]["table"]), "business_dimension"))
+    for position, dimension in enumerate(unique_dimensions):
+        requested_targets.append(
+            (str(dimension["table"]), "business_dimension" if not position else f"business_dimension_{position + 1}"))
     # The members the question names are read where the index found them,
     # joined as any breakdown is.
     for index, member in enumerate(members):
@@ -1926,6 +1949,7 @@ def _compile_governed_grouped_request_sql(
             if (
                 kind != "last_n"
                 or not dimension_ref
+                or len(unique_dimensions) > 1
                 or derived.get("semantics") != "count_distinct_business_identifier"
                 or db_type not in {"azure_sql", "snowflake"}
             ):
@@ -2066,6 +2090,23 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     elif dimension_ref and dimension_ref not in group_parts:
         select_parts.append(f"{dimension_ref} AS {dimension_alias}")
         group_parts.append(dimension_ref)
+    from core.label_language import reader_label_expression
+
+    for dimension in unique_dimensions[1:]:
+        table_alias = alias_for(str(dimension["table"]))
+        if not table_alias or dimension.get("label_columns"):
+            return ""
+        extra_ref = reader_label_expression(
+            table_alias, str(dimension["table"]), str(dimension["column"]), plan, db_type,
+        ) or f"{table_alias}.{qcol(str(dimension['column']))}"
+        extra_alias = re.sub(
+            r"[^A-Za-z0-9_]", "_", str(dimension.get("term") or dimension.get("column") or "dimension")
+        ).upper()
+        if extra_alias in {dimension_alias, "PERIOD", unit_alias}:
+            extra_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(dimension.get("column") or "DIMENSION_2")).upper()
+        if extra_ref not in group_parts:
+            select_parts.append(f"{extra_ref} AS {extra_alias}")
+            group_parts.append(extra_ref)
     if unit_ref:
         select_parts.append(f"{unit_ref} AS {unit_alias}")
         group_parts.append(unit_ref)

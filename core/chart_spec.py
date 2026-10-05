@@ -502,6 +502,48 @@ def _series_dimension(
     return qualifying[0] if len(qualifying) == 1 else None
 
 
+def _unit_series(
+    rows: list[dict], x_col: str, measure: str | None, roles: dict[str, dict],
+    headers: list[str],
+) -> tuple[str | None, list[str] | None]:
+    """(unit column, the units drawn) for a trend kept in several units.
+
+    A quantity over time comes back a row per period PER UNIT OF MEASURE --
+    feet are not added to eaches -- and a unit is rarely in every period: an
+    item sold by the roll sells in March and October. That grid is sparse,
+    and often wider than the palette, so _series_dimension refused it and
+    "units sold by month" was a table. A unit is still a series: a line per
+    unit, a gap where it has no value. Only when the unit is the result's
+    one other dimension, each (period, unit) once; the largest units by
+    volume when there are more than the palette, None otherwise.
+    """
+    from core.units_of_measure import is_unit_column
+
+    if not measure or roles.get(x_col, {}).get("role") != "temporal":
+        return None, None
+    others = [c for c in headers if c != x_col
+              and roles.get(c, {}).get("role") in {"dimension", "identifier", "temporal"}
+              and len(set(_labels_of(rows, c))) > 1]
+    if len(others) != 1 or not is_unit_column(others[0]):
+        return None, None
+    unit_col = others[0]
+    units = _labels_of(rows, unit_col)
+    if units and set(units) & {str(h) for h in headers}:
+        return None, None
+    if len(set(zip(_labels_of(rows, x_col), units))) != len(rows):
+        return None, None
+    volume: dict[str, float] = {}
+    for unit, row in zip(units, rows):
+        value = _to_float(row.get(measure))
+        volume[unit] = volume.get(unit, 0.0) + (abs(value) if value is not None else 0.0)
+    if len(volume) < 2:
+        return None, None
+    if len(volume) <= _SERIES_CAP:
+        return unit_col, None
+    ranked = sorted(volume, key=lambda unit: (-volume[unit], unit))
+    return unit_col, ranked[:_SERIES_CAP]
+
+
 # Small multiples: at most this many panels, and a same-unit pair split into
 # two once one is this many times the other.
 _FACET_CAP = 3
@@ -630,11 +672,16 @@ def _column_roles(rows: list[dict], column_formats: dict | None = None) -> dict[
         #
         # A temporal NAME token stays evidence on its own, except beside a
         # measure token: YR_TO_DT_AMT and DLV_DAY_CNT are an amount and a count.
+        # Nor beside a measure's name over numbers no date is written as: the
+        # month-end stock on hand, MONTH_END_STOCK_ON_HAND, is a level, and
+        # read as the time axis it left "month-end stock by month" with no
+        # measure to draw.
         temporal = (
             explicit_format == "date"
             or (not explicit_measure and (
                 is_calendar_period_column(col, vals)
-                or (_is_temporal_name(col) and not names_a_measure(col))
+                or (_is_temporal_name(col) and not names_a_measure(col)
+                    and not (looks_measure_name and numeric and not _looks_temporal_values(vals)))
                 or (not looks_measure_name and _looks_temporal_values(vals))
             ))
         )
@@ -782,6 +829,13 @@ def infer_chart_spec(
     composition_measures = _composition_measures(measures)
     temporals = [c for c in headers if roles[c]["role"] == "temporal"]
     dimensions = [c for c in headers if roles[c]["role"] in {"dimension", "identifier"}]
+    # A dimension the question filtered to one member is the same on every
+    # row: "stock on hand for the North Depot warehouse" is North Depot's, by unit, and
+    # drawn along the warehouse it was one row of a heatmap.
+    if len(rows) > 1:
+        varying = [c for c in dimensions if len(set(_labels_of(rows, c))) > 1]
+        if varying:
+            dimensions = varying + [c for c in dimensions if c not in varying]
 
     q = question or ""
     trend_q = bool(_TREND_RE.search(q))
@@ -920,9 +974,17 @@ def infer_chart_spec(
     #
     # This is the only place that knows every column's role AND has the final
     # chart type in hand, so it is where the choice belongs.
+    series_members: list[str] | None = None
     if recommended in {"bar", "line", "area"} and x_col:
         series_col = _series_dimension(rows, x_col, roles, headers)
         x_labels = _labels_of(rows, x_col)
+        if not series_col:
+            series_col, series_members = _unit_series(rows, x_col, _first(y_cols), roles, headers)
+            if series_col and series_members:
+                warnings.append(_t(
+                    "ui.chart.warn.largest_units",
+                    drawn=len(series_members), total=len(set(_labels_of(rows, series_col))),
+                ))
         if not series_col and len(set(x_labels)) * 2 <= len(x_labels):
             # The axis repeats because the result is a grid, and the column
             # that would split it has more members than the palette -- ten
@@ -1059,7 +1121,8 @@ def infer_chart_spec(
         "renderable_types": renderable_types,
         "x": roles.get(x_col) if x_col else None,
         "y": [roles[c] for c in y_cols],
-        "series": roles.get(series_col) if series_col else None,
+        "series": ({**roles[series_col], "members": series_members} if series_col and series_members
+                   else roles.get(series_col) if series_col else None),
         "facets": facets,
         "column_roles": roles,
         "warnings": warnings,

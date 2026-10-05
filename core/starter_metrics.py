@@ -240,9 +240,16 @@ def _metrics_for(base: str, columns: list[str], monthly: bool) -> list[StarterMe
     if on_hand:
         found.append(StarterMetric(
             "on_hand", "Stock on hand", f"SUM({on_hand})", base, (on_hand,),
+            # "Stock" and "inventory" alone are the stock on hand: every other
+            # stock metric says what kind ("stock value", "available stock").
+            # Without them a bare "lowest stock" tied six of these metrics, and
+            # the one it meant sorted last.
             ("stock on hand", "on hand", "quantity on hand", "inventory on hand",
-             "units in stock", "quantité en stock", "stock en main",
-             "quantité en main", "inventaire en main", "stock physique"),
+             "units in stock", "stock", "stocks", "inventory", "stock level",
+             "stock levels", "inventory level", "inventory levels",
+             "quantité en stock", "stock en main", "quantité en main",
+             "inventaire en main", "stock physique", "inventaire",
+             "niveau de stock", "niveaux de stock", "niveau des stocks"),
             f"Units in stock {at} ({on_hand}). {level}",
             (on_hand_why,), confidence=75,
         ))

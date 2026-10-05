@@ -519,6 +519,17 @@ class ResultCache:
                 return {}
             return self._snapshot_payload(entry)
 
+    def note_planning_question(self, session_id: str, result_id: str | None, question: str) -> None:
+        """Keep beside a result the question its query was planned from, when
+        that is more than the words it is shown under: a follow-up's answer
+        is shown as "break it down by item group" and was planned as that and
+        its parent question. A follow-up of it inherits both
+        (core.governed_result_followup.contextualize_source_query_fallback)."""
+        with self._lock:
+            entry = self._get(session_id, result_id)
+            if entry is not None and question:
+                entry.metadata["planning_question"] = str(question)
+
     def list_snapshot_summaries(self, session_id: str) -> list[dict]:
         """Return chronological, row-free metadata for cached result references."""
         with self._lock:

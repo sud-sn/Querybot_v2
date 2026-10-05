@@ -74,6 +74,12 @@ _META_WORDS = frozenset({
     "after", "before", "since", "until", "highest", "lowest", "best",
     "worst", "average", "maximum", "minimum", "compare", "compared",
     "versus", "percent", "percentage", "breakdown", "distribution",
+    # How a reader drills into a result: "break it down by item group",
+    # "drill into that", "split it up" -- "down" was offered to the index and
+    # matched every value with DOWN in it, and the drill-down was answered
+    # with "'down' matches more than one thing in your data".
+    "break", "broken", "down", "drill", "drilling", "split", "zoom", "now",
+    "instead", "again", "also", "only", "just", "same",
     "trend", "trends", "monthly", "weekly", "daily", "yearly", "quarterly",
     "month", "months", "year", "years", "week", "weeks", "quarter",
     "quarters", "days", "date", "dates", "today", "yesterday", "tomorrow",

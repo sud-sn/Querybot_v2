@@ -1897,6 +1897,13 @@ def combine_with_result_context(parent_question: str, followup_question: str) ->
     parent metric, filters, and time window.  The marker keeps this context
     machine-readable so UI rendering can still show only the user's follow-up.
     """
+    # A parent that was itself a follow-up is carried as its planners read it
+    # -- "<its parent>  Follow-up request: <it>" -- not with this marker
+    # inside it: flattened, "why is that?" asked after a drill-down reached
+    # the planner as "... Context from the active governed result: ..." and
+    # the reader was asked which dataset they meant.
+    if _RESULT_CONTEXT_MARKER in str(parent_question or ""):
+        parent_question = extract_original_question(str(parent_question))
     parent = " ".join(str(parent_question or "").split()).strip()
     followup = " ".join(str(followup_question or "").split()).strip()
     if (

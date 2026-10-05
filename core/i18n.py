@@ -841,6 +841,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Quantities in different units are not added together.",
         "fr": "Les quantités de différentes unités ne sont pas additionnées.",
     },
+    "answer.leads_in_unit": {
+        "en": "In {unit}, {label} leads at {value} {unit}.",
+        "fr": "En {unit}, {label} arrive en tête avec {value} {unit}.",
+    },
+    "answer.lowest_in_unit": {
+        "en": "In {unit}, {label} is lowest at {value} {unit}.",
+        "fr": "En {unit}, {label} est le plus bas avec {value} {unit}.",
+    },
     "answer.lowest": {
         "en": "{label} is lowest at {value}.", "fr": "{label} est le plus bas avec {value}.",
     },
@@ -1272,6 +1280,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.warn.grouped_many_measures": {
         "en": "Grouped by {series}, so only {drawn} is drawn; the other measures stay in the table.",
         "fr": "Regroupé par {series} : seul {drawn} est tracé ; les autres mesures restent dans le tableau.",
+    },
+    "ui.chart.warn.largest_units": {
+        "en": "A line per unit of measure: the {drawn} largest of {total} are drawn; the table has every unit.",
+        "fr": "Une ligne par unité de mesure : les {drawn} plus importantes sur {total} sont tracées ; le tableau contient toutes les unités.",
     },
     "ui.chart.warn.panels_left_out": {
         "en": "A panel per unit, three at most: the table also has {left_out}.",

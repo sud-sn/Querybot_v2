@@ -767,6 +767,10 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         rows, members_labelled = label_unknown_members(
             rows, member_labels(account_id), lambda kind: _t(f"member.{kind}"),
         )
+        from core.unknown_members import UNKNOWN, label_blank_members
+
+        rows, blank_labelled = label_blank_members(rows, _t(f"member.{UNKNOWN}"))
+        members_labelled += blank_labelled
     except Exception as exc:
         log.warning("Placeholder members not relabelled for %s: %s", account_id, exc)
     # The grain the periods were asked at, as the portal's payload reads it
@@ -810,6 +814,14 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             contract_version=contract_version,
             rows_truncated=bool((confidence_context or {}).get("rows_truncated")),
         )
+        if display_question != question:
+            try:
+                from core.result_cache import result_cache
+
+                result_cache.note_planning_question(
+                    str(getattr(adapter, "session_id", "") or ""), getattr(adapter, "last_result_id", None), question)
+            except Exception as exc:  # noqa: BLE001 - a follow-up of a follow-up loses its grandparent
+                log.warning("Planning question not kept with the result: %s", exc)
 
     display_formats = build_display_formats(rows, column_formats, requested_grain=period_grain)
     table_text = _rows_to_table(rows, column_formats, display_formats)

@@ -169,6 +169,57 @@ _DATA_REQUEST_SHAPE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The words that say a message is about the business's figures without any
+# verb before them. Most questions a reader types have none: "revenue by
+# month", "top 10 customers by sales", "stock value by warehouse", "gross
+# margin %". The verb half above was required, so 87% of a 2,350-question
+# corpus failed it and every one of them was put to the conversational
+# analyst -- a model -- to decide whether it was a question at all. Where the
+# model chatted instead, the reader got "QueryBot can analyze ... let me
+# know!" and a Proceed button, or "QueryBot cannot directly list item names",
+# and no answer. These are the measures, the things they are counted on, and
+# the breakdowns a business question is made of; the generic words of the
+# shape half ("with", "data", "all", "rows") are not among them, and need a
+# verb as before. A French question arrives in its canonical English
+# (core/question_normalizer.py), so "ventes par région" is "sales by region".
+_BUSINESS_QUESTION_RE = re.compile(
+    r"\b(?:"
+    # Measures.
+    r"revenues?|sales|turnover|profits?|margins?|gross|net|amounts?|costs?|prices?|"
+    r"spend(?:ing)?|expenses?|budgets?|balances?|receivables?|payables?|discounts?|"
+    r"rebates?|tax(?:es)?|quantit(?:y|ies)|qty|units?|volumes?|stock|inventory|"
+    r"on\s+hand|backlog|growth|averages?|totals?|counts?|kpis?|metrics?|"
+    # What they are counted on.
+    r"customers?|clients?|orders?|invoices?|shipments?|returns?|transactions?|"
+    r"payments?|purchases?|receipts?|deliveries?|claims?|prescriptions?|tickets?|"
+    r"items?|products?|articles?|skus?|suppliers?|vendors?|warehouses?|branch(?:es)?|"
+    r"stores?|sites?|plants?|regions?|territor(?:y|ies)|countr(?:y|ies)|cit(?:y|ies)|"
+    r"provinces?|segments?|categor(?:y|ies)|groups?|divisions?|departments?|"
+    r"profit\s+cent(?:er|re)s?|cost\s+cent(?:er|re)s?|accounts?|employees?|"
+    # Breakdowns and periods. Not a ranking word on its own: "thanks, that is
+    # the best" and "you are the most helpful" are said to the assistant, and
+    # a ranking question names what it ranks ("best customers", "top 10 items
+    # by ...") -- nor "by the way" or "as per your answer".
+    r"by(?!\s+the\s+way)|per(?!\s+(?:your|my|our|the\s+above))|how\s+many|"
+    r"how\s+much|trends?|monthly|weekly|daily|quarterly|yearly|annual|ytd|mtd|"
+    r"last\s+(?:\d+\s+)?(?:days?|weeks?|months?|quarters?|years?)|"
+    r"this\s+(?:week|month|quarter|year)|(?:19|20)\d\d"
+    r")\b|%",
+    re.IGNORECASE,
+)
+
+# How something is doing: "how has customer X performed?", "how did the
+# Toronto branch do last month", "how are we doing on stock". No verb of the
+# list above, and still a question about the data -- unless it is about the
+# assistant ("how are you doing").
+_PERFORMANCE_QUESTION_RE = re.compile(
+    r"\bhow\s+(?:has|have|had|did|does|do|is|are|was|were)\b"
+    r"(?!\s+(?:you|u|querybot|things|it\s+going)\b)"
+    r".{0,80}?\b(?:perform(?:ed|ing|ance)?|doing|done|do|trend(?:ed|ing)?|going|gone|"
+    r"grow(?:n|ing)?|chang(?:ed|ing)|compare[sd]?)\b",
+    re.IGNORECASE,
+)
+
 # A question ABOUT the assistant or the workspace rather than about the
 # business data in it. These belong to the conversational analyst, which can
 # actually list what the workspace holds; sending them to SQL generation
@@ -272,19 +323,18 @@ def _looks_like_data_request(text: str, account_id: str = "") -> bool:
         # resolves the business event dataset to analyse". The user asked what
         # the product can do and was told to go and approve a mapping.
         return False
-    if not _DATA_REQUEST_ACTION_RE.search(value):
-        return False
-    if _DATA_REQUEST_SHAPE_RE.search(value):
+    if _BUSINESS_QUESTION_RE.search(value) or _PERFORMANCE_QUESTION_RE.search(value):
+        # Named measures, what they are counted on, or a breakdown: a question
+        # about the data, with or without a verb before it.
         return True
-    if not account_id:
-        return False
+    if _DATA_REQUEST_ACTION_RE.search(value) and _DATA_REQUEST_SHAPE_RE.search(value):
+        return True
     words = set(_METADATA_WORD_RE.findall(value.lower()))
-    if not words:
+    if not account_id or not words:
         return False
-    known = _workspace_nouns(account_id)
-    if not known:
-        return False
-    hit = words & known
+    # A word this workspace's own metrics, glossary or tables use, with or
+    # without a verb: "Backlog by plant", "list item names".
+    hit = words & _workspace_nouns(account_id)
     if hit:
         log.info(
             "Treating %r as a data request: it names %s, which this workspace's "
@@ -758,11 +808,21 @@ async def _run_query_with_guard_locked(
             result_metadata=_cached_metadata,
         )
 
+    # Read in the reader's language too: "seulement les 5 premiers" is "only
+    # the top 5", and parsed as English alone it was put to the analyst.
+    # The classifier's patterns are English, and so is the canonical form: a
+    # French "pourquoi ... ?" beside a result is asked about it, as "why ...?"
+    # is.
+    from core.question_normalizer import canonical_question as _canonical_question
+
+    _reader_lang = str((portal_user or {}).get("lang") or "")
+    _turn_text = (_canonical_question(text, _reader_lang) or text
+                  if _reader_lang and not _reader_lang.startswith("en") else text)
     _direct_result_command = (
-        parse_result_command(text) if _cached_snapshot else None
+        (parse_result_command(text) or parse_result_command(_turn_text)) if _cached_snapshot else None
     )
     _decision = classify_turn(
-        text,
+        _turn_text,
         state=_prior_state,
         has_cached_result=bool(_cached_snapshot),
         direct_result_command=_direct_result_command is not None,
@@ -790,10 +850,18 @@ async def _run_query_with_guard_locked(
         )
         return
 
-    # The analyst gate remains dynamic for greetings, safe off-topic turns, and
-    # fresh questions. Governed result follow-ups bypass it and are handled by
-    # the result/query pipeline instead.
-    if not bypass_analyst_gate(_decision):
+    # The analyst gate remains dynamic for greetings and safe off-topic turns.
+    # Governed result follow-ups bypass it and are handled by the result/query
+    # pipeline instead, and so does a question about the business's figures,
+    # read in the reader's language through its canonical English: a model
+    # asked "is this a data question?" sometimes chats instead, and the reader
+    # is then offered a Proceed button for the question they just asked.
+    from core.question_normalizer import canonical_question
+
+    _plainly_data = _looks_like_data_request(
+        canonical_question(text, (portal_user or {}).get("lang")), account_id,
+    )
+    if not bypass_analyst_gate(_decision) and not _plainly_data:
         _analyst_history_fn = getattr(adapter, "get_analyst_history", None)
         _analyst_history = (
             _analyst_history_fn() if callable(_analyst_history_fn) else []
@@ -804,37 +872,14 @@ async def _run_query_with_guard_locked(
             text, account_id, client_row, history=_analyst_history,
             result_question=_result_question, result_brief=_result_brief,
         )
+        if _analyst_reply is not None and _analyst_reply_offers_query(_analyst_reply):
+            # The analyst read the message as a request for data and offered to
+            # run it ("... let me know!"). The reader already asked: run it.
+            # Offering a Proceed button for the question just typed reads as
+            # the product not understanding it.
+            log.info("Analyst offered to run %r; running it", text[:100])
+            _analyst_reply = None
         if _analyst_reply is not None:
-            if _analyst_reply_offers_query(_analyst_reply) and event.user_id:
-                # Persist the offered request before rendering it. A later
-                # "yes, proceed" must replay this exact question rather than
-                # entering the SQL pipeline as an unrelated two-word query.
-                _offer_options = [{
-                    "id": "proceed",
-                    "label": "Proceed",
-                    "value": "Proceed",
-                    "resolved_question": text,
-                }]
-                save_pending(
-                    account_id,
-                    event.user_id,
-                    text,
-                    clarification_meta={
-                        "source": "analyst_query_offer",
-                        "question": _analyst_reply,
-                        "options": _offer_options,
-                    },
-                    session_id=clarification_session_id(adapter, event),
-                )
-                send_prompt = getattr(adapter, "send_clarification_prompt", None)
-                if callable(send_prompt):
-                    await send_prompt(event, _analyst_reply, _offer_options)
-                else:
-                    await adapter.send_message(
-                        event,
-                        f"{_analyst_reply}\n\n{_t('dispatch.proceed_hint')}",
-                    )
-                return
             await adapter.send_message(event, _analyst_reply)
             # Remember it, or the next turn is another first turn.
             _remember_analyst_turn(adapter, text, _analyst_reply)

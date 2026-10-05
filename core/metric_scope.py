@@ -486,15 +486,30 @@ def resolve_metric_scope(
     # inventory counts by month" names two, and the window above -- which
     # keeps a close second reading of ONE measure -- kept the longer name
     # alone. A name said where another's already is, is not a second measure.
-    said = [span for metric in chosen for span in _named_spans(metric, question)]
+    #
+    # Read in each wording the question has -- the canonical English and the
+    # reader's own -- and a name said inside another's in either is not a
+    # second measure: "valeur du stock par entrepôt" is "value of inventory
+    # by warehouse" in English, where "inventory" (the stock on hand) stood
+    # alone, but in the reader's words its "stock" is inside "valeur du
+    # stock", and the stock on hand was read beside the value asked for.
+    texts = [text for text in dict.fromkeys((question, reader_question)) if text]
+    said = {text: [span for metric in chosen for span in _named_spans(metric, text)] for text in texts}
+
+    def _overlaps(spans: list[tuple[int, int]], others: list[tuple[int, int]]) -> bool:
+        return any(start < other_end and other_start < end
+                   for start, end in spans for other_start, other_end in others)
+
     for _score, metric, _schemas in scored:
         if any(metric is kept for kept in chosen):
             continue
-        spans = _named_spans(metric, question)
-        if spans and not any(start < other_end and other_start < end
-                             for start, end in spans for other_start, other_end in said):
+        spans = {text: _named_spans(metric, text) for text in texts}
+        named_alone = any(spans[text] and not _overlaps(spans[text], said[text]) for text in texts)
+        inside_another = any(spans[text] and _overlaps(spans[text], said[text]) for text in texts)
+        if named_alone and not inside_another:
             chosen.append(metric)
-            said.extend(spans)
+            for text in texts:
+                said[text].extend(spans[text])
     return MetricScopeResult(
         metrics=chosen[: max(1, int(limit or 6))],
         context_schemas=context_schemas,

@@ -1113,6 +1113,11 @@ def _narrative_label_column(rows: list[dict], text_cols: list[str]) -> str:
         labels = [str(row.get(col, "")) for row in rows]
         if _looks_temporal(labels) and len(set(labels)) != len(labels):
             continue
+        # One member on every row is what the question filtered to, not what
+        # it breaks down: "stock on hand for the North Depot warehouse" is
+        # North Depot's, by unit.
+        if len(rows) > 1 and len(set(labels)) == 1:
+            continue
         return col
     return text_cols[0]
 
@@ -2454,6 +2459,42 @@ def _per_unit_listing(totals: list[tuple[str, float]], missing: list[str], forma
     return _t("answer.per_unit.last", values=", ".join(listed[:-1]), last=listed[-1])
 
 
+# What a row with no unit is labelled (core/unknown_members.py), in either
+# language: no unit to rank in.
+_NO_UNIT = frozenset({"", "none", "null", "unknown", "inconnu", "inconnue"})
+
+
+def _leader_in_one_unit(
+    rows: list[dict], label_col: str, text_cols: list[str], value_col: str, ascending: bool,
+) -> tuple[str, str, float] | None:
+    """(unit, label, value) of the first label in the unit most of a quantity
+    is kept in, for rows broken down by a label and by unit of measure; None
+    for any other result. Rows of one label in one unit are added up."""
+    from core.units_of_measure import is_quantity_measure, is_unit_column
+
+    unit_col = next((c for c in text_cols if c != label_col and is_unit_column(c)), None)
+    # Money adds up across units, and is not said in one.
+    if not unit_col or len(text_cols) != 2 or not is_quantity_measure(value_col):
+        return None
+    totals: dict[str, dict[str, float]] = {}
+    for row in rows:
+        unit = str(row.get(unit_col) or "").strip()
+        value = _to_float(row.get(value_col))
+        if unit.casefold() in _NO_UNIT or value is None:
+            continue
+        label = row.get(label_col)
+        label = _t("member.unknown") if label is None or str(label).strip() in {"", "None", "null", "NULL"} else str(label)
+        by_label = totals.setdefault(unit, {})
+        by_label[label] = by_label.get(label, 0.0) + value
+    if len(totals) < 2 and not any(len(by_label) > 1 for by_label in totals.values()):
+        return None
+    unit = max(totals, key=lambda u: (sum(abs(v) for v in totals[u].values()), u))
+    if len(totals[unit]) < 2:
+        return None
+    label, value = sorted(totals[unit].items(), key=lambda item: (item[1], item[0]), reverse=not ascending)[0]
+    return unit, label, value
+
+
 def _per_unit_answer(
     rows: list[dict], unit_col: str, value_col: str, question: str, value_fmt: str | None,
     format_value, scope: dict,
@@ -2464,9 +2505,13 @@ def _per_unit_answer(
     so none leads, none is above the next, and no one figure is the answer:
     they are listed, and the card says why they are not added.
     """
-    from core.units_of_measure import per_unit_totals, rows_per_unit
+    from core.units_of_measure import is_quantity_measure, is_unit_column, per_unit_totals, rows_per_unit
 
-    if not rows_per_unit(rows, unit_col, value_col, question, measure_format=str(value_fmt or "")):
+    # One unit's total is that total, not a leader: "units sold last 6 months"
+    # came back in one unit and was headed "Unknown leads at 939,315.50".
+    single = (len(rows) == 1 and is_unit_column(unit_col)
+              and is_quantity_measure(value_col, str(value_fmt or "")))
+    if not single and not rows_per_unit(rows, unit_col, value_col, question, measure_format=str(value_fmt or "")):
         return None
     found = per_unit_totals(rows, unit_col, value_col)
     if not found or not found[0]:
@@ -2666,6 +2711,22 @@ def build_answer(
                 "scope_note": scope.get("note", ""),
             }
         if not ordered:
+            # A quantity broken down by something AND by its unit is ranked
+            # within one unit -- the one most of it is kept in -- and says so:
+            # "stock on hand by warehouse" was "Returned 19 rows", because
+            # feet and eaches are not added up to rank a warehouse.
+            in_unit = _leader_in_one_unit(rows, label_col, text_cols, value_col, ascending)
+            if in_unit:
+                unit, label, value = in_unit
+                return {
+                    "headline": _t("answer.lowest_in_unit" if ascending else "answer.leads_in_unit",
+                                   unit=unit, label=label, value=format_value(value, value_col)),
+                    "short_value": format_value(value, value_col),
+                    "comparison": scope.get("badge", ""),
+                    "scope_badge": scope.get("badge", ""),
+                    "scope_note": " ".join(part for part in (
+                        scope.get("note", ""), _t("answer.per_unit.not_added")) if part),
+                }
             # Repeats the sum may not merge -- a margin percentage, a balance.
             # A leader among rows that cannot be added together is a made-up
             # ranking, so this falls through to the plain row-count answer.
@@ -2679,6 +2740,10 @@ def build_answer(
                 "scope_note": scope.get("note", ""),
             }
         best_label, best_value = ordered[0]
+        # A group with no label -- a fact row whose key matched no row of its
+        # dimension, kept by the outer join -- is "Unknown", not "None leads".
+        if best_label is None or str(best_label).strip() in {"", "None", "null", "NULL"}:
+            best_label = _t("member.unknown")
         # A period ranked by its measure -- "which month had the highest
         # sales" -- is named as the series names it: "2025-10", not the
         # first day of its bucket.

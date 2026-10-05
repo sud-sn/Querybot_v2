@@ -308,6 +308,72 @@ def _phrases_route_to_cache(
     return False
 
 
+# What a question breaks its answer down by, or ranks: "by item group", "per
+# warehouse", "top 10 items by ...".
+_BREAKDOWN_TARGET_RE = re.compile(r"\b(?:by|per|for\s+each)\s+((?:[a-z]+\s+){0,2}?[a-z]+)\b(?=\s*(?:$|[?.,!]|and\b|in\b|for\b|last\b|this\b|over\b|with\b|from\b))", re.I)
+_RANKED_TARGET_RE = re.compile(r"\b(?:top|bottom)\s+\d+\s+((?:[a-z]+\s+){0,2}?[a-z]+)\s+(?:by|per|with|on)\b", re.I)
+
+
+def _names_a_measure(canonical: str, metrics: list[dict] | None) -> bool:
+    """Whether the (canonical) question says one of the metrics' names or synonyms."""
+    text = " ".join(re.findall(r"[a-z0-9%]+", canonical.casefold()))
+    for metric in metrics or []:
+        for phrase in [metric.get("name"), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]:
+            words = " ".join(re.findall(r"[a-z0-9%]+", str(phrase or "").casefold()))
+            if words and re.search(rf"(?<![a-z0-9]){re.escape(words)}(?![a-z0-9])", text):
+                return True
+    return False
+
+
+# Asking about the answer on screen: why it is so, what is behind it.
+_ABOUT_THE_RESULT_RE = re.compile(
+    r"\b(?:why|explain|explique[rz]?|analy[sz]e|summari[sz]e|insights?|what\s+(?:changed|drove|caused|is\s+driving)"
+    r"|what\s+does\s+(?:this|that|it)\s+(?:mean|show|tell)|tell\s+me\s+(?:more\s+)?about\s+(?:this|that|it))\b",
+    re.I,
+)
+
+
+def asks_about_the_result(question: str, metrics: list[dict] | None, *, lang: str = "") -> bool:
+    """Whether a question beside a result on screen asks about that result --
+    "why is North Depot the highest?", "explain this result", "pourquoi ...?" --
+    and names no measure of its own. Asked as a fresh question it named
+    nothing to measure, and was refused: "I cannot compile a trusted query
+    until the semantic layer resolves the business event dataset"."""
+    canonical = _spellings(question, lang)[-1]
+    return bool(_ABOUT_THE_RESULT_RE.search(canonical)) and not _names_a_measure(canonical, metrics)
+
+
+def asks_a_new_question(
+    question: str,
+    cached_col_names: list[str] | None,
+    metrics: list[dict] | None,
+    *,
+    lang: str = "",
+) -> bool:
+    """Whether a question asked beside a result on screen is a question of its
+    own: it names its measure, and a breakdown, a ranking or a period the
+    result does not hold.
+
+    "top 10 items by inventory value" asked after "inventory value by
+    warehouse" names the result's column, so it was handed to the result on
+    screen -- which holds warehouses, not items -- and refused ("I could not
+    safely apply that operation to the cached result"); "units sold last 6
+    months" after "units sold by month" the same. Such a question is answered
+    as asked. A follow-up that names no measure ("break it down by item
+    group", "and by supplier?") is still read against the result on screen.
+    """
+    from core.contextual_dates import detect_temporal_window
+
+    canonical = _spellings(question, lang)[-1]
+    if not _names_a_measure(canonical, metrics):
+        return False
+    targets = [m.group(1) for regex in (_BREAKDOWN_TARGET_RE, _RANKED_TARGET_RE) for m in regex.finditer(canonical)]
+    if any(not question_mentions_cached_column(target, cached_col_names) for target in targets):
+        return True
+    window = detect_temporal_window(canonical) or {}
+    return str(window.get("kind") or "") not in ("", "none")
+
+
 def should_attempt_cache_followup(
     question: str,
     has_cached_result: bool,

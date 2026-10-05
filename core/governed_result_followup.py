@@ -45,6 +45,47 @@ class GovernedFollowupResult:
         return self.status == "executed" and bool(self.outcome and self.outcome.ok)
 
 
+def source_question(
+    session_id: str,
+    *,
+    source_result_id: str | None = None,
+    cache: ResultCache = result_cache,
+) -> str:
+    """The question the result on screen was queried for -- the oldest source
+    query of its lineage, as it was planned -- or "" when none is cached.
+    Only questions and lineage IDs are read here; cached row values are never
+    copied or exposed."""
+    snapshot = cache.get_snapshot(session_id, source_result_id)
+    if not snapshot:
+        return ""
+
+    root_question = str(
+        (snapshot.get("metadata") or {}).get("planning_question") or snapshot.get("question") or ""
+    ).strip()
+    current = snapshot
+    seen: set[str] = set()
+    for _ in range(8):
+        result_id = str(current.get("result_id") or "")
+        if result_id:
+            if result_id in seen:
+                break
+            seen.add(result_id)
+        if str(current.get("operation") or "source_query") == "source_query":
+            candidate = str(
+                (current.get("metadata") or {}).get("planning_question") or current.get("question") or ""
+            ).strip()
+            if candidate:
+                root_question = candidate
+        parent_id = str(current.get("parent_result_id") or "")
+        if not parent_id:
+            break
+        parent = cache.get_snapshot(session_id, parent_id)
+        if not parent:
+            break
+        current = parent
+    return root_question
+
+
 def contextualize_source_query_fallback(
     question: str,
     session_id: str,
@@ -60,31 +101,9 @@ def contextualize_source_query_fallback(
     Only questions and lineage IDs are read here; cached row values are never
     copied or exposed.
     """
-    snapshot = cache.get_snapshot(session_id, source_result_id)
-    if not snapshot:
+    root_question = source_question(session_id, source_result_id=source_result_id, cache=cache)
+    if not root_question:
         return question
-
-    root_question = str(snapshot.get("question") or "").strip()
-    current = snapshot
-    seen: set[str] = set()
-    for _ in range(8):
-        result_id = str(current.get("result_id") or "")
-        if result_id:
-            if result_id in seen:
-                break
-            seen.add(result_id)
-        if str(current.get("operation") or "source_query") == "source_query":
-            candidate = str(current.get("question") or "").strip()
-            if candidate:
-                root_question = candidate
-        parent_id = str(current.get("parent_result_id") or "")
-        if not parent_id:
-            break
-        parent = cache.get_snapshot(session_id, parent_id)
-        if not parent:
-            break
-        current = parent
-
     return combine_with_result_context(root_question, question)
 
 
@@ -354,8 +373,13 @@ async def run_governed_result_followup(
     source_result_id: str | None = None,
     cache: ResultCache = result_cache,
     is_clarification: bool = False,
+    lang: str = "",
 ) -> GovernedFollowupResult:
-    """Plan and execute one result follow-up without disclosing cached values."""
+    """Plan and execute one result follow-up without disclosing cached values.
+
+    ``lang`` is the reader's language: a command is read in the canonical
+    English the router read it in (core.query_router._spellings), so
+    "seulement les 5 premiers" is the "only top 5" that sent it here."""
     reference = _resolve_result_reference(
         question,
         session_id,
@@ -381,6 +405,12 @@ async def run_governed_result_followup(
         )
 
     command = parse_result_command(question)
+    if command is None and lang:
+        from core.question_normalizer import canonical_question
+
+        canonical = canonical_question(question, lang)
+        if canonical != question:
+            command = parse_result_command(canonical)
     if command is not None:
         outcome = execute_result_command(
             session_id,

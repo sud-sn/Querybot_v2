@@ -8,6 +8,7 @@ SQL, logs, snapshot metadata, or model prompts.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from calendar import month_abbr, month_name
 from dataclasses import dataclass, field
@@ -651,6 +652,20 @@ def execute_result_command(
                         before,
                         _t("reply.rc.no_measure_to_rank"),
                     )
+            elif command.direction != "asc" and not _holds_periods(rows):
+                # "just the top 5" of a breakdown is its five largest, not the
+                # first five rows it happened to be listed in: an answer by
+                # warehouse is listed by warehouse, and its first five were
+                # kept as its "top 5". Ranked by its first measure -- the one
+                # the question asked for. A series over time keeps its order:
+                # its first rows are its first periods. Nor is a quantity kept in
+                # several units ranked across them: 900 feet are not ahead of
+                # 160 eaches.
+                from core.units_of_measure import kept_in_several_units
+
+                candidates = _ranking_measure_columns(rows)
+                if candidates and not kept_in_several_units(rows, candidates[0]):
+                    order_column = candidates[0]
             descending = command.direction != "asc"
             order_keyword = "DESC" if descending else "ASC"
             if order_column:
@@ -1529,6 +1544,21 @@ _RANKING_DIAGNOSTIC_TOKENS = {
     "confidence", "diagnostic", "matched", "nonnull", "null", "records",
     "rows", "score", "validation",
 }
+
+
+_PERIOD_TEXT = re.compile(r"^\d{4}-\d{2}")
+
+
+def _holds_periods(rows: list[dict]) -> bool:
+    """Whether a result is a series over time: a column of periods or dates."""
+    if not rows:
+        return False
+    for column, value in rows[0].items():
+        if str(column).upper() in {"PERIOD", "DATE", "MONTH", "YEAR", "QUARTER", "WEEK", "DAY"}:
+            return True
+        if isinstance(value, (dt.date, dt.datetime)) or (isinstance(value, str) and _PERIOD_TEXT.match(value)):
+            return True
+    return False
 
 
 def _ranking_measure_columns(rows: list[dict]) -> list[str]:

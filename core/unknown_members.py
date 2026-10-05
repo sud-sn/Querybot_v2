@@ -824,6 +824,41 @@ def label_unknown_members(rows: list[dict], labels: dict, label_for) -> tuple[li
     return labelled, changed
 
 
+_DATE_TEXT = re.compile(r"^\d{4}-\d{2}(?:-\d{2})?")
+
+
+def label_blank_members(rows: list[dict], label: str) -> tuple[list[dict], int]:
+    """The rows with an empty label cell named ``label``, and how many.
+
+    A fact row whose key matches no row of its dimension is kept by the
+    outer join every confirmed join with orphaned keys is written as, and
+    its group's label is NULL: the answer was headed "None leads at 583",
+    and the chart and the table showed "None". A column is a label where
+    every value it does hold is text and no date; its empty cells are named
+    for what they are."""
+    if not rows:
+        return rows, 0
+    labels = []
+    for column in rows[0]:
+        values = [row.get(column) for row in rows]
+        held = [value for value in values if value is not None]
+        if (held and len(held) < len(values) and all(isinstance(value, str) for value in held)
+                and not any(_DATE_TEXT.match(value) for value in held)):
+            labels.append(column)
+    if not labels:
+        return rows, 0
+    changed = 0
+    named = []
+    for row in rows:
+        out = dict(row)
+        for column in labels:
+            if out.get(column) is None:
+                out[column] = label
+                changed += 1
+        named.append(out)
+    return named, changed
+
+
 def references_in_scope(policies: list[dict] | None, *texts: str) -> list[dict]:
     """The policies whose dimension, or a key pointing at it, is named in
     ``texts`` -- a question about unspecified buyers may reach only the fact."""
