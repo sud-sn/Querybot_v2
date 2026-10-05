@@ -206,6 +206,10 @@ _ASKED_OF_THE_ASSISTANT_RE = re.compile(
     r"(?:calculated|computed|defined|derived|measured|worked\s+out)"
     r"|explain\s+(?:what|how)\b|password|log\s*in|sign\s*in|refresh(?:ed|es)?|up\s+to\s+date"
     r"|thanks?|thank\s+you|merci|agree"
+    # Help with the product, and asks that are not about the figures.
+    r"|how\s+(?:do|can|should|would)\s+i\b|^\s*(?:do|does|can|could|will|would|are|is)\s+(?:you|querybot)\b"
+    r"|\b(?:write|compose|draft|translate)\s+(?:me\s+)?(?:a|an|the|this|that|it)\b|\b(?:poem|joke|song|story|weather)\b"
+    r"|(?:what|which)\s+tables?\b"
     r"|(?:is|are)\s+(?:\S+\s+){0,6}(?:good|bad|normal|healthy|reasonable|ok(?:ay)?)\s*\??\s*$)",
     re.IGNORECASE,
 )

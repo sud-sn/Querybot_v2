@@ -87,16 +87,23 @@ def _is_bare(phrase: str) -> bool:
     return bool(words) and words <= _tokens(" ".join(_BARE_STOCK_WORDS))
 
 
+_BREAKDOWN_MARKER = re.compile(r"\b(?:by|per|for\s+each|across|in\s+each|par|pour\s+chaque)\b", re.I)
+
+
 def _bare_word_stands_alone(metric: dict[str, Any], metrics: list[dict[str, Any]], *texts: str) -> bool:
     """Whether a bare "stock" the question says is this metric's to claim:
     the question says no word of another metric's that this one does not --
     "value of our inventory", "available inventory", "inventory sold" each
     name a measure of their own, and a bare word answered them with the
     stock on hand. Grains and windows are not such words."""
+    # Read in what the question measures, not what it breaks it down by:
+    # "inventory by category of products" breaks the stock down by product,
+    # and "products" is a word of the number of products sold's.
     asked: set[str] = set()
     for text in texts:
         if text:
-            asked |= _tokens(without_grain_or_window(text))
+            measured = _BREAKDOWN_MARKER.split(str(text), maxsplit=1)[0]
+            asked |= _tokens(without_grain_or_window(measured))
     own = {word for phrase in _metric_phrases(metric) for word in _tokens(phrase)}
     others = {word for other in metrics or [] if other is not metric
               for phrase in _metric_phrases(other) for word in _tokens(phrase)}
@@ -567,48 +574,62 @@ _MONEY_WORDS = {
     "profit": "profit", "profits": "profit", "margin": "margin", "margins": "margin",
     "income": "income", "earnings": "earnings",
 }
+# Words for the same figure: a "Net sales" metric is the revenue asked for.
+_MONEY_FAMILIES = (
+    frozenset({"revenue", "revenues", "sales", "sale", "turnover", "income", "ventes", "chiffre"}),
+    frozenset({"profit", "profits", "margin", "margins", "earnings", "marge", "benefice"}),
+)
+# A money word that says what kind of something else is meant: "sales
+# orders", "sales rep", "income bracket", "profit centre".
 _MONEY_WORD_RE = re.compile(
-    r"\b(" + "|".join(sorted(_MONEY_WORDS, key=len, reverse=True)) + r")\b(?!\s+(?:cent(?:er|re)s?|cent(?:er|re)\b))",
+    r"\b(" + "|".join(sorted(_MONEY_WORDS, key=len, reverse=True)) + r")\b"
+    r"(?!\s+(?:cent(?:er|re)s?|orders?|reps?|representatives?|people|persons?|teams?|regions?|channels?"
+    r"|territor(?:y|ies)|offices?|brackets?|groups?|levels?|classes?|bands?|tax(?:es)?|lines?|documents?"
+    r"|invoices?|accounts?|managers?|agents?|quotes?|opportunit(?:y|ies)|pipelines?|calls?|visits?)\b)",
     re.I,
 )
 _MONEY_COLUMN_TOKENS = frozenset({
     # Not NET or GRS alone: ITM_NET_WT is a weight. NET_SLS_AMT says SLS.
-    "REV", "RVN", "REVENUE", "SLS", "SALES", "SAL", "SALE", "AMT", "AMOUNT", "IVC",
-    "INVOICE", "TURNOVER", "INCOME", "PRC", "PRICE", "SELL", "PROFIT", "PRFT", "MRG", "MARGIN", "MGN",
-    "EARN", "EARNINGS", "GMV",
+    "REV", "RVN", "REVENUE", "SLS", "SALES", "SAL", "SALE", "AMT", "AMOUNT", "IVC", "INVOICE", "INVOICED",
+    "TURNOVER", "INCOME", "PRC", "PRICE", "PRICES", "SELL", "SELLING", "PROFIT", "PRFT", "MRG", "MARGIN",
+    "MGN", "EARN", "EARNINGS", "GMV", "VAL", "VALUE", "TOTAL", "TOT", "PAID", "PAY", "PAYMENT", "FEE", "FEES",
+    "CHARGE", "CHARGES", "COPAY", "BILLED", "BILLING", "MONTANT", "PRIX", "VENTE", "VENTES", "HT", "TTC",
 })
 _FLAG_SUFFIXES = ("_IND", "_FLG", "_FLAG", "_KEY", "_ID", "_CD")
+
+
+def _column_tokens(column: str) -> set[str]:
+    """A column's name as its upper-case words: SalesAmount is SALES, AMOUNT."""
+    from core.semantic_planner import _words_form
+
+    return {token for token in re.split(r"[^A-Z0-9]+", _words_form(str(column)).upper()) if token}
 
 
 def measure_the_data_lacks(
     question: str,
     metrics: list[dict[str, Any]] | None,
     table_columns: dict[str, dict[str, str]] | None,
-    fact_tables: set[str] | None = None,
 ) -> str:
     """The money word a question asks for that this workspace has no figure
-    of -- no metric names it and no column of its facts (``fact_tables``,
-    every table when none is known) holds any money a sale is kept in -- or
-    "". ``question`` is read in its canonical English; a profit centre is a
-    place, not a profit."""
+    of -- no metric names it or a word of its family, and no column of any
+    table holds money a sale could be kept in -- or "". ``question`` is read
+    in its canonical English. Said only when nothing in the data could be
+    it: any column that might be money keeps the question on its way."""
     found = _MONEY_WORD_RE.search(_norm(question))
     if not found or not table_columns:
         return ""
-    facts = {_bare_table(table) for table in fact_tables or ()}
-    if facts:
-        table_columns = {table: columns for table, columns in table_columns.items()
-                         if _bare_table(table) in facts}
     word = _MONEY_WORDS[found.group(1).lower()]
+    family = next((f for f in _MONEY_FAMILIES if found.group(1).lower() in f), frozenset({found.group(1).lower()}))
     for metric in metrics or []:
-        if any(re.search(rf"(?<![a-z0-9]){found.group(1).lower()}(?![a-z0-9])", phrase) or word in phrase
-               for phrase in _metric_phrases(metric)):
-            return ""
+        for phrase in _metric_phrases(metric):
+            if set(re.findall(r"[a-z0-9]+", phrase)) & family:
+                return ""
     for columns in table_columns.values():
         for column in (columns or {}):
             name = str(column).upper()
             if name.endswith(_FLAG_SUFFIXES):
                 continue
-            tokens = set(re.split(r"[^A-Z0-9]+", name))
+            tokens = _column_tokens(column)
             if tokens & _MONEY_COLUMN_TOKENS:
                 return ""
             # A profit centre's key is a place: PFT_CTR.

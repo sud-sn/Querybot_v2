@@ -841,6 +841,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Quantities in different units are not added together.",
         "fr": "Les quantités de différentes unités ne sont pas additionnées.",
     },
+    "answer.listing_cut": {
+        "en": "Showing the first {count}, in order; there are more.",
+        "fr": "Les {count} premiers sont affichés, dans l'ordre ; il y en a d'autres.",
+    },
     "answer.leads_in_unit": {
         "en": "In {unit}, {label} leads at {value} {unit}.",
         "fr": "En {unit}, {label} arrive en tête avec {value} {unit}.",

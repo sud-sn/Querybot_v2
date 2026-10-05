@@ -1681,13 +1681,13 @@ def graph_block_response(graph_ctx, *, lang, model=None, vocab=None) -> str:
     ])
 
 
-def answerable_metric_names(account_id: str, limit: int = 5) -> list[str]:
-    """The workspace's answerable metrics a reader can be offered: the most
-    asked first, then the plainest -- "Units sold" before "Month-end
-    allocated quantity"."""
-    metrics = store.list_metrics(account_id, answerable_only=True) or []
-    ordered = sorted(metrics, key=lambda m: (-int(m.get("usage_count") or 0), len(str(m.get("name") or "")),
-                                             str(m.get("name") or "")))
+def answerable_metric_names(metrics: list[dict] | None, limit: int = 5) -> list[str]:
+    """The metrics a reader can be offered -- ``metrics`` is the reader's own,
+    planner_metrics_in_scope: answerable, on tables they may read -- the most
+    asked first, then the plainest: "Units sold" before "Month-end allocated
+    quantity"."""
+    ordered = sorted(metrics or [], key=lambda m: (-int(m.get("usage_count") or 0), len(str(m.get("name") or "")),
+                                                   str(m.get("name") or "")))
     return [str(m.get("name")) for m in ordered if m.get("name")][:limit]
 
 
@@ -3908,26 +3908,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
                 _registry_metrics = (_contract_metrics if _contract_metrics is not None
                                      else store.list_metrics(account_id))
-                _lacked = measure_the_data_lacks(_semantic_plan_question, _registry_metrics, all_columns,
-                                                 _planner_fact_tables)
+                _lacked = measure_the_data_lacks(_semantic_plan_question, _registry_metrics, all_columns)
             except Exception as _lacked_exc:
                 _lacked = ""
                 log.warning("Measure coverage not checked for %s: %s", account_id, _lacked_exc)
             if _lacked:
-                _reader_lang = (portal_user or {}).get("lang") or "en"
-                _answerable = answerable_metric_names(account_id)
+                _answerable = answerable_metric_names(_planner_metrics)
                 _example_metric = next((name for name in _answerable if _lacked == "sales" and "sold" in name.lower()),
                                        _answerable[0] if _answerable else "")
                 log.info("%r asks for %s, which %s's data does not keep", question[:120], _lacked, account_id)
                 await adapter.send_message(
                     event,
-                    _t("terminal.measure_not_in_data", lang=_reader_lang,
-                       word=_t(f"word.{_lacked}", lang=_reader_lang),
+                    _t("terminal.measure_not_in_data", lang=(portal_user or {}).get("lang") or "en",
+                       word=_t(f"word.{_lacked}", lang=(portal_user or {}).get("lang") or "en"),
                        measures=", ".join(_answerable[:5]),
-                       example=_t("example.by_month", lang=_reader_lang, measure=_example_metric))
+                       example=_t("example.by_month", lang=(portal_user or {}).get("lang") or "en",
+                                  measure=_example_metric))
                     if _answerable else
-                    _t("terminal.measure_not_in_data_no_metrics", lang=_reader_lang,
-                       word=_t(f"word.{_lacked}", lang=_reader_lang)),
+                    _t("terminal.measure_not_in_data_no_metrics", lang=(portal_user or {}).get("lang") or "en",
+                       word=_t(f"word.{_lacked}", lang=(portal_user or {}).get("lang") or "en")),
                 )
                 _trace_finish(
                     trace_id,
@@ -4567,13 +4566,30 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     # A plain listing reads the one dimension column its plan names: its
     # distinct members, through the governed executor (core.listing).
+    # Not where it names a member ("the FITTINGS items") or the reader's rows
+    # are limited by a policy on a fact: the dimension alone lists every
+    # member, which neither is.
     _listed = None
-    if _listing:
-        from core.listing import listed_field, listing_sql
+    _listing_sql = ""
+    if _listing and not _named_members and not any(_resolved_values.values()):
+        try:
+            from core.listing import listed_field, listing_sql
+            from core.unknown_members import unknown_member_policies
 
-        _listed = listed_field(_semantic_plan, _planner_fact_tables)
-    if _listed:
-        _listing_sql = listing_sql(_listed, db_cfg.get("db_type", "azure_sql"))
+            if not store.list_row_policies(account_id):
+                _listed = listed_field(_semantic_plan, _planner_fact_tables, _listing,
+                                       [key.get("label") or "" for key in _planner_role_keys])
+            if _listed:
+                _leave_out = next((policy for policy in unknown_member_policies(account_id)
+                                   if policy["table"].split(".")[-1].upper()
+                                   == str(_listed["table"]).split(".")[-1].upper()), None)
+                _listing_sql = listing_sql(_listed, db_cfg.get("db_type", "azure_sql"), leave_out=_leave_out)
+        except Exception as _listing_plan_exc:
+            _listed = None
+            log.warning("Listing %r not planned for %s: %s", _listing, account_id, _listing_plan_exc)
+    if _listed and _listing_sql:
+        from core.listing import LIMIT as _LISTING_LIMIT
+
         log.info("Listing %r for %s: %s", _listing, account_id, _listing_sql)
         try:
             _listing_t0 = time.time()
@@ -4582,6 +4598,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 timeout=_query_wait_timeout(db_cfg),
             )
             rows = governed.rows
+            # More than shown, by the extra row read or by the executor's own
+            # row cap.
+            if len(rows) > _LISTING_LIMIT or getattr(governed, "truncated", False):
+                rows = rows[:_LISTING_LIMIT]
+                await adapter.send_message(event, _t(
+                    "answer.listing_cut", lang=(portal_user or {}).get("lang") or "en", count=_LISTING_LIMIT))
             duration_ms = int((time.time() - _listing_t0) * 1000)
             _trace_update(trace_id, generated_sql=governed.sql, sql_validation_status="governed_listing",
                           query_row_count=len(rows), query_duration_ms=duration_ms)
@@ -6019,7 +6041,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 str(field.get("role") or "") in {"measure", "measure_candidate"}
                 for field in (_semantic_plan or {}).get("fields") or [] if isinstance(field, dict)
             )
-            _offered = answerable_metric_names(account_id) if _names_no_measure else []
+            _offered = answerable_metric_names(_planner_metrics) if _names_no_measure else []
             await adapter.send_message(
                 event,
                 _t("terminal.name_a_measure", lang=(portal_user or {}).get("lang") or "en",

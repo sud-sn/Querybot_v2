@@ -65,30 +65,77 @@ def _bare(table: str) -> str:
     return re.sub(r"[\[\]\"`]", "", str(table or "")).split(".")[-1].strip().upper()
 
 
-def listed_field(semantic_plan: dict | None, fact_tables: set[str] | None) -> dict | None:
-    """The one dimension column a listing's plan reads, or None when it reads
-    none, several, or a fact's."""
+_FILLER = frozenset({"name", "names", "list", "code", "codes", "description", "descriptions", "label", "labels"})
+
+
+def _singular(word: str) -> str:
+    """"items" is "item", "categories" "category", "addresses" "address"."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith(("sses", "shes", "ches", "xes")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _words(text: str) -> set[str]:
+    from core.word_forms import base_form
+
+    return {_singular(base_form(word)) for word in re.findall(r"[a-z0-9]+", str(text or "").lower())}
+
+
+def listed_field(semantic_plan: dict | None, fact_tables: set[str] | None, target: str = "",
+                 role_labels: list[str] | None = None) -> dict | None:
+    """The one dimension column a listing reads, or None.
+
+    None unless the plan reads exactly that one column, of a dimension, and
+    every word of what the reader asked for is the column's own -- "item
+    names" of the item name, not "FITTINGS items", "item prices" or "French
+    item names" -- and none is a role a fact reaches the dimension in: "the
+    buyers" are the parties some fact names as its buyer, which the
+    dimension alone does not say."""
     facts = {_bare(table) for table in fact_tables or ()}
     found: dict[tuple[str, str], dict] = {}
     for field in (semantic_plan or {}).get("fields") or []:
-        if not isinstance(field, dict) or str(field.get("role") or "") not in _LISTED_ROLES:
+        if not isinstance(field, dict):
             continue
-        table, column = str(field.get("table") or ""), str(field.get("column") or "")
-        if not table or not column or _bare(table) in facts:
-            continue
-        found.setdefault((_bare(table), column.upper()), field)
-    return next(iter(found.values())) if len(found) == 1 else None
+        found.setdefault((_bare(field.get("table")), str(field.get("column") or "").upper()), field)
+    if len(found) != 1:
+        return None
+    field = next(iter(found.values()))
+    if str(field.get("role") or "") not in _LISTED_ROLES or _bare(field.get("table")) in facts:
+        return None
+    if not field.get("table") or not field.get("column"):
+        return None
+    asked = _words(target) - _words(" ".join(_FILLER))
+    from core.semantic_planner import _words_form
+
+    own = _words(field.get("term")) | _words(_words_form(str(field.get("column"))).replace("_", " "))
+    if target and not asked <= own:
+        return None
+    if asked & _words(" ".join(role_labels or [])):
+        return None
+    return field
 
 
-def listing_sql(field: dict, db_type: str, limit: int = LIMIT) -> str:
+def listing_sql(field: dict, db_type: str, limit: int = LIMIT, *, leave_out: dict | None = None) -> str:
     """Its distinct members, in order: SELECT DISTINCT TOP n column FROM its
-    table, written for ``db_type``."""
+    table, written for ``db_type``. ``leave_out`` is the table's unknown-
+    member policy (core.unknown_members): its placeholder rows are no
+    members. One more than ``limit`` is read, so a list cut short can say so."""
     parts = [part for part in re.split(r"\.", re.sub(r"[\[\]\"`]", "", str(field["table"]))) if part][-2:]
     table = ".".join(f"[{part}]" for part in parts)
     column = re.sub(r"[\[\]\"`]", "", str(field["column"]))
     alias = re.sub(r"[^A-Za-z0-9]+", "_", str(field.get("term") or column)).strip("_").upper() or column.upper()
-    sql = (f"SELECT DISTINCT TOP {int(limit)} listed.[{column}] AS [{alias}] FROM {table} AS listed "
-           f"WHERE listed.[{column}] IS NOT NULL ORDER BY listed.[{column}]")
+    where = f"listed.[{column}] IS NOT NULL"
+    if leave_out and leave_out.get("keys") and leave_out.get("key_column"):
+        from core.unknown_members import exclusion_predicate
+
+        key = re.sub(r"[\[\]\"`]", "", str(leave_out["key_column"]))
+        where += " AND " + exclusion_predicate(f"listed.[{key}]", leave_out)
+    sql = (f"SELECT DISTINCT TOP {int(limit) + 1} listed.[{column}] AS [{alias}] FROM {table} AS listed "
+           f"WHERE {where} ORDER BY listed.[{column}]")
     dialect = _DIALECTS.get(str(db_type or "").lower(), str(db_type or "").lower() or "tsql")
     if dialect == "tsql":
         return sql

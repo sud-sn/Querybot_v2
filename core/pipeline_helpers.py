@@ -956,7 +956,9 @@ def unmet_aggregates(question: str, metrics: list[dict]) -> list[str]:
 # What "no", "without", "sans" and "aucun" say there is none of, when they
 # are a condition on a value: stock, a quantity, its movements.
 _NONE_OF = (r"(?:stock|inventory|inventaire|on\s+hand|quantit(?:y|ies|e|es)|units?|sales|ventes?|orders?"
-            r"|commandes?|movements?|mouvements?|activity|activite|purchases?|achats?|receipts?|demand)\b")
+            r"|commandes?|movements?|mouvements?|activity|activite|purchases?|achats?|receipts?|demand"
+            r"|invoices?|factures?|prescriptions?|ordonnances?|payments?|paiements?|shipments?|deliveries?"
+            r"|livraisons?|claims?|transactions?)\b")
 
 
 # A breakdown said to replace another: "by supplier instead", "plutôt par

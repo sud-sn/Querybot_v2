@@ -330,19 +330,29 @@ def _names_a_measure(canonical: str, metrics: list[dict] | None) -> bool:
     return False
 
 
+def _folded_words(text: str) -> set[str]:
+    import unicodedata
+
+    folded = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode().casefold()
+    return set(re.findall(r"[a-z0-9]+", folded))
+
+
 def _names_a_measure_on_screen(canonical: str, metrics: list[dict] | None, cached_col_names: list[str] | None) -> bool:
-    """Whether a metric the question names is one the result on screen holds
-    -- its column carries the metric's name (UNITS_SOLD for "Units sold")."""
+    """Whether a metric the question names is one the result on screen holds:
+    a column carries the metric's name or one of its synonyms -- NET_SALES
+    for a Revenue whose synonym is "sales", QUANTITE_VENDUE for "Quantité
+    vendue" -- accents folded."""
     text = " ".join(re.findall(r"[a-z0-9%]+", canonical.casefold()))
-    columns = [set(re.findall(r"[a-z0-9]+", str(column).casefold())) for column in cached_col_names or []]
+    columns = [_folded_words(column) for column in cached_col_names or []]
     for metric in metrics or []:
         phrases = [metric.get("name"), *re.split(r"[,;\n]+", str(metric.get("synonyms") or ""))]
         if not any((words := " ".join(re.findall(r"[a-z0-9%]+", str(phrase or "").casefold())))
                    and re.search(rf"(?<![a-z0-9]){re.escape(words)}(?![a-z0-9])", text) for phrase in phrases):
             continue
-        name = set(re.findall(r"[a-z0-9]+", str(metric.get("name") or "").casefold()))
-        if name and any(name <= column for column in columns):
-            return True
+        for phrase in phrases:
+            words = _folded_words(phrase)
+            if words and any(words <= column for column in columns):
+                return True
     return False
 
 

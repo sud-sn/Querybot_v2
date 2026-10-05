@@ -151,6 +151,18 @@ class TestTheHeadline:
         assert (_headline(_BY_WAREHOUSE, "stock en main par entrepôt", "fr")
                 == "En FT, NORTH DEPOT arrive en tête avec 900 FT.")
 
+    def test_nothing_leads_where_every_one_is_at_nothing(self):
+        rows = [{**row, "STOCK_ON_HAND": 0.0} for row in _BY_WAREHOUSE]
+
+        assert _headline(rows, "available quantity by warehouse") == "Stock On Hand is 0 in every unit of measure."
+
+    def test_the_unit_a_leader_is_said_in_holds_some(self):
+        rows = [{"WAREHOUSE": w, "UNT_OF_MSR": "BG", "STOCK_ON_HAND": 0.0} for w in ("A DEPOT", "B DEPOT")] + [
+            {"WAREHOUSE": "A DEPOT", "UNT_OF_MSR": "EA", "STOCK_ON_HAND": 10.0},
+            {"WAREHOUSE": "B DEPOT", "UNT_OF_MSR": "EA", "STOCK_ON_HAND": 4.0}]
+
+        assert _headline(rows, "stock on hand by warehouse") == "In EA, A DEPOT leads at 10 EA."
+
     def test_money_is_not_said_in_a_unit(self):
         rows = [{"WAREHOUSE": row["WAREHOUSE"], "UNT_OF_MSR": row["UNT_OF_MSR"],
                  "INVENTORY_VALUE": row["STOCK_ON_HAND"] * 2.5} for row in _BY_WAREHOUSE]

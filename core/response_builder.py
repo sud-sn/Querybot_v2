@@ -2488,7 +2488,13 @@ def _leader_in_one_unit(
         by_label[label] = by_label.get(label, 0.0) + value
     if len(totals) < 2 and not any(len(by_label) > 1 for by_label in totals.values()):
         return None
-    unit = max(totals, key=lambda u: (sum(abs(v) for v in totals[u].values()), u))
+    # The unit the most of them hold any of, then the most of them are kept
+    # in -- never one where every one is at nothing -- and only then the
+    # larger, to settle a tie: the headline is said in one unit, not ranked
+    # across them.
+    unit = max(totals, key=lambda u: (sum(1 for v in totals[u].values() if (v < 0 if ascending else v > 0)),
+                                      sum(1 for v in totals[u].values() if v), len(totals[u]),
+                                      sum(abs(v) for v in totals[u].values()), -sorted(totals).index(u)))
     if len(totals[unit]) < 2:
         return None
     label, value = sorted(totals[unit].items(), key=lambda item: (item[1], item[0]), reverse=not ascending)[0]
@@ -2716,12 +2722,23 @@ def build_answer(
             # "stock on hand by warehouse" was "Returned 19 rows", because
             # feet and eaches are not added up to rank a warehouse.
             in_unit = _leader_in_one_unit(rows, label_col, text_cols, value_col, ascending)
+            # Nothing anywhere leads: every one is at nothing.
+            if in_unit and not any(_to_float(row.get(value_col)) for row in rows):
+                return {
+                    "headline": _t("answer.per_unit.all_zero",
+                                   measure=_display_label(value_col) or _t("answer.total")),
+                    "short_value": "",
+                    "comparison": scope.get("badge", ""),
+                    "scope_badge": scope.get("badge", ""),
+                    "scope_note": scope.get("note", ""),
+                }
             if in_unit:
                 unit, label, value = in_unit
                 return {
                     "headline": _t("answer.lowest_in_unit" if ascending else "answer.leads_in_unit",
                                    unit=unit, label=label, value=format_value(value, value_col)),
-                    "short_value": format_value(value, value_col),
+                    # No one figure is the answer: it is one unit's.
+                    "short_value": "",
                     "comparison": scope.get("badge", ""),
                     "scope_badge": scope.get("badge", ""),
                     "scope_note": " ".join(part for part in (

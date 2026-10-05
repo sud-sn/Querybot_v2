@@ -109,6 +109,12 @@ class TestNoneOfIt:
 
         assert not _VALUE_CONDITION.search(question)
 
+    @pytest.mark.parametrize("question", ["customers with no invoices", "patients with no prescriptions"])
+    def test_none_of_what_is_counted(self, question):
+        from core.pipeline_helpers import _VALUE_CONDITION
+
+        assert _VALUE_CONDITION.search(question)
+
 
 @pytest.fixture(scope="module")
 def warehouse(tmp_path_factory):
@@ -169,7 +175,8 @@ class TestTheFrontDoor:
         "tell me a joke", "perfect, thanks a lot", "What does gross margin mean?", "How is net margin calculated?",
         "Can you explain what a KPI is?", "Can you help me reset my account password?", "is 30% margin good?",
         "what does on hand mean?", "Is our data refreshed daily?", "Thank you, see you in 2025", "100% agree",
-        "merci by avance",
+        "merci by avance", "how do I export orders to Excel?", "do you store customer data?",
+        "write me a poem about inventory", "what's the weather in the city of Toronto", "what tables hold invoices?",
     ])
     def test_said_to_the_assistant(self, message):
         from core.dispatcher import _plainly_a_business_question
@@ -236,6 +243,8 @@ class TestBesideAResult:
         ("just the top 5 by sales", ["REGION", "REVENUE"], False),
         ("sort by sales", ["REGION", "REVENUE"], False),
         ("what about revenue by product?", ["REGION", "REVENUE"], False),
+        # A measure on screen under one of its synonyms is still on screen.
+        ("which region has the highest sales?", ["REGION", "NET_SALES"], False),
     ])
     def test_a_question_of_its_own(self, question, columns, asked_anew):
         from core.query_router import asks_a_new_question
@@ -266,8 +275,6 @@ class TestWhatTheDataKeeps:
     _INVENTORY = {"MART.ITM_BAL_DLY_FCT": {"ON_HND_QTY": "decimal", "ITM_CST": "decimal", "PFT_CTR_DMS_KEY": "int",
                                            "STL_PRC_IND": "nvarchar"},
                   "MART.ITM_DMS": {"ITM_NET_WT": "decimal", "ITM_GRS_WT": "decimal"}}
-    _FACTS = {"MART.ITM_BAL_DLY_FCT"}
-
     @pytest.mark.parametrize("question, word", [
         ("what is my revenue trend", "revenue"),
         ("what is my revenue for each profit centre", "revenue"),
@@ -280,13 +287,33 @@ class TestWhatTheDataKeeps:
         from core.metric_scope import measure_the_data_lacks
 
         metrics = [{"name": "Stock on hand", "synonyms": "stock"}, {"name": "Units sold", "synonyms": "units sold"}]
-        assert measure_the_data_lacks(question, metrics, self._INVENTORY, self._FACTS) == word
+        assert measure_the_data_lacks(question, metrics, self._INVENTORY) == word
 
-    def test_a_workspace_that_keeps_the_money_is_not_told_it_does_not(self):
+    @pytest.mark.parametrize("columns", [
+        {"MART.SLS_FCT": {"NET_SLS_AMT": "decimal"}}, {"dbo.FactSales": {"SalesAmount": "money"}},
+        {"dbo.F": {"UnitPrice": "money", "Qty": "int"}}, {"S.F": {"LINE_TOTAL": "decimal"}},
+        {"S.F": {"NET_VAL": "decimal"}}, {"S.F": {"MONTANT_HT": "decimal"}},
+        {"S.CLAIMS": {"PAID": "decimal", "COPAY": "decimal", "DISP_FEE": "decimal"}},
+        {"S.ITEM": {"LIST_PRC": "decimal"}, "S.F": {"QTY": "int"}},
+    ])
+    def test_a_workspace_that_may_keep_the_money_is_not_told_it_does_not(self, columns):
         from core.metric_scope import measure_the_data_lacks
 
-        assert measure_the_data_lacks("revenue by month", [], {"MART.SLS_FCT": {"NET_SLS_AMT": "decimal"}}) == ""
-        assert measure_the_data_lacks("revenue by month", [{"name": "Revenue"}], self._INVENTORY, self._FACTS) == ""
+        assert measure_the_data_lacks("revenue by month", [], columns) == ""
+
+    @pytest.mark.parametrize("metric", [{"name": "Revenue"}, {"name": "Net sales"}, {"name": "Chiffre d'affaires"}])
+    def test_a_metric_for_the_figure_is_the_figure(self, metric):
+        from core.metric_scope import measure_the_data_lacks
+
+        assert measure_the_data_lacks("revenue by month", [metric], self._INVENTORY) == ""
+
+    @pytest.mark.parametrize("question", [
+        "how many sales orders were shipped late", "patients per income bracket", "orders by sales rep",
+    ])
+    def test_a_money_word_naming_something_else(self, question):
+        from core.metric_scope import measure_the_data_lacks
+
+        assert measure_the_data_lacks(question, [], self._INVENTORY) == ""
 
     @pytest.mark.parametrize("question, thing", [
         ("List me the item names", "item names"), ("what are the item groups?", "item groups"),
@@ -308,10 +335,12 @@ class TestWhatTheDataKeeps:
         from core.listing import listing_sql
 
         field = {"term": "item name", "table": "WH.MART.ITM_DMS", "column": "ITM_NM"}
-        assert listing_sql(field, "azure_sql") == (
-            "SELECT DISTINCT TOP 200 listed.[ITM_NM] AS [ITEM_NAME] FROM [MART].[ITM_DMS] AS listed "
-            "WHERE listed.[ITM_NM] IS NOT NULL ORDER BY listed.[ITM_NM]")
-        assert "LIMIT 200" in listing_sql(field, "snowflake")
+        # One more than the 200 shown, so a list cut short says so; the
+        # placeholder member left out.
+        assert listing_sql(field, "azure_sql", leave_out={"key_column": "ITM_DMS_KEY", "keys": ["0"]}) == (
+            "SELECT DISTINCT TOP 201 listed.[ITM_NM] AS [ITEM_NAME] FROM [MART].[ITM_DMS] AS listed "
+            "WHERE listed.[ITM_NM] IS NOT NULL AND listed.[ITM_DMS_KEY] NOT IN (0) ORDER BY listed.[ITM_NM]")
+        assert "LIMIT 201" in listing_sql(field, "snowflake")
 
 
 class TestTheProductSaysWhatItKeeps:
@@ -333,14 +362,41 @@ class TestTheProductSaysWhatItKeeps:
         answer = harness.ask(warehouse, "list item names")
 
         assert not answer["model_wrote_sql"]
-        assert {row["ITEM_NAME"] for row in answer["rows"]} >= {"BRASS ELBOW", "STEEL TEE", "COPPER PIPE", "PEX PIPE"}
+        # Every item, and only items: the placeholder row is no item.
+        assert sorted(row["ITEM_NAME"] for row in answer["rows"]) == [
+            "BRASS ELBOW", "COPPER PIPE", "PEX PIPE", "STEEL TEE"]
 
-    def test_the_available_items(self, warehouse):
+    def test_a_list_cut_short_says_so(self, warehouse):
+        import core.listing
+
+        with patch.object(core.listing, "LIMIT", 2):
+            answer = harness.ask(warehouse, "which items do we carry?")
+
+        (card,) = [payload for _kind, payload in answer["replies"]
+                   if isinstance(payload, dict) and payload.get("answer")]
+        assert len((card.get("data") or {}).get("rows") or []) == 2
+        assert "Showing the first 2, in order; there are more." in [
+            str(payload) for _kind, payload in answer["replies"]]
+
+    def test_the_available_items_are_the_items(self, warehouse):
+        # A reader's "the available items present" asks for the items; it
+        # was asked which dataset to use. "Available" is not read as a
+        # condition on their stock.
         answer = harness.ask(warehouse, "list the available items")
 
         assert not answer["model_wrote_sql"]
-        assert {"BRASS ELBOW", "COPPER PIPE"} <= set(answer["rows"][0].values()) | {
-            value for row in answer["rows"] for value in row.values()}
+        assert sorted(next(iter(row.values())) for row in answer["rows"]) == [
+            "BRASS ELBOW", "COPPER PIPE", "PEX PIPE", "STEEL TEE"]
+
+    @pytest.mark.parametrize("question", [
+        "list FITTINGS items", "show me the NORTH DEPOT items", "list catalogued items", "list the buyers",
+        "list item prices", "list french item names",
+    ])
+    def test_a_list_narrowed_by_something_is_not_every_member(self, warehouse, question):
+        answer = harness.ask(warehouse, question)
+
+        listed_whole = [sql for sql in [answer["sql"]] if "SELECT DISTINCT TOP 201" in sql]
+        assert not listed_whole, answer["sql"]
 
     def test_the_warehouses_in_french(self, warehouse):
         answer = harness.ask(warehouse, "liste des entrepôts", "fr")
