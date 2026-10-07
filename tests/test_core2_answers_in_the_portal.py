@@ -281,7 +281,8 @@ def test_the_new_core_runs_on_its_own_threads_not_on_todays_pipelines(learned, m
 @pytest.mark.parametrize("posture", ["standard", "regulated", "unprovisioned"])
 def test_a_question_is_recorded_as_querybot_keeps_questions(posture, learned, monkeypatch):
     """Under compliance (regulated, or never set up, as the agent runtime counts it) the
-    recorded question has its personal data scrubbed, and member values stay from the AI."""
+    recorded question has its personal data scrubbed. The same scrubber's presence is what
+    keeps member values from the AI (portal_answer: values_allowed=scrub is None)."""
     store, *_ = learned
     import gateway.core2_bridge as bridge
     from core2.service import question_scrubber
@@ -289,7 +290,11 @@ def test_a_question_is_recorded_as_querybot_keeps_questions(posture, learned, mo
     if posture == "regulated":
         store.save_compliance_profile(ACCOUNT, mode="regulated")
     elif posture == "unprovisioned":
-        monkeypatch.setattr(store, "compliance_profile_exists", lambda account_id: False)
+        # The store object is_regulated holds: other test modules re-import `store`, so in
+        # a full run a bare `import store` can be another object (see test_user_attestation).
+        from core.compliance import policy_engine
+
+        monkeypatch.setattr(policy_engine.store, "compliance_profile_exists", lambda account_id: False)
     monkeypatch.setattr("core2.service.portal_answer", lambda *a, **k: json.loads(json.dumps(CANNED)))
 
     class Adapter:
@@ -306,6 +311,7 @@ def test_a_question_is_recorded_as_querybot_keeps_questions(posture, learned, mo
         assert recorded == "orders for jane.doe@example.com" and question_scrubber(ACCOUNT) is None
     else:
         assert "jane.doe@example.com" not in recorded and "[EMAIL]" in recorded, recorded
+        assert question_scrubber(ACCOUNT) is not None
 
 
 def test_side_by_side_does_not_answer_thanks_twice(learned, monkeypatch):
