@@ -127,7 +127,8 @@ def _yyyymmdd(c: exp.Expression) -> exp.Expr:
 
 
 def _yyyymm(c: exp.Expression) -> exp.Expr:
-    return exp.and_(_between(c.copy(), 190001, 210012), _between(_mod(c.copy(), 100), 1, 12))
+    # Month 00 is allowed: period tables often hold a row for the whole year (202200).
+    return exp.and_(_between(c.copy(), 190000, 210012), _between(_mod(c.copy(), 100), 0, 12))
 
 
 def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions | None = None) -> TableProfile:

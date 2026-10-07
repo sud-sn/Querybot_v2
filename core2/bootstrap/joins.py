@@ -83,6 +83,10 @@ def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, 
     for target, score in ((k, 0.85), (u, 0.8)):
         if target and names.ends_with(a, target) and len(a) > len(target):
             return score, a[: len(a) - len(target)]
+    for target, score in ((k, 0.8), (u, 0.75)):
+        # The role after the name: ABC_CLASS_VOLUME_KEY points at ABC_CLASS as its "volume" role.
+        if target and len(a) > len(target) and all(names.same_word(x, y) for x, y in zip(a, target)):
+            return score, a[len(target):]
     return 0.0, []
 
 
@@ -169,10 +173,13 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             if kind not in ("integer", "text", "decimal"):
                 continue
             if [unique] != primary:
-                # Besides the key itself, only code columns of tables big enough that
-                # their uniqueness is not an accident (six warehouses in six cities).
+                # Besides the key itself, only the table's own code (WHS_CD on the
+                # warehouses), in a table big enough that its uniqueness is not an
+                # accident: a warehouse's profit-centre code is unique in a small
+                # warehouse table, and still the profit centre's, not the warehouse's.
                 words = names.tokens(unique)
-                if not (words and words[-1] in names.KEY_SUFFIXES) or profiles[key].rows < 20:
+                if not (words and words[-1] in names.KEY_SUFFIXES) or profiles[key].rows < 20 \
+                        or not _names_its_table(unique, table.name):
                     continue
             if kind == "text" and (p.avg_len or 0) > 24:
                 continue   # names and descriptions are not what keys point at
@@ -215,17 +222,20 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                                                        k_is_dimension=to_table in dimension_like)
                 to_calendar = to_table in calendars
                 if to_calendar:
-                    # Date keys are recognised by shape, whatever their names.
-                    plausible = a.pattern in ("yyyymmdd",) or column.data_type == "date" or is_declared or score > 0
+                    # Date keys are recognised by shape, whatever their names: a day key
+                    # points at a day calendar, a yyyymm period at a month calendar.
+                    grain = calendars[to_table].grain
+                    plausible = (a.pattern == "yyyymmdd" and grain == "day") or (a.pattern == "yyyymm" and grain == "month") \
+                        or (column.data_type == "date" and grain == "day") or is_declared or score > 0
                 if to_table == key and not (is_declared or score >= 0.8):
                     continue   # a table pointing at itself needs more than values
                 if is_calendar and not (is_declared or score >= 0.9):
                     continue   # a calendar's own period numbers are not foreign keys
                 if own_key and not (is_declared or score >= 0.9):
                     continue   # a table's own key points elsewhere only when it says so (1:1 extensions)
-                if plausible and not (is_declared or score) and k.distinct < 20 \
+                if plausible and not (is_declared or score) and not to_calendar \
                         and not names.opaque(column.name) and not _shares_a_word(column.name, inventory.tables[to_table].name):
-                    plausible = False   # small keys collide by chance; a meaningful name must agree
+                    plausible = False   # whole-number keys collide by chance: a meaningful name must agree
                 if not (is_declared or score >= 0.75 or plausible):
                     continue
                 candidates[ident] = JoinFinding(*ident, declared=is_declared, name_score=score, role_tokens=role,
@@ -254,7 +264,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             f.trust = "verified"
         elif f.declared and f.match_rate >= PROPOSED:
             f.trust = "declared"   # usable, as the database says; the unmatched rows are reported
-        elif f.match_rate >= PROPOSED:
+        elif f.match_rate >= PROPOSED or ((f.declared or f.name_score >= 0.95) and f.match_rate > 0):
+            # A join its names (or the database) vouch for stays usable when most keys
+            # find nothing: the answer reports the unmatched rows rather than losing
+            # the grouping altogether.
             f.trust = "proposed"
         else:
             f.trust = "rejected"
@@ -294,9 +307,14 @@ def _names_its_table(column: str, table: str) -> bool:
     return bool(core) and len(core) == len(own) and all(names.same_word(a, b) for a, b in zip(core, own))
 
 
+# Words too general to tie a column to a table on their own ("seller status" is not "item stock status").
+_GENERIC_WORDS = {"sts", "status", "typ", "type", "cd", "code", "grp", "group", "cls", "class", "cat", "category",
+                  "lvl", "level", "flg", "flag", "dms", "dim", "nm", "name", "desc", "dsc", "id", "key", "no", "nbr"}
+
+
 def _shares_a_word(column: str, table: str) -> bool:
-    left = [t for t in names.tokens(column) if t not in names.KEY_SUFFIXES and not t.isdigit()]
-    right = names.core_table(table)
+    left = [t for t in names.tokens(column) if t not in names.KEY_SUFFIXES and not t.isdigit() and t not in _GENERIC_WORDS]
+    right = [t for t in names.core_table(table) if t not in _GENERIC_WORDS]
     return any(names.same_word(a, b) for a in left for b in right)
 
 

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from core2.bootstrap import names
 from core2.bootstrap.calendar import CalendarFinding
 from core2.bootstrap.dates import DateCandidate
-from core2.bootstrap.inventory import Inventory, InvColumn
+from core2.bootstrap.inventory import Inventory, InvColumn, InvTable
 from core2.bootstrap.joins import JoinFinding
 from core2.bootstrap.keys import TableKeys
 from core2.bootstrap.profiler import TableProfile
@@ -36,11 +36,9 @@ _MONEY = {"amount", "amt", "value", "val", "cost", "cst", "price", "prc", "reven
           "mgn", "usd", "cad", "eur", "invoice", "billed", "total", "target"}
 _QUANTITY = {"qty", "quantity", "units", "count", "cnt", "volume", "weight", "hours", "days", "seats", "fte",
              "headcount", "hc", "number", "items", "pieces"}
-_LEVEL = {"balance", "bal", "hand", "oh", "stock", "stk", "inventory", "level", "headcount", "hc", "fte", "seats",
-          "mrr", "arr", "outstanding", "backlog", "available", "avl", "allocated", "alc", "position", "open"}
-_FLOW = {"cost", "cst", "salary", "sal", "sales", "sls", "revenue", "rev", "received", "rcv", "issued", "paid",
-         "budget", "bdgt", "target", "tgt", "plan", "forecast", "quota", "hours", "spent", "spend", "movement"}
-_CODE = {"id", "key", "code", "cd", "no", "nbr", "num", "seq", "sequence", "line", "ln", "lin", "type", "typ",
+_LEVEL = names.LEVEL_WORDS
+_FLOW = names.FLOW_WORDS
+_CODE = {"id", "key", "code", "cd", "no", "nbr", "num", "seq", "sequence", "line", "ln", "lin", "type", "typ", "ind", "indicator",
          "status", "sts", "flag", "flg", "year", "yr", "month", "mth", "day", "week", "wk", "quarter", "qtr",
          "version", "level", "lvl", "rank", "priority", "grade", "zip", "postal", "phone"}
 _UNIT_WORDS = {"uom", "unit", "units", "unt", "um", "measure"}
@@ -94,20 +92,28 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
             kind = "snapshot"
             evidence.append(Evidence(kind="periodic", weight=1, detail=next(
                 e.detail for e in periodic[0].evidence if e.kind == "snapshot")))
-        elif not numbers and len(outgoing) >= 2:
+        elif not numbers and len(outgoing) >= 2 and not _any_label(table, profiles[key], keys[key]) and (
+                len(keys[key].primary_key) != 1 or any(j.from_column == keys[key].primary_key[0] for j in outgoing)):
             kind = "bridge"
             evidence.append(Evidence(kind="bridge", weight=1, detail=f"links {len(outgoing)} tables and holds no measures"))
         elif numbers and (outgoing or roles):
             kind = "fact"
             evidence.append(Evidence(kind="measures", weight=1, detail=f"{len(numbers)} measure(s) and "
                                      f"{len(outgoing)} link(s) to other tables"))
-        elif incoming or labels:
+        elif incoming or labels or (not numbers and len(keys[key].primary_key) == 1
+                                    and _any_label(table, profiles[key], keys[key])):
             kind = "dimension"
-            evidence.append(Evidence(kind="names_members", weight=0.5, detail="other tables point at it"))
+            evidence.append(Evidence(kind="names_members", weight=0.5,
+                                     detail="other tables point at it" if incoming else "it lists named things"))
         else:
             kind = "other"
         out[key] = (kind, evidence)
     return out
+
+
+def _any_label(table: InvTable, profile: TableProfile, keys: TableKeys) -> bool:
+    """Any column that names things, unique or not."""
+    return any(c.name not in keys.primary_key and _label_like(c, profile.columns[c.name]) for c in table.columns)
 
 
 def _label_like(column: InvColumn | None, p: ColumnProfile) -> bool:
@@ -176,7 +182,7 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                 elif words & _QUANTITY or column_is_whole(p):
                     m.format = "integer" if column_is_whole(p) else "number"
                 if periodic:
-                    level = bool(words & _LEVEL) or opaque or not words & _FLOW
+                    level = (bool(words & _LEVEL) or opaque or not words & _FLOW) and not (words & _FLOW and not words & _LEVEL)
                     if level:
                         m.additivity, m.time_aggregation = "semi_additive", "last"
                         m.evidence.append(Evidence(kind="level", weight=1,

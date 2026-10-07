@@ -97,9 +97,11 @@ def learned_view(model: SemanticModel) -> dict[str, Any]:
 
     calendars = [{
         "table": model.tables[c.table].business_name, "physical": model.tables[c.table].name,
-        "date": model.columns[c.date_column].name,
+        "date": model.columns[c.date_column].name if c.date_column else "",
         "key": model.columns[c.key_column].name if c.key_column else "",
-        "range": f"{c.first_date} to {c.last_date}",
+        "grain": c.grain,
+        "range": f"{c.first_date} to {c.last_date}" if c.grain == "day" else
+                 f"{c.first_date:%b %Y} to {c.last_date:%b %Y}" if c.first_date and c.last_date else "",
         "attributes": [(a.replace("_", " "), model.columns[col].name) for a, col in sorted(c.attributes.items())],
         "fiscal": (f"Fiscal years start in month {c.fiscal_year_start_month}, named by the year they "
                    f"{c.fiscal_year_named_by}") if c.fiscal_year_start_month else "",

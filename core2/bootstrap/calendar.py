@@ -33,7 +33,7 @@ _HIGH = dt.date(9000, 1, 1)
 @dataclass
 class CalendarFinding:
     table: str                      # table key
-    date_column: str
+    date_column: str                # "" for a period table
     key_column: str | None
     smart_key: bool                 # the key is the date written as yyyymmdd
     first: dt.date
@@ -45,6 +45,8 @@ class CalendarFinding:
     fiscal_year_start_month: int | None = None
     fiscal_year_named_by: str | None = None
     evidence: list[Evidence] = field(default_factory=list)
+    grain: str = "day"
+    year_rows: bool = False
 
 
 def _as_date(value: object) -> dt.date | None:
@@ -147,8 +149,12 @@ def _calendar_in(warehouse: Warehouse, table: InvTable, profile: TableProfile, k
               and table.type_of(c) in ("integer", "text", "decimal")]
     if others:
         smart = D.add(D.add(D.mul(p.part("year"), 10000), D.mul(p.part("month"), 100)), p.part("day"))
-        values = p.run([_count_if(exp.EQ(this=p.col(c), expression=smart.copy())) for c in others])[0]
-        smart_keys = [c for c, v in zip(others, values) if int(v or 0) >= AGREE * rows]
+        # Only numbers can be the date written as yyyymmdd; comparing text with a
+        # number fails outright on most warehouses ("Jan 01, 1950" is a label).
+        numeric = [c for c in others if table.type_of(c) in ("integer", "decimal")]
+        values = p.run([_count_if(exp.EQ(this=p.col(c), expression=smart.copy())) for c in numeric])[0] \
+            if numeric else []
+        smart_keys = [c for c, v in zip(numeric, values) if int(v or 0) >= AGREE * rows]
         ranked = smart_keys or sorted(others, key=lambda c: (table.type_of(c) != "integer",
                                                              [x.name for x in table.columns].index(c)))
         finding.key_column = ranked[0]
@@ -236,4 +242,63 @@ def find_calendars(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             if finding:
                 out[key] = finding
                 break
+        if key not in out:
+            period = _period_table(warehouse, table, profile, keys[key])
+            if period:
+                out[key] = period
     return out
+
+
+def _period_table(warehouse: Warehouse, table: InvTable, profile: TableProfile,
+                  keys: TableKeys) -> CalendarFinding | None:
+    """A table of months keyed yyyymm (with year rows as month 00), checked against its own columns."""
+    if len(keys.primary_key) != 1 or profile.rows > 100_000:
+        return None
+    key = keys.primary_key[0]
+    kp = profile.columns[key]
+    if kp.pattern != "yyyymm" or kp.distinct < 12:
+        return None
+    d = warehouse.dialect
+    k = exp.column(D.ident(key, d))
+    real = exp.and_(exp.Between(this=k.copy(), low=exp.Literal.number(190000), high=exp.Literal.number(299912)),
+                    exp.Between(this=D.mod(k.copy(), 100), low=exp.Literal.number(0), high=exp.Literal.number(12)))
+    year = exp.Floor(this=D.div(k.copy(), 100))
+    month = D.mod(k.copy(), 100)
+    integers = [c.name for c in table.columns if c.name != key and table.type_of(c.name) in ("integer", "decimal")]
+    if not integers:
+        return None
+    tests = [(name, column, exp.EQ(this=exp.column(D.ident(column, d)), expression=expr.copy()))
+             for name, expr in (("year", year), ("month", month)) for column in integers]
+    selects = [exp.Count(this=exp.Literal.number(1)), _count_if(exp.EQ(this=month.copy(), expression=exp.Literal.number(0))),
+               exp.Min(this=exp.Case(ifs=[exp.If(this=exp.GT(this=month.copy(), expression=exp.Literal.number(0)),
+                                                 true=k.copy())])),
+               exp.Max(this=exp.Case(ifs=[exp.If(this=exp.GT(this=month.copy(), expression=exp.Literal.number(0)),
+                                                 true=k.copy())]))] + [_count_if(t) for _, _, t in tests]
+    query = exp.select(*[s.as_(f"s{i}") for i, s in enumerate(selects)]).from_(exp.to_table("__SRC__")).where(real)
+    values = warehouse.query(query.sql(dialect=d).replace("__SRC__", D.table_sql(table.database, table.schema,
+                                                                                 table.name, d), 1)).rows[0]
+    real_rows, year_rows, first, last = int(values[0] or 0), int(values[1] or 0), values[2], values[3]
+    if real_rows < 12 or first is None:
+        return None
+    found: dict[str, str] = {}
+    for (name, column, _), value in zip(tests, values[4:]):
+        if int(value or 0) >= AGREE * real_rows and name not in found and column not in found.values():
+            found[name] = column
+    if not found:
+        return None
+    sentinel = exp.not_(real.copy())
+    rows = warehouse.query(exp.select(k.copy()).from_(exp.to_table("__SRC__")).where(sentinel).sql(dialect=d)
+                           .replace("__SRC__", D.table_sql(table.database, table.schema, table.name, d), 1),
+                           max_rows=20).rows
+    first_day = dt.date(int(first) // 100, int(first) % 100, 1)
+    last_day = dt.date(int(last) // 100, int(last) % 100, 1)
+    finding = CalendarFinding(table=table.key, date_column="", key_column=key, smart_key=True, first=first_day,
+                              last=last_day, contiguous=False, real_rows=real_rows,
+                              placeholders=sorted({r[0] for r in rows if r[0] is not None})[:20],
+                              attributes=found, grain="month", year_rows=year_rows > 0)
+    finding.evidence.append(Evidence(kind="period_table", weight=1.0, data={"periods": real_rows},
+                                     detail=f"{key} is a month written yyyymm on {real_rows:,} rows"
+                                            + (f" ({year_rows:,} whole-year rows as month 00)" if year_rows else "")))
+    finding.evidence.append(Evidence(kind="calendar_attributes", weight=0.5, detail="agree with the period on every row: "
+                                     + ", ".join(f"{c} ({a})" for a, c in sorted(found.items()))))
+    return finding

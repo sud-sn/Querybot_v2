@@ -174,7 +174,10 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
     for key, cal in f.calendars.items():
         model.calendars[key] = Calendar(
             table=key, key_column=ck[(key, cal.key_column)] if cal.key_column else None,
-            date_column=ck[(key, cal.date_column)], attributes={a: ck[(key, c)] for a, c in cal.attributes.items()},
+            date_column=ck[(key, cal.date_column)] if cal.date_column else None,
+            grain=cal.grain,  # type: ignore[arg-type]
+            year_rows=cal.year_rows,
+            attributes={a: ck[(key, c)] for a, c in cal.attributes.items()},
             first_date=cal.first, last_date=cal.last, contiguous=cal.contiguous,
             fiscal_year_start_month=cal.fiscal_year_start_month,
             fiscal_year_named_by=cal.fiscal_year_named_by,  # type: ignore[arg-type]

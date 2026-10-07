@@ -263,8 +263,9 @@
     <h2 id="lq-calendar">Calendar</h2>
     <div class="lq-body">
       {% for c in view.calendars %}
-      <p class="lq-intro"><strong>{{ c.table }}</strong> <span class="lq-mono">{{ c.physical }}</span>: one row per day,
-        {{ c.range }}, keyed by <span class="lq-mono">{{ c.key or c.date }}</span>.
+      <p class="lq-intro"><strong>{{ c.table }}</strong> <span class="lq-mono">{{ c.physical }}</span>:
+        one row per {{ 'day' if c.grain == 'day' else 'month' }}, {{ c.range }},
+        keyed by <span class="lq-mono">{{ c.key or c.date }}</span>.
         {% if c.fiscal %}{{ c.fiscal }}.{% endif %}
         {% if c.placeholders %}Keys meaning "no date": {{ c.placeholders }}.{% endif %}</p>
       <p class="lq-intro">Columns checked against the date on every day:

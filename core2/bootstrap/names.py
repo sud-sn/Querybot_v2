@@ -19,6 +19,17 @@ TABLE_AFFIXES = {"dim", "dms", "dimension", "fact", "fct", "fac", "f", "d", "tbl
                  "lookup", "ref", "mst", "master", "dw", "stg", "bridge", "brg", "snp", "snapshot", "agg"}
 _OPAQUE_WORDS = {"c", "col", "column", "field", "fld", "attr", "attribute", "t", "tab", "table", "var", "x", "f", "v"}
 
+# Numbers that are levels (taken at a point in time) and numbers that are flows
+# (amounts for a period). On a periodic snapshot a level is taken at period end
+# and a flow is summed; names are the evidence for which is which.
+LEVEL_WORDS = {"balance", "bal", "hand", "oh", "hnd", "stock", "stk", "inventory", "level", "headcount", "hc", "fte",
+               "seats", "mrr", "arr", "outstanding", "backlog", "available", "avl", "allocated", "alc", "reserved",
+               "rsv", "position", "open"}
+FLOW_WORDS = {"cost", "cst", "salary", "sal", "sales", "sls", "sold", "sld", "sale", "revenue", "rev", "received", "rcv",
+              "receipt", "rct", "issued", "iss", "issue", "paid", "budget", "bdgt", "target", "tgt", "plan", "forecast",
+              "quota", "hours", "spent", "spend", "movement", "mvt", "shipped", "ship", "shp", "transfer", "tfr",
+              "returned", "rtn", "adjusted", "adj", "consumed", "produced", "scrap", "delivered", "dlv", "invoiced"}
+
 # A fallback reading of common abbreviations (weak evidence; AI labels and admins win).
 EXPANSIONS = {
     "acct": "account", "acg": "accounting", "act": "actual", "asg": "assignment", "cfm": "confirmed",
@@ -40,7 +51,7 @@ EXPANSIONS = {
     "pri": "priority", "prnt": "parent", "prv": "province", "pst": "postal", "pur": "purchase", "qtr": "quarter",
     "qty": "quantity", "rcpt": "receipt", "rct": "receipt", "rcv": "received", "req": "requested",
     "rev": "revenue", "rfd": "refund", "rgn": "region", "rjt": "rejected", "rqs": "requested", "rslv": "resolved",
-    "rsn": "reason", "rtn": "return", "sal": "salary", "seg": "segment", "shp": "ship", "sls": "sales",
+    "rsn": "reason", "rsv": "reserved", "rtn": "return", "sld": "sold", "tfr": "transfer", "sal": "salary", "seg": "segment", "shp": "ship", "sls": "sales",
     "snp": "snapshot", "sts": "status", "stk": "stock", "str": "store", "strt": "start", "sub": "subscription",
     "sup": "supplier", "supp": "supplier", "tgt": "target", "tkt": "ticket", "ts": "timestamp", "typ": "type",
     "uom": "unit of measure", "upd": "updated", "unt": "unit", "usr": "user", "val": "value", "vch": "voucher",

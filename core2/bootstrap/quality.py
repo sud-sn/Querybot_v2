@@ -60,10 +60,11 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
             flags.append(_flag(col_key[(m.table, m.column)], "negative_values",
                                f"{p.negatives:,} rows have a negative {label.lower()}", "warning",
                                rows=p.negatives))
-        if m.unit_column and len(m.unit_values) > 1:
+        units = [u for u in m.unit_values if u.strip()]
+        if m.unit_column and len(units) > 1:
             flags.append(_flag(col_key[(m.table, m.column)], "unit_mix",
-                               f"{label} mixes units ({', '.join(m.unit_values[:6])}): totals add different units",
-                               "warning", units=m.unit_values))
+                               f"{label} mixes units ({', '.join(units[:6])}{', ...' if len(units) > 6 else ''}): "
+                               "totals add different units", "warning", units=units))
 
     for j in joins:
         if j.trust in ("proposed", "declared") and j.match_rate < 0.99 and j.non_null:
@@ -84,6 +85,8 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
                 flags.append(_flag(col_key[(key, c.column)], "load_timestamp",
                                    f"{names.readable(c.column)} records when rows were written, not a business date"))
 
+    linked = {(j.from_table, j.from_column) for j in joins}
+    dated = {(k, c.column) for k, roles in dates.items() for c in roles}
     for key, table in inventory.tables.items():
         if kinds.get(key) not in ("fact", "snapshot"):
             continue
@@ -91,6 +94,8 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
             p = profiles[key].columns[column.name]
             if column.data_type not in ("text", "integer") or not p.top or not 2 <= p.distinct <= 12:
                 continue
+            if (key, column.name) in linked or (key, column.name) in dated:
+                continue   # a key into a status table is filtered by that table's labels, not by its numbers
             words = set(names.tokens(column.name))
             values = {(t.value or "").strip().lower() for t in p.top}
             cancels = sorted({(t.value or "").strip() for t in p.top} & {

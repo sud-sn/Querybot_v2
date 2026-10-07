@@ -87,12 +87,13 @@ def _parse_day(value: object, granularity: str) -> dt.date | None:
 
 def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: str, granularity: str,
               rows: int, entity_columns: list[str]) -> tuple[bool, str]:
-    """Is ``column`` the period of a snapshot: do the same things recur in every period?
+    """Is ``column`` the period of a snapshot: one row per thing per period, things recurring?
 
-    A snapshot holds each item (or employee, account...) once per period, so the
-    number of rows per item is about the number of periods. An event table's
-    month-end or evenly spread dates do not make it a snapshot: its items do not
-    recur period after period.
+    The things a row is about are found by adding the table's links one at a
+    time, the link to the largest table first, until (period + links)
+    identifies every row. A snapshot then holds each thing about once per
+    period; an event table's month-end or evenly spread dates do not make it a
+    snapshot, because its rows are not one per thing and period.
     """
     if not entity_columns:
         return False, ""
@@ -101,18 +102,30 @@ def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: st
     source = D.table_sql(t.database, t.schema, t.name, d)
     c = exp.column(D.ident(column, d))
     periods_q = exp.select(exp.Count(this=exp.Distinct(expressions=[c.copy()]))).from_(exp.to_table("__SRC__"))
-    entities = exp.select(*[exp.column(D.ident(e, d)) for e in entity_columns]).distinct().from_(exp.to_table("__SRC__"))
-    entities_q = exp.select(exp.Count(this=exp.Literal.number(1))).from_(entities.subquery("e"))
     periods = int(warehouse.query(periods_q.sql(dialect=d).replace("__SRC__", source)).rows[0][0] or 0)
-    things = int(warehouse.query(entities_q.sql(dialect=d).replace("__SRC__", source)).rows[0][0] or 0)
-    if periods < 3 or not things:
+    if periods < 3:
         return False, ""
-    if _duplicates(warehouse, t, [column, *entity_columns]):
-        return False, ""   # several rows per item and period: events, not a snapshot
-    recurrence = rows / things
+    chosen: list[str] = []
+    for link in entity_columns[:6]:
+        chosen.append(link)
+        if not _duplicates(warehouse, t, [column, *chosen]):
+            break
+    else:
+        return False, ""   # several rows per thing and period: events, not a snapshot
+    things_q = exp.select(exp.Count(this=exp.Literal.number(1))).from_(
+        exp.select(*[exp.column(D.ident(e, d)) for e in chosen]).distinct().from_(exp.to_table("__SRC__")).subquery("e"))
+    things = int(warehouse.query(things_q.sql(dialect=d).replace("__SRC__", source)).rows[0][0] or 0)
+    recurrence = rows / things if things else 0.0
     if recurrence >= max(3.0, 0.5 * periods):
-        return True, (f"each of {things:,} combinations of {', '.join(entity_columns)} recurs in about "
+        return True, (f"each of {things:,} combinations of {', '.join(chosen)} recurs in about "
                       f"{recurrence:.0f} of {periods} periods")
+    # A short history cannot show things recurring; the names can still say the
+    # table holds balances (stock on hand, a balance table), one row per thing
+    # and period.
+    words = set(names.tokens(t.name)) | {w for col in t.columns for w in names.tokens(col.name)}
+    if words & names.LEVEL_WORDS and not names.opaque(t.name):
+        return True, (f"one row per {', '.join(chosen)} and period, and its names say it holds balances "
+                      f"({', '.join(sorted(words & names.LEVEL_WORDS)[:3])})")
     return False, ""
 
 
@@ -121,8 +134,9 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                     joins: list[JoinFinding]) -> dict[str, list[DateCandidate]]:
     """Date roles per table key, the default marked."""
     to_calendar = {(j.from_table, j.from_column): j for j in joins if j.to_calendar and j.trust != "rejected"}
+    # What a snapshot row is about: its links, the largest tables first.
     entity_columns: dict[str, list[str]] = {}
-    for j in joins:
+    for j in sorted(joins, key=lambda j: (-profiles[j.to_table].rows, j.from_column)):
         if not j.to_calendar and j.trust != "rejected":
             entity_columns.setdefault(j.from_table, []).append(j.from_column)
     out: dict[str, list[DateCandidate]] = {}
@@ -135,7 +149,7 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             p = profile.columns[column.name]
             join = to_calendar.get((key, column.name))
             if join:
-                granularity = "day"
+                granularity = "month" if calendars[join.to_table].grain == "month" else "day"
             elif column.data_type == "date":
                 granularity = "day"
             elif column.data_type == "timestamp":
@@ -203,12 +217,55 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                     c.kind = "snapshot"
                     c.add("snapshot", 0.35, why)
 
+        _written_later(warehouse, inventory, key, candidates)
         business = [c for c in candidates if c.kind in ("event", "snapshot")]
         ranked = sorted(business or [], key=lambda c: (-c.score, [x.name for x in table.columns].index(c.column)))
         if ranked:
             ranked[0].is_default = True
         out[key] = candidates
     return out
+
+
+def _months(value: exp.Expression, candidate: DateCandidate, data_type: str, dialect: str) -> exp.Expression:
+    """A date as a month count (year * 12 + month): from a yyyymm or yyyymmdd number, or a date."""
+    if candidate.granularity == "month":
+        return D.add(D.mul(exp.Floor(this=D.div(value, 100)), 12), D.mod(value.copy(), 100))
+    if data_type in ("integer", "decimal"):
+        return D.add(D.mul(exp.Floor(this=D.div(value, 10000)), 12),
+                     D.mod(exp.Floor(this=D.div(value.copy(), 100)), 100))
+    return D.add(D.mul(D.date_part(value, "year", dialect), 12), D.date_part(value.copy(), "month", dialect))
+
+
+def _written_later(warehouse: Warehouse, inventory: Inventory, key: str, candidates: list[DateCandidate]) -> None:
+    """A timestamp that trails the table's period or business date by months is when rows were written."""
+    anchors = sorted((c for c in candidates if c.kind in ("event", "snapshot") and c.granularity in ("day", "month")
+                      and (c.periodic or c.granularity == "month")), key=lambda c: -c.score)
+    stamps = [c for c in candidates if c.granularity == "timestamp" and c.kind != "audit"]
+    if not anchors or not stamps:
+        return
+    anchor = anchors[0]
+    if anchor.granularity == "day" and anchor.via_calendar is not None:
+        return   # a calendar key would need the calendar's date: the period or a real date column is enough
+    d = warehouse.dialect
+    t = inventory.tables[key]
+    a = exp.column(D.ident(anchor.column, d))
+    anchor_months = _months(a, anchor, t.type_of(anchor.column), d)
+    valid = exp.GT(this=D.mod(a.copy(), 100), expression=exp.Literal.number(0)) if anchor.granularity == "month" \
+        else exp.not_(exp.Is(this=a.copy(), expression=exp.Null()))
+    for stamp in stamps:
+        s = exp.column(D.ident(stamp.column, d))
+        lag = D.sub(D.add(D.mul(D.date_part(s, "year", d), 12), D.date_part(s.copy(), "month", d)), anchor_months.copy())
+        late = exp.Sum(this=exp.Case(ifs=[exp.If(this=exp.GTE(this=lag, expression=exp.Literal.number(2)),
+                                                  true=exp.Literal.number(1))], default=exp.Literal.number(0)))
+        query = exp.select(exp.Count(this=exp.Literal.number(1)).as_("n"), late.as_("late")).from_(
+            exp.to_table("__SRC__")).where(exp.and_(valid.copy(), exp.not_(exp.Is(this=s.copy(), expression=exp.Null()))))
+        n, late_rows = warehouse.query(query.sql(dialect=d).replace(
+            "__SRC__", D.table_sql(t.database, t.schema, t.name, d), 1)).rows[0]
+        if n and int(late_rows or 0) / int(n) >= 0.3:
+            stamp.kind = "audit"
+            stamp.add("written_later", -1.0, f"{int(late_rows) / int(n):.0%} of rows were written two months or more "
+                      f"after the {names.readable(anchor.column).lower()} they belong to: it records when rows were "
+                      "written, not a business date")
 
 
 def close_call(candidates: list[DateCandidate]) -> DateCandidate | None:

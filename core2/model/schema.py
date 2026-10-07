@@ -180,7 +180,9 @@ class Join(Belief):
 class Calendar(_Data):
     table: str
     key_column: str | None          # column key; None when the date itself is the key
-    date_column: str
+    date_column: str | None         # None for a period table (one row per month, keyed yyyymm)
+    grain: Literal["day", "month"] = "day"
+    year_rows: bool = False         # a period table also holds whole-year rows (month 00)
     attributes: dict[str, str] = Field(default_factory=dict)   # canonical attribute -> column key
     first_date: date | None = None
     last_date: date | None = None
