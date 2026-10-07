@@ -31,6 +31,7 @@ from core2.model.schema import (
     Column,
     DateRole,
     Entity,
+    Evidence,
     Join,
     Measure,
     ReviewItem,
@@ -360,6 +361,19 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
             model.columns[ck[(key, label)]].label_of = model.tables[key].primary_key[0] if model.tables[key].primary_key else None
         if codes:
             model.columns[ck[(key, codes[0])]].role = "code"
+        if len(tkeys.primary_key) == 1:
+            # "How many customers do we have?": the members listed, each counted once.
+            key_m = f"m:{key}.{tkeys.primary_key[0].casefold()}.distinct"
+            counted = names.plural(business.lower())
+            model.measures[key_m] = Measure(
+                key=key_m, slug=ids.unique_slug(ids.slug(f"number of {counted}"), taken),
+                business_name=f"Number of {counted}", table=key,
+                expr=AggExpr(agg="count_distinct", column=ck[(key, tkeys.primary_key[0])]),
+                additivity="non_additive", format="count", kind="count",
+                default_date=model.tables[key].default_date,
+                evidence=[Evidence(kind="entity_count", weight=1,
+                                   detail=f"each {business.lower()} listed in {table.name}, counted once")],
+                provenance="profile", status="verified", confidence=0.9)
 
     # Hierarchies: a dimension pointing at another dimension.
     for j in f.joins:

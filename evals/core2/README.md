@@ -94,6 +94,9 @@ questions:
   question is windowed or grouped by time.
 * Rows with a cancelled status are included unless the question excludes them
   (excluding them by default is a business decision an admin makes once).
+* A grouping keeps the rows that do not reach the grouping's table, or have no
+  value there, as one empty group (`LEFT JOIN`), so a breakdown adds up to the
+  total. A top-n ranking leaves that group out (the answer says so).
 * Rankings break ties by the label ascending; `LIMIT` the top n.
 * Snapshot (semi-additive) measures take, per period and for a whole window,
   only the rows of the last snapshot date in it.

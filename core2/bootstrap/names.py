@@ -84,6 +84,21 @@ def singular(word: str) -> str:
     return word
 
 
+def plural(phrase: str) -> str:
+    """'order line' -> 'order lines', 'category' -> 'categories', 'address' -> 'addresses'."""
+    head, _, word = phrase.rpartition(" ")
+    lower = word.lower()
+    if not word or lower.endswith(("rows", "data", "staff", "people")):
+        out = word
+    elif lower.endswith("y") and len(lower) > 1 and lower[-2] not in "aeiou":
+        out = word[:-1] + "ies"
+    elif lower.endswith(("s", "x", "z", "ch", "sh")):
+        out = word + "es"
+    else:
+        out = word + "s"
+    return f"{head} {out}" if head else out
+
+
 def _skeleton(word: str) -> str:
     return word[0] + re.sub(r"[aeiou]", "", word[1:]) if word else word
 

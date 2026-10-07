@@ -168,10 +168,10 @@ def _template(text: str, dialect: str) -> exp.Expression:
     return sqlglot.parse_one(f"SELECT {text}", read=dialect).expressions[0]
 
 
-def _fill(text: str, dialect: str, value: exp.Expression) -> exp.Expression:
+def _fill(text: str, dialect: str, value: exp.Expression, n: exp.Expression | None = None) -> exp.Expression:
     def swap(node: exp.Expression) -> exp.Expression:
-        if isinstance(node, exp.Column) and node.name == "__X__" and not node.table:
-            return value.copy()
+        if isinstance(node, exp.Column) and not node.table and node.name in ("__X__", "__N__"):
+            return (value if node.name == "__X__" else n or value).copy()
         return node
 
     return _template(text, dialect).copy().transform(swap)
@@ -209,6 +209,45 @@ def date_part(value: exp.Expression, part: str, dialect: str) -> exp.Expression:
     except KeyError:
         raise ValueError(f"no {part!r} date part in {dialect!r}") from None
     return _fill(text, dialect, value)
+
+
+_FROM_NUMBER = {
+    "tsql": {"yyyymmdd": "TRY_CONVERT(DATE, CONVERT(VARCHAR(8), CAST(__X__ AS BIGINT)), 112)",
+             "yyyymm": "TRY_CONVERT(DATE, CONVERT(VARCHAR(6), CAST(__X__ AS BIGINT)) + '01', 112)"},
+    "oracle": {fmt.lower(): f"CASE WHEN VALIDATE_CONVERSION(TO_CHAR(TRUNC(__X__)) AS DATE, '{fmt}') = 1 "
+                            f"THEN TO_DATE(TO_CHAR(TRUNC(__X__)), '{fmt}') END" for fmt in ("YYYYMMDD", "YYYYMM")},
+}
+
+
+def from_number(value: exp.Expression, shape: str, dialect: str) -> exp.Expression:
+    """A yyyymmdd or yyyymm number as a DATE (the month's first day), NULL when it is no date.
+
+    Placeholder keys (0, -1, 19000101, month 00) become NULL instead of failing the
+    query, whatever order the warehouse evaluates filters and expressions in.
+    """
+    if shape not in ("yyyymmdd", "yyyymm"):
+        raise ValueError(f"no date shape {shape!r}")
+    if dialect in _FROM_NUMBER:
+        return _fill(_FROM_NUMBER[dialect][shape], dialect, value)
+    whole = exp.Cast(this=value.copy(), to=exp.DataType.build("BIGINT"))
+    if dialect == "snowflake":
+        return exp.Anonymous(this="TRY_TO_DATE", expressions=[
+            exp.Anonymous(this="TO_VARCHAR", expressions=[whole]), exp.Literal.string(shape.upper())])
+    if dialect == "duckdb":
+        text = exp.Cast(this=whole, to=exp.DataType.build("VARCHAR"))
+        fmt = "%Y%m%d" if shape == "yyyymmdd" else "%Y%m"
+        return exp.Cast(this=exp.Anonymous(this="TRY_STRPTIME", expressions=[text, exp.Literal.string(fmt)]),
+                        to=exp.DataType.build("DATE"))
+    raise ValueError(f"no dialect {dialect!r}")
+
+
+_ADD_MONTHS = {"snowflake": "DATEADD(MONTH, __N__, __X__)", "tsql": "DATEADD(MONTH, __N__, __X__)",
+               "oracle": "ADD_MONTHS(__X__, __N__)", "duckdb": "CAST(__X__ + TO_MONTHS(__N__) AS DATE)"}
+
+
+def add_months(value: exp.Expression, months: exp.Expression | int, dialect: str) -> exp.Expression:
+    """A DATE moved by a whole number of months (``months`` may be an expression)."""
+    return _fill(_ADD_MONTHS[dialect], dialect, value, _number(months))
 
 
 def date_literal(day: dt.date, dialect: str) -> exp.Expression:

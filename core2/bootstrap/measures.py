@@ -206,8 +206,9 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
 
         # Counting rows and documents.
         noun = names.readable(" ".join(names.core_table(table.name))) if not names.opaque(table.name) else table.name
+        counted = f"{noun.lower()} rows" if periodic else names.plural(noun.lower())
         out.append(MeasureFinding(table=key, column=None, agg="count", additivity="additive", format="count",
-                                  name=f"Number of {noun.lower()} rows" if periodic else f"Number of {noun.lower()}s",
+                                  name=f"Number of {counted}",
                                   evidence=[Evidence(kind="row_count", weight=1, detail="counts rows")]))
         for column in table.columns:
             p = profile.columns[column.name]
@@ -230,7 +231,7 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                 thing.pop()
             label = names.readable("_".join(thing)) if thing and not names.opaque(column.name) else column.name
             out.append(MeasureFinding(table=key, column=column.name, agg="count_distinct", additivity="non_additive",
-                                      format="count", name=f"Number of {label.lower()}s",
+                                      format="count", name=f"Number of {names.plural(label.lower())}",
                                       evidence=[Evidence(kind="document_count", weight=1,
                                                          detail=f"{column.name} repeats across rows: counted once each")]))
     return out

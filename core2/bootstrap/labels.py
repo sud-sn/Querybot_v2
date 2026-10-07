@@ -19,6 +19,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from core2.bootstrap import names
 from core2.model.schema import SemanticModel
 
 log = logging.getLogger("querybot.core2")
@@ -154,11 +155,11 @@ def _apply(model: SemanticModel, table_key: str, reply: dict[str, Any]) -> None:
             measure.business_name = model.columns[column_key].business_name
             measure.synonyms = dict(model.columns[column_key].synonyms)
         elif agg == "count" and table.provenance == "ai":
-            measure.business_name = f"Number of {table.business_name.lower()}s"
+            measure.business_name = f"Number of {names.plural(table.business_name.lower())}"
         elif column_key and agg == "count_distinct" and model.columns[column_key].provenance == "ai":
-            thing = re.sub(r"\s+(number|no\.?|id|code|reference)$", "", model.columns[column_key].business_name,
+            thing = re.sub(r"\s+(number|no\.?|id|key|code|reference)$", "", model.columns[column_key].business_name,
                            flags=re.I)
-            measure.business_name = f"Number of {thing.lower()}s"
+            measure.business_name = f"Number of {names.plural(thing.lower())}"
     for role in model.date_roles.values():
         column = model.columns[role.column]
         if role.table == table_key and role.provenance != "admin" and column.provenance == "ai" and not (

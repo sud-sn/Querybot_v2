@@ -104,7 +104,7 @@ questions:
       WHERE c.full_date >= DATE '2026-05-01' AND c.full_date < DATE '2026-06-01'
       GROUP BY 1
       ORDER BY 1
-    expect: {order_matters: true, partial_periods: ["2026-04-27", "2026-05-25"]}
+    expect: {order_matters: true, partial_periods: ["2026-04-27"]}
 
   - id: retail-007
     question: "Net sales by ship month in 2025"
@@ -272,13 +272,13 @@ questions:
              COALESCE(SUM(CASE WHEN c.full_date >= DATE '2026-03-01' AND c.full_date < DATE '2026-04-01' THEN l.net_amount END), 0)
                - COALESCE(SUM(CASE WHEN c.full_date >= DATE '2026-02-01' AND c.full_date < DATE '2026-03-01' THEN l.net_amount END), 0) AS change
       FROM order_lines l
-      JOIN products p ON p.product_id = l.product_id
-      JOIN categories ca ON ca.category_id = p.category_id
+      LEFT JOIN products p ON p.product_id = l.product_id
+      LEFT JOIN categories ca ON ca.category_id = p.category_id
       JOIN calendar c ON c.date_key = l.order_date_key
       WHERE c.full_date >= DATE '2026-02-01' AND c.full_date < DATE '2026-04-01'
       GROUP BY 1
       ORDER BY change DESC, ca.category_name
-    expect: {order_matters: true}
+    expect: {order_matters: true, notes: ["lines of a product missing from the product list show as an empty category"]}
 
   - id: retail-015
     question: "What share of 2025 net sales came from each customer segment?"

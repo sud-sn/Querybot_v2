@@ -1,0 +1,634 @@
+"""From a plan to a logical query: which tables, joins, dates, filters and periods.
+
+The resolver owns the rules the answer depends on: one join path per attribute
+(paths.py), the date each measure is counted by, exact windows (time.py), a
+snapshot's last day per period, placeholder dates left out, default filters
+applied, two facts aggregated separately and lined up on their shared
+groupings. It writes no SQL; it records what it decided, in words, for the
+answer.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import re
+from dataclasses import dataclass, field
+
+from core2 import ids
+from core2.model.schema import (
+    AggExpr,
+    Attribute,
+    Calendar,
+    ColumnFilter,
+    DateRole,
+    Entity,
+    Measure,
+    MeasureExpr,
+    OpExpr,
+    RefExpr,
+    SemanticModel,
+)
+from core2.plan.ir import TIME_ATTRIBUTES, Filter, Plan
+from core2.resolve import paths as P
+from core2.resolve.time import Range, partial_periods, periods, resolve_window, shift
+
+# Aliases a validator screens as statements, whatever their quoting.
+_UNSAFE_ALIASES = {"call", "load", "get", "put", "copy", "exec", "execute", "function", "procedure", "merge", "grant",
+                   "revoke", "drop", "delete", "insert", "update", "create", "alter", "truncate", "use", "set"}
+
+
+class ResolveError(Exception):
+    """The plan cannot be answered as it stands; ``kind`` says why, ``options`` what could be chosen."""
+
+    def __init__(self, kind: str, message: str, options: list[str] | None = None):
+        super().__init__(message)
+        self.kind = kind            # unknown | ambiguous | unsupported | denied | empty
+        self.message = message
+        self.options = options or []
+
+
+@dataclass
+class Context:
+    today: dt.date
+    allowed_tables: set[str] | None = None      # table keys the reader may use; None = all
+    max_rows: int = 5000
+
+
+@dataclass
+class DateUse:
+    role: DateRole
+    alias: str               # where the date lives: the calendar's alias, or the measure table's
+    mode: str                # day_calendar | month_calendar | date | timestamp | yyyymmdd | yyyymm
+    column: str              # column key of the date (or of the period key)
+    calendar: Calendar | None = None
+    join: Joined | None = None
+
+
+@dataclass
+class Joined:
+    alias: str
+    table: str
+    on: list[tuple[str, str, str]]   # (left alias, left column key, right column key)
+    kind: str = "left"
+    what: str = ""
+
+
+@dataclass
+class OutMeasure:
+    name: str                # output column
+    label: str
+    expr: MeasureExpr        # column keys resolved against this part's base alias
+    format: str
+    measure: Measure | None
+    semi: bool = False
+
+
+@dataclass
+class PartGroup:
+    name: str
+    alias: str
+    column: str | None       # column key, for attributes
+    kind: str                # attribute | period | time
+    grain: str | None = None
+    time_attr: str | None = None
+    date: DateUse | None = None
+
+
+@dataclass
+class Pred:
+    alias: str
+    column: str
+    op: str
+    values: list
+    text: str = ""
+
+
+@dataclass
+class Part:
+    table: str
+    alias: str
+    joins: list[Joined] = field(default_factory=list)
+    measures: list[OutMeasure] = field(default_factory=list)
+    groups: list[PartGroup] = field(default_factory=list)
+    preds: list[Pred] = field(default_factory=list)
+    date: DateUse | None = None
+    date_ranges: list[tuple[DateUse, Range]] = field(default_factory=list)
+    snapshot: bool = False
+    distinct_only: bool = False
+
+
+@dataclass
+class Group:
+    name: str
+    label: str
+    kind: str                # attribute | period | time
+    grain: str | None = None
+    attribute: str | None = None
+
+
+@dataclass
+class Logical:
+    intent: str
+    parts: list[Part]
+    groups: list[Group]
+    measures: list[OutMeasure]          # output order (the first part's objects, for formats and labels)
+    window: Range
+    compare: Range | None = None
+    sort: list[tuple[str, bool]] = field(default_factory=list)
+    limit: int | None = None
+    share: bool = False
+    having: list[Pred] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    partial: list[dt.date] = field(default_factory=list)
+    fiscal_start: int | None = None
+    max_rows: int = 5000
+
+
+class _Aliases:
+    def __init__(self) -> None:
+        self.taken: set[str] = set()
+
+    def new(self, hint: str) -> str:
+        base = re.sub(r"[^a-z0-9_]", "_", ids.slug(hint))[:24] or "t"
+        if base in _UNSAFE_ALIASES or base[0].isdigit():
+            base = f"t_{base}"
+        return ids.unique_slug(base, self.taken)
+
+
+def _output_name(text: str, taken: set[str]) -> str:
+    base = ids.slug(text)[:40] or "value"
+    if base in _UNSAFE_ALIASES:
+        base = f"{base}_value"
+    return ids.unique_slug(base, taken)
+
+
+def _find_slug(model: SemanticModel, slug: str) -> tuple[str, object] | None:
+    """What a slug names: a measure, an attribute, an entity (its label) or a date."""
+    for m in model.measures.values():
+        if m.slug == slug:
+            return "measure", m
+    if slug in model.attributes:
+        return "attribute", model.attributes[slug]
+    if slug in model.entities:
+        return "entity", model.entities[slug]
+    for r in model.date_roles.values():
+        if r.slug == slug:
+            return "date", r
+    return None
+
+
+def _entity_label(model: SemanticModel, slug: str) -> Attribute:
+    entity = model.entities[slug]
+    column = entity.label_column or entity.code_column or (entity.key_columns[0] if entity.key_columns else None)
+    for a in model.attributes.values():
+        if a.column == column:
+            return a
+    raise ResolveError("unknown", f"{entity.business_name} has no name to show")
+
+
+class _PartBuilder:
+    """Joins for one measure table: every table joined once per path, aliases reused."""
+
+    def __init__(self, model: SemanticModel, table: str, aliases: _Aliases, ctx: Context):
+        self.model = model
+        self.ctx = ctx
+        self.aliases = aliases
+        self.part = Part(table=table, alias=aliases.new(model.tables[table].slug or "f"))
+        self.by_path: dict[tuple[str, ...], str] = {(): self.part.alias}
+        self.paths_used: dict[str, P.Path] = {}
+
+    def _allowed(self, table: str) -> None:
+        if self.ctx.allowed_tables is not None and table not in self.ctx.allowed_tables:
+            raise ResolveError("denied", f"{self.model.tables[table].business_name} is not available to you")
+
+    def reach(self, table: str, *, through: str | None = None, label: str = "") -> str:
+        """The alias holding ``table``, joining along the one path rule."""
+        self._allowed(table)
+        try:
+            path = P.best_path(self.model, self.part.table, table, through=through)
+        except P.Ambiguous as exc:
+            options = [p.describe(self.model) for p in exc.options]
+            raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be reached "
+                               "more than one way", options) from None
+        if path is None:
+            raise ResolveError("unsupported", f"{label or self.model.tables[table].business_name} is not linked to "
+                               f"{self.model.tables[self.part.table].business_name}")
+        alias = self.part.alias
+        walked: tuple[str, ...] = ()
+        for j in path.joins:
+            walked = walked + (j.key,)
+            if walked not in self.by_path:
+                self._allowed(j.to_table)
+                new = self.aliases.new(j.role or self.model.tables[j.to_table].slug)
+                self.part.joins.append(Joined(
+                    alias=new, table=j.to_table,
+                    on=[(alias, f, t) for f, t in zip(j.from_columns, j.to_columns)], kind="left",
+                    what=j.role or self.model.tables[j.to_table].business_name))
+                self.by_path[walked] = new
+            alias = self.by_path[walked]
+        if path.joins:
+            self.paths_used[table] = path
+        return alias
+
+    def date(self, role: DateRole) -> DateUse:
+        """Where a date role's date lives, joining its calendar once under the role's own name."""
+        model = self.model
+        column = model.columns[role.column]
+        if role.calendar:
+            calendar = model.calendars[role.calendar]
+            key = ("calendar", role.key)
+            if key not in self.by_path:
+                self._allowed(role.calendar)
+                join = model.joins.get(role.calendar_join or "")
+                if join is None:
+                    raise ResolveError("unsupported", f"{role.name} has no calendar link")
+                alias = self.aliases.new(role.slug or role.name)
+                self.part.joins.append(Joined(alias=alias, table=role.calendar,
+                                              on=[(self.part.alias, join.from_columns[0], join.to_columns[0])],
+                                              kind="inner", what=role.name))
+                self.by_path[key] = alias
+            alias = self.by_path[key]
+            if calendar.grain == "month":
+                return DateUse(role, alias, "month_calendar", calendar.key_column or "", calendar)
+            return DateUse(role, alias, "day_calendar", calendar.date_column or "", calendar)
+        if column.data_type == "date":
+            return DateUse(role, self.part.alias, "date", column.key)
+        if column.data_type == "timestamp":
+            return DateUse(role, self.part.alias, "timestamp", column.key)
+        if role.granularity == "month":
+            return DateUse(role, self.part.alias, "yyyymm", column.key)
+        return DateUse(role, self.part.alias, "yyyymmdd", column.key)
+
+
+def _measure_expr(model: SemanticModel, measure: Measure) -> MeasureExpr:
+    """References to other measures inlined: the compiler sees only aggregates and operations."""
+    def inline(expr: MeasureExpr, depth: int = 0) -> MeasureExpr:
+        if depth > 5:
+            raise ResolveError("unsupported", f"{measure.business_name} refers to itself")
+        if isinstance(expr, RefExpr):
+            return inline(model.measures[expr.measure].expr, depth + 1)
+        if isinstance(expr, OpExpr):
+            return OpExpr(op=expr.op, args=[inline(a, depth + 1) for a in expr.args], scale=expr.scale)
+        return expr
+
+    return inline(measure.expr)
+
+
+def _with_filters(expr: MeasureExpr, filters: list[ColumnFilter]) -> MeasureExpr:
+    if not filters:
+        return expr
+    if isinstance(expr, AggExpr):
+        return AggExpr(agg=expr.agg, column=expr.column, filters=[*expr.filters, *filters])
+    if isinstance(expr, OpExpr):
+        return OpExpr(op=expr.op, args=[_with_filters(a, filters) for a in expr.args], scale=expr.scale)
+    return expr
+
+
+def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure, table: str) -> DateRole | None:
+    if plan.time.date:
+        found = _find_slug(model, plan.time.date)
+        if not found or found[0] != "date":
+            raise ResolveError("unknown", f"no date called {plan.time.date}")
+        role = found[1]
+        assert isinstance(role, DateRole)
+        if role.table == table:
+            return role
+    key = measure.default_date or model.tables[table].default_date
+    return model.date_roles.get(key) if key else None
+
+
+def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
+    return role.first, role.last
+
+
+def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    if plan.kind != "query":
+        raise ResolveError("unsupported", f"a {plan.kind} plan is not a query")
+    aliases = _Aliases()
+    out_names: set[str] = set()
+    notes: list[str] = []
+
+    # Measures, and the table each is counted on.
+    chosen: list[tuple[Measure | None, MeasureExpr, str, str, str]] = []   # (measure, expr, table, label, format)
+    for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
+        found = _find_slug(model, slug)
+        if not found or found[0] != "measure":
+            raise ResolveError("unknown", f"no measure called {slug}")
+        m = found[1]
+        assert isinstance(m, Measure)
+        expr = _with_filters(_measure_expr(model, m), m.filters)
+        chosen.append((m, expr, m.table, m.business_name, m.format))
+        if m.filters:
+            notes.append(f"{m.business_name} counts only rows where " + "; ".join(
+                f"{model.columns[f.column].business_name} {f.op.replace('_', ' ')} {', '.join(map(str, f.values))}"
+                for f in m.filters))
+        if m.kind == "proposed" or m.status == "proposed":
+            notes.append(f"{m.business_name} is a proposed measure, not yet confirmed.")
+    for d in plan.derived:
+        operands = []
+        for slug in d.measures:
+            found = _find_slug(model, slug)
+            if not found or found[0] != "measure":
+                raise ResolveError("unknown", f"no measure called {slug}")
+            operands.append(found[1])
+        a, b = operands
+        assert isinstance(a, Measure) and isinstance(b, Measure)
+        if a.table != b.table:
+            raise ResolveError("unsupported", f"{d.name} combines measures from two tables")
+        op = {"ratio": "ratio", "difference": "subtract", "sum": "add", "product": "multiply"}[d.op]
+        expr = OpExpr(op=op, args=[_with_filters(_measure_expr(model, a), a.filters),  # type: ignore[arg-type]
+                                   _with_filters(_measure_expr(model, b), b.filters)], scale=d.scale)
+        chosen.append((None, expr, a.table, d.name, "percent" if d.scale == 100 else "number"))
+        notes.append(f"{d.name} is worked out as {a.business_name} {d.op} {b.business_name}: a proposed measure.")
+
+    # Groupings asked for.
+    wanted: list[tuple[str, Attribute | None, str | None]] = []   # (slug, attribute, time attribute)
+    for slug in plan.group_by:
+        if slug in TIME_ATTRIBUTES:
+            wanted.append((slug, None, slug.split(":", 1)[1]))
+            continue
+        found = _find_slug(model, slug)
+        if not found or found[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to group by called {slug}")
+        attribute = _entity_label(model, slug) if found[0] == "entity" else found[1]
+        assert isinstance(attribute, Attribute)
+        wanted.append((slug, attribute, None))
+
+    intent = plan.intent or ("trend" if plan.time.grain else ("breakdown" if wanted else "value"))
+    if not chosen:
+        if wanted and intent in ("list", "breakdown", "rank", "count", "value"):
+            return _members(plan, model, ctx, wanted, aliases, intent)
+        raise ResolveError("unknown", "the question names no measure", [])
+
+    # One part per measure table (and per snapshot kind: levels and flows of one
+    # snapshot table are counted over different rows).
+    by_part: dict[tuple[str, bool], list[tuple[Measure | None, MeasureExpr, str, str, str]]] = {}
+    for item in chosen:
+        m = item[0]
+        semi = bool(m and m.additivity == "semi_additive" and m.time_aggregation == "last")
+        by_part.setdefault((item[2], semi), []).append(item)
+
+    first_role: DateRole | None = None
+    builders: list[tuple[_PartBuilder, DateRole | None]] = []
+    for (table, semi), items in by_part.items():
+        builder = _PartBuilder(model, table, aliases, ctx)
+        builder._allowed(table)
+        role = _date_role_for(model, plan, items[0][0] or _fallback_measure(model, table), table)
+        builder.part.snapshot = semi
+        builders.append((builder, role))
+        first_role = first_role or role
+        if plan.time.date and role and role.slug != plan.time.date:
+            notes.append(f"{model.tables[table].business_name} is counted by {role.name}.")
+
+    fiscal_start = model.settings.fiscal_year_start_month
+    first, last = _first_last(first_role) if first_role else (None, None)
+    window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
+                            fiscal_start=fiscal_start)
+    notes += window.notes
+    compare: Range | None = None
+    if plan.time.compare:
+        c = plan.time.compare
+        if c.kind == "window" and c.window:
+            compare = resolve_window(c.window, today=ctx.today, first_data=first, last_data=last,
+                                     fiscal_start=fiscal_start)
+        else:
+            compare = shift(window, c.kind)
+        intent = "compare"
+
+    uses_time = bool(plan.time.grain) or plan.time.window.kind != "all" or compare is not None or any(
+        t for _, _, t in wanted)
+    groups: list[Group] = []
+    group_names: dict[str, str] = {}
+    if plan.time.grain:
+        groups.append(Group("period", "Period", "period", plan.time.grain))
+        group_names["__period__"] = "period"
+        out_names.add("period")
+    for slug, attribute, time_attr in wanted:
+        if time_attr:
+            name = _output_name(time_attr, out_names)
+            groups.append(Group(name, time_attr.replace("_", " ").capitalize(), "time"))
+        else:
+            assert attribute is not None
+            name = _output_name(attribute.slug.replace(".", "_"), out_names)
+            groups.append(Group(name, attribute.business_name, "attribute", attribute=attribute.slug))
+        group_names[slug] = name
+
+    parts: list[Part] = []
+    measures_out: list[OutMeasure] = []
+    for (builder, role), items in zip(builders, by_part.values()):
+        part = builder.part
+        if role is not None and (uses_time or part.snapshot):
+            part.date = builder.date(role)
+            if part.date.mode in ("day_calendar", "month_calendar") and not uses_time and not part.snapshot:
+                part.date = None
+        elif uses_time and role is None:
+            raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
+        for m, expr, table, label, fmt in items:
+            name = _output_name(m.slug if m else label, out_names)
+            out = OutMeasure(name=name, label=label, expr=expr, format=fmt, measure=m,
+                             semi=bool(m and m.additivity == "semi_additive"))
+            part.measures.append(out)
+            measures_out.append(out)
+        for slug, attribute, time_attr in wanted:
+            name = group_names[slug]
+            if time_attr:
+                if part.date is None:
+                    raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
+                part.groups.append(PartGroup(name, part.date.alias, None, "time", time_attr=time_attr, date=part.date))
+                continue
+            assert attribute is not None
+            column = model.columns[attribute.column]
+            through = None
+            if slug in plan.via:
+                via = _find_slug(model, plan.via[slug])
+                via_entity = via[1] if via else None
+                through = via_entity.table if isinstance(via_entity, Entity) else None
+            alias = builder.reach(column.table, through=through, label=attribute.business_name)
+            part.groups.append(PartGroup(name, alias, column.key, "attribute"))
+            if plan.limit:
+                # A top n ranks real members; rows with none are not a member (a
+                # breakdown keeps them as one empty group, so it adds up to the total).
+                part.preds.append(Pred(alias, column.key, "not_null", []))
+                notes.append(f"Rows with no {attribute.business_name.lower()} are left out of the ranking.")
+        if plan.time.grain:
+            if part.date is None:
+                raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
+            part.groups.insert(0, PartGroup("period", part.date.alias, None, "period", grain=plan.time.grain,
+                                            date=part.date))
+        if part.date is not None and (window.start or window.end or compare is not None or plan.time.grain):
+            rng = window
+            if compare is not None:
+                rng = Range(min(x for x in (window.start, compare.start) if x) if window.start or compare.start else None,
+                            max(x for x in (window.end, compare.end) if x) if window.end or compare.end else None)
+            part.date_ranges.append((part.date, rng))
+        parts.append(part)
+
+    # Filters: attributes, other dates, totals.
+    having: list[Pred] = []
+    for f in plan.filters:
+        found = _find_slug(model, f.field)
+        if not found:
+            raise ResolveError("unknown", f"nothing to filter on called {f.field}")
+        kind, obj = found
+        if kind == "measure":
+            m = obj
+            assert isinstance(m, Measure)
+            target = next((o for o in measures_out if o.measure is m), None)
+            if target is None:
+                raise ResolveError("unsupported", f"a filter on {m.business_name} needs it in the answer")
+            having.append(Pred("", target.name, f.op, list(f.values), f"{m.business_name} {_op_words(f)}"))
+            continue
+        for builder, _ in builders:
+            part = builder.part
+            if kind == "date":
+                filter_role = obj
+                assert isinstance(filter_role, DateRole)
+                if filter_role.table != part.table:
+                    continue
+                use = builder.date(filter_role)
+                values = [dt.date.fromisoformat(str(v)) for v in f.values]
+                part.date_ranges.append((use, _date_filter_range(f, values)))
+                notes.append(f"{filter_role.name} {_op_words(f)}.")
+                continue
+            attribute = _entity_label(model, f.field) if kind == "entity" else obj
+            assert isinstance(attribute, Attribute)
+            column = model.columns[attribute.column]
+            alias = builder.reach(column.table, label=attribute.business_name)
+            part.preds.append(Pred(alias, column.key, f.op, list(f.values),
+                                   f"{attribute.business_name} {_op_words(f)}"))
+        if kind != "date":
+            label = obj.business_name if hasattr(obj, "business_name") else f.field
+            notes.append(f"{label} {_op_words(f)}.")
+
+    # Admin-approved default filters on the measure tables.
+    for builder, _ in builders:
+        owner = model.tables[builder.part.table]
+        for df in owner.default_filters:
+            builder.part.preds.append(Pred(builder.part.alias, df.column, df.op, list(df.values)))
+            notes.append(f"{owner.business_name}: {model.columns[df.column].business_name} "
+                         f"{df.op.replace('_', ' ')} {', '.join(map(str, df.values))} (a default filter).")
+
+    # How it was answered, in words.
+    for builder, role in builders:
+        part = builder.part
+        if part.date is not None and role is not None:
+            notes.insert(0, f"{', '.join(o.label for o in part.measures)} by {role.name.lower()}.")
+        for table, path in builder.paths_used.items():
+            alternatives = P.all_paths(model, part.table, table)
+            if len(alternatives) > 1:
+                others = [p.describe(model) for p in alternatives[1:3]]
+                notes.append(f"{model.tables[table].business_name} through {path.describe(model)} "
+                             f"(also possible: {'; '.join(others)}).")
+        for j in model.joins.values():
+            if j.from_table == part.table and j.trust == "proposed" and any(
+                    step.key == j.key for p in builder.paths_used.values() for step in p.joins):
+                notes.append(f"{1 - j.match_rate:.0%} of {model.tables[part.table].business_name.lower()} rows have "
+                             f"no matching {model.tables[j.to_table].business_name.lower()}: they show as Unknown.")
+        if part.date and part.date.role.placeholder_share > 0.001 and uses_time:
+            notes.append(f"Rows with no {part.date.role.name.lower()} ({part.date.role.placeholder_share:.0%}) "
+                         "are left out.")
+        if part.snapshot:
+            notes.append(f"{', '.join(o.label for o in part.measures)}: taken at the last "
+                         f"{'snapshot' if not plan.time.grain else 'snapshot of each period'}, not added up over time.")
+
+    # Partial periods of a series.
+    partial: list[dt.date] = []
+    if plan.time.grain and first_role and not plan.time.grain.startswith("fiscal"):
+        bounded = Range(window.start or (first_role.first or None), window.end or (
+            (first_role.last + dt.timedelta(days=1)) if first_role.last else None))
+        if bounded.start and bounded.end:
+            starts = periods(bounded, plan.time.grain, fiscal_start=fiscal_start)
+            partial = partial_periods(starts, plan.time.grain, first_data=first_role.first,
+                                      last_data=first_role.last, rng=window, fiscal_start=fiscal_start)
+
+    sort = [(_sort_name(s.by, measures_out, group_names, model), s.desc) for s in plan.sort]
+    sort = [(n, d) for n, d in sort if n]
+    if not sort:
+        if plan.time.grain:
+            sort = [("period", False)]
+        elif intent == "compare" and measures_out:
+            sort = [(f"{measures_out[0].name}_change", True)]
+        elif intent in ("rank", "breakdown", "share") and measures_out and wanted:
+            sort = [(measures_out[0].name, True)]
+    limit = plan.limit
+    return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
+                   sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
+                   partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows)
+
+
+def _fallback_measure(model: SemanticModel, table: str) -> Measure:
+    return next(m for m in model.measures.values() if m.table == table)
+
+
+def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, aliases: _Aliases, intent: str) -> Logical:
+    """A list of members (no measure): the distinct values of the grouping, from its own table."""
+    slug, attribute, time_attr = wanted[0]
+    if time_attr or attribute is None:
+        raise ResolveError("unsupported", "listing periods needs a measure")
+    column = model.columns[attribute.column]
+    builder = _PartBuilder(model, column.table, aliases, ctx)
+    builder._allowed(column.table)
+    part = builder.part
+    part.distinct_only = True
+    out_names: set[str] = set()
+    groups = []
+    for slug_, attr, _ in wanted:
+        col = model.columns[attr.column]
+        alias = builder.reach(col.table, label=attr.business_name)
+        name = _output_name(attr.slug.replace(".", "_"), out_names)
+        part.groups.append(PartGroup(name, alias, col.key, "attribute"))
+        groups.append(Group(name, attr.business_name, "attribute", attribute=attr.slug))
+    for f in plan.filters:
+        found = _find_slug(model, f.field)
+        if not found or found[0] not in ("attribute", "entity"):
+            raise ResolveError("unsupported", f"listing cannot filter on {f.field}")
+        attr = _entity_label(model, f.field) if found[0] == "entity" else found[1]
+        assert isinstance(attr, Attribute)
+        col = model.columns[attr.column]
+        part.preds.append(Pred(builder.reach(col.table), col.key, f.op, list(f.values)))
+    return Logical(intent="list", parts=[part], groups=groups, measures=[], window=Range(None, None),
+                   sort=[(groups[0].name, False)], limit=plan.limit, max_rows=ctx.max_rows,
+                   notes=[f"{model.tables[column.table].business_name}: {attribute.business_name.lower()} as listed."])
+
+
+def _date_filter_range(f: Filter, values: list[dt.date]) -> Range:
+    one = dt.timedelta(days=1)
+    if f.op == "between" and len(values) == 2:
+        return Range(min(values), max(values) + one)
+    if f.op in ("eq", "in") and values:
+        return Range(min(values), max(values) + one)
+    if f.op in ("gte", "gt") and values:
+        return Range(values[0] + (one if f.op == "gt" else dt.timedelta(0)), None)
+    if f.op in ("lte", "lt") and values:
+        return Range(None, values[0] + (one if f.op == "lte" else dt.timedelta(0)))
+    raise ResolveError("unsupported", f"a date filter with {f.op} is not supported")
+
+
+def _op_words(f: Filter) -> str:
+    values = ", ".join(str(v) for v in f.values)
+    return {"eq": f"is {values}", "in": f"is {values}", "ne": f"is not {values}", "not_in": f"is not {values}",
+            "gt": f"above {values}", "gte": f"at least {values}", "lt": f"below {values}", "lte": f"at most {values}",
+            "between": f"between {' and '.join(str(v) for v in f.values)}", "contains": f"contains {values}",
+            "starts_with": f"starts with {values}", "is_null": "is empty", "not_null": "is filled"}.get(f.op, f.op)
+
+
+def _sort_name(by: str, measures: list[OutMeasure], groups: dict[str, str], model: SemanticModel) -> str:
+    if by in ("change", "pct_change", "share") and measures:
+        return f"{measures[0].name}_{by}"
+    if by == "period":
+        return "period"
+    for o in measures:
+        if o.measure is not None and o.measure.slug == by or o.name == by:
+            return o.name
+    if by in groups:
+        return groups[by]
+    return ""
+
+
+def _unique(items: list[str]) -> list[str]:
+    seen, out = set(), []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
