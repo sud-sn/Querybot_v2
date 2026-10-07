@@ -151,6 +151,7 @@ class Logical:
     unit_group: str | None = None       # the grouping that keeps different units apart, when one was added
     unit_order: list[str] = field(default_factory=list)   # its units, the most used first (when profiled)
     expected: list[dt.date] = field(default_factory=list)  # a series' periods within the data: one with no row is a gap
+    data_last: dt.date | None = None    # the last day the series' date has data (periods after it have none yet)
 
 
 class _Aliases:
@@ -742,7 +743,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                    sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
-                   expected=expected)
+                   expected=expected, data_last=last if plan.time.grain else None)
 
 
 _SPLIT_INTENTS = {"value", "breakdown", "rank", "trend", "compare", "count"}

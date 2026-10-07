@@ -207,3 +207,24 @@ def test_a_forecast_of_whole_numbers_kept_as_a_number_says_whole_numbers(stock):
     assert [m.expr.agg for m in copy.measures.values()                 # never also a receipt number counted
             if (getattr(m.expr, "column", None) or "").endswith(".num_of_rct")] == ["sum"]
     assert "Forecast for Sep 2026 to Nov 2026" in headline and not re.search(r"\d\.\d", headline), headline
+
+
+def test_where_values_stay_out_of_prompts_a_formula_or_filter_value_does_too(stock):
+    # A formula's text values and a measure filter's values are values like any other: a
+    # workspace that keeps values out of the AI's prompt keeps these out too.
+    from core2.model.schema import ColumnFilter
+    from core2.plan.catalog import catalog_text
+
+    con, model = stock
+    applied, report = _with_metrics(model, {
+        "name": "North stock", "base_table": "dbo.STOCK_DAY_FACT", "result_format": "number",
+        "sql_template": "SUM(CASE WHEN CAST(WAREHOUSE_ID AS VARCHAR) = 'North Depot' THEN ON_HND_QTY END)"})
+    assert not report.missed, report.missed
+    sold = next(m for m in applied.measures.values() if (getattr(m.expr, "column", None) or "").endswith(".sld_qty"))
+    period = next(c.key for c in applied.columns.values() if c.name == "warehouse_id" and c.table == sold.table)
+    sold.expr = sold.expr.model_copy(update={"filters": [ColumnFilter(column=period, op="ne", values=["Depot 9"])]})
+    kept = catalog_text(applied, values_allowed=True)
+    assert "North Depot" in kept and "Depot 9" in kept
+    out = catalog_text(applied, values_allowed=False)
+    assert "North Depot" not in out and "Depot 9" not in out
+    assert "the formula SUM(CASE WHEN CAST(" in out and "(a value)" in out

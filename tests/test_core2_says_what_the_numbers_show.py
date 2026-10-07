@@ -10,7 +10,8 @@
 * A comparison by member says which way each moved: when every member fell, none
   "rose most" (G4).
 * A series is described by its complete periods: a partly covered year or week is
-  named, not compared (A7); weeks are Monday weeks, read "the week of 4 May 2026"
+  named, not compared (A7), and months after the data ends have no data yet;
+  weeks are Monday weeks, read "the week of 4 May 2026"
   (A6); the highest period is named, and nothing is called flat (F3).
 """
 
@@ -212,6 +213,17 @@ def test_a_partly_covered_year_is_named_not_compared(retail):
     headline = payload["answer"]["headline"]
     assert "2026" not in headline and headline.endswith("in 2025 (the highest).")     # named once, not repeated
     assert any(c.startswith("2026 is only partly covered") for c in payload["coverage_caveats"])
+
+
+def test_months_after_the_data_ends_have_no_data_yet_not_part_of_it(retail):
+    con, model = retail
+    payload, _ = _ask(model, con, {"intent": "trend", "measures": ["net_amount"], "time": {
+        "grain": "month", "window": {"kind": "between", "start": "2026-01-01", "end": "2026-12-31"}}})
+    last = con.execute("SELECT MAX(c.full_date) FROM order_lines l JOIN calendar c ON c.date_key = l.order_date_key"
+                       ).fetchone()[0]
+    caveats = payload["coverage_caveats"]
+    assert f"Jun 2026 is only partly covered by the data: not compared as whole periods." in caveats
+    assert f"The data ends on {last.day} {last:%b %Y}: Jul 2026 to Dec 2026 have no data yet." in caveats, caveats
 
 
 def test_weeks_are_monday_weeks_and_read_as_the_week_of(retail):

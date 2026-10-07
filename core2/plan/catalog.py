@@ -11,6 +11,9 @@ values out of prompts or the column is sensitive.
 
 from __future__ import annotations
 
+from sqlglot import exp
+
+from core2.model import formula
 from core2.model.schema import AggExpr, Attribute, Measure, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr
 from core2.plan.ir import TIME_ATTRIBUTES
 from core2.resolve import paths as P
@@ -21,8 +24,12 @@ _ADDS_UP = {"additive": "adds up", "non_additive": "does not add up (averaged or
             "semi_additive": "a balance: taken on the last day of each period, never added over time"}
 
 
-def _words(model: SemanticModel, expr: MeasureExpr) -> str:
-    """A measure's definition in words: "sum of Net amount where Status is not C"."""
+def _words(model: SemanticModel, expr: MeasureExpr, values: bool = True) -> str:
+    """A measure's definition in words: "sum of Net amount where Status is not C".
+
+    Where values stay out of prompts (``values`` false), a filter's values and a formula's
+    text values are not written: "where Status is not (a value)".
+    """
     if isinstance(expr, AggExpr):
         target = model.columns[expr.column].business_name if expr.column else "rows"
         head = {"sum": f"sum of {target}", "count": f"number of {target}" if expr.column else "number of rows",
@@ -30,18 +37,24 @@ def _words(model: SemanticModel, expr: MeasureExpr) -> str:
                 "min": f"smallest {target}", "max": f"largest {target}"}[expr.agg]
         if expr.filters:
             head += " where " + "; ".join(
-                f"{model.columns[f.column].business_name} {f.op.replace('_', ' ')} {', '.join(map(str, f.values))}"
+                f"{model.columns[f.column].business_name} {f.op.replace('_', ' ')} "
+                f"{', '.join(map(str, f.values)) if values else '(a value)'}"
                 for f in expr.filters)
         return head
     if isinstance(expr, OpExpr):
         sign = {"ratio": "÷", "subtract": "−", "add": "+", "multiply": "×"}[expr.op]
-        text = f" {sign} ".join(f"({_words(model, a)})" for a in expr.args)
+        text = f" {sign} ".join(f"({_words(model, a, values)})" for a in expr.args)
         return f"{text} × {expr.scale:g}" if expr.scale != 1 else text
     if isinstance(expr, RefExpr):
         ref = model.measures.get(expr.measure)
         return ref.business_name if ref else expr.measure
     if isinstance(expr, SqlExpr):
-        return f"the formula {expr.sql}"
+        tree = formula.parse_stored(expr.sql)
+        if not values:
+            for literal in list(tree.find_all(exp.Literal)):
+                if literal.is_string:
+                    literal.replace(exp.Literal.string("…"))
+        return f"the formula {tree.sql()}"
     return ""
 
 
@@ -80,7 +93,7 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
             status = " | unconfirmed" if m.status in ("needs_review", "proposed") else ""
             unit = f" in {m.unit}" if m.unit else ""
             lines.append(f"- {m.slug} | {m.business_name} | {m.format}{unit} | {_ADDS_UP.get(m.additivity, '')} | "
-                         f"{_words(model, m.expr)}{_synonyms(m.synonyms)}{status}")
+                         f"{_words(model, m.expr, values_allowed)}{_synonyms(m.synonyms)}{status}")
     lines.append("")
 
     lines.append("DATES (slug | name | what it records | data range)")

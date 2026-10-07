@@ -287,10 +287,20 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     caveats: list[str] = []
     if partial and cols.of("period"):
         grain = cols.of("period")[0].grain or "month"
-        named = ", ".join(period_label(dt.date.fromisoformat(p), grain, fiscal_start=logical.fiscal_start)
-                          for p in sorted(partial))
-        caveats.append(f"{named} {'is' if len(partial) == 1 else 'are'} only partly covered by the data: "
-                       "not compared as whole periods.")
+        days = sorted(dt.date.fromisoformat(p) for p in partial)
+        # A period that starts after the data ends has no data yet: said so, not called partly covered.
+        ahead = [d for d in days if logical.data_last is not None and d > logical.data_last]
+        part = [d for d in days if d not in ahead]
+        if part:
+            named = ", ".join(period_label(d, grain, fiscal_start=logical.fiscal_start) for d in part)
+            caveats.append(f"{named} {'is' if len(part) == 1 else 'are'} only partly covered by the data: "
+                           "not compared as whole periods.")
+        if ahead and logical.data_last is not None:
+            first = period_label(ahead[0], grain, fiscal_start=logical.fiscal_start)
+            last = period_label(ahead[-1], grain, fiscal_start=logical.fiscal_start)
+            span = first if len(ahead) == 1 else f"{first} to {last}"
+            caveats.append(f"The data ends on {logical.data_last.day} {logical.data_last:%b %Y}: {span} "
+                           f"{'has' if len(ahead) == 1 else 'have'} no data yet.")
     if truncated:
         caveats.append(f"Showing the first {logical.max_rows:,} rows.")
     gaps = _gaps(logical, cols, raw, truncated)
