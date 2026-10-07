@@ -41,7 +41,7 @@ def _words(model: SemanticModel, expr: MeasureExpr) -> str:
         ref = model.measures.get(expr.measure)
         return ref.business_name if ref else expr.measure
     if isinstance(expr, SqlExpr):
-        return "an imported formula"
+        return f"the formula {expr.sql}"
     return ""
 
 

@@ -183,6 +183,19 @@ def project(values: list[float], season: int | None, horizon: int, *, skip: list
     return Projection(out, low, high, "trend and seasonality" if fit.lifts else "trend", fit.slope, max(0.0, r2))
 
 
+MAX_GAP = 2      # periods with no rows inside the history before it is cut
+
+
+def _steps(start: dt.date, end: dt.date, unit: str) -> int:
+    """How many periods from ``start`` to ``end``."""
+    if unit == "day":
+        return (end - start).days
+    n = 0
+    while start < end:
+        start, n = add_units(start, unit, 1), n + 1
+    return n
+
+
 def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehouse: Warehouse, ctx: Context,
                     data_source: str = "", question_id: str = "", model_version: int = 0,
                     started: float | None = None) -> dict[str, Any]:
@@ -222,6 +235,18 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
     partial = set(logical.partial)
     complete = sorted(d for d in series if d not in partial)
     snapshot = bool(m.measure and m.measure.additivity == "semi_additive")
+    label_of = lambda d: period_label(d, grain, fiscal_start=logical.fiscal_start)  # noqa: E731
+    if complete:
+        # The history is the latest unbroken stretch: a series that stops for longer than
+        # MAX_GAP periods starts again after it (a long gap is no information, not zeros).
+        run = [complete[-1]]
+        for day in reversed(complete[:-1]):
+            if _steps(day, run[0], unit) > MAX_GAP + 1:
+                notes.append(f"Only the data since {label_of(run[0])} is used: before it, the series stops for "
+                             f"{_steps(day, run[0], unit) - 1} {unit}s.")
+                break
+            run.insert(0, day)
+        complete = run
     values: list[float] = []
     starts: list[dt.date] = []
     gaps = 0
@@ -241,7 +266,6 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
         notes.append(f"{gaps} period{'s' if gaps > 1 else ''} with no rows "
                      f"{'kept the last level' if snapshot else 'counted as zero'}.")
 
-    label_of = lambda d: period_label(d, grain, fiscal_start=logical.fiscal_start)  # noqa: E731
     fmt_ = m.format
     table_format = {"currency": "currency", "percent": "percentage"}.get(fmt_, "number")
     headers = ["period", "actual", "forecast", "forecast_low", "forecast_high"]

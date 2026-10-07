@@ -552,6 +552,13 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 rng = Range(min(x for x in (window.start, compare.start) if x) if window.start or compare.start else None,
                             max(x for x in (window.end, compare.end) if x) if window.end or compare.end else None)
             part.date_ranges.append((part.date, rng))
+        if role is not None and role.whole_year_share > 0 and not part.date_ranges:
+            # A row keyed to month 00 holds a whole year: never added to its months, even over all time.
+            part.date = part.date or builder.date(role)
+            part.date_ranges.append((part.date, Range(None, None)))
+        if role is not None and role.whole_year_share > 0:
+            notes.append(f"{model.tables[part.table].business_name}: rows for a whole year (month 00) are left "
+                         "out; only months are counted.")
         parts.append(part)
 
     # Filters: attributes, other dates, totals.
@@ -674,6 +681,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         if bounded.start and bounded.end:
             starts = periods(bounded, plan.time.grain, fiscal_start=fiscal_start)
             partial = partial_periods(starts, plan.time.grain, first_data=first, last_data=last, rng=window,
+                                      today=ctx.today,
                                       fiscal_start=fiscal_start)
 
     sort = [(_sort_name(s.by, measures_out, group_names, model), s.desc) for s in plan.sort]

@@ -25,16 +25,19 @@ _OPAQUE_WORDS = {"c", "col", "column", "field", "fld", "attr", "attribute", "t",
 LEVEL_WORDS = {"balance", "bal", "hand", "oh", "hnd", "stock", "stk", "inventory", "level", "headcount", "hc", "fte",
                "seats", "mrr", "arr", "outstanding", "backlog", "available", "avl", "allocated", "alc", "reserved",
                "rsv", "position", "open"}
-FLOW_WORDS = {"cost", "cst", "salary", "sal", "sales", "sls", "sold", "sld", "sale", "revenue", "rev", "received", "rcv",
+FLOW_WORDS = {"purchase", "purchased", "pch", "pur", "bought",
+              "cost", "cst", "salary", "sal", "sales", "sls", "sold", "sld", "sale", "revenue", "rev", "received", "rcv",
               "receipt", "rct", "issued", "iss", "issue", "paid", "budget", "bdgt", "target", "tgt", "plan", "forecast",
               "quota", "hours", "spent", "spend", "movement", "mvt", "shipped", "ship", "shp", "transfer", "tfr",
-              "returned", "rtn", "adjusted", "adj", "consumed", "produced", "scrap", "delivered", "dlv", "invoiced"}
+              "returned", "rtn", "ret", "return", "adjusted", "adj", "consumed", "produced", "scrap", "delivered", "dlv",
+              "invoiced"}
 
 # A fallback reading of common abbreviations (weak evidence; AI labels and admins win).
 EXPANSIONS = {
     "acct": "account", "acg": "accounting", "act": "actual", "asg": "assignment", "cfm": "confirmed",
     "ann": "annual", "bck": "back", "dmd": "demand", "drc": "direct", "isp": "inspection", "lis": "list",
-    "ngv": "negative", "pik": "pick", "psv": "positive", "rjc": "rejected", "rt": "rate",
+    "ngv": "negative", "pik": "pick", "psv": "positive", "rjc": "rejected", "rt": "rate", "efc": "effective",
+    "fnn": "finance", "ret": "return", "phy": "physical", "acc": "account", "ctr": "centre",
     "chg": "change", "lmt": "limit", "pln": "planned", "pry": "primary", "crd": "credit", "dbt": "debit",
     "addr": "address", "adj": "adjustment", "alc": "allocated", "amt": "amount",
     "avg": "average", "avl": "available", "bal": "balance", "bdgt": "budget", "bil": "billing", "brg": "bridge",
@@ -148,6 +151,7 @@ def ends_with(longer: list[str], tail: list[str]) -> bool:
 
 
 _DATE_TOKENS = {"dt", "date", "ts", "timestamp", "day", "time"}
+_KEY_ONLY = {"dms", "dim", "key", "sk", "fk"}
 _CURRENCY_TOKENS = {"cd", "code", "key", "id", "rate", "rt", "exch", "exchange", "sym", "symbol", "nm", "name",
                     "conv", "conversion", "iso"}
 
@@ -160,10 +164,29 @@ def _expand(token: str, neighbours: list[str], data_type: str | None) -> str:
     if token == "cls":
         # CLS_DT is when something closed; ABC_CLS is a classification.
         return "closed" if set(neighbours) & _DATE_TOKENS else "class"
+    if token == "prd" and (set(neighbours) - {"prd"} <= _KEY_ONLY or set(neighbours) & {"bal", "balance"}):
+        # PRD_DMS_KEY and ITM_BAL_PRD_FCT are periods; PRD_GRP_DMS_KEY, PRD_NM are products.
+        return "period"
+    if token == "dly":
+        # CFM_DLY_DT is a delivery date; ITM_BAL_DLY_FCT is a daily balance.
+        return "delivery" if set(neighbours) & _DATE_TOKENS else "daily"
     if token == "cur":
         # CUR_CD is a currency; CUR_ON_HND_QTY is the current quantity.
         return "currency" if set(neighbours) & _CURRENCY_TOKENS else "current"
     return EXPANSIONS.get(token, token)
+
+
+# Written in capitals in a name read out: "GL account", not "Gl account".
+ACRONYMS = {"gl", "sku", "abc", "po", "vat", "gst", "hst", "pst", "kpi", "ar", "ap"}
+
+
+def _word(token: str, parts: list[str], data_type: str | None) -> str:
+    return token.upper() if token in ACRONYMS else _expand(token, parts, data_type)
+
+
+def read_tokens(parts: list[str]) -> str:
+    """Tokens in words, each read with its neighbours (as :func:`readable` reads a name)."""
+    return " ".join(_word(t, parts, None) for t in parts)
 
 
 def readable(name: str, data_type: str | None = None) -> str:
@@ -171,6 +194,6 @@ def readable(name: str, data_type: str | None = None) -> str:
     if opaque(name):
         return name
     parts = tokens(name)
-    words = [_expand(t, parts, data_type) for t in parts]
+    words = [_word(t, parts, data_type) for t in parts]
     text = " ".join(words)
     return text[:1].upper() + text[1:]

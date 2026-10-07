@@ -56,6 +56,7 @@ class DateCandidate:
     score: float = 0.0
     coverage: float = 1.0
     placeholder_share: float = 0.0
+    whole_year_share: float = 0.0
     periodic: bool = False
     first: dt.date | None = None
     last: dt.date | None = None
@@ -164,6 +165,7 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             filled = p.non_null - (join.placeholder_rows if join else 0)
             c.coverage = filled / profile.rows if profile.rows else 0.0
             c.placeholder_share = (join.placeholder_rows / profile.rows) if join and profile.rows else 0.0
+            c.whole_year_share = (p.whole_year_rows or 0) / profile.rows if profile.rows else 0.0
             low, high = (p.date_min, p.date_max) if p.date_min else (p.min, p.max)
             c.first, c.last = _parse_day(low, granularity), _parse_day(high, granularity)
             if c.first and c.first.year <= 1901:
@@ -208,7 +210,7 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                 c.add("names_event", 0.25, f"{readable} is the event the table records")
                 if head and any(names.same_word(w, head) for w in words):
                     c.add("names_head", 0.1, f"it names the table's main subject ({head})")
-            if c.kind != "audit" and c.granularity in ("day", "month"):
+            if c.kind == "event" and c.granularity in ("day", "month"):   # a planned or due date is never a snapshot
                 periodic, why = _periodic(warehouse, inventory, key, c.column, c.granularity, profile.rows,
                                           entity_columns.get(key, [])) \
                     if profile.rows >= 50 and p.distinct and profile.rows / p.distinct >= 5 else (False, "")

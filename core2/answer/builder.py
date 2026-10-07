@@ -84,6 +84,8 @@ def span_words(rng: Range) -> str:
         return ""
     if start and end:
         last = end - dt.timedelta(days=1)
+        if last == start:
+            return f"on {start.day} {start:%b %Y}"
         if start.month == 1 and start.day == 1 and end.month == 1 and end.day == 1 and end.year == start.year + 1:
             return f"in {start.year}"
         if start.day == 1 and end.day == 1 and last.year == start.year and last.month == start.month:
@@ -99,6 +101,14 @@ def span_words(rng: Range) -> str:
     assert end is not None
     last = end - dt.timedelta(days=1)
     return f"up to {last.day} {last:%b %Y}"
+
+
+def versus(rng: Range) -> str:
+    """How a comparison names what it is compared with: "on April 2026", "against 17 Aug 2026"."""
+    words = span_words(rng)
+    if words.startswith("in "):
+        return "on " + words[3:]
+    return "against " + words.removeprefix("on ").removeprefix("from ")
 
 
 # ── the table ──────────────────────────────────────────────────────────────
@@ -304,7 +314,7 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
         "insight_summary": "",
         "anomaly_callouts": [],
         "coverage_caveats": caveats,
-        "follow_up_suggestions": suggestions,
+        "follow_up_suggestions": [s if isinstance(s, dict) else {"label": s, "question": s} for s in suggestions],
         "data": {
             "headers": headers,
             "header_labels": labels,
@@ -409,6 +419,8 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
         pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
         prior_span = span_words(logical.compare).removeprefix("in ")
+        against = versus(logical.compare)
+        prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
 
         def moved(r: dict, with_unit: bool = True) -> str:
             by = _number(r[change.name]) or 0.0   # type: ignore[union-attr]
@@ -425,7 +437,10 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
                 tail = f"; {extra} more unit{'s' if extra > 1 else ''} in the table" if extra > 0 else ""
                 return f"{lead} against {prior_span}: {'; '.join(listed)}{tail}."
             r = raw[0]
-            return f"{lead}: {value(r)}, {moved(r)} on {prior_span}."
+            if prior is not None and _number(r[prior.name]) is None:
+                return (f"{lead}: {value(r)}. There is no {_lower(m.label)} "
+                        f"{span_words(logical.compare) or 'in the period before'} to compare it with.")
+            return f"{lead}: {value(r)}, {moved(r)} {against}."
         if members and change is not None:
             changes = [_number(r[change.name]) or 0.0 for r in raw]
             order = sorted(range(len(raw)), key=lambda i: -changes[i])
@@ -472,6 +487,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         complete = [r for r in rows if _day(r[periods[0].name]) and _day(r[periods[0].name]).isoformat()  # type: ignore[union-attr]
                     not in partial] or rows
         complete = sorted(complete, key=lambda r: _day(r[periods[0].name]) or dt.date.min)   # newest-first too
+        complete = [r for r in complete if _number(r[m.name]) is not None] or complete     # a period with a value
         first, last = complete[0], complete[-1]
         peak = max(complete, key=lambda r: _number(r[m.name]) or float("-inf"))
         text = f"{lead}, by {grain.replace('fiscal_', 'fiscal ')}: {value(first)} in {name(first)}"
@@ -520,8 +536,11 @@ def _lead(logical: Logical, cols: _Columns, raw: list[dict], units: _Units) -> t
             moved = _number(r[change.name]) or 0.0
             ratio = _number(r[pct.name]) if pct is not None else None
             pct_text = f" ({ratio * 100:+.1f}%)" if ratio is not None else ""
+            prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
+            if prior is not None and _number(r[prior.name]) is None:
+                return value, f"nothing {span_words(logical.compare)} to compare with"
             return value, (f"{'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format, unit=units.of(r))}"
-                           f"{pct_text} on {span_words(logical.compare).removeprefix('in ')}")
+                           f"{pct_text} {versus(logical.compare)}")
     return value, span_words(logical.window)
 
 

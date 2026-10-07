@@ -67,6 +67,8 @@ class Findings:
     values_allowed: Callable[[str, str], bool] = field(default=lambda table_key, column: True)
 
 
+_PERIOD_NAMES = {"period", "month", "year", "week", "quarter", "fiscal period", "fiscal month"}
+
 def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | None = None) -> Findings:
     options = options or BuildOptions()
     tables = list(inventory.tables.items())
@@ -194,9 +196,19 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
     for key, roles in f.dates.items():
         table_name = inv.tables[key].name
         for c in roles:
-            name = (c.via_calendar.role if c.via_calendar and c.via_calendar.role else names.readable(c.column))
+            if c.via_calendar and c.via_calendar.role:
+                name = c.via_calendar.role
+            elif c.via_calendar and not names.opaque(c.column):
+                # A key into a calendar is named by what it keys: PRD_DMS_KEY is the period.
+                text = names.read_tokens(names.core_column(c.column))
+                name = text[:1].upper() + text[1:]
+            elif not names.opaque(c.column):
+                text = names.read_tokens(names.core_column(c.column))
+                name = text[:1].upper() + text[1:]
+            else:
+                name = names.readable(c.column)
             if c.via_calendar is None and not names.opaque(c.column) and "date" not in name.lower() \
-                    and c.granularity != "timestamp":
+                    and c.granularity != "timestamp" and name.lower() not in _PERIOD_NAMES:
                 name = f"{name} date"
             base = ids.slug(name)
             slug = ids.unique_slug(base if base not in date_slugs else ids.slug(f"{table_name} {name}"), date_slugs)
@@ -208,7 +220,8 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 granularity=c.granularity,  # type: ignore[arg-type]
                 kind=c.kind,  # type: ignore[arg-type]
                 is_default=c.is_default, score=round(c.score, 3), coverage=round(c.coverage, 4),
-                placeholder_share=round(c.placeholder_share, 4), first=c.first, last=c.last,
+                placeholder_share=round(c.placeholder_share, 4), whole_year_share=round(c.whole_year_share, 4),
+                first=c.first, last=c.last,
                 evidence=c.evidence, confidence=max(0.0, min(1.0, c.score)), provenance="profile",
                 status="verified" if c.is_default and not close_call(roles) else "proposed")
             taken.add(slug)

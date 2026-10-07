@@ -32,6 +32,7 @@ from sqlglot import exp
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
+from core2.model import formula
 from core2.model.schema import AggExpr, MeasureExpr, OpExpr, SemanticModel, SqlExpr
 from core2.resolve.resolver import DateUse, Joined, Logical, Part, PartGroup
 from core2.resolve.time import Range
@@ -267,16 +268,37 @@ class _Compiler:
                 result = D.mul(a, b)
             return D.mul(result, expr.scale) if expr.scale != 1 else result
         if isinstance(expr, SqlExpr):
-            if condition is not None:
-                raise CompileError("an imported formula cannot be compared between periods yet")
-            parsed = sqlglot.parse_one(expr.sql, read=self.d)
-            if not isinstance(parsed, exp.Expression):
-                raise CompileError("an imported formula must be an expression")
-            for column in parsed.find_all(exp.Column):
-                if not column.table:
-                    column.set("table", self.name(part.alias))
-            return parsed
+            return self.formula(expr, part, condition)
         raise CompileError(f"cannot compile {type(expr).__name__}")
+
+    def formula(self, expr: SqlExpr, part: Part, condition: exp.Expr | None) -> exp.Expression:
+        """An imported formula (core2.model.formula), written from its checked form: every column
+        is this part's, quoted as the warehouse spells it; for a comparison each aggregate counts
+        only its period's rows; an average is never an integer division."""
+        tree = formula.parse_stored(expr.sql)
+        by_name = {self.model.columns[k].name.casefold(): k for k in expr.columns if k in self.model.columns}
+        for column in list(tree.find_all(exp.Column)):
+            key = by_name.get(column.name.casefold())
+            if key is None:
+                raise CompileError(f"an imported formula reads {column.name}, which is not in the data any more")
+            column.replace(self.col(part.alias, key))
+        for agg in list(tree.find_all(*formula.AGGREGATES)):
+            arg = agg.this
+            if condition is not None:
+                if isinstance(arg, exp.Star):
+                    arg = _num(1)
+                if isinstance(arg, exp.Distinct):
+                    arg.set("expressions", [exp.Case(ifs=[exp.If(this=condition.copy(), true=e)])
+                                            for e in arg.expressions])
+                else:
+                    arg = exp.Case(ifs=[exp.If(this=condition.copy(), true=arg)])
+            if isinstance(agg, exp.Avg):
+                arg = _double(arg)
+            if arg is not agg.this:
+                agg.set("this", arg)
+        if not isinstance(tree, exp.Expression):
+            raise CompileError("an imported formula must be an expression")
+        return tree
 
     # ── one measure table ──────────────────────────────────────────────────
     def part_select(self, part: Part) -> exp.Select:

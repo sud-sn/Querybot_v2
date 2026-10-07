@@ -38,6 +38,7 @@ _QUANTITY = {"qty", "quantity", "units", "count", "cnt", "volume", "weight", "ho
              "headcount", "hc", "number", "items", "pieces"}
 _LEVEL = names.LEVEL_WORDS
 _FLOW = names.FLOW_WORDS
+_COST_ONLY = {"cost", "cst"}
 _CODE = {"id", "key", "code", "cd", "no", "nbr", "num", "seq", "sequence", "line", "ln", "lin", "type", "typ", "ind", "indicator",
          "status", "sts", "flag", "flg", "year", "yr", "month", "mth", "day", "week", "wk", "quarter", "qtr",
          "version", "level", "lvl", "rank", "priority", "grade", "zip", "postal", "phone"}
@@ -206,7 +207,10 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                 elif words & _QUANTITY or column_is_whole(p):
                     m.format = "integer" if column_is_whole(p) else "number"
                 if periodic:
-                    level = (bool(words & _LEVEL) or opaque or not words & _FLOW) and not (words & _FLOW and not words & _LEVEL)
+                    # On a balance, a "cost" alone may be a unit cost or a value at cost: never summed over time
+                    # on that word alone (asked about instead).
+                    flow = words & _FLOW - _COST_ONLY
+                    level = (bool(words & _LEVEL) or opaque or not flow) and not (flow and not words & _LEVEL)
                     if level:
                         m.additivity, m.time_aggregation = "semi_additive", "last"
                         m.evidence.append(Evidence(kind="level", weight=1,

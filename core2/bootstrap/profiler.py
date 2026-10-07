@@ -204,8 +204,14 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
         elif p.max_num >= 190001 and p.max_num <= 999912:
             shape = _yyyymm(c)
             shaped.append((column.name, "yyyymm", _count_if(shape)))
+            shaped.append((column.name, "whole_year", _count_if(exp.and_(shape.copy(), exp.EQ(
+                this=_mod(c.copy(), 100), expression=exp.Literal.number(0))))))
         else:
             continue
+        if shaped[-1][1] == "whole_year":
+            # The first and last real months: a whole-year row (month 00) is not a month.
+            shape = exp.and_(shape, exp.Between(this=_mod(c.copy(), 100), low=exp.Literal.number(1),
+                                                high=exp.Literal.number(12)))
         real = exp.and_(shape.copy(), exp.LT(this=c.copy(), expression=exp.Literal.number(
             99991231 if shaped[-1][1] == "yyyymmdd" else 999912)), exp.GT(this=c.copy(), expression=exp.Literal.number(
                 19000101 if shaped[-1][1] == "yyyymmdd" else 190001)))
@@ -219,6 +225,10 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
             p = profiles[name]
             if pattern in ("min_valid", "max_valid"):
                 setattr(p, "date_min" if pattern == "min_valid" else "date_max", _text(value))
+                continue
+            if pattern == "whole_year":
+                count = int(value or 0)
+                p.whole_year_rows = int(round(count * rows / sample_rows)) if sampled and sample_rows else count
                 continue
             valid = int(value or 0)
             if sampled:

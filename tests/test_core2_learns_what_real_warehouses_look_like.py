@@ -130,7 +130,7 @@ def test_columns_about_the_load_or_never_filled_are_not_groupings():
 def test_abbreviations_read_by_the_column_they_are_in():
     assert names.readable("WHS_DSC", "text") == "Warehouse description"
     assert names.readable("IVC_DSC_AMT", "decimal") == "Invoice discount amount"
-    assert names.readable("ABC_CLS_CD", "text") == "Abc class code"
+    assert names.readable("ABC_CLS_CD", "text") == "ABC class code"
     assert names.readable("CLS_DT", "date") == "Closed date"
     _, model = _built()
     column = next(c for c in model.columns.values() if c.name == "CUS_TYP_DSC")

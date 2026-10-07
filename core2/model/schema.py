@@ -100,6 +100,7 @@ class ColumnProfile(_Data):
     time_share: float | None = None      # timestamps: share of values with a time of day
     date_min: str | None = None          # date-shaped numbers: the first and last real dates,
     date_max: str | None = None          # placeholders (-1, 0, 19000101) left out
+    whole_year_rows: int | None = None   # yyyymm keys with month 00: a row for a whole year, not a month
     sampled: bool = False
 
     @property
@@ -208,6 +209,7 @@ class DateRole(Belief):
     score: float = 0.0
     coverage: float = 0.0
     placeholder_share: float = 0.0
+    whole_year_share: float = 0.0   # rows keyed to month 00 (a whole year): never counted as a month
     first: date | None = None
     last: date | None = None
     synonyms: dict[str, list[str]] = Field(default_factory=dict)

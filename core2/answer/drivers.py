@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import bar_chart, display_value, fmt, frame, span_words
+from core2.answer.builder import bar_chart, display_value, fmt, frame, span_words, versus
 from core2.compile.compiler import CompileError, Compiled, compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Compare, Plan, TimeSpec, Window
@@ -171,6 +171,9 @@ def base_plan(plan: Plan, model: SemanticModel, ctx: Context) -> tuple[Plan, lis
 # ── which groupings ────────────────────────────────────────────────────────
 
 
+MIN_MATCH = 0.9     # a grouping reached through a link that matches fewer rows is not checked
+
+
 def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, skip: set[str]) -> list[str]:
     """Groupings worth checking, most telling first: direct dimensions, their parents, then small categories."""
     scored: list[tuple[tuple, str]] = []
@@ -186,6 +189,8 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
             path = P.best_path(model, table, owner)
         except P.Ambiguous:
             return None              # reached two ways: only when the question names the role
+        if path is not None and any(j.match_rate < MIN_MATCH for j in path.joins):
+            return None              # most rows would read Unknown: it explains nothing
         return len(path.joins) if path is not None else None
 
     for e in model.entities.values():
@@ -373,8 +378,8 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     comparison = ""
     if prior or current:
         pct_text = f" ({pct * 100:+.1f}%)" if pct is not None else ""
-        comparison = (f"{'up' if change >= 0 else 'down'} {fmt(abs(change), fmt_)}{pct_text} on "
-                      f"{before.removeprefix('in ')}")
+        comparison = (f"{'up' if change >= 0 else 'down'} {fmt(abs(change), fmt_)}{pct_text} "
+                      f"{versus(total_logical.compare or Range(None, None))}")
     suggestions: list[str] = []
     if reported:
         top = reported[0]

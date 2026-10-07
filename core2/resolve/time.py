@@ -142,17 +142,30 @@ def periods(rng: Range, grain: str, *, fiscal_start: int | None = None) -> list[
     return out
 
 
+# Days the data may miss at the edge of a period that is over (a holiday, a weekend) and the
+# period still counts as whole: invoices that start on 2 January cover January.
+_EDGE_SLACK = {"day": 0, "week": 1, "month": 3, "quarter": 7, "year": 14}
+
+
 def partial_periods(starts: list[dt.date], grain: str, *, first_data: dt.date | None, last_data: dt.date | None,
-                    rng: Range | None = None, fiscal_start: int | None = None) -> list[dt.date]:
-    """Periods the data (or the window) covers only in part: never compared as if whole."""
+                    rng: Range | None = None, fiscal_start: int | None = None,
+                    today: dt.date | None = None) -> list[dt.date]:
+    """Periods the window, or the data, covers only in part: never compared as if whole.
+
+    The window's own edges are exact. The data's are allowed a few days at the edge of a
+    period that is over; a period still under way is partial if any of its days is missing.
+    """
     unit = {"fiscal_month": "month", "fiscal_quarter": "quarter", "fiscal_year": "year"}.get(grain, grain)
+    slack = dt.timedelta(days=_EDGE_SLACK.get(unit, 0))
     out = []
     for start in starts:
         end = add_units(start, unit, 1)
-        covered_from = max(x for x in (start, first_data, rng.start if rng else None) if x is not None)
-        covered_to = min(x for x in (end, (last_data + DAY) if last_data else None, rng.end if rng else None)
-                         if x is not None)
-        if covered_from > start or covered_to < end:
+        cut = rng is not None and ((rng.start is not None and rng.start > start) or (rng.end is not None
+                                                                                   and rng.end < end))
+        late_start = first_data is not None and first_data - start > slack
+        missing_end = last_data is not None and end - (last_data + DAY) > (
+            dt.timedelta(0) if today is not None and end > today else slack)
+        if cut or late_start or missing_end:
             out.append(start)
     return out
 

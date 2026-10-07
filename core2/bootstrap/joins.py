@@ -334,7 +334,8 @@ def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:
                 words = names.core_column(f.from_column)
             if not words:
                 continue
-            text = " ".join(names.EXPANSIONS.get(w, w) for w in words)
+            # Read in the company of the noun: "CFM DLY" before a date is a confirmed delivery.
+            text = names.read_tokens([*words, "dt"]).rsplit(" ", 1)[0] if f.to_calendar else names.read_tokens(words)
             if f.to_calendar:
                 noun = "date"
             else:

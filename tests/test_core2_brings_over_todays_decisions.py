@@ -188,10 +188,10 @@ def test_a_metric_comes_over_as_a_measure_the_new_core_answers_with_the_warehous
     assert float(got) == pytest.approx(float(want))
 
 
-def test_a_metric_written_as_sql_or_still_a_draft_does_not_come_over(retail):
+def test_a_metric_written_as_a_query_or_still_a_draft_does_not_come_over(retail):
     _, model = retail
     report = decisions(model, _legacy(model))
-    assert any("Hand written" in m and "SQL" in m for m in report.missed)
+    assert any("Hand written" in m and "it uses SELECT" in m for m in report.missed)   # the reason, in words
     said = json.dumps([d.value for d in report.decisions])      # neither added nor naming a measure
     assert "Draft one" not in said and "Hand written" not in said
 

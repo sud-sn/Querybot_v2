@@ -13,9 +13,11 @@ column by its name on that table. A name that matches nothing, or more than one
 table, is reported ("not brought over"), never guessed.
 
 Metrics come over when today's metric builder holds them in a structural form
-(a total, a count or an average with filters, or a ratio of two): the new core
-compiles those by its own rules. A metric written as SQL is reported, not
-pasted: the new core never runs SQL text it did not write.
+(a total, a count or an average with filters, or a ratio of two), or as a formula
+over their own table's columns (``SUM(ON_HND_QTY * ITM_CST)``), read and checked
+by core2.model.formula. Anything else (a query, another table, a function a
+measure does not use) is reported with its reason, never pasted: the new core
+writes every query itself.
 """
 
 from __future__ import annotations
@@ -29,8 +31,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from sqlglot import exp
+
 from core2 import ids
-from core2.model.schema import AggExpr, ColumnFilter, Join, Measure, MeasureExpr, OpExpr, SemanticModel
+from core2.bootstrap import names as words_of
+from core2.model import formula
+from core2.model.schema import AggExpr, ColumnFilter, Join, Measure, MeasureExpr, OpExpr, SemanticModel, SqlExpr
 
 log = logging.getLogger("querybot.core2")
 
@@ -43,6 +49,7 @@ _OPS = {"equals": "eq", "not_equals": "ne", "greater_than": "gt", "greater_or_eq
 _FORMATS = {"currency": "currency", "percentage": "percent", "percent": "percent", "integer": "integer",
             "count": "count", "number": "number"}
 _UNANSWERABLE = {"draft", "deprecated"}            # as today's metric_is_answerable
+_EVENT_COUNTS = {"num", "nbr", "cnt", "count", "number"}
 
 
 @dataclass
@@ -269,6 +276,7 @@ def _metrics(model: SemanticModel, legacy: Legacy, names: _Names, report: Report
         mode = str(config.get("mode") or "aggregate").lower()
         expr: MeasureExpr | None = None
         percent = str(metric.get("result_format") or "").lower() in ("percentage", "percent")
+        why = "written as a query or over another table's columns"
         if config.get("enabled") and table and mode in ("aggregate", "filtered_aggregate", "measure"):
             expr = _side(config, table, names, "SUM")
         elif config.get("enabled") and table and mode == "ratio":
@@ -276,9 +284,13 @@ def _metrics(model: SemanticModel, legacy: Legacy, names: _Names, report: Report
             bottom = _side(config.get("denominator") or {}, table, names, "COUNT")
             if top and bottom:
                 expr = OpExpr(op="ratio", args=[top, bottom], scale=100.0 if percent else 1.0)
+        elif table and str(metric.get("sql_template") or "").strip():
+            try:
+                expr = _from_formula(model, table, str(metric["sql_template"]), percent)
+            except formula.FormulaError as exc:
+                why = f"its formula is not used: {exc}"
         if expr is None or table is None:
-            report.missed.append(f"the metric {name}: written as SQL or over another table's columns; define it "
-                                 "in the new core from its parts")
+            report.missed.append(f"the metric {name}: {why}; define it in the new core from its parts")
             continue
         same = next((m for m in model.measures.values() if m.table == table
                      and m.expr.model_dump() == expr.model_dump()), None)
@@ -291,20 +303,86 @@ def _metrics(model: SemanticModel, legacy: Legacy, names: _Names, report: Report
             add_synonyms(f"measure:{same.key}", words)
             report.count("metrics matched")
             continue
-        additive = isinstance(expr, AggExpr) and expr.agg in ("sum", "count")
-        snapshot = model.tables[table].kind == "snapshot" and additive
+        additivity, over_time = _behaviour(model, table, expr)
         slug = ids.unique_slug(ids.slug(name), taken)
         measure = Measure(
             key=f"import.metric_{metric.get('id')}", slug=slug, business_name=name,
             description=str(metric.get("description") or ""), synonyms={"en": words} if words else {}, table=table,
-            expr=expr, additivity="semi_additive" if snapshot else ("additive" if additive else "non_additive"),
-            time_aggregation="last" if snapshot else None,
+            expr=expr, additivity=additivity, time_aggregation=over_time,   # type: ignore[arg-type]
             format=_FORMATS.get(str(metric.get("result_format") or "number").lower(), "number"),   # type: ignore[arg-type]
             default_date=_metric_date(metric, legacy, model, names, table), kind="import", provenance="admin",
             status="approved")
         report.decisions.append(Decision(f"measure:{measure.key}", "define", measure.model_dump(mode="json"),
                                          f"the metric {name} from today's setup"))
         report.count("metrics added")
+
+
+def _from_formula(model: SemanticModel, table: str, text: str, percent: bool) -> MeasureExpr:
+    """A metric's formula as the measure it is: one aggregate, two combined, or a checked formula."""
+    t = model.tables[table]
+    by_name = {c.name.casefold(): c.key for c in model.columns.values() if c.table == table}
+    read = formula.parse(text, lambda n: by_name.get(n.casefold()), lambda k: model.columns[k].name,
+                         {t.name.casefold()})
+
+    def simple(node: exp.Expr) -> AggExpr | None:
+        while isinstance(node, exp.Paren):
+            node = node.this
+        if isinstance(node, exp.Nullif) and isinstance(node.expression, exp.Literal) \
+                and node.expression.this in ("0", "0.0"):
+            node = node.this          # a ratio already never divides by zero
+        if not isinstance(node, formula.AGGREGATES):
+            return None
+        arg = node.this
+        if isinstance(node, exp.Count) and isinstance(arg, exp.Star):
+            return AggExpr(agg="count")
+        if isinstance(node, exp.Count) and isinstance(arg, exp.Distinct) and len(arg.expressions) == 1 \
+                and isinstance(arg.expressions[0], exp.Column):
+            return AggExpr(agg="count_distinct", column=by_name[arg.expressions[0].name.casefold()])
+        if isinstance(arg, exp.Column):
+            agg = {exp.Sum: "sum", exp.Avg: "avg", exp.Count: "count", exp.Min: "min", exp.Max: "max"}[type(node)]
+            return AggExpr(agg=agg, column=by_name[arg.name.casefold()])   # type: ignore[arg-type]
+        return None
+
+    tree = read.tree
+    one = simple(tree)
+    if one is not None:
+        return one
+    if isinstance(tree, (exp.Add, exp.Sub, exp.Div)):
+        left, right = simple(tree.this), simple(tree.expression)
+        if left is not None and right is not None:
+            op = "add" if isinstance(tree, exp.Add) else "subtract" if isinstance(tree, exp.Sub) else "ratio"
+            return OpExpr(op=op, args=[left, right],   # type: ignore[arg-type]
+                          scale=100.0 if percent and op == "ratio" else 1.0)
+    return SqlExpr(sql=read.sql, columns=read.columns)
+
+
+def _behaviour(model: SemanticModel, table: str, expr: MeasureExpr) -> tuple[str, str | None]:
+    """How an added metric adds up: never summed over time on a balance unless what it adds is a flow."""
+    if isinstance(expr, AggExpr):
+        additive, columns = expr.agg in ("sum", "count"), [expr.column] if expr.column else []
+    elif isinstance(expr, OpExpr):
+        additive = expr.op in ("add", "subtract") and all(
+            isinstance(a, AggExpr) and a.agg in ("sum", "count") for a in expr.args)
+        columns = [a.column for a in expr.args if isinstance(a, AggExpr) and a.column]
+    elif isinstance(expr, SqlExpr):
+        additive, columns = formula.additive(formula.parse_stored(expr.sql)), list(expr.columns)
+    else:
+        additive, columns = False, []
+    if not additive:
+        return "non_additive", None
+    if model.tables[table].kind != "snapshot":
+        return "additive", None
+    learned = [m for m in model.measures.values()
+               if m.table == table and isinstance(m.expr, AggExpr) and m.expr.column in columns]
+    semi = next((m for m in learned if m.additivity == "semi_additive"), None)
+    if semi is not None:
+        return "semi_additive", semi.time_aggregation or "last"
+    if learned and all(m.additivity == "additive" for m in learned):
+        return "additive", None
+    tokens = {t for c in columns for t in words_of.tokens(model.columns[c].name)}
+    if tokens & (words_of.FLOW_WORDS | _EVENT_COUNTS) and not tokens & words_of.LEVEL_WORDS:
+        return "additive", None      # a period's amount, or how many times something happened in it
+    return "semi_additive", "last"
 
 
 def _metric_date(metric: dict, legacy: Legacy, model: SemanticModel, names: _Names, table: str) -> str | None:
