@@ -235,6 +235,12 @@ def run_case(case: dict, words: _Words, model: SemanticModel, built: Built, toda
     diff = same_rows(expected.columns, expected.rows, got.columns, got.rows,
                      order_matters=bool(expect.get("order_matters")))
     if diff:
+        # A level-or-amount call the build could not make from values alone, and put to the admin:
+        # a learning gap (level 1), answered right once the admin has said (the admin run checks that).
+        used = {m.key for m in model.measures.values() if m.slug in plan.measures}
+        open_calls = [r.question for r in model.review if r.key.startswith("additivity:") and r.object in used]
+        if open_calls:
+            return CaseResult(cid, "not_learned", f"left to the admin: {open_calls[0]} ({diff})", compiled.sql)
         return CaseResult(cid, "mismatch", diff, compiled.sql)
     if "partial_periods" in expect:
         found = sorted(d.isoformat() for d in logical.partial)

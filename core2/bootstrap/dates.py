@@ -37,6 +37,7 @@ from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
 AUDIT_WORDS = _AUDIT = {"loaded", "load", "ld", "etl", "updated", "upd", "update", "modified", "mod", "inserted", "ins",
+          "entered",
           "batch", "sync", "synced", "ingest", "ingested", "extract", "extracted", "audit", "written", "refresh",
           "refreshed", "processed", "staged", "stg"}
 _PLANNED = {"planned", "plan", "pln", "promised", "requested", "rqs", "req", "expected", "exp", "target",
@@ -283,8 +284,8 @@ def _load_times(warehouse: Warehouse, inventory: Inventory, key: str, candidates
     d = warehouse.dialect
     t = inventory.tables[key]
     for stamp in candidates:
-        if stamp.granularity != "timestamp" or stamp.kind == "audit":
-            continue
+        if stamp.granularity != "timestamp":
+            continue                # an audit stamp by its name is still checked: the evidence is shown
         s = exp.column(D.ident(stamp.column, d))
         minute_of_day = D.add(D.mul(D.date_part(s, "hour", d), 60), D.date_part(s.copy(), "minute", d))
         query = exp.select(exp.Count(this=exp.Literal.number(1)).as_("n"),
@@ -293,9 +294,10 @@ def _load_times(warehouse: Warehouse, inventory: Inventory, key: str, candidates
         n, times = warehouse.query(query.sql(dialect=d).replace(
             "__SRC__", D.table_sql(t.database, t.schema, t.name, d), 1)).rows[0]
         if int(n or 0) >= 200 and 0 < int(times or 0) <= 3:
-            stamp.kind = "audit"
-            stamp.add("load_clustering", -1.0, f"all {int(n):,} rows were written at {int(times)} time"
+            stamp.add("load_clustering", -1.0 if stamp.kind != "audit" else 0.0,
+                      f"all {int(n):,} rows were written at {int(times)} time"
                       f"{'s' if int(times) > 1 else ''} of day: rows are stamped when a batch loads them")
+            stamp.kind = "audit"
 
 
 def close_call(candidates: list[DateCandidate]) -> DateCandidate | None:

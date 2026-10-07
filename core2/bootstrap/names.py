@@ -37,7 +37,7 @@ EXPANSIONS = {
     "acct": "account", "acg": "accounting", "act": "actual", "asg": "assignment", "cfm": "confirmed",
     "ann": "annual", "bck": "back", "dmd": "demand", "drc": "direct", "isp": "inspection", "lis": "list",
     "ngv": "negative", "pik": "pick", "psv": "positive", "rjc": "rejected", "rt": "rate", "efc": "effective",
-    "fnn": "finance", "ret": "return", "phy": "physical", "acc": "account", "ctr": "centre",
+    "fnn": "finance", "ret": "return", "phy": "physical", "acc": "account", "ctr": "centre", "doc": "document",
     "chg": "change", "lmt": "limit", "pln": "planned", "pry": "primary", "crd": "credit", "dbt": "debit",
     "addr": "address", "adj": "adjustment", "alc": "allocated", "amt": "amount",
     "avg": "average", "avl": "available", "bal": "balance", "bdgt": "budget", "bil": "billing", "brg": "bridge",
@@ -167,6 +167,11 @@ def _expand(token: str, neighbours: list[str], data_type: str | None) -> str:
     if token == "prd" and (set(neighbours) - {"prd"} <= _KEY_ONLY or set(neighbours) & {"bal", "balance"}):
         # PRD_DMS_KEY and ITM_BAL_PRD_FCT are periods; PRD_GRP_DMS_KEY, PRD_NM are products.
         return "period"
+    if token == "pst":
+        # PST_DT is a posting date, PST_AMT the provincial sales tax, PST_CD a postal code.
+        if set(neighbours) & _DATE_TOKENS:
+            return "posting"
+        return "postal" if set(neighbours) & {"cd", "cde", "code", "zip"} else "PST"
     if token == "dly":
         # CFM_DLY_DT is a delivery date; ITM_BAL_DLY_FCT is a daily balance.
         return "delivery" if set(neighbours) & _DATE_TOKENS else "daily"
@@ -181,7 +186,10 @@ ACRONYMS = {"gl", "sku", "abc", "po", "vat", "gst", "hst", "pst", "kpi", "ar", "
 
 
 def _word(token: str, parts: list[str], data_type: str | None) -> str:
-    return token.upper() if token in ACRONYMS else _expand(token, parts, data_type)
+    read = _expand(token, parts, data_type)
+    if read != token:
+        return read                 # read in its company first: PST_DT is a posting date
+    return token.upper() if token in ACRONYMS else token
 
 
 def read_tokens(parts: list[str]) -> str:

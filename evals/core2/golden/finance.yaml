@@ -1,0 +1,587 @@
+domain: finance
+today: 2026-06-15
+questions:
+  - id: finance-001
+    question: "What was revenue in fiscal 2025?"
+    tags: [value, fiscal]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.credit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Revenue"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2024-07-01", end: "2025-06-30"}
+    reference_sql: |
+      SELECT SUM(j.credit_amount) AS credit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Revenue'
+        AND c.full_date >= DATE '2024-07-01' AND c.full_date < DATE '2025-07-01'
+    expect: {order_matters: false, notes: ["fiscal 2025 is July 2024 to June 2025"]}
+
+  - id: finance-002
+    question: "Monthly expenses in fiscal 2026"
+    tags: [trend, A2, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        date: journal_lines.posting_date_key
+        grain: month
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', c.full_date)::DATE AS period, SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense'
+        AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 12, partial_periods: ["2026-06-01"]}
+
+  - id: finance-003
+    question: "net amount by account type in fiscal 2026"
+    tags: [breakdown]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: journal_lines.net_amount}]
+      group_by: [accounts.account_type]
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+    reference_sql: |
+      SELECT a.account_type, SUM(j.net_amount) AS net_amount
+      FROM journal_lines j
+      LEFT JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+      GROUP BY 1
+    expect: {order_matters: false, notes: ["credits are negative: revenue sums below zero"]}
+
+  - id: finance-004
+    question: "Top 5 expense accounts in fiscal 2026"
+    tags: [rank]
+    plan:
+      intent: rank
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      group_by: [accounts.account_name]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+      sort: [{by: journal_lines.debit_amount, desc: true}]
+      limit: 5
+    reference_sql: |
+      SELECT a.account_name, SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense'
+        AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+      GROUP BY 1
+      ORDER BY debit_amount DESC, a.account_name
+      LIMIT 5
+    expect: {order_matters: true}
+
+  - id: finance-005
+    question: "expenses by cost centre in Q3 of fiscal 2026"
+    tags: [breakdown, fiscal]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      group_by: [cost_centres.cost_centre_name]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2026-01-01", end: "2026-03-31"}
+    reference_sql: |
+      SELECT cc.cost_centre_name, SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      LEFT JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense'
+        AND c.full_date >= DATE '2026-01-01' AND c.full_date < DATE '2026-04-01'
+      GROUP BY 1
+    expect: {order_matters: false, notes: ["fiscal Q3 is January to March"]}
+
+  - id: finance-006
+    question: "Expenses by division in fiscal 2025"
+    tags: [breakdown, D1]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      group_by: [divisions.division_name]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2024-07-01", end: "2025-06-30"}
+    reference_sql: |
+      SELECT dv.division_name, SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      LEFT JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+      LEFT JOIN divisions dv ON dv.division_id = cc.division_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense'
+        AND c.full_date >= DATE '2024-07-01' AND c.full_date < DATE '2025-07-01'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: finance-007
+    question: "Expense budget against actual by cost centre for fiscal 2026"
+    tags: [breakdown, two-facts]
+    plan:
+      intent: breakdown
+      measures:
+        - {agg: sum, column: budgets.budget_amount}
+        - {agg: sum, column: journal_lines.debit_amount}
+      group_by: [cost_centres.cost_centre_name]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+    reference_sql: |
+      WITH b AS (
+        SELECT cc.cost_centre_name, SUM(b.budget_amount) AS budget_amount
+        FROM budgets b
+        JOIN accounts a ON a.account_id = b.account_id
+        LEFT JOIN cost_centres cc ON cc.cost_centre_id = b.cost_centre_id
+        WHERE a.account_type = 'Expense' AND b.period_key BETWEEN 202507 AND 202606
+        GROUP BY 1),
+      x AS (
+        SELECT cc.cost_centre_name, SUM(j.debit_amount) AS debit_amount
+        FROM journal_lines j
+        JOIN accounts a ON a.account_id = j.account_id
+        LEFT JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+        JOIN calendar c ON c.date_key = j.posting_date_key
+        WHERE a.account_type = 'Expense'
+          AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+        GROUP BY 1)
+      SELECT COALESCE(b.cost_centre_name, x.cost_centre_name) AS cost_centre_name, b.budget_amount, x.debit_amount
+      FROM b FULL JOIN x ON b.cost_centre_name = x.cost_centre_name
+    expect: {order_matters: false, row_count: 12, notes: ["each total on its own table, then side by side"]}
+
+  - id: finance-008
+    question: "How many journals were posted in May 2026?"
+    tags: [count]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: journal_lines.journal_number}]
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT COUNT(DISTINCT j.journal_number) AS journals
+      FROM journal_lines j
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE c.full_date >= DATE '2026-05-01' AND c.full_date < DATE '2026-06-01'
+    expect: {order_matters: false}
+
+  - id: finance-009
+    question: "journal lines by posting week in May 2026"
+    tags: [trend, A6]
+    plan:
+      intent: trend
+      measures: [{agg: count, table: journal_lines}]
+      time:
+        date: journal_lines.posting_date_key
+        grain: week
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('week', c.full_date)::DATE AS period, COUNT(*) AS journal_lines
+      FROM journal_lines j
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE c.full_date >= DATE '2026-05-01' AND c.full_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true}
+
+  - id: finance-010
+    question: "Revenue by document date, by month, April to May 2026"
+    tags: [trend, role-date]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: journal_lines.credit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Revenue"]}
+      time:
+        date: journal_lines.document_date_key
+        grain: month
+        window: {kind: between, start: "2026-04-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', c.full_date)::DATE AS period, SUM(j.credit_amount) AS credit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.document_date_key
+      WHERE a.account_type = 'Revenue'
+        AND c.full_date >= DATE '2026-04-01' AND c.full_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 2}
+
+  - id: finance-011
+    question: "Revenue since March 2026"
+    tags: [value, A3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.credit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Revenue"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: since, start: "2026-03-01"}
+    reference_sql: |
+      SELECT SUM(j.credit_amount) AS credit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Revenue'
+        AND c.full_date >= DATE '2026-03-01' AND c.full_date < DATE '2026-06-16'
+    expect: {order_matters: false}
+
+  - id: finance-012
+    question: "expenses from 1 to 7 June 2026"
+    tags: [value, A4]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2026-06-01", end: "2026-06-07"}
+    reference_sql: |
+      SELECT SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense'
+        AND c.full_date >= DATE '2026-06-01' AND c.full_date < DATE '2026-06-08'
+    expect: {order_matters: false}
+
+  - id: finance-013
+    question: "Monthly revenue for the last 6 months"
+    tags: [trend, A5]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: journal_lines.credit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Revenue"]}
+      time:
+        date: journal_lines.posting_date_key
+        grain: month
+        window: {kind: last, unit: month, n: 6}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', c.full_date)::DATE AS period, SUM(j.credit_amount) AS credit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Revenue'
+        AND c.full_date >= DATE '2025-12-01' AND c.full_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 6}
+
+  - id: finance-014
+    question: "Which cost centres' expenses grew the most from April to May 2026?"
+    tags: [compare, rank, A8]
+    plan:
+      intent: compare
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      group_by: [cost_centres.cost_centre_name]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+        compare: {kind: window, window: {kind: between, start: "2026-04-01", end: "2026-04-30"}}
+      sort: [{by: change, desc: true}]
+    reference_sql: |
+      SELECT cc.cost_centre_name,
+             SUM(CASE WHEN c.full_date < DATE '2026-05-01' THEN j.debit_amount END) AS debit_before,
+             SUM(CASE WHEN c.full_date >= DATE '2026-05-01' THEN j.debit_amount END) AS debit_amount,
+             COALESCE(SUM(CASE WHEN c.full_date >= DATE '2026-05-01' THEN j.debit_amount END), 0)
+               - COALESCE(SUM(CASE WHEN c.full_date < DATE '2026-05-01' THEN j.debit_amount END), 0) AS change
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      LEFT JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense'
+        AND c.full_date >= DATE '2026-04-01' AND c.full_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY change DESC, cc.cost_centre_name
+    expect: {order_matters: true}
+
+  - id: finance-015
+    question: "expenses for R&D Lab #2 in fiscal 2026"
+    tags: [value, C3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+        - {column: cost_centres.cost_centre_name, op: eq, values: ["R&D Lab #2"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+    reference_sql: |
+      SELECT SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense' AND cc.cost_centre_name = 'R&D Lab #2'
+        AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+    expect: {order_matters: false}
+
+  - id: finance-016
+    question: "Sales & Marketing expenses by fiscal quarter in fiscal 2026"
+    tags: [trend, C3, fiscal]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+        - {column: cost_centres.cost_centre_name, op: eq, values: ["Sales & Marketing"]}
+      time:
+        date: journal_lines.posting_date_key
+        grain: fiscal_quarter
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+    reference_sql: |
+      SELECT DATE_TRUNC('quarter', c.full_date)::DATE AS period, SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense' AND cc.cost_centre_name = 'Sales & Marketing'
+        AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, notes: ["fiscal quarters start in July, October, January and April"]}
+
+  - id: finance-017
+    question: "expenses for the monthly reporting unit in 2025"
+    tags: [value, C2]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+        - {column: cost_centres.cost_centre_name, op: eq, values: ["Monthly Reporting Unit"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense' AND cc.cost_centre_name = 'Monthly Reporting Unit'
+        AND c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: finance-018
+    question: "What share of fiscal 2025 expenses did each division have?"
+    tags: [share]
+    plan:
+      intent: share
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      group_by: [divisions.division_name]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Expense"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2024-07-01", end: "2025-06-30"}
+    reference_sql: |
+      SELECT dv.division_name, SUM(j.debit_amount) AS debit_amount,
+             SUM(j.debit_amount) / SUM(SUM(j.debit_amount)) OVER () AS share
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      LEFT JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+      LEFT JOIN divisions dv ON dv.division_id = cc.division_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Expense'
+        AND c.full_date >= DATE '2024-07-01' AND c.full_date < DATE '2025-07-01'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: finance-019
+    question: "Revenue by fiscal year"
+    tags: [trend, A7, fiscal]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: journal_lines.credit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Revenue"]}
+      time:
+        date: journal_lines.posting_date_key
+        grain: fiscal_year
+        window: {kind: all}
+    reference_sql: |
+      SELECT MAKE_DATE(c.fiscal_year - 1, 7, 1) AS period, SUM(j.credit_amount) AS credit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Revenue'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 3, partial_periods: ["2025-07-01"]}
+
+  - id: finance-020
+    question: "How much was reversed in fiscal 2026?"
+    tags: [value, E3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      filters:
+        - {column: journal_lines.status, op: eq, values: ["REV"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+    reference_sql: |
+      SELECT SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE j.status = 'REV'
+        AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+    expect: {order_matters: false}
+
+  - id: finance-021
+    question: "revenue in fiscal 2026 leaving out reversed journals"
+    tags: [value, E3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.credit_amount}]
+      filters:
+        - {column: accounts.account_type, op: eq, values: ["Revenue"]}
+        - {column: journal_lines.status, op: ne, values: ["REV"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+    reference_sql: |
+      SELECT SUM(j.credit_amount) AS credit_amount
+      FROM journal_lines j
+      JOIN accounts a ON a.account_id = j.account_id
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE a.account_type = 'Revenue' AND j.status <> 'REV'
+        AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+    expect: {order_matters: false}
+
+  - id: finance-022
+    question: "What is the budget for fiscal 2027?"
+    tags: [value, future]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: budgets.budget_amount}]
+      time:
+        date: budgets.period_key
+        window: {kind: between, start: "2026-07-01", end: "2027-06-30"}
+    reference_sql: |
+      SELECT SUM(b.budget_amount) AS budget_amount
+      FROM budgets b
+      WHERE b.period_key BETWEEN 202607 AND 202706
+    expect: {order_matters: false, notes: ["the budget is set ahead: a window in the future has rows"]}
+
+  - id: finance-023
+    question: "net amount booked in USD in May 2026"
+    tags: [value]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: journal_lines.debit_amount}]
+      filters:
+        - {column: journal_lines.currency_code, op: eq, values: ["USD"]}
+      time:
+        date: journal_lines.posting_date_key
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT SUM(j.debit_amount) AS debit_amount
+      FROM journal_lines j
+      JOIN calendar c ON c.date_key = j.posting_date_key
+      WHERE j.currency_code = 'USD'
+        AND c.full_date >= DATE '2026-05-01' AND c.full_date < DATE '2026-06-01'
+    expect: {order_matters: false}
+
+  - id: finance-024
+    question: "list the divisions"
+    tags: [list]
+    plan:
+      intent: list
+      group_by: [divisions.division_name]
+    reference_sql: |
+      SELECT dv.division_name FROM divisions dv ORDER BY 1
+    expect: {order_matters: true, row_count: 4}
+
+  - id: finance-025
+    question: "How many accounts do we have?"
+    tags: [count, listed-vs-active]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: accounts.account_id}]
+    reference_sql: |
+      SELECT COUNT(DISTINCT a.account_id) AS accounts FROM accounts a
+    expect: {order_matters: false, notes: ["120 listed; about 40 ever posted to"]}
+
+  - id: finance-026
+    question: "Expenses by division for fiscal 2026, then fiscal 2025"
+    tags: [follow-up, B1]
+    turns:
+      - question: "Expenses by division in fiscal 2026"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: journal_lines.debit_amount}]
+          group_by: [divisions.division_name]
+          filters:
+            - {column: accounts.account_type, op: eq, values: ["Expense"]}
+          time:
+            date: journal_lines.posting_date_key
+            window: {kind: between, start: "2025-07-01", end: "2026-06-30"}
+        reference_sql: |
+          SELECT dv.division_name, SUM(j.debit_amount) AS debit_amount
+          FROM journal_lines j
+          JOIN accounts a ON a.account_id = j.account_id
+          LEFT JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+          LEFT JOIN divisions dv ON dv.division_id = cc.division_id
+          JOIN calendar c ON c.date_key = j.posting_date_key
+          WHERE a.account_type = 'Expense'
+            AND c.full_date >= DATE '2025-07-01' AND c.full_date < DATE '2026-07-01'
+          GROUP BY 1
+      - question: "and for fiscal 2025?"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: journal_lines.debit_amount}]
+          group_by: [divisions.division_name]
+          filters:
+            - {column: accounts.account_type, op: eq, values: ["Expense"]}
+          time:
+            date: journal_lines.posting_date_key
+            window: {kind: between, start: "2024-07-01", end: "2025-06-30"}
+        reference_sql: |
+          SELECT dv.division_name, SUM(j.debit_amount) AS debit_amount
+          FROM journal_lines j
+          JOIN accounts a ON a.account_id = j.account_id
+          LEFT JOIN cost_centres cc ON cc.cost_centre_id = j.cost_centre_id
+          LEFT JOIN divisions dv ON dv.division_id = cc.division_id
+          JOIN calendar c ON c.date_key = j.posting_date_key
+          WHERE a.account_type = 'Expense'
+            AND c.full_date >= DATE '2024-07-01' AND c.full_date < DATE '2025-07-01'
+          GROUP BY 1
+
+  - id: finance-027
+    question: "What was the amount in May?"
+    tags: [asks]
+    expect: {asks: measure, notes: ["debit, credit, net or budget: four amounts, none the obvious one"]}
+
+  - id: finance-028
+    question: "What is our headcount by department?"
+    tags: [declines]
+    expect: {declines: true, notes: ["a ledger holds no headcount"]}

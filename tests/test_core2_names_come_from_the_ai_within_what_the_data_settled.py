@@ -102,6 +102,9 @@ def test_an_admin_name_is_never_replaced_by_the_ai(generic):
     ("ISP_ON_HND_QTY", "Inspection on hand quantity"), ("RJC_ON_HND_QTY", "Rejected on hand quantity"),
     ("PIK_LIS_QTY", "Pick list quantity"), ("RSV_BCK_ORD_QTY", "Reserved back order quantity"),
     ("ANN_DMD_QTY", "Annual demand quantity"), ("NGV_TFR_QTY", "Negative transfer quantity"),
+    # PST is read with its neighbours: a posting date, a postal code, the sales tax.
+    ("GL_PST_DT_KEY", "GL posting date key"), ("PST_CD", "Postal code"), ("PST_AMT", "PST amount"),
+    ("DOC_DT", "Document date"),
 ])
 def test_without_the_ai_a_stock_column_reads_in_words(column, reads):
     from core2.bootstrap.names import readable

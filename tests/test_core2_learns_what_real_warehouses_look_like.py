@@ -5,7 +5,8 @@ invented rows: an invoice table whose requested-delivery date repeats once per
 customer and day (it is still invoices, not balances), item names that repeat
 (two items called the same must never be merged), columns that only describe the
 load or are never filled (they are not groupings), abbreviations whose meaning
-depends on the column's type, and a description that matches its own table's codes.
+depends on the column's type, a description that matches its own table's codes,
+and a stamp named for when rows were entered (a load time, batched or not).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import datetime as dt
 import duckdb
 import numpy as np
 import pandas as pd
+import pytest
 
 from core2.bootstrap import names
 from core2.bootstrap.build import BuildOptions, build_model
@@ -140,3 +142,26 @@ def test_abbreviations_read_by_the_column_they_are_in():
 def test_a_column_never_links_to_its_own_table_unless_it_names_a_hierarchy():
     _, model = _built()
     assert not [j for j in model.joins.values() if j.from_table == j.to_table]
+
+
+@pytest.mark.parametrize("runs", [True, False])
+def test_a_stamp_named_for_when_rows_were_entered_is_a_load_time(runs):
+    # When the row was entered, not when the business happened: its name says so. Written by
+    # posting runs at 06:00, 12:30 and 18:00, the times prove it too, and the evidence says why.
+    rng = np.random.default_rng(5)
+    con = duckdb.connect()
+    days = pd.bdate_range("2025-01-01", "2026-06-12")
+    posted = days.repeat(rng.poisson(4, len(days)))
+    n = len(posted)
+    minutes = rng.choice([6 * 60, 12 * 60 + 30, 18 * 60], n) if runs else rng.integers(7 * 60, 19 * 60, n)
+    _load(con, "gl_lines", pd.DataFrame({
+        "line_id": np.arange(1, n + 1), "posting_date": posted.date,
+        "entered_at": posted + pd.to_timedelta(rng.integers(0, 3, n), unit="D") + pd.to_timedelta(minutes, unit="m"),
+        "amount": np.round(rng.uniform(10, 900, n), 2)}))
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="t", options=BuildOptions(workers=1))
+    entered = next(r for r in model.date_roles.values() if model.columns[r.column].name == "entered_at")
+    assert entered.kind == "audit" and not entered.is_default
+    clustered = any(e.kind == "load_clustering" and "3 times of day" in e.detail for e in entered.evidence)
+    assert clustered == runs
+    assert any(q.kind == "load_timestamp" and q.object == entered.column for q in model.quality) == runs
