@@ -172,6 +172,11 @@ from store.semantic_compile_store import (
     resolve_semantic_conflict, list_semantic_contract_versions,
     get_semantic_contract_version,
 )
+from store.core2_store import (
+    save_core2_model, load_core2_model, list_core2_model_versions,
+    set_core2_override, delete_core2_override, list_core2_overrides,
+    start_core2_build, finish_core2_build, latest_core2_build,
+)
 
 __all__ = [
     "init_db","get_db","encrypt","decrypt","decrypt_json","mask",
@@ -300,4 +305,7 @@ __all__ = [
     "get_semantic_compiler_summary","get_semantic_conflict",
     "resolve_semantic_conflict","list_semantic_contract_versions",
     "get_semantic_contract_version",
+    "save_core2_model","load_core2_model","list_core2_model_versions",
+    "set_core2_override","delete_core2_override","list_core2_overrides",
+    "start_core2_build","finish_core2_build","latest_core2_build",
 ]

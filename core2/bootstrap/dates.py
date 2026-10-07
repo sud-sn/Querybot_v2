@@ -150,9 +150,10 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             filled = p.non_null - (join.placeholder_rows if join else 0)
             c.coverage = filled / profile.rows if profile.rows else 0.0
             c.placeholder_share = (join.placeholder_rows / profile.rows) if join and profile.rows else 0.0
-            c.first, c.last = _parse_day(p.min, granularity), _parse_day(p.max, granularity)
-            if c.first and c.first.year <= 1901 and join:
-                c.first = None   # the minimum is the placeholder row's sentinel
+            low, high = (p.date_min, p.date_max) if p.date_min else (p.min, p.max)
+            c.first, c.last = _parse_day(low, granularity), _parse_day(high, granularity)
+            if c.first and c.first.year <= 1901:
+                c.first = None   # a sentinel, not a date
             candidates.append(c)
         if not candidates:
             continue
@@ -164,7 +165,7 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             p = profile.columns[c.column]
             words = [w for w in names.core_column(c.column) if w not in ("date", "dt", "day", "time", "ts", "timestamp",
                                                                          "key", "period", "per", "month")]
-            readable = names.readable(c.column)
+            readable = (c.via_calendar.role if c.via_calendar and c.via_calendar.role else names.readable(c.column))
             c.add("base", 0.5, "a date of this table")
             if c.coverage < 0.999:
                 c.add("coverage", -0.4 * (1 - c.coverage), f"{c.coverage:.0%} of rows have a real date")

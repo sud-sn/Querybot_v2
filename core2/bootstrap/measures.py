@@ -220,6 +220,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             if not is_document or column.name in {c.column for c in dates.get(key, [])}:
                 continue
             thing = [w for w in names.core_column(column.name)]
+            while len(thing) > 1 and thing[-1] in ("number", "no", "nbr", "num", "id", "ref", "code"):
+                thing.pop()
             label = names.readable("_".join(thing)) if thing and not names.opaque(column.name) else column.name
             out.append(MeasureFinding(table=key, column=column.name, agg="count_distinct", additivity="non_additive",
                                       format="count", name=f"Number of {label.lower()}s",

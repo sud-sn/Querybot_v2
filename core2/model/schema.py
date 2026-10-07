@@ -98,6 +98,8 @@ class ColumnProfile(_Data):
     top: list[TopValue] | None = None    # only for low-cardinality columns, only where allowed
     pattern: str | None = None           # yyyymmdd | yyyymm | yyyy | flag01 | flag_yn | code | name | free_text | ...
     time_share: float | None = None      # timestamps: share of values with a time of day
+    date_min: str | None = None          # date-shaped numbers: the first and last real dates,
+    date_max: str | None = None          # placeholders (-1, 0, 19000101) left out
     sampled: bool = False
 
     @property

@@ -198,14 +198,27 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
             continue
         c = exp.column(D.ident(column.name, dialect))
         if p.max_num >= 19000101 and p.max_num <= 99991231:
-            shaped.append((column.name, "yyyymmdd", _count_if(_yyyymmdd(c))))
+            shape = _yyyymmdd(c)
+            shaped.append((column.name, "yyyymmdd", _count_if(shape)))
         elif p.max_num >= 190001 and p.max_num <= 999912:
-            shaped.append((column.name, "yyyymm", _count_if(_yyyymm(c))))
+            shape = _yyyymm(c)
+            shaped.append((column.name, "yyyymm", _count_if(shape)))
+        else:
+            continue
+        real = exp.and_(shape.copy(), exp.LT(this=c.copy(), expression=exp.Literal.number(
+            99991231 if shaped[-1][1] == "yyyymmdd" else 999912)), exp.GT(this=c.copy(), expression=exp.Literal.number(
+                19000101 if shaped[-1][1] == "yyyymmdd" else 190001)))
+        first = exp.Case(ifs=[exp.If(this=real, true=c.copy())])
+        shaped.append((column.name, "min_valid", exp.Min(this=first)))
+        shaped.append((column.name, "max_valid", exp.Max(this=first.copy())))
     if shaped:
         query = exp.select(*[e.as_(f"s{i}") for i, (_, _, e) in enumerate(shaped)]).from_(exp.to_table("__SRC__"))
         values = warehouse.query(query.sql(dialect=dialect).replace("__SRC__", source, 1)).rows[0]
         for (name, pattern, _), value in zip(shaped, values):
             p = profiles[name]
+            if pattern in ("min_valid", "max_valid"):
+                setattr(p, "date_min" if pattern == "min_valid" else "date_max", _text(value))
+                continue
             valid = int(value or 0)
             if sampled:
                 valid = int(round(valid * rows / sample_rows)) if sample_rows else valid

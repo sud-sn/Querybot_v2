@@ -1321,6 +1321,9 @@ def _run_migrations() -> None:
         # sends it after every result; "on_request" only when the question
         # asked for analysis or a cause. See core.insight.analysis_action_for.
         ("client", "analysis_mode",              "TEXT NOT NULL DEFAULT 'always'"),
+        # Which engine answers web questions: today's pipeline (legacy), both side
+        # by side (compare), or the new core (core2). docs/core-v2/DESIGN.md §12.2.
+        ("client", "query_engine",               "TEXT NOT NULL DEFAULT 'legacy'"),
         # v30: validated_examples governance columns
         ("validated_examples", "approval_status",          "TEXT NOT NULL DEFAULT 'legacy'"),
         ("validated_examples", "candidate_id",             "TEXT NOT NULL DEFAULT ''"),
@@ -1444,6 +1447,7 @@ def _run_migrations() -> None:
         _ensure_user_account_event_table(conn)
         _ensure_sign_in_attempt_table(conn)
         _ensure_join_types_are_sql(conn)
+        _ensure_core2_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1564,6 +1568,47 @@ def _ensure_graph_change_proposal_table(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
             ON graph_change_proposal(account_id, status, created_at);
+        """
+    )
+
+
+def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
+    """The new core's semantic model versions, admin overrides and build runs (store/core2_store.py)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS core2_model (
+            account_id     TEXT NOT NULL,
+            db_config_id   INTEGER NOT NULL DEFAULT 0,
+            version        INTEGER NOT NULL,
+            built_at       TEXT DEFAULT (datetime('now')),
+            source_hash    TEXT NOT NULL DEFAULT '',
+            model_json     TEXT NOT NULL,
+            stats_json     TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (account_id, db_config_id, version)
+        );
+
+        CREATE TABLE IF NOT EXISTS core2_override (
+            account_id     TEXT NOT NULL,
+            db_config_id   INTEGER NOT NULL DEFAULT 0,
+            object_key     TEXT NOT NULL,
+            field          TEXT NOT NULL,
+            value_json     TEXT NOT NULL,
+            author         TEXT NOT NULL DEFAULT 'admin',
+            note           TEXT NOT NULL DEFAULT '',
+            updated_at     TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (account_id, db_config_id, object_key, field)
+        );
+
+        CREATE TABLE IF NOT EXISTS core2_build (
+            account_id     TEXT NOT NULL,
+            db_config_id   INTEGER NOT NULL DEFAULT 0,
+            started_at     TEXT NOT NULL,
+            finished_at    TEXT NOT NULL DEFAULT '',
+            status         TEXT NOT NULL DEFAULT 'running',
+            message        TEXT NOT NULL DEFAULT '',
+            version        INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (account_id, db_config_id, started_at)
+        );
         """
     )
 

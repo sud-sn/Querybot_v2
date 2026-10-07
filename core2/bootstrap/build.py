@@ -68,6 +68,12 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     with ThreadPoolExecutor(max_workers=max(1, options.workers)) as pool:
         profiled = list(pool.map(lambda item: profile_table(warehouse, item[1], options.profile), tables))
     profiles = {key: p for (key, _), p in zip(tables, profiled)}
+    for key, table in tables:
+        for column in table.columns:
+            # A generic NUMBER (no scale declared) holding only whole numbers is a whole-number column.
+            if column.data_type == "decimal" and "(" not in column.raw_type \
+                    and profiles[key].columns[column.name].integer_share == 1.0:
+                column.data_type = "integer"
     keys = {key: infer_keys(warehouse, table, profiles[key]) for key, table in tables}
     calendars = find_calendars(warehouse, inventory, profiles, keys)
     joins = discover_joins(warehouse, inventory, profiles, keys, calendars, max_tests=options.max_join_tests,

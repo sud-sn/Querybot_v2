@@ -34,6 +34,9 @@ class InvTable:
     primary_key: list[str] = field(default_factory=list)
     row_count: int | None = None
     comment: str = ""
+    source_key: str = ""                    # the table's key in discovery's _schema.json
+    masked: set[str] = field(default_factory=set)   # columns discovery masks
+    mask_all: bool = False
 
     @property
     def key(self) -> str:
@@ -121,4 +124,60 @@ def from_duckdb(warehouse: Warehouse, *, schema: str = "main",
         if parent in tables and ref in tables:
             fks.append(InvForeignKey(parent, [fk["parent_col"]], ref, [fk["ref_col"]],
                                      fk.get("constraint_name", ""), bool(fk.get("enforced"))))
+    return Inventory(tables=tables, foreign_keys=fks)
+
+
+def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
+    """The inventory discovery already wrote (``clients/<account>/schema/_schema.json``).
+
+    The file's own keys differ by warehouse (Azure ``DB.SCHEMA.Table``, Snowflake
+    and Oracle the bare name unless it repeats), so each table's full name is
+    rebuilt from the entry's database / schema / owner fields. Metadata keys
+    (``__...``) and non-table entries are skipped.
+    """
+    tables: dict[str, InvTable] = {}
+    by_schema_and_name: dict[tuple[str, str], str] = {}
+    for file_key, entry in schema.items():
+        if file_key.startswith("__") or not isinstance(entry, dict):
+            continue
+        parts = file_key.split(".")
+        name = parts[-1]
+        if db_type == "oracle":
+            database, owner = "", entry.get("owner") or (parts[-2] if len(parts) > 1 else "")
+        else:
+            database = entry.get("database") or (parts[-3] if len(parts) > 2 else "")
+            owner = entry.get("schema") or (parts[-2] if len(parts) > 1 else "")
+        raw_columns = entry.get("columns") or []
+        columns = []
+        for column in raw_columns:
+            if isinstance(column, str):
+                columns.append(InvColumn(column, "", "other"))
+                continue
+            raw = str(column.get("type") or "")
+            nullable = column.get("nullable")
+            columns.append(InvColumn(str(column.get("name")), raw, normalize_type(raw),
+                                     nullable is not False and str(nullable).upper() not in ("NO", "N", "FALSE"),
+                                     str(column.get("comment") or "")))
+        rows = entry.get("row_count")
+        table = InvTable(database=database, schema=owner, name=name, columns=columns,
+                         primary_key=list(entry.get("pk_columns") or []),
+                         row_count=int(rows) if isinstance(rows, (int, float)) and rows > 0 else None,
+                         comment=str(entry.get("comment") or ""), source_key=file_key,
+                         masked={str(c) for c in (entry.get("masked_fields") or [])},
+                         mask_all=str(entry.get("mask_mode") or "").lower() == "all")
+        tables[table.key] = table
+        by_schema_and_name[(ids.norm(owner), ids.norm(name))] = table.key
+        by_schema_and_name.setdefault(("", ids.norm(name)), table.key)
+
+    fks: list[InvForeignKey] = []
+    for fk in schema.get("__db_fk_constraints__") or []:
+        if not isinstance(fk, dict):
+            continue
+        parent = by_schema_and_name.get((ids.norm(fk.get("parent_schema")), ids.norm(fk.get("parent_table")))) \
+            or by_schema_and_name.get(("", ids.norm(fk.get("parent_table"))))
+        ref = by_schema_and_name.get((ids.norm(fk.get("ref_schema")), ids.norm(fk.get("ref_table")))) \
+            or by_schema_and_name.get(("", ids.norm(fk.get("ref_table"))))
+        if parent and ref and fk.get("parent_col") and fk.get("ref_col"):
+            fks.append(InvForeignKey(parent, [str(fk["parent_col"])], ref, [str(fk["ref_col"])],
+                                     str(fk.get("constraint_name") or ""), bool(fk.get("enforced"))))
     return Inventory(tables=tables, foreign_keys=fks)

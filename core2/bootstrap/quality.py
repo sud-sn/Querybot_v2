@@ -27,8 +27,10 @@ from core2.warehouse.runner import Warehouse
 _STATUS_WORDS = {"status", "sts", "state", "stat", "stage"}
 _LOW = dt.date(1901, 1, 1)
 _HIGH = dt.date(8999, 12, 31)
+# Codes that usually mean a row should not count. Single letters other than C, X
+# and V are left out: D is as often "delivered" as "deleted".
 _CANCEL_VALUES = {"c", "x", "v", "cnl", "can", "cxl", "cancel", "cancelled", "canceled", "void", "voided", "rev",
-                  "reversed", "credit", "cr", "returned", "rejected", "deleted", "del", "d"}
+                  "reversed", "credit", "returned", "rejected", "deleted"}
 
 
 def _flag(object_key: str, kind: str, message: str, severity: str = "info", **data: object) -> QualityFlag:
@@ -91,12 +93,13 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
                 continue
             words = set(names.tokens(column.name))
             values = {(t.value or "").strip().lower() for t in p.top}
-            cancels = values & _CANCEL_VALUES
+            cancels = sorted({(t.value or "").strip() for t in p.top} & {
+                (t.value or "").strip() for t in p.top if (t.value or "").strip().lower() in _CANCEL_VALUES})
             if (words & _STATUS_WORDS and not names.opaque(column.name)) or (cancels and len(values) <= 6):
                 flags.append(_flag(col_key[(key, column.name)], "status_column",
                                    f"{names.readable(column.name)} has codes {', '.join(sorted(v.value or '' for v in p.top))}: "
                                    "should some rows (cancelled, void, reversed) be left out of totals?",
-                                   values=[t.value for t in p.top], cancel_like=sorted(cancels)))
+                                   values=[t.value for t in p.top], cancel_like=cancels))
 
     # Members listed in a dimension but never used by the facts that point at it.
     for j in joins:

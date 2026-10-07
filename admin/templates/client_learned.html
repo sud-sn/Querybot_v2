@@ -1,0 +1,309 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert %}
+{% block title %}What QueryBot learned — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",  "href": "/admin"},
+    {"label": "Clients",    "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "What QueryBot learned", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.lq{display:flex;flex-direction:column;gap:1rem}
+.lq-hero{padding:1rem 1.1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);
+  box-shadow:var(--shadow);display:flex;gap:1rem;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+.lq-hero h1{font-size:var(--font-xl);font-weight:var(--weight-bold);margin:0}
+.lq-hero p{color:var(--text-muted);margin:.35rem 0 0;max-width:760px;line-height:1.55}
+.lq-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:.5rem}
+.lq-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));gap:.6rem}
+.lq-stat{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:.7rem .85rem}
+.lq-stat span{display:block;font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.06em;
+  text-transform:uppercase;color:var(--text-muted)}
+.lq-stat strong{display:block;font-size:var(--font-2xl);font-weight:var(--weight-bold);margin-top:.2rem}
+.lq-stat small{color:var(--text-muted);font-size:var(--font-xs)}
+.lq-section{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-sm)}
+.lq-section > h2{font-size:var(--font-md);font-weight:var(--weight-bold);margin:0;padding:.75rem 1rem;
+  border-bottom:1px solid var(--border);background:var(--surface-2);border-radius:var(--radius) var(--radius) 0 0}
+.lq-section > .lq-body{padding:.75rem 1rem}
+.lq-intro{color:var(--text-muted);font-size:var(--font-sm);margin:0 0 .6rem;line-height:1.5}
+.lq-table{width:100%;border-collapse:collapse;font-size:var(--font-sm)}
+.lq-table th{padding:.45rem .6rem;text-align:left;font-size:var(--font-2xs);text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-muted);border-bottom:1px solid var(--border);white-space:nowrap}
+.lq-table td{padding:.5rem .6rem;border-bottom:1px solid var(--border);vertical-align:top}
+.lq-table tr:last-child td{border-bottom:none}
+.lq-wrap{overflow-x:auto}
+.lq-mono{font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-muted)}
+.lq-why{color:var(--text-muted);font-size:var(--font-xs);line-height:1.45;margin-top:.15rem}
+.lq-table details summary{cursor:pointer;color:var(--text-muted);font-size:var(--font-xs)}
+.lq-card{border:1px solid var(--border);border-radius:var(--radius-sm);margin:.6rem 0;background:var(--surface)}
+.lq-card > summary{list-style:none;cursor:pointer;padding:.65rem .8rem;display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
+.lq-card > summary::-webkit-details-marker{display:none}
+.lq-card > summary .lq-name{font-weight:var(--weight-bold)}
+.lq-card[open] > summary{border-bottom:1px solid var(--border)}
+.lq-card > .lq-inner{padding:.6rem .8rem;display:flex;flex-direction:column;gap:.75rem}
+.lq-card h3{font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin:0 0 .3rem}
+.lq-inline{display:inline}
+.lq-btn{font-size:var(--font-xs);padding:.2rem .55rem;border-radius:var(--radius-sm);border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text);cursor:pointer}
+.lq-btn:hover{border-color:var(--primary)}
+.lq-review li{margin:.5rem 0;line-height:1.5}
+.lq-default{font-weight:var(--weight-bold)}
+.lq-kind{font-size:var(--font-2xs);text-transform:uppercase;letter-spacing:.05em}
+@media (max-width:640px){.lq-hero{flex-direction:column}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="lq">
+  <div class="lq-hero">
+    <div>
+      <h1>What QueryBot learned</h1>
+      <p>QueryBot studies the connected database by itself: which tables record events and which list
+         things you group by, how tables join, which date each table uses by default, which numbers are
+         measures and how they add up. Every finding shows the evidence from the data. Nothing here needs
+         your approval; a decision you make below always wins and is kept when QueryBot learns again.</p>
+      <div class="lq-meta">
+        {% if view %}Version {{ view.version }}{% if view.built_at %}, learned {{ view.built_at.strftime('%d %b %Y %H:%M') if view.built_at.strftime is defined else view.built_at }} UTC{% endif %}.{% endif %}
+        {% if build %}
+          {% if building %}Learning now (started {{ build.started_at }} UTC). Refresh in a minute.
+          {% elif build.status == 'failed' %}The last attempt failed: {{ build.message }}
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+    {% if has_database %}
+    <form method="post" action="/admin/clients/{{ client.account_id }}/learned/build">
+      <button type="submit" class="btn btn-primary" {% if building %}disabled{% endif %}>
+        {% if view %}Learn again{% else %}Learn this database{% endif %}
+      </button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if saved == 'building' %}{{ alert("QueryBot is studying the database. This page shows the result when it is done.", "info") }}{% endif %}
+  {% if saved == 'decision' %}{{ alert("Decision saved. It applies now and every time QueryBot learns again.", "success") }}{% endif %}
+  {% if saved == 'undone' %}{{ alert("Decision removed. QueryBot's own finding applies again.", "success") }}{% endif %}
+  {% if error %}{{ alert(error, "error") }}{% endif %}
+  {% if problem %}{{ alert(problem, "warning") }}{% endif %}
+
+  {% if not view %}
+  <div class="lq-section"><div class="lq-body">
+    {% if has_database %}
+      <p>QueryBot has not studied this database yet. Discovery must have run first; then choose
+         <strong>Learn this database</strong>. It reads only counts, ranges and short code values inside your
+         warehouse; no rows leave it.</p>
+    {% else %}
+      <p>Connect a database to this workspace first.</p>
+    {% endif %}
+  </div></div>
+  {% else %}
+
+  <div class="lq-stats">
+    <div class="lq-stat"><span>Tables</span><strong>{{ view.summary.tables }}</strong>
+      <small>{% for words, n in view.summary.kinds %}{{ n }} {{ words|lower }}{% if not loop.last %}, {% endif %}{% endfor %}</small></div>
+    <div class="lq-stat"><span>Joins</span><strong>{{ view.summary.joins }}</strong>
+      <small>{{ view.summary.joins_trusted }} verified</small></div>
+    <div class="lq-stat"><span>Dates</span><strong>{{ view.summary.dates }}</strong></div>
+    <div class="lq-stat"><span>Measures</span><strong>{{ view.summary.measures }}</strong></div>
+    <div class="lq-stat"><span>Data notes</span><strong>{{ view.summary.quality }}</strong></div>
+    <div class="lq-stat"><span>To review</span><strong>{{ view.summary.review }}</strong><small>optional</small></div>
+  </div>
+
+  {% if view.notes %}
+  <div class="lq-section"><div class="lq-body">{% for n in view.notes %}<p class="lq-intro">{{ n }}</p>{% endfor %}</div></div>
+  {% endif %}
+
+  {% if view.review %}
+  <section class="lq-section" aria-labelledby="lq-review">
+    <h2 id="lq-review">Worth a look</h2>
+    <div class="lq-body">
+      <p class="lq-intro">Calls QueryBot made on thin evidence. Answers already use the choice shown; change it only if it is wrong.</p>
+      <ul class="lq-review">
+        {% for r in view.review %}
+        <li><strong>{{ r.question }}</strong><br>
+          Using: {{ r.choice }}{% if r.alternatives %}. Alternatives: {{ r.alternatives|join(', ') }}{% endif %}.
+          {% for e in r.evidence %}<div class="lq-why">{{ e }}</div>{% endfor %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="lq-section" aria-labelledby="lq-tables">
+    <h2 id="lq-tables">Tables</h2>
+    <div class="lq-body">
+      {% for t in view.tables %}
+      <details class="lq-card">
+        <summary>
+          <span class="lq-name">{{ t.name }}</span>
+          <span class="lq-mono">{{ t.physical }}</span>
+          <span class="badge {% if t.kind in ['fact','snapshot'] %}badge-blue{% elif t.kind == 'dimension' %}badge-green{% else %}badge-gray{% endif %} lq-kind">{{ t.kind_words }}</span>
+          <span class="lq-mono">{{ "{:,}".format(t.rows) }} rows</span>
+          <span class="lq-why">{{ t.grain }}</span>
+        </summary>
+        <div class="lq-inner">
+          {% if t.evidence %}<div>{% for e in t.evidence %}<div class="lq-why">{{ e }}</div>{% endfor %}</div>{% endif %}
+
+          {% if t.dates %}
+          <div>
+            <h3>Dates</h3>
+            <div class="lq-wrap"><table class="lq-table">
+              <thead><tr><th>Date</th><th>Column</th><th>Kind</th><th>Filled</th><th>Range</th><th>Why</th><th></th></tr></thead>
+              <tbody>
+              {% for d in t.dates %}
+              <tr>
+                <td>{% if d.default %}<span class="lq-default">{{ d.name }}</span> <span class="badge badge-green">default</span>{% else %}{{ d.name }}{% endif %}</td>
+                <td class="lq-mono">{{ d.column }}</td>
+                <td>{{ d.kind }}</td>
+                <td>{{ d.coverage }}</td>
+                <td class="lq-mono">{{ d.range }}</td>
+                <td>{% for e in d.evidence %}<div class="lq-why">{{ e }}</div>{% endfor %}</td>
+                <td>{% if not d.default and d.kind != 'audit' %}
+                  <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
+                    <input type="hidden" name="target" value="{{ d.target }}"><input type="hidden" name="field" value="is_default">
+                    <input type="hidden" name="value" value="true">
+                    <button class="lq-btn" type="submit">Make default</button>
+                  </form>{% endif %}</td>
+              </tr>
+              {% endfor %}
+              </tbody>
+            </table></div>
+          </div>
+          {% endif %}
+
+          {% if t.measures %}
+          <div>
+            <h3>Measures</h3>
+            <div class="lq-wrap"><table class="lq-table">
+              <thead><tr><th>Measure</th><th>Adds up</th><th>Shown as</th><th>Unit</th><th>Why</th></tr></thead>
+              <tbody>
+              {% for m in t.measures %}
+              <tr>
+                <td>{{ m.name }}{% if m.status == 'needs_review' %} <span class="badge badge-amber">check</span>{% endif %}</td>
+                <td>{{ m.adds_up }}</td>
+                <td>{{ m.format }}</td>
+                <td>{{ m.unit }}</td>
+                <td>{% for e in m.evidence %}<div class="lq-why">{{ e }}</div>{% endfor %}</td>
+              </tr>
+              {% endfor %}
+              </tbody>
+            </table></div>
+          </div>
+          {% endif %}
+
+          {% if t.joins %}
+          <div>
+            <h3>Joins from this table</h3>
+            <div class="lq-wrap"><table class="lq-table">
+              <thead><tr><th>To</th><th>Through</th><th>Role</th><th>Matches</th><th>Trust</th></tr></thead>
+              <tbody>
+              {% for j in t.joins %}
+              <tr><td>{{ j.to }}</td><td class="lq-mono">{{ j.from_column }} = {{ j.to_column }}</td><td>{{ j.role }}</td>
+                  <td>{{ j.match }}</td><td>{{ j.trust_words }}</td></tr>
+              {% endfor %}
+              </tbody>
+            </table></div>
+          </div>
+          {% endif %}
+
+          <details>
+            <summary class="lq-why">All {{ t.columns|length }} columns</summary>
+            <div class="lq-wrap"><table class="lq-table">
+              <thead><tr><th>Column</th><th>Reads as</th><th>Role</th><th>Type</th><th>Filled</th><th>Distinct</th></tr></thead>
+              <tbody>
+              {% for c in t.columns %}
+              <tr><td class="lq-mono">{{ c.name }}</td><td>{{ c.business_name }}</td><td>{{ c.role|replace('_', ' ') }}</td>
+                  <td>{{ c.type }}</td><td>{{ c.filled }}</td><td>{{ "{:,}".format(c.distinct) }}</td></tr>
+              {% endfor %}
+              </tbody>
+            </table></div>
+          </details>
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="lq-section" aria-labelledby="lq-joins">
+    <h2 id="lq-joins">Joins</h2>
+    <div class="lq-body">
+      <p class="lq-intro">Each join was test-run on the data. Verified joins are used at once; proposed ones only when no
+        verified path exists, and the answer says so.</p>
+      <div class="lq-wrap"><table class="lq-table">
+        <thead><tr><th>From</th><th>To</th><th>Through</th><th>Role</th><th>Matches</th><th>Trust</th><th>Evidence</th><th></th></tr></thead>
+        <tbody>
+        {% for j in view.joins %}
+        <tr>
+          <td>{{ j.from }}</td><td>{{ j.to }}</td><td class="lq-mono">{{ j.from_column }} = {{ j.to_column }}</td>
+          <td>{{ j.role }}</td><td>{{ j.match }}</td><td>{{ j.trust_words }}</td>
+          <td>{% for e in j.evidence %}<div class="lq-why">{{ e }}</div>{% endfor %}</td>
+          <td style="white-space:nowrap">
+            {% if j.trust != 'admin' %}
+            <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
+              <input type="hidden" name="target" value="{{ j.target }}"><input type="hidden" name="field" value="trust">
+              <input type="hidden" name="value" value="admin"><button class="lq-btn" type="submit">Approve</button>
+            </form>{% endif %}
+            {% if j.trust != 'rejected' %}
+            <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
+              <input type="hidden" name="target" value="{{ j.target }}"><input type="hidden" name="field" value="trust">
+              <input type="hidden" name="value" value="rejected"><button class="lq-btn" type="submit">Reject</button>
+            </form>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  {% if view.calendars %}
+  <section class="lq-section" aria-labelledby="lq-calendar">
+    <h2 id="lq-calendar">Calendar</h2>
+    <div class="lq-body">
+      {% for c in view.calendars %}
+      <p class="lq-intro"><strong>{{ c.table }}</strong> <span class="lq-mono">{{ c.physical }}</span>: one row per day,
+        {{ c.range }}, keyed by <span class="lq-mono">{{ c.key or c.date }}</span>.
+        {% if c.fiscal %}{{ c.fiscal }}.{% endif %}
+        {% if c.placeholders %}Keys meaning "no date": {{ c.placeholders }}.{% endif %}</p>
+      <p class="lq-intro">Columns checked against the date on every day:
+        {% for name, column in c.attributes %}{{ name }} (<span class="lq-mono">{{ column }}</span>){% if not loop.last %}, {% endif %}{% endfor %}.</p>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if view.quality %}
+  <section class="lq-section" aria-labelledby="lq-quality">
+    <h2 id="lq-quality">About the data</h2>
+    <div class="lq-body">
+      <p class="lq-intro">Answers that use these mention them in one line.</p>
+      <ul>{% for q in view.quality %}<li>{{ q.message }}{% if q.severity == 'warning' %} <span class="badge badge-amber">check</span>{% endif %}</li>{% endfor %}</ul>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if decisions %}
+  <section class="lq-section" aria-labelledby="lq-decisions">
+    <h2 id="lq-decisions">Your decisions</h2>
+    <div class="lq-body">
+      <div class="lq-wrap"><table class="lq-table">
+        <thead><tr><th>What</th><th>Set</th><th>To</th><th>When</th><th></th></tr></thead>
+        <tbody>
+        {% for d in decisions %}
+        <tr><td class="lq-mono">{{ d.object_key }}</td><td>{{ d.field|replace('_', ' ') }}</td><td>{{ d.value }}</td>
+            <td class="lq-mono">{{ d.updated_at }}</td>
+            <td><form method="post" action="/admin/clients/{{ client.account_id }}/learned/undo" class="lq-inline">
+              <input type="hidden" name="target" value="{{ d.object_key }}"><input type="hidden" name="field" value="{{ d.field }}">
+              <button class="lq-btn" type="submit">Undo</button></form></td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+  {% endif %}
+
+  {% endif %}
+</div>
+{% endblock %}

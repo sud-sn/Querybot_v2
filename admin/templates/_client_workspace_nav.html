@@ -23,7 +23,7 @@
 {% set _seg  = _tail.split('/')[0] if _tail else '' %}
 
 {% set _is_overview   = (_seg == '') %}
-{% set _is_model      = _seg in ['setup', 'kb', 'graph', 'mapping', 'date-roles', 'metrics', 'glossary', 'meanings', 'domains', 'reports'] %}
+{% set _is_model      = _seg in ['setup', 'learned', 'kb', 'graph', 'mapping', 'date-roles', 'metrics', 'glossary', 'meanings', 'domains', 'reports'] %}
 {% set _is_activity   = _seg in ['queries', 'traces', 'egress', 'billing'] %}
 {% set _is_quality    = _seg in ['model-health', 'evals', 'learning-queue', 'readiness', 'drafts'] %}
 {% set _is_access     = _seg in ['users', 'groups', 'pending-users'] %}
@@ -55,6 +55,7 @@
   {% if _is_model %}
   <nav class="client-workspace-secondary" aria-label="Data and model tools">
     <a href="{{ _b }}/setup" class="{% if _seg == 'setup' %}active{% endif %}" {% if _seg == 'setup' %}aria-current="page"{% endif %}>Setup</a>
+    <a href="{{ _b }}/learned" class="{% if _seg == 'learned' %}active{% endif %}" {% if _seg == 'learned' %}aria-current="page"{% endif %}>What QueryBot Learned</a>
     <a href="{{ _b }}/kb" class="{% if _seg == 'kb' %}active{% endif %}" {% if _seg == 'kb' %}aria-current="page"{% endif %}>Knowledge Base</a>
     <a href="{{ _b }}/graph" class="{% if _seg == 'graph' %}active{% endif %}" {% if _seg == 'graph' %}aria-current="page"{% endif %}>Relationships</a>
     <a href="{{ _b }}/mapping" class="{% if _seg == 'mapping' %}active{% endif %}" {% if _seg == 'mapping' %}aria-current="page"{% endif %}>Source Mapping</a>
