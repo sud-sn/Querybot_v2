@@ -1,0 +1,342 @@
+domain: retail
+today: 2026-06-15
+questions:
+  - id: retail-001
+    question: "What were net sales in 2025?"
+    tags: [value]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: retail-002
+    question: "Monthly net sales in 2025"
+    tags: [trend, A2, A5]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.order_date_key
+        grain: month
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', c.full_date)::DATE AS period, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 12}
+
+  - id: retail-003
+    question: "Net sales since January 2026"
+    tags: [value, A3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.order_date_key
+        window: {kind: since, start: "2026-01-01"}
+    reference_sql: |
+      SELECT SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2026-01-01' AND c.full_date < DATE '2026-06-16'
+    expect: {order_matters: false}
+
+  - id: retail-004
+    question: "Net sales from 1 June to 7 June 2026"
+    tags: [value, A4]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2026-06-01", end: "2026-06-07"}
+    reference_sql: |
+      SELECT SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2026-06-01' AND c.full_date < DATE '2026-06-08'
+    expect: {order_matters: false}
+
+  - id: retail-005
+    question: "Monthly net sales for the last 6 months"
+    tags: [trend, A5]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.order_date_key
+        grain: month
+        window: {kind: last, unit: month, n: 6}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', c.full_date)::DATE AS period, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2025-12-01' AND c.full_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 6}
+
+  - id: retail-006
+    question: "Weekly net sales in May 2026"
+    tags: [trend, A6]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.order_date_key
+        grain: week
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('week', c.full_date)::DATE AS period, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2026-05-01' AND c.full_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, partial_periods: ["2026-04-27", "2026-05-25"]}
+
+  - id: retail-007
+    question: "Net sales by ship month in 2025"
+    tags: [trend, role-playing]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.ship_date_key
+        grain: month
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', s.full_date)::DATE AS period, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar s ON s.date_key = l.ship_date_key
+      WHERE s.full_date >= DATE '2025-01-01' AND s.full_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 12}
+
+  - id: retail-008
+    question: "How many orders were placed in March 2026 and delivered in April 2026?"
+    tags: [value, role-playing]
+    plan:
+      intent: value
+      measures: [{agg: count_distinct, column: order_lines.order_number}]
+      filters:
+        - {column: order_lines.delivered_date_key, op: between, values: ["2026-04-01", "2026-04-30"]}
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2026-03-01", end: "2026-03-31"}
+    reference_sql: |
+      SELECT COUNT(DISTINCT l.order_number) AS orders
+      FROM order_lines l
+      JOIN calendar o ON o.date_key = l.order_date_key
+      JOIN calendar d ON d.date_key = l.delivered_date_key
+      WHERE o.full_date >= DATE '2026-03-01' AND o.full_date < DATE '2026-04-01'
+        AND d.full_date >= DATE '2026-04-01' AND d.full_date < DATE '2026-05-01'
+    expect: {order_matters: false}
+
+  - id: retail-009
+    question: "Net sales for northline distribution 58 in 2025"
+    tags: [value, C2]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      filters:
+        - {column: customers.customer_name, op: eq, values: ["Northline Distribution 58"]}
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN customers cu ON cu.customer_id = l.customer_id
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE cu.customer_name = 'Northline Distribution 58'
+        AND c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: retail-010
+    question: "Monthly net sales for Acme #27 Supply in 2025"
+    tags: [trend, C3]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      filters:
+        - {column: customers.customer_name, op: eq, values: ["Acme #27 Supply"]}
+      time:
+        date: order_lines.order_date_key
+        grain: month
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', c.full_date)::DATE AS period, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN customers cu ON cu.customer_id = l.customer_id
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE cu.customer_name = 'Acme #27 Supply'
+        AND c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true}
+
+  - id: retail-011
+    question: "Net sales by region in 2025"
+    tags: [breakdown, D1]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      group_by: [regions.region_name]
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT r.region_name, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN stores s ON s.store_id = l.store_id
+      JOIN regions r ON r.region_id = s.region_id
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false, notes: ["region of the order line's store"]}
+
+  - id: retail-012
+    question: "Net sales in 2025 by the region of each customer's home store"
+    tags: [breakdown, D1]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      group_by: [regions.region_name]
+      via: {regions.region_name: [order_lines.customer_id, customers.home_store_id, stores.region_id]}
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT r.region_name, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN customers cu ON cu.customer_id = l.customer_id
+      JOIN stores s ON s.store_id = cu.home_store_id
+      JOIN regions r ON r.region_id = s.region_id
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: retail-013
+    question: "Top 5 products by net sales in 2025"
+    tags: [rank]
+    plan:
+      intent: rank
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      group_by: [products.product_name]
+      sort: [{by: order_lines.net_amount, desc: true}]
+      limit: 5
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT p.product_name, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN products p ON p.product_id = l.product_id
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY net_sales DESC, p.product_name
+      LIMIT 5
+    expect: {order_matters: true, row_count: 5}
+
+  - id: retail-014
+    question: "Which categories grew the most from February to March 2026?"
+    tags: [compare, rank, A8]
+    plan:
+      intent: compare
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      group_by: [categories.category_name]
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2026-03-01", end: "2026-03-31"}
+        compare: {kind: window, window: {kind: between, start: "2026-02-01", end: "2026-02-28"}}
+      sort: [{by: change, desc: true}]
+    reference_sql: |
+      SELECT ca.category_name,
+             SUM(CASE WHEN c.full_date >= DATE '2026-02-01' AND c.full_date < DATE '2026-03-01' THEN l.net_amount END) AS net_sales_before,
+             SUM(CASE WHEN c.full_date >= DATE '2026-03-01' AND c.full_date < DATE '2026-04-01' THEN l.net_amount END) AS net_sales,
+             COALESCE(SUM(CASE WHEN c.full_date >= DATE '2026-03-01' AND c.full_date < DATE '2026-04-01' THEN l.net_amount END), 0)
+               - COALESCE(SUM(CASE WHEN c.full_date >= DATE '2026-02-01' AND c.full_date < DATE '2026-03-01' THEN l.net_amount END), 0) AS change
+      FROM order_lines l
+      JOIN products p ON p.product_id = l.product_id
+      JOIN categories ca ON ca.category_id = p.category_id
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2026-02-01' AND c.full_date < DATE '2026-04-01'
+      GROUP BY 1
+      ORDER BY change DESC, ca.category_name
+    expect: {order_matters: true}
+
+  - id: retail-015
+    question: "What share of 2025 net sales came from each customer segment?"
+    tags: [share]
+    plan:
+      intent: share
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      group_by: [customers.segment]
+      time:
+        date: order_lines.order_date_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT cu.segment, SUM(l.net_amount) AS net_sales,
+             SUM(l.net_amount) / SUM(SUM(l.net_amount)) OVER () AS share
+      FROM order_lines l
+      JOIN customers cu ON cu.customer_id = l.customer_id
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.full_date >= DATE '2025-01-01' AND c.full_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: retail-016
+    question: "Yearly net sales"
+    tags: [trend, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: order_lines.net_amount}]
+      time:
+        date: order_lines.order_date_key
+        grain: year
+        window: {kind: all}
+    reference_sql: |
+      SELECT DATE_TRUNC('year', c.full_date)::DATE AS period, SUM(l.net_amount) AS net_sales
+      FROM order_lines l
+      JOIN calendar c ON c.date_key = l.order_date_key
+      WHERE c.date_key <> -1
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 4, partial_periods: ["2026-01-01"]}
+
+  - id: retail-017
+    question: "How many products do we have?"
+    tags: [count, listed-vs-active]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: products.product_id}]
+    reference_sql: |
+      SELECT COUNT(DISTINCT p.product_id) AS products
+      FROM products p
+    expect: {order_matters: false, notes: ["150 listed; 110 have sales"]}
+
+  - id: retail-018
+    question: "What is our margin percentage?"
+    tags: [value, C1, E1]
+    plan:
+      intent: value
+      measures: [{agg: avg, column: order_lines.margin_pct}]
+    reference_sql: |
+      SELECT AVG(l.margin_pct) AS margin_pct
+      FROM order_lines l
+    expect: {order_matters: false, format: percent, notes: ["margin is the same on every line"]}
