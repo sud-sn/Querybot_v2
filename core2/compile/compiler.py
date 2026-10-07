@@ -51,7 +51,7 @@ class CompileError(ValueError):
 class OutColumn:
     name: str
     label: str
-    role: str            # period | attribute | time | measure | prior | change | pct_change | share
+    role: str            # period | attribute | member_code | time | measure | prior | change | pct_change | share
     format: str = ""
     measure: str | None = None      # the measure's key, for measures and their derived columns
     grain: str | None = None        # for the period

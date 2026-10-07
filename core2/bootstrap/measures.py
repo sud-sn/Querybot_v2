@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from core2.bootstrap import names
 from core2.bootstrap.calendar import CalendarFinding
-from core2.bootstrap.dates import DateCandidate
+from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate
 from core2.bootstrap.inventory import Inventory, InvColumn, InvTable
 from core2.bootstrap.joins import JoinFinding
 from core2.bootstrap.keys import TableKeys
@@ -82,8 +82,17 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
         labels = [c for c in keys[key].unique_columns if c not in keys[key].primary_key
                   and _label_like(table.column(c), profiles[key].columns[c])]
         roles = dates.get(key, [])
-        periodic = [c for c in roles if c.periodic]
+        # A snapshot is dated by its period: the table's own (default) date must be
+        # the periodic one. A secondary date that happens to repeat per customer and
+        # day does not make invoices into balances, and nothing numbered as a
+        # document or a line (invoice no., line no.) is a balance.
+        periodic = [c for c in roles if c.periodic and c.is_default]
+        documents = _document_numbers(table, {j.from_column for j in outgoing})
         evidence: list[Evidence] = []
+        if periodic and documents:
+            evidence.append(Evidence(kind="documents", weight=1, detail=(
+                f"{', '.join(documents[:2])} number documents or their lines: rows are transactions, not balances")))
+            periodic = []
         if incoming and labels:
             kind = "dimension"
             evidence.append(Evidence(kind="referenced", weight=1, detail=(
@@ -108,6 +117,21 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
         else:
             kind = "other"
         out[key] = (kind, evidence)
+    return out
+
+
+_NUMBERED = {"no", "num", "nbr", "number"}
+
+
+def _document_numbers(table: InvTable, links: set[str]) -> list[str]:
+    """Columns that number documents or their lines (``IVC_NO``, ``IVC_LIN_NO``), links aside."""
+    out = []
+    for column in table.columns:
+        words = names.tokens(column.name)
+        if column.name in links or column.data_type not in ("text", "integer") or not words:
+            continue
+        if words[-1] in _NUMBERED and not set(words) & AUDIT_WORDS:
+            out.append(column.name)
     return out
 
 

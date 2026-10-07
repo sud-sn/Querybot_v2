@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from core2 import ids
 from core2.bootstrap import names
 from core2.bootstrap.calendar import CalendarFinding, find_calendars
-from core2.bootstrap.dates import DateCandidate, close_call, find_date_roles
-from core2.bootstrap.inventory import Inventory
+from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
+from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.joins import JoinFinding, discover_joins
 from core2.bootstrap.labels import label
 from core2.bootstrap.keys import TableKeys, infer_keys
@@ -266,7 +266,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 key=k, table=key, name=column.name, data_type=column.data_type,  # type: ignore[arg-type]
                 raw_type=column.raw_type, nullable=column.nullable, comment=column.comment,
                 role=role,  # type: ignore[arg-type]
-                business_name=names.readable(column.name), format=fmt,  # type: ignore[arg-type]
+                business_name=names.readable(column.name, column.data_type), format=fmt,  # type: ignore[arg-type]
                 values_allowed=p.top is not None,
                 profile=p, provenance="profile", status="verified", confidence=1.0)
 
@@ -348,9 +348,7 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
         slug = ids.unique_slug(ids.slug(business), taken)
         entity_of[key] = slug
         texts = [c for c in tkeys.unique_columns if table.type_of(c) == "text" and c not in tkeys.primary_key]
-        labels = sorted(texts, key=lambda c: (-(profile.columns[c].avg_len or 0)))
-        named = [c for c in labels if set(names.tokens(c)) & {"name", "nm", "desc", "description", "title", "label"}]
-        label: str | None = (named or labels)[0] if (named or labels) else None
+        label = _label_column(table, profile, tkeys)
         codes = [c for c in texts if c != label and (profile.columns[c].max_len or 99) <= 16]
         model.entities[slug] = Entity(
             slug=slug, business_name=business, table=key, key_columns=[ck[(key, c)] for c in tkeys.primary_key],
@@ -394,6 +392,8 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
             p = col.profile
             if col.role in ("key", "foreign_key", "date_key", "date", "audit", "period_key", "measure", "text"):
                 continue
+            if not _attribute_worthy(column, col, kind):
+                continue
             if kind != "dimension" and col.role not in ("status", "flag") and not (
                     p and 1 < p.distinct <= 1000 and column.data_type == "text"):
                 continue
@@ -405,6 +405,56 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
                 slug=slug, column=col.key, entity=owner if key in entity_of else None,
                 business_name=col.business_name, members=p.distinct if p else 0,
                 provenance="profile", status="verified", confidence=0.8)
+
+
+_NAME_WORDS = {"name", "nm", "title", "label"}
+_DESCRIPTION_WORDS = {"desc", "dsc", "description", "descr"}
+
+
+def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys) -> str | None:
+    """The column that names each member: a name, else a short description, else the longest unique text.
+
+    Names need not be unique (two customers can both be "J. Smith"): a name-like
+    column filled on nine rows in ten with nine distinct values in ten is a name.
+    Grouping by it is made safe by also grouping by the member's code or key.
+    """
+    rows = profile.rows or 0
+    best: list[tuple[int, float, str]] = []
+    for column in table.columns:
+        name = column.name
+        p = profile.columns[name]
+        if column.data_type != "text" or name in keys.primary_key or not rows:
+            continue
+        words = set(names.tokens(name))
+        unique = name in keys.unique_columns
+        named = bool(words & _NAME_WORDS)
+        described = bool(words & _DESCRIPTION_WORDS) and (p.avg_len or 0) <= 60
+        near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.9 * p.non_null
+        if not (unique or (near_unique and (named or described))):
+            continue
+        rank = 0 if named else 1 if described else 2
+        best.append((rank, -(p.avg_len or 0), name))
+    return min(best)[2] if best else None
+
+
+# Columns that describe the load, not the business: never offered as groupings.
+_TECHNICAL = {"etl", "ext", "src", "sys", "dw", "dwh", "hash", "checksum", "rowid", "guid", "uuid", "az"}
+
+
+def _attribute_worthy(column: InvColumn, col: Column, kind: str) -> bool:
+    p = col.profile
+    if p is None or not p.distinct:
+        return False   # never filled
+    words = set(names.tokens(column.name))
+    if words & _TECHNICAL or words & AUDIT_WORDS:
+        return False
+    last = names.tokens(column.name)[-1:] or [""]
+    if column.data_type in ("integer", "decimal", "float") and last[0] in names.KEY_SUFFIXES - {"code", "cd", "no"}:
+        return False   # a key to a table this warehouse does not hold
+    if kind == "dimension" and column.data_type in ("integer", "decimal", "float") and (
+            p.distinct > 20 or p.distinct > 0.5 * p.non_null):
+        return False   # a weight or a size, one per member: a number to read, not a group (pack sizes repeat)
+    return True
 
 
 def _attribute_name(business: str, entity: Entity | None) -> str:

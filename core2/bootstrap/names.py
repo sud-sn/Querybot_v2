@@ -138,10 +138,25 @@ def ends_with(longer: list[str], tail: list[str]) -> bool:
     return all(same_word(x, y) for x, y in zip(longer[-len(tail):], tail))
 
 
-def readable(name: str) -> str:
+_DATE_TOKENS = {"dt", "date", "ts", "timestamp", "day", "time"}
+
+
+def _expand(token: str, neighbours: list[str], data_type: str | None) -> str:
+    """One token in words. A few abbreviations mean different things in different places."""
+    if token == "dsc":
+        # A text column's DSC is its description; a number's is a discount.
+        return "description" if data_type == "text" else EXPANSIONS[token]
+    if token == "cls":
+        # CLS_DT is when something closed; ABC_CLS is a classification.
+        return "closed" if set(neighbours) & _DATE_TOKENS else "class"
+    return EXPANSIONS.get(token, token)
+
+
+def readable(name: str, data_type: str | None = None) -> str:
     """A fallback label from a name: ``CUST_ORD_DT_KEY`` -> "Customer order date key"."""
     if opaque(name):
         return name
-    words = [EXPANSIONS.get(t, t) for t in tokens(name)]
+    parts = tokens(name)
+    words = [_expand(t, parts, data_type) for t in parts]
     text = " ".join(words)
     return text[:1].upper() + text[1:]

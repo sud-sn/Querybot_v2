@@ -68,6 +68,10 @@ def _compatible(a: str, b: str) -> bool:
     return (a in numeric and b in numeric) or a == b == "text" or a == b == "date"
 
 
+_HIERARCHY = {"parent", "prnt", "par", "mgr", "manager", "reports", "rpt", "supervisor", "head", "rollup",
+              "roll", "up", "sup", "lead", "owner"}
+
+
 def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, list[str]]:
     """How strongly the names say ``from_column`` points at ``to_table.to_column``, and the role words left over."""
     if names.opaque(from_column) or names.opaque(to_column) and names.opaque(to_table):
@@ -227,8 +231,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     grain = calendars[to_table].grain
                     plausible = (a.pattern == "yyyymmdd" and grain == "day") or (a.pattern == "yyyymm" and grain == "month") \
                         or (column.data_type == "date" and grain == "day") or is_declared or score > 0
-                if to_table == key and not (is_declared or score >= 0.8):
-                    continue   # a table pointing at itself needs more than values
+                if to_table == key and not (is_declared or (score >= 0.8 and _HIERARCHY & set(names.tokens(column.name)))):
+                    continue   # a table points at itself only up a hierarchy (a parent, a manager)
                 if is_calendar and not (is_declared or score >= 0.9):
                     continue   # a calendar's own period numbers are not foreign keys
                 if own_key and not (is_declared or score >= 0.9):

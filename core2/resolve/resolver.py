@@ -19,6 +19,7 @@ from core2.model.schema import (
     AggExpr,
     Attribute,
     Calendar,
+    Column,
     ColumnFilter,
     DateRole,
     Entity,
@@ -121,7 +122,7 @@ class Part:
 class Group:
     name: str
     label: str
-    kind: str                # attribute | period | time
+    kind: str                # attribute | member_code | period | time
     grain: str | None = None
     attribute: str | None = None
 
@@ -175,6 +176,28 @@ def _find_slug(model: SemanticModel, slug: str) -> tuple[str, object] | None:
         if r.slug == slug:
             return "date", r
     return None
+
+
+def _can_lack(model: SemanticModel, path: P.Path | None, column: Column) -> bool:
+    """Whether some rows may reach no member: a link that misses, or a value that is empty."""
+    if path is not None and any(j.match_rate < 0.999 for j in path.joins):
+        return True
+    p = column.profile
+    table_rows = model.tables[column.table].row_count or 0
+    return p is None or p.non_null < table_rows
+
+
+def _member_identity(model: SemanticModel, attribute: Attribute) -> str | None:
+    """The code (or key) telling apart members that share a name, when the names repeat."""
+    column = model.columns[attribute.column]
+    entity = next((e for e in model.entities.values() if e.label_column == column.key), None)
+    if entity is None or column.profile is None:
+        return None
+    if column.profile.distinct >= (model.tables[column.table].row_count or 0):
+        return None
+    if entity.code_column:
+        return entity.code_column
+    return entity.key_columns[0] if len(entity.key_columns) == 1 else None
 
 
 def _entity_label(model: SemanticModel, slug: str) -> Attribute:
@@ -350,7 +373,10 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         expr = OpExpr(op=op, args=[_with_filters(_measure_expr(model, a), a.filters),  # type: ignore[arg-type]
                                    _with_filters(_measure_expr(model, b), b.filters)], scale=d.scale)
         chosen.append((None, expr, a.table, d.name, "percent" if d.scale == 100 else "number"))
-        notes.append(f"{d.name} is worked out as {a.business_name} {d.op} {b.business_name}: a proposed measure.")
+        sign = {"ratio": "÷", "difference": "−", "sum": "+", "product": "×"}[d.op]
+        scaled = f" × {d.scale:g}" if d.scale != 1 else ""
+        notes.append(f"{d.name} = {a.business_name} {sign} {b.business_name}{scaled}, worked out for this question "
+                     "(not a saved measure yet).")
 
     # Groupings asked for.
     wanted: list[tuple[str, Attribute | None, str | None]] = []   # (slug, attribute, time attribute)
@@ -414,6 +440,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         groups.append(Group("period", "Period", "period", plan.time.grain))
         group_names["__period__"] = "period"
         out_names.add("period")
+    identity_names: dict[str, tuple[str, str]] = {}     # slug -> (output name, column key) of a member's code
     for slug, attribute, time_attr in wanted:
         if time_attr:
             name = _output_name(time_attr, out_names)
@@ -422,6 +449,12 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             assert attribute is not None
             name = _output_name(attribute.slug.replace(".", "_"), out_names)
             groups.append(Group(name, attribute.business_name, "attribute", attribute=attribute.slug))
+            identity = _member_identity(model, attribute)
+            if identity is not None:
+                code_name = _output_name(f"{name}_code", out_names)
+                groups.append(Group(code_name, f"{attribute.business_name} code", "member_code",
+                                    attribute=attribute.slug))
+                identity_names[slug] = (code_name, identity)
         group_names[slug] = name
 
     parts: list[Part] = []
@@ -456,11 +489,16 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 through = via_entity.table if isinstance(via_entity, Entity) else None
             alias = builder.reach(column.table, through=through, label=attribute.business_name)
             part.groups.append(PartGroup(name, alias, column.key, "attribute"))
+            if slug in identity_names:
+                # Names repeat: two members called the same must stay two rows.
+                code_name, code_column = identity_names[slug]
+                part.groups.append(PartGroup(code_name, alias, code_column, "attribute"))
             if plan.limit:
                 # A top n ranks real members; rows with none are not a member (a
                 # breakdown keeps them as one empty group, so it adds up to the total).
                 part.preds.append(Pred(alias, column.key, "not_null", []))
-                notes.append(f"Rows with no {attribute.business_name.lower()} are left out of the ranking.")
+                if _can_lack(model, builder.paths_used.get(column.table), column):
+                    notes.append(f"Rows with no {attribute.business_name.lower()} are left out of the ranking.")
         if plan.time.grain:
             if part.date is None:
                 raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
@@ -549,11 +587,13 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         if part.date is not None and role is not None:
             notes.insert(0, f"{', '.join(o.label for o in part.measures)} by {role.name.lower()}.")
         for table, path in builder.paths_used.items():
-            alternatives = P.all_paths(model, part.table, table)
-            if len(alternatives) > 1:
-                others = [p.describe(model) for p in alternatives[1:3]]
-                notes.append(f"{model.tables[table].business_name} through {path.describe(model)} "
-                             f"(also possible: {'; '.join(others)}).")
+            alternatives = [p for p in P.all_paths(model, part.table, table) if p.joins != path.joins]
+            if alternatives:
+                reached = model.tables[table].business_name
+                how = "each row's own" if len(path.joins) == 1 else f"through {path.describe(model)}"
+                routes = sorted({model.tables[p.joins[0].to_table].business_name.lower() if len(p.joins) > 1 else
+                                 (p.joins[0].role or reached).lower() for p in alternatives[:3]})
+                notes.append(f"{reached}: {how} (it could also come through the {' or the '.join(routes)}).")
         for j in model.joins.values():
             if j.from_table == part.table and j.trust == "proposed" and any(
                     step.key == j.key for p in builder.paths_used.values() for step in p.joins):
@@ -565,6 +605,24 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         if part.snapshot:
             notes.append(f"{', '.join(o.label for o in part.measures)}: taken at the last "
                          f"{'snapshot' if not plan.time.grain else 'snapshot of each period'}, not added up over time.")
+        grouped = {g.column for g in part.groups if g.column}
+        filtered = {p.column for p in part.preds}
+        for o in part.measures:
+            column_key = getattr(o.measure.expr, "column", None) if o.measure else None
+            for flag in model.quality:
+                if flag.kind == "unit_mix" and flag.object == column_key and not (
+                        o.measure and o.measure.unit_column and o.measure.unit_column in grouped | filtered):
+                    units = ", ".join(str(u) for u in flag.data.get("units", [])[:4])
+                    notes.append(f"{o.label} adds up different units{f' ({units})' if units else ''}: "
+                                 "group by unit of measure to keep them apart.")
+        owner_columns = {c.key for c in model.columns.values() if c.table == part.table}
+        for flag in model.quality:
+            if flag.kind == "status_column" and flag.object in owner_columns and flag.object not in filtered \
+                    and not model.tables[part.table].default_filters:
+                cancel_like = [str(v) for v in flag.data.get("cancel_like", [])]
+                if cancel_like:
+                    notes.append(f"Includes rows whose {model.columns[flag.object].business_name.lower()} is "
+                                 f"{' or '.join(cancel_like)}; an admin can leave them out by default.")
 
     # Partial periods of a series.
     partial: list[dt.date] = []

@@ -36,7 +36,7 @@ from core2.model.schema import Evidence
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
-_AUDIT = {"loaded", "load", "ld", "etl", "updated", "upd", "update", "modified", "mod", "inserted", "ins",
+AUDIT_WORDS = _AUDIT = {"loaded", "load", "ld", "etl", "updated", "upd", "update", "modified", "mod", "inserted", "ins",
           "batch", "sync", "synced", "ingest", "ingested", "extract", "extracted", "audit", "written", "refresh",
           "refreshed", "processed", "staged", "stg"}
 _PLANNED = {"planned", "plan", "pln", "promised", "requested", "rqs", "req", "expected", "exp", "target",
