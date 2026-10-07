@@ -264,6 +264,9 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
             "model_version": model_version,
         },
         "confidence": {},
+        # Every row of the answer, for the full export; the portal bridge keeps it on the
+        # server (the answer trace) and never sends it over the socket.
+        "export_rows": records,
     }
 
 

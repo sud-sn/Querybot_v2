@@ -1303,6 +1303,7 @@ def _run_migrations() -> None:
         ("answer_trace", "compiler_confidence",        "REAL DEFAULT 0.0"),
         # v32: regulated execution stores protected (never raw) rows and policy version.
         ("answer_trace", "result_rows",                "TEXT NOT NULL DEFAULT '[]'"),
+        ("core2_answer", "question_id",                "TEXT NOT NULL DEFAULT ''"),
         ("answer_trace", "policy_version_at_query",    "INTEGER NOT NULL DEFAULT 0"),
         # v30: self-learning loop — feature flags on client
         ("client", "enable_feedback_collection", "INTEGER NOT NULL DEFAULT 0"),
@@ -1623,6 +1624,7 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             plan_json      TEXT NOT NULL DEFAULT '{}',
             duration_ms    INTEGER NOT NULL DEFAULT 0,
             model_version  INTEGER NOT NULL DEFAULT 0,
+            question_id    TEXT NOT NULL DEFAULT '',
             created_at     TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_core2_answer_account ON core2_answer (account_id, created_at);

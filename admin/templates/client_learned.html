@@ -97,7 +97,7 @@
         {% for value, title, detail in [
              ("legacy", "Today's pipeline", "As now. The new core does not run."),
              ("compare", "Both, side by side", "Today's answer, then the new core's answer to the same question, marked as a preview. Use this to compare them."),
-             ("core2", "The new core (early)", "The new core answers; a question it cannot express goes to today's pipeline. Early: its answers are not yet kept in the conversation history, counted toward limits or offered for export.")] %}
+             ("core2", "The new core", "The new core answers; a question it cannot express goes to today's pipeline. Its answers are kept in the conversation's history, count toward the monthly limit, can be exported and take the readers' thumbs, like today's.")] %}
         <label class="lq-choice">
           <input type="radio" name="engine" value="{{ value }}" {% if engine == value %}checked{% endif %}>
           <span><strong>{{ title }}</strong><span class="lq-why">{{ detail }}</span></span>
@@ -110,12 +110,13 @@
       {% if answers %}
       <div class="lq-wrap">
       <table class="lq-table">
-        <thead><tr><th>When (UTC)</th><th>Question</th><th>New core</th><th>Rows</th></tr></thead>
+        <thead><tr><th>When (UTC)</th><th>Question</th><th>New core</th><th>Rows</th><th>Reader's verdict</th></tr></thead>
         <tbody>
         {% for a in answers %}
           <tr><td class="lq-mono">{{ a.created_at }}</td><td>{{ a.question }}</td>
               <td><span class="lq-kind">{{ a.status }}</span><div class="lq-why">{{ a.headline }}</div></td>
-              <td>{{ a.row_count }}</td></tr>
+              <td>{{ a.row_count }}</td>
+              <td>{% if a.rating == 1 %}Helpful{% elif a.rating == -1 %}Not helpful{% endif %}</td></tr>
         {% endfor %}
         </tbody>
       </table>

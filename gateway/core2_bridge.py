@@ -8,9 +8,14 @@ A workspace answers portal questions with one of three engines:
 * ``core2``   - the new core answers; what it cannot express (``unsupported``)
   or fails on goes to today's pipeline, so no question is left unanswered.
 
-Every new-core answer is recorded (store.log_core2_answer) for comparison. The
-new core never blocks the conversation: it runs in a worker thread under a time
-limit, and any failure is logged and leaves today's answer standing.
+Every new-core answer is recorded (store.log_core2_answer) for comparison, with
+a question id so the reader's thumbs reach it. In ``core2`` mode an answer is
+also kept the way today's answers are: the workspace's monthly limits are
+checked first (at a limit, today's pipeline answers and says so), and an answer
+writes an answer trace (the thread's history, the full CSV export, the audit
+link) and a query-log row (usage and limits). The new core never blocks the
+conversation: it runs in its own threads under a time limit, and any failure is
+logged and leaves today's answer standing.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import concurrent.futures
 import functools
 import logging
 import time
+import uuid
 from typing import Any
 
 log = logging.getLogger("querybot.core2")
@@ -43,15 +49,27 @@ async def engine(account_id: str) -> str:
         return "legacy"
 
 
+def new_question_id() -> str:
+    """A new-core answer's id: feedback and traces find it, and the prefix says which engine answered."""
+    return f"c2-{uuid.uuid4().hex[:24]}"
+
+
+def _within_limits(account_id: str) -> bool:
+    """The workspace's monthly question and token limits, as today's pipeline checks them."""
+    from core.pipeline_context import check_query_limit, check_token_limit
+
+    return check_query_limit(account_id)[0] and check_token_limit(account_id)[0]
+
+
 async def _answer(account_id: str, question: str, portal_user: dict | None, session_key: str,
-                  mode: str) -> dict[str, Any] | None:
-    import store
+                  mode: str, question_id: str) -> dict[str, Any] | None:
     from core2.service import portal_answer
 
     start = time.perf_counter()
     status, payload = "failed", None
     try:
-        work = functools.partial(portal_answer, account_id, question, portal_user, session_key=session_key)
+        work = functools.partial(portal_answer, account_id, question, portal_user, session_key=session_key,
+                                 question_id=question_id)
         payload = await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(_POOL, work), TIMEOUT_SECONDS)
         status = ("unsupported" if payload.get("unsupported") else
                   "answered" if payload.get("data") else "replied")
@@ -62,14 +80,41 @@ async def _answer(account_id: str, question: str, portal_user: dict | None, sess
         log.warning("core2 failed on a question for %s: %s", account_id, exc, exc_info=True)
     try:
         await asyncio.to_thread(_record, account_id, portal_user, mode, question, status, payload,
-                                int((time.perf_counter() - start) * 1000))
+                                int((time.perf_counter() - start) * 1000), question_id)
     except Exception as exc:     # noqa: BLE001
         log.warning("core2 answer could not be recorded for %s: %s", account_id, exc)
     return payload
 
 
+def _keep(account_id: str, portal_user: dict | None, session_id: str, question: str, question_id: str,
+          payload: dict[str, Any], rows: list[dict] | None, duration_ms: int) -> int:
+    """An answer kept as today's are: its trace (history, full export, audit) and its query-log row (usage)."""
+    import store
+    from core2.service import question_scrubber
+
+    scrub = question_scrubber(account_id)
+    text = scrub(question) if scrub else question
+    trust = payload.get("trust") or {}
+    sql = str(trust.get("sql") or "")
+    row_count = int(trust.get("row_count") or 0)
+    user_id = int(portal_user["id"]) if portal_user and portal_user.get("id") else None
+    trace_id = store.create_answer_trace(account_id=account_id, question_id=question_id, question_text=text,
+                                         portal_user_id=user_id, session_id=session_id, request_source="portal",
+                                         route="core2")
+    store.update_answer_trace(trace_id, generated_sql=sql, db_type=str(trust.get("data_source") or ""),
+                              query_row_count=row_count, query_duration_ms=duration_ms, answer_type="core2",
+                              final_answer_summary=str((payload.get("answer") or {}).get("headline") or "")[:500],
+                              sql_validation_status="governed", status="success")
+    if rows:
+        store.store_protected_result_rows(account_id, question_id, rows)
+    if sql and payload.get("data") is not None:      # a question back or a greeting ran no query: not counted
+        store.log_query(account_id, text, sql, row_count=row_count, success=True, duration_ms=duration_ms,
+                        portal_user_id=user_id, question_id=question_id, llm_provider="core2")
+    return trace_id
+
+
 def _record(account_id: str, portal_user: dict | None, mode: str, question: str, status: str,
-            payload: dict[str, Any] | None, duration_ms: int) -> None:
+            payload: dict[str, Any] | None, duration_ms: int, question_id: str = "") -> None:
     """One row per new-core answer, for comparison. The question is kept as QueryBot keeps
     questions: personal data scrubbed for a tenant under compliance (unrecorded if it cannot be)."""
     import store
@@ -82,7 +127,7 @@ def _record(account_id: str, portal_user: dict | None, mode: str, question: str,
         account_id, user_id=str((portal_user or {}).get("id") or ""), mode=mode,
         question=scrub(question) if scrub else question, status=status, headline=str(answer.get("headline") or ""),
         sql=str(trust.get("sql") or ""), row_count=int(trust.get("row_count") or 0), plan=(payload or {}).get("plan"),
-        duration_ms=duration_ms, model_version=int(trust.get("model_version") or 0))
+        duration_ms=duration_ms, model_version=int(trust.get("model_version") or 0), question_id=question_id)
 
 
 def _session_key(account_id: str, portal_user: dict | None, thread_id: str) -> str:
@@ -107,24 +152,46 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
     """``core2`` mode: answer with the new core; False hands the question to today's pipeline.
 
     Any other engine is False at once: today's pipeline answers, and in ``compare``
-    mode :func:`answer_beside` follows it.
+    mode :func:`answer_beside` follows it. A workspace at its monthly limit is
+    handed over too: today's pipeline answers that with its own message.
     """
     if engine != "core2":
         return False
+    try:
+        if not await asyncio.to_thread(_within_limits, account_id):
+            return False
+    except Exception as exc:     # noqa: BLE001 - an unreadable limit is today's pipeline's to report
+        log.warning("core2 could not read the limits of %s: %s", account_id, exc)
+        return False
+    question_id = new_question_id()
+    start = time.perf_counter()
     payload = await _answer(account_id, question, portal_user,
-                            _session_key(account_id, portal_user, adapter.thread_id), "core2")
+                            _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id)
     if payload is None or payload.get("unsupported"):
         return False
+    rows = payload.pop("export_rows", None)
+    try:
+        payload["trace_id"] = await asyncio.to_thread(
+            _keep, account_id, portal_user, str(getattr(adapter, "session_id", "") or ""), question, question_id,
+            payload, rows, int((time.perf_counter() - start) * 1000))
+    except Exception as exc:     # noqa: BLE001 - the answer stands; its history and usage row are logged as lost
+        log.warning("core2 answer could not be kept in history and usage for %s: %s", account_id, exc)
     return await _send(adapter, websocket, payload)
 
 
 async def answer_beside(adapter: Any, websocket: Any, account_id: str, question: str,
                         portal_user: dict | None) -> None:
-    """``compare`` mode: the new core's answer after today's, badged as a preview."""
+    """``compare`` mode: the new core's answer after today's, badged as a preview.
+
+    A preview has its own question id (the reader's thumbs reach it) but is not
+    kept in the thread's history and does not count toward the monthly limit:
+    today's answer to the same question already did.
+    """
     payload = await _answer(account_id, question, portal_user,
-                            _session_key(account_id, portal_user, adapter.thread_id), "compare")
+                            _session_key(account_id, portal_user, adapter.thread_id), "compare", new_question_id())
     if payload is None or payload.get("kind") == "smalltalk":
         return     # nothing to compare: today's reply to "thanks" needs no second one
+    payload.pop("export_rows", None)
     if isinstance(payload.get("answer"), dict):
         payload["answer"]["scope_badge"] = PREVIEW_BADGE
     payload.setdefault("result_scope", {})["badge"] = PREVIEW_BADGE

@@ -154,22 +154,25 @@ def set_query_engine(account_id: str, engine: str) -> None:
 
 def log_core2_answer(account_id: str, *, user_id: str, mode: str, question: str, status: str, headline: str,
                      sql: str, row_count: int, plan: dict[str, Any] | None, duration_ms: int,
-                     model_version: int) -> None:
+                     model_version: int, question_id: str = "") -> None:
     with get_db() as conn:
         conn.execute(
             """INSERT INTO core2_answer (account_id, user_id, mode, question, status, headline, sql, row_count,
-                                         plan_json, duration_ms, model_version)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         plan_json, duration_ms, model_version, question_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (account_id, user_id, mode, question[:2000], status, headline[:2000], sql, row_count,
-             json.dumps(plan or {}), duration_ms, model_version))
+             json.dumps(plan or {}), duration_ms, model_version, question_id))
 
 
 def list_core2_answers(account_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """The new core's recent answers, with the reader's thumbs on each when they gave one."""
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT id, user_id, mode, question, status, headline, sql, row_count, plan_json, duration_ms,
-                      model_version, created_at
-               FROM core2_answer WHERE account_id=? ORDER BY id DESC LIMIT ?""", (account_id, limit)).fetchall()
+            """SELECT a.id, a.user_id, a.mode, a.question, a.status, a.headline, a.sql, a.row_count, a.plan_json,
+                      a.duration_ms, a.model_version, a.created_at, a.question_id,
+                      (SELECT f.rating FROM answer_feedback f WHERE a.question_id <> '' AND f.question_id = a.question_id
+                        ORDER BY f.updated_at DESC LIMIT 1) AS rating
+               FROM core2_answer a WHERE a.account_id=? ORDER BY a.id DESC LIMIT ?""", (account_id, limit)).fetchall()
     keys = ("id", "user_id", "mode", "question", "status", "headline", "sql", "row_count", "plan_json",
-            "duration_ms", "model_version", "created_at")
+            "duration_ms", "model_version", "created_at", "question_id", "rating")
     return [dict(zip(keys, r)) for r in rows]

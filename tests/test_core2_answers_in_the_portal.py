@@ -111,6 +111,70 @@ def test_a_new_core_failure_never_costs_the_reader_todays_answer(tenant):
     assert logged and logged[0]["status"] == "failed"
 
 
+def _answer_with_rows(n: int):
+    """A new-core answer of ``n`` rows, using the question id the bridge hands it (as portal_answer does)."""
+    def answer(*args, **kwargs):
+        rows = [{"v": i} for i in range(n)]
+        payload = json.loads(json.dumps(CANNED))
+        payload["data"]["rows"], payload["data"]["total_rows"] = rows[:200], n
+        payload["trust"]["question_id"], payload["trust"]["row_count"] = kwargs["question_id"], n
+        payload["export_rows"] = rows
+        return payload
+    return answer
+
+
+def test_a_core2_answer_is_kept_as_todays_are_history_full_export_usage_and_thumbs(tenant):
+    import store
+
+    before = store.get_monthly_query_count(harness.ACCOUNT)
+    turn = _ask(tenant, "core2", _answer_with_rows(250))
+    (frame,) = _answers(turn)
+    assert "export_rows" not in frame                      # every row stays on the server
+    question_id = frame["trust"]["question_id"]
+    assert question_id.startswith("c2-")                  # the reader's thumbs reach this answer
+    trace = store.get_answer_trace(int(frame["trace_id"]))
+    assert trace["question_id"] == question_id and trace["route"] == "core2" and trace["status"] == "success"
+    assert len(json.loads(trace["result_rows"])) == 250   # the CSV export reads all of them, not the 200 shown
+    assert trace["session_id"]                            # the thread's history finds it again
+    assert store.get_monthly_query_count(harness.ACCOUNT) == before + 1
+    assert store.list_core2_answers(harness.ACCOUNT, 1)[0]["question_id"] == question_id
+    from store.learning_store import save_feedback
+
+    save_feedback(question_id, int(trace["portal_user_id"]), harness.ACCOUNT, -1, reason_code="wrong_data")
+    assert store.list_core2_answers(harness.ACCOUNT, 1)[0]["rating"] == -1
+
+
+def test_a_workspace_at_its_monthly_limit_is_answered_by_todays_pipeline(tenant):
+    import store
+
+    used = store.get_monthly_query_count(harness.ACCOUNT)
+    limit = (store.get_client(harness.ACCOUNT) or {}).get("query_limit_monthly")
+    store.update_client_meta(harness.ACCOUNT, query_limit_monthly=max(used, 1))
+    if used == 0:
+        store.log_query(harness.ACCOUNT, "an earlier question", "SELECT 1", success=True)
+    try:
+        turn = _ask(tenant, "core2", _answer_with_rows(3))
+    finally:
+        store.update_client_meta(harness.ACCOUNT, query_limit_monthly=limit or 500)
+    assert all(a.get("engine") != "core2" for a in _answers(turn))
+    assert any("limit" in json.dumps(f).lower() for f in turn["frames"])   # today's pipeline says so
+
+
+def test_a_side_by_side_preview_takes_thumbs_but_no_history_and_no_usage(tenant):
+    import store
+
+    before = store.get_monthly_query_count(harness.ACCOUNT)
+    traces = len(store.list_answer_traces(harness.ACCOUNT, 500))
+    turn = _ask(tenant, "compare", _answer_with_rows(3))
+    today, preview = _answers(turn)
+    assert preview["trust"]["question_id"].startswith("c2-") and "trace_id" not in preview
+    assert "export_rows" not in preview
+    core2_traces = [t for t in store.list_answer_traces(harness.ACCOUNT, 500) if t.get("route") == "core2"]
+    assert len(store.list_answer_traces(harness.ACCOUNT, 500)) - traces <= 1     # today's answer's own trace
+    assert all(t["question_id"] != preview["trust"]["question_id"] for t in core2_traces)
+    assert store.get_monthly_query_count(harness.ACCOUNT) - before <= 1          # today's answer counted, not the preview
+
+
 # ── governance and the production wiring ──────────────────────────────────
 
 
