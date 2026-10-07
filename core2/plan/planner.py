@@ -85,6 +85,8 @@ How to plan:
    week instead", "only for X", "what about returns", "top 5 of those"), return the whole new plan with
    follow_up "refine"; a question about something else is follow_up "new".
 12. notes: one short line for each assumption the user did not state.
+13. chart: only when the question says how to show it ("as a pie", "bar chart", "just the table" -> "table");
+   on a follow-up ("show that as a pie") return the previous plan with chart set and follow_up "refine".
 """
 
 

@@ -101,6 +101,7 @@ class Plan(_Strict):
     forecast: Forecast | None = None
     drivers: Drivers | None = None
     clarify: Clarify | None = None
+    chart: Literal["bar", "line", "area", "pie", "table"] | None = None   # "as a pie", "just the table"
     follow_up: Literal["new", "refine"] = "new"
     notes: list[str] = Field(default_factory=list)
 

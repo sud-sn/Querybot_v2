@@ -172,7 +172,7 @@ def _table_format(column: OutColumn) -> str:
 
 def build_answer(question: str, logical: Logical, compiled: Compiled, columns: list[str], rows: list[tuple],
                  *, duration_ms: float = 0.0, data_source: str = "", question_id: str = "",
-                 model_version: int = 0, truncated: bool = False) -> dict[str, Any]:
+                 model_version: int = 0, truncated: bool = False, chart_type: str | None = None) -> dict[str, Any]:
     if len(rows) > logical.max_rows:
         truncated, rows = True, rows[:logical.max_rows]
     cols = _Columns(compiled, columns)
@@ -199,11 +199,25 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
 
     headline = _headline(logical, cols, raw, records, partial)
     short_value, comparison = _lead(logical, cols, raw)
+    chart = _chart(logical, cols, records, formats, labels, display)
+    notes = list(logical.notes)
+    if chart is not None and chart_type == "table":
+        chart = None
+    elif chart is not None and chart_type and chart_type != chart["chart_type"]:
+        temporal = ((chart.get("chart_spec") or {}).get("x") or {}).get("role") == "temporal"
+        allowed = [t for t in chart.get("allowed_types", []) if not (temporal and t == "pie")]
+        if chart_type in allowed:
+            chart["chart_type"] = chart["recommended_type"] = chart_type
+            if chart_type not in chart["renderable_types"]:
+                chart["renderable_types"] = [chart_type, *chart["renderable_types"]]
+        else:
+            notes.append(f"A {chart_type} chart does not fit this answer; it is shown as a "
+                         f"{chart['chart_type']} chart.")
     return frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
-                 chart=_chart(logical, cols, records, formats, labels, display), kpi=_kpi(logical, cols, raw, formats),
-                 suggestions=_next(logical, cols), headers=[c.name for c in shown], labels=labels, records=records,
+                 chart=chart, kpi=_kpi(logical, cols, raw, formats),
+                 suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
-                 data_source=data_source, question_id=question_id, notes=list(logical.notes),
+                 data_source=data_source, question_id=question_id, notes=notes,
                  model_version=model_version)
 
 
@@ -451,19 +465,3 @@ def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn,
             "intent": logical.intent, "grouped_by": member.name, "grouped_measure": m.name,
             "forecast_meta": None, "chart_warnings": [] if len(totals) <= 8 else [
                 f"Showing the 8 largest of {len(totals)} {labels[member.name].lower()} values."]}
-
-
-def _next(logical: Logical, cols: _Columns) -> list[str]:
-    """A few next questions that follow from this plan (the planner turns them into plans)."""
-    measures = cols.of("measure")
-    if not measures:
-        return []
-    m = measures[0].label.lower()
-    out: list[str] = []
-    if cols.of("attribute") and not cols.of("period"):
-        out.append(f"{measures[0].label} by month for the top {cols.of('attribute')[0].label.lower()}")
-    if cols.of("period") and not cols.of("attribute"):
-        out.append(f"Break {m} down by its largest group")
-    if logical.compare is None and logical.window.start and logical.window.end:
-        out.append(f"Compare {m} with the previous period")
-    return out[:3]

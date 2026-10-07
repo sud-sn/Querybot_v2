@@ -48,6 +48,7 @@ class ResolveError(Exception):
         self.kind = kind            # unknown | ambiguous | unconfirmed | unsupported | denied | empty
         self.message = message
         self.options = options or []
+        self.field: str | None = None   # for "ambiguous": the slug whose link the reader must name (plan.via)
 
 
 @dataclass
@@ -521,18 +522,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 continue
             assert attribute is not None
             column = model.columns[attribute.column]
-            through: str | None = None
-            link_role: str | None = None
-            if slug in plan.via:
-                # An entity it is reached through ("by the customer's home store"),
-                # or the role of a link ("Bill-to", "Ship-to").
-                via = _find_slug(model, plan.via[slug])
-                via_entity = via[1] if via else None
-                if isinstance(via_entity, Entity):
-                    through = via_entity.table
-                else:
-                    link_role = plan.via[slug].removeprefix("role:").strip()
-            alias = builder.reach(column.table, through=through, role=link_role, label=attribute.business_name)
+            through, link_role = _via(model, plan, slug)
+            alias = _reach(builder, column.table, slug, through, link_role, attribute.business_name)
             part.groups.append(PartGroup(name, alias, column.key, "attribute"))
             if slug in identity_names:
                 # Names repeat: two members called the same must stay two rows.
@@ -596,8 +587,9 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             attribute = _entity_label(model, f.field) if kind == "entity" else obj
             assert isinstance(attribute, Attribute)
             column = model.columns[attribute.column]
+            through, link_role = _via(model, plan, f.field)
             try:
-                alias = builder.reach(column.table, label=attribute.business_name)
+                alias = _reach(builder, column.table, f.field, through, link_role, attribute.business_name)
             except ResolveError as exc:
                 if exc.kind != "unsupported":
                     raise
@@ -691,6 +683,27 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows)
+
+
+def _via(model: SemanticModel, plan: Plan, slug: str) -> tuple[str | None, str | None]:
+    """How the plan says ``slug`` is reached: through an entity's table ("the customer's home store"),
+    or by the role of a link ("Bill to customer", "Ship to customer")."""
+    named = plan.via.get(slug)
+    if not named:
+        return None, None
+    found = _find_slug(model, named)
+    if found and isinstance(found[1], Entity):
+        return found[1].table, None
+    return None, named.removeprefix("role:").strip()
+
+
+def _reach(builder: _PartBuilder, table: str, slug: str, through: str | None, role: str | None, label: str) -> str:
+    try:
+        return builder.reach(table, through=through, role=role, label=label)
+    except ResolveError as exc:
+        if exc.kind == "ambiguous" and exc.field is None:
+            exc.field = slug                 # the reply names a link for this slug
+        raise
 
 
 def _like_for_like(window: Range, compare: Range, last: dt.date | None, kind: str) -> tuple[Range, Range, str]:

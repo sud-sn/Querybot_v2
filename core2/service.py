@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -27,11 +28,12 @@ from core2 import ids
 from core2.answer.builder import build_answer
 from core2.answer.drivers import answer_drivers
 from core2.answer.forecast import answer_forecast
+from core2.answer.suggestions import follow_ups
 from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Clarify, Plan
-from core2.plan.planner import Complete, Turn, plan_question
-from core2.plan.values import MemberIndex, ValueMatch, build_index
+from core2.plan.planner import Complete, Outcome, Turn, plan_question
+from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index
 from core2.resolve.resolver import Context, ResolveError, resolve
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
@@ -55,8 +57,51 @@ class Services:
 
 
 @dataclass
+class Pending:
+    """A question back that code completes: the plan waiting for the link the reader names."""
+
+    plan: Plan
+    field: str                       # the slug whose link the reply names (plan.via)
+    options: list[str]
+    masked: Masked | None = None
+
+
+@dataclass
 class Session:
     turns: list[Turn] = field(default_factory=list)
+    pending: Pending | None = None
+
+
+_ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
+             "fifth": 4, "5th": 4, "sixth": 5, "6th": 5, "last": -1}
+_FILLER = {"the", "one", "option", "number", "no", "please", "use", "i", "mean", "meant", "it", "is", "via",
+           "by", "a", "an"}
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+
+def choose(reply: str, options: list[str]) -> str | None:
+    """The option a reply picks: its name, its number ("2", "the second one"), or a start only it has."""
+    text = _plain(reply)
+    if not text or not options:
+        return None
+    plain = [_plain(o) for o in options]
+    if text in plain:
+        return options[plain.index(text)]
+    words = [w for w in text.split() if w not in _FILLER]
+    if len(words) == 1:
+        word = words[0]
+        if word.isdigit() and 1 <= int(word) <= len(options):
+            return options[int(word) - 1]
+        if word in _ORDINALS and _ORDINALS[word] < len(options):
+            return options[_ORDINALS[word]]
+    starts = [o for o, p in zip(options, plain) if p.startswith(text)]
+    if len(starts) == 1:
+        return starts[0]
+    inside = [o for o, p in zip(options, plain) if p and re.search(rf"\b{re.escape(p)}\b", text)]
+    return inside[0] if len(inside) == 1 else None
 
 
 def _frame(question: str, text: str, **extra: Any) -> dict[str, Any]:
@@ -67,10 +112,16 @@ def _frame(question: str, text: str, **extra: Any) -> dict[str, Any]:
 
 
 def _clarification(question: str, clarify: Clarify) -> dict[str, Any]:
+    """A question back: the options in the sentence, and each one a chip that answers it."""
     options = [o for o in clarify.options if o][:6]
-    listed = "".join(f"\n• {o}" for o in options)
-    return _frame(question, f"{clarify.question}{listed}", clarify={"about": clarify.about,
-                                                                     "question": clarify.question, "options": options})
+    asked = clarify.question.rstrip(" ?:.")
+    if options:
+        listed = options[0] if len(options) == 1 else ", ".join(options[:-1]) + f" or {options[-1]}"
+        text = f"{asked}: {listed}?"
+    else:
+        text = clarify.question
+    return _frame(question, text, clarify={"about": clarify.about, "question": clarify.question, "options": options},
+                  follow_up_suggestions=[{"label": o, "question": o} for o in options])
 
 
 def _describe(question: str, model: SemanticModel) -> dict[str, Any]:
@@ -100,10 +151,17 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     """The portal frame answering ``question``; the session keeps the plan for follow-ups."""
     start = time.perf_counter()
     model = services.model
-    matches = _visible(services.index.match(question), model, services.allowed_tables)
-    outcome = plan_question(model, question, services.complete, today=services.today,
-                            history=session.turns[-HISTORY:], matches=matches,
-                            values_allowed=services.values_allowed, scrub=services.scrub)
+    pending, session.pending = session.pending, None
+    picked = choose(question, pending.options) if pending is not None else None
+    if pending is not None and picked is not None:
+        # The reply names one of the links offered: the waiting plan, completed by code.
+        outcome = Outcome(pending.plan.model_copy(update={"via": {**pending.plan.via, pending.field: picked},
+                                                          "follow_up": "refine"}), masked=pending.masked)
+    else:
+        matches = _visible(services.index.match(question), model, services.allowed_tables)
+        outcome = plan_question(model, question, services.complete, today=services.today,
+                                history=session.turns[-HISTORY:], matches=matches,
+                                values_allowed=services.values_allowed, scrub=services.scrub)
     plan = outcome.plan
     if plan.kind == "smalltalk":
         return _frame(question, "Hello! Ask me about your data, for example a total, a trend or a ranking.",
@@ -126,7 +184,9 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         if exc.kind == "ambiguous":
             session.turns.append(Turn(question, plan, outcome.masked))     # the reply names the role this asks for
             del session.turns[:-HISTORY]
-            return _clarification(question, Clarify(about="path", question=f"{exc.message}: which one?",
+            if exc.field:
+                session.pending = Pending(plan, exc.field, list(exc.options), outcome.masked)
+            return _clarification(question, Clarify(about="path", question=f"{exc.message}. Which one do you mean",
                                                     options=exc.options))
         template = _REFUSALS.get(exc.kind, "{message}.")
         return _frame(question, template.format(message=exc.message), unsupported=exc.kind == "unsupported")
@@ -161,8 +221,11 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     logical = resolve(plan, model, ctx)
     compiled = compile_query(logical, model, warehouse.dialect)
     result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
-    return build_answer(question, logical, compiled, result.columns, result.rows,
-                        duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated, **common)
+    payload = build_answer(question, logical, compiled, result.columns, result.rows,
+                           duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
+                           chart_type=plan.chart, **common)
+    payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
+    return payload
 
 
 def _visible(matches: list[ValueMatch], model: SemanticModel, allowed: set[str] | None) -> list[ValueMatch]:

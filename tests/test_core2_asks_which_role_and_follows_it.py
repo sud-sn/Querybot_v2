@@ -78,9 +78,13 @@ def test_two_roles_are_asked_about_by_name_and_the_reply_is_followed():
     learned = len(warehouse.log)          # the bootstrap's own reads
     asked = answer_question("sales by customer", services, session)
     assert sorted(asked["clarify"]["options"]) == roles and len(warehouse.log) == learned   # asked, nothing run
+    # Each option is a chip that answers the question, and the sentence names them too.
+    assert sorted(c["question"] for c in asked["follow_up_suggestions"]) == roles
+    assert all(r in asked["answer"]["headline"] for r in roles)
     answered = answer_question(roles[1], services, session)
     sql = warehouse.log[-1]
-    assert "PREVIOUS QUESTION: sales by customer" in ai.sent[-1]
+    assert len(ai.sent) == 1          # the reply completed the waiting plan by code: no second AI call
+    assert answered["plan"]["via"] == {customer: roles[1]}
     got = warehouse.query(sql)
     expected = warehouse.query("SELECT c.customer_name, SUM(o.order_amount) FROM orders o "
                                "LEFT JOIN customers c ON c.customer_id = o.ship_to_customer_id GROUP BY 1")
@@ -96,6 +100,22 @@ def test_two_roles_are_asked_about_by_name_and_the_reply_is_followed():
 
     assert sql_for("ship-to") == sql_for("SHIP TO CUSTOMER") == sql
     assert sql_for("Bill to") != sql_for("Ship to")
+
+    # A reply by number picks the same option; a reply about something else goes to the AI,
+    # which sees the question back in the conversation.
+    for reply in ("the second one", "2", "ship to"):
+        session = Session()
+        ai = Recorded(json.dumps(plain))
+        services.complete = ai
+        answer_question("sales by customer", services, session)
+        again = answer_question(reply, services, session)
+        assert again["plan"]["via"] == {customer: roles[1]} and len(ai.sent) == 1, reply
+    session = Session()
+    ai = Recorded(json.dumps(plain), json.dumps({"kind": "smalltalk"}))
+    services.complete = ai
+    answer_question("sales by customer", services, session)
+    answer_question("never mind, thanks", services, session)
+    assert len(ai.sent) == 2 and "PREVIOUS QUESTION: sales by customer" in ai.sent[-1]
 
 
 def test_a_role_the_question_names_is_followed_where_a_plain_link_also_exists():
