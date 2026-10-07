@@ -107,8 +107,10 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
         if e.table not in reach:
             continue
         label = model.columns[e.label_column].business_name if e.label_column else "its key"
+        named_roles = sorted({r for t in measure_tables for r in P.role_names(model, t, e.table)})
+        as_roles = f" | roles (name one in via): {', '.join(named_roles)}" if named_roles else ""
         lines.append(f"- {e.slug} | {e.business_name} (named by {label}) | {e.members:,} members | "
-                     f"{', '.join(sorted(set(reach[e.table])))}{_synonyms(e.synonyms)}")
+                     f"{', '.join(sorted(set(reach[e.table])))}{as_roles}{_synonyms(e.synonyms)}")
         for a in sorted(by_owner.get(e.table, []), key=lambda a: a.slug):
             if a.column == e.label_column:
                 continue

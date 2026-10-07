@@ -122,6 +122,8 @@ def answer_question(question: str, services: Services, session: Session, *, ques
                                                max_rows=MAX_ROWS))
     except ResolveError as exc:
         if exc.kind == "ambiguous":
+            session.turns.append(Turn(question, plan))     # the reply names the role this asks for
+            del session.turns[:-HISTORY]
             return _clarification(question, Clarify(about="path", question=f"{exc.message}: which one?",
                                                     options=exc.options))
         template = _REFUSALS.get(exc.kind, "{message}.")

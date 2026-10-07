@@ -45,7 +45,9 @@ How to plan:
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
    derived with a short name, the op and the two slugs (scale 100 for a percentage).
 3. group_by: attribute or entity slugs for "by X", "per X", "each X", "which X"; an entity slug groups by
-   its name. A time: attribute for "by weekday", "by month of the year", "weekends".
+   its name. A time: attribute for "by weekday", "by month of the year", "weekends". When the catalog lists
+   roles for an entity and the question names one ("by ship-to customer", "the customer's home store"),
+   put it in via: {"<the group_by slug>": "<role>"}; with no role named, leave via empty.
 4. time.grain makes a series: "monthly", "by month", "weekly", "per quarter", "trend", "over time" (month
    when unsaid). No grain for one total.
 5. time.window, written as the user said it; never compute relative dates yourself:
@@ -177,8 +179,8 @@ def check(plan: Plan, model: SemanticModel, today: dt.date) -> list[str]:
     try:
         resolve(plan, model, Context(today=today))
     except ResolveError as exc:
-        if exc.kind in ("unconfirmed", "denied"):
-            return []          # not the planner's to fix: answered as such by the service
+        if exc.kind in ("unconfirmed", "denied", "ambiguous"):
+            return []          # not the planner's to fix: the service answers or asks the reader
         options = f" Allowed: {', '.join(exc.options[:12])}." if exc.options else ""
         return [f"{exc.message}.{options}"]
     except ValueError as exc:

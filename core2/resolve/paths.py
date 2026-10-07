@@ -15,6 +15,7 @@ or an admin's default decides.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from core2.model.schema import Join, SemanticModel
@@ -124,3 +125,33 @@ def best_path(model: SemanticModel, start: str, goal: str, *, through: str | Non
             return plain[0]
         raise Ambiguous(direct)
     return paths[0]
+
+
+def roles(path: Path) -> list[str]:
+    return [j.role for j in path.joins if j.role]
+
+
+def _words(text: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", text.casefold()))
+
+
+def with_role(model: SemanticModel, start: str, goal: str, role: str, *, through: str | None = None) -> list[Path]:
+    """The paths that go through a link named ``role`` ("Bill to customer", "Home store"), best first.
+
+    Spelling is forgiven ("ship-to customer"), and so is a role written without its
+    target's noun ("Ship to" for "Ship to customer") when only one role starts so.
+    """
+    wanted = _words(role)
+    paths = all_paths(model, start, goal, through=through)
+    named = {r for p in paths for r in roles(p)}
+    chosen = {r for r in named if _words(r) == wanted}
+    if not chosen and wanted:
+        chosen = {r for r in named if _words(r)[:len(wanted)] == wanted}
+        if len(chosen) > 1:
+            return []          # "Ship" could be either: the reader is asked, never guessed for
+    return [p for p in paths if chosen & set(roles(p))]
+
+
+def role_names(model: SemanticModel, start: str, goal: str) -> list[str]:
+    """The named links a question can choose between to reach ``goal`` from ``start``."""
+    return sorted({r for p in all_paths(model, start, goal) for r in roles(p)})

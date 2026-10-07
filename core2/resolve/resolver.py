@@ -241,13 +241,20 @@ class _PartBuilder:
         if self.ctx.allowed_tables is not None and table not in self.ctx.allowed_tables:
             raise ResolveError("denied", f"{self.model.tables[table].business_name} is not available to you")
 
-    def reach(self, table: str, *, through: str | None = None, label: str = "") -> str:
-        """The alias holding ``table``, joining along the one path rule."""
+    def reach(self, table: str, *, through: str | None = None, role: str | None = None, label: str = "") -> str:
+        """The alias holding ``table``, joining along the one path rule (or through the named role)."""
         self._allowed(table)
+        if role:
+            chosen = P.with_role(self.model, self.part.table, table, role, through=through)
+            if not chosen:
+                raise ResolveError("unknown", f"{label or self.model.tables[table].business_name} is not reached as "
+                                   f"{role}", P.role_names(self.model, self.part.table, table))
+            return self._walk(table, chosen[0])
         try:
             path = P.best_path(self.model, self.part.table, table, through=through)
         except P.Ambiguous as exc:
-            options = [p.describe(self.model) for p in exc.options]
+            # The choice is offered by role ("Bill-to", "Ship-to"): what the plan's via names.
+            options = [", ".join(P.roles(p)) or p.describe(self.model) for p in exc.options]
             raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be reached "
                                "more than one way", options) from None
         if path is None:
@@ -260,6 +267,9 @@ class _PartBuilder:
                                                        f"{self.model.tables[j.to_table].business_name}" for j in links])
             raise ResolveError("unsupported", f"{label or self.model.tables[table].business_name} is not linked to "
                                f"{self.model.tables[self.part.table].business_name}")
+        return self._walk(table, path)
+
+    def _walk(self, table: str, path: P.Path) -> str:
         alias = self.part.alias
         walked: tuple[str, ...] = ()
         for j in path.joins:
@@ -499,12 +509,18 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 continue
             assert attribute is not None
             column = model.columns[attribute.column]
-            through = None
+            through: str | None = None
+            link_role: str | None = None
             if slug in plan.via:
+                # An entity it is reached through ("by the customer's home store"),
+                # or the role of a link ("Bill-to", "Ship-to").
                 via = _find_slug(model, plan.via[slug])
                 via_entity = via[1] if via else None
-                through = via_entity.table if isinstance(via_entity, Entity) else None
-            alias = builder.reach(column.table, through=through, label=attribute.business_name)
+                if isinstance(via_entity, Entity):
+                    through = via_entity.table
+                else:
+                    link_role = plan.via[slug].removeprefix("role:").strip()
+            alias = builder.reach(column.table, through=through, role=link_role, label=attribute.business_name)
             part.groups.append(PartGroup(name, alias, column.key, "attribute"))
             if slug in identity_names:
                 # Names repeat: two members called the same must stay two rows.
