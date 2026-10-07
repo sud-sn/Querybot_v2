@@ -85,14 +85,75 @@
         </div>
         <div class="form-grid">
           <div class="form-group"><label>User *</label>
-            <input type="text" name="sf_user" placeholder="your_username"></div>
-          <div class="form-group"><label>Password *</label>
-            <input type="password" name="sf_password">
-            <p class="form-note" id="sf-pwd-note" style="display:none">Leave blank to keep the existing password.</p>
+            <input type="text" name="sf_user" placeholder="QUERYBOT_SVC"></div>
+          <div class="form-group"><label for="sf_auth_method">Sign-in method *</label>
+            <select name="sf_auth_method" id="sf_auth_method" onchange="showSfAuth(this.value)">
+              <option value="keypair">Key pair: service user (recommended)</option>
+              <option value="pat">Programmatic access token</option>
+              <option value="password">Password (legacy)</option>
+            </select></div>
+        </div>
+        <div id="sf-auth-keypair">
+          <div class="form-group"><label for="sf_private_key">Private key (PEM)</label>
+            <textarea name="sf_private_key" id="sf_private_key" rows="4" autocomplete="off" spellcheck="false"
+              placeholder="-----BEGIN PRIVATE KEY-----" style="font-family:var(--font-mono);font-size:var(--font-xs)"></textarea>
+            <p class="form-note" id="sf-key-note" style="display:none">A key is stored. Leave blank to keep it.</p></div>
+          <div class="form-grid">
+            <div class="form-group"><label for="sf_private_key_passphrase">Key passphrase (only if the key is encrypted)</label>
+              <input type="password" name="sf_private_key_passphrase" id="sf_private_key_passphrase" autocomplete="new-password"></div>
+            <div class="form-group"><label>No key yet?</label>
+              <button type="button" class="btn btn-secondary btn-sm" id="sf-generate-btn" onclick="sfGenerateKey()">Generate a key pair</button>
+              <p class="form-note">QueryBot makes a key pair and puts the private key in this form. Set its public key on the
+                Snowflake user, test the connection, then save.</p></div>
+          </div>
+          <div id="sf-generated" class="alert alert-info" style="display:none;font-size:var(--font-sm)">
+            <p style="margin:0 0 .35rem"><b>A new key pair is in this form, not saved yet.</b>
+              Fingerprint <code id="sf-generated-fp"></code></p>
+            <p style="margin:0 0 .35rem">1. Run this in Snowflake. If the user already signs in with a key, write
+              RSA_PUBLIC_KEY_2 instead, so the old key keeps working until you remove it.</p>
+            <code id="sf-generated-alter" style="display:block;white-space:pre-wrap;word-break:break-all;user-select:all"></code>
+            <p style="margin:.35rem 0 0">2. Test connection. 3. Save: the key is stored encrypted and is never shown again.
+              <button type="button" class="btn btn-secondary btn-sm" onclick="sfClearGeneratedKey()">Use my own key instead</button></p>
           </div>
         </div>
+        <div id="sf-auth-pat" style="display:none">
+          <div class="form-group"><label for="sf_token">Programmatic access token</label>
+            <input type="password" name="sf_token" id="sf_token" autocomplete="off">
+            <p class="form-note" id="sf-token-note" style="display:none">A token is stored. Leave blank to keep it.</p></div>
+        </div>
+        <div id="sf-auth-password" style="display:none">
+          <div class="alert alert-amber" style="font-size:var(--font-sm)">Snowflake is blocking password-only sign-in for users
+            without multi-factor authentication, which a server cannot answer. Use a service user with a key pair.</div>
+          <div class="form-group"><label for="sf_password">Password</label>
+            <input type="password" name="sf_password" id="sf_password">
+            <p class="form-note" id="sf-pwd-note" style="display:none">Leave blank to keep the existing password.</p></div>
+        </div>
         <div class="form-group"><label>Role (optional)</label>
-          <input type="text" name="sf_role" placeholder="leave blank to use default role"></div>
+          <input type="text" name="sf_role" placeholder="QUERYBOT_READER, or blank for the user's default role"></div>
+        <details style="margin-top:.5rem;font-size:var(--font-sm)">
+          <summary style="cursor:pointer;font-weight:var(--weight-semibold)">Set up a read-only service user in Snowflake</summary>
+          <p class="form-note" style="margin:.5rem 0">Your Snowflake administrator runs this once. Replace the names in angle brackets.
+            The public key comes from Generate a key pair above, before you save, or from your own key.</p>
+<pre style="white-space:pre-wrap;font-size:var(--font-xs);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:.75rem">CREATE ROLE IF NOT EXISTS QUERYBOT_READER;
+GRANT USAGE ON WAREHOUSE &lt;WAREHOUSE&gt; TO ROLE QUERYBOT_READER;
+GRANT USAGE ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;
+GRANT USAGE ON SCHEMA &lt;DATABASE&gt;.&lt;SCHEMA&gt; TO ROLE QUERYBOT_READER;
+GRANT SELECT ON ALL TABLES IN SCHEMA &lt;DATABASE&gt;.&lt;SCHEMA&gt; TO ROLE QUERYBOT_READER;
+GRANT SELECT ON ALL VIEWS IN SCHEMA &lt;DATABASE&gt;.&lt;SCHEMA&gt; TO ROLE QUERYBOT_READER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA &lt;DATABASE&gt;.&lt;SCHEMA&gt; TO ROLE QUERYBOT_READER;
+GRANT SELECT ON FUTURE VIEWS IN SCHEMA &lt;DATABASE&gt;.&lt;SCHEMA&gt; TO ROLE QUERYBOT_READER;
+
+CREATE USER IF NOT EXISTS QUERYBOT_SVC
+  TYPE = SERVICE
+  DEFAULT_ROLE = QUERYBOT_READER
+  DEFAULT_WAREHOUSE = &lt;WAREHOUSE&gt;
+  RSA_PUBLIC_KEY = '&lt;public key from QueryBot&gt;';
+GRANT ROLE QUERYBOT_READER TO USER QUERYBOT_SVC;
+
+-- Only if QueryBot keeps its logs in Snowflake (Log export below): it creates
+-- the log schema and its tables itself, and owns them. Nothing else is written.
+GRANT CREATE SCHEMA ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;</pre>
+        </details>
       </div>
 
       <!-- ══ ORACLE — all fields prefixed ora_ ══ -->
@@ -215,6 +276,23 @@
           <span class="badge badge-red">Credentials cannot be read</span>
         {% elif d.db_type == "snowflake" %}
           {{ d.credentials.get("account","—") }} / {{ d.credentials.get("database","—") }} / {{ d.credentials.get("schema","PUBLIC") }}
+          <div style="margin-top:4px">
+            {% if d.sf_auth == "keypair" %}<span class="badge badge-green">Key pair</span>
+            {% elif d.sf_auth == "pat" %}<span class="badge badge-blue">Access token</span>
+            {% else %}<span class="badge badge-amber" title="Snowflake is blocking password-only sign-in without MFA">Password: switch to a key pair</span>{% endif %}
+          </div>
+          {% if d.sf_key %}
+            {% if d.sf_key.error %}
+              <div style="margin-top:4px;color:var(--red)">{{ d.sf_key.error }}</div>
+            {% else %}
+              <details style="margin-top:4px">
+                <summary style="cursor:pointer">Public key · {{ d.sf_key.fingerprint }}</summary>
+                <p style="margin:.35rem 0 .25rem">Run in Snowflake to let {{ d.credentials.get("user","the user") }} sign in with this key
+                  (RSA_PUBLIC_KEY_2 if the user already has another key):</p>
+                <code style="display:block;white-space:pre-wrap;word-break:break-all;user-select:all">{{ d.sf_key.alter }}</code>
+              </details>
+            {% endif %}
+          {% endif %}
         {% elif d.db_type == "oracle" %}
           {{ d.credentials.get("dsn","—") }}
         {% else %}
@@ -281,6 +359,92 @@
 <script>
 const dbScopeSelected = new Set();
 
+function showSfAuth(method){
+  ['keypair','pat','password'].forEach(function(m){
+    const el = document.getElementById('sf-auth-' + m);
+    if (el) el.style.display = m === method ? '' : 'none';
+  });
+}
+// A key pair made by QueryBot for this form: Test connection signs in with it,
+// and Save stores it. Nothing is stored until then.
+let sfGeneratedKey = '';
+let sfGeneratedKeyTested = false;
+
+function sfIdentifier(name) {
+  name = (name || '').trim() || '<SERVICE_USER>';
+  return /^[A-Za-z0-9_$]+$/.test(name) ? name : '"' + name.replace(/"/g, '""') + '"';
+}
+
+function sfShowStatement() {
+  const panel = document.getElementById('sf-generated');
+  document.getElementById('sf-generated-alter').textContent = 'ALTER USER '
+    + sfIdentifier(document.querySelector('[name="sf_user"]').value)
+    + " SET RSA_PUBLIC_KEY='" + (panel.dataset.publicKey || '') + "';";
+}
+
+async function sfGenerateKey() {
+  const btn = document.getElementById('sf-generate-btn');
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/admin/databases/snowflake/new-key', {method: 'POST', credentials: 'same-origin'});
+    const data = await resp.json();
+    if (data.status !== 'ok') throw new Error(data.message || 'Could not generate a key pair.');
+    const box = document.getElementById('sf_private_key');
+    box.value = data.private_key;
+    box.closest('.form-group').style.display = 'none';
+    setField('sf_private_key_passphrase', '');
+    sfGeneratedKey = data.private_key;
+    sfGeneratedKeyTested = false;
+    const panel = document.getElementById('sf-generated');
+    panel.dataset.publicKey = data.public_key;
+    document.getElementById('sf-generated-fp').textContent = data.fingerprint;
+    sfShowStatement();
+    panel.style.display = '';
+  } catch (e) {
+    qbToast.error(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function sfClearGeneratedKey() {
+  const box = document.getElementById('sf_private_key');
+  if (sfGeneratedKey && box.value === sfGeneratedKey) box.value = '';
+  sfGeneratedKey = '';
+  sfGeneratedKeyTested = false;
+  box.closest('.form-group').style.display = '';
+  const panel = document.getElementById('sf-generated');
+  panel.style.display = 'none';
+  panel.dataset.publicKey = '';
+}
+
+function sfGeneratedKeyInForm() {
+  return document.getElementById('db_type_sel').value === 'snowflake'
+    && document.getElementById('sf_auth_method').value === 'keypair'
+    && sfGeneratedKey !== '' && document.getElementById('sf_private_key').value === sfGeneratedKey;
+}
+
+// A test passed for one user or account says nothing about another.
+document.querySelector('[name="sf_user"]').addEventListener('input', function(){
+  sfGeneratedKeyTested = false;
+  if (sfGeneratedKey) sfShowStatement();
+});
+document.querySelector('[name="sf_account"]').addEventListener('input', function(){ sfGeneratedKeyTested = false; });
+
+// Saving a key that has never signed in switches the connection to a key
+// Snowflake does not know yet: say so first.
+document.getElementById('db-form').addEventListener('submit', function(event){
+  if (sfGeneratedKeyInForm() && !sfGeneratedKeyTested && !window.confirm(
+      'This new key has not signed in yet. If you save now, the connection uses it and stops working '
+      + 'until its public key is set on the Snowflake user. Save anyway?')) {
+    event.preventDefault();
+  }
+});
+
+// A browser that restores form values on reload must show the matching fields.
+showSfAuth(document.getElementById('sf_auth_method').value);
+window.addEventListener('pageshow', function(){ showSfAuth(document.getElementById('sf_auth_method').value); });
+
 function showDb(t){
   ['snowflake','oracle','azure_sql'].forEach(x=>{
     document.getElementById('db-'+x).style.display=x===t?'block':'none';
@@ -302,6 +466,8 @@ document.getElementById('test-btn').addEventListener('click', async () => {
   result.style.display = 'block';
   result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:var(--font-sm);padding:.65rem .8rem;border-radius:6px;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)');
   result.textContent = 'Opening a test connection...';
+  // The answer counts for the generated key only if that key is what was sent.
+  const sentKey = sfGeneratedKeyInForm() ? sfGeneratedKey : '';
   try {
     const resp = await fetch('/admin/databases/test', {
       method: 'POST',
@@ -310,6 +476,7 @@ document.getElementById('test-btn').addEventListener('click', async () => {
     });
     const data = await resp.json();
     if (data.status === 'ok') {
+      if (sentKey && sentKey === sfGeneratedKey && sfGeneratedKeyInForm()) sfGeneratedKeyTested = true;
       const detailText = data.details
         ? Object.entries(data.details).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(' · ')
         : '';
@@ -641,10 +808,12 @@ function editDb(id, type, name, creds, logCfg, scope) {
   showDb(type);
   setField('name', name);
 
-  ['sf-pwd-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
+  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
     const el = document.getElementById(nid);
     if (el) el.style.display = 'none';
   });
+  // A key generated before Edit was clicked belongs to no connection yet.
+  sfClearGeneratedKey();
 
   if (type === 'snowflake') {
     setField('sf_account',   creds.account   || '');
@@ -654,7 +823,15 @@ function editDb(id, type, name, creds, logCfg, scope) {
     setField('sf_user',      creds.user      || '');
     setField('sf_role',      creds.role      || '');
     setField('sf_password',  '');
-    document.getElementById('sf-pwd-note').style.display = '';
+    setField('sf_private_key', '');
+    setField('sf_private_key_passphrase', '');
+    setField('sf_token', '');
+    const sfMethod = creds.auth_method || 'password';
+    setField('sf_auth_method', sfMethod);
+    showSfAuth(sfMethod);
+    document.getElementById('sf-pwd-note').style.display = creds.has_password ? '' : 'none';
+    document.getElementById('sf-key-note').style.display = creds.has_private_key ? '' : 'none';
+    document.getElementById('sf-token-note').style.display = creds.has_token ? '' : 'none';
   } else if (type === 'oracle') {
     setField('ora_dsn',      creds.dsn    || '');
     setField('ora_user',     creds.user   || '');
@@ -688,11 +865,18 @@ function editDb(id, type, name, creds, logCfg, scope) {
 
 function cancelEdit() {
   document.getElementById('db-form').reset();
+  // reset() leaves script-set hidden values: without this, "adding" a new
+  // connection after Cancel would overwrite the one that was being edited.
+  document.querySelector('[name="db_id"]').value = '';
+  dbScopeClear(false);
+  dbScopeStatus('', '');
   document.getElementById('db-form-title').textContent = 'Add database connection';
   document.getElementById('save-btn').textContent = 'Save database';
   document.getElementById('cancel-edit-btn').style.display = 'none';
   showDb('');
-  ['sf-pwd-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
+  showSfAuth('keypair');
+  sfClearGeneratedKey();
+  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
     const el = document.getElementById(nid);
     if (el) el.style.display = 'none';
   });

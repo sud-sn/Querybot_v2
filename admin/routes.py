@@ -1409,6 +1409,13 @@ def _selected_schemas_from_tables(tables: list[str]) -> list[str]:
 def _db_connection_error_message(db_type: str, err: Exception | str) -> str:
     raw = str(err)
     low = raw.lower()
+    if db_type == "snowflake":
+        from core.snowflake_auth import SnowflakeAuthError, friendly_error
+        if isinstance(err, SnowflakeAuthError):
+            return raw
+        explained = friendly_error(raw)
+        if explained:
+            return f"{explained} Raw error: {raw}"
     if db_type == "azure_sql":
         if "can't open lib" in low or "odbc driver 18" in low and "file not found" in low:
             return (
@@ -1426,6 +1433,12 @@ def _db_connection_error_message(db_type: str, err: Exception | str) -> str:
     return f"Connection failed: {raw}"
 
 
+# Stored database secrets: shown masked or not at all, and never sent back to the browser.
+_DB_SECRET_FIELDS = frozenset({"password", "private_key", "private_key_passphrase", "token"})
+# Key material is never shown, not even masked.
+_DB_KEY_FIELDS = frozenset({"private_key"})
+
+
 def _db_credentials_from_form(form) -> tuple[str, str, int | None, dict]:
     db_type = (form.get("db_type") or "").strip()
     name    = (form.get("name") or "").strip()
@@ -1434,8 +1447,17 @@ def _db_credentials_from_form(form) -> tuple[str, str, int | None, dict]:
     def g(k): return (form.get(k) or "").strip()
 
     if db_type == "snowflake":
+        from core.snowflake_auth import AUTH_METHODS
+        method = g("sf_auth_method").lower()
         creds = {"account": g("sf_account"), "user": g("sf_user"),
-                 "password": g("sf_password"), "warehouse": g("sf_warehouse"),
+                 # Blank when the form has no method (a page loaded before sign-in
+                 # methods existed): the stored or inferred method is used instead.
+                 "auth_method": method if method in AUTH_METHODS else "",
+                 "password": g("sf_password"), "token": g("sf_token"),
+                 # A pasted key keeps its line breaks; only the ends are trimmed.
+                 "private_key": (form.get("sf_private_key") or "").strip(),
+                 "private_key_passphrase": form.get("sf_private_key_passphrase") or "",
+                 "warehouse": g("sf_warehouse"),
                  "database": g("sf_database"), "schema": g("sf_schema") or "PUBLIC",
                  "role": g("sf_role")}
     elif db_type == "oracle":
@@ -1461,18 +1483,69 @@ def _db_credentials_from_form(form) -> tuple[str, str, int | None, dict]:
     return db_type, name, db_id, creds
 
 
-def _preserve_existing_db_secret_values(db_id: int | None, creds: dict) -> dict:
-    if not db_id:
-        return creds
-    existing = store.get_db_config(db_id)
+def _preserve_existing_db_secret_values(db_id: int | None, creds: dict, db_type: str | None = None) -> dict:
+    """Fill the secrets an edit form leaves blank from the stored connection.
+
+    Only secrets are filled: the form never shows them, so blank means "keep".
+    Every other field is shown filled in, so a blank role or database is the
+    admin clearing it. Nothing is filled from a connection of another type: a
+    form switched from Azure SQL to Snowflake must not send Azure's password.
+    A stored key is kept unlocked, so it never takes a passphrase.
+    """
+    existing = store.get_db_config(db_id) if db_id else None
+    if existing and db_type is not None and existing.get("db_type") != db_type:
+        existing = None
     if existing:
+        stored = existing["credentials"]
         for k, v in creds.items():
-            if not v:
-                creds[k] = existing["credentials"].get(k, "")
-        if "selected_schema_tables" not in creds and existing["credentials"].get("selected_schema_tables"):
-            creds["selected_schema_tables"] = existing["credentials"]["selected_schema_tables"]
-            creds["selected_schemas"] = existing["credentials"].get("selected_schemas", [])
+            if k in _DB_SECRET_FIELDS and k != "private_key_passphrase" and not v:
+                creds[k] = stored.get(k, "")
+        if creds.get("private_key") and creds["private_key"] == stored.get("private_key"):
+            creds["private_key_passphrase"] = ""
+        if "selected_schema_tables" not in creds and stored.get("selected_schema_tables"):
+            creds["selected_schema_tables"] = stored["selected_schema_tables"]
+            creds["selected_schemas"] = stored.get("selected_schemas", [])
+    if "auth_method" in creds and not creds["auth_method"]:
+        # A Snowflake form without a method: the secret it carries decides,
+        # the way a connection saved before methods existed signs in.
+        from core.snowflake_auth import auth_method
+        creds["auth_method"] = auth_method(creds)
     return creds
+
+
+def _snowflake_credentials_to_save(creds: dict) -> dict:
+    """The Snowflake credentials to store. A pasted or generated key is unlocked
+    and stored without its passphrase (the credentials it is stored with are
+    encrypted at rest), and only the secret of the method in use is kept.
+    Raises SnowflakeAuthError with the reason to show.
+    """
+    from core.snowflake_auth import (
+        KEYPAIR, PASSWORD, TOKEN, SnowflakeAuthError, auth_method, keep_method_secrets,
+        unlocked_private_key_pem,
+    )
+    method = auth_method(creds)
+    if method == KEYPAIR and creds.get("private_key"):
+        creds["private_key"] = unlocked_private_key_pem(
+            creds["private_key"], creds.get("private_key_passphrase") or "",
+        )
+    creds = keep_method_secrets(creds)
+    if method == KEYPAIR and not creds.get("private_key"):
+        raise SnowflakeAuthError("Paste the private key, or click Generate a key pair.")
+    if method == TOKEN and not creds.get("token"):
+        raise SnowflakeAuthError("Enter the programmatic access token for the Snowflake user.")
+    if method == PASSWORD and not creds.get("password"):
+        raise SnowflakeAuthError("Enter the password, or switch the sign-in method to Key pair.")
+    return creds
+
+
+def _forget_cached_schema_tree(db_id) -> None:
+    """Credentials can now point somewhere else entirely; a tree cached against
+    this config id would describe the previous database."""
+    try:
+        from core.schema_discovery import bust_cache as _bust_tree
+        _bust_tree(int(db_id))
+    except Exception as _tree_exc:
+        log.warning("Could not invalidate the cached schema tree for db %s: %s", db_id, _tree_exc)
 
 
 def _provision_log_store_background(db_id: int) -> None:
@@ -1493,8 +1566,8 @@ async def databases_page(request: Request):
     for d in dbs:
         creds = d["credentials"]
         d["creds_masked"] = {
-            k: (store.mask(v) if k == "password" else v)
-            for k, v in creds.items()
+            k: (store.mask(v) if k in _DB_SECRET_FIELDS and isinstance(v, str) else v)
+            for k, v in creds.items() if k not in _DB_KEY_FIELDS
         }
         d["log_export_enabled"] = is_log_export_enabled(creds)
         d["log_schema"] = creds.get("log_schema") or DEFAULT_LOG_SCHEMA
@@ -1505,6 +1578,10 @@ async def databases_page(request: Request):
         # Non-secret credentials for the Edit button data attributes (no passwords)
         db_type = d["db_type"]
         if db_type == "snowflake":
+            from core.snowflake_auth import (
+                KEYPAIR, SnowflakeAuthError, alter_user_statement, auth_method, public_key_details,
+            )
+            d["sf_auth"] = auth_method(creds)
             d["edit_creds"] = {
                 "account":   creds.get("account",   ""),
                 "warehouse": creds.get("warehouse",  ""),
@@ -1512,7 +1589,18 @@ async def databases_page(request: Request):
                 "schema":    creds.get("schema",    "PUBLIC"),
                 "user":      creds.get("user",      ""),
                 "role":      creds.get("role",      ""),
+                # The method and whether a secret is stored; never the secret.
+                "auth_method":     d["sf_auth"],
+                "has_private_key": bool(creds.get("private_key")),
+                "has_token":       bool(creds.get("token")),
+                "has_password":    bool(creds.get("password")),
             }
+            if d["sf_auth"] == KEYPAIR and creds.get("private_key"):
+                try:
+                    key = public_key_details(creds["private_key"], creds.get("private_key_passphrase") or "")
+                    d["sf_key"] = {**key, "alter": alter_user_statement(creds.get("user", ""), key["public_key"])}
+                except SnowflakeAuthError as exc:
+                    d["sf_key"] = {"error": str(exc)}
         elif db_type == "oracle":
             d["edit_creds"] = {
                 "dsn":    creds.get("dsn",    ""),
@@ -1557,18 +1645,20 @@ async def database_save(request: Request, bg: BackgroundTasks):
                                 status_code=303)
 
     # Preserve existing encrypted values for blank fields when editing
-    creds = _preserve_existing_db_secret_values(db_id, creds)
+    creds = _preserve_existing_db_secret_values(db_id, creds, db_type)
+
+    if db_type == "snowflake":
+        # A key that cannot be read is refused now, with the reason, rather
+        # than at the first question.
+        from core.snowflake_auth import SnowflakeAuthError
+        try:
+            creds = _snowflake_credentials_to_save(creds)
+        except SnowflakeAuthError as exc:
+            return RedirectResponse(f"/admin/databases?error={quote(str(exc))}", status_code=303)
 
     try:
         saved_id = store.save_db_config(db_type, name, creds, db_id)
-        # Credentials can now point somewhere else entirely; a tree cached
-        # against this config id would describe the previous database.
-        try:
-            from core.schema_discovery import bust_cache as _bust_tree
-            _bust_tree(int(saved_id))
-        except Exception as _tree_exc:
-            log.warning("Could not invalidate the cached schema tree for db %s: %s",
-                        saved_id, _tree_exc)
+        _forget_cached_schema_tree(saved_id)
         if is_log_export_enabled(creds):
             bg.add_task(_provision_log_store_background, saved_id)
             saved_msg = "Database saved. Log table provisioning started."
@@ -1591,9 +1681,9 @@ async def database_test(request: Request):
             {"status": "error", "message": "Please select a database type first."},
             status_code=400,
         )
-    creds = _preserve_existing_db_secret_values(db_id, creds)
+    creds = _preserve_existing_db_secret_values(db_id, creds, db_type)
 
-    missing = [field for field in store.DB_REQUIRED_FIELDS[db_type] if not creds.get(field)]
+    missing = [field for field in store.db_required_fields(db_type, creds) if not creds.get(field)]
     if missing:
         return JSONResponse(
             {"status": "error", "message": "Missing required field(s): " + ", ".join(missing)},
@@ -1648,9 +1738,9 @@ async def database_discover_schema(request: Request):
             {"status": "error", "message": "Please select a database type first."},
             status_code=400,
         )
-    creds = _preserve_existing_db_secret_values(db_id, creds)
+    creds = _preserve_existing_db_secret_values(db_id, creds, db_type)
 
-    missing = [field for field in store.DB_REQUIRED_FIELDS[db_type] if not creds.get(field)]
+    missing = [field for field in store.db_required_fields(db_type, creds) if not creds.get(field)]
     if missing:
         return JSONResponse(
             {"status": "error", "message": "Missing required field(s): " + ", ".join(missing)},
@@ -1672,6 +1762,19 @@ async def database_discover_schema(request: Request):
             "status": "error",
             "message": _db_connection_error_message(db_type, e),
         })
+
+
+@router.post("/databases/snowflake/new-key")
+async def database_new_snowflake_key(request: Request):
+    """A new key pair for the Snowflake form. Nothing is stored here: the
+    private key goes into the form, so Test connection signs in with exactly
+    the key that Save then stores, once its public half is set on the user."""
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "message": "Not authenticated"}, status_code=401)
+    from core.snowflake_auth import generate_private_key_pem, public_key_details
+    pem = generate_private_key_pem()
+    return JSONResponse({"status": "ok", "private_key": pem, **public_key_details(pem)},
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.post("/databases/{db_id}/logs/provision")

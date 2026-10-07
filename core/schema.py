@@ -382,12 +382,27 @@ def test_connection(credentials: dict, db_type: str) -> dict:
         conn = _sf_connect(smoke_cfg, max_retries=1)
         try:
             cur = conn.cursor()
-            cur.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA(), CURRENT_USER()")
+            cur.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA(), CURRENT_USER(), CURRENT_ROLE(), "
+                        "CURRENT_WAREHOUSE()")
             row = cur.fetchone()
+            from core.snowflake_auth import SnowflakeAuthError, auth_method, unusable_settings
+            # Signing in is not enough: a warehouse or database this user and
+            # role can't use leaves the session without one, and every question
+            # would then fail. Said here, where it can be fixed.
+            problem = unusable_settings(
+                smoke_cfg, database=row[0],
+                warehouse=row[4] if len(row) > 4 else smoke_cfg.get("warehouse"),
+            )
+            if problem:
+                raise SnowflakeAuthError(problem)
+            signed_in_with = {"keypair": "key pair", "pat": "access token", "password": "password"}
             return {
                 "database": str(row[0] or ""),
                 "schema": str(row[1] or ""),
+                "warehouse": str(row[4] or "") if len(row) > 4 else "",
                 "user": str(row[2] or ""),
+                "role": str(row[3] or "") if len(row) > 3 else "",
+                "sign-in": signed_in_with[auth_method(credentials)],
             }
         finally:
             conn.close()
@@ -2106,16 +2121,16 @@ def _role_edge(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _sf_connect(cfg: dict, max_retries: int = 3):
-    """Snowflake connection with retry for transient network failures."""
+    """Snowflake connection with retry for transient network failures.
+
+    How it signs in (key pair, programmatic access token or legacy password)
+    comes from core.snowflake_auth, so every caller signs in the same way.
+    """
     import snowflake.connector
     import time as _time
+    from core.snowflake_auth import connect_kwargs
 
-    allowed_keys = {
-        "account", "user", "password", "warehouse", "database", "schema", "role",
-        "authenticator", "login_timeout", "network_timeout",
-        "client_session_keep_alive",
-    }
-    connect_cfg = {k: v for k, v in cfg.items() if v and k in allowed_keys}
+    connect_cfg = connect_kwargs(cfg)
     last_err = None
     for attempt in range(max_retries):
         try:

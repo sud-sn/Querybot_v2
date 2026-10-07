@@ -404,7 +404,8 @@ def _platform_row(row) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 DB_REQUIRED_FIELDS: dict[str, list[str]] = {
-    "snowflake": ["account", "user", "password", "warehouse"],
+    # Snowflake's secret depends on the sign-in method: see db_required_fields.
+    "snowflake": ["account", "user", "warehouse"],
     "oracle":    ["user", "password", "dsn"],
     "azure_sql": ["server", "user", "password"],   # database is optional — omit to browse all DBs on the server
 }
@@ -422,11 +423,24 @@ DB_LABEL: dict[str, str] = {
 }
 
 
+def db_required_fields(db_type: str, credentials: dict) -> list[str]:
+    """The fields a connection of this type must have. A Snowflake connection
+    needs the secret of its own sign-in method: a private key, a programmatic
+    access token, or (for connections made before service users) a password."""
+    if db_type == "snowflake":
+        from core.snowflake_auth import required_fields
+        return required_fields(credentials)
+    return list(DB_REQUIRED_FIELDS.get(db_type) or [])
+
+
 def save_db_config(
     db_type: str, name: str, credentials: dict,
     db_id: Optional[int] = None,
 ) -> int:
     _validate_fields(db_type, credentials, DB_REQUIRED_FIELDS)
+    missing = [f for f in db_required_fields(db_type, credentials) if not credentials.get(f)]
+    if missing:
+        raise ValueError(f"Missing required fields for {db_type}: {', '.join(missing)}")
     enc = encrypt(credentials)
     with get_db() as conn:
         if db_id:
