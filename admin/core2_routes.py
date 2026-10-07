@@ -60,12 +60,19 @@ async def learned_page(request: Request, account_id: str):
         log.warning("core2: stored model for %s could not be read: %s", account_id, exc, exc_info=True)
         problem = "The stored model was written by another release and cannot be read. Learn again to rebuild it."
     build = store.latest_core2_build(account_id, db_id)
+    try:
+        imported = json.loads((build or {}).get("import_report") or "{}")
+    except (TypeError, ValueError):
+        imported = {}
+    decisions = store.list_core2_overrides(account_id, db_id)
     return _resp(request, "client_learned.html", {
         "client": client,
         "view": learned_view(model) if model else None,
         "build": build,
         "building": _running(build),
-        "decisions": store.list_core2_overrides(account_id, db_id),
+        "decisions": [d for d in decisions if d["author"] != "import"],
+        "brought_over": [d for d in decisions if d["author"] == "import"],
+        "imported": imported,
         "problem": problem,
         "has_database": bool(db_id),
         "saved": request.query_params.get("saved"),
@@ -137,6 +144,25 @@ async def learned_undo(request: Request, account_id: str, target: str = Form(...
         return RedirectResponse("/admin/clients", status_code=303)
     store.delete_core2_override(account_id, client.get("db_config_id"), target, field)
     return _back(account_id, saved="undone")
+
+
+@router.post("/clients/{account_id}/learned/import")
+async def learned_import(request: Request, account_id: str):
+    """Bring today's decisions over again (after an admin changed them in today's setup)."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    from core2.bootstrap.service import bring_over, learned_model
+
+    model = learned_model(account_id, client.get("db_config_id"))
+    if model is None:
+        return _back(account_id, error="QueryBot has to learn this database first.")
+    report = bring_over(account_id, client.get("db_config_id"), model, client)
+    if report.get("error"):
+        return _back(account_id, error="Today's decisions could not be brought over: " + str(report["error"])[:200])
+    return _back(account_id, saved="imported")
 
 
 @router.post("/clients/{account_id}/learned/engine")

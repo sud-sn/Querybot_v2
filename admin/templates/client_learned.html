@@ -86,6 +86,7 @@
   {% if saved == 'decision' %}{{ alert("Decision saved. It applies now and every time QueryBot learns again.", "success") }}{% endif %}
   {% if saved == 'undone' %}{{ alert("Decision removed. QueryBot's own finding applies again.", "success") }}{% endif %}
   {% if saved == 'engine' %}{{ alert("Saved. The next question in the portal is answered this way.", "success") }}{% endif %}
+  {% if saved == 'imported' %}{{ alert("Today's decisions were brought over again.", "success") }}{% endif %}
   {% if error %}{{ alert(error, "error") }}{% endif %}
   {% if problem %}{{ alert(problem, "warning") }}{% endif %}
 
@@ -323,6 +324,39 @@
     </div>
   </section>
   {% endif %}
+
+  <section class="lq-section" aria-labelledby="lq-imported">
+    <h2 id="lq-imported">Brought over from today's setup</h2>
+    <div class="lq-body">
+      <p class="lq-intro">Links, default dates, metrics, names and synonyms your admins already decided are used
+         here too, refreshed every time QueryBot learns. Change them in today's setup, or decide differently on
+         this page: your decision here wins.</p>
+      {% if imported.error %}{{ alert("They could not be brought over: " ~ imported.error, "warning") }}{% endif %}
+      {% if imported.counts %}
+      <p>{% for what, n in imported.counts|dictsort %}{{ n }} {{ what }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+      {% endif %}
+      {% if brought_over %}
+      <details>
+        <summary class="lq-why">All {{ brought_over|length }} decisions brought over</summary>
+        <div class="lq-wrap"><table class="lq-table">
+          <thead><tr><th>What</th><th>Set</th><th>Why</th></tr></thead>
+          <tbody>
+          {% for d in brought_over %}
+          <tr><td class="lq-mono">{{ d.object_key }}</td><td>{{ d.field|replace('_', ' ') }}</td><td>{{ d.note }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      </details>
+      {% endif %}
+      {% if imported.missed %}
+      <h3>Not brought over</h3>
+      <ul>{% for m in imported.missed %}<li>{{ m }}</li>{% endfor %}</ul>
+      {% endif %}
+      <form method="post" action="/admin/clients/{{ client.account_id }}/learned/import">
+        <button type="submit" class="btn btn-secondary btn-sm">Bring them over again</button>
+      </form>
+    </div>
+  </section>
 
   {% if decisions %}
   <section class="lq-section" aria-labelledby="lq-decisions">

@@ -101,11 +101,42 @@ def build_workspace(account_id: str) -> int:
         version = store.save_core2_model(account_id, db_id, model.model_dump_json(),
                                          source_hash=source_hash(inventory), stats=stats(model))
         store.finish_core2_build(account_id, db_id, started, status="done", version=version)
+        bring_over(account_id, db_id, model, client)
         return version
     except Exception as exc:
         log.warning("core2 build failed for %s: %s", account_id, exc, exc_info=True)
         store.finish_core2_build(account_id, db_id, started, status="failed", message=str(exc))
         raise
+
+
+def bring_over(account_id: str, db_id: int | None, model: SemanticModel, client: dict[str, Any]) -> dict[str, Any]:
+    """Today's admin decisions as this model's overrides (core2.model.imports); never fails the build."""
+    import store
+    from core2.model.imports import import_approvals
+
+    try:
+        state = json.loads(client.get("state_data") or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    try:
+        report = import_approvals(account_id, db_id, model, str(state.get("kb_dir") or ""))
+    except Exception as exc:  # noqa: BLE001 - the model stands without them; the page says so
+        log.warning("core2: today's decisions for %s could not be brought over: %s", account_id, exc, exc_info=True)
+        report = {"error": str(exc)}
+    store.set_core2_import_report(account_id, db_id, report)
+    return report
+
+
+def learned_model(account_id: str, db_id: int | None) -> SemanticModel | None:
+    """The latest stored model as learned, before any decision."""
+    import store
+
+    row = store.load_core2_model(account_id, db_id)
+    if row is None:
+        return None
+    model = SemanticModel.model_validate_json(row["model_json"])
+    model.version = row["version"]
+    return model
 
 
 def load_model(account_id: str, db_id: int | None, version: int | None = None) -> SemanticModel | None:

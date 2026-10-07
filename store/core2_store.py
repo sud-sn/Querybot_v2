@@ -121,6 +121,18 @@ def finish_core2_build(account_id: str, db_config_id: int | None, started_at: st
                      (_now(), status, message[:2000], int(version), account_id, int(db_config_id or 0), started_at))
 
 
+def set_core2_import_report(account_id: str, db_config_id: int | None, report: dict[str, Any]) -> None:
+    """What the latest import brought over from today's setup, and what it could not (shown on the page)."""
+    with get_db() as conn:
+        row = conn.execute("""SELECT started_at FROM core2_build WHERE account_id = ? AND db_config_id = ?
+                              ORDER BY started_at DESC LIMIT 1""", (account_id, int(db_config_id or 0))).fetchone()
+        if row is None:
+            return
+        conn.execute("""UPDATE core2_build SET import_report = ? WHERE account_id = ? AND db_config_id = ?
+                        AND started_at = ?""", (json.dumps(report, default=str), account_id,
+                                               int(db_config_id or 0), row["started_at"]))
+
+
 def latest_core2_build(account_id: str, db_config_id: int | None) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute("""SELECT * FROM core2_build WHERE account_id = ? AND db_config_id = ?
