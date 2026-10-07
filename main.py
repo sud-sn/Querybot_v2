@@ -31,7 +31,6 @@ import store
 from store import crypto
 from store.db import init_db
 from admin import router as admin_router
-from admin.core2_routes import router as core2_admin_router
 from portal import router as portal_router
 from gateway.webhooks import router as webhooks_router
 from core.release import KB_FORMAT, code_release, kb_rebuild_needed, product_version
@@ -47,7 +46,6 @@ app = FastAPI(title="QueryBot", version=product_version())
 app.add_middleware(RefuseCrossSiteRequests)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(admin_router)
-app.include_router(core2_admin_router)
 app.include_router(portal_router)
 app.include_router(webhooks_router)
 

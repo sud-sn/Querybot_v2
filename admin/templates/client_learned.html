@@ -45,9 +45,6 @@
 .lq-card > .lq-inner{padding:.6rem .8rem;display:flex;flex-direction:column;gap:.75rem}
 .lq-card h3{font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin:0 0 .3rem}
 .lq-inline{display:inline}
-.lq-btn{font-size:var(--font-xs);padding:.2rem .55rem;border-radius:var(--radius-sm);border:1px solid var(--border);
-  background:var(--surface-2);color:var(--text);cursor:pointer}
-.lq-btn:hover{border-color:var(--primary)}
 .lq-engine{display:flex;flex-direction:column;gap:.55rem;align-items:flex-start;margin-bottom:.6rem}
 .lq-choice{display:flex;gap:.55rem;align-items:flex-start;line-height:1.45;cursor:pointer}
 .lq-choice input{margin-top:.25rem}
@@ -191,7 +188,7 @@
           <div>
             <h3>Dates</h3>
             <div class="lq-wrap"><table class="lq-table">
-              <thead><tr><th>Date</th><th>Column</th><th>Kind</th><th>Filled</th><th>Range</th><th>Why</th><th></th></tr></thead>
+              <thead><tr><th>Date</th><th>Column</th><th>Kind</th><th>Filled</th><th>Range</th><th>Why</th><th><span class="sr-only">Actions</span></th></tr></thead>
               <tbody>
               {% for d in t.dates %}
               <tr>
@@ -205,7 +202,7 @@
                   <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
                     <input type="hidden" name="target" value="{{ d.target }}"><input type="hidden" name="field" value="is_default">
                     <input type="hidden" name="value" value="true">
-                    <button class="lq-btn" type="submit">Make default</button>
+                    <button class="btn btn-secondary btn-xs" type="submit">Make default</button>
                   </form>{% endif %}</td>
               </tr>
               {% endfor %}
@@ -273,7 +270,7 @@
       <p class="lq-intro">Each join was test-run on the data. Verified joins are used at once; proposed ones only when no
         verified path exists, and the answer says so.</p>
       <div class="lq-wrap"><table class="lq-table">
-        <thead><tr><th>From</th><th>To</th><th>Through</th><th>Role</th><th>Matches</th><th>Trust</th><th>Evidence</th><th></th></tr></thead>
+        <thead><tr><th>From</th><th>To</th><th>Through</th><th>Role</th><th>Matches</th><th>Trust</th><th>Evidence</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for j in view.joins %}
         <tr>
@@ -284,12 +281,12 @@
             {% if j.trust != 'admin' %}
             <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
               <input type="hidden" name="target" value="{{ j.target }}"><input type="hidden" name="field" value="trust">
-              <input type="hidden" name="value" value="admin"><button class="lq-btn" type="submit">Approve</button>
+              <input type="hidden" name="value" value="admin"><button class="btn btn-soft-success btn-xs" type="submit">Approve</button>
             </form>{% endif %}
             {% if j.trust != 'rejected' %}
             <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
               <input type="hidden" name="target" value="{{ j.target }}"><input type="hidden" name="field" value="trust">
-              <input type="hidden" name="value" value="rejected"><button class="lq-btn" type="submit">Reject</button>
+              <input type="hidden" name="value" value="rejected"><button class="btn btn-soft-danger btn-xs" type="submit">Reject</button>
             </form>{% endif %}
           </td>
         </tr>
@@ -331,14 +328,14 @@
     <h2 id="lq-decisions">Your decisions</h2>
     <div class="lq-body">
       <div class="lq-wrap"><table class="lq-table">
-        <thead><tr><th>What</th><th>Set</th><th>To</th><th>When</th><th></th></tr></thead>
+        <thead><tr><th>What</th><th>Set</th><th>To</th><th>When</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for d in decisions %}
         <tr><td class="lq-mono">{{ d.object_key }}</td><td>{{ d.field|replace('_', ' ') }}</td><td>{{ d.value }}</td>
             <td class="lq-mono">{{ d.updated_at }}</td>
             <td><form method="post" action="/admin/clients/{{ client.account_id }}/learned/undo" class="lq-inline">
               <input type="hidden" name="target" value="{{ d.object_key }}"><input type="hidden" name="field" value="{{ d.field }}">
-              <button class="lq-btn" type="submit">Undo</button></form></td></tr>
+              <button class="btn btn-secondary btn-xs" type="submit">Undo</button></form></td></tr>
         {% endfor %}
         </tbody>
       </table></div>

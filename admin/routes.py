@@ -12753,3 +12753,9 @@ async def mapping_download_terms(request: Request, account_id: str):
         iter([body]), media_type="text/csv",
         headers={"Content-Disposition":
                  _download_header(f"querybot_column_terms_{account_id[:12]}.csv")})
+
+
+# ── What QueryBot learned (the new core) ─────────────────────────────────────
+# Its pages live in admin/core2_routes.py, which registers them on this router
+# when imported here, like every other admin page.
+from admin import core2_routes as _core2_routes  # noqa: E402,F401

@@ -84,9 +84,15 @@ async def _send(adapter: Any, websocket: Any, payload: dict[str, Any]) -> bool:
         return False
 
 
-async def answer_instead(adapter: Any, websocket: Any, account_id: str, question: str,
+async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: str, question: str,
                          portal_user: dict | None) -> bool:
-    """``core2`` mode: answer with the new core; False hands the question to today's pipeline."""
+    """``core2`` mode: answer with the new core; False hands the question to today's pipeline.
+
+    Any other engine is False at once: today's pipeline answers, and in ``compare``
+    mode :func:`answer_beside` follows it.
+    """
+    if engine != "core2":
+        return False
     payload = await _answer(account_id, question, portal_user,
                             _session_key(account_id, portal_user, adapter.thread_id), "core2")
     if payload is None or payload.get("unsupported"):

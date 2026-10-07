@@ -1068,12 +1068,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         agent_context.__enter__()
         background_failure = None
         try:
-            # The new core, per workspace (gateway/core2_bridge.py): it answers
-            # instead of today's pipeline ("core2"), or after it ("compare").
             engine = await core2_bridge.engine(account_id)
-            handled = engine == "core2" and await core2_bridge.answer_instead(
-                adapter, websocket, account_id, text, portal_user)
-            if not handled:
+            if not await core2_bridge.answer_instead(engine, adapter, websocket, account_id, text, portal_user):
                 await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
 
             # Run any background tasks synchronously in WebSocket context

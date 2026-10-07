@@ -282,4 +282,4 @@ def test_a_frame_that_cannot_be_sent_never_turns_todays_answer_into_an_error(lea
             raise RuntimeError("the socket is closed")
 
     asyncio.run(bridge.answer_beside(Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1}))
-    assert asyncio.run(bridge.answer_instead(Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1})) is False
+    assert asyncio.run(bridge.answer_instead("core2", Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1})) is False

@@ -13,14 +13,15 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Form, Request
+from fastapi import BackgroundTasks, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 import store
-from admin.routes import _is_auth, _resp
+# The pages are registered on the admin console's own router (admin/routes.py
+# imports this module at its end), so every /admin page sits on one router.
+from admin.routes import _is_auth, _resp, router
 
 log = logging.getLogger("querybot.core2")
-router = APIRouter(prefix="/admin")
 
 _BUILD_STALE = dt.timedelta(minutes=45)
 
