@@ -25,7 +25,7 @@ from core2.bootstrap import names
 from core2.model.schema import Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.ir import Clarify, Plan, schema_text
-from core2.plan.values import Masked, ValueMatch, mask, unmask
+from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
 
@@ -84,6 +84,7 @@ How to plan:
 class Turn:
     question: str
     plan: Plan | None = None
+    masked: Masked | None = None        # what the AI was shown, when member values are withheld
 
 
 @dataclass
@@ -92,6 +93,7 @@ class Outcome:
     repaired: bool = False
     problems: list[str] = field(default_factory=list)   # what the last attempt got wrong, if anything
     raw: list[str] = field(default_factory=list)        # the model's answers, for the record
+    masked: Masked | None = None                        # the placeholders used, when values are withheld
 
 
 def _examples(model: SemanticModel) -> str:
@@ -136,15 +138,22 @@ def stable_prompt(model: SemanticModel, *, values_allowed: bool = True) -> str:
 
 
 def question_tail(question: str, *, today: dt.date, history: list[Turn], matches: list[ValueMatch],
-                  masked: Masked | None = None, scrub: Callable[[str], str] | None = None) -> str:
-    """Today, the conversation, the member matches and the question (each question scrubbed when asked to)."""
+                  masked: Masked | None = None, scrub: Callable[[str], str] | None = None,
+                  model: SemanticModel | None = None) -> str:
+    """Today, the conversation, the member matches and the question (each question scrubbed when asked to).
+
+    With member values withheld (``masked``), the previous turn is shown as the AI saw
+    it: its question with placeholders, and its plan's member values as placeholders too.
+    """
     clean = scrub or (lambda text: text)
     lines = [f"TODAY: {today.isoformat()} ({today:%A})"]
     if history:
         last = history[-1]
-        lines.append(f"PREVIOUS QUESTION: {clean(last.question)}")
+        if masked is None or last.masked is not None:
+            asked = last.masked.question if masked is not None and last.masked is not None else last.question
+            lines.append(f"PREVIOUS QUESTION: {clean(asked)}")
         if last.plan is not None:
-            lines.append("PREVIOUS PLAN: " + last.plan.model_dump_json(exclude_defaults=True))
+            lines.append("PREVIOUS PLAN: " + _plan_shown(last.plan, model, masked))
     if matches:
         lines.append("VALUE MATCHES (member names found in the question; use these exact values):")
         for m in matches:
@@ -188,6 +197,18 @@ def check(plan: Plan, model: SemanticModel, today: dt.date) -> list[str]:
     return []
 
 
+def _plan_shown(plan: Plan, model: SemanticModel | None, masked: Masked | None) -> str:
+    """A plan as the AI may see it: member values as placeholders when values are withheld."""
+    if masked is None:
+        return plan.model_dump_json(exclude_defaults=True)
+    data = plan.model_dump(mode="json", exclude_defaults=True)
+    for f in data.get("filters", []):
+        if model is not None and (f.get("field") in model.measures or f.get("field") in model.date_roles):
+            continue      # amounts and dates, not member values
+        f["values"] = [placeholder(v, masked.values) for v in f.get("values", [])]
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
 def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
     if masked is None or not masked.values:
         return plan
@@ -202,10 +223,12 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                   values_allowed: bool = True, scrub: Callable[[str], str] | None = None) -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI."""
     matches = matches or []
-    masked = None if values_allowed else mask(question, matches)
+    history = history or []
+    known = history[-1].masked.values if history and history[-1].masked is not None else None
+    masked = None if values_allowed else mask(question, matches, known=known)
     stable = stable_prompt(model, values_allowed=values_allowed)
-    tail = question_tail(question, today=today, history=history or [], matches=matches, masked=masked,
-                         scrub=scrub)
+    tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
+                         scrub=scrub, model=model)
     raw: list[str] = []
     problems: list[str] = []
     text = ""
@@ -222,10 +245,11 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             continue
         problems = check(plan, model, today)
         if not problems:
-            return Outcome(plan, repaired=attempt > 0, raw=raw)
+            return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked)
     return Outcome(Plan(kind="clarify", clarify=Clarify(
         about="other", question="I could not work out how to answer that from this data. Could you say it "
-        "another way, naming what to measure and for when?")), repaired=True, problems=problems, raw=raw)
+        "another way, naming what to measure and for when?")), repaired=True, problems=problems, raw=raw,
+        masked=masked)
 
 
 def _short(exc: Exception) -> str:

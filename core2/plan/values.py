@@ -136,24 +136,34 @@ def build_index(model: SemanticModel, fetch: Callable[[str], list[object]], *, v
 @dataclass
 class Masked:
     question: str                          # with member names replaced by placeholders
-    values: dict[str, str]                 # placeholder -> stored value
+    values: dict[str, object]              # placeholder -> stored value
 
 
-def mask(question: str, matches: list[ValueMatch]) -> Masked:
-    """Replace matched member names by ⟨v1⟩, ⟨v2⟩... so no member value reaches the AI."""
-    out, values, last = [], {}, 0
-    by_text: dict[str, str] = {}
+def mask(question: str, matches: list[ValueMatch], known: dict[str, object] | None = None) -> Masked:
+    """Replace matched member names by ⟨v1⟩, ⟨v2⟩... so no member value reaches the AI.
+
+    ``known`` holds the placeholders earlier turns used: a value keeps its placeholder
+    for the whole conversation, so a follow-up ("and in 2024?") can carry it over.
+    """
+    values = dict(known or {})
+    out, last = [], 0
     for m in sorted(matches, key=lambda m: m.start):
         if m.start < last:
             continue
-        token = by_text.get(m.value) or f"⟨v{len(by_text) + 1}⟩"
-        by_text[m.value] = token
-        values[token] = m.value
         out.append(question[last:m.start])
-        out.append(token)
+        out.append(placeholder(m.value, values))
         last = m.end
     out.append(question[last:])
     return Masked("".join(out), values)
+
+
+def placeholder(value: object, values: dict[str, object]) -> str:
+    """``value``'s placeholder in ``values``, added when it has none yet."""
+    token = next((t for t, v in values.items() if v == value), None)
+    if token is None:
+        token = f"⟨v{len(values) + 1}⟩"
+        values[token] = value
+    return token
 
 
 def unmask(value: object, masked: Masked) -> object:
@@ -161,5 +171,5 @@ def unmask(value: object, masked: Masked) -> object:
         for token, stored in masked.values.items():
             if value == token:
                 return stored
-            value = value.replace(token, stored)
+            value = value.replace(token, str(stored))
     return value

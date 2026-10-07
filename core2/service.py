@@ -113,7 +113,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         return _frame(question, f"I cannot answer that from this data: {why}", unsupported=True)
     if plan.kind == "clarify" and plan.clarify is not None:
         # Kept in the conversation: the reply ("the first one") answers this question.
-        session.turns.append(Turn(question, plan))
+        session.turns.append(Turn(question, plan, outcome.masked))
         del session.turns[:-HISTORY]
         return _clarification(question, plan.clarify)
 
@@ -122,7 +122,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
                                                max_rows=MAX_ROWS))
     except ResolveError as exc:
         if exc.kind == "ambiguous":
-            session.turns.append(Turn(question, plan))     # the reply names the role this asks for
+            session.turns.append(Turn(question, plan, outcome.masked))     # the reply names the role this asks for
             del session.turns[:-HISTORY]
             return _clarification(question, Clarify(about="path", question=f"{exc.message}: which one?",
                                                     options=exc.options))
@@ -146,7 +146,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
-    session.turns.append(Turn(question, plan))
+    session.turns.append(Turn(question, plan, outcome.masked))
     del session.turns[:-HISTORY]
     return payload
 
@@ -219,11 +219,29 @@ def _allowed_model_tables(model: SemanticModel, allowed: set[str] | None) -> set
     return out
 
 
+def question_scrubber(account_id: str) -> Callable[[str], str] | None:
+    """Personal data out of a question, for a tenant under compliance; None for one that is not.
+
+    The agent runtime's rule (core/agent_runtime.py): regulated, unprovisioned, or any
+    mode but standard. It may widen, never narrow. The same tenants keep member values
+    from the AI.
+    """
+    import store
+    from core.compliance.policy_engine import is_regulated
+
+    profile = store.get_compliance_profile(account_id) or {}
+    if not (is_regulated(account_id) or str(profile.get("mode") or "standard").lower() != "standard"):
+        return None
+    from core.masking import scrub_question_pii
+
+    industry = str(profile.get("industry") or "")
+    return lambda text: scrub_question_pii(text, industry)[0]
+
+
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,
                   question_id: str = "") -> dict[str, Any]:
     """The new core's answer in the web portal (compare mode, or core2 mode)."""
     import store
-    from core.compliance.policy_engine import is_regulated
     from core.schema import load_known_tables
     from core2.bootstrap.ai import workspace_planner
     from core2.bootstrap.service import load_model
@@ -243,17 +261,11 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
     warehouse = GovernedWarehouse(account_id, portal_user, db_config,
                                   known_tables=load_known_tables(state.get("schema_dir", "")),
                                   allowed_tables=allowed)
-    profile = store.get_compliance_profile(account_id) or {}
-    scrub = None
-    if profile.get("mode") == "regulated":
-        from core.masking import scrub_question_pii
-
-        industry = str(profile.get("industry") or "")
-        scrub = lambda text: scrub_question_pii(text, industry)[0]   # noqa: E731
+    scrub = question_scrubber(account_id)
     services = Services(
         model=model, warehouse=warehouse, complete=workspace_planner(account_id, client, question=question),
         index=_member_index(account_id, model, db_config), today=dt.date.today(),
-        values_allowed=not is_regulated(account_id), allowed_tables=_allowed_model_tables(model, allowed),
+        values_allowed=scrub is None, allowed_tables=_allowed_model_tables(model, allowed),
         data_source=str(db_config.get("db_type") or ""), scrub=scrub)
     return answer_question(question, services, _session(session_key), question_id=question_id)
 

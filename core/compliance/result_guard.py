@@ -96,6 +96,13 @@ def protect_rows(
     protected = []
     for row in rows:
         item = dict(row)
+        # The warehouse decides the case of the names it returns: Snowflake and
+        # Oracle upper-case unquoted ones, so `customer_name` in the SQL comes
+        # back as CUSTOMER_NAME. An exact-case lookup missed it and released
+        # the column unmasked, so an output is found by name, whatever the case.
+        keys_by_name: dict[str, list] = {}
+        for key in item:
+            keys_by_name.setdefault(str(key).lower(), []).append(key)
         for output_column, sources in lineage.items():
             if str(output_column).lower() in exempt_keys:
                 continue
@@ -104,10 +111,10 @@ def protect_rows(
                 for source in sources
                 if source in decision.masking
             ]
-            if strategies and output_column in item:
-                strategy, source = strategies[0]
-                item[output_column] = _mask(
-                    item[output_column], strategy, account_id, source=source
-                )
+            if not strategies:
+                continue
+            strategy, source = strategies[0]
+            for key in keys_by_name.get(str(output_column).lower(), []):
+                item[key] = _mask(item[key], strategy, account_id, source=source)
         protected.append(item)
     return protected

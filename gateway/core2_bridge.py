@@ -16,6 +16,8 @@ limit, and any failure is logged and leaves today's answer standing.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import functools
 import logging
 import time
 from typing import Any
@@ -24,6 +26,11 @@ log = logging.getLogger("querybot.core2")
 
 TIMEOUT_SECONDS = 120.0
 PREVIEW_BADGE = "New core (preview)"
+
+# The new core's own threads. Today's pipeline runs its warehouse queries on the
+# default pool; a slow AI or warehouse call here ties up these instead. A question
+# that finds them all busy waits within the same time limit, and today's answer stands.
+_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="core2")
 
 
 async def engine(account_id: str) -> str:
@@ -44,8 +51,8 @@ async def _answer(account_id: str, question: str, portal_user: dict | None, sess
     start = time.perf_counter()
     status, payload = "failed", None
     try:
-        payload = await asyncio.wait_for(asyncio.to_thread(
-            portal_answer, account_id, question, portal_user, session_key=session_key), TIMEOUT_SECONDS)
+        work = functools.partial(portal_answer, account_id, question, portal_user, session_key=session_key)
+        payload = await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(_POOL, work), TIMEOUT_SECONDS)
         status = ("unsupported" if payload.get("unsupported") else
                   "answered" if payload.get("data") else "replied")
     except asyncio.TimeoutError:
@@ -54,17 +61,28 @@ async def _answer(account_id: str, question: str, portal_user: dict | None, sess
     except Exception as exc:     # noqa: BLE001 - logged loudly; today's answer stands
         log.warning("core2 failed on a question for %s: %s", account_id, exc, exc_info=True)
     try:
-        answer = (payload or {}).get("answer") or {}
-        trust = (payload or {}).get("trust") or {}
-        await asyncio.to_thread(
-            store.log_core2_answer, account_id, user_id=str((portal_user or {}).get("id") or ""), mode=mode,
-            question=question, status=status, headline=str(answer.get("headline") or ""),
-            sql=str(trust.get("sql") or ""), row_count=int(trust.get("row_count") or 0),
-            plan=(payload or {}).get("plan"), duration_ms=int((time.perf_counter() - start) * 1000),
-            model_version=int(trust.get("model_version") or 0))
+        await asyncio.to_thread(_record, account_id, portal_user, mode, question, status, payload,
+                                int((time.perf_counter() - start) * 1000))
     except Exception as exc:     # noqa: BLE001
         log.warning("core2 answer could not be recorded for %s: %s", account_id, exc)
     return payload
+
+
+def _record(account_id: str, portal_user: dict | None, mode: str, question: str, status: str,
+            payload: dict[str, Any] | None, duration_ms: int) -> None:
+    """One row per new-core answer, for comparison. The question is kept as QueryBot keeps
+    questions: personal data scrubbed for a tenant under compliance (unrecorded if it cannot be)."""
+    import store
+    from core2.service import question_scrubber
+
+    scrub = question_scrubber(account_id)
+    answer = (payload or {}).get("answer") or {}
+    trust = (payload or {}).get("trust") or {}
+    store.log_core2_answer(
+        account_id, user_id=str((portal_user or {}).get("id") or ""), mode=mode,
+        question=scrub(question) if scrub else question, status=status, headline=str(answer.get("headline") or ""),
+        sql=str(trust.get("sql") or ""), row_count=int(trust.get("row_count") or 0), plan=(payload or {}).get("plan"),
+        duration_ms=duration_ms, model_version=int(trust.get("model_version") or 0))
 
 
 def _session_key(account_id: str, portal_user: dict | None, thread_id: str) -> str:

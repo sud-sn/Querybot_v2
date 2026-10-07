@@ -250,6 +250,64 @@ def test_the_bridge_records_every_answer_for_comparison(learned, monkeypatch):
     assert sent and sent[0]["answer"]["scope_badge"] == "New core (preview)"
 
 
+def test_the_new_core_runs_on_its_own_threads_not_on_todays_pipelines(learned, monkeypatch):
+    """Today's pipeline runs its warehouse queries on the default thread pool; a slow
+    new-core question must tie up the new core's own threads, never those."""
+    import threading
+
+    import gateway.core2_bridge as bridge
+
+    ran_on: list[str] = []
+
+    def answer(*args, **kwargs):
+        ran_on.append(threading.current_thread().name)
+        return json.loads(json.dumps(CANNED))
+
+    monkeypatch.setattr("core2.service.portal_answer", answer)
+
+    class Adapter:
+        thread_id = "t1"
+        send_lock = asyncio.Lock()
+
+    class Socket:
+        async def send_json(self, payload):
+            return None
+
+    asyncio.run(bridge.answer_beside(Adapter(), Socket(), ACCOUNT, "what is 42?", {"id": 1}))
+    assert asyncio.run(bridge.answer_instead("core2", Adapter(), Socket(), ACCOUNT, "what is 42?", {"id": 1}))
+    assert len(ran_on) == 2 and all(name.startswith("core2") for name in ran_on), ran_on
+
+
+@pytest.mark.parametrize("posture", ["standard", "regulated", "unprovisioned"])
+def test_a_question_is_recorded_as_querybot_keeps_questions(posture, learned, monkeypatch):
+    """Under compliance (regulated, or never set up, as the agent runtime counts it) the
+    recorded question has its personal data scrubbed, and member values stay from the AI."""
+    store, *_ = learned
+    import gateway.core2_bridge as bridge
+    from core2.service import question_scrubber
+
+    if posture == "regulated":
+        store.save_compliance_profile(ACCOUNT, mode="regulated")
+    elif posture == "unprovisioned":
+        monkeypatch.setattr(store, "compliance_profile_exists", lambda account_id: False)
+    monkeypatch.setattr("core2.service.portal_answer", lambda *a, **k: json.loads(json.dumps(CANNED)))
+
+    class Adapter:
+        thread_id = "t1"
+        send_lock = asyncio.Lock()
+
+    class Socket:
+        async def send_json(self, payload):
+            return None
+
+    asyncio.run(bridge.answer_beside(Adapter(), Socket(), ACCOUNT, "orders for jane.doe@example.com", {"id": 1}))
+    recorded = store.list_core2_answers(ACCOUNT, 1)[0]["question"]
+    if posture == "standard":
+        assert recorded == "orders for jane.doe@example.com" and question_scrubber(ACCOUNT) is None
+    else:
+        assert "jane.doe@example.com" not in recorded and "[EMAIL]" in recorded, recorded
+
+
 def test_side_by_side_does_not_answer_thanks_twice(learned, monkeypatch):
     import gateway.core2_bridge as bridge
 
@@ -283,3 +341,152 @@ def test_a_frame_that_cannot_be_sent_never_turns_todays_answer_into_an_error(lea
 
     asyncio.run(bridge.answer_beside(Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1}))
     assert asyncio.run(bridge.answer_instead("core2", Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1})) is False
+
+
+def test_a_row_policy_narrows_the_new_cores_answer_to_the_readers_rows(tmp_path, monkeypatch):
+    """Row policies are the governed executor's: it rewrites the SQL, so core2's must stay rewritable.
+
+    The rewriter names each table by its alias, unquoted. Core2 once aliased the
+    orders table "order", a reserved word it then had to quote, so a policy on
+    orders made ``WHERE order.region = 'North'``: a syntax error instead of the
+    reader's numbers, in every dialect.
+    """
+    import types
+
+    import duckdb
+    import numpy as np
+    import pandas as pd
+
+    import store
+    import store.crypto
+    from core.compliance import governed_query as gq
+    from core.compliance import sql_guard
+    from core.compliance.models import PolicyContext
+    from core.schema import load_known_tables
+    from core2.bootstrap.service import build_workspace, load_model
+    from core2.compile.compiler import compile_query
+    from core2.plan.ir import Plan
+    from core2.resolve.resolver import Context, resolve
+    from core2.warehouse import querybot
+    from core2.warehouse.governed import GovernedWarehouse
+
+    rng = np.random.default_rng(1)
+    con = duckdb.connect()
+    n = 600
+    frames = {
+        "customers": pd.DataFrame({"customer_id": np.arange(1, 21), "customer_name": [f"C{i:02d}" for i in range(1, 21)]}),
+        "orders": pd.DataFrame({"order_id": np.arange(1, n + 1), "customer_id": rng.integers(1, 21, n),
+                                "region": np.where(rng.random(n) < 0.5, "North", "South"),
+                                "order_amount": np.round(rng.uniform(10, 900, n), 2)}),
+    }
+    for name, frame in frames.items():
+        con.register("_f", frame)
+        con.execute(f"CREATE TABLE {name} AS SELECT * FROM _f")
+        con.unregister("_f")
+    built = types.SimpleNamespace(con=con, tables={t: t for t in frames}, declared_pks={}, declared_fks=[])
+
+    path = str(tmp_path / "querybot.db")
+    monkeypatch.setenv("QUERYBOT_DB_PATH", path)
+    monkeypatch.setenv("DB_PATH", path)
+    monkeypatch.setattr(store.crypto, "KEY_FILE", tmp_path / ".key")
+    store.init_db()
+    account = "acct-core2-row-policy"
+    store.upsert_client(account, "web")
+    store.save_compliance_profile(account, mode="standard")
+    db_id = store.save_db_config("azure_sql", "orders", {"server": "s", "database": "d", "user": "u", "password": "p"})
+    store.update_client_meta(account, db_config_id=db_id)
+    schema_dir = tmp_path / "clients" / account / "schema"
+    store.update_client_state(account, "READY", {"schema_dir": str(schema_dir)})
+    _schema_file(built, schema_dir)
+    monkeypatch.setattr(querybot, "QueryBotWarehouse", lambda db_type, credentials, **kw: _Connection(con))
+    build_workspace(account)
+    reader = {"id": 7, "role": "analyst"}
+    store.replace_row_policies(account, 0, [{
+        "name": "north only", "subject_type": "user", "subject_id": "7", "table_fqn": "ORDERS",
+        "condition": {"field": "region", "operator": "=", "value": "North"}}])
+
+    def run_query(credentials, db_type, sql, max_rows=200):
+        cursor = con.cursor()
+        cursor.execute(sqlglot.transpile(sql, read="tsql", write="duckdb")[0])
+        names = [d[0] for d in cursor.description]
+        return [dict(zip(names, row)) for row in cursor.fetchmany(max_rows)]
+
+    monkeypatch.setattr(gq, "run_query", run_query)
+    model = load_model(account, db_id)
+    measure = next(m.slug for m in model.measures.values()
+                   if (getattr(m.expr, "column", None) or "").endswith("order_amount"))
+    customer = next(e.slug for e in model.entities.values() if e.table.endswith("customers"))
+    logical = resolve(Plan.model_validate({"kind": "query", "intent": "breakdown", "measures": [measure],
+                                           "group_by": [customer]}), model, Context(today=dt.date(2026, 6, 15)))
+    compiled = compile_query(logical, model, "tsql")
+    governed = GovernedWarehouse(account, reader, store.get_db_config(db_id),
+                                 known_tables=load_known_tables(str(schema_dir)))
+    got = governed.query(compiled.sql, max_rows=compiled.row_cap)
+    expected = con.execute("SELECT c.customer_name, SUM(o.order_amount) FROM orders o LEFT JOIN customers c "
+                           "ON c.customer_id = o.customer_id WHERE o.region = 'North' GROUP BY 1").fetchall()
+    everyone = con.execute("SELECT SUM(order_amount) FROM orders").fetchone()[0]
+    assert sorted((r[0], round(r[1], 2)) for r in got.rows) == sorted((r[0], round(r[1], 2)) for r in expected)
+    assert round(sum(r[1] for r in got.rows), 2) < round(everyone, 2)      # the policy did narrow it
+
+    # The same rewrite in every warehouse the new core writes for.
+    context = PolicyContext(account_id=account, user_id="7")
+    for dialect, db_type in (("tsql", "azure_sql"), ("snowflake", "snowflake"), ("oracle", "oracle"),
+                             ("duckdb", "duckdb")):
+        rewritten, applied = sql_guard.inject_row_policies(compile_query(logical, model, dialect).sql, db_type,
+                                                           context)
+        assert applied, dialect
+        sqlglot.parse_one(rewritten, read=sql_guard._DIALECT.get(db_type, "snowflake"))   # still valid SQL
+        if dialect == "duckdb":
+            assert sorted((r[0], round(r[1], 2)) for r in con.execute(rewritten).fetchall()) == \
+                sorted((r[0], round(r[1], 2)) for r in expected)
+
+
+def test_a_masked_column_stays_masked_in_the_new_cores_answer_on_every_warehouse():
+    """Masking follows each output back to its source column (analyze_sql's lineage), then
+    finds that output in the rows. Core2 names its outputs in lower case, unquoted, and
+    Snowflake and Oracle return those names upper-cased: the masked customer name came
+    back in clear there, and only there."""
+    import duckdb
+    import numpy as np
+    import pandas as pd
+
+    from core.compliance.models import PolicyDecision
+    from core.compliance.result_guard import protect_rows
+    from core.compliance.sql_guard import analyze_sql
+    from core2.bootstrap.build import BuildOptions, build_model
+    from core2.bootstrap.inventory import from_duckdb
+    from core2.compile.compiler import compile_query
+    from core2.plan.ir import Plan
+    from core2.resolve.resolver import Context, resolve
+    from core2.warehouse.runner import DuckDBWarehouse
+
+    rng = np.random.default_rng(1)
+    con = duckdb.connect()
+    frames = {
+        "customers": pd.DataFrame({"customer_id": np.arange(1, 6), "customer_name": [f"Person {i}" for i in range(1, 6)]}),
+        "orders": pd.DataFrame({"order_id": np.arange(1, 51), "customer_id": rng.integers(1, 6, 50),
+                                "order_amount": rng.uniform(1, 9, 50)}),
+    }
+    for name, frame in frames.items():
+        con.register("_f", frame)
+        con.execute(f"CREATE TABLE {name} AS SELECT * FROM _f")
+        con.unregister("_f")
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="t", options=BuildOptions(workers=1))
+    measure = next(m.slug for m in model.measures.values()
+                   if (getattr(m.expr, "column", None) or "").endswith("order_amount"))
+    customer = next(e.slug for e in model.entities.values() if e.table.endswith("customers"))
+    logical = resolve(Plan.model_validate({"kind": "query", "intent": "breakdown", "measures": [measure],
+                                           "group_by": [customer]}), model, Context(today=dt.date(2026, 6, 15)))
+    for dialect, db_type, returned_as in (("snowflake", "snowflake", str.upper), ("oracle", "oracle", str.upper),
+                                          ("tsql", "azure_sql", str)):
+        compiled = compile_query(logical, model, dialect)
+        analysis = analyze_sql(compiled.sql, db_type)
+        source = next(s for v in analysis.lineage.values() for s in v if s.endswith(".CUSTOMER_NAME"))
+        decision = PolicyDecision(allowed=True, reason_code="allow", masking={source: "redact"})
+        names = [returned_as(c.name) for c in compiled.columns]
+        values = ["Person 1" if c.role != "measure" else 12.5 for c in compiled.columns]
+        protected = protect_rows([dict(zip(names, values))], decision, analysis.lineage, account_id="t",
+                                 mask_exempt_outputs=analysis.mask_exempt_outputs)
+        assert "Person 1" not in str(protected), (dialect, protected)
+        assert 12.5 in protected[0].values(), (dialect, protected)     # the total is not masked

@@ -311,6 +311,27 @@ class ResultProtectionTests(unittest.TestCase):
         self.assertTrue(protected[0]["Account"].endswith("6789"))
         self.assertNotEqual(protected[0]["Account"], "123456789")
 
+    def test_masking_finds_the_column_whatever_case_the_warehouse_returns(self):
+        # Snowflake and Oracle report an unquoted `account_number` as
+        # ACCOUNT_NUMBER; an exact-case lookup released it unmasked.
+        decision = PolicyDecision(
+            allowed=True,
+            reason_code="allow",
+            masking={"DBO.CUSTOMERS.ACCOUNT_NUMBER": "partial"},
+        )
+        protected = protect_rows(
+            [{"CUSTOMER": "Alice", "ACCOUNT_NUMBER": "123456789"}],
+            decision,
+            {
+                "customer": ["DBO.CUSTOMERS.NAME"],
+                "account_number": ["DBO.CUSTOMERS.ACCOUNT_NUMBER"],
+            },
+            account_id="tenant-a",
+        )
+        self.assertEqual(protected[0]["CUSTOMER"], "Alice")
+        self.assertTrue(protected[0]["ACCOUNT_NUMBER"].endswith("6789"))
+        self.assertNotEqual(protected[0]["ACCOUNT_NUMBER"], "123456789")
+
     def test_tokenization_is_deterministic_per_tenant(self):
         decision = PolicyDecision(
             allowed=True,

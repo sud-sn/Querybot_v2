@@ -115,6 +115,52 @@ def test_a_regulated_tenants_member_values_never_reach_the_ai():
     assert round(payload["kpi"]["value"], 2) == 95698.79
 
 
+def test_a_regulated_tenants_member_values_stay_placeholders_on_a_follow_up():
+    """The follow-up shows the AI the previous question and plan: both as it saw them,
+    the customer still a placeholder, and the placeholder still meaning that customer."""
+    _, built, model, _ = _domain("retail")
+    warehouse = DuckDBWarehouse(built.con)
+    slug = next(a.slug for a in model.attributes.values() if model.columns[a.column].name == "customer_name")
+
+    def plan(values: list[str], year: int) -> str:
+        return json.dumps({"kind": "query", "intent": "value", "measures": ["net_amount"],
+                           "filters": [{"field": slug, "op": "eq", "values": values}],
+                           "time": {"window": {"kind": "between", "start": f"{year}-01-01", "end": f"{year}-12-31"}}})
+
+    ai = Recorded(plan(["⟨v1⟩"], 2025), json.dumps({**json.loads(plan(["⟨v1⟩"], 2024)), "follow_up": "refine"}))
+    services = _services(model, warehouse, ai, index=_index(model, warehouse), values_allowed=False)
+    session = Session()
+    answer_question("net sales for Northline Distribution 58 in 2025", services, session)
+    followed = answer_question("and in 2024?", services, session)
+    assert "Northline" not in ai.sent[1] and "⟨v1⟩" in ai.sent[1], ai.sent[1]
+    assert followed["plan"]["filters"][0]["values"] == ["Northline Distribution 58"]
+    plain = answer_question("net sales for Northline Distribution 58 in 2024",
+                            _services(model, warehouse, Recorded(plan(["Northline Distribution 58"], 2024))), Session())
+    assert followed["kpi"]["value"] == plain["kpi"]["value"]
+
+
+def test_a_placeholder_means_one_member_for_the_whole_conversation():
+    _, built, model, _ = _domain("retail")
+    warehouse = DuckDBWarehouse(built.con)
+    attribute = next(a for a in model.attributes.values() if model.columns[a.column].name == "customer_name")
+    table = model.tables[model.columns[attribute.column].table].name
+    other = next(r[0] for r in built.con.execute(f'SELECT DISTINCT customer_name FROM "{table}" ORDER BY 1').fetchall()
+                 if "Northline" not in r[0])
+    window = {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}
+    first = {"kind": "query", "intent": "value", "measures": ["net_amount"], "time": {"window": window},
+             "filters": [{"field": attribute.slug, "op": "eq", "values": ["⟨v1⟩"]}]}
+    both = {**first, "filters": [{"field": attribute.slug, "op": "in", "values": ["⟨v1⟩", "⟨v2⟩"]}],
+            "follow_up": "refine"}
+    ai = Recorded(json.dumps(first), json.dumps(both))
+    services = _services(model, warehouse, ai, index=_index(model, warehouse), values_allowed=False)
+    session = Session()
+    answer_question("net sales for Northline Distribution 58 in 2025", services, session)
+    followed = answer_question(f"and together with {other}?", services, session)
+    assert "PREVIOUS QUESTION: net sales for ⟨v1⟩ in 2025" in ai.sent[1]
+    assert "QUESTION: and together with ⟨v2⟩?" in ai.sent[1] and other not in ai.sent[1], ai.sent[1]
+    assert followed["plan"]["filters"][0]["values"] == ["Northline Distribution 58", other]
+
+
 def test_personal_data_typed_into_a_question_is_scrubbed_before_the_ai():
     from core.masking import scrub_question_pii
 

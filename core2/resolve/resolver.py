@@ -33,6 +33,7 @@ from core2.model.schema import (
 from core2.plan.ir import TIME_ATTRIBUTES, Filter, Plan
 from core2.resolve import paths as P
 from core2.resolve.time import Range, add_units, partial_periods, periods, resolve_window, shift
+from core2.warehouse import dialect as D
 
 # Aliases a validator screens as statements, whatever their quoting.
 _UNSAFE_ALIASES = {"call", "load", "get", "put", "copy", "exec", "execute", "function", "procedure", "merge", "grant",
@@ -151,8 +152,10 @@ class _Aliases:
         self.taken: set[str] = set()
 
     def new(self, hint: str) -> str:
+        """A table alias that never needs quoting: the governed executor's row policies
+        name a table by its alias, unquoted ("order" would make ``WHERE order.region``)."""
         base = re.sub(r"[^a-z0-9_]", "_", ids.slug(hint))[:24] or "t"
-        if base in _UNSAFE_ALIASES or base[0].isdigit():
+        if base in _UNSAFE_ALIASES or base.upper() in D.RESERVED or base[0].isdigit():
             base = f"t_{base}"
         return ids.unique_slug(base, self.taken)
 
