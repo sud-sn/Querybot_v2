@@ -176,6 +176,7 @@ from store.core2_store import (
     save_core2_model, load_core2_model, list_core2_model_versions,
     set_core2_override, delete_core2_override, list_core2_overrides,
     start_core2_build, finish_core2_build, latest_core2_build,
+    get_query_engine, set_query_engine, log_core2_answer, list_core2_answers,
 )
 
 __all__ = [
@@ -308,4 +309,5 @@ __all__ = [
     "save_core2_model","load_core2_model","list_core2_model_versions",
     "set_core2_override","delete_core2_override","list_core2_overrides",
     "start_core2_build","finish_core2_build","latest_core2_build",
+    "get_query_engine","set_query_engine","log_core2_answer","list_core2_answers",
 ]

@@ -168,6 +168,8 @@ def _table_format(column: OutColumn) -> str:
 def build_answer(question: str, logical: Logical, compiled: Compiled, columns: list[str], rows: list[tuple],
                  *, duration_ms: float = 0.0, data_source: str = "", question_id: str = "",
                  model_version: int = 0, truncated: bool = False) -> dict[str, Any]:
+    if len(rows) > logical.max_rows:
+        truncated, rows = True, rows[:logical.max_rows]
     cols = _Columns(compiled, columns)
     shown = cols.columns
     records = [{c.name: _cell(c, row[cols.index[c.name]], logical) for c in shown} for row in rows]
@@ -187,15 +189,19 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                           for p in sorted(partial))
         caveats.append(f"{named} {'is' if len(partial) == 1 else 'are'} only partly covered by the data: "
                        "not compared as whole periods.")
-    if truncated or len(rows) > logical.max_rows:
+    if truncated:
         caveats.append(f"Showing the first {logical.max_rows:,} rows.")
 
     headline = _headline(logical, cols, raw, records, partial)
+    short_value, comparison = _lead(logical, cols, raw)
     payload: dict[str, Any] = {
         "type": "assistant_response",
         "engine": "core2",
         "question": question,
-        "answer": headline,
+        # The portal's answer card: the value leads when there is one, the sentence otherwise.
+        "answer": {"headline": headline, "short_value": short_value, "comparison": comparison,
+                   "scope_badge": "", "scope_note": caveats[0] if caveats else ""},
+        "result_scope": {"badge": "", "note": ""},
         "chart": _chart(logical, cols, records, formats, labels, display),
         "kpi": _kpi(logical, cols, raw, formats),
         "insight_summary": "",
@@ -320,6 +326,25 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         tail = f"; {', '.join(others)}" if others else ""
         return f"{lead}: {value(r)}{tail}."
     return f"{lead}: {len(raw):,} rows."
+
+
+def _lead(logical: Logical, cols: _Columns, raw: list[dict]) -> tuple[str, str]:
+    """The card's lead value and what it is compared with, when the answer is one number."""
+    measures = cols.of("measure")
+    if len(raw) != 1 or cols.of("period") or cols.of("attribute") or cols.of("time") or not measures:
+        return "", ""
+    m, r = measures[0], raw[0]
+    value = fmt(r[m.name], m.format)
+    if logical.compare is not None:
+        change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
+        pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
+        if change is not None:
+            moved = _number(r[change.name]) or 0.0
+            ratio = _number(r[pct.name]) if pct is not None else None
+            pct_text = f" ({ratio * 100:+.1f}%)" if ratio is not None else ""
+            return value, (f"{'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format)}{pct_text} on "
+                           f"{_span(logical.compare).removeprefix('in ')}")
+    return value, _span(logical.window)
 
 
 def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, str]) -> dict | None:

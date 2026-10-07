@@ -134,11 +134,13 @@ def stable_prompt(model: SemanticModel, *, values_allowed: bool = True) -> str:
 
 
 def question_tail(question: str, *, today: dt.date, history: list[Turn], matches: list[ValueMatch],
-                  masked: Masked | None = None) -> str:
+                  masked: Masked | None = None, scrub: Callable[[str], str] | None = None) -> str:
+    """Today, the conversation, the member matches and the question (each question scrubbed when asked to)."""
+    clean = scrub or (lambda text: text)
     lines = [f"TODAY: {today.isoformat()} ({today:%A})"]
     if history:
         last = history[-1]
-        lines.append(f"PREVIOUS QUESTION: {last.question}")
+        lines.append(f"PREVIOUS QUESTION: {clean(last.question)}")
         if last.plan is not None:
             lines.append("PREVIOUS PLAN: " + last.plan.model_dump_json(exclude_defaults=True))
     if matches:
@@ -147,7 +149,7 @@ def question_tail(question: str, *, today: dt.date, history: list[Turn], matches
             shown = next((t for t, v in masked.values.items() if v == m.value), m.text) if masked else m.text
             stored = shown if masked else m.value
             lines.append(f'- "{shown}" -> {m.attribute} = "{stored}"')
-    lines.append(f"QUESTION: {masked.question if masked else question}")
+    lines.append(f"QUESTION: {clean(masked.question if masked else question)}")
     return "\n".join(lines)
 
 
@@ -195,12 +197,13 @@ def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
 
 def plan_question(model: SemanticModel, question: str, complete: Complete, *, today: dt.date,
                   history: list[Turn] | None = None, matches: list[ValueMatch] | None = None,
-                  values_allowed: bool = True) -> Outcome:
+                  values_allowed: bool = True, scrub: Callable[[str], str] | None = None) -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI."""
     matches = matches or []
     masked = None if values_allowed else mask(question, matches)
     stable = stable_prompt(model, values_allowed=values_allowed)
-    tail = question_tail(question, today=today, history=history or [], matches=matches, masked=masked)
+    tail = question_tail(question, today=today, history=history or [], matches=matches, masked=masked,
+                         scrub=scrub)
     raw: list[str] = []
     problems: list[str] = []
     text = ""

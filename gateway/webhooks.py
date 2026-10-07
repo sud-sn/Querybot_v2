@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from gateway import get_adapter, PlatformEvent
 from core.webhook_dedup import is_duplicate_event, remember_event, get_user_serialization_lock
 from core.dispatcher import dispatch
+from gateway import core2_bridge
 from core.i18n import enum_label as _enum_label, plural as _t_plural, t as _t
 from core.question_normalizer import canonical_question
 from core.query_pipeline import handle_query
@@ -1067,7 +1068,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         agent_context.__enter__()
         background_failure = None
         try:
-            await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
+            # The new core, per workspace (gateway/core2_bridge.py): it answers
+            # instead of today's pipeline ("core2"), or after it ("compare").
+            engine = await core2_bridge.engine(account_id)
+            handled = engine == "core2" and await core2_bridge.answer_instead(
+                adapter, websocket, account_id, text, portal_user)
+            if not handled:
+                await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
 
             # Run any background tasks synchronously in WebSocket context
             for task in bg.tasks:
@@ -1093,6 +1100,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             })
                     except Exception:
                         pass
+
+            if engine == "compare" and background_failure is None:
+                await core2_bridge.answer_beside(adapter, websocket, account_id, text, portal_user)
 
             if agent_run:
                 try:

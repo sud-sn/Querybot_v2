@@ -69,6 +69,8 @@ async def learned_page(request: Request, account_id: str):
         "has_database": bool(db_id),
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
+        "engine": store.get_query_engine(account_id),
+        "answers": store.list_core2_answers(account_id, 20),
     })
 
 
@@ -134,3 +136,23 @@ async def learned_undo(request: Request, account_id: str, target: str = Form(...
         return RedirectResponse("/admin/clients", status_code=303)
     store.delete_core2_override(account_id, client.get("db_config_id"), target, field)
     return _back(account_id, saved="undone")
+
+
+@router.post("/clients/{account_id}/learned/engine")
+async def learned_engine(request: Request, account_id: str, engine: str = Form(...)):
+    """Who answers the workspace's portal questions: today's pipeline, both side by side, or the new core."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    if engine not in store.core2_store.ENGINES:
+        return _back(account_id, error="Choose one of the three ways to answer.")
+    if engine != "legacy":
+        from core2.bootstrap.service import load_model
+
+        if load_model(account_id, client.get("db_config_id")) is None:
+            return _back(account_id, error="QueryBot has to learn this database before the new core can answer.")
+    store.set_query_engine(account_id, engine)
+    log.info("core2: %s now answers with %s", account_id, engine)
+    return _back(account_id, saved="engine")

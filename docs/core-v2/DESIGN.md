@@ -746,6 +746,35 @@ config has one, else `SqlExpr` parsed and checked) with their default dates from
 core2 keys through `_schema.json` (bare and two-part names are resolved against
 it, and an unresolvable name is reported, never guessed).
 
+### 12.5 The first cut, as built
+
+Where it differs from §12.3, the first cut is simpler on purpose:
+
+* **The hook** is `gateway/core2_bridge.py`, called from `_run_main_question` in
+  `ws_chat`: in `core2` mode before today's pipeline (which answers when the new
+  core reports `unsupported` or fails), in `compare` mode after it, under a
+  120-second limit. Turns that today's local pre-routes answer (commands on the
+  result on screen, why-insights) do not reach the new core yet.
+* **Clarifications** from the new core are written in its answer card with their
+  options (no chips, no `pending_id`); the reply is planned with the question it
+  answers, which the conversation history carries.
+* **Member names** come from core2's own index, read once per model version under
+  the workspace's service connection (entities' names and codes first, within a
+  30-second budget, only columns whose values may be read), not from
+  `value_index.sqlite`.
+* **Recording**: every new-core answer is a row in `core2_answer` (question,
+  status, headline, SQL, rows, plan, duration, model version), listed on the
+  learned page beside the switch.
+* **`core2` mode is early**: its answers are not yet kept in `answer_trace`, not
+  counted by `store.log_query`, and not offered for export; the admin page says so.
+* **Regulated tenants**: the question is scrubbed with `scrub_question_pii`, matched
+  members are replaced by placeholders, and the catalog carries no values.
+* **Production SQL rules** the compiler meets, checked in tests against the real
+  governed executor: output columns are listed (never `alias.*`), `COUNT(1)`, no
+  alias a statement screen matches.
+* **Evaluation level 3** (`evals/core2/plan_eval.py`) runs a domain's golden
+  questions through a configured provider and records its answers for replay.
+
 ## 13. Delivery order
 
 1. Model schema, identity, store, warehouse runner and dialects.

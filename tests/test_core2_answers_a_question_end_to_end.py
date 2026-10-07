@@ -73,8 +73,10 @@ def test_every_golden_question_comes_out_with_the_reference_numbers(name, case_i
     ai = Recorded(plan.model_dump_json(exclude_defaults=True))
     payload = answer_question(case["question"], _services(model, warehouse, ai), Session())
     assert payload["type"] == "assistant_response" and payload["engine"] == "core2"
-    assert payload["answer"] and payload["data"]["total_rows"] >= 1, payload["answer"]
-    json.dumps(payload, default=str)     # the frame crosses a websocket
+    # The portal's answer card reads these keys (portal_chat.html appendAssistantResponse).
+    assert set(payload["answer"]) >= {"headline", "short_value", "comparison", "scope_note"}
+    assert payload["answer"]["headline"] and payload["data"]["total_rows"] >= 1, payload["answer"]
+    json.dumps(payload)     # the frame crosses a websocket as it is: no Decimal, no date objects
     ran = warehouse.query(warehouse.log[-1])
     expected = reference.query(case["reference_sql"])
     diff = same_rows(expected.columns, expected.rows, ran.columns, ran.rows,
@@ -94,6 +96,7 @@ def test_member_names_are_found_and_handed_to_the_ai():
                               _services(model, warehouse, ai, index=_index(model, warehouse)), Session())
     assert f'{slug} = "Northline Distribution 58"' in ai.sent[0]
     assert payload["kpi"] and round(payload["kpi"]["value"], 2) == 95698.79
+    assert payload["answer"]["short_value"] == "$95,698.79" and payload["answer"]["comparison"] == "in 2025"
 
 
 def test_a_regulated_tenants_member_values_never_reach_the_ai():
@@ -110,6 +113,18 @@ def test_a_regulated_tenants_member_values_never_reach_the_ai():
     assert "Northline" not in sent and "⟨v1⟩" in sent
     assert payload["plan"]["filters"][0]["values"] == ["Northline Distribution 58"]
     assert round(payload["kpi"]["value"], 2) == 95698.79
+
+
+def test_personal_data_typed_into_a_question_is_scrubbed_before_the_ai():
+    from core.masking import scrub_question_pii
+
+    _, built, model, _ = _domain("retail")
+    warehouse = DuckDBWarehouse(built.con)
+    ai = Recorded(json.dumps({"kind": "query", "intent": "value", "measures": ["net_amount"]}))
+    services = _services(model, warehouse, ai, values_allowed=False,
+                         scrub=lambda text: scrub_question_pii(text, "")[0])
+    answer_question("net sales for the customer jane.doe@example.com", services, Session())
+    assert "jane.doe@example.com" not in ai.sent[0] and "[EMAIL]" in ai.sent[0]
 
 
 def test_a_wrong_plan_is_repaired_once_and_then_asked_about():
@@ -132,20 +147,20 @@ def test_a_reader_reaches_only_the_tables_they_may_use():
     allowed = set(model.tables) - {customers}
     payload = answer_question("net sales by customer", _services(model, warehouse, Recorded(plan),
                                                                   allowed_tables=allowed), Session())
-    assert "do not have access" in payload["answer"] and not warehouse.log
+    assert "do not have access" in payload["answer"]["headline"] and not warehouse.log
 
 
 def test_greetings_questions_about_the_data_and_the_unanswerable_are_answered_as_such():
     _, built, model, _ = _domain("inventory")
     warehouse = DuckDBWarehouse(built.con)
     hello = answer_question("hi", _services(model, warehouse, Recorded('{"kind": "smalltalk"}')), Session())
-    assert hello["answer"].startswith("Hello")
+    assert hello["answer"]["headline"].startswith("Hello")
     about = answer_question("what can I ask?", _services(model, warehouse, Recorded('{"kind": "describe_data"}')),
                             Session())
-    assert "On hand quantity".lower() in about["answer"].lower()
+    assert "on hand quantity" in about["answer"]["headline"].lower()
     sales = answer_question("sales last month", _services(model, warehouse, Recorded(
         '{"kind": "unsupported", "notes": ["this warehouse holds stock, not sales"]}')), Session())
-    assert sales["unsupported"] and "holds stock" in sales["answer"] and not warehouse.log
+    assert sales["unsupported"] and "holds stock" in sales["answer"]["headline"] and not warehouse.log
 
 
 def test_a_follow_up_sees_the_previous_plan():
@@ -160,3 +175,19 @@ def test_a_follow_up_sees_the_previous_plan():
     payload = answer_question("by year", _services(model, warehouse, ai), session)
     assert "PREVIOUS QUESTION: net sales" in ai.sent[1] and '"measures":["net_amount"]' in ai.sent[1]
     assert payload["chart"]["chart_type"] == "line"
+
+
+def test_a_reply_to_a_question_back_is_read_with_that_question():
+    _, built, model, _ = _domain("retail")
+    warehouse = DuckDBWarehouse(built.con)
+    ask = {"kind": "clarify", "clarify": {"about": "date", "question": "By order date or by ship date?",
+                                          "options": ["order date", "ship date"]}}
+    then = {"kind": "query", "intent": "trend", "measures": ["net_amount"],
+            "time": {"date": "ship_date", "grain": "year"}}
+    ai = Recorded(json.dumps(ask), json.dumps(then))
+    session = Session()
+    first = answer_question("net sales by year", _services(model, warehouse, ai), session)
+    assert first["clarify"]["options"] == ["order date", "ship date"] and not warehouse.log
+    second = answer_question("ship date", _services(model, warehouse, ai), session)
+    assert "PREVIOUS QUESTION: net sales by year" in ai.sent[1] and "By order date or by ship date?" in ai.sent[1]
+    assert second["data"]["total_rows"] >= 3

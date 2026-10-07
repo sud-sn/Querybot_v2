@@ -126,3 +126,50 @@ def latest_core2_build(account_id: str, db_config_id: int | None) -> dict[str, A
         row = conn.execute("""SELECT * FROM core2_build WHERE account_id = ? AND db_config_id = ?
                               ORDER BY started_at DESC LIMIT 1""", (account_id, int(db_config_id or 0))).fetchone()
     return dict(row) if row else None
+
+
+# ── the switch, and what the new core answered ─────────────────────────────
+
+ENGINES = ("legacy", "compare", "core2")
+
+
+def get_query_engine(account_id: str) -> str:
+    """Which core answers the workspace's portal questions: legacy (default), compare or core2."""
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT query_engine FROM client WHERE account_id=?", (account_id,)).fetchone()
+    except Exception:
+        return "legacy"
+    value = str((row[0] if row else "") or "legacy")
+    return value if value in ENGINES else "legacy"
+
+
+def set_query_engine(account_id: str, engine: str) -> None:
+    if engine not in ENGINES:
+        raise ValueError(f"unknown engine {engine!r}")
+    with get_db() as conn:
+        conn.execute("UPDATE client SET query_engine=?, updated_at=datetime('now') WHERE account_id=?",
+                     (engine, account_id))
+
+
+def log_core2_answer(account_id: str, *, user_id: str, mode: str, question: str, status: str, headline: str,
+                     sql: str, row_count: int, plan: dict[str, Any] | None, duration_ms: int,
+                     model_version: int) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO core2_answer (account_id, user_id, mode, question, status, headline, sql, row_count,
+                                         plan_json, duration_ms, model_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (account_id, user_id, mode, question[:2000], status, headline[:2000], sql, row_count,
+             json.dumps(plan or {}), duration_ms, model_version))
+
+
+def list_core2_answers(account_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, user_id, mode, question, status, headline, sql, row_count, plan_json, duration_ms,
+                      model_version, created_at
+               FROM core2_answer WHERE account_id=? ORDER BY id DESC LIMIT ?""", (account_id, limit)).fetchall()
+    keys = ("id", "user_id", "mode", "question", "status", "headline", "sql", "row_count", "plan_json",
+            "duration_ms", "model_version", "created_at")
+    return [dict(zip(keys, r)) for r in rows]

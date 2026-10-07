@@ -376,7 +376,9 @@ class _Compiler:
             if q.compare is not None:
                 columns.append(OutColumn(f"{m.name}_prior", m.label, "prior", m.format, key))
 
-        outer = exp.select(exp.Column(this=exp.Star(), table=self.name("q"))).from_(body.subquery(self.name("q")))
+        # Output columns are always listed by name, never alias.*: QueryBot's production
+        # query rules refuse a star projection, and a listed column is what was asked for.
+        outer = exp.select(*[self.out("q", c.name) for c in columns]).from_(body.subquery(self.name("q")))
         if q.compare is not None:
             for m in q.measures:
                 cur, pri = self.out("q", m.name), self.out("q", f"{m.name}_prior")
@@ -402,7 +404,7 @@ class _Compiler:
             # expression, and its nulls-last ordering is one. A share is of everything
             # shown before a filter on totals.
             alias = "r"
-            outer = exp.select(exp.Column(this=exp.Star(), table=self.name(alias))).from_(outer.subquery(self.name(alias)))
+            outer = exp.select(*[self.out(alias, c.name) for c in columns]).from_(outer.subquery(self.name(alias)))
             if q.having:
                 outer = outer.where(exp.and_(*[self.predicate(self.out(alias, h.column), h.op, h.values)
                                                for h in q.having]))

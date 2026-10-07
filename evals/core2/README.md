@@ -8,7 +8,21 @@ evals/core2/
   framework.py       Domain, ground truth, materialize() into DuckDB
   domains/<name>.py  one business each: build() -> Domain
   golden/<name>.yaml golden questions for that domain
+  learn_eval.py      level 1: the learned model against the ground truth
+  compile_eval.py    level 2: golden plans -> SQL -> rows, against the reference SQL
+  plan_eval.py       level 3: golden questions -> a real AI -> rows (recorded for replay)
 ```
+
+```
+python -m evals.core2.learn_eval inventory            # every naming style
+python -m evals.core2.compile_eval retail warehouse
+QUERYBOT_EVAL_API_KEY=... python -m evals.core2.plan_eval retail --provider azure_openai \
+    --model <deployment> --endpoint https://<resource>.openai.azure.com
+python -m evals.core2.plan_eval retail --replay evals/core2/recorded/retail.<deployment>.json
+```
+
+Levels 1 and 2 run in CI (`tests/test_core2_*`); level 3 needs a provider and is
+run on demand. The synthetic warehouses hold no customer data.
 
 Every domain is written once with descriptive names and rendered in each style
 (`descriptive`, `warehouse`, `pascal`, `generic`). The ground truth and the

@@ -96,12 +96,23 @@ class MemberIndex:
 
 
 def build_index(model: SemanticModel, fetch: Callable[[str], list[object]], *, values_allowed: bool = True,
-                max_members: int = 50_000) -> MemberIndex:
-    """Members of every attribute whose values may be listed, from profiles or ``fetch(attribute slug)``."""
+                max_members: int = 20_000, budget_seconds: float | None = None) -> MemberIndex:
+    """Members of every attribute whose values may be listed, from profiles or ``fetch(attribute slug)``.
+
+    Entities' names and codes are read first (they are what questions name); with a
+    time budget, attributes not reached in time are left out and logged, never waited on.
+    """
+    import logging
+    import time
+
     index = MemberIndex()
     if not values_allowed:
         return index
-    for slug, attribute in sorted(model.attributes.items()):
+    labels = {e.label_column for e in model.entities.values()} | {e.code_column for e in model.entities.values()}
+    start = time.monotonic()
+    skipped: list[str] = []
+    ordered = sorted(model.attributes.items(), key=lambda item: (item[1].column not in labels, item[0]))
+    for slug, attribute in ordered:
         column = model.columns[attribute.column]
         if column.hidden or column.sensitivity != "none" or not column.values_allowed:
             continue
@@ -111,7 +122,14 @@ def build_index(model: SemanticModel, fetch: Callable[[str], list[object]], *, v
         if p is not None and p.top and p.distinct <= len(p.top):
             index.add(slug, (t.value for t in p.top))
         elif (attribute.members or (p.distinct if p else 0)) <= max_members:
+            if budget_seconds is not None and time.monotonic() - start > budget_seconds:
+                skipped.append(slug)
+                continue
             index.add(slug, fetch(slug))
+    if skipped:
+        logging.getLogger("querybot.core2").warning(
+            "core2: member names of %d attributes not indexed within %.0fs: %s", len(skipped), budget_seconds or 0,
+            ", ".join(skipped[:10]))
     return index
 
 

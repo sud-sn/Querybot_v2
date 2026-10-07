@@ -19,6 +19,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,6 +49,7 @@ class Services:
     values_allowed: bool = True                 # may member values reach the AI (False for regulated tenants)
     allowed_tables: set[str] | None = None      # model table keys the reader may use; None = all
     data_source: str = ""
+    scrub: Callable[[str], str] | None = None   # personal data out of the question before the AI (regulated)
 
 
 @dataclass
@@ -56,7 +58,8 @@ class Session:
 
 
 def _frame(question: str, text: str, **extra: Any) -> dict[str, Any]:
-    return {"type": "assistant_response", "engine": "core2", "question": question, "answer": text, "chart": None,
+    answer = {"headline": text, "short_value": "", "comparison": "", "scope_badge": "", "scope_note": ""}
+    return {"type": "assistant_response", "engine": "core2", "question": question, "answer": answer, "chart": None,
             "kpi": None, "data": None, "trust": {"engine": "core2"}, "confidence": {}, "insight_summary": "",
             "anomaly_callouts": [], "coverage_caveats": [], "follow_up_suggestions": [], **extra}
 
@@ -98,16 +101,20 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     matches = _visible(services.index.match(question), model, services.allowed_tables)
     outcome = plan_question(model, question, services.complete, today=services.today,
                             history=session.turns[-HISTORY:], matches=matches,
-                            values_allowed=services.values_allowed)
+                            values_allowed=services.values_allowed, scrub=services.scrub)
     plan = outcome.plan
     if plan.kind == "smalltalk":
-        return _frame(question, "Hello! Ask me about your data, for example a total, a trend or a ranking.")
+        return _frame(question, "Hello! Ask me about your data, for example a total, a trend or a ranking.",
+                      kind="smalltalk")
     if plan.kind == "describe_data":
         return _describe(question, model)
     if plan.kind == "unsupported":
         why = " ".join(plan.notes) or "nothing in this data measures it"
         return _frame(question, f"I cannot answer that from this data: {why}", unsupported=True)
     if plan.kind == "clarify" and plan.clarify is not None:
+        # Kept in the conversation: the reply ("the first one") answers this question.
+        session.turns.append(Turn(question, plan))
+        del session.turns[:-HISTORY]
         return _clarification(question, plan.clarify)
 
     try:
@@ -188,7 +195,7 @@ def _member_index(account_id: str, model: SemanticModel, db_config: dict[str, An
         return [r[0] for r in warehouse.query(sql, max_rows=50_001).rows]
 
     with QueryBotWarehouse(str(db_config.get("db_type") or ""), db_config["credentials"]) as warehouse:
-        index = build_index(model, fetch)
+        index = build_index(model, fetch, budget_seconds=30.0)
     with _LOCK:
         _INDEXES[key] = index
         while len(_INDEXES) > 20:
@@ -234,11 +241,18 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
     warehouse = GovernedWarehouse(account_id, portal_user, db_config,
                                   known_tables=load_known_tables(state.get("schema_dir", "")),
                                   allowed_tables=allowed)
+    profile = store.get_compliance_profile(account_id) or {}
+    scrub = None
+    if profile.get("mode") == "regulated":
+        from core.masking import scrub_question_pii
+
+        industry = str(profile.get("industry") or "")
+        scrub = lambda text: scrub_question_pii(text, industry)[0]   # noqa: E731
     services = Services(
         model=model, warehouse=warehouse, complete=workspace_planner(account_id, client, question=question),
         index=_member_index(account_id, model, db_config), today=dt.date.today(),
         values_allowed=not is_regulated(account_id), allowed_tables=_allowed_model_tables(model, allowed),
-        data_source=str(db_config.get("db_type") or ""))
+        data_source=str(db_config.get("db_type") or ""), scrub=scrub)
     return answer_question(question, services, _session(session_key), question_id=question_id)
 
 

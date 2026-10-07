@@ -48,6 +48,10 @@
 .lq-btn{font-size:var(--font-xs);padding:.2rem .55rem;border-radius:var(--radius-sm);border:1px solid var(--border);
   background:var(--surface-2);color:var(--text);cursor:pointer}
 .lq-btn:hover{border-color:var(--primary)}
+.lq-engine{display:flex;flex-direction:column;gap:.55rem;align-items:flex-start;margin-bottom:.6rem}
+.lq-choice{display:flex;gap:.55rem;align-items:flex-start;line-height:1.45;cursor:pointer}
+.lq-choice input{margin-top:.25rem}
+.lq-choice strong{display:block}
 .lq-review li{margin:.5rem 0;line-height:1.5}
 .lq-default{font-weight:var(--weight-bold)}
 .lq-kind{font-size:var(--font-2xs);text-transform:uppercase;letter-spacing:.05em}
@@ -84,8 +88,45 @@
   {% if saved == 'building' %}{{ alert("QueryBot is studying the database. This page shows the result when it is done.", "info") }}{% endif %}
   {% if saved == 'decision' %}{{ alert("Decision saved. It applies now and every time QueryBot learns again.", "success") }}{% endif %}
   {% if saved == 'undone' %}{{ alert("Decision removed. QueryBot's own finding applies again.", "success") }}{% endif %}
+  {% if saved == 'engine' %}{{ alert("Saved. The next question in the portal is answered this way.", "success") }}{% endif %}
   {% if error %}{{ alert(error, "error") }}{% endif %}
   {% if problem %}{{ alert(problem, "warning") }}{% endif %}
+
+  {% if view %}
+  <section class="lq-section" aria-labelledby="lq-engine">
+    <h2 id="lq-engine">Who answers questions in the portal</h2>
+    <div class="lq-body">
+      <form method="post" action="/admin/clients/{{ client.account_id }}/learned/engine" class="lq-engine">
+        {% for value, title, detail in [
+             ("legacy", "Today's pipeline", "As now. The new core does not run."),
+             ("compare", "Both, side by side", "Today's answer, then the new core's answer to the same question, marked as a preview. Use this to compare them."),
+             ("core2", "The new core (early)", "The new core answers; a question it cannot express goes to today's pipeline. Early: its answers are not yet kept in the conversation history, counted toward limits or offered for export.")] %}
+        <label class="lq-choice">
+          <input type="radio" name="engine" value="{{ value }}" {% if engine == value %}checked{% endif %}>
+          <span><strong>{{ title }}</strong><span class="lq-why">{{ detail }}</span></span>
+        </label>
+        {% endfor %}
+        <button type="submit" class="btn btn-primary">Save</button>
+      </form>
+      <p class="lq-intro">Web portal only; Teams and other channels keep today's pipeline. Each new-core answer
+         is recorded here so the two can be compared.</p>
+      {% if answers %}
+      <div class="lq-wrap">
+      <table class="lq-table">
+        <thead><tr><th>When (UTC)</th><th>Question</th><th>New core</th><th>Rows</th></tr></thead>
+        <tbody>
+        {% for a in answers %}
+          <tr><td class="lq-mono">{{ a.created_at }}</td><td>{{ a.question }}</td>
+              <td><span class="lq-kind">{{ a.status }}</span><div class="lq-why">{{ a.headline }}</div></td>
+              <td>{{ a.row_count }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
 
   {% if not view %}
   <div class="lq-section"><div class="lq-body">
