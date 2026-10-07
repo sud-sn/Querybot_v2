@@ -11,6 +11,7 @@ answer.
 from __future__ import annotations
 
 import datetime as dt
+import difflib
 import re
 from dataclasses import dataclass, field
 
@@ -161,6 +162,22 @@ def _output_name(text: str, taken: set[str]) -> str:
     if base in _UNSAFE_ALIASES:
         base = f"{base}_value"
     return ids.unique_slug(base, taken)
+
+
+def _slugs(model: SemanticModel, kind: str) -> list[str]:
+    if kind == "measure":
+        return sorted(m.slug for m in model.measures.values() if not m.hidden)
+    if kind == "date":
+        return sorted(r.slug for r in model.date_roles.values() if r.kind != "audit")
+    return sorted([*model.entities, *model.attributes, *TIME_ATTRIBUTES])
+
+
+def _closest(name: str, candidates: list[str], n: int = 6) -> list[str]:
+    """The names a mistyped or invented slug most likely meant (for the repair round and the user)."""
+    words = set(re.split(r"[._:]", name.casefold()))
+    by_words = [c for c in candidates if words & set(re.split(r"[._:]", c.casefold()))]
+    near = difflib.get_close_matches(name, candidates, n=n, cutoff=0.5)
+    return list(dict.fromkeys([*near, *by_words]))[:n] or candidates[:n]
 
 
 def _find_slug(model: SemanticModel, slug: str) -> tuple[str, object] | None:
@@ -318,7 +335,7 @@ def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure, table: st
     if plan.time.date:
         found = _find_slug(model, plan.time.date)
         if not found or found[0] != "date":
-            raise ResolveError("unknown", f"no date called {plan.time.date}")
+            raise ResolveError("unknown", f"no date called {plan.time.date}", _closest(plan.time.date, _slugs(model, "date")))
         role = found[1]
         assert isinstance(role, DateRole)
         if role.table == table:
@@ -347,7 +364,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
         found = _find_slug(model, slug)
         if not found or found[0] != "measure":
-            raise ResolveError("unknown", f"no measure called {slug}")
+            raise ResolveError("unknown", f"no measure called {slug}", _closest(slug, _slugs(model, "measure")))
         m = found[1]
         assert isinstance(m, Measure)
         expr = _with_filters(_measure_expr(model, m), m.filters)
@@ -363,7 +380,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         for slug in d.measures:
             found = _find_slug(model, slug)
             if not found or found[0] != "measure":
-                raise ResolveError("unknown", f"no measure called {slug}")
+                raise ResolveError("unknown", f"no measure called {slug}", _closest(slug, _slugs(model, "measure")))
             operands.append(found[1])
         a, b = operands
         assert isinstance(a, Measure) and isinstance(b, Measure)
@@ -386,7 +403,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             continue
         found = _find_slug(model, slug)
         if not found or found[0] not in ("attribute", "entity"):
-            raise ResolveError("unknown", f"nothing to group by called {slug}")
+            raise ResolveError("unknown", f"nothing to group by called {slug}", _closest(slug, _slugs(model, "group")))
         attribute = _entity_label(model, slug) if found[0] == "entity" else found[1]
         assert isinstance(attribute, Attribute)
         wanted.append((slug, attribute, None))
@@ -395,7 +412,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if not chosen:
         if wanted and intent in ("list", "breakdown", "rank", "count", "value"):
             return _members(plan, model, ctx, wanted, aliases, intent)
-        raise ResolveError("unknown", "the question names no measure", [])
+        raise ResolveError("unknown", "the question names no measure", _slugs(model, "measure")[:12])
 
     # One part per measure table (and per snapshot kind: levels and flows of one
     # snapshot table are counted over different rows).
@@ -517,7 +534,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     for f in plan.filters:
         found = _find_slug(model, f.field)
         if not found:
-            raise ResolveError("unknown", f"nothing to filter on called {f.field}")
+            raise ResolveError("unknown", f"nothing to filter on called {f.field}", _closest(f.field, _slugs(model, "group") + _slugs(model, "date") + _slugs(model, "measure")))
         kind, obj = found
         if kind == "measure":
             m = obj

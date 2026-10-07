@@ -63,6 +63,8 @@ class Findings:
     dates: dict[str, list[DateCandidate]]
     kinds: dict[str, str]
     measures: list[MeasureFinding]
+    # May a column's member values be read and shown (governance), whatever their number.
+    values_allowed: Callable[[str, str], bool] = field(default=lambda table_key, column: True)
 
 
 def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | None = None) -> Findings:
@@ -90,7 +92,8 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
         # budgets) adds up over time like any fact.
         if kind == "snapshot" and not any(m.table == key and m.additivity == "semi_additive" for m in measures):
             kinds[key] = "fact"
-    return Findings(inventory, profiles, keys, calendars, joins, dates, kinds, measures)
+    return Findings(inventory, profiles, keys, calendars, joins, dates, kinds, measures,
+                    values_allowed=options.profile.values_allowed)
 
 
 def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = "", db_id: int | None = None,
@@ -267,7 +270,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 raw_type=column.raw_type, nullable=column.nullable, comment=column.comment,
                 role=role,  # type: ignore[arg-type]
                 business_name=names.readable(column.name, column.data_type), format=fmt,  # type: ignore[arg-type]
-                values_allowed=p.top is not None,
+                values_allowed=f.values_allowed(key, column.name),
                 profile=p, provenance="profile", status="verified", confidence=1.0)
 
     # Measures.

@@ -53,8 +53,11 @@ def assert_read_only(sql: str, dialect: str) -> None:
 
 
 class Warehouse(Protocol):
-    dialect: str      # sqlglot dialect: snowflake | tsql | oracle | duckdb
-    db_type: str      # QueryBot database type: snowflake | azure_sql | oracle | duckdb
+    @property
+    def dialect(self) -> str: ...      # sqlglot dialect: snowflake | tsql | oracle | duckdb
+
+    @property
+    def db_type(self) -> str: ...      # QueryBot database type: snowflake | azure_sql | oracle | duckdb
 
     def query(self, sql: str, *, max_rows: int | None = None) -> QueryResult: ...
 

@@ -74,12 +74,19 @@ def opaque(name: str) -> bool:
     return not parts or all(p.isdigit() or p in _OPAQUE_WORDS for p in parts)
 
 
+_IRREGULAR = {"statuses": "status", "buses": "bus", "bonuses": "bonus", "campuses": "campus", "people": "person",
+              "children": "child", "analyses": "analysis", "data": "data", "series": "series"}
+
+
 def singular(word: str) -> str:
+    """"categories" -> "category", "addresses" -> "address", "warehouses" -> "warehouse", "status" stays."""
+    if word in _IRREGULAR:
+        return _IRREGULAR[word]
     if len(word) > 4 and word.endswith("ies"):
         return word[:-3] + "y"
-    if len(word) > 3 and word.endswith("ses"):
+    if len(word) > 4 and word.endswith(("sses", "xes", "ches", "shes", "zzes")):
         return word[:-2]
-    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
         return word[:-1]
     return word
 
