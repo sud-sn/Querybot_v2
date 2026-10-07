@@ -43,7 +43,7 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
     span = span_words(logical.window)
     bounded = logical.window.start is not None and logical.window.end is not None
     rows = (payload.get("data") or {}).get("rows") or []
-    grouped = [g for g in logical.groups if g.kind == "attribute"]
+    grouped = [g for g in logical.groups if g.kind == "attribute" and g.name != logical.unit_group]
     period = next((g for g in logical.groups if g.kind == "period"), None)
     out: list[str] = []
 

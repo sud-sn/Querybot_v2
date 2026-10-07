@@ -94,3 +94,16 @@ def test_an_admin_name_is_never_replaced_by_the_ai(generic):
     key = next(k for k, t in model.tables.items() if t.name == lines)
     apply_overrides(model, [{"object_key": target("table", key), "field": "business_name", "value": "Order lines"}])
     assert model.tables[key].business_name == "Order lines"
+
+
+@pytest.mark.parametrize("column, reads", [
+    ("CUR_ON_HND_QTY", "Current on hand quantity"),        # a quantity now, not a currency
+    ("CUR_CD", "Currency code"), ("CUR_RT", "Currency rate"),
+    ("ISP_ON_HND_QTY", "Inspection on hand quantity"), ("RJC_ON_HND_QTY", "Rejected on hand quantity"),
+    ("PIK_LIS_QTY", "Pick list quantity"), ("RSV_BCK_ORD_QTY", "Reserved back order quantity"),
+    ("ANN_DMD_QTY", "Annual demand quantity"), ("NGV_TFR_QTY", "Negative transfer quantity"),
+])
+def test_without_the_ai_a_stock_column_reads_in_words(column, reads):
+    from core2.bootstrap.names import readable
+
+    assert readable(column) == reads

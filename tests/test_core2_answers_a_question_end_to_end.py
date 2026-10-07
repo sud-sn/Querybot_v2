@@ -71,7 +71,9 @@ def test_every_golden_question_comes_out_with_the_reference_numbers(name, case_i
     plan = _Words(model, built).plan(case["plan"])
     warehouse = DuckDBWarehouse(built.con)
     ai = Recorded(plan.model_dump_json(exclude_defaults=True))
-    payload = answer_question(case["question"], _services(model, warehouse, ai), Session())
+    # The reference numbers are the plan's; a quantity a reader asks about is also kept
+    # apart by unit (tests/test_core2_keeps_units_apart.py checks those against the warehouse).
+    payload = answer_question(case["question"], _services(model, warehouse, ai, split_units=False), Session())
     assert payload["type"] == "assistant_response" and payload["engine"] == "core2"
     # The portal's answer card reads these keys (portal_chat.html appendAssistantResponse).
     assert set(payload["answer"]) >= {"headline", "short_value", "comparison", "scope_note"}

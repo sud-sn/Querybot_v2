@@ -21,7 +21,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from core2 import ids
@@ -54,6 +54,7 @@ class Services:
     allowed_tables: set[str] | None = None      # model table keys the reader may use; None = all
     data_source: str = ""
     scrub: Callable[[str], str] | None = None   # personal data out of the question before the AI (regulated)
+    split_units: bool = True                    # a quantity in several units is answered per unit (issue E4)
 
 
 @dataclass
@@ -218,7 +219,7 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
         return answer_drivers(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
     if plan.intent == "forecast":
         return answer_forecast(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
-    logical = resolve(plan, model, ctx)
+    logical = resolve(plan, model, replace(ctx, split_units=services.split_units))
     compiled = compile_query(logical, model, warehouse.dialect)
     result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
     payload = build_answer(question, logical, compiled, result.columns, result.rows,

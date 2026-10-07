@@ -68,7 +68,8 @@ def add_units(day: dt.date, unit: str, n: int) -> dt.date:
 def anchor(today: dt.date, last_data: dt.date | None) -> tuple[dt.date, str]:
     """The day relative windows count back from, and a note when it is not today."""
     if last_data is not None and today - last_data > STALE_AFTER:
-        return last_data + DAY, f"Your data ends {last_data:%d %b %Y}, so recent periods are counted back from there."
+        return last_data + DAY, (f"Your data ends {last_data.day} {last_data:%b %Y}, so recent periods are counted "
+                                 "back from there.")
     return today, ""
 
 
@@ -159,9 +160,9 @@ def partial_periods(starts: list[dt.date], grain: str, *, first_data: dt.date | 
 def label(start: dt.date, grain: str, *, fiscal_start: int | None = None) -> str:
     """How a period reads: Mar 2026, Week of 29 Jun 2026, Q1 2026, 2026, FY2026 Q3."""
     if grain == "day":
-        return f"{start:%d %b %Y}"
+        return f"{start.day} {start:%b %Y}"
     if grain == "week":
-        return f"Week of {start:%d %b %Y}"
+        return f"Week of {start.day} {start:%b %Y}"
     if grain in ("month", "fiscal_month"):
         return f"{start:%b %Y}"
     if grain == "quarter":

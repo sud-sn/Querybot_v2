@@ -171,6 +171,38 @@ def test_a_decision_applies_at_once_and_can_be_undone(workspace):
     assert model.date_roles[order.key].is_default and not model.date_roles[ship.key].is_default
 
 
+def test_cancelled_rows_are_left_out_from_the_page_and_answers_follow(workspace):
+    """The note on an answer ("an admin can leave them out by default") names a button that exists (E3)."""
+    import re
+
+    store, built, schema_dir = workspace
+    _schema_file(built, schema_dir)
+    from admin import core2_routes
+    from core2.bootstrap.service import load_model
+    from core2.compile.compiler import compile_query
+    from core2.plan.ir import Plan
+    from core2.resolve.resolver import Context, resolve
+
+    core2_routes._run_build(ACCOUNT)
+    with patch.object(core2_routes, "_is_auth", return_value=True):
+        raw = asyncio.run(core2_routes.learned_page(
+            _request(f"/admin/clients/{ACCOUNT}/learned", method="GET"), ACCOUNT)).body.decode()
+    form = next(f for f in re.findall(r"<form[^>]*learned/decide.*?</form>", raw, re.S) if "Leave out C" in f)
+    # What a browser sends: the attribute values as written in the page, unescaped.
+    fields = {k: html.unescape(v) for k, v in re.findall(r'name="(target|field|value|note)" value="([^"]*)"', form)}
+    response = _post(core2_routes.learned_decide, f"/admin/clients/{ACCOUNT}/learned/decide", fields)
+    assert response.status_code == 303 and "saved=decision" in response.headers["location"]
+    assert "Left out: C (your decision)" in _page()
+
+    model = load_model(ACCOUNT, store.get_client(ACCOUNT)["db_config_id"])
+    logical = resolve(Plan.model_validate({"kind": "query", "intent": "value", "measures": ["net_amount"]}),
+                      model, Context(today=__import__("datetime").date(2026, 6, 15)))
+    assert not any("an admin can leave them out" in n for n in logical.notes)
+    got = DuckDBWarehouse(built.con).query(compile_query(logical, model, "duckdb").sql).rows[0][0]
+    want = built.con.execute("SELECT SUM(net_amount) FROM order_lines WHERE status_code <> 'C'").fetchone()[0]
+    assert float(got) == pytest.approx(float(want))
+
+
 def test_a_field_the_data_decides_cannot_be_set_from_the_page(workspace):
     from admin import core2_routes
 

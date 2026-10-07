@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
 
@@ -104,12 +105,17 @@ def span_words(rng: Range) -> str:
 
 
 class _Columns:
-    """Result columns matched to what the compiler said they are (case-insensitively)."""
+    """Result columns matched to what the compiler said they are (case-insensitively).
 
-    def __init__(self, compiled: Compiled, names: list[str]):
+    The grouping that keeps a quantity's units apart has the role "unit": it is a
+    column of the table, never a member the sentence or the chart ranks.
+    """
+
+    def __init__(self, compiled: Compiled, names: list[str], unit: str | None = None):
         by_name = {c.name.casefold(): c for c in compiled.columns}
         self.index = {c.name: i for i, name in enumerate(names) for c in [by_name.get(name.casefold())] if c}
-        self.columns = [c for c in compiled.columns if c.name in self.index]
+        self.columns = [replace(c, role="unit") if unit and c.name == unit else c
+                        for c in compiled.columns if c.name in self.index]
 
     def of(self, role: str) -> list[OutColumn]:
         return [c for c in self.columns if c.role == role]
@@ -138,7 +144,7 @@ def _cell(column: OutColumn, value: Any, logical: Logical) -> Any:
         if column.name.startswith("is_weekend"):
             return "Weekend" if n else "Weekday"
         return str(n)
-    if column.role in ("attribute", "member_code"):
+    if column.role in ("attribute", "member_code", "unit"):
         if value is None:
             return "Unknown"
         if isinstance(value, float) and value.is_integer():
@@ -160,11 +166,59 @@ def display_value(column: OutColumn, value: Any, logical: Logical) -> Any:
 def _table_format(column: OutColumn) -> str:
     if column.role == "period":
         return "text" if column.grain and column.grain.startswith("fiscal") else "date"
-    if column.role in ("attribute", "member_code", "time"):
+    if column.role in ("attribute", "member_code", "time", "unit"):
         return "text"
     if column.role in ("share", "pct_change"):
         return "percentage"
     return _TABLE_FORMAT.get(column.format, "number")
+
+
+@dataclass
+class _Units:
+    """The unit of each row when a quantity is kept apart by unit (issue E4), and the unit most rows are in."""
+
+    column: OutColumn | None = None
+    main: str | None = None
+    count: int = 0
+
+    def key(self, row: dict) -> str:
+        value = row.get(self.column.name) if self.column else None
+        return "Unknown" if value in (None, "") else str(value)
+
+    def of(self, row: dict) -> str | None:
+        """The unit to write after a value; none for a row without one."""
+        if self.column is None:
+            return None
+        unit = self.key(row)
+        return None if unit == "Unknown" else unit
+
+    @property
+    def mixed(self) -> bool:
+        return self.count > 1
+
+    def main_rows(self, rows: list[dict]) -> list[dict]:
+        return [r for r in rows if self.key(r) == self.main] if self.mixed else rows
+
+
+def _units(cols: _Columns, raw: list[dict], order: list[str]) -> _Units:
+    """Which unit the sentence and the chart use: the one most of the data is in (from its profile),
+    else the one most rows of the answer are in."""
+    column = next(iter(cols.of("unit")), None)
+    if column is None:
+        return _Units()
+    units = _Units(column)
+    counts: dict[str, int] = {}
+    totals: dict[str, float] = {}
+    measure = next(iter(cols.of("measure")), None)
+    for r in raw:
+        key = units.key(r)
+        counts[key] = counts.get(key, 0) + 1
+        totals[key] = totals.get(key, 0.0) + abs((_number(r[measure.name]) if measure else 0.0) or 0.0)
+    units.count = len(counts)
+    rank = {u: i for i, u in enumerate(order)}
+    units.main = min(counts, key=lambda u: (rank.get(u, len(rank)), u == "Unknown", -counts[u], -totals[u])) \
+        if counts else None
+    return units
 
 
 # ── the answer ─────────────────────────────────────────────────────────────
@@ -175,7 +229,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                  model_version: int = 0, truncated: bool = False, chart_type: str | None = None) -> dict[str, Any]:
     if len(rows) > logical.max_rows:
         truncated, rows = True, rows[:logical.max_rows]
-    cols = _Columns(compiled, columns)
+    cols = _Columns(compiled, columns, unit=logical.unit_group)
     shown = cols.columns
     records = [{c.name: _cell(c, row[cols.index[c.name]], logical) for c in shown} for row in rows]
     raw = [{c.name: row[cols.index[c.name]] for c in shown} for row in rows]
@@ -197,9 +251,19 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     if truncated:
         caveats.append(f"Showing the first {logical.max_rows:,} rows.")
 
-    headline = _headline(logical, cols, raw, records, partial)
-    short_value, comparison = _lead(logical, cols, raw)
-    chart = _chart(logical, cols, records, formats, labels, display)
+    units = _units(cols, raw, logical.unit_order)
+    headline = _headline(logical, cols, raw, records, partial, units)
+    short_value, comparison = _lead(logical, cols, raw, units)
+    drawn = [r for r, plain in zip(records, raw) if not units.mixed or units.key(plain) == units.main]
+    chart = _chart(logical, cols, drawn, formats, labels, display)
+    if chart is not None and units.main and units.main != "Unknown":
+        chart["title"] = f"{chart['title']} ({units.main})"
+        if units.mixed:
+            chart["chart_warnings"] = [*chart["chart_warnings"], f"Only {units.main} is drawn: the other "
+                                       f"{units.count - 1} units are in the table."]
+    if units.mixed and (cols.of("attribute") or cols.of("time") or cols.of("period")):
+        caveats.append(f"{cols.of('measure')[0].label} is counted in {units.count} units; the sentence and the "
+                       f"chart use {units.main}, the unit of most rows. Every unit is in the table.")
     notes = list(logical.notes)
     if chart is not None and chart_type == "table":
         chart = None
@@ -214,7 +278,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
             notes.append(f"A {chart_type} chart does not fit this answer; it is shown as a "
                          f"{chart['chart_type']} chart.")
     return frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
-                 chart=chart, kpi=_kpi(logical, cols, raw, formats),
+                 chart=chart, kpi=_kpi(logical, cols, raw, formats, units),
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
@@ -309,7 +373,23 @@ def _noun(label: str) -> str:
     return names.plural(" ".join(words))
 
 
-def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dict], partial: set[str]) -> str:
+def _ranked_periods(logical: Logical, cols: _Columns) -> bool:
+    """Periods ordered by a measure ("which month had the most"), not by time."""
+    periods = cols.of("period")
+    return bool(periods and logical.sort and logical.compare is None and logical.sort[0][0] != periods[0].name)
+
+
+def _lower(label: str) -> str:
+    """A name inside a sentence: "Net amount" -> "net amount"; "GMV" stays "GMV"."""
+    return label if label[1:2].isupper() else label[:1].lower() + label[1:]
+
+
+def _signed(number: float, format_: str, unit: str | None = None) -> str:
+    return ("+" if number > 0 else "") + fmt(number, format_, unit=unit)
+
+
+def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dict], partial: set[str],
+              units: _Units) -> str:
     measures = cols.of("measure")
     span = span_words(logical.window)
     if not raw:
@@ -323,34 +403,75 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         return f"{len(raw):,} {_noun(groups[0].label)}: {', '.join(listed)}{more}."
     m = measures[0]
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
-    value = lambda r, c=m: fmt(r[c.name], c.format)   # noqa: E731
+    value = lambda r, c=m: fmt(r[c.name], c.format, unit=units.of(r))   # noqa: E731
     lead = f"{m.label}{(' ' + span) if span else ''}"
     if logical.compare is not None:
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
         pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
-        prior_span = span_words(logical.compare)
-        if not members and not periods and change is not None:
-            r = raw[0]
-            moved = _number(r[change.name]) or 0.0
+        prior_span = span_words(logical.compare).removeprefix("in ")
+
+        def moved(r: dict, with_unit: bool = True) -> str:
+            by = _number(r[change.name]) or 0.0   # type: ignore[union-attr]
             ratio = _number(r[pct.name]) if pct else None
             pct_text = f" ({ratio * 100:+.1f}%)" if ratio is not None else ""
-            return (f"{lead}: {value(r)}, {'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format)}{pct_text} "
-                    f"on {prior_span.removeprefix('in ')}.")
+            unit = units.of(r) if with_unit else None
+            return f"{'up' if by >= 0 else 'down'} {fmt(abs(by), m.format, unit=unit)}{pct_text}"
+
+        if not members and not periods and change is not None:
+            if units.column is not None and len(raw) > 1:
+                ordered = sorted(raw, key=lambda r: -abs(_number(r[change.name]) or 0.0))
+                listed = [f"{units.of(r) or 'with no unit'} {moved(r, with_unit=False)}" for r in ordered[:3]]
+                extra = len(raw) - 3
+                tail = f"; {extra} more unit{'s' if extra > 1 else ''} in the table" if extra > 0 else ""
+                return f"{lead} against {prior_span}: {'; '.join(listed)}{tail}."
+            r = raw[0]
+            return f"{lead}: {value(r)}, {moved(r)} on {prior_span}."
         if members and change is not None:
-            order = sorted(range(len(raw)), key=lambda i: -(_number(raw[i][change.name]) or 0.0))
-            top, bottom = raw[order[0]], raw[order[-1]]
-            named = {id(raw[i]): str(shown[i][members[0].name]) for i in range(len(raw))}
-            who = lambda r: named[id(r)]  # noqa: E731
-            parts = [f"{who(top)} rose most ({fmt(_number(top[change.name]), m.format)})"]
-            if (_number(bottom[change.name]) or 0) < 0:
-                parts.append(f"{who(bottom)} fell most ({fmt(_number(bottom[change.name]), m.format)})")
-            return f"{m.label} {span} against {prior_span.removeprefix('in ')}: {'; '.join(parts)}."
+            changes = [_number(r[change.name]) or 0.0 for r in raw]
+            order = sorted(range(len(raw)), key=lambda i: -changes[i])
+            hi, lo = order[0], order[-1]
+            who = lambda i: str(shown[i][members[0].name])   # noqa: E731
+            by = lambda i: _signed(changes[i], m.format, units.of(raw[i]))   # noqa: E731
+            many = f"{len(raw)} {_noun(members[0].label)}{' shown' if logical.limit else ''}"
+            if changes[hi] > 0 and changes[lo] < 0:
+                said = f"{who(hi)} rose most ({by(hi)}); {who(lo)} fell most ({by(lo)})"
+            elif len(raw) == 1:
+                said = f"{who(hi)} {'rose' if changes[hi] > 0 else 'fell' if changes[hi] < 0 else 'held'}" + (
+                    f" ({by(hi)})" if changes[hi] else "")
+            elif changes[hi] > 0:
+                said = (f"{'all' if changes[lo] > 0 else 'none of the'} {many} "
+                        f"{'rose' if changes[lo] > 0 else 'fell'}; {who(hi)} rose most ({by(hi)})")
+            elif changes[lo] < 0:
+                said = (f"{'all' if changes[hi] < 0 else 'none of the'} {many} "
+                        f"{'fell' if changes[hi] < 0 else 'rose'}; {who(lo)} fell most ({by(lo)})")
+            else:
+                said = f"no change for any of the {many}"
+            return f"{m.label} {span} against {prior_span}: {said}."
     if periods and not members:
-        complete = [r for r in raw if _day(r[periods[0].name]) and _day(r[periods[0].name]).isoformat()  # type: ignore[union-attr]
-                    not in partial] or raw
         grain = periods[0].grain or "month"
-        name = lambda r: period_label(_day(r[periods[0].name]) or dt.date.min, grain,  # noqa: E731
-                                      fiscal_start=logical.fiscal_start)
+
+        def name(r: dict) -> str:
+            """A period inside a sentence: "the week of 4 May 2026", "Aug 2025"."""
+            text = period_label(_day(r[periods[0].name]) or dt.date.min, grain, fiscal_start=logical.fiscal_start)
+            return "the w" + text[1:] if grain == "week" else text
+
+        rows = units.main_rows(raw)
+        if _ranked_periods(logical, cols):
+            ranked_by = next((c for c in measures if c.name == logical.sort[0][0]), m)
+            word = "highest" if logical.sort[0][1] else "lowest"
+            top = rows[0]
+            leader = name(top)
+            text = (f"{leader[:1].upper() + leader[1:]} had the {word} {_lower(ranked_by.label)}"
+                    f"{(' ' + span) if span else ''}: "
+                    f"{value(top, ranked_by)}")
+            if top[periods[0].name] is not None and str(_day(top[periods[0].name])) in partial:
+                text += " (a period the data only partly covers)"
+            if len(rows) > 1:
+                text += f", then {name(rows[1])} ({value(rows[1], ranked_by)})"
+            return text + "."
+        complete = [r for r in rows if _day(r[periods[0].name]) and _day(r[periods[0].name]).isoformat()  # type: ignore[union-attr]
+                    not in partial] or rows
+        complete = sorted(complete, key=lambda r: _day(r[periods[0].name]) or dt.date.min)   # newest-first too
         first, last = complete[0], complete[-1]
         peak = max(complete, key=lambda r: _number(r[m.name]) or float("-inf"))
         text = f"{lead}, by {grain.replace('fiscal_', 'fiscal ')}: {value(first)} in {name(first)}"
@@ -364,27 +485,34 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         leader = str(shown[best][g.name])
         total = sum(_number(r[m.name]) or 0.0 for r in raw)
         share = ""
-        if logical.share or (m.format in ("currency", "number", "integer", "count") and total and len(raw) > 1
-                             and not logical.limit):
+        if not units.mixed and (logical.share or (m.format in ("currency", "number", "integer", "count") and total
+                                                  and len(raw) > 1 and not logical.limit)):
             portion = (_number(top[m.name]) or 0.0) / total if total else 0.0
             share = f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
-        count = f" across {len(raw):,} {_noun(g.label)}" if len(raw) > 1 else ""
+        count_of = len({str(r[g.name]) for r in shown})
+        count = f" across {count_of:,} {_noun(g.label)}" if count_of > 1 else ""
         return f"{lead}: {leader} leads with {value(top)}{share}{count}."
     if not members and not periods:
+        if units.column is not None and len(raw) > 1:
+            ordered = sorted(raw, key=lambda r: -(_number(r[m.name]) or 0.0))
+            listed = [value(r) if units.of(r) else f"{value(r)} with no unit" for r in ordered[:4]]
+            extra = len(raw) - 4
+            tail = f" and {extra} more unit{'s' if extra > 1 else ''}" if extra > 0 else ""
+            return f"{lead}: {', '.join(listed)}{tail}."
         r = raw[0]
-        others = [f"{c.label} {fmt(r[c.name], c.format)}" for c in measures[1:]]
+        others = [f"{c.label} {fmt(r[c.name], c.format, unit=units.of(r))}" for c in measures[1:]]
         tail = f"; {', '.join(others)}" if others else ""
         return f"{lead}: {value(r)}{tail}."
     return f"{lead}: {len(raw):,} rows."
 
 
-def _lead(logical: Logical, cols: _Columns, raw: list[dict]) -> tuple[str, str]:
+def _lead(logical: Logical, cols: _Columns, raw: list[dict], units: _Units) -> tuple[str, str]:
     """The card's lead value and what it is compared with, when the answer is one number."""
     measures = cols.of("measure")
     if len(raw) != 1 or cols.of("period") or cols.of("attribute") or cols.of("time") or not measures:
         return "", ""
     m, r = measures[0], raw[0]
-    value = fmt(r[m.name], m.format)
+    value = fmt(r[m.name], m.format, unit=units.of(r))
     if logical.compare is not None:
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
         pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
@@ -392,18 +520,20 @@ def _lead(logical: Logical, cols: _Columns, raw: list[dict]) -> tuple[str, str]:
             moved = _number(r[change.name]) or 0.0
             ratio = _number(r[pct.name]) if pct is not None else None
             pct_text = f" ({ratio * 100:+.1f}%)" if ratio is not None else ""
-            return value, (f"{'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format)}{pct_text} on "
-                           f"{span_words(logical.compare).removeprefix('in ')}")
+            return value, (f"{'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format, unit=units.of(r))}"
+                           f"{pct_text} on {span_words(logical.compare).removeprefix('in ')}")
     return value, span_words(logical.window)
 
 
-def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, str]) -> dict | None:
+def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, str], units: _Units) -> dict | None:
     measures = cols.of("measure")
     if len(raw) != 1 or cols.of("period") or cols.of("attribute") or len(measures) != 1 or logical.compare:
         return None
     m = measures[0]
     value = raw[0][m.name]
-    return {"label": m.label, "value": value if _number(value) is None else _number(value),
+    unit = units.of(raw[0])
+    return {"label": f"{m.label} ({unit})" if unit else m.label,
+            "value": value if _number(value) is None else _number(value),
             "format": formats[m.name], "display_format": {},
             "state": "missing" if _number(value) is None else "ready", "note": span_words(logical.window)}
 
@@ -415,9 +545,13 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     if not measures or len(records) < 2 or logical.intent == "list":
         return None
     m = measures[0]
+    ranked = _ranked_periods(logical, cols) and not members
     if logical.compare is not None and members:
         prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
         x, ys, kind = members[0], [c.name for c in (prior, m) if c is not None], "bar"
+    elif periods and ranked:
+        # A ranking of periods is drawn as ranked bars, named as periods ("Aug 2025"), never as a time line.
+        x, ys, kind = periods[0], [m.name], "bar"
     elif periods:
         x, ys, kind = periods[0], [c.name for c in measures], "line"
         if members:   # one line per member
@@ -427,16 +561,27 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         kind = "pie" if logical.share and len(records) <= 6 else "bar"
     else:
         return None
+    temporal = x.role == "period" and not ranked
     roles = {c.name: {"column": c.name, "label": labels[c.name],
-                      "role": "temporal" if c.role == "period" else ("measure" if c.name in ys else "dimension"),
-                      "format": "percentage" if formats.get(c.name) == "percentage" else formats.get(c.name)}
+                      "role": "temporal" if c.name == x.name and temporal else (
+                          "measure" if c.name in ys else "dimension"),
+                      "format": "percentage" if formats.get(c.name) == "percentage" else (
+                          "text" if c.name == x.name and ranked else formats.get(c.name))}
              for c in cols.columns if c.name in ys or c.name == x.name}
-    rows = [{x.name: "" if r[x.name] is None else str(r[x.name]), **{y: _number(r[y]) for y in ys}} for r in records]
+
+    def x_value(r: dict) -> str:
+        if ranked and _day(r[x.name]) is not None:
+            return period_label(_day(r[x.name]) or dt.date.min, x.grain or "month", fiscal_start=logical.fiscal_start)
+        return "" if r[x.name] is None else str(r[x.name])
+
+    rows = [{x.name: x_value(r), **{y: _number(r[y]) for y in ys}} for r in records]
+    if temporal:
+        rows.sort(key=lambda r: str(r[x.name]))     # a time axis runs forward, whatever order the table is in
     return {"title": labels[m.name], "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows,
-            "x_style": (display.get(x.name) or {}).get("style", ""),
-            "column_roles": roles, "column_formats": {k: v for k, v in formats.items() if k in roles},
+            "x_style": "" if ranked else (display.get(x.name) or {}).get("style", ""),
+            "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
             "renderable_types": ["bar", "line", "area"] if kind != "pie" else ["pie", "bar"],
-            "allowed_types": ["bar", "line", "area", "pie"], "recommended_type": kind,
+            "allowed_types": ["bar"] if ranked else ["bar", "line", "area", "pie"], "recommended_type": kind,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
             "intent": logical.intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
 

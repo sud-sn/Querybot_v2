@@ -56,6 +56,7 @@ class Context:
     today: dt.date
     allowed_tables: set[str] | None = None      # table keys the reader may use; None = all
     max_rows: int = 5000
+    split_units: bool = False                   # a reader's answer: quantities kept apart by unit (issue E4)
 
 
 @dataclass
@@ -146,6 +147,8 @@ class Logical:
     partial: list[dt.date] = field(default_factory=list)
     fiscal_start: int | None = None
     max_rows: int = 5000
+    unit_group: str | None = None       # the grouping that keeps different units apart, when one was added
+    unit_order: list[str] = field(default_factory=list)   # its units, the most used first (when profiled)
 
 
 class _Aliases:
@@ -427,6 +430,9 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         if wanted and intent in ("list", "breakdown", "rank", "count", "value"):
             return _members(plan, model, ctx, wanted, aliases, intent)
         raise ResolveError("unknown", "the question names no measure", _slugs(model, "measure")[:12])
+    unit_slug = _unit_split(plan, model, ctx, intent, chosen, wanted)
+    if unit_slug is not None:
+        wanted.append((unit_slug, model.attributes[unit_slug], None))
 
     # One part per measure table (and per snapshot kind: levels and flows of one
     # snapshot table are counted over different rows).
@@ -529,7 +535,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 # Names repeat: two members called the same must stay two rows.
                 code_name, code_column = identity_names[slug]
                 part.groups.append(PartGroup(code_name, alias, code_column, "attribute"))
-            if plan.limit:
+            if plan.limit and slug != unit_slug:
                 # A top n ranks real members; rows with none are not a member (a
                 # breakdown keeps them as one empty group, so it adds up to the total).
                 part.preds.append(Pred(alias, column.key, "not_null", []))
@@ -680,9 +686,55 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         elif intent in ("rank", "breakdown", "share") and measures_out and wanted:
             sort = [(measures_out[0].name, True)]
     limit = plan.limit
+    unit_order: list[str] = []
+    if unit_slug is not None:
+        unit = model.attributes[unit_slug]
+        notes.append(f"{', '.join(o.label for o in measures_out if o.measure and o.measure.unit_column)} is shown "
+                     f"per {unit.business_name.lower()}: different units are not added together.")
+        profile = model.columns[unit.column].profile
+        unit_order = [str(t.value) for t in sorted((profile.top or []) if profile else [], key=lambda t: -t.count)
+                      if t.value not in (None, "")]
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
-                   partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows)
+                   partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
+                   unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order)
+
+
+_SPLIT_INTENTS = {"value", "breakdown", "rank", "trend", "compare", "count"}
+
+
+def _unit_split(plan: Plan, model: SemanticModel, ctx: Context, intent: str, chosen: list,
+                wanted: list[tuple[str, Attribute | None, str | None]]) -> str | None:
+    """The unit to keep a quantity apart by, when its rows hold different units and the answer would add
+    them up (issue E4): "1,200 EA and 300 FT", never "1,500". None when the question already groups or
+    filters by the unit, when measures come from more than one table, or when the unit cannot be reached
+    plainly (another table the reader may not use, or two ways to get there)."""
+    if not ctx.split_units or intent not in _SPLIT_INTENTS or len({item[2] for item in chosen}) != 1:
+        return None
+    for m, *_ in chosen:
+        if m is None or not m.unit_column:
+            continue
+        column = getattr(m.expr, "column", None)
+        if not any(f.kind == "unit_mix" and f.object == column for f in model.quality):
+            continue
+        unit_column = model.columns[m.unit_column]
+        attribute = next((a for a in model.attributes.values() if a.column == m.unit_column), None)
+        if attribute is None or unit_column.hidden:
+            return None
+        named = {a.column for _, a, _ in wanted if a is not None}
+        filtered = {model.attributes[f.field].column for f in plan.filters if f.field in model.attributes}
+        if m.unit_column in named | filtered:
+            return None
+        if unit_column.table != m.table:
+            if ctx.allowed_tables is not None and unit_column.table not in ctx.allowed_tables:
+                return None
+            try:
+                if P.best_path(model, m.table, unit_column.table) is None:
+                    return None
+            except P.Ambiguous:
+                return None
+        return attribute.slug
+    return None
 
 
 def _via(model: SemanticModel, plan: Plan, slug: str) -> tuple[str | None, str | None]:
@@ -725,7 +777,7 @@ def _like_for_like(window: Range, compare: Range, last: dt.date | None, kind: st
         prior_end = compare.start + (covered_to - window.start)
     prior_end = min(prior_end, compare.end)
     days = (covered_to - window.start).days
-    note = (f"The data runs to {last:%d %b %Y}, so both periods are compared over their first "
+    note = (f"The data runs to {last.day} {last:%b %Y}, so both periods are compared over their first "
             f"{days} day{'s' if days != 1 else ''}.")
     return Range(window.start, covered_to, window.notes), Range(compare.start, prior_end, compare.notes), note
 

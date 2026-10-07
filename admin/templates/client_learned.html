@@ -162,8 +162,18 @@
       <ul class="lq-review">
         {% for r in view.review %}
         <li><strong>{{ r.question }}</strong><br>
-          Using: {{ r.choice }}{% if r.alternatives %}. Alternatives: {{ r.alternatives|join(', ') }}{% endif %}.
+          {% if r.decided %}{{ r.decided }} (your decision).
+          {% else %}Using: {{ r.choice }}{% if r.alternatives %}. Alternatives: {{ r.alternatives|join(', ') }}{% endif %}.{% endif %}
           {% for e in r.evidence %}<div class="lq-why">{{ e }}</div>{% endfor %}
+          {% if r.action %}
+          <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
+            <input type="hidden" name="target" value="{{ r.action.target }}">
+            <input type="hidden" name="field" value="{{ r.action.field }}">
+            <input type="hidden" name="value" value="{{ r.action.value }}">
+            <input type="hidden" name="note" value="{{ r.action.note }}">
+            <button type="submit" class="btn btn-secondary btn-sm">{{ r.action.label }}</button>
+          </form>
+          {% endif %}
         </li>
         {% endfor %}
       </ul>

@@ -7,6 +7,7 @@ matched. Raw keys appear only where an admin decision has to name its object.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from core2.model.overrides import target
@@ -127,6 +128,28 @@ def learned_view(model: SemanticModel) -> dict[str, Any]:
         "quality": [{"message": q.message, "severity": q.severity, "kind": q.kind.replace("_", " ")}
                     for q in sorted(model.quality, key=lambda q: (q.severity != "warning", q.kind))],
         "review": [{"question": r.question, "choice": r.choice_made, "alternatives": r.alternatives,
-                    "evidence": _evidence(r.evidence)[:4], "object": r.object} for r in model.review],
+                    "evidence": _evidence(r.evidence)[:4], "object": r.object, **_leave_out(model, r.key, r.object)}
+                   for r in model.review],
         "notes": list(model.notes),
     }
+
+
+def _leave_out(model: SemanticModel, key: str, column: str) -> dict[str, Any]:
+    """For a status column with cancel-like codes: the decision that leaves those rows out of the table's
+    totals (a default filter, undone like any decision), or what was already decided."""
+    if not key.startswith("default_filter:") or column not in model.columns:
+        return {}
+    flag = next((q for q in model.quality if q.kind == "status_column" and q.object == column), None)
+    codes = [str(c) for c in (flag.data.get("cancel_like") or [])] if flag else []
+    table = model.tables[model.columns[column].table]
+    if any(f.column == column for f in table.default_filters):
+        decided = next(f for f in table.default_filters if f.column == column)
+        return {"decided": f"Left out: {', '.join(map(str, decided.values))}"}
+    if not codes:
+        return {}
+    filters = [f.model_dump(mode="json") for f in table.default_filters]
+    filters.append({"column": column, "op": "not_in", "values": codes})
+    return {"action": {"target": target("table", table.key), "field": "default_filters",
+                       "value": json.dumps(filters), "label": f"Leave out {', '.join(codes)}",
+                       "note": f"{table.business_name}: rows whose {model.columns[column].business_name.lower()} "
+                               f"is {' or '.join(codes)} are left out of totals"}}

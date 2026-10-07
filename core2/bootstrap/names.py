@@ -33,6 +33,8 @@ FLOW_WORDS = {"cost", "cst", "salary", "sal", "sales", "sls", "sold", "sld", "sa
 # A fallback reading of common abbreviations (weak evidence; AI labels and admins win).
 EXPANSIONS = {
     "acct": "account", "acg": "accounting", "act": "actual", "asg": "assignment", "cfm": "confirmed",
+    "ann": "annual", "bck": "back", "dmd": "demand", "drc": "direct", "isp": "inspection", "lis": "list",
+    "ngv": "negative", "pik": "pick", "psv": "positive", "rjc": "rejected", "rt": "rate",
     "chg": "change", "lmt": "limit", "pln": "planned", "pry": "primary", "crd": "credit", "dbt": "debit",
     "addr": "address", "adj": "adjustment", "alc": "allocated", "amt": "amount",
     "avg": "average", "avl": "available", "bal": "balance", "bdgt": "budget", "bil": "billing", "brg": "bridge",
@@ -146,6 +148,8 @@ def ends_with(longer: list[str], tail: list[str]) -> bool:
 
 
 _DATE_TOKENS = {"dt", "date", "ts", "timestamp", "day", "time"}
+_CURRENCY_TOKENS = {"cd", "code", "key", "id", "rate", "rt", "exch", "exchange", "sym", "symbol", "nm", "name",
+                    "conv", "conversion", "iso"}
 
 
 def _expand(token: str, neighbours: list[str], data_type: str | None) -> str:
@@ -156,6 +160,9 @@ def _expand(token: str, neighbours: list[str], data_type: str | None) -> str:
     if token == "cls":
         # CLS_DT is when something closed; ABC_CLS is a classification.
         return "closed" if set(neighbours) & _DATE_TOKENS else "class"
+    if token == "cur":
+        # CUR_CD is a currency; CUR_ON_HND_QTY is the current quantity.
+        return "currency" if set(neighbours) & _CURRENCY_TOKENS else "current"
     return EXPANSIONS.get(token, token)
 
 
