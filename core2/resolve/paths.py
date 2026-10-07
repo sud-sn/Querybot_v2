@@ -58,10 +58,22 @@ class Ambiguous(Exception):
         self.options = options
 
 
-def _edges(model: SemanticModel) -> dict[str, list[Join]]:
+def usable(j: Join) -> bool:
+    """A link a question may follow: not rejected, and not one of several a column could mean.
+
+    A column whose values fit two tables equally (two small dimensions keyed 1..6)
+    is a question for an admin, never a guess: until one link is approved, neither is used.
+    """
+    if j.trust == "rejected":
+        return False
+    return j.trust == "admin" or j.status == "approved" or not any(e.kind == "ambiguous" for e in j.evidence)
+
+
+def _edges(model: SemanticModel, unconfirmed: bool = False) -> dict[str, list[Join]]:
     out: dict[str, list[Join]] = {}
     for j in sorted(model.joins.values(), key=lambda j: j.key):
-        if j.to_calendar or j.trust == "rejected" or j.cardinality not in ("many_to_one", "one_to_one"):
+        allowed = usable(j) or (unconfirmed and j.trust != "rejected")
+        if j.to_calendar or not allowed or j.cardinality not in ("many_to_one", "one_to_one"):
             continue
         if model.tables.get(j.to_table) is not None and model.tables[j.to_table].kind == "calendar":
             continue
@@ -69,11 +81,16 @@ def _edges(model: SemanticModel) -> dict[str, list[Join]]:
     return out
 
 
-def all_paths(model: SemanticModel, start: str, goal: str, *, through: str | None = None) -> list[Path]:
-    """Every row-safe path from ``start`` to ``goal`` (optionally passing ``through`` a table), best first."""
+def all_paths(model: SemanticModel, start: str, goal: str, *, through: str | None = None,
+              unconfirmed: bool = False) -> list[Path]:
+    """Every row-safe path from ``start`` to ``goal`` (optionally passing ``through`` a table), best first.
+
+    ``unconfirmed`` also follows links waiting for an admin, to say what a question
+    would need confirmed, never to answer it.
+    """
     if start == goal:
         return [Path([])]
-    edges = _edges(model)
+    edges = _edges(model, unconfirmed)
     found: list[Path] = []
     stack: list[tuple[str, list[Join]]] = [(start, [])]
     while stack:

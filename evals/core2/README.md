@@ -67,7 +67,9 @@ questions:
   measures.
 * `group_by`: `table.column` attributes, or `time:day_of_week`,
   `time:month_of_year`, `time:is_weekend`.
-* `filters`: `{column, op, values}`; ops as in DESIGN §7.1.
+* `filters`: `{column, op, values}`; ops as in DESIGN §7.1. A filter on a total
+  ("warehouses with more than 9,000 on hand") names the measure instead:
+  `{measure: {agg, column}, op, values}`.
 * `time`: `{date, grain, window, compare}`; `date` is the date-role column
   (`order_lines.ship_date_key`), omitted when the question names none and the
   default applies (write the default explicitly anyway, so the case is

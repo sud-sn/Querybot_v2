@@ -188,22 +188,26 @@ def period_start(value: exp.Expression, grain: str, dialect: str) -> exp.Express
 
 _DATE_PARTS = {
     "snowflake": {"year": "YEAR(__X__)", "month": "MONTH(__X__)", "day": "DAY(__X__)", "quarter": "QUARTER(__X__)",
-                  "isodow": "DAYOFWEEKISO(__X__)", "isoweek": "WEEKISO(__X__)"},
+                  "isodow": "DAYOFWEEKISO(__X__)", "isoweek": "WEEKISO(__X__)", "hour": "HOUR(__X__)",
+                  "minute": "MINUTE(__X__)"},
     "tsql": {"year": "YEAR(__X__)", "month": "MONTH(__X__)", "day": "DAY(__X__)",
              "quarter": "DATEPART(QUARTER, __X__)",
              "isodow": "((DATEPART(WEEKDAY, __X__) + @@DATEFIRST + 5) % 7) + 1",
-             "isoweek": "DATEPART(ISO_WEEK, __X__)"},
+             "isoweek": "DATEPART(ISO_WEEK, __X__)", "hour": "DATEPART(HOUR, __X__)",
+             "minute": "DATEPART(MINUTE, __X__)"},
     "oracle": {"year": "EXTRACT(YEAR FROM __X__)", "month": "EXTRACT(MONTH FROM __X__)",
                "day": "EXTRACT(DAY FROM __X__)", "quarter": "TO_NUMBER(TO_CHAR(__X__, 'Q'))",
-               "isodow": "(TRUNC(__X__) - TRUNC(__X__, 'IW')) + 1", "isoweek": "TO_NUMBER(TO_CHAR(__X__, 'IW'))"},
+               "isodow": "(TRUNC(__X__) - TRUNC(__X__, 'IW')) + 1", "isoweek": "TO_NUMBER(TO_CHAR(__X__, 'IW'))",
+               "hour": "TO_NUMBER(TO_CHAR(__X__, 'HH24'))", "minute": "TO_NUMBER(TO_CHAR(__X__, 'MI'))"},
     "duckdb": {"year": "YEAR(__X__)", "month": "MONTH(__X__)", "day": "DAY(__X__)", "quarter": "QUARTER(__X__)",
-               "isodow": "ISODOW(__X__)", "isoweek": "WEEKOFYEAR(__X__)"},
+               "isodow": "ISODOW(__X__)", "isoweek": "WEEKOFYEAR(__X__)", "hour": "HOUR(__X__)",
+               "minute": "MINUTE(__X__)"},
 }
-DATE_PARTS = ("year", "month", "day", "quarter", "isodow", "isoweek")
+DATE_PARTS = ("year", "month", "day", "quarter", "isodow", "isoweek", "hour", "minute")
 
 
 def date_part(value: exp.Expression, part: str, dialect: str) -> exp.Expression:
-    """A number from a date: year, month, day, quarter, ISO day of week (Monday 1), ISO week."""
+    """A number from a date: year, month, day, quarter, ISO day of week (Monday 1), ISO week, hour, minute."""
     try:
         text = _DATE_PARTS[dialect][part]
     except KeyError:

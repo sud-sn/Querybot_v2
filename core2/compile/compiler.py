@@ -288,8 +288,8 @@ class _Compiler:
                                        for p in part.preds]
         dated = False
         for use, rng in part.date_ranges:
-            conds.append(self.range_condition(use, rng))
             dated = dated or use is part.date
+            conds.append(self.window_condition(use) if use is part.date else self.range_condition(use, rng))
         if part.date is not None and not dated:
             conds.append(self.range_condition(part.date, Range(None, None)))   # placeholders never count
 
@@ -338,18 +338,27 @@ class _Compiler:
             j = next(j for j in part.joins if j.alias == use.alias)
             on = exp.and_(*[exp.EQ(this=self.col("ls", lc), expression=self.col("lsd", rc)) for _, lc, rc in j.on])
             inner = inner.join(self.table(j.table, "lsd"), on=on, join_type="inner")
-        windows = [r for u, r in part.date_ranges if u is use] or [Range(None, None)]
-        inner = inner.where(exp.and_(*[self.range_condition(inner_use, r) for r in windows]))
+        if any(u is use for u, _ in part.date_ranges):
+            inner = inner.where(self.window_condition(inner_use))
+        else:
+            inner = inner.where(self.range_condition(inner_use, Range(None, None)))
         buckets: list[exp.Expression] = []
         period = next((g for g in part.groups if g.kind == "period"), None)
         if period is not None and period.grain:
             buckets.append(self.bucket(inner_use, period.grain))
         if self.q.compare is not None:
+            # Each compared window has its own last day.
             buckets.append(exp.Case(ifs=[exp.If(this=self.range_condition(inner_use, self.q.window), true=_num(1))],
                                     default=_num(2)))
         if buckets:
             inner = inner.group_by(*buckets)
-        return exp.In(this=self.stored_date(use), query=inner)
+        return exp.In(this=self.stored_date(use), query=inner.subquery())
+
+    def window_condition(self, use: DateUse) -> exp.Expr:
+        """The question's window on its own date; with a comparison, either of the two windows."""
+        if self.q.compare is not None:
+            return exp.or_(self.range_condition(use, self.q.window), self.range_condition(use, self.q.compare))
+        return self.range_condition(use, self.q.window)
 
     # ── the whole query ────────────────────────────────────────────────────
     def compile(self) -> Compiled:

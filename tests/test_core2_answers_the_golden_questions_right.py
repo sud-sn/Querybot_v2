@@ -31,6 +31,16 @@ def test_every_golden_question_gets_the_reference_answer(name, style):
     assert not wrong, "\n\n".join(wrong)
 
 
+@pytest.mark.parametrize("name", [n for n in domains.available() if golden(n)])
+def test_with_generic_names_an_admins_answers_are_all_it_takes(name):
+    # Generic names leave some links and additivities open (two small dimensions
+    # keyed 1..6; a price called C05). The build puts them to an admin; once
+    # answered, every golden question gets the reference answer.
+    results = evaluate(name, "generic", admin=True)
+    wrong = [f"{r.id}: {r.status}: {r.detail}\n{r.sql}" for r in results if r.status != "ok"]
+    assert not wrong, "\n\n".join(wrong)
+
+
 @pytest.mark.parametrize("dialect", ["snowflake", "oracle"])
 def test_a_name_spelled_two_ways_is_caught_where_case_matters(dialect):
     # Defined unquoted (folded to Q), referenced quoted (q): a different name there.

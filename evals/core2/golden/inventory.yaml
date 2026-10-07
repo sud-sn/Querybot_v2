@@ -1,0 +1,526 @@
+domain: inventory
+today: 2026-06-15
+questions:
+  - id: inventory-001
+    question: "How much stock do we have on hand right now?"
+    tags: [value, snapshot]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: daily_balances.on_hand_qty}]
+      time:
+        date: daily_balances.balance_date
+        window: {kind: all}
+    reference_sql: |
+      SELECT SUM(b.on_hand_qty) AS on_hand
+      FROM daily_balances b
+      WHERE b.balance_date = (SELECT MAX(balance_date) FROM daily_balances)
+    expect: {order_matters: false, notes: ["on hand on 12 June 2026, the last balance day"]}
+
+  - id: inventory-002
+    question: "on hand by warehouse"
+    tags: [breakdown, snapshot]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: daily_balances.on_hand_qty}]
+      group_by: [warehouses.warehouse_name]
+      time:
+        date: daily_balances.balance_date
+        window: {kind: all}
+    reference_sql: |
+      SELECT w.warehouse_name, SUM(b.on_hand_qty) AS on_hand
+      FROM daily_balances b
+      LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id
+      WHERE b.balance_date = (SELECT MAX(balance_date) FROM daily_balances)
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 6}
+
+  - id: inventory-003
+    question: "month-end stock on hand for the last 6 months"
+    tags: [trend, snapshot, A5]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: daily_balances.on_hand_qty}]
+      time:
+        date: daily_balances.balance_date
+        grain: month
+        window: {kind: last, unit: month, n: 6}
+    reference_sql: |
+      WITH last_days AS (
+        SELECT MAX(balance_date) AS day
+        FROM daily_balances
+        WHERE balance_date >= DATE '2025-12-01' AND balance_date < DATE '2026-06-01'
+        GROUP BY DATE_TRUNC('month', balance_date))
+      SELECT DATE_TRUNC('month', b.balance_date)::DATE AS period, SUM(b.on_hand_qty) AS on_hand
+      FROM daily_balances b
+      WHERE b.balance_date IN (SELECT day FROM last_days)
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 6}
+
+  - id: inventory-004
+    question: "Which warehouses had the biggest drop in stock on hand from March to May 2026?"
+    tags: [compare, snapshot, A8]
+    plan:
+      intent: compare
+      measures: [{agg: sum, column: daily_balances.on_hand_qty}]
+      group_by: [warehouses.warehouse_name]
+      time:
+        date: daily_balances.balance_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+        compare: {kind: window, window: {kind: between, start: "2026-03-01", end: "2026-03-31"}}
+      sort: [{by: change, desc: false}]
+    reference_sql: |
+      WITH days AS (
+        SELECT MAX(CASE WHEN balance_date >= DATE '2026-05-01' AND balance_date < DATE '2026-06-01' THEN balance_date END) AS cur,
+               MAX(CASE WHEN balance_date >= DATE '2026-03-01' AND balance_date < DATE '2026-04-01' THEN balance_date END) AS pri
+        FROM daily_balances)
+      SELECT w.warehouse_name,
+             SUM(CASE WHEN b.balance_date = d.cur THEN b.on_hand_qty END) AS on_hand,
+             SUM(CASE WHEN b.balance_date = d.pri THEN b.on_hand_qty END) AS on_hand_before,
+             COALESCE(SUM(CASE WHEN b.balance_date = d.cur THEN b.on_hand_qty END), 0)
+               - COALESCE(SUM(CASE WHEN b.balance_date = d.pri THEN b.on_hand_qty END), 0) AS change
+      FROM daily_balances b
+      CROSS JOIN days d
+      LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id
+      WHERE b.balance_date IN (d.cur, d.pri)
+      GROUP BY 1
+      ORDER BY change ASC, w.warehouse_name
+    expect: {order_matters: true, row_count: 6, notes: ["on hand on 31 May 2026 against 31 March 2026"]}
+
+  - id: inventory-005
+    question: "Stock value at the end of each fiscal quarter in fiscal 2026"
+    tags: [trend, snapshot, fiscal]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: monthly_balances.closing_value}]
+      time:
+        date: monthly_balances.period_key
+        grain: fiscal_quarter
+        window: {kind: between, start: "2025-04-01", end: "2026-03-31"}
+    reference_sql: |
+      WITH m AS (
+        SELECT b.period_key, b.closing_value, MAKE_DATE(b.period_key // 100, b.period_key % 100, 1) AS month_start
+        FROM monthly_balances b
+        WHERE b.period_key BETWEEN 202504 AND 202603),
+      q AS (
+        SELECT CAST(month_start - TO_MONTHS(CAST((MONTH(month_start) - 4 + 12) % 3 AS INTEGER)) AS DATE) AS period,
+               period_key, closing_value
+        FROM m),
+      last_periods AS (SELECT period, MAX(period_key) AS last_key FROM q GROUP BY period)
+      SELECT q.period, SUM(q.closing_value) AS closing_value
+      FROM q JOIN last_periods l ON l.period = q.period AND l.last_key = q.period_key
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 4}
+
+  - id: inventory-006
+    question: "closing stock value by month in fiscal 2026"
+    tags: [trend, snapshot, fiscal, A2]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: monthly_balances.closing_value}]
+      time:
+        date: monthly_balances.period_key
+        grain: month
+        window: {kind: between, start: "2025-04-01", end: "2026-03-31"}
+    reference_sql: |
+      SELECT MAKE_DATE(b.period_key // 100, b.period_key % 100, 1) AS period, SUM(b.closing_value) AS closing_value
+      FROM monthly_balances b
+      WHERE b.period_key BETWEEN 202504 AND 202603
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 12}
+
+  - id: inventory-007
+    question: "Inventory value at the end of each fiscal year"
+    tags: [trend, snapshot, fiscal, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: monthly_balances.closing_value}]
+      time:
+        date: monthly_balances.period_key
+        grain: fiscal_year
+        window: {kind: all}
+    reference_sql: |
+      WITH m AS (
+        SELECT b.period_key, b.closing_value, MAKE_DATE(b.period_key // 100, b.period_key % 100, 1) AS month_start
+        FROM monthly_balances b),
+      y AS (
+        SELECT CAST(month_start - TO_MONTHS(CAST((MONTH(month_start) - 4 + 12) % 12 AS INTEGER)) AS DATE) AS period,
+               period_key, closing_value
+        FROM m),
+      last_periods AS (SELECT period, MAX(period_key) AS last_key FROM y GROUP BY period)
+      SELECT y.period, SUM(y.closing_value) AS closing_value
+      FROM y JOIN last_periods l ON l.period = y.period AND l.last_key = y.period_key
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 3, partial_periods: ["2026-04-01"]}
+
+  - id: inventory-008
+    question: "Closing quantity at the end of 2025 by item group"
+    tags: [breakdown, snapshot, D1]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: monthly_balances.closing_qty}]
+      group_by: [item_groups.item_group_name]
+      time:
+        date: monthly_balances.period_key
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT g.item_group_name, SUM(b.closing_qty) AS closing_qty
+      FROM monthly_balances b
+      LEFT JOIN items i ON i.item_id = b.item_id
+      LEFT JOIN item_groups g ON g.item_group_id = i.item_group_id
+      WHERE b.period_key = (SELECT MAX(period_key) FROM monthly_balances WHERE period_key BETWEEN 202501 AND 202512)
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: inventory-009
+    question: "Units received by month this year"
+    tags: [trend, A2, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.movement_ts
+        grain: month
+        window: {kind: this, unit: year}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', m.movement_ts)::DATE AS period, SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      WHERE m.movement_type = 'RCV'
+        AND m.movement_ts >= DATE '2026-01-01' AND m.movement_ts < DATE '2026-06-16'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 6, partial_periods: ["2026-06-01"]}
+
+  - id: inventory-010
+    question: "Receipts by posting week in May 2026"
+    tags: [trend, role-playing, A6]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.posted_date_key
+        grain: week
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('week', c.full_date)::DATE AS period, SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      JOIN calendar c ON c.date_key = m.posted_date_key
+      WHERE m.movement_type = 'RCV'
+        AND c.full_date >= DATE '2026-05-01' AND c.full_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 5, partial_periods: ["2026-04-27"]}
+
+  - id: inventory-011
+    question: "Top 5 items by quantity issued in 2025"
+    tags: [rank]
+    plan:
+      intent: rank
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      group_by: [items.item_name]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["ISS"]}
+      sort: [{by: stock_movements.quantity, desc: true}]
+      limit: 5
+      time:
+        date: stock_movements.movement_ts
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT i.item_name, SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      JOIN items i ON i.item_id = m.item_id
+      WHERE m.movement_type = 'ISS'
+        AND m.movement_ts >= DATE '2025-01-01' AND m.movement_ts < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY quantity DESC, i.item_name
+      LIMIT 5
+    expect: {order_matters: true, row_count: 5}
+
+  - id: inventory-012
+    question: "How many receipts did we have in Q1 2026?"
+    tags: [value, count]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: stock_movements.movement_number}]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.movement_ts
+        window: {kind: between, start: "2026-01-01", end: "2026-03-31"}
+    reference_sql: |
+      SELECT COUNT(DISTINCT m.movement_number) AS receipts
+      FROM stock_movements m
+      WHERE m.movement_type = 'RCV'
+        AND m.movement_ts >= DATE '2026-01-01' AND m.movement_ts < DATE '2026-04-01'
+    expect: {order_matters: false}
+
+  - id: inventory-013
+    question: "share of stock value by warehouse"
+    tags: [share, snapshot]
+    plan:
+      intent: share
+      measures: [{agg: sum, column: daily_balances.on_hand_value}]
+      group_by: [warehouses.warehouse_name]
+      time:
+        date: daily_balances.balance_date
+        window: {kind: all}
+    reference_sql: |
+      SELECT w.warehouse_name, SUM(b.on_hand_value) AS on_hand_value,
+             SUM(b.on_hand_value) / SUM(SUM(b.on_hand_value)) OVER () AS share
+      FROM daily_balances b
+      LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id
+      WHERE b.balance_date = (SELECT MAX(balance_date) FROM daily_balances)
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 6}
+
+  - id: inventory-014
+    question: "Units received in May 2026 and stock on hand at the end of May, by warehouse"
+    tags: [breakdown, two-facts, snapshot]
+    plan:
+      intent: breakdown
+      measures:
+        - {agg: sum, column: stock_movements.quantity}
+        - {agg: sum, column: daily_balances.on_hand_qty}
+      group_by: [warehouses.warehouse_name]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      WITH r AS (
+        SELECT w.warehouse_name, SUM(m.quantity) AS quantity
+        FROM stock_movements m
+        LEFT JOIN warehouses w ON w.warehouse_id = m.warehouse_id
+        WHERE m.movement_type = 'RCV'
+          AND m.movement_ts >= DATE '2026-05-01' AND m.movement_ts < DATE '2026-06-01'
+        GROUP BY 1),
+      o AS (
+        SELECT w.warehouse_name, SUM(b.on_hand_qty) AS on_hand
+        FROM daily_balances b
+        LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id
+        WHERE b.balance_date = (SELECT MAX(balance_date) FROM daily_balances
+                                WHERE balance_date >= DATE '2026-05-01' AND balance_date < DATE '2026-06-01')
+        GROUP BY 1)
+      SELECT COALESCE(r.warehouse_name, o.warehouse_name) AS warehouse_name, r.quantity, o.on_hand
+      FROM r FULL JOIN o ON r.warehouse_name = o.warehouse_name
+    expect: {order_matters: false, row_count: 6, notes: ["the receipt filter applies to receipts only"]}
+
+  - id: inventory-015
+    question: "Receipts by day of the week in 2025"
+    tags: [breakdown, time-attribute]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      group_by: ["time:day_of_week"]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.movement_ts
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT ISODOW(m.movement_ts) AS day_of_week, SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      WHERE m.movement_type = 'RCV'
+        AND m.movement_ts >= DATE '2025-01-01' AND m.movement_ts < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 7}
+
+  - id: inventory-016
+    question: "Which warehouses have more than 9,000 units on hand?"
+    tags: [breakdown, snapshot, total-filter]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: daily_balances.on_hand_qty}]
+      group_by: [warehouses.warehouse_name]
+      filters:
+        - {measure: {agg: sum, column: daily_balances.on_hand_qty}, op: gt, values: [9000]}
+      time:
+        date: daily_balances.balance_date
+        window: {kind: all}
+    reference_sql: |
+      SELECT w.warehouse_name, SUM(b.on_hand_qty) AS on_hand
+      FROM daily_balances b
+      LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id
+      WHERE b.balance_date = (SELECT MAX(balance_date) FROM daily_balances)
+      GROUP BY 1
+      HAVING SUM(b.on_hand_qty) > 9000
+    expect: {order_matters: false}
+
+  - id: inventory-017
+    question: "List the item groups"
+    tags: [list]
+    plan:
+      intent: list
+      group_by: [item_groups.item_group_name]
+    reference_sql: |
+      SELECT g.item_group_name FROM item_groups g ORDER BY 1
+    expect: {order_matters: true, row_count: 6}
+
+  - id: inventory-018
+    question: "How many items do we have?"
+    tags: [count, listed-vs-active]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: items.item_id}]
+    reference_sql: |
+      SELECT COUNT(DISTINCT i.item_id) AS items FROM items i
+    expect: {order_matters: false, notes: ["60 listed; 36 ever stocked"]}
+
+  - id: inventory-019
+    question: "average unit cost of receipts in 2025"
+    tags: [value, C1]
+    plan:
+      intent: value
+      measures: [{agg: avg, column: stock_movements.unit_cost}]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.movement_ts
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT AVG(m.unit_cost) AS unit_cost
+      FROM stock_movements m
+      WHERE m.movement_type = 'RCV'
+        AND m.movement_ts >= DATE '2025-01-01' AND m.movement_ts < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: inventory-020
+    question: "stock on hand for #10 Hex Bolt by warehouse"
+    tags: [breakdown, snapshot, C3]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: daily_balances.on_hand_qty}]
+      group_by: [warehouses.warehouse_name]
+      filters:
+        - {column: items.item_name, op: eq, values: ["#10 Hex Bolt"]}
+      time:
+        date: daily_balances.balance_date
+        window: {kind: all}
+    reference_sql: |
+      SELECT w.warehouse_name, SUM(b.on_hand_qty) AS on_hand
+      FROM daily_balances b
+      JOIN items i ON i.item_id = b.item_id
+      LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id
+      WHERE i.item_name = '#10 Hex Bolt'
+        AND b.balance_date = (SELECT MAX(balance_date) FROM daily_balances)
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: inventory-021
+    question: "quantity received from O'Brien Fittings in 2025"
+    tags: [value, C3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      filters:
+        - {column: suppliers.supplier_name, op: eq, values: ["O'Brien Fittings"]}
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.movement_ts
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      JOIN suppliers s ON s.supplier_id = m.supplier_id
+      WHERE s.supplier_name = 'O''Brien Fittings' AND m.movement_type = 'RCV'
+        AND m.movement_ts >= DATE '2025-01-01' AND m.movement_ts < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: inventory-022
+    question: "How much received stock expires in 2028?"
+    tags: [value, role-playing]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      filters:
+        - {column: stock_movements.expiry_date, op: between, values: ["2028-01-01", "2028-12-31"]}
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.movement_ts
+        window: {kind: all}
+    reference_sql: |
+      SELECT SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      WHERE m.movement_type = 'RCV' AND m.expiry_date >= 20280101 AND m.expiry_date < 20290101
+    expect: {order_matters: false}
+
+  - id: inventory-023
+    question: "stock on hand at Monthly Overflow Store by item group"
+    tags: [breakdown, snapshot, C2]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: daily_balances.on_hand_qty}]
+      group_by: [item_groups.item_group_name]
+      filters:
+        - {column: warehouses.warehouse_name, op: eq, values: ["Monthly Overflow Store"]}
+      time:
+        date: daily_balances.balance_date
+        window: {kind: all}
+    reference_sql: |
+      SELECT g.item_group_name, SUM(b.on_hand_qty) AS on_hand
+      FROM daily_balances b
+      JOIN warehouses w ON w.warehouse_id = b.warehouse_id
+      LEFT JOIN items i ON i.item_id = b.item_id
+      LEFT JOIN item_groups g ON g.item_group_id = i.item_group_id
+      WHERE w.warehouse_name = 'Monthly Overflow Store'
+        AND b.balance_date = (SELECT MAX(balance_date) FROM daily_balances)
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: inventory-024
+    question: "Quarterly receipts in 2025"
+    tags: [trend, A1]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["RCV"]}
+      time:
+        date: stock_movements.movement_ts
+        grain: quarter
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('quarter', m.movement_ts)::DATE AS period, SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      WHERE m.movement_type = 'RCV'
+        AND m.movement_ts >= DATE '2025-01-01' AND m.movement_ts < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 4}
+
+  - id: inventory-025
+    question: "Yearly issues"
+    tags: [trend, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: stock_movements.quantity}]
+      filters:
+        - {column: stock_movements.movement_type, op: eq, values: ["ISS"]}
+      time:
+        date: stock_movements.movement_ts
+        grain: year
+        window: {kind: all}
+    reference_sql: |
+      SELECT DATE_TRUNC('year', m.movement_ts)::DATE AS period, SUM(m.quantity) AS quantity
+      FROM stock_movements m
+      WHERE m.movement_type = 'ISS'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 3, partial_periods: ["2024-01-01", "2026-01-01"]}
+
+  - id: inventory-026
+    question: "What were sales last month?"
+    tags: [declines]
+    expect: {declines: true, notes: ["an inventory warehouse holds no sales: say so, offer issues instead"]}
+
+  - id: inventory-027
+    question: "How many units moved last month?"
+    tags: [asks]
+    expect: {asks: member, notes: ["received, issued, transferred or adjusted: they do not add up to one meaning"]}

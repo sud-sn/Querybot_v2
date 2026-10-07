@@ -72,7 +72,7 @@ def _abbreviate(word: str, extra: dict[str, str] | None = None) -> str:
 
 def warehouse_table(name: str, kind: str, extra: dict[str, str] | None = None) -> str:
     parts = [a for a in (_abbreviate(w, extra) for w in _words(name)) if a]
-    if kind == "calendar":
+    if kind == "calendar" and name == "calendar":
         return "CAL_DIM"
     return "_".join(parts + [_KIND_SUFFIX.get(kind, "TBL")])
 

@@ -30,7 +30,7 @@ from core2.model.schema import (
 )
 from core2.plan.ir import TIME_ATTRIBUTES, Filter, Plan
 from core2.resolve import paths as P
-from core2.resolve.time import Range, partial_periods, periods, resolve_window, shift
+from core2.resolve.time import Range, add_units, partial_periods, periods, resolve_window, shift
 
 # Aliases a validator screens as statements, whatever their quoting.
 _UNSAFE_ALIASES = {"call", "load", "get", "put", "copy", "exec", "execute", "function", "procedure", "merge", "grant",
@@ -42,7 +42,7 @@ class ResolveError(Exception):
 
     def __init__(self, kind: str, message: str, options: list[str] | None = None):
         super().__init__(message)
-        self.kind = kind            # unknown | ambiguous | unsupported | denied | empty
+        self.kind = kind            # unknown | ambiguous | unconfirmed | unsupported | denied | empty
         self.message = message
         self.options = options or []
 
@@ -211,6 +211,13 @@ class _PartBuilder:
             raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be reached "
                                "more than one way", options) from None
         if path is None:
+            waiting = P.all_paths(self.model, self.part.table, table, through=through, unconfirmed=True)
+            if waiting:
+                links = [j for j in waiting[0].joins if not P.usable(j)]
+                raise ResolveError(
+                    "unconfirmed", f"{label or self.model.tables[table].business_name} is reached through a link "
+                    "an admin has not confirmed yet", [f"{self.model.columns[j.from_columns[0]].business_name} -> "
+                                                       f"{self.model.tables[j.to_table].business_name}" for j in links])
             raise ResolveError("unsupported", f"{label or self.model.tables[table].business_name} is not linked to "
                                f"{self.model.tables[self.part.table].business_name}")
         alias = self.part.alias
@@ -298,7 +305,11 @@ def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure, table: st
 
 
 def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
-    return role.first, role.last
+    """The first and last day the role's data covers (a monthly date covers its whole last month)."""
+    last = role.last
+    if last is not None and role.granularity == "month":
+        last = add_units(last.replace(day=1), "month", 1) - dt.timedelta(days=1)
+    return role.first, last
 
 
 def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
@@ -478,26 +489,50 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 raise ResolveError("unsupported", f"a filter on {m.business_name} needs it in the answer")
             having.append(Pred("", target.name, f.op, list(f.values), f"{m.business_name} {_op_words(f)}"))
             continue
+        # Each measure table takes the filters it can reach; in a question about two
+        # tables, a filter on one table's own column limits that table's measures only.
+        took: list[Part] = []
+        missed: list[Part] = []
+        unreachable: ResolveError | None = None
         for builder, _ in builders:
             part = builder.part
             if kind == "date":
                 filter_role = obj
                 assert isinstance(filter_role, DateRole)
                 if filter_role.table != part.table:
+                    missed.append(part)
                     continue
                 use = builder.date(filter_role)
-                values = [dt.date.fromisoformat(str(v)) for v in f.values]
+                try:
+                    values = [dt.date.fromisoformat(str(v)) for v in f.values]
+                except ValueError:
+                    raise ResolveError("unsupported", f"{filter_role.name} needs dates, not {f.values}") from None
                 part.date_ranges.append((use, _date_filter_range(f, values)))
-                notes.append(f"{filter_role.name} {_op_words(f)}.")
+                took.append(part)
                 continue
             attribute = _entity_label(model, f.field) if kind == "entity" else obj
             assert isinstance(attribute, Attribute)
             column = model.columns[attribute.column]
-            alias = builder.reach(column.table, label=attribute.business_name)
+            try:
+                alias = builder.reach(column.table, label=attribute.business_name)
+            except ResolveError as exc:
+                if exc.kind != "unsupported":
+                    raise
+                unreachable = exc
+                missed.append(part)
+                continue
             part.preds.append(Pred(alias, column.key, f.op, list(f.values),
                                    f"{attribute.business_name} {_op_words(f)}"))
-        if kind != "date":
-            label = obj.business_name if hasattr(obj, "business_name") else f.field
+            took.append(part)
+        if not took:
+            if unreachable is not None:
+                raise unreachable
+            raise ResolveError("unsupported", f"{getattr(obj, 'name', f.field)} is not a date of what was asked")
+        label = getattr(obj, "business_name", "") or getattr(obj, "name", "") or f.field
+        if missed:
+            limited = ", ".join(o.label for p in took for o in p.measures)
+            notes.append(f"{label} {_op_words(f)}: this limits {limited} only.")
+        else:
             notes.append(f"{label} {_op_words(f)}.")
 
     # Admin-approved default filters on the measure tables.
@@ -533,13 +568,12 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
 
     # Partial periods of a series.
     partial: list[dt.date] = []
-    if plan.time.grain and first_role and not plan.time.grain.startswith("fiscal"):
-        bounded = Range(window.start or (first_role.first or None), window.end or (
-            (first_role.last + dt.timedelta(days=1)) if first_role.last else None))
+    if plan.time.grain and first_role:
+        bounded = Range(window.start or first, window.end or ((last + dt.timedelta(days=1)) if last else None))
         if bounded.start and bounded.end:
             starts = periods(bounded, plan.time.grain, fiscal_start=fiscal_start)
-            partial = partial_periods(starts, plan.time.grain, first_data=first_role.first,
-                                      last_data=first_role.last, rng=window, fiscal_start=fiscal_start)
+            partial = partial_periods(starts, plan.time.grain, first_data=first, last_data=last, rng=window,
+                                      fiscal_start=fiscal_start)
 
     sort = [(_sort_name(s.by, measures_out, group_names, model), s.desc) for s in plan.sort]
     sort = [(n, d) for n, d in sort if n]

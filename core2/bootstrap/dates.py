@@ -218,6 +218,7 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                     c.add("snapshot", 0.35, why)
 
         _written_later(warehouse, inventory, key, candidates)
+        _load_times(warehouse, inventory, key, candidates)
         business = [c for c in candidates if c.kind in ("event", "snapshot")]
         ranked = sorted(business or [], key=lambda c: (-c.score, [x.name for x in table.columns].index(c.column)))
         if ranked:
@@ -266,6 +267,33 @@ def _written_later(warehouse: Warehouse, inventory: Inventory, key: str, candida
             stamp.add("written_later", -1.0, f"{int(late_rows) / int(n):.0%} of rows were written two months or more "
                       f"after the {names.readable(anchor.column).lower()} they belong to: it records when rows were "
                       "written, not a business date")
+
+
+def _load_times(warehouse: Warehouse, inventory: Inventory, key: str, candidates: list[DateCandidate]) -> None:
+    """A timestamp written at the same few times of day, beside another date, is when a batch loaded the rows.
+
+    Business events happen around the clock or across working hours; a nightly load
+    stamps every row at 03:00. A table's only date stays a business date whatever
+    its times (a shift that always starts at 06:00 is still when the shift started).
+    """
+    if not any(c.kind in ("event", "snapshot") and c.granularity != "timestamp" for c in candidates):
+        return
+    d = warehouse.dialect
+    t = inventory.tables[key]
+    for stamp in candidates:
+        if stamp.granularity != "timestamp" or stamp.kind == "audit":
+            continue
+        s = exp.column(D.ident(stamp.column, d))
+        minute_of_day = D.add(D.mul(D.date_part(s, "hour", d), 60), D.date_part(s.copy(), "minute", d))
+        query = exp.select(exp.Count(this=exp.Literal.number(1)).as_("n"),
+                           exp.Count(this=exp.Distinct(expressions=[minute_of_day])).as_("times")).from_(
+            exp.to_table("__SRC__")).where(exp.not_(exp.Is(this=s.copy(), expression=exp.Null())))
+        n, times = warehouse.query(query.sql(dialect=d).replace(
+            "__SRC__", D.table_sql(t.database, t.schema, t.name, d), 1)).rows[0]
+        if int(n or 0) >= 200 and 0 < int(times or 0) <= 3:
+            stamp.kind = "audit"
+            stamp.add("load_clustering", -1.0, f"all {int(n):,} rows were written at {int(times)} time"
+                      f"{'s' if int(times) > 1 else ''} of day: rows are stamped when a batch loads them")
 
 
 def close_call(candidates: list[DateCandidate]) -> DateCandidate | None:

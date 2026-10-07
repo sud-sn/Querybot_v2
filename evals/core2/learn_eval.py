@@ -82,7 +82,12 @@ def score(domain: Domain, style: str, model: SemanticModel | None = None) -> tup
                 s.add("join_roles", (found.role or "").casefold() == j.role.casefold(),
                       f"{pair[0]} role {found.role!r}, expected {j.role!r}")
     for pair, j in learned.items():
-        if pair not in expected:
+        # A column whose values fit two tables equally is put to an admin as a
+        # choice and used by no question until answered: asking is not inventing,
+        # as long as the right table is among the choices.
+        asked = j.trust == "proposed" and any(e.kind == "ambiguous" for e in j.evidence) and any(
+            p[0] == pair[0] and p in expected for p in learned)
+        if pair not in expected and not asked:
             s.add("joins_precise", False, f"invented {pair[0]} -> {pair[1]} ({j.trust})")
         else:
             s.add("joins_precise", True)

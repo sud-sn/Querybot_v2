@@ -29,6 +29,7 @@ import yaml
 from core2.bootstrap.build import BuildOptions, build_model
 from core2.bootstrap.inventory import from_duckdb
 from core2.compile.compiler import Compiled, compile_query
+from core2.model.overrides import apply_overrides, target
 from core2.model.schema import AggExpr, SemanticModel
 from core2.plan.ir import Plan
 from core2.resolve.resolver import Context, Logical, ResolveError, resolve
@@ -126,8 +127,8 @@ class _Words:
         measures = [self.measure(m) for m in spec.get("measures", [])]
         group_by = [g if g.startswith("time:") else self.attribute(g) for g in spec.get("group_by", [])]
         via = {self.attribute(a): self.entity_through(path[0]) for a, path in (spec.get("via") or {}).items()}
-        filters = [{"field": self.field(f["column"]), "op": f["op"], "values": f.get("values", [])}
-                   for f in spec.get("filters", [])]
+        filters = [{"field": self.measure(f["measure"]) if "measure" in f else self.field(f["column"]),
+                    "op": f["op"], "values": f.get("values", [])} for f in spec.get("filters", [])]
         time = dict(spec.get("time") or {})
         if time.get("date"):
             slug = self.date(time["date"])
@@ -218,7 +219,9 @@ def run_case(case: dict, words: _Words, model: SemanticModel, built: Built, toda
     try:
         logical: Logical = resolve(plan, model, Context(today=today))
     except ResolveError as exc:
-        return CaseResult(cid, "resolve", f"{exc.kind}: {exc.message} {exc.options or ''}")
+        # A link waiting for an admin is a learning gap (level 1), not a wrong answer.
+        status = "not_learned" if exc.kind == "unconfirmed" else "resolve"
+        return CaseResult(cid, status, f"{exc.kind}: {exc.message} {exc.options or ''}")
     try:
         compiled: Compiled = compile_query(logical, model, "duckdb")
     except Exception as exc:     # noqa: BLE001 - reported per case
@@ -250,13 +253,40 @@ def run_case(case: dict, words: _Words, model: SemanticModel, built: Built, toda
     return result
 
 
-def evaluate(domain_name: str, style: str) -> list[CaseResult]:
+def admin_answers(model: SemanticModel, built: Built, domain: Domain) -> list[dict[str, Any]]:
+    """The decisions an admin who knows the business would make on what the build left open.
+
+    Every link put to the admin as a choice is confirmed or rejected, and every
+    measure whose additivity the names could not tell is set, both from the
+    domain's ground truth: what QueryBot answers after an admin has done their part.
+    """
+    tables, columns = _maps(model, built)
+    true_links = {(f"{j.from_table}.{j.from_column}", j.to_table) for j in domain.truth.joins}
+    out: list[dict[str, Any]] = []
+    for j in model.joins.values():
+        if j.trust == "proposed" and any(e.kind == "ambiguous" for e in j.evidence):
+            right = (columns[j.from_columns[0]], tables[j.to_table]) in true_links
+            out.append({"object_key": target("join", j.key), "field": "trust", "value": "admin" if right else "rejected"})
+    truth = {(f"{m.table}.{m.column}"): m for m in domain.truth.measures if m.column}
+    for m in model.measures.values():
+        column = getattr(m.expr, "column", None)
+        t = truth.get(columns.get(column or "", ""))
+        if t is not None and t.additivity != m.additivity and t.agg in ("sum", "avg"):
+            out.append({"object_key": target("measure", m.key), "field": "additivity", "value": t.additivity})
+    return out
+
+
+def evaluate(domain_name: str, style: str, *, admin: bool = False) -> list[CaseResult]:
+    """Every golden question of a domain in one naming style; ``admin`` applies an admin's answers first."""
     spec = golden(domain_name)
     cases = [c for c in spec.get("questions", []) if c.get("plan") and c.get("reference_sql")]
     if not cases:
         return []
     domain = domains.build(domain_name)
     built, model = learn(domain, style)
+    if admin:
+        notes = apply_overrides(model, admin_answers(model, built, domain))
+        assert not notes, notes
     reference = DuckDBWarehouse(materialize(domain, "descriptive").con)
     today = dt.date.fromisoformat(str(spec["today"]))
     words = _Words(model, built)

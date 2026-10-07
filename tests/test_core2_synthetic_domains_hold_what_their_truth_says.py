@@ -132,7 +132,7 @@ def _plan_columns(plan: dict) -> list[str]:
         if "column" in m:
             refs.append(m["column"])
     refs += [g for g in plan.get("group_by", []) if not g.startswith("time:")]
-    refs += [f["column"] for f in plan.get("filters", [])]
+    refs += [f["column"] if "column" in f else f["measure"]["column"] for f in plan.get("filters", [])]
     time = plan.get("time") or {}
     if time.get("date"):
         refs.append(time["date"])

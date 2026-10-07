@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from core2.model.schema import SemanticModel
+from core2.model.schema import AggExpr, Measure, SemanticModel
 
 # What an admin may change, per kind of object. Everything else is the data's call.
 ALLOWED = {
@@ -82,6 +82,9 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
                 notes.append(f"A decision sets {field} on {key} to a value it cannot take ({value!r}).")
                 continue
             setattr(obj, field, getattr(validated, field))
+            if kind == "measure" and field == "additivity":
+                assert isinstance(obj, Measure)
+                _aggregate_as(obj, str(value))
         if hasattr(obj, "provenance"):
             obj.provenance = "admin"  # type: ignore[attr-defined]
         if hasattr(obj, "status"):
@@ -91,3 +94,19 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
             obj.trust = value  # type: ignore[attr-defined]
     model.notes = [n for n in model.notes if not n.startswith("A decision")] + notes
     return notes
+
+
+def _aggregate_as(measure: Measure, additivity: str) -> None:
+    """A column measure follows its additivity: what adds up is summed, what does not (a price) is averaged.
+
+    A balance (semi-additive) is still summed across things, at one point in time.
+    Counts and formulas keep their own aggregation.
+    """
+    expr = measure.expr
+    if not isinstance(expr, AggExpr) or expr.column is None or expr.agg not in ("sum", "avg"):
+        return
+    if expr.agg != ("avg" if additivity == "non_additive" else "sum"):
+        measure.expr = AggExpr(agg="avg" if additivity == "non_additive" else "sum", column=expr.column,
+                               filters=list(expr.filters))
+    if additivity == "semi_additive" and measure.time_aggregation is None:
+        measure.time_aggregation = "last"
