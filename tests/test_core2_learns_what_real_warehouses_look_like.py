@@ -6,7 +6,10 @@ customer and day (it is still invoices, not balances), item names that repeat
 (two items called the same must never be merged), columns that only describe the
 load or are never filled (they are not groupings), abbreviations whose meaning
 depends on the column's type, a description that matches its own table's codes,
-and a stamp named for when rows were entered (a load time, batched or not).
+a stamp named for when rows were entered (a load time, batched or not), and a list of
+people with a birth date (never what the list is dated by) and 9999-12-31 for "not left",
+a department number that is unique beside a name only by chance (a link, not a line number),
+and numbers of events on a month-end table (NUM_OF_DLV: deliveries, added up over months).
 """
 
 from __future__ import annotations
@@ -165,3 +168,84 @@ def test_a_stamp_named_for_when_rows_were_entered_is_a_load_time(runs):
     clustered = any(e.kind == "load_clustering" and "3 times of day" in e.detail for e in entered.evidence)
     assert clustered == runs
     assert any(q.kind == "load_timestamp" and q.object == entered.column for q in model.quality) == runs
+
+
+def test_a_person_is_listed_by_when_they_joined_never_by_their_birth_date():
+    # Every date of the employee list is filled; the birth date comes first. It is a date in
+    # a person's life, not something the business did: the hire date dates the list. An
+    # employee still working has the termination date 9999-12-31, a placeholder, not a date.
+    rng = np.random.default_rng(3)
+    con = duckdb.connect()
+    n = 400
+    hired = pd.Timestamp("2015-01-01") + pd.to_timedelta(rng.integers(0, 3000, n), unit="D")
+    left = hired + pd.to_timedelta(rng.integers(30, 1000, n), unit="D")          # by 2026
+    _load(con, "staff", pd.DataFrame({
+        "staff_id": np.arange(1, n + 1), "staff_name": [f"Person {i}" for i in range(n)],
+        "birth_date": (hired - pd.to_timedelta(rng.integers(8000, 20000, n), unit="D")).date,
+        "hire_date": hired.date,
+        "termination_date": np.where(rng.random(n) < 0.7, pd.Timestamp("9999-12-31").date(), left.date)}))
+    _load(con, "timesheets", pd.DataFrame({
+        "staff_id": rng.integers(1, n + 1, 3000), "work_date": (pd.Timestamp("2025-01-01") + pd.to_timedelta(
+            rng.integers(0, 500, 3000), unit="D")).date, "hours": rng.integers(1, 10, 3000)}))
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="t", options=BuildOptions(workers=1))
+    staff = _table(model, "staff")
+    assert model.columns[model.date_roles[staff.default_date or ""].column].name == "hire_date"
+    left_role = next(r for r in model.date_roles.values() if model.columns[r.column].name == "termination_date")
+    assert left_role.last is not None and left_role.last.year < 2030 and 0.6 < left_role.placeholder_share < 0.8
+    assert any(q.kind == "placeholder_dates" and q.object == left_role.column for q in model.quality)
+
+
+def test_a_link_unique_beside_a_name_by_chance_is_a_link_not_a_line_number():
+    # A few names repeat, each time in another department: name and department are unique
+    # together, the way an order number and its line number are. A line number starts again
+    # at 1 in each order; a department number does not, and stays a link to the departments.
+    rng = np.random.default_rng(8)
+    con = duckdb.connect()
+    _load(con, "dept", pd.DataFrame({"dept_id": np.arange(1, 11), "dept_name": [f"Team {c}" for c in "ABCDEFGHIJ"]}))
+    n = 500
+    names_ = [f"Person {i}" for i in range(n - 20)] + [f"Person {i}" for i in range(20)]
+    first = rng.integers(2, 11, n - 20)
+    dept = np.concatenate([first, (first[:20] % 10) + 1])     # a repeated name is in another department
+    _load(con, "people", pd.DataFrame({"person_id": np.arange(1, n + 1), "person_name": names_, "dept_id": dept,
+                                       "hired_on": (pd.Timestamp("2020-01-01") + pd.to_timedelta(
+                                           rng.integers(0, 2000, n), unit="D")).date}))
+    lines = pd.DataFrame({"order_no": np.repeat([f"SO-{i}" for i in range(300)], 3), "line_no": np.tile([1, 2, 3], 300),
+                          "person_id": rng.integers(1, n + 1, 900), "amount": np.round(rng.uniform(5, 500, 900), 2),
+                          "order_date": np.repeat((pd.Timestamp("2025-01-01") + pd.to_timedelta(
+                              rng.integers(0, 300, 300), unit="D")).date, 3)})
+    lines.insert(0, "line_id", np.arange(1, 901))
+    _load(con, "order_lines", lines)
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="t", options=BuildOptions(workers=1))
+    links = {(model.columns[j.from_columns[0]].name, model.tables[j.to_table].name) for j in model.joins.values()
+             if j.trust != "rejected"}
+    assert ("dept_id", "dept") in links
+    people = _table(model, "people")
+    assert people.kind == "dimension"
+    line_no = next(c for c in model.columns.values() if c.name == "line_no")
+    assert not any(m for m in model.measures.values() if getattr(m.expr, "column", None) == line_no.key)
+
+
+def test_a_number_of_events_on_a_month_end_table_is_counted_and_added_up():
+    # A month-end balance table also counts the month's deliveries and stock counts
+    # (NUM_OF_DLV, NUM_OF_PHY_INV): numbers of events, added up over months, named as
+    # what was counted. The stock on hand beside them is a level, taken at month end.
+    rng = np.random.default_rng(4)
+    con = duckdb.connect()
+    _load(con, "ITM_DMS", pd.DataFrame({"ITM_DMS_KEY": np.arange(1, 41), "ITM_NM": [f"Part {i}" for i in range(40)]}))
+    months = [y * 100 + m for y in (2025, 2026) for m in range(1, 13) if y * 100 + m <= 202608]
+    rows = [(p, i, int(rng.integers(0, 500)), int(rng.integers(0, 4)), int(rng.integers(0, 2)))
+            for p in months for i in range(1, 41)]
+    _load(con, "ITM_BAL_PRD_FCT", pd.DataFrame(rows, columns=["PRD_KEY", "ITM_DMS_KEY", "ON_HND_QTY", "NUM_OF_DLV",
+                                                              "NUM_OF_PHY_INV"]))
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="t", options=BuildOptions(workers=1))
+    by_column = {model.columns[m.expr.column].name: m for m in model.measures.values()
+                 if getattr(m.expr, "column", None)}
+    assert _table(model, "ITM_BAL_PRD_FCT").kind == "snapshot"
+    assert by_column["ON_HND_QTY"].additivity == "semi_additive"
+    assert (by_column["NUM_OF_DLV"].business_name, by_column["NUM_OF_DLV"].additivity) == (
+        "Number of deliveries", "additive")
+    assert (by_column["NUM_OF_PHY_INV"].business_name, by_column["NUM_OF_PHY_INV"].additivity) == (
+        "Number of physical inventories", "additive")

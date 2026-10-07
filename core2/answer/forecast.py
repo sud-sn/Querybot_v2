@@ -267,6 +267,8 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
                      f"{'kept the last level' if snapshot else 'counted as zero'}.")
 
     fmt_ = m.format
+    if fmt_ == "number" and values and all(float(v).is_integer() for v in values):
+        fmt_ = "integer"        # a count kept as a number: "about 47 a month", not 46.68
     table_format = {"currency": "currency", "percent": "percentage"}.get(fmt_, "number")
     headers = ["period", "actual", "forecast", "forecast_low", "forecast_high"]
     labels = {"period": {"week": "Week of", "day": "Day"}.get(grain, "Period"), "actual": "Actual",

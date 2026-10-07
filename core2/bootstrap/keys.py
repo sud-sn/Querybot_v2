@@ -43,6 +43,23 @@ def _duplicates(warehouse: Warehouse, table: InvTable, columns: list[str]) -> in
     return int(warehouse.query(sql).rows[0][0] or 0)
 
 
+def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str) -> bool:
+    """Does ``seq`` start again at 1 in (nearly) every ``doc``, as a line number does in each order?
+
+    A department number beside a nearly unique name is unique with it by chance, and starts at 1
+    only for the names that happen to be in department 1.
+    """
+    d = warehouse.dialect
+    first = exp.Min(this=exp.column(D.ident(seq, d)))
+    inner = exp.select(first.as_("m")).from_(exp.to_table("__SRC__")).group_by(exp.column(D.ident(doc, d)))
+    starts = exp.Sum(this=exp.Case(ifs=[exp.If(this=exp.EQ(this=exp.column("m"), expression=exp.Literal.number(1)),
+                                                true=exp.Literal.number(1))], default=exp.Literal.number(0)))
+    query = exp.select(starts, exp.Count(this=exp.Literal.number(1))).from_(inner.subquery("x"))
+    sql = query.sql(dialect=d).replace("__SRC__", D.table_sql(table.database, table.schema, table.name, d))
+    started, groups = warehouse.query(sql).rows[0]
+    return bool(groups) and int(started or 0) >= 0.9 * int(groups)
+
+
 def _key_like(table: InvTable, profile: TableProfile) -> list[str]:
     out = []
     for c in table.columns:
@@ -113,7 +130,7 @@ def infer_keys(warehouse: Warehouse, table: InvTable, profile: TableProfile) -> 
                 continue
             if profile.columns[doc].distinct * profile.columns[seq].distinct < rows:
                 continue
-            if not _duplicates(warehouse, table, [doc, seq]):
+            if not _duplicates(warehouse, table, [doc, seq]) and _restarts(warehouse, table, doc, seq):
                 found.append([doc, seq])
         result.alternate_keys = found
         return result

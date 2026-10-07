@@ -30,7 +30,8 @@ FLOW_WORDS = {"purchase", "purchased", "pch", "pur", "bought",
               "receipt", "rct", "issued", "iss", "issue", "paid", "budget", "bdgt", "target", "tgt", "plan", "forecast",
               "quota", "hours", "spent", "spend", "movement", "mvt", "shipped", "ship", "shp", "transfer", "tfr",
               "returned", "rtn", "ret", "return", "adjusted", "adj", "consumed", "produced", "scrap", "delivered", "dlv",
-              "invoiced"}
+              "invoiced", "pay", "payroll", "wage", "wages", "earnings", "earned", "withheld", "deduction",
+              "deductions", "bonus", "commission", "overtime", "whld", "hrs"}
 
 # A fallback reading of common abbreviations (weak evidence; AI labels and admins win).
 EXPANSIONS = {
@@ -38,6 +39,8 @@ EXPANSIONS = {
     "ann": "annual", "bck": "back", "dmd": "demand", "drc": "direct", "isp": "inspection", "lis": "list",
     "ngv": "negative", "pik": "pick", "psv": "positive", "rjc": "rejected", "rt": "rate", "efc": "effective",
     "fnn": "finance", "ret": "return", "phy": "physical", "acc": "account", "ctr": "centre", "doc": "document",
+    "whld": "withheld", "hrs": "hours", "ot": "overtime", "slr": "seller", "pty": "party", "ara": "area",
+    "bus": "business", "ned": "needed", "ind": "indicator",
     "chg": "change", "lmt": "limit", "pln": "planned", "pry": "primary", "crd": "credit", "dbt": "debit",
     "addr": "address", "adj": "adjustment", "alc": "allocated", "amt": "amount",
     "avg": "average", "avl": "available", "bal": "balance", "bdgt": "budget", "bil": "billing", "brg": "bridge",
@@ -172,17 +175,20 @@ def _expand(token: str, neighbours: list[str], data_type: str | None) -> str:
         if set(neighbours) & _DATE_TOKENS:
             return "posting"
         return "postal" if set(neighbours) & {"cd", "cde", "code", "zip"} else "PST"
+    if token == "inv" and set(neighbours) & {"phy", "physical", "stk", "stock", "cnt", "count", "cyc", "cycle"}:
+        return "inventory"           # PHY_INV is a physical inventory (a stock count), not an invoice
     if token == "dly":
         # CFM_DLY_DT is a delivery date; ITM_BAL_DLY_FCT is a daily balance.
         return "delivery" if set(neighbours) & _DATE_TOKENS else "daily"
     if token == "cur":
         # CUR_CD is a currency; CUR_ON_HND_QTY is the current quantity.
-        return "currency" if set(neighbours) & _CURRENCY_TOKENS else "current"
+        # CUR_CD is a currency, and so is a CUR table; CUR_ON_HND_QTY is the current quantity.
+        return "currency" if set(neighbours) & _CURRENCY_TOKENS or set(neighbours) <= {"cur"} else "current"
     return EXPANSIONS.get(token, token)
 
 
 # Written in capitals in a name read out: "GL account", not "Gl account".
-ACRONYMS = {"gl", "sku", "abc", "po", "vat", "gst", "hst", "pst", "kpi", "ar", "ap"}
+ACRONYMS = {"gl", "sku", "abc", "po", "vat", "gst", "hst", "pst", "kpi", "ar", "ap", "mrr", "arr", "fte"}
 
 
 def _word(token: str, parts: list[str], data_type: str | None) -> str:

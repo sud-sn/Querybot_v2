@@ -26,11 +26,12 @@ from typing import Any
 
 import yaml
 
+from core2 import ids
 from core2.bootstrap.build import BuildOptions, build_model
 from core2.bootstrap.inventory import from_duckdb
 from core2.compile.compiler import Compiled, compile_query
 from core2.model.overrides import apply_overrides, target
-from core2.model.schema import AggExpr, SemanticModel
+from core2.model.schema import AggExpr, Measure, SemanticModel
 from core2.plan.ir import Plan
 from core2.resolve.resolver import Context, Logical, ResolveError, resolve
 from core2.warehouse.runner import DuckDBWarehouse
@@ -274,11 +275,30 @@ def admin_answers(model: SemanticModel, built: Built, domain: Domain) -> list[di
             right = (columns[j.from_columns[0]], tables[j.to_table]) in true_links
             out.append({"object_key": target("join", j.key), "field": "trust", "value": "admin" if right else "rejected"})
     truth = {(f"{m.table}.{m.column}"): m for m in domain.truth.measures if m.column}
+    learned = set()
     for m in model.measures.values():
         column = getattr(m.expr, "column", None)
         t = truth.get(columns.get(column or "", ""))
-        if t is not None and t.additivity != m.additivity and t.agg in ("sum", "avg"):
+        if t is None or getattr(m.expr, "agg", None) != t.agg:
+            continue
+        learned.add(columns[column or ""])
+        if t.additivity != m.additivity and t.agg in ("sum", "avg"):
             out.append({"object_key": target("measure", m.key), "field": "additivity", "value": t.additivity})
+            if t.time_aggregation and t.time_aggregation != m.time_aggregation:
+                out.append({"object_key": target("measure", m.key), "field": "time_aggregation",
+                            "value": t.time_aggregation})
+    # A number the build read as a code (a headcount of 1 on every row, called C05): the admin defines it.
+    key_of = {logical: key for key, logical in columns.items()}
+    table_of = {logical: key for key, logical in tables.items()}
+    for ref, t in truth.items():
+        if ref in learned or t.agg not in ("sum", "avg") or ref not in key_of:
+            continue
+        measure = Measure(key=f"admin.{ref}", slug=ids.slug(t.name), business_name=t.name,
+                          table=table_of[t.table], expr=AggExpr(agg=t.agg, column=key_of[ref]),  # type: ignore[arg-type]
+                          additivity=t.additivity, time_aggregation=t.time_aggregation,  # type: ignore[arg-type]
+                          format=t.format, kind="model", provenance="admin", status="approved")  # type: ignore[arg-type]
+        out.append({"object_key": target("measure", measure.key), "field": "define",
+                    "value": measure.model_dump(mode="json")})
     return out
 
 

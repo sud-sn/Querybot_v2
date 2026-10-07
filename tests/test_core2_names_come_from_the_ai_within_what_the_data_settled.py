@@ -110,3 +110,14 @@ def test_without_the_ai_a_stock_column_reads_in_words(column, reads):
     from core2.bootstrap.names import readable
 
     assert readable(column) == reads
+
+
+@pytest.mark.parametrize("table, reads", [
+    ("PRD_DMS", "Period"), ("ITM_BAL_PRD_FCT", "Item balance period"), ("PRD_GRP_DMS", "Product group"),
+    ("ABC_CLS_DMS", "ABC class"), ("ITM_BAL_DLY_FCT", "Item balance daily"), ("CUR_DMS", "Currency"),
+    ("SLR_DMS", "Seller"), ("sales_order_lines", "Sales order line"), ("DimCustomers", "Customer"),
+])
+def test_without_the_ai_a_table_reads_in_words_as_its_columns_do(table, reads):
+    from core2.bootstrap.build import _table_name
+
+    assert _table_name(table) == reads

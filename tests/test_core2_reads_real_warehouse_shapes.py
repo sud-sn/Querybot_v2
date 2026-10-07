@@ -3,19 +3,23 @@
 * A monthly table keyed YYYYMM may hold a row for a whole year (month 00, 202600).
   It is not a month: never added to its months, even in an all-time total.
 * A series that stops for years and starts again is forecast from the stretch
-  since it started again, and the answer says so; a long gap is not zeros.
+  since it started again, and the answer says so; a long gap is not zeros, and a
+  series over it names the stretch with no data.
 * "Why did it change?" does not check a grouping most rows cannot reach (a link
   that matches few rows): its answer would be "Unknown".
 * Today's metrics written as formulas (SUM(ON_HAND_QTY * ITEM_COST)) come over:
   checked, then compiled by the new core, in totals and in comparisons.
 * A month whose data starts on the 2nd (a holiday on the 1st) is a whole month;
   a month still under way is not.
+* NUM_OF_RCT is a number of receipts, added up (never a receipt number counted),
+  and a forecast of whole numbers says whole numbers.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 
 import duckdb
 import pytest
@@ -179,3 +183,27 @@ def test_formula_metrics_come_over_and_answer_totals_and_comparisons(stock):
 def test_a_month_is_whole_unless_its_data_really_stops_short(first, last, today, partial):
     starts = [dt.date(2025, m, 1) for m in range(1, 13)] + [dt.date(2026, m, 1) for m in range(1, 7)]
     assert partial_periods(starts, "month", first_data=first, last_data=last, today=today) == partial
+
+
+def test_a_series_that_stops_for_years_names_the_stretch_it_has_no_data_for(stock):
+    con, model = stock
+    payload = _ask(con, model, {"intent": "trend", "measures": [_measure(model, ".sld_qty")], "time": {"grain": "month"}})
+    assert "No data from Aug 2022 to Sep 2025: shown as a gap, not as zero." in payload["coverage_caveats"]
+    months = {r["period"][:7] for r in payload["data"]["rows"]}
+    assert "2022-07" in months and "2025-10" in months and not any("2023" in m for m in months)
+
+
+def test_a_forecast_of_whole_numbers_kept_as_a_number_says_whole_numbers(stock):
+    # Today's metric "Number of receipts" is formatted as a number: its history is whole
+    # numbers, so the forecast is "about 47 a month", not 46.68.
+    con, model = stock
+    copy = model.model_copy(deep=True)
+    receipts = next(m for m in copy.measures.values() if (getattr(m.expr, "column", None) or "").endswith(".num_of_rct"))
+    receipts.format = "number"
+    payload = _ask(con, copy, {"intent": "forecast", "measures": [receipts.slug], "time": {"grain": "month"},
+                               "forecast": {"periods": 3}})
+    headline = payload["answer"]["headline"]
+    assert receipts.business_name == "Number of receipts"          # NUM_OF_RCT: a count to add up
+    assert [m.expr.agg for m in copy.measures.values()                 # never also a receipt number counted
+            if (getattr(m.expr, "column", None) or "").endswith(".num_of_rct")] == ["sum"]
+    assert "Forecast for Sep 2026 to Nov 2026" in headline and not re.search(r"\d\.\d", headline), headline

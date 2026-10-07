@@ -337,8 +337,13 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
 def _table_name(name: str) -> str:
     if names.opaque(name):
         return name
-    words = [names.EXPANSIONS.get(w, w) for w in names.core_table(name)]
-    text = " ".join(words)
+    # Read as a column's name is, each word with its neighbours: PRD_DMS is the period table,
+    # ITM_BAL_PRD_FCT item balances by period, ABC_CLS_DMS the ABC classes.
+    core = names.core_table(name)
+    kept = [p for p in names.tokens(name) if p not in names.TABLE_AFFIXES and not p.isdigit()]
+    if len(kept) == len(core):
+        core = kept[:-1] + core[-1:]       # only the last word is made singular: sales order lines
+    text = names.read_tokens(core)
     return text[:1].upper() + text[1:]
 
 

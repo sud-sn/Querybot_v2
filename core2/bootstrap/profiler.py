@@ -57,6 +57,12 @@ def _num(value: object) -> float | None:
         return None
 
 
+# Dates outside these are placeholders a system writes for "none" or "still open" (1900-01-01,
+# 1753-01-01, 9999-12-31): the same bounds the compiler keeps every date question within.
+FIRST_REAL_DAY = dt.date(1901, 1, 1)
+AFTER_REAL_DAY = dt.date(9000, 1, 1)
+
+
 def _text(value: object) -> str | None:
     if value is None:
         return None
@@ -237,6 +243,34 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
             # disqualify a date key either: most values must be dates.
             if p.non_null and valid >= 0.9 * p.non_null:
                 p.pattern = pattern
+
+    # 2b. placeholder dates in date columns: counted apart, and left out of the first and last dates
+    dated: list[tuple[str, str, exp.Expression]] = []
+    for column in table.columns:
+        p = profiles[column.name]
+        if column.data_type not in ("date", "timestamp") or not p.min or not p.max:
+            continue
+        if FIRST_REAL_DAY.isoformat() <= p.min[:10] and p.max[:10] < AFTER_REAL_DAY.isoformat():
+            continue
+        c = exp.column(D.ident(column.name, dialect))
+        real = exp.and_(exp.GTE(this=c.copy(), expression=D.date_literal(FIRST_REAL_DAY, dialect)),
+                        exp.LT(this=c.copy(), expression=D.date_literal(AFTER_REAL_DAY, dialect)))
+        other = exp.and_(exp.not_(exp.Is(this=c.copy(), expression=exp.Null())), exp.not_(real.copy()))
+        dated.append((column.name, "placeholders", exp.Sum(this=exp.Case(
+            ifs=[exp.If(this=other, true=exp.Literal.number(1))], default=exp.Literal.number(0)))))
+        real_day = exp.Case(ifs=[exp.If(this=real, true=c.copy())])
+        dated.append((column.name, "min_valid", exp.Min(this=real_day)))
+        dated.append((column.name, "max_valid", exp.Max(this=real_day.copy())))
+    if dated:
+        query = exp.select(*[e.as_(f"s{i}") for i, (_, _, e) in enumerate(dated)]).from_(exp.to_table("__SRC__"))
+        values = warehouse.query(query.sql(dialect=dialect).replace("__SRC__", source, 1)).rows[0]
+        for (name, stat, _), value in zip(dated, values):
+            p = profiles[name]
+            if stat == "placeholders":
+                count = int(value or 0)
+                p.placeholder_rows = int(round(count * rows / sample_rows)) if sampled and sample_rows else count
+            else:
+                setattr(p, "date_min" if stat == "min_valid" else "date_max", _text(value))
 
     # 3. common values
     low = [c for c in table.columns

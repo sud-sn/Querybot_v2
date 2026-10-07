@@ -44,6 +44,7 @@ _PLANNED = {"planned", "plan", "pln", "promised", "requested", "rqs", "req", "ex
             "scheduled", "sched", "forecast", "estimated", "est"}
 _DUE = {"due", "deadline", "expiry", "expires", "expiration", "maturity"}
 _CANCEL = {"cancel", "cancelled", "canceled", "cnl", "void", "voided", "reversed", "rejected"}
+_PERSONAL = {"birth", "dob", "born", "birthday"}
 MARGIN = 0.1
 
 
@@ -118,7 +119,9 @@ def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: st
         exp.select(*[exp.column(D.ident(e, d)) for e in chosen]).distinct().from_(exp.to_table("__SRC__")).subquery("e"))
     things = int(warehouse.query(things_q.sql(dialect=d).replace("__SRC__", source)).rows[0][0] or 0)
     recurrence = rows / things if things else 0.0
-    if recurrence >= max(3.0, 0.5 * periods):
+    # A growing base (subscriptions that start each month) holds each thing in fewer than half the
+    # periods; a third still tells a snapshot from events, which seldom repeat per thing and period.
+    if recurrence >= max(3.0, 0.3 * periods):
         return True, (f"each of {things:,} combinations of {', '.join(chosen)} recurs in about "
                       f"{recurrence:.0f} of {periods} periods")
     # A short history cannot show things recurring; the names can still say the
@@ -163,9 +166,10 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             else:
                 continue
             c = DateCandidate(table=key, column=column.name, via_calendar=join, granularity=granularity)
-            filled = p.non_null - (join.placeholder_rows if join else 0)
+            placeholders = join.placeholder_rows if join else (p.placeholder_rows or 0)
+            filled = p.non_null - placeholders
             c.coverage = filled / profile.rows if profile.rows else 0.0
-            c.placeholder_share = (join.placeholder_rows / profile.rows) if join and profile.rows else 0.0
+            c.placeholder_share = placeholders / profile.rows if profile.rows else 0.0
             c.whole_year_share = (p.whole_year_rows or 0) / profile.rows if profile.rows else 0.0
             low, high = (p.date_min, p.date_max) if p.date_min else (p.min, p.max)
             c.first, c.last = _parse_day(low, granularity), _parse_day(high, granularity)
@@ -206,6 +210,9 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                 c.add("planned_name", -0.25, f"the name ({readable}) says it is planned or requested")
             elif word_set & _CANCEL:
                 c.add("cancel_name", -0.3, f"the name ({readable}) says it applies only to cancelled rows")
+            elif word_set & _PERSONAL:
+                c.add("personal_name", -0.5, f"the name ({readable}) is a date in a person's life, not an event "
+                      "the table records")
             meaningful = not names.opaque(c.column) and not names.opaque(table.name)
             if meaningful and words and table_words and any(names.same_word(w, t) for w in words for t in table_words):
                 c.add("names_event", 0.25, f"{readable} is the event the table records")

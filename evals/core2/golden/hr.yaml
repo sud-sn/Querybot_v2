@@ -1,0 +1,401 @@
+domain: hr
+today: 2026-06-15
+questions:
+  - id: hr-001
+    question: "What was our headcount at the end of May 2026?"
+    tags: [value, snapshot]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: headcount_monthly.headcount}]
+      time:
+        date: headcount_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT SUM(h.headcount) AS headcount
+      FROM headcount_monthly h
+      WHERE h.month_end_date = DATE '2026-05-31'
+    expect: {order_matters: false, notes: ["a level: taken at the month's end, never added up over months"]}
+
+  - id: hr-002
+    question: "Headcount by department at the end of 2025"
+    tags: [breakdown, snapshot, D1]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: headcount_monthly.headcount}]
+      group_by: [departments.department_name]
+      time:
+        date: headcount_monthly.month_end_date
+        window: {kind: between, start: "2025-12-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT d.department_name, SUM(h.headcount) AS headcount
+      FROM headcount_monthly h
+      LEFT JOIN departments d ON d.department_id = h.department_id
+      WHERE h.month_end_date = DATE '2025-12-31'
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 10, notes: ["the department each row was in that month, not today's"]}
+
+  - id: hr-003
+    question: "Headcount by month in 2025"
+    tags: [trend, snapshot, A2]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: headcount_monthly.headcount}]
+      time:
+        date: headcount_monthly.month_end_date
+        grain: month
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', h.month_end_date)::DATE AS period, SUM(h.headcount) AS headcount
+      FROM headcount_monthly h
+      WHERE h.month_end_date >= DATE '2025-01-01' AND h.month_end_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 12}
+
+  - id: hr-004
+    question: "FTE by location at the end of May 2026"
+    tags: [breakdown, snapshot]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: headcount_monthly.fte}]
+      group_by: [locations.location_name]
+      time:
+        date: headcount_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT l.location_name, SUM(h.fte) AS fte
+      FROM headcount_monthly h
+      LEFT JOIN locations l ON l.location_id = h.location_id
+      WHERE h.month_end_date = DATE '2026-05-31'
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 5}
+
+  - id: hr-005
+    question: "What did salaries cost in 2025?"
+    tags: [value, snapshot-flow]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: headcount_monthly.monthly_salary}]
+      time:
+        date: headcount_monthly.month_end_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(h.monthly_salary) AS monthly_salary
+      FROM headcount_monthly h
+      WHERE h.month_end_date >= DATE '2025-01-01' AND h.month_end_date < DATE '2026-01-01'
+    expect: {order_matters: false, notes: ["the month's salary is an amount for the month: twelve months add up"]}
+
+  - id: hr-006
+    question: "Gross pay by month this year"
+    tags: [trend, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: payroll.gross_pay}]
+      time:
+        date: payroll.pay_date
+        grain: month
+        window: {kind: this, unit: year}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', p.pay_date)::DATE AS period, SUM(p.gross_pay) AS gross_pay
+      FROM payroll p
+      WHERE p.pay_date >= DATE '2026-01-01' AND p.pay_date < DATE '2026-06-16'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 6, partial_periods: ["2026-06-01"]}
+
+  - id: hr-007
+    question: "Overtime hours by department in Q1 2026"
+    tags: [breakdown, D1]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: payroll.overtime_hours}]
+      group_by: [departments.department_name]
+      time:
+        date: payroll.pay_date
+        window: {kind: between, start: "2026-01-01", end: "2026-03-31"}
+    reference_sql: |
+      SELECT d.department_name, SUM(p.overtime_hours) AS overtime_hours
+      FROM payroll p
+      LEFT JOIN departments d ON d.department_id = p.department_id
+      WHERE p.pay_date >= DATE '2026-01-01' AND p.pay_date < DATE '2026-04-01'
+      GROUP BY 1
+    expect: {order_matters: false, notes: ["the department the pay was booked to, not the employee's current one"]}
+
+  - id: hr-008
+    question: "How many people did we hire in 2025?"
+    tags: [count, dimension-date]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: employees.employee_id}]
+      time:
+        date: employees.hire_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT COUNT(*) AS employees
+      FROM employees e
+      WHERE e.hire_date >= DATE '2025-01-01' AND e.hire_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: hr-009
+    question: "Leavers by month in 2025"
+    tags: [trend, role-date, placeholder]
+    plan:
+      intent: trend
+      measures: [{agg: count_distinct, column: employees.employee_id}]
+      time:
+        date: employees.termination_date
+        grain: month
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', e.termination_date)::DATE AS period, COUNT(*) AS employees
+      FROM employees e
+      WHERE e.termination_date >= DATE '2025-01-01' AND e.termination_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true}
+
+  - id: hr-010
+    question: "Leavers by year"
+    tags: [trend, placeholder, A7]
+    plan:
+      intent: trend
+      measures: [{agg: count_distinct, column: employees.employee_id}]
+      time:
+        date: employees.termination_date
+        grain: year
+        window: {kind: all}
+    reference_sql: |
+      SELECT DATE_TRUNC('year', e.termination_date)::DATE AS period, COUNT(*) AS employees
+      FROM employees e
+      WHERE e.termination_date < DATE '9000-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 4, partial_periods: ["2026-01-01"],
+             notes: ["9999-12-31 means still working: not a year of leavers"]}
+
+  - id: hr-011
+    question: "How many employees have left?"
+    tags: [count, placeholder]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: employees.employee_id}]
+      time:
+        date: employees.termination_date
+    reference_sql: |
+      SELECT COUNT(*) AS employees
+      FROM employees e
+      WHERE e.termination_date < DATE '9000-01-01'
+    expect: {order_matters: false, notes: ["only those with a termination date"]}
+
+  - id: hr-012
+    question: "How many active employees do we have?"
+    tags: [count]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: employees.employee_id}]
+      filters:
+        - {column: employees.status, op: eq, values: ["A"]}
+    reference_sql: |
+      SELECT COUNT(*) AS employees FROM employees e WHERE e.status = 'A'
+    expect: {order_matters: false}
+
+  - id: hr-013
+    question: "Gross pay for Sales & Marketing in 2025"
+    tags: [value, C3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: payroll.gross_pay}]
+      filters:
+        - {column: departments.department_name, op: eq, values: ["Sales & Marketing"]}
+      time:
+        date: payroll.pay_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(p.gross_pay) AS gross_pay
+      FROM payroll p
+      JOIN departments d ON d.department_id = p.department_id
+      WHERE d.department_name = 'Sales & Marketing'
+        AND p.pay_date >= DATE '2025-01-01' AND p.pay_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: hr-014
+    question: "Weekly Ops Planning headcount at the end of May 2026"
+    tags: [value, C2, snapshot]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: headcount_monthly.headcount}]
+      filters:
+        - {column: departments.department_name, op: eq, values: ["Weekly Ops Planning"]}
+      time:
+        date: headcount_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT SUM(h.headcount) AS headcount
+      FROM headcount_monthly h
+      JOIN departments d ON d.department_id = h.department_id
+      WHERE d.department_name = 'Weekly Ops Planning' AND h.month_end_date = DATE '2026-05-31'
+    expect: {order_matters: false, notes: ["'Weekly' is part of the name, not a weekly grain"]}
+
+  - id: hr-015
+    question: "Net pay since March 2026"
+    tags: [value, A3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: payroll.net_pay}]
+      time:
+        date: payroll.pay_date
+        window: {kind: since, start: "2026-03-01"}
+    reference_sql: |
+      SELECT SUM(p.net_pay) AS net_pay
+      FROM payroll p
+      WHERE p.pay_date >= DATE '2026-03-01' AND p.pay_date < DATE '2026-06-16'
+    expect: {order_matters: false}
+
+  - id: hr-016
+    question: "gross pay from 1 to 14 May 2026"
+    tags: [value, A4]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: payroll.gross_pay}]
+      time:
+        date: payroll.pay_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-14"}
+    reference_sql: |
+      SELECT SUM(p.gross_pay) AS gross_pay
+      FROM payroll p
+      WHERE p.pay_date >= DATE '2026-05-01' AND p.pay_date < DATE '2026-05-15'
+    expect: {order_matters: false}
+
+  - id: hr-017
+    question: "Gross pay by month for the last 3 months"
+    tags: [trend, A5]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: payroll.gross_pay}]
+      time:
+        date: payroll.pay_date
+        grain: month
+        window: {kind: last, unit: month, n: 3}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', p.pay_date)::DATE AS period, SUM(p.gross_pay) AS gross_pay
+      FROM payroll p
+      WHERE p.pay_date >= DATE '2026-03-01' AND p.pay_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 3}
+
+  - id: hr-018
+    question: "Which departments' gross pay grew the most from Q4 2025 to Q1 2026?"
+    tags: [compare, rank, A8]
+    plan:
+      intent: compare
+      measures: [{agg: sum, column: payroll.gross_pay}]
+      group_by: [departments.department_name]
+      time:
+        date: payroll.pay_date
+        window: {kind: between, start: "2026-01-01", end: "2026-03-31"}
+        compare: {kind: window, window: {kind: between, start: "2025-10-01", end: "2025-12-31"}}
+      sort: [{by: change, desc: true}]
+    reference_sql: |
+      SELECT d.department_name,
+             SUM(CASE WHEN p.pay_date < DATE '2026-01-01' THEN p.gross_pay END) AS gross_before,
+             SUM(CASE WHEN p.pay_date >= DATE '2026-01-01' THEN p.gross_pay END) AS gross_pay,
+             COALESCE(SUM(CASE WHEN p.pay_date >= DATE '2026-01-01' THEN p.gross_pay END), 0)
+               - COALESCE(SUM(CASE WHEN p.pay_date < DATE '2026-01-01' THEN p.gross_pay END), 0) AS change
+      FROM payroll p
+      LEFT JOIN departments d ON d.department_id = p.department_id
+      WHERE p.pay_date >= DATE '2025-10-01' AND p.pay_date < DATE '2026-04-01'
+      GROUP BY 1
+      ORDER BY change DESC, d.department_name
+    expect: {order_matters: true}
+
+  - id: hr-019
+    question: "What share of 2025 gross pay went to each location?"
+    tags: [share, snowflake]
+    plan:
+      intent: share
+      measures: [{agg: sum, column: payroll.gross_pay}]
+      group_by: [locations.location_name]
+      time:
+        date: payroll.pay_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT l.location_name, SUM(p.gross_pay) AS gross_pay,
+             SUM(p.gross_pay) / SUM(SUM(p.gross_pay)) OVER () AS share
+      FROM payroll p
+      LEFT JOIN employees e ON e.employee_id = p.employee_id
+      LEFT JOIN locations l ON l.location_id = e.location_id
+      WHERE p.pay_date >= DATE '2025-01-01' AND p.pay_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false, notes: ["payroll reaches a location only through the employee"]}
+
+  - id: hr-020
+    question: "list the departments"
+    tags: [list]
+    plan:
+      intent: list
+      group_by: [departments.department_name]
+    reference_sql: |
+      SELECT d.department_name FROM departments d ORDER BY 1
+    expect: {order_matters: true, row_count: 10}
+
+  - id: hr-021
+    question: "Headcount by employment type at the end of May 2026"
+    tags: [breakdown, snapshot]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: headcount_monthly.headcount}]
+      group_by: [employees.employment_type]
+      time:
+        date: headcount_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT e.employment_type, SUM(h.headcount) AS headcount
+      FROM headcount_monthly h
+      LEFT JOIN employees e ON e.employee_id = h.employee_id
+      WHERE h.month_end_date = DATE '2026-05-31'
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 3}
+
+  - id: hr-022
+    question: "Headcount by department at the end of 2025, then 2024"
+    tags: [follow-up, B1]
+    turns:
+      - question: "Headcount by department at the end of 2025"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: headcount_monthly.headcount}]
+          group_by: [departments.department_name]
+          time:
+            date: headcount_monthly.month_end_date
+            window: {kind: between, start: "2025-12-01", end: "2025-12-31"}
+        reference_sql: |
+          SELECT d.department_name, SUM(h.headcount) AS headcount
+          FROM headcount_monthly h
+          LEFT JOIN departments d ON d.department_id = h.department_id
+          WHERE h.month_end_date = DATE '2025-12-31'
+          GROUP BY 1
+      - question: "and at the end of 2024?"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: headcount_monthly.headcount}]
+          group_by: [departments.department_name]
+          time:
+            date: headcount_monthly.month_end_date
+            window: {kind: between, start: "2024-12-01", end: "2024-12-31"}
+        reference_sql: |
+          SELECT d.department_name, SUM(h.headcount) AS headcount
+          FROM headcount_monthly h
+          LEFT JOIN departments d ON d.department_id = h.department_id
+          WHERE h.month_end_date = DATE '2024-12-31'
+          GROUP BY 1
+
+  - id: hr-023
+    question: "What was the pay in May?"
+    tags: [asks]
+    expect: {asks: measure, notes: ["gross pay, net pay or the month's salary: none is the obvious one"]}
+
+  - id: hr-024
+    question: "What were our sales in May?"
+    tags: [declines]
+    expect: {declines: true, notes: ["an HR warehouse holds no sales"]}

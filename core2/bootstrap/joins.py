@@ -231,7 +231,14 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     grain = calendars[to_table].grain
                     plausible = (a.pattern == "yyyymmdd" and grain == "day") or (a.pattern == "yyyymm" and grain == "month") \
                         or (column.data_type == "date" and grain == "day") or is_declared or score > 0
-                if to_table == key and not (is_declared or (score >= 0.8 and _HIERARCHY & set(names.tokens(column.name)))):
+                words = names.tokens(column.name)
+                # MGR_KEY on the employees: a key named for a step up a hierarchy. Few rows are managers,
+                # so the share of members it uses proves nothing; the test run decides.
+                up_the_hierarchy = to_table == key and bool(_HIERARCHY & set(words)) and bool(words) \
+                    and words[-1] in names.KEY_SUFFIXES
+                if to_table == key and not (is_declared or score >= 0.8 and up_the_hierarchy
+                                            or up_the_hierarchy and column.data_type == inventory.tables[key].type_of(
+                                                to_column)):
                     continue   # a table points at itself only up a hierarchy (a parent, a manager)
                 if is_calendar and not (is_declared or score >= 0.9):
                     continue   # a calendar's own period numbers are not foreign keys
@@ -240,6 +247,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 if plausible and not (is_declared or score) and not to_calendar \
                         and not names.opaque(column.name) and not _shares_a_word(column.name, inventory.tables[to_table].name):
                     plausible = False   # whole-number keys collide by chance: a meaningful name must agree
+                plausible = plausible or up_the_hierarchy
                 if not (is_declared or score >= 0.75 or plausible):
                     continue
                 candidates[ident] = JoinFinding(*ident, declared=is_declared, name_score=score, role_tokens=role,
@@ -264,7 +272,14 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         if f.name_score:
             f.evidence.append(Evidence(kind="name_match", weight=f.name_score,
                                        detail=f"the names match ({f.from_column} -> {f.to_column})"))
-        if f.match_rate >= VERIFIED:
+        distinct = profiles[f.from_table].columns[f.from_column].distinct
+        if not (f.declared or f.name_score) and f.unmatched_values > 0.2 * distinct:
+            # Values alone, and a fifth of them found nowhere (seats 10, 15, 20 and 25 against six plans):
+            # the numbers only happen to overlap. A real link's strays are a few deleted members.
+            f.trust = "rejected"
+            f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
+                f"{f.unmatched_values:,} of its {distinct:,} values are found nowhere: the numbers only overlap")))
+        elif f.match_rate >= VERIFIED:
             f.trust = "verified"
         elif f.declared and f.match_rate >= PROPOSED:
             f.trust = "declared"   # usable, as the database says; the unmatched rows are reported
@@ -330,8 +345,10 @@ def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:
     for group in by_pair.values():
         for f in group:
             words = list(f.role_tokens)
-            if not words and len(group) > 1 and not names.opaque(f.from_column):
+            own = False         # the column names the role itself (MANAGER_ID on employees: the manager)
+            if not words and (len(group) > 1 or f.from_table == f.to_table) and not names.opaque(f.from_column):
                 words = names.core_column(f.from_column)
+                own = f.from_table == f.to_table
             if not words:
                 continue
             # Read in the company of the noun: "CFM DLY" before a date is a confirmed delivery.
@@ -342,6 +359,6 @@ def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:
                 target = inventory.tables[f.to_table].name
                 noun = "" if names.opaque(target) else " ".join(
                     names.EXPANSIONS.get(w, w) for w in names.core_table(target))
-            if noun and not text.endswith(noun):
+            if noun and not own and not text.endswith(noun):
                 text = f"{text} {noun}"
             f.role = text[:1].upper() + text[1:]

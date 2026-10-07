@@ -9,6 +9,11 @@
   as a cancellation to leave out; the minority value (X) is.
 * A table joined only to keep units apart is not described as a path the reader
   chose; a grouping the reader asked for still is.
+* A period of a series with no row at all (a month-end snapshot never loaded) is
+  named as a gap, not left for the reader to take as a zero; a top N, which leaves
+  periods out on purpose, says nothing.
+* A count by a date that most rows lack (subscriptions still running have no end
+  date) counts the rows that have it, and says how many do not.
 """
 
 from __future__ import annotations
@@ -34,18 +39,28 @@ def purchasing():
 
 
 @pytest.fixture(scope="module")
+def subscriptions():
+    built, model = learn(domains.build("subscriptions"), "descriptive")
+    return built.con, model
+
+
+@pytest.fixture(scope="module")
 def retail():
     built, model = learn(domains.build("retail"), "descriptive")
     return built.con, model
 
 
-def _notes(learned, plan: dict) -> list[str]:
+def _payload(learned, plan: dict) -> dict:
     con, model = learned
     services = Services(model=model, warehouse=DuckDBWarehouse(con), complete=lambda s, t: json.dumps(
         {"kind": "query", **plan}), index=MemberIndex(), today=TODAY)
     payload = answer_question("q", services, Session())
     assert payload["data"]["rows"], payload
-    return payload["trust"]["date_context"]
+    return payload
+
+
+def _notes(learned, plan: dict) -> list[str]:
+    return _payload(learned, plan)["trust"]["date_context"]
 
 
 def _between(start: str, end: str, **time) -> dict:
@@ -106,3 +121,33 @@ def test_a_table_joined_only_to_keep_units_apart_is_not_called_a_path(purchasing
     by_category = _notes(purchasing, {"intent": "breakdown", "measures": ["received_quantity"],
                                       "group_by": ["item.category"]})
     assert any(n.startswith("Item: each row's own") for n in by_category), by_category
+
+
+def test_a_period_with_no_row_is_named_a_gap_not_left_to_read_as_zero(subscriptions):
+    con, model = subscriptions
+    assert not con.execute("SELECT COUNT(*) FROM mrr_monthly WHERE month_end_date = DATE '2025-02-28'").fetchone()[0]
+    by_month = {"intent": "trend", "measures": ["mrr"], "time": _between("2025-01-01", "2025-12-31", grain="month")}
+    payload = _payload(subscriptions, by_month)
+    assert len(payload["data"]["rows"]) == 11
+    assert "No data for Feb 2025: shown as a gap, not as zero." in payload["coverage_caveats"]
+    assert payload["answer"]["headline"].startswith("MRR in 2025, by month:")        # an acronym, as written
+    whole = _payload(subscriptions, {**by_month, "time": _between("2025-03-01", "2025-12-31", grain="month")})
+    assert not any(c.startswith("No data") for c in whole["coverage_caveats"])
+    # Before the data starts (January 2024) a month has no row because nothing was there yet.
+    early = _payload(subscriptions, {**by_month, "time": _between("2023-07-01", "2024-06-30", grain="month")})
+    assert len(early["data"]["rows"]) == 6
+    assert not any(c.startswith("No data") for c in early["coverage_caveats"]), early["coverage_caveats"]
+    top = _payload(subscriptions, {**by_month, "intent": "rank", "sort": [{"by": "mrr", "desc": True}], "limit": 3})
+    assert not any(c.startswith("No data") for c in top["coverage_caveats"])
+
+
+def test_a_count_by_a_date_most_rows_lack_says_how_many_lack_it(subscriptions):
+    con, model = subscriptions
+    ended = con.execute("SELECT COUNT(*) FROM subscriptions WHERE end_date IS NOT NULL").fetchone()[0]
+    running = con.execute("SELECT AVG(CASE WHEN end_date IS NULL THEN 1.0 ELSE 0 END) FROM subscriptions").fetchone()[0]
+    payload = _payload(subscriptions, {"intent": "count", "measures": ["number_of_subscriptions"],
+                                       "time": {"date": "end_date"}})
+    assert payload["kpi"]["value"] == ended
+    assert f"Rows with no end date ({float(running):.0%}) are left out." in payload["trust"]["date_context"]
+    payload = _payload(subscriptions, {"intent": "count", "measures": ["number_of_subscriptions"]})
+    assert payload["kpi"]["value"] == con.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]

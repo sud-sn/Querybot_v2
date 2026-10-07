@@ -42,6 +42,39 @@ def _number(value: Any) -> float | None:
     return None
 
 
+def _gaps(logical: Logical, cols: "_Columns", raw: list[dict], truncated: bool) -> str:
+    """Periods of a series with no row at all (a month never loaded): named, so a gap is not read as a zero.
+
+    Not when rows were left out on purpose: a top N, a filter on the totals, a cut list.
+    """
+    periods = cols.of("period")
+    if not logical.expected or not periods or not raw or logical.limit or logical.having or truncated:
+        return ""
+    present = {_day(r[periods[0].name]) for r in raw}
+    missing = [d for d in logical.expected if d not in present]
+    if not missing:
+        return ""
+    grain = periods[0].grain or "month"
+
+    def name(d: dt.date) -> str:
+        return period_label(d, grain, fiscal_start=logical.fiscal_start)
+
+    # Missing periods side by side read as one stretch: "from Aug 2022 to Sep 2025".
+    place = {d: i for i, d in enumerate(logical.expected)}
+    runs: list[list[dt.date]] = []
+    for d in missing:
+        if runs and place[d] == place[runs[-1][-1]] + 1:
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+    if len(runs) == 1 and len(runs[0]) > 1:
+        return f"No data from {name(runs[0][0])} to {name(runs[0][-1])}: shown as a gap, not as zero."
+    said = [name(r[0]) if len(r) == 1 else f"{name(r[0])} to {name(r[-1])}" for r in runs]
+    text = said[0] if len(said) == 1 else f"{', '.join(said[:-1])} and {said[-1]}" if len(said) <= 3 \
+        else f"{', '.join(said[:3])} and {len(said) - 3} more stretches"
+    return f"No data for {text}: shown as a gap, not as zero."
+
+
 def _day(value: Any) -> dt.date | None:
     if isinstance(value, dt.datetime):
         return value.date()
@@ -260,6 +293,9 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                        "not compared as whole periods.")
     if truncated:
         caveats.append(f"Showing the first {logical.max_rows:,} rows.")
+    gaps = _gaps(logical, cols, raw, truncated)
+    if gaps:
+        caveats.append(gaps)
 
     units = _units(cols, raw, logical.unit_order)
     headline = _headline(logical, cols, raw, records, partial, units)
@@ -492,14 +528,14 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         peak = max(complete, key=lambda r: _number(r[m.name]) or float("-inf"))
         # The highest is named once: beside the first or last period when it is one of them, and not
         # at all between two periods (one of two is plainly the higher).
-        top = " (the highest)" if len(complete) > 2 else ""
+        highest = " (the highest)" if len(complete) > 2 else ""
         text = f"{lead}, by {grain.replace('fiscal_', 'fiscal ')}: {value(first)} in {name(first)}"
         if peak is first:
-            text += top
+            text += highest
         if len(complete) > 1:
             text += f", {value(last)} in {name(last)}"
             if peak is last:
-                text += top
+                text += highest
             elif peak is not first:
                 text += f"; highest {value(peak)} in {name(peak)}"
         return text + "."

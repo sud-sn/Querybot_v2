@@ -68,6 +68,22 @@ def _words(column: str) -> set[str]:
     return set(names.tokens(column))
 
 
+_NUMBER_WORDS = {"num", "nbr", "no", "number", "cnt", "count"}
+# What was counted, as a noun: a number of "delivered" is a number of deliveries.
+_EVENT_NOUNS = {"delivered": "delivery", "received": "receipt", "returned": "return", "shipped": "shipment",
+                "invoiced": "invoice", "ordered": "order", "sold": "sale", "issued": "issue", "transferred": "transfer",
+                "adjusted": "adjustment", "rejected": "rejection", "cancelled": "cancellation"}
+
+
+def _counted(column: str) -> list[str]:
+    """What a "number of" column counts (NUM_OF_RCT: receipts), or nothing: a count to add up, not an identifier."""
+    parts = names.tokens(column)
+    for i, word in enumerate(parts[:-2]):
+        if word in _NUMBER_WORDS and parts[i + 1] == "of":
+            return parts[i + 2:]
+    return []
+
+
 def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], keys: dict[str, TableKeys],
                     calendars: dict[str, CalendarFinding], joins: list[JoinFinding],
                     dates: dict[str, list[DateCandidate]]) -> dict[str, tuple[str, list[Evidence]]]:
@@ -161,10 +177,13 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
         if column.name in excluded or column.data_type not in ("integer", "decimal", "float"):
             continue
         p = profile.columns[column.name]
-        if p.pattern in ("flag01", "yyyy", "yyyymm", "yyyymmdd") or column.name in keys[key].unique_columns:
+        if p.pattern in ("yyyy", "yyyymm", "yyyymmdd") or column.name in keys[key].unique_columns:
             continue
+        if p.pattern == "flag01" and not _counted(column.name):
+            continue   # 0 and 1 is a flag, unless the name says it counts (NUM_OF_PHY_INV: none or one this month)
         words = _words(column.name)
-        if not names.opaque(column.name) and words & _CODE and not words & (_MONEY | _QUANTITY | _PERCENT | _RATE):
+        if not names.opaque(column.name) and words & _CODE and not words & (_MONEY | _QUANTITY | _PERCENT | _RATE) \
+                and not _counted(column.name):
             continue
         if column.data_type == "integer" and names.opaque(column.name) and p.distinct <= 10:
             continue   # a small set of whole numbers with no name reads as a code
@@ -188,6 +207,10 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             words = _words(name)
             opaque = names.opaque(name)
             label = names.readable(name)
+            if _counted(name):
+                events = names.read_tokens(_counted(name)).lower().split()
+                events[-1] = _EVENT_NOUNS.get(events[-1], events[-1])     # NUM_OF_DLV: deliveries
+                label = f"Number of {names.plural(' '.join(events))}"
             m = MeasureFinding(table=key, column=name, agg="sum", additivity="additive", format="number", name=label)
             in_unit_range = p.min_num is not None and p.max_num is not None and p.min_num >= 0 and p.max_num <= 1
             in_percent_range = p.min_num is not None and p.max_num is not None and p.min_num >= -100 and p.max_num <= 100
@@ -210,6 +233,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                     # On a balance, a "cost" alone may be a unit cost or a value at cost: never summed over time
                     # on that word alone (asked about instead).
                     flow = words & _FLOW - _COST_ONLY
+                    if _counted(name):
+                        flow = flow | {"count"}     # a number of receipts in the month: events, added up
                     level = (bool(words & _LEVEL) or opaque or not flow) and not (flow and not words & _LEVEL)
                     if level:
                         m.additivity, m.time_aggregation = "semi_additive", "last"
@@ -248,10 +273,13 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                 continue
             words = _words(column.name)
             if names.opaque(column.name):
-                is_document = column.data_type == "text" and (p.max_len or 0) <= 24
+                # Short text, and many values: three currency codes are a code, not invoice numbers.
+                is_document = column.data_type == "text" and (p.max_len or 0) <= 24 \
+                    and p.distinct >= max(20, profile.rows / 100)
             else:
                 identifying = {"number", "no", "nbr", "num", "id", "ref"}
-                is_document = bool(words & identifying) and not words & (_CODE - identifying)
+                is_document = bool(words & identifying) and not words & (_CODE - identifying) \
+                    and not _counted(column.name)
             if not is_document or column.name in {c.column for c in dates.get(key, [])}:
                 continue
             thing = [w for w in names.core_column(column.name)]

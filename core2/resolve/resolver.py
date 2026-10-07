@@ -150,6 +150,7 @@ class Logical:
     max_rows: int = 5000
     unit_group: str | None = None       # the grouping that keeps different units apart, when one was added
     unit_order: list[str] = field(default_factory=list)   # its units, the most used first (when profiled)
+    expected: list[dt.date] = field(default_factory=list)  # a series' periods within the data: one with no row is a gap
 
 
 class _Aliases:
@@ -479,8 +480,12 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             if cut:
                 notes.append(cut)
 
+    # A date the question names, that some rows lack (9999-12-31 for "not left yet"), keeps to the rows
+    # that have it, over all time too: "how many have left" counts those with a termination date.
+    named_gaps = any(role is not None and role.slug == plan.time.date and (
+        role.placeholder_share > 0.001 or role.coverage < 0.999) for _, role in builders)
     uses_time = bool(plan.time.grain) or plan.time.window.kind != "all" or compare is not None or any(
-        t for _, _, t in wanted)
+        t for _, _, t in wanted) or named_gaps
     groups: list[Group] = []
     group_names: dict[str, str] = {}
     if plan.time.grain:
@@ -656,9 +661,9 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                     step.key == j.key for p in builder.paths_used.values() for step in p.joins):
                 notes.append(f"{1 - j.match_rate:.0%} of {model.tables[part.table].business_name.lower()} rows have "
                              f"no matching {model.tables[j.to_table].business_name.lower()}: they show as Unknown.")
-        if part.date and part.date.role.placeholder_share > 0.001 and uses_time:
-            notes.append(f"Rows with no {part.date.role.name.lower()} ({part.date.role.placeholder_share:.0%}) "
-                         "are left out.")
+        missing = 1 - part.date.role.coverage if part.date else 0.0    # empty or a placeholder (-1, 9999-12-31)
+        if part.date and missing > 0.001 and uses_time:
+            notes.append(f"Rows with no {part.date.role.name.lower()} ({missing:.0%}) are left out.")
         if part.snapshot:
             notes.append(f"{', '.join(o.label for o in part.measures)}: taken at the last "
                          f"{'snapshot' if not plan.time.grain else 'snapshot of each period'}, not added up over time.")
@@ -672,7 +677,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                     units = ", ".join(str(u) for u in flag.data.get("units", [])[:4])
                     notes.append(f"{o.label} adds up different units{f' ({units})' if units else ''}: "
                                  "group by unit of measure to keep them apart.")
-                elif flag.kind == "constant" and flag.object == column_key \
+                elif flag.kind == "constant" and flag.object == column_key and o.measure \
                         and getattr(o.measure.expr, "agg", None) in ("avg", "min", "max"):
                     # Summed, a constant still counts rows (a headcount of 1 per row); averaged, it says nothing.
                     notes.append(f"{o.label} is {flag.data.get('value')} on every row: it tells nothing apart.")
@@ -700,8 +705,9 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                     notes.append(f"Includes rows whose {model.columns[flag.object].business_name.lower()} is "
                                  f"{' or '.join(cancel_like)}; an admin can leave them out by default.")
 
-    # Partial periods of a series.
+    # Partial periods of a series, and the periods it should hold (between the first and last data).
     partial: list[dt.date] = []
+    expected: list[dt.date] = []
     if plan.time.grain and first_role:
         bounded = Range(window.start or first, window.end or ((last + dt.timedelta(days=1)) if last else None))
         if bounded.start and bounded.end:
@@ -709,6 +715,10 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             partial = partial_periods(starts, plan.time.grain, first_data=first, last_data=last, rng=window,
                                       today=ctx.today,
                                       fiscal_start=fiscal_start)
+            step = {"fiscal_month": "month", "fiscal_quarter": "quarter", "fiscal_year": "year"}.get(
+                plan.time.grain, plan.time.grain)
+            expected = [s for s in starts if (first is None or add_units(s, step, 1) > first)
+                        and (last is None or s <= last)]
 
     sort = [(_sort_name(s.by, measures_out, group_names, model), s.desc) for s in plan.sort]
     sort = [(n, d) for n, d in sort if n]
@@ -731,7 +741,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
-                   unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order)
+                   unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
+                   expected=expected)
 
 
 _SPLIT_INTENTS = {"value", "breakdown", "rank", "trend", "compare", "count"}

@@ -1,0 +1,378 @@
+domain: subscriptions
+today: 2026-06-15
+questions:
+  - id: subscriptions-001
+    question: "What was MRR at the end of May 2026?"
+    tags: [value, snapshot]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      time:
+        date: mrr_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT SUM(m.mrr) AS mrr FROM mrr_monthly m WHERE m.month_end_date = DATE '2026-05-31'
+    expect: {order_matters: false}
+
+  - id: subscriptions-002
+    question: "MRR by plan at the end of May 2026"
+    tags: [breakdown, snapshot]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      group_by: [plans.plan_name]
+      time:
+        date: mrr_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT p.plan_name, SUM(m.mrr) AS mrr
+      FROM mrr_monthly m
+      LEFT JOIN plans p ON p.plan_id = m.plan_id
+      WHERE m.month_end_date = DATE '2026-05-31'
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 6}
+
+  - id: subscriptions-003
+    question: "MRR by month in 2025"
+    tags: [trend, snapshot, gap]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      time:
+        date: mrr_monthly.month_end_date
+        grain: month
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', m.month_end_date)::DATE AS period, SUM(m.mrr) AS mrr
+      FROM mrr_monthly m
+      WHERE m.month_end_date >= DATE '2025-01-01' AND m.month_end_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 11, notes: ["February 2025 was never loaded: a gap, not a zero"]}
+
+  - id: subscriptions-004
+    question: "MRR by quarter in 2025"
+    tags: [trend, snapshot]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      time:
+        date: mrr_monthly.month_end_date
+        grain: quarter
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('quarter', m.month_end_date)::DATE AS period, SUM(m.mrr) AS mrr
+      FROM mrr_monthly m
+      WHERE m.month_end_date IN (DATE '2025-03-31', DATE '2025-06-30', DATE '2025-09-30', DATE '2025-12-31')
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 4, notes: ["each quarter's last month end, never three months added"]}
+
+  - id: subscriptions-005
+    question: "Seats by customer segment at the end of May 2026"
+    tags: [breakdown, snapshot]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: mrr_monthly.seats}]
+      group_by: [customers.segment]
+      time:
+        date: mrr_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT c.segment, SUM(m.seats) AS seats
+      FROM mrr_monthly m
+      LEFT JOIN customers c ON c.customer_id = m.customer_id
+      WHERE m.month_end_date = DATE '2026-05-31'
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 3}
+
+  - id: subscriptions-006
+    question: "How many subscriptions started in 2025?"
+    tags: [count, dimension-date]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: subscriptions.subscription_id}]
+      time:
+        date: subscriptions.start_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT COUNT(*) AS subscriptions
+      FROM subscriptions s
+      WHERE s.start_date >= DATE '2025-01-01' AND s.start_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: subscriptions-007
+    question: "How many subscriptions ended in 2025?"
+    tags: [count, role-date]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: subscriptions.subscription_id}]
+      time:
+        date: subscriptions.end_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT COUNT(*) AS subscriptions
+      FROM subscriptions s
+      WHERE s.end_date >= DATE '2025-01-01' AND s.end_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: subscriptions-008
+    question: "How many subscriptions have ended?"
+    tags: [count, empty-date]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: subscriptions.subscription_id}]
+      time:
+        date: subscriptions.end_date
+    reference_sql: |
+      SELECT COUNT(*) AS subscriptions FROM subscriptions s WHERE s.end_date IS NOT NULL
+    expect: {order_matters: false, notes: ["a subscription still running has no end date"]}
+
+  - id: subscriptions-009
+    question: "Invoiced amount by month this year"
+    tags: [trend, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: invoices.amount}]
+      time:
+        date: invoices.invoice_date
+        grain: month
+        window: {kind: this, unit: year}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', i.invoice_date)::DATE AS period, SUM(i.amount) AS amount
+      FROM invoices i
+      WHERE i.invoice_date >= DATE '2026-01-01' AND i.invoice_date < DATE '2026-06-16'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 6, partial_periods: ["2026-06-01"]}
+
+  - id: subscriptions-010
+    question: "Invoiced amount by currency in 2025"
+    tags: [breakdown, currencies]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: invoices.amount}]
+      group_by: [invoices.currency_code]
+      time:
+        date: invoices.invoice_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT i.currency_code, SUM(i.amount) AS amount
+      FROM invoices i
+      WHERE i.invoice_date >= DATE '2025-01-01' AND i.invoice_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false, row_count: 3}
+
+  - id: subscriptions-011
+    question: "Top 5 customers by invoiced amount in 2025"
+    tags: [rank]
+    plan:
+      intent: rank
+      measures: [{agg: sum, column: invoices.amount}]
+      group_by: [customers.customer_name]
+      time:
+        date: invoices.invoice_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+      sort: [{by: invoices.amount, desc: true}]
+      limit: 5
+    reference_sql: |
+      SELECT c.customer_name, SUM(i.amount) AS amount
+      FROM invoices i
+      LEFT JOIN customers c ON c.customer_id = i.customer_id
+      WHERE i.invoice_date >= DATE '2025-01-01' AND i.invoice_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY amount DESC, c.customer_name
+      LIMIT 5
+    expect: {order_matters: true}
+
+  - id: subscriptions-012
+    question: "What was Top Shelf Analytics' MRR at the end of May 2026?"
+    tags: [value, C2]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      filters:
+        - {column: customers.customer_name, op: eq, values: ["Top Shelf Analytics"]}
+      time:
+        date: mrr_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT SUM(m.mrr) AS mrr
+      FROM mrr_monthly m
+      JOIN customers c ON c.customer_id = m.customer_id
+      WHERE c.customer_name = 'Top Shelf Analytics' AND m.month_end_date = DATE '2026-05-31'
+    expect: {order_matters: false, notes: ["'Top' is part of the name, not a ranking"]}
+
+  - id: subscriptions-013
+    question: "O'Leary Media's MRR at the end of May 2026"
+    tags: [value, C3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      filters:
+        - {column: customers.customer_name, op: eq, values: ["O'Leary Media"]}
+      time:
+        date: mrr_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT SUM(m.mrr) AS mrr
+      FROM mrr_monthly m
+      JOIN customers c ON c.customer_id = m.customer_id
+      WHERE c.customer_name = 'O''Leary Media' AND m.month_end_date = DATE '2026-05-31'
+    expect: {order_matters: false}
+
+  - id: subscriptions-014
+    question: "How many invoices since April 2026?"
+    tags: [count, A3]
+    plan:
+      intent: count
+      measures: [{agg: count, table: invoices}]
+      time:
+        date: invoices.invoice_date
+        window: {kind: since, start: "2026-04-01"}
+    reference_sql: |
+      SELECT COUNT(*) AS invoices
+      FROM invoices i
+      WHERE i.invoice_date >= DATE '2026-04-01' AND i.invoice_date < DATE '2026-06-16'
+    expect: {order_matters: false}
+
+  - id: subscriptions-015
+    question: "Which plans' MRR grew the most from December 2025 to May 2026?"
+    tags: [compare, rank, A8, snapshot]
+    plan:
+      intent: compare
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      group_by: [plans.plan_name]
+      time:
+        date: mrr_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+        compare: {kind: window, window: {kind: between, start: "2025-12-01", end: "2025-12-31"}}
+      sort: [{by: change, desc: true}]
+    reference_sql: |
+      SELECT p.plan_name,
+             SUM(CASE WHEN m.month_end_date = DATE '2025-12-31' THEN m.mrr END) AS mrr_before,
+             SUM(CASE WHEN m.month_end_date = DATE '2026-05-31' THEN m.mrr END) AS mrr,
+             COALESCE(SUM(CASE WHEN m.month_end_date = DATE '2026-05-31' THEN m.mrr END), 0)
+               - COALESCE(SUM(CASE WHEN m.month_end_date = DATE '2025-12-31' THEN m.mrr END), 0) AS change
+      FROM mrr_monthly m
+      LEFT JOIN plans p ON p.plan_id = m.plan_id
+      WHERE m.month_end_date IN (DATE '2025-12-31', DATE '2026-05-31')
+      GROUP BY 1
+      ORDER BY change DESC, p.plan_name
+    expect: {order_matters: true}
+
+  - id: subscriptions-016
+    question: "What share of MRR at the end of May 2026 came from each segment?"
+    tags: [share, snapshot]
+    plan:
+      intent: share
+      measures: [{agg: sum, column: mrr_monthly.mrr}]
+      group_by: [customers.segment]
+      time:
+        date: mrr_monthly.month_end_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT c.segment, SUM(m.mrr) AS mrr, SUM(m.mrr) / SUM(SUM(m.mrr)) OVER () AS share
+      FROM mrr_monthly m
+      LEFT JOIN customers c ON c.customer_id = m.customer_id
+      WHERE m.month_end_date = DATE '2026-05-31'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: subscriptions-017
+    question: "list our plans"
+    tags: [list]
+    plan:
+      intent: list
+      group_by: [plans.plan_name]
+    reference_sql: |
+      SELECT p.plan_name FROM plans p ORDER BY 1
+    expect: {order_matters: true, row_count: 6}
+
+  - id: subscriptions-018
+    question: "How many customers do we have on file?"
+    tags: [count, listed-vs-active]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: customers.customer_id}]
+    reference_sql: |
+      SELECT COUNT(*) AS customers FROM customers c
+    expect: {order_matters: false, notes: ["300 listed; about 220 ever subscribed"]}
+
+  - id: subscriptions-019
+    question: "Tax invoiced by country in 2025"
+    tags: [breakdown]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: invoices.tax_amount}]
+      group_by: [customers.country]
+      time:
+        date: invoices.invoice_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT c.country, SUM(i.tax_amount) AS tax_amount
+      FROM invoices i
+      LEFT JOIN customers c ON c.customer_id = i.customer_id
+      WHERE i.invoice_date >= DATE '2025-01-01' AND i.invoice_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: subscriptions-020
+    question: "Customers who signed up by year"
+    tags: [trend, timestamp-date]
+    plan:
+      intent: trend
+      measures: [{agg: count_distinct, column: customers.customer_id}]
+      time:
+        date: customers.signup_ts
+        grain: year
+        window: {kind: all}
+    reference_sql: |
+      SELECT DATE_TRUNC('year', c.signup_ts)::DATE AS period, COUNT(*) AS customers
+      FROM customers c
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 4}
+
+  - id: subscriptions-021
+    question: "MRR by plan at the end of May 2026, then at the end of 2025"
+    tags: [follow-up, B1]
+    turns:
+      - question: "MRR by plan at the end of May 2026"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: mrr_monthly.mrr}]
+          group_by: [plans.plan_name]
+          time:
+            date: mrr_monthly.month_end_date
+            window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+        reference_sql: |
+          SELECT p.plan_name, SUM(m.mrr) AS mrr
+          FROM mrr_monthly m
+          LEFT JOIN plans p ON p.plan_id = m.plan_id
+          WHERE m.month_end_date = DATE '2026-05-31'
+          GROUP BY 1
+      - question: "and at the end of 2025?"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: mrr_monthly.mrr}]
+          group_by: [plans.plan_name]
+          time:
+            date: mrr_monthly.month_end_date
+            window: {kind: between, start: "2025-12-01", end: "2025-12-31"}
+        reference_sql: |
+          SELECT p.plan_name, SUM(m.mrr) AS mrr
+          FROM mrr_monthly m
+          LEFT JOIN plans p ON p.plan_id = m.plan_id
+          WHERE m.month_end_date = DATE '2025-12-31'
+          GROUP BY 1
+
+  - id: subscriptions-022
+    question: "What was revenue in May?"
+    tags: [asks]
+    expect: {asks: measure, notes: ["MRR or the amount invoiced: two different things"]}
+
+  - id: subscriptions-023
+    question: "How much stock do we have on hand?"
+    tags: [declines]
+    expect: {declines: true, notes: ["a subscription business holds no stock"]}
