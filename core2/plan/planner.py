@@ -70,9 +70,17 @@ How to plan:
    total ("customers with more than 10,000 in sales") is a filter on the measure slug.
 9. sort and limit: "top 5" -> sort by the measure (desc) with limit 5; "bottom 5", "least" -> desc false.
    "grew the most" -> sort by "change" desc; "biggest drop" -> "change" with desc false.
-10. intent: value | breakdown | trend | compare | rank | share | list | count. "List the X", "what are the
-   X" with no measure -> intent list with group_by [X] and no measures. "How many X" -> intent count with
-   the "Number of X" measure. "Share of", "% of total", "contribution" -> intent share.
+10. intent: value | breakdown | trend | compare | rank | share | list | count | drivers | forecast. "List the
+   X", "what are the X" with no measure -> intent list with group_by [X] and no measures. "How many X" ->
+   intent count with the "Number of X" measure. "Share of", "% of total", "contribution" -> intent share.
+   "Why did X drop/rise/change", "what drove X", "explain the change in X" -> intent drivers with the
+   measure; time.window is the period asked about ("in March" -> March 2026), time.compare only when the
+   question names the other period (else the period before is used); drivers.dimensions only when the
+   question names where to look ("why ... by region"). A "why" about the answer on screen keeps that
+   answer's time, grain included.
+   "Forecast X", "predict X", "X for the next N months", "where will X be" -> intent forecast with
+   forecast.periods N (3 when unsaid) and time.grain (month when unsaid); a window only when the question
+   limits the history to use.
 11. Follow-ups: PREVIOUS PLAN is the plan behind the last answer. When the new question changes it ("by
    week instead", "only for X", "what about returns", "top 5 of those"), return the whole new plan with
    follow_up "refine"; a question about something else is follow_up "new".
@@ -127,6 +135,12 @@ def _examples(model: SemanticModel) -> str:
                 "sort": [{"by": "change", "desc": True}]}
         lines.append(f"Q: which {names.plural(e.business_name.lower())} grew the most last month\n"
                      f"A: {json.dumps(plan)}")
+    plan = {"kind": "query", "intent": "drivers", "measures": [m.slug],
+            "time": {"window": {"kind": "previous", "unit": "month"}}}
+    lines.append(f"Q: why did {m.business_name.lower()} drop last month?\nA: {json.dumps(plan)}")
+    plan = {"kind": "query", "intent": "forecast", "measures": [m.slug], "time": {"grain": "month"},
+            "forecast": {"periods": 6}}
+    lines.append(f"Q: forecast {m.business_name.lower()} for the next 6 months\nA: {json.dumps(plan)}")
     return "\n".join(lines)
 
 

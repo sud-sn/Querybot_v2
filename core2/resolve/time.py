@@ -106,12 +106,20 @@ def resolve_window(window: Window, *, today: dt.date, first_data: dt.date | None
     raise ValueError(f"no such window: {kind}")
 
 
+def year_back(day: dt.date) -> dt.date:
+    """The same calendar day a year earlier (29 February becomes the 28th)."""
+    try:
+        return day.replace(year=day.year - 1)
+    except ValueError:
+        return day.replace(year=day.year - 1, day=28)
+
+
 def shift(rng: Range, kind: str, *, unit: str | None = None) -> Range:
     """The comparison range: the period before (same length), or the same period a year earlier."""
     if rng.start is None or rng.end is None:
         raise ValueError("a comparison needs a bounded period")
     if kind == "same_period_last_year":
-        return Range(add_units(rng.start, "year", -1), add_units(rng.end, "year", -1))
+        return Range(year_back(rng.start), year_back(rng.end))
     # The previous period of the same shape: whole months stay whole months.
     if rng.start.day == 1 and rng.end.day == 1:
         months = (rng.end.year - rng.start.year) * 12 + rng.end.month - rng.start.month

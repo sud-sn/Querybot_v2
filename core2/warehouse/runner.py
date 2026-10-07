@@ -93,3 +93,36 @@ class DuckDBWarehouse:
             finally:
                 cursor.close()
         return QueryResult(columns, [tuple(r) for r in rows], truncated, (time.perf_counter() - start) * 1000)
+
+
+class QueryFailed(RuntimeError):
+    """A query the warehouse (or QueryBot's governance) refused or could not run."""
+
+    def __init__(self, cause: Exception, sql: str):
+        super().__init__(str(cause))
+        self.cause = cause
+        self.sql = sql
+
+
+@dataclass
+class Guarded:
+    """A warehouse whose failures surface as :class:`QueryFailed`, never mistaken for a planning problem."""
+
+    inner: Any
+
+    @property
+    def dialect(self) -> str:
+        return str(self.inner.dialect)
+
+    @property
+    def db_type(self) -> str:
+        return str(self.inner.db_type)
+
+    def query(self, sql: str, *, max_rows: int | None = None) -> QueryResult:
+        try:
+            result: QueryResult = self.inner.query(sql, max_rows=max_rows)
+        except QueryFailed:
+            raise
+        except Exception as exc:  # noqa: BLE001 - any refusal or failure, told with the SQL that met it
+            raise QueryFailed(exc, sql) from exc
+        return result

@@ -76,7 +76,7 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
     return f"{text} {unit}" if unit else text
 
 
-def _span(rng: Range) -> str:
+def span_words(rng: Range) -> str:
     """A window in words: "in 2025", "in March 2026", "from 1 Jun 2026 to 7 Jun 2026", "since ..."."""
     start, end = rng.start, rng.end
     if start is None and end is None:
@@ -152,6 +152,11 @@ def _cell(column: OutColumn, value: Any, logical: Logical) -> Any:
     return round(number, 6) if not float(number).is_integer() else int(number)
 
 
+def display_value(column: OutColumn, value: Any, logical: Logical) -> Any:
+    """A cell as the portal shows it (for answers built outside :func:`build_answer`)."""
+    return _cell(column, value, logical)
+
+
 def _table_format(column: OutColumn) -> str:
     if column.role == "period":
         return "text" if column.grain and column.grain.startswith("fiscal") else "date"
@@ -194,7 +199,21 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
 
     headline = _headline(logical, cols, raw, records, partial)
     short_value, comparison = _lead(logical, cols, raw)
-    payload: dict[str, Any] = {
+    return frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
+                 chart=_chart(logical, cols, records, formats, labels, display), kpi=_kpi(logical, cols, raw, formats),
+                 suggestions=_next(logical, cols), headers=[c.name for c in shown], labels=labels, records=records,
+                 formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
+                 data_source=data_source, question_id=question_id, notes=list(logical.notes),
+                 model_version=model_version)
+
+
+def frame(question: str, *, headline: str, short_value: str = "", comparison: str = "", caveats: list[str],
+          chart: dict | None, kpi: dict | None, suggestions: list[str], headers: list[str], labels: dict[str, str],
+          records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
+          row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
+          model_version: int) -> dict[str, Any]:
+    """The frame the web portal renders (the same shape today's pipeline sends)."""
+    return {
         "type": "assistant_response",
         "engine": "core2",
         "question": question,
@@ -202,37 +221,51 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         "answer": {"headline": headline, "short_value": short_value, "comparison": comparison,
                    "scope_badge": "", "scope_note": caveats[0] if caveats else ""},
         "result_scope": {"badge": "", "note": ""},
-        "chart": _chart(logical, cols, records, formats, labels, display),
-        "kpi": _kpi(logical, cols, raw, formats),
+        "chart": chart,
+        "kpi": kpi,
         "insight_summary": "",
         "anomaly_callouts": [],
         "coverage_caveats": caveats,
-        "follow_up_suggestions": _next(logical, cols),
+        "follow_up_suggestions": suggestions,
         "data": {
-            "headers": [c.name for c in shown],
+            "headers": headers,
             "header_labels": labels,
             "rows": records[:PREVIEW_ROWS],
             "total_rows": len(records),
             "truncated": len(records) > PREVIEW_ROWS,
             "column_formats": formats,
-            "display_formats": display,
+            "display_formats": display or {},
             "currency_columns": [n for n, f in formats.items() if f == "currency"],
         },
         "trust": {
-            "sql": compiled.sql,
-            "row_count": len(rows),
+            "sql": sql,
+            "row_count": row_count,
             "duration_label": f"{duration_ms:.0f}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.1f}s",
             "data_source": data_source,
             "scope_badge": "",
             "confidence": {},
             "question_id": question_id,
-            "date_context": list(logical.notes),
+            "date_context": notes,
             "engine": "core2",
             "model_version": model_version,
         },
         "confidence": {},
     }
-    return payload
+
+
+def bar_chart(title: str, x: str, x_label: str, ys: list[tuple[str, str, str]], rows: list[dict],
+              *, intent: str) -> dict[str, Any]:
+    """A bar chart of ``rows``: ``x`` the category, each of ``ys`` (column, label, table format) a bar."""
+    roles: dict[str, dict] = {x: {"column": x, "label": x_label, "role": "dimension", "format": "text"}}
+    for column, label, format_ in ys:
+        roles[column] = {"column": column, "label": label, "role": "measure", "format": format_}
+    return {"title": title, "chart_type": "bar", "x_key": x, "y_keys": [y for y, _, _ in ys],
+            "rows": [{x: "" if r.get(x) is None else str(r[x]), **{y: _number(r.get(y)) for y, _, _ in ys}}
+                     for r in rows],
+            "x_style": "", "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
+            "renderable_types": ["bar", "line", "area"], "allowed_types": ["bar", "line", "area"],
+            "recommended_type": "bar", "chart_spec": {"x": {"column": x, "role": "dimension"}, "column_roles": roles},
+            "intent": intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
 
 
 def _header(c: OutColumn) -> str:
@@ -261,7 +294,7 @@ def _noun(label: str) -> str:
 
 def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dict], partial: set[str]) -> str:
     measures = cols.of("measure")
-    span = _span(logical.window)
+    span = span_words(logical.window)
     if not raw:
         return f"No rows match{(' ' + span) if span else ''}."
     if logical.intent == "list" or not measures:
@@ -278,7 +311,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
     if logical.compare is not None:
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
         pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
-        prior_span = _span(logical.compare)
+        prior_span = span_words(logical.compare)
         if not members and not periods and change is not None:
             r = raw[0]
             moved = _number(r[change.name]) or 0.0
@@ -343,8 +376,8 @@ def _lead(logical: Logical, cols: _Columns, raw: list[dict]) -> tuple[str, str]:
             ratio = _number(r[pct.name]) if pct is not None else None
             pct_text = f" ({ratio * 100:+.1f}%)" if ratio is not None else ""
             return value, (f"{'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format)}{pct_text} on "
-                           f"{_span(logical.compare).removeprefix('in ')}")
-    return value, _span(logical.window)
+                           f"{span_words(logical.compare).removeprefix('in ')}")
+    return value, span_words(logical.window)
 
 
 def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, str]) -> dict | None:
@@ -355,7 +388,7 @@ def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, s
     value = raw[0][m.name]
     return {"label": m.label, "value": value if _number(value) is None else _number(value),
             "format": formats[m.name], "display_format": {},
-            "state": "missing" if _number(value) is None else "ready", "note": _span(logical.window)}
+            "state": "missing" if _number(value) is None else "ready", "note": span_words(logical.window)}
 
 
 def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],

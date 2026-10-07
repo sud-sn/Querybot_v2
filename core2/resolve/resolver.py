@@ -32,7 +32,7 @@ from core2.model.schema import (
 )
 from core2.plan.ir import TIME_ATTRIBUTES, Filter, Plan
 from core2.resolve import paths as P
-from core2.resolve.time import Range, add_units, partial_periods, periods, resolve_window, shift
+from core2.resolve.time import Range, add_units, partial_periods, periods, resolve_window, shift, year_back
 from core2.warehouse import dialect as D
 
 # Aliases a validator screens as statements, whatever their quoting.
@@ -458,9 +458,18 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         if c.kind == "window" and c.window:
             compare = resolve_window(c.window, today=ctx.today, first_data=first, last_data=last,
                                      fiscal_start=fiscal_start)
+        elif c.kind == "previous_period" and plan.time.window.kind in ("this", "to_date") and window.start \
+                and window.end:
+            # "This month so far" against the same days of last month, not the days just before it.
+            before = add_units(window.start, plan.time.window.unit or "month", -1)
+            compare = Range(before, min(before + (window.end - window.start), window.start))
         else:
             compare = shift(window, c.kind)
         intent = "compare"
+        if not all(semi for _, semi in by_part):
+            window, compare, cut = _like_for_like(window, compare, last, c.kind)
+            if cut:
+                notes.append(cut)
 
     uses_time = bool(plan.time.grain) or plan.time.window.kind != "all" or compare is not None or any(
         t for _, _, t in wanted)
@@ -682,6 +691,47 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows)
+
+
+def _like_for_like(window: Range, compare: Range, last: dt.date | None, kind: str) -> tuple[Range, Range, str]:
+    """A current period the data covers only in part, set against the same part of the other one.
+
+    "This month vs last month" on the 10th compares the 1st to the 10th of each
+    month; "this year vs last year" compares up to the same day of each year. A
+    whole period set against a part of one is a fall that never happened.
+    """
+    if last is None or None in (window.start, window.end, compare.start, compare.end):
+        return window, compare, ""
+    assert window.start and window.end and compare.start and compare.end
+    covered_to = last + dt.timedelta(days=1)
+    if not window.start < covered_to < window.end:
+        return window, compare, ""
+    if kind == "same_period_last_year":
+        prior_end = year_back(covered_to)
+    else:
+        prior_end = compare.start + (covered_to - window.start)
+    prior_end = min(prior_end, compare.end)
+    days = (covered_to - window.start).days
+    note = (f"The data runs to {last:%d %b %Y}, so both periods are compared over their first "
+            f"{days} day{'s' if days != 1 else ''}.")
+    return Range(window.start, covered_to, window.notes), Range(compare.start, prior_end, compare.notes), note
+
+
+def measure_dates(plan: Plan, model: SemanticModel) -> tuple[DateRole | None, dt.date | None, dt.date | None]:
+    """The date the plan's first measure is counted by, and the first and last day its data covers."""
+    measure: Measure | None = None
+    for slug in [*plan.measures, *[s for d in plan.derived for s in d.measures]]:
+        found = _find_slug(model, slug)
+        if found and found[0] == "measure":
+            measure = found[1]  # type: ignore[assignment]
+            break
+    if measure is None:
+        return None, None, None
+    role = _date_role_for(model, plan, measure, measure.table)
+    if role is None:
+        return None, None, None
+    first, last = _first_last(role)
+    return role, first, last
 
 
 def _fallback_measure(model: SemanticModel, table: str) -> Measure:

@@ -25,13 +25,15 @@ from typing import Any
 
 from core2 import ids
 from core2.answer.builder import build_answer
+from core2.answer.drivers import answer_drivers
+from core2.answer.forecast import answer_forecast
 from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Clarify, Plan
 from core2.plan.planner import Complete, Turn, plan_question
 from core2.plan.values import MemberIndex, ValueMatch, build_index
 from core2.resolve.resolver import Context, ResolveError, resolve
-from core2.warehouse.runner import Warehouse
+from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
 log = logging.getLogger("querybot.core2")
 
@@ -117,9 +119,9 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         del session.turns[:-HISTORY]
         return _clarification(question, plan.clarify)
 
+    ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS)
     try:
-        logical = resolve(plan, model, Context(today=services.today, allowed_tables=services.allowed_tables,
-                                               max_rows=MAX_ROWS))
+        payload = _compute(question, plan, services, ctx, question_id=question_id, started=start)
     except ResolveError as exc:
         if exc.kind == "ambiguous":
             session.turns.append(Turn(question, plan, outcome.masked))     # the reply names the role this asks for
@@ -128,27 +130,39 @@ def answer_question(question: str, services: Services, session: Session, *, ques
                                                     options=exc.options))
         template = _REFUSALS.get(exc.kind, "{message}.")
         return _frame(question, template.format(message=exc.message), unsupported=exc.kind == "unsupported")
-    try:
-        compiled = compile_query(logical, model, services.warehouse.dialect)
+    except QueryFailed as exc:     # a refused or failed query is told, never raised to the socket
+        log.warning("core2 query failed for %r: %s", question, exc.cause)
+        cause = exc.cause
+        reason = str(cause).split(":", 1)[-1].strip() if "Policy" in type(cause).__name__ else "the database refused it"
+        return _frame(question, f"The question was understood but the query could not run ({reason}).",
+                      trust={"engine": "core2", "sql": exc.sql})
     except (CompileError, ValueError) as exc:
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
         return _frame(question, f"I cannot answer that from this data yet: {exc}.", unsupported=True)
-    try:
-        result = services.warehouse.query(compiled.sql, max_rows=compiled.row_cap)
-    except Exception as exc:     # noqa: BLE001 - a refused or failed query is told, never raised to the socket
-        log.warning("core2 query failed for %r: %s", question, exc)
-        reason = str(exc).split(":", 1)[-1].strip() if "Policy" in type(exc).__name__ else "the database refused it"
-        return _frame(question, f"The question was understood but the query could not run ({reason}).",
-                      trust={"engine": "core2", "sql": compiled.sql})
-    payload = build_answer(question, logical, compiled, result.columns, result.rows,
-                           duration_ms=(time.perf_counter() - start) * 1000, data_source=services.data_source,
-                           question_id=question_id, model_version=model.version, truncated=result.truncated)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
     session.turns.append(Turn(question, plan, outcome.masked))
     del session.turns[:-HISTORY]
     return payload
+
+
+def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, question_id: str,
+             started: float) -> dict[str, Any]:
+    """The answer to a checked plan: one query, or the several a "why" or a forecast needs."""
+    model = services.model
+    warehouse = Guarded(services.warehouse)
+    common: dict[str, Any] = {"data_source": services.data_source, "question_id": question_id,
+                              "model_version": model.version}
+    if plan.intent == "drivers":
+        return answer_drivers(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
+    if plan.intent == "forecast":
+        return answer_forecast(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
+    logical = resolve(plan, model, ctx)
+    compiled = compile_query(logical, model, warehouse.dialect)
+    result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
+    return build_answer(question, logical, compiled, result.columns, result.rows,
+                        duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated, **common)
 
 
 def _visible(matches: list[ValueMatch], model: SemanticModel, allowed: set[str] | None) -> list[ValueMatch]:
