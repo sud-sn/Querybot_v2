@@ -29,7 +29,7 @@ select = ["E9", "F63", "F7", "F82", "F601", "F811", "RUF006", "RUF034", "PLE"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["core", "store", "gateway", "admin", "portal", "main.py"]
+files = ["core", "core2", "store", "gateway", "admin", "portal", "main.py"]
 # Third-party packages are not installed in the type-check job, so their names
 # resolve to Any. That keeps the job fast and its result independent of which
 # wheels a runner happened to get.

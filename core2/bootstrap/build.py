@@ -1,0 +1,346 @@
+"""Bootstrap, end to end: from a connected database to a semantic model version.
+
+Each step reads only what earlier steps found, and every belief it records
+carries its evidence. Business names here are the fallback readings of names
+(``CUST_ORD_DT_KEY`` -> "Customer order date key"); the AI labelling step and
+admin overrides improve them without changing anything the data decided.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+
+from core2 import ids
+from core2.bootstrap import names
+from core2.bootstrap.calendar import CalendarFinding, find_calendars
+from core2.bootstrap.dates import DateCandidate, close_call, find_date_roles
+from core2.bootstrap.inventory import Inventory
+from core2.bootstrap.joins import JoinFinding, discover_joins
+from core2.bootstrap.keys import TableKeys, infer_keys
+from core2.bootstrap.measures import MeasureFinding, classify_tables, find_measures
+from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_table
+from core2.bootstrap.quality import find_quality
+from core2.model.schema import (
+    AggExpr,
+    Attribute,
+    Calendar,
+    Column,
+    DateRole,
+    Entity,
+    Join,
+    Measure,
+    ReviewItem,
+    SemanticModel,
+    Table,
+)
+from core2.warehouse.runner import Warehouse
+
+
+@dataclass
+class BuildOptions:
+    profile: ProfileOptions = field(default_factory=ProfileOptions)
+    max_join_tests: int = 400
+    workers: int = 4
+    outliers: bool = True
+    today: Callable[[], dt.datetime] = field(default=lambda: dt.datetime.now(dt.timezone.utc))
+
+
+@dataclass
+class Findings:
+    """Everything the steps found, kept for the learned-data page and for tests."""
+
+    inventory: Inventory
+    profiles: dict[str, TableProfile]
+    keys: dict[str, TableKeys]
+    calendars: dict[str, CalendarFinding]
+    joins: list[JoinFinding]
+    dates: dict[str, list[DateCandidate]]
+    kinds: dict[str, str]
+    measures: list[MeasureFinding]
+
+
+def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | None = None) -> Findings:
+    options = options or BuildOptions()
+    tables = list(inventory.tables.items())
+    with ThreadPoolExecutor(max_workers=max(1, options.workers)) as pool:
+        profiled = list(pool.map(lambda item: profile_table(warehouse, item[1], options.profile), tables))
+    profiles = {key: p for (key, _), p in zip(tables, profiled)}
+    keys = {key: infer_keys(warehouse, table, profiles[key]) for key, table in tables}
+    calendars = find_calendars(warehouse, inventory, profiles, keys)
+    joins = discover_joins(warehouse, inventory, profiles, keys, calendars, max_tests=options.max_join_tests,
+                           workers=options.workers)
+    dates = find_date_roles(warehouse, inventory, profiles, keys, calendars, joins)
+    classified = classify_tables(inventory, profiles, keys, calendars, joins, dates)
+    kinds = {key: kind for key, (kind, _) in classified.items()}
+    measures = find_measures(inventory, profiles, keys, joins, dates, classified)
+    for key, kind in list(kinds.items()):
+        # A periodic table whose numbers are all amounts for the period (targets,
+        # budgets) adds up over time like any fact.
+        if kind == "snapshot" and not any(m.table == key and m.additivity == "semi_additive" for m in measures):
+            kinds[key] = "fact"
+    return Findings(inventory, profiles, keys, calendars, joins, dates, kinds, measures)
+
+
+def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = "", db_id: int | None = None,
+                db_type: str | None = None, options: BuildOptions | None = None,
+                findings: Findings | None = None) -> SemanticModel:
+    options = options or BuildOptions()
+    f = findings or learn(warehouse, inventory, options)
+    flags = find_quality(warehouse, inventory, f.profiles, f.calendars, f.joins, f.dates, f.measures, f.kinds,
+                         outliers=options.outliers)
+    return assemble(f, flags=flags, client_id=client_id, db_id=db_id, db_type=db_type or warehouse.db_type,
+                    built_at=options.today())
+
+
+def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_type: str,
+             built_at: dt.datetime) -> SemanticModel:
+    model = SemanticModel(client_id=client_id, db_id=db_id, db_type=db_type, built_at=built_at)
+    inv = f.inventory
+    ck = {(key, c.name): ids.column_key(key, c.name) for key, t in inv.tables.items() for c in t.columns}
+    taken: set[str] = set()
+
+    # Joins first: column roles and entities depend on them.
+    join_key_of: dict[tuple[str, str], str] = {}
+    for j in f.joins:
+        key = ids.join_key(j.from_table, [j.from_column], j.to_table, [j.to_column])
+        join_key_of[(j.from_table, j.from_column)] = key
+        model.joins[key] = Join(
+            key=key, from_table=j.from_table, from_columns=[ck[(j.from_table, j.from_column)]],
+            to_table=j.to_table, to_columns=[ck[(j.to_table, j.to_column)]],
+            cardinality="one_to_one" if j.from_unique else "many_to_one", match_rate=j.match_rate,
+            null_rate=j.null_rate, orphan_rows=j.unmatched, to_unique=True, role=j.role,
+            trust="verified" if j.trust == "verified" else ("declared" if j.trust == "declared" else "proposed"),
+            to_calendar=j.to_calendar, evidence=j.evidence, confidence=j.match_rate,
+            provenance="declared" if j.declared else "profile",
+            status="verified" if j.trust in ("verified", "declared") else "proposed")
+
+    # Calendars.
+    for key, cal in f.calendars.items():
+        model.calendars[key] = Calendar(
+            table=key, key_column=ck[(key, cal.key_column)] if cal.key_column else None,
+            date_column=ck[(key, cal.date_column)], attributes={a: ck[(key, c)] for a, c in cal.attributes.items()},
+            first_date=cal.first, last_date=cal.last, contiguous=cal.contiguous,
+            fiscal_year_start_month=cal.fiscal_year_start_month,
+            fiscal_year_named_by=cal.fiscal_year_named_by,  # type: ignore[arg-type]
+            placeholders=list(cal.placeholders), evidence=cal.evidence)
+        if cal.fiscal_year_start_month and not model.settings.fiscal_year_start_month:
+            model.settings.fiscal_year_start_month = cal.fiscal_year_start_month
+
+    # Date roles.
+    date_slugs: set[str] = set()
+    for key, roles in f.dates.items():
+        table_name = inv.tables[key].name
+        for c in roles:
+            name = (c.via_calendar.role if c.via_calendar and c.via_calendar.role else names.readable(c.column))
+            if c.via_calendar is None and not names.opaque(c.column) and "date" not in name.lower() \
+                    and c.granularity != "timestamp":
+                name = f"{name} date"
+            base = ids.slug(name)
+            slug = ids.unique_slug(base if base not in date_slugs else ids.slug(f"{table_name} {name}"), date_slugs)
+            key_c = ck[(key, c.column)]
+            model.date_roles[key_c] = DateRole(
+                key=key_c, table=key, column=key_c, name=name, slug=slug,
+                calendar=c.via_calendar.to_table if c.via_calendar else None,
+                calendar_join=join_key_of.get((key, c.column)) if c.via_calendar else None,
+                granularity=c.granularity,  # type: ignore[arg-type]
+                kind=c.kind,  # type: ignore[arg-type]
+                is_default=c.is_default, score=round(c.score, 3), coverage=round(c.coverage, 4),
+                placeholder_share=round(c.placeholder_share, 4), first=c.first, last=c.last,
+                evidence=c.evidence, confidence=max(0.0, min(1.0, c.score)), provenance="profile",
+                status="verified" if c.is_default and not close_call(roles) else "proposed")
+            taken.add(slug)
+        runner = close_call(roles)
+        default = next((c for c in roles if c.is_default), None)
+        if runner and default:
+            model.review.append(ReviewItem(
+                key=f"default_date:{key}", object=key,
+                question=f"Which date should {table_name} use when a question names none?",
+                choice_made=names.readable(default.column), alternatives=[names.readable(runner.column)],
+                evidence=default.evidence + runner.evidence))
+
+    # Tables and columns.
+    measure_columns = {(m.table, m.column) for m in f.measures if m.column}
+    fk_columns = {(j.from_table, j.from_column): j for j in f.joins}
+    status_columns = {fl.object for fl in flags if fl.kind == "status_column"}
+    for key, table in inv.tables.items():
+        kind = f.kinds[key]
+        tkeys = f.keys[key]
+        business = _table_name(table.name)
+        default_role = next((ck[(key, c.column)] for c in f.dates.get(key, []) if c.is_default), None)
+        model.tables[key] = Table(
+            key=key, database=table.database, schema_name=table.schema, name=table.name, business_name=business,
+            kind=kind,  # type: ignore[arg-type]
+            grain=[ck[(key, c)] for c in tkeys.primary_key], grain_text=_grain_text(table.name, kind, tkeys),
+            row_count=f.profiles[key].rows, primary_key=[ck[(key, c)] for c in tkeys.primary_key],
+            default_date=default_role, columns=[ck[(key, c.name)] for c in table.columns],
+            slug=ids.unique_slug(ids.slug(business), taken), evidence=tkeys.evidence, confidence=1.0,
+            provenance="profile", status="verified")
+        by_column = {c.column: c for c in f.dates.get(key, [])}
+        for column in table.columns:
+            p = f.profiles[key].columns[column.name]
+            k = ck[(key, column.name)]
+            role = "attribute"
+            fmt: str | None = None
+            if column.name in tkeys.primary_key:
+                role = "key"
+            elif (key, column.name) in fk_columns:
+                role = "date_key" if fk_columns[(key, column.name)].to_calendar else "foreign_key"
+            elif column.name in by_column:
+                c = by_column[column.name]
+                role = "audit" if c.kind == "audit" else ("period_key" if c.granularity == "month" else "date")
+            elif (key, column.name) in measure_columns:
+                role = "measure"
+            elif k in status_columns:
+                role = "status"
+            elif p.pattern in ("flag01", "flag", "flag_yn"):
+                role = "flag"
+            elif p.pattern == "free_text":
+                role = "text"
+            if column.data_type in ("date",):
+                fmt = "date"
+            elif column.data_type == "timestamp":
+                fmt = "datetime"
+            elif column.data_type == "text":
+                fmt = "text"
+            model.columns[k] = Column(
+                key=k, table=key, name=column.name, data_type=column.data_type,  # type: ignore[arg-type]
+                raw_type=column.raw_type, nullable=column.nullable, comment=column.comment,
+                role=role,  # type: ignore[arg-type]
+                business_name=names.readable(column.name), format=fmt,  # type: ignore[arg-type]
+                profile=p, provenance="profile", status="verified", confidence=1.0)
+
+    # Measures.
+    for m in f.measures:
+        table_name = inv.tables[m.table].name
+        if m.column is None:
+            key_m = f"m:{m.table}.rows"
+            expr = AggExpr(agg="count")
+        elif m.agg == "count_distinct":
+            key_m = f"m:{m.table}.{m.column.casefold()}.distinct"
+            expr = AggExpr(agg="count_distinct", column=ck[(m.table, m.column)])
+        else:
+            key_m = f"m:{m.table}.{m.column.casefold()}"
+            expr = AggExpr(agg=m.agg, column=ck[(m.table, m.column)])  # type: ignore[arg-type]
+        base = ids.slug(m.name)
+        slug = ids.unique_slug(base if base not in taken else ids.slug(f"{_table_name(table_name)} {m.name}"), taken)
+        unit = m.unit_values[0] if m.unit_column and len(m.unit_values) == 1 else None
+        model.measures[key_m] = Measure(
+            key=key_m, slug=slug, business_name=m.name, table=m.table, expr=expr,
+            additivity=m.additivity,  # type: ignore[arg-type]
+            time_aggregation=m.time_aggregation,  # type: ignore[arg-type]
+            format=m.format,  # type: ignore[arg-type]
+            unit=unit, unit_column=ck[m.unit_column] if m.unit_column else None,
+            default_date=model.tables[m.table].default_date,
+            kind="count" if m.agg in ("count", "count_distinct") else "column",
+            evidence=m.evidence, provenance="profile", status="needs_review" if m.review else "verified",
+            confidence=0.6 if m.review else 0.9)
+        if m.review:
+            model.review.append(ReviewItem(key=f"additivity:{key_m}", object=key_m, question=m.review,
+                                           choice_made="taken at the end of each period",
+                                           alternatives=["added up over time"], evidence=m.evidence))
+
+    _entities_and_attributes(model, f, ck, taken)
+
+    model.quality = flags
+    for fl in flags:
+        if fl.kind == "status_column":
+            model.review.append(ReviewItem(key=f"default_filter:{fl.object}", object=fl.object,
+                                           question=fl.message, choice_made="all rows are counted",
+                                           alternatives=[f"leave out {v}" for v in fl.data.get("cancel_like", [])]))
+    for j in f.joins:
+        if j.trust == "proposed" and any(e.kind == "ambiguous" for e in j.evidence):
+            model.review.append(ReviewItem(
+                key=f"join:{j.from_table}.{j.from_column}", object=join_key_of[(j.from_table, j.from_column)],
+                question=f"Which table does {inv.tables[j.from_table].name}.{j.from_column} point at?",
+                choice_made="neither, until confirmed", alternatives=[inv.tables[j.to_table].name],
+                evidence=j.evidence))
+    return model
+
+
+def _table_name(name: str) -> str:
+    if names.opaque(name):
+        return name
+    words = [names.EXPANSIONS.get(w, w) for w in names.core_table(name)]
+    text = " ".join(words)
+    return text[:1].upper() + text[1:]
+
+
+def _grain_text(name: str, kind: str, keys: TableKeys) -> str:
+    noun = _table_name(name).lower()
+    if kind == "snapshot" and len(keys.primary_key) > 1:
+        return "one row per " + " and ".join(names.readable(c).lower() for c in keys.primary_key)
+    if kind == "calendar":
+        return "one row per day"
+    return f"one row per {noun}"
+
+
+def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[str, str], str],
+                             taken: set[str]) -> None:
+    inv = f.inventory
+    entity_of: dict[str, str] = {}
+    for key, table in inv.tables.items():
+        if f.kinds[key] != "dimension":
+            continue
+        tkeys = f.keys[key]
+        profile = f.profiles[key]
+        business = _table_name(table.name)
+        slug = ids.unique_slug(ids.slug(business), taken)
+        entity_of[key] = slug
+        texts = [c for c in tkeys.unique_columns if table.type_of(c) == "text" and c not in tkeys.primary_key]
+        labels = sorted(texts, key=lambda c: (-(profile.columns[c].avg_len or 0)))
+        named = [c for c in labels if set(names.tokens(c)) & {"name", "nm", "desc", "description", "title", "label"}]
+        label: str | None = (named or labels)[0] if (named or labels) else None
+        codes = [c for c in texts if c != label and (profile.columns[c].max_len or 99) <= 16]
+        model.entities[slug] = Entity(
+            slug=slug, business_name=business, table=key, key_columns=[ck[(key, c)] for c in tkeys.primary_key],
+            label_column=ck[(key, label)] if label else None, code_column=ck[(key, codes[0])] if codes else None,
+            members=profile.rows, provenance="profile", status="verified", confidence=0.9)
+        if label:
+            model.columns[ck[(key, label)]].role = "label"
+            model.columns[ck[(key, label)]].label_of = model.tables[key].primary_key[0] if model.tables[key].primary_key else None
+        if codes:
+            model.columns[ck[(key, codes[0])]].role = "code"
+
+    # Hierarchies: a dimension pointing at another dimension.
+    for j in f.joins:
+        if j.trust in ("verified", "declared") and j.from_table in entity_of and j.to_table in entity_of \
+                and j.from_table != j.to_table:
+            child = model.entities[entity_of[j.from_table]]
+            if child.parent is None:
+                child.parent = entity_of[j.to_table]
+
+    # Attributes: what people group and filter by.
+    for key, table in inv.tables.items():
+        kind = f.kinds[key]
+        if kind not in ("dimension", "fact", "snapshot", "bridge"):
+            continue
+        owner = entity_of.get(key) or model.tables[key].slug
+        for column in table.columns:
+            col = model.columns[ck[(key, column.name)]]
+            p = col.profile
+            if col.role in ("key", "foreign_key", "date_key", "date", "audit", "period_key", "measure", "text"):
+                continue
+            if kind != "dimension" and col.role not in ("status", "flag") and not (
+                    p and 1 < p.distinct <= 1000 and column.data_type == "text"):
+                continue
+            name = _attribute_name(col.business_name, model.entities.get(owner))
+            slug = f"{owner}.{ids.slug(name)}"
+            if slug in model.attributes:
+                slug = ids.unique_slug(slug, set(model.attributes))
+            model.attributes[slug] = Attribute(
+                slug=slug, column=col.key, entity=owner if key in entity_of else None,
+                business_name=col.business_name, members=p.distinct if p else 0,
+                provenance="profile", status="verified", confidence=0.8)
+
+
+def _attribute_name(business: str, entity: Entity | None) -> str:
+    if entity is None:
+        return business
+    words = business.split()
+    entity_words = entity.business_name.lower().split()
+    if len(words) > 1 and words[0].lower() in entity_words:
+        return " ".join(words[1:])
+    return business
