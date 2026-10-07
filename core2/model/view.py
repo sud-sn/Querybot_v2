@@ -24,6 +24,9 @@ ADDS_UP = {
     ("semi_additive", "average"): "averaged over time",
     ("non_additive", None): "averaged, never summed",
 }
+# How an admin may say a total adds up over time (a choice on the page): summed, or a level.
+ADDS_UP_CHOICES = {"summed": ("additive", None), "last": ("semi_additive", "last"),
+                   "average": ("semi_additive", "average")}
 TRUST_WORDS = {"admin": "approved by an admin", "verified": "verified by the data", "declared": "declared by the database",
                "proposed": "proposed: used only when nothing better exists", "rejected": "rejected"}
 
@@ -84,7 +87,11 @@ def learned_view(model: SemanticModel) -> dict[str, Any]:
             } for r in roles],
             "measures": [{
                 "key": m.key, "target": target("measure", m.key), "name": m.business_name,
-                "adds_up": _adds_up(m),
+                "adds_up": _adds_up(m), "synonyms": ", ".join(sorted({w for ws in m.synonyms.values() for w in ws})),
+                "adds_up_value": next((k for k, v in ADDS_UP_CHOICES.items()
+                                       if v == (m.additivity, m.time_aggregation)), ""),
+                "adds_up_options": [(k, ADDS_UP[v]) for k, v in ADDS_UP_CHOICES.items()]
+                if getattr(m.expr, "agg", None) == "sum" else [],
                 "format": m.format, "unit": _unit(m, model), "status": m.status, "evidence": _evidence(m.evidence),
             } for m in measures],
             "joins": joins_from.get(t.key, []),

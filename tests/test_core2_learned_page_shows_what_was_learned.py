@@ -203,6 +203,41 @@ def test_cancelled_rows_are_left_out_from_the_page_and_answers_follow(workspace)
     assert float(got) == pytest.approx(float(want))
 
 
+def test_a_measure_is_renamed_given_words_and_told_how_it_adds_up_from_the_page(workspace):
+    import re
+
+    store, built, schema_dir = workspace
+    _schema_file(built, schema_dir)
+    from admin import core2_routes
+    from core2.bootstrap.service import load_model
+    from core2.plan.catalog import catalog_text
+
+    core2_routes._run_build(ACCOUNT)
+    with patch.object(core2_routes, "_is_auth", return_value=True):
+        raw = asyncio.run(core2_routes.learned_page(
+            _request(f"/admin/clients/{ACCOUNT}/learned", method="GET"), ACCOUNT)).body.decode()
+    form = next(f for f in re.findall(r"<form[^>]*learned/measure.*?</form>", raw, re.S)
+                if 'value="Net amount"' in f)
+    target = html.unescape(re.search(r'name="target" value="([^"]*)"', form).group(1))
+    fields = {"target": target, "name": "Revenue", "synonyms": "sales, turnover , sales", "adds_up": "last"}
+    response = _post(core2_routes.learned_measure, f"/admin/clients/{ACCOUNT}/learned/measure", fields)
+    assert response.status_code == 303 and "saved=decision" in response.headers["location"]
+
+    model = load_model(ACCOUNT, store.get_client(ACCOUNT)["db_config_id"])
+    measure = model.measures[target.partition(":")[2]]
+    assert measure.business_name == "Revenue" and measure.synonyms == {"en": ["sales", "turnover"]}
+    assert (measure.additivity, measure.time_aggregation) == ("semi_additive", "last")
+    assert "also called: sales, turnover" in catalog_text(model)
+    page = _page()
+    assert "Also called: sales, turnover" in page and "Your decisions" in page
+
+    # Emptying the words takes them away; the other decisions stand.
+    _post(core2_routes.learned_measure, f"/admin/clients/{ACCOUNT}/learned/measure",
+          {"target": target, "name": "Revenue", "synonyms": " ", "adds_up": "last"})
+    measure = load_model(ACCOUNT, store.get_client(ACCOUNT)["db_config_id"]).measures[target.partition(":")[2]]
+    assert measure.synonyms == {"en": []} and measure.business_name == "Revenue"
+
+
 def test_a_field_the_data_decides_cannot_be_set_from_the_page(workspace):
     from admin import core2_routes
 

@@ -227,15 +227,35 @@
           <div>
             <h3>Measures</h3>
             <div class="lq-wrap"><table class="lq-table">
-              <thead><tr><th>Measure</th><th>Adds up</th><th>Shown as</th><th>Unit</th><th>Why</th></tr></thead>
+              <thead><tr><th>Measure</th><th>Adds up</th><th>Shown as</th><th>Unit</th><th>Why</th><th><span class="sr-only">Actions</span></th></tr></thead>
               <tbody>
+              {% set tloop = loop.index %}
               {% for m in t.measures %}
+              {% set fid = 'measure-' ~ tloop ~ '-' ~ loop.index %}
               <tr>
-                <td>{{ m.name }}{% if m.status == 'needs_review' %} <span class="badge badge-amber">check</span>{% endif %}</td>
+                <td>{{ m.name }}{% if m.status == 'needs_review' %} <span class="badge badge-amber">check</span>{% endif %}
+                  {% if m.synonyms %}<div class="lq-why">Also called: {{ m.synonyms }}</div>{% endif %}</td>
                 <td>{{ m.adds_up }}</td>
                 <td>{{ m.format }}</td>
                 <td>{{ m.unit }}</td>
                 <td>{% for e in m.evidence %}<div class="lq-why">{{ e }}</div>{% endfor %}</td>
+                <td><details>
+                  <summary class="lq-why">Change</summary>
+                  <form method="post" action="/admin/clients/{{ client.account_id }}/learned/measure">
+                    <input type="hidden" name="target" value="{{ m.target }}">
+                    <label for="{{ fid }}-name">Name</label>
+                    <input id="{{ fid }}-name" name="name" type="text" value="{{ m.name }}" maxlength="120">
+                    <label for="{{ fid }}-words">Also called (separate with commas)</label>
+                    <input id="{{ fid }}-words" name="synonyms" type="text" value="{{ m.synonyms }}" maxlength="500">
+                    {% if m.adds_up_options %}
+                    <label for="{{ fid }}-adds">Over time</label>
+                    <select id="{{ fid }}-adds" name="adds_up">
+                      {% for value, words in m.adds_up_options %}<option value="{{ value }}"{% if value == m.adds_up_value %} selected{% endif %}>{{ words }}</option>{% endfor %}
+                    </select>
+                    {% endif %}
+                    <button type="submit" class="btn btn-secondary btn-xs">Save</button>
+                  </form>
+                </details></td>
               </tr>
               {% endfor %}
               </tbody>

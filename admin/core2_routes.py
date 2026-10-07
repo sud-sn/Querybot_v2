@@ -146,6 +146,37 @@ async def learned_undo(request: Request, account_id: str, target: str = Form(...
     return _back(account_id, saved="undone")
 
 
+@router.post("/clients/{account_id}/learned/measure")
+async def learned_measure(request: Request, account_id: str, target: str = Form(...), name: str = Form(""),
+                          synonyms: str = Form(""), adds_up: str = Form("")):
+    """A measure's name, the other words readers use for it, and how it adds up over time, in one form."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    from core2.bootstrap.service import load_model
+    from core2.model.view import ADDS_UP_CHOICES
+
+    db_id = client.get("db_config_id")
+    model = load_model(account_id, db_id) if target.startswith("measure:") else None
+    measure = model.measures.get(target.partition(":")[2]) if model else None
+    if measure is None:
+        return _back(account_id, error="That measure is not in the data any more. Learn again, then change it.")
+    text = " ".join(name.split())[:120]
+    if text and text != measure.business_name:
+        store.set_core2_override(account_id, db_id, target, "business_name", text)
+    words = list(dict.fromkeys(w for w in (" ".join(x.split()) for x in synonyms.split(",")) if w))[:30]
+    if sorted(words) != sorted({w for ws in measure.synonyms.values() for w in ws}):
+        store.set_core2_override(account_id, db_id, target, "synonyms", {"en": words})
+    choice = ADDS_UP_CHOICES.get(adds_up)
+    if choice and getattr(measure.expr, "agg", None) == "sum" \
+            and choice != (measure.additivity, measure.time_aggregation):
+        store.set_core2_override(account_id, db_id, target, "additivity", choice[0])
+        store.set_core2_override(account_id, db_id, target, "time_aggregation", choice[1])
+    return _back(account_id, saved="decision")
+
+
 @router.post("/clients/{account_id}/learned/import")
 async def learned_import(request: Request, account_id: str):
     """Bring today's decisions over again (after an admin changed them in today's setup)."""
