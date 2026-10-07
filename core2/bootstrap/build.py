@@ -19,6 +19,7 @@ from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import DateCandidate, close_call, find_date_roles
 from core2.bootstrap.inventory import Inventory
 from core2.bootstrap.joins import JoinFinding, discover_joins
+from core2.bootstrap.labels import label
 from core2.bootstrap.keys import TableKeys, infer_keys
 from core2.bootstrap.measures import MeasureFinding, classify_tables, find_measures
 from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_table
@@ -46,6 +47,7 @@ class BuildOptions:
     workers: int = 4
     outliers: bool = True
     today: Callable[[], dt.datetime] = field(default=lambda: dt.datetime.now(dt.timezone.utc))
+    labeler: Callable[[str, str], str] | None = None   # the AI that names things; None keeps names' readings
 
 
 @dataclass
@@ -97,8 +99,53 @@ def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = 
     f = findings or learn(warehouse, inventory, options)
     flags = find_quality(warehouse, inventory, f.profiles, f.calendars, f.joins, f.dates, f.measures, f.kinds,
                          outliers=options.outliers)
-    return assemble(f, flags=flags, client_id=client_id, db_id=db_id, db_type=db_type or warehouse.db_type,
-                    built_at=options.today())
+    model = assemble(f, flags=flags, client_id=client_id, db_id=db_id, db_type=db_type or warehouse.db_type,
+                     built_at=options.today())
+    if options.labeler is not None:
+        model.notes += label(model, options.labeler)
+    assign_slugs(model)
+    return model
+
+
+def assign_slugs(model: SemanticModel) -> None:
+    """Planner-facing names from the final business names, unique within the model.
+
+    Measures and entities come first (they are what questions name most), then
+    dates, attributes and tables; a clash is resolved by prefixing the table.
+    """
+    taken: set[str] = set()
+    for m in sorted(model.measures.values(), key=lambda m: (m.kind == "count", m.key)):
+        base = ids.slug(m.business_name)
+        m.slug = ids.unique_slug(base if base not in taken else
+                                 ids.slug(f"{model.tables[m.table].business_name} {m.business_name}"), taken)
+    entities = {}
+    renamed: dict[str, str] = {}
+    for old_slug, e in sorted(model.entities.items()):
+        new_slug = ids.unique_slug(ids.slug(e.business_name), taken)
+        renamed[old_slug] = new_slug
+        e.slug = new_slug
+        entities[new_slug] = e
+    for e in entities.values():
+        if e.parent:
+            e.parent = renamed.get(e.parent, e.parent)
+    model.entities = entities
+    for r in sorted(model.date_roles.values(), key=lambda r: (not r.is_default, r.key)):
+        base = ids.slug(r.name)
+        r.slug = ids.unique_slug(base if base not in taken else
+                                 ids.slug(f"{model.tables[r.table].business_name} {r.name}"), taken)
+    for t in sorted(model.tables.values(), key=lambda t: t.key):
+        t.slug = ids.unique_slug(ids.slug(t.business_name), taken)
+    owner_slug = {e.table: e.slug for e in model.entities.values()}
+    attributes: dict[str, Attribute] = {}
+    for a in sorted(model.attributes.values(), key=lambda a: a.slug):
+        column = model.columns[a.column]
+        owner = owner_slug.get(column.table) or model.tables[column.table].slug
+        name = _attribute_name(column.business_name, model.entities.get(owner))
+        slug = ids.unique_slug(f"{owner}.{ids.slug(name)}", set(attributes))
+        a.slug, a.entity = slug, owner if column.table in owner_slug else None
+        a.business_name = column.business_name
+        attributes[slug] = a
+    model.attributes = attributes
 
 
 def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_type: str,
@@ -216,6 +263,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 raw_type=column.raw_type, nullable=column.nullable, comment=column.comment,
                 role=role,  # type: ignore[arg-type]
                 business_name=names.readable(column.name), format=fmt,  # type: ignore[arg-type]
+                values_allowed=p.top is not None,
                 profile=p, provenance="profile", status="verified", confidence=1.0)
 
     # Measures.

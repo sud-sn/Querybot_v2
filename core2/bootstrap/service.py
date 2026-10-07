@@ -55,6 +55,18 @@ def values_gate(account_id: str, inventory: Inventory) -> Callable[[str, str], b
     return allowed
 
 
+def _labeler(account_id: str, client: dict[str, Any], inventory: Inventory) -> Callable[[str, str], str] | None:
+    """The workspace's AI for naming, or None when it has none (names then come from the names)."""
+    from core2.bootstrap.ai import workspace_labeler
+
+    try:
+        return workspace_labeler(account_id, client, tables=sorted(t.name for t in inventory.tables.values()),
+                                 columns=sorted({c.name for t in inventory.tables.values() for c in t.columns}))
+    except Exception as exc:  # noqa: BLE001 - no AI configured still learns everything the data shows
+        log.warning("core2: no AI model to name tables for %s: %s", account_id, exc)
+        return None
+
+
 def source_hash(inventory: Inventory) -> str:
     shape = sorted((k, [(c.name, c.raw_type) for c in t.columns]) for k, t in inventory.tables.items())
     return hashlib.sha256(json.dumps(shape).encode()).hexdigest()[:16]
@@ -80,7 +92,8 @@ def build_workspace(account_id: str) -> int:
         inventory = from_schema_json(json.loads(path.read_text(encoding="utf-8")), config["db_type"])
         if not inventory.tables:
             raise ValueError("Discovery found no tables to learn from.")
-        options = BuildOptions(profile=ProfileOptions(values_allowed=values_gate(account_id, inventory)))
+        options = BuildOptions(profile=ProfileOptions(values_allowed=values_gate(account_id, inventory)),
+                               labeler=_labeler(account_id, client, inventory))
         with QueryBotWarehouse(config["db_type"], config.get("credentials") or {}) as warehouse:
             model = build_model(warehouse, inventory, client_id=account_id, db_id=db_id, options=options)
         # Stored as learned: decisions are a layer applied when the model is read, so
