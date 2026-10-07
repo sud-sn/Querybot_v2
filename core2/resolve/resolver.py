@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 
 from core2 import ids
+from core2.bootstrap.names import plural
 from core2.model.schema import (
     AggExpr,
     Attribute,
@@ -636,7 +637,13 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         part = builder.part
         if part.date is not None and role is not None:
             notes.insert(0, f"{', '.join(o.label for o in part.measures)} by {role.name.lower()}.")
+        # A table joined only to keep units apart is not one the reader asked about: no path note.
+        unit_column = model.attributes[unit_slug].column if unit_slug is not None else None
+        asked = {model.columns[g.column].table for g in part.groups if g.column and g.column != unit_column} | {
+            model.columns[p.column].table for p in part.preds if p.column in model.columns}
         for table, path in builder.paths_used.items():
+            if unit_column and table == model.columns[unit_column].table and table not in asked:
+                continue
             alternatives = [p for p in P.all_paths(model, part.table, table) if p.joins != path.joins]
             if alternatives:
                 reached = model.tables[table].business_name
@@ -665,6 +672,25 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                     units = ", ".join(str(u) for u in flag.data.get("units", [])[:4])
                     notes.append(f"{o.label} adds up different units{f' ({units})' if units else ''}: "
                                  "group by unit of measure to keep them apart.")
+                elif flag.kind == "constant" and flag.object == column_key \
+                        and getattr(o.measure.expr, "agg", None) in ("avg", "min", "max"):
+                    # Summed, a constant still counts rows (a headcount of 1 per row); averaged, it says nothing.
+                    notes.append(f"{o.label} is {flag.data.get('value')} on every row: it tells nothing apart.")
+                elif flag.kind == "outlier_period" and flag.object == column_key \
+                        and (part.date is None or part.date.role.is_default):
+                    month = _month_of(str(flag.data.get("period", "")))
+                    if month and _overlaps(month, window, compare):
+                        notes.append(f"{month:%b %Y} stands out: {o.label.lower()} of "
+                                     f"{float(flag.data.get('value') or 0):,.0f} against a typical "
+                                     f"{float(flag.data.get('typical') or 0):,.0f} a month. Worth checking before "
+                                     "relying on it.")
+        for flag in model.quality:
+            if flag.kind == "listed_vs_active" and flag.object == part.table:    # a list's members, counted
+                via = model.columns.get(str(flag.data.get("via")))
+                listed = plural(model.tables[part.table].business_name.lower())
+                used_in = plural(model.tables[via.table].business_name.lower()) if via else "the data"
+                notes.append(f"{int(flag.data.get('listed') or 0):,} {listed} are listed; "
+                             f"{int(flag.data.get('used') or 0):,} appear in {used_in}.")
         owner_columns = {c.key for c in model.columns.values() if c.table == part.table}
         for flag in model.quality:
             if flag.kind == "status_column" and flag.object in owner_columns and flag.object not in filtered \
@@ -883,3 +909,18 @@ def _unique(items: list[str]) -> list[str]:
             seen.add(item)
             out.append(item)
     return out
+
+
+def _month_of(period: str) -> dt.date | None:
+    """'2025-11' as the first day of that month."""
+    try:
+        return dt.date(int(period[:4]), int(period[5:7]), 1)
+    except ValueError:
+        return None
+
+
+def _overlaps(month: dt.date, *ranges: Range | None) -> bool:
+    """Does any range (open-ended where unbounded) cover part of ``month``?"""
+    end = add_units(month, "month", 1)
+    return any(r is not None and (r.start is None or r.start < end) and (r.end is None or r.end > month)
+               for r in ranges)

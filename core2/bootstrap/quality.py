@@ -98,8 +98,10 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
                 continue   # a key into a status table is filtered by that table's labels, not by its numbers
             words = set(names.tokens(column.name))
             values = {(t.value or "").strip().lower() for t in p.top}
-            cancels = sorted({(t.value or "").strip() for t in p.top} & {
-                (t.value or "").strip() for t in p.top if (t.value or "").strip().lower() in _CANCEL_VALUES})
+            # A value on most rows is the normal state (C for closed), never a cancellation.
+            counted = sum(t.count for t in p.top) or 1
+            cancels = sorted({(t.value or "").strip() for t in p.top
+                              if (t.value or "").strip().lower() in _CANCEL_VALUES and t.count <= counted / 2})
             if (words & _STATUS_WORDS and not names.opaque(column.name)) or (cancels and len(values) <= 6):
                 flags.append(_flag(col_key[(key, column.name)], "status_column",
                                    f"{names.readable(column.name)} has codes {', '.join(sorted(v.value or '' for v in p.top))}: "

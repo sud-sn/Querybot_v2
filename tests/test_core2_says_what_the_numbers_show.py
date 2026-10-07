@@ -210,7 +210,7 @@ def test_a_partly_covered_year_is_named_not_compared(retail):
     con, model = retail
     payload, _ = _ask(model, con, {"intent": "trend", "measures": ["net_amount"], "time": {"grain": "year"}})
     headline = payload["answer"]["headline"]
-    assert "2026" not in headline and "in 2025; highest" in headline
+    assert "2026" not in headline and headline.endswith("in 2025 (the highest).")     # named once, not repeated
     assert any(c.startswith("2026 is only partly covered") for c in payload["coverage_caveats"])
 
 
@@ -232,6 +232,17 @@ def test_a_series_with_a_spike_names_its_highest_period_and_is_never_called_flat
     (peak, value), = _months_2025(con, 1)
     headline = payload["answer"]["headline"]
     assert f"highest {fmt(value, 'currency')} in {peak:%b %Y}" in headline and "flat" not in headline
+
+
+def test_the_highest_period_is_named_once_beside_the_first_or_last(retail):
+    con, model = retail
+    payload, _ = _ask(model, con, {"intent": "trend", "measures": ["net_amount"], "time": {
+        "grain": "month", "window": {"kind": "between", "start": "2025-08-01", "end": "2025-12-31"}}})
+    headline = payload["answer"]["headline"]
+    assert " in Aug 2025 (the highest), " in headline and "; highest" not in headline, headline
+    payload, _ = _ask(model, con, {"intent": "trend", "measures": ["net_amount"], "time": {
+        "grain": "month", "window": {"kind": "between", "start": "2025-11-01", "end": "2025-12-31"}}})
+    assert "highest" not in payload["answer"]["headline"]          # one of two is plainly the higher
 
 
 def test_a_series_listed_newest_first_still_reads_and_draws_forward(retail):

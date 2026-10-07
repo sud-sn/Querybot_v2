@@ -1,0 +1,478 @@
+domain: purchasing
+today: 2026-06-15
+questions:
+  - id: purchasing-001
+    question: "How much did we spend in 2025?"
+    tags: [value]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      WHERE l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+    expect: {order_matters: false, notes: ["cancelled lines are counted until an admin leaves them out"]}
+
+  - id: purchasing-002
+    question: "Monthly spend in 2025"
+    tags: [trend, no-calendar]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      time:
+        date: purchase_order_lines.order_date
+        grain: month
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', l.order_date)::DATE AS period, SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      WHERE l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 12, notes: ["November 2025 holds a line typed a thousand times too large"]}
+
+  - id: purchasing-003
+    question: "Top 5 suppliers by spend this year"
+    tags: [rank]
+    plan:
+      intent: rank
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      group_by: [suppliers.supplier_name]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: this, unit: year}
+      sort: [{by: purchase_order_lines.line_amount, desc: true}]
+      limit: 5
+    reference_sql: |
+      SELECT s.supplier_name, SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      LEFT JOIN suppliers s ON s.supplier_id = l.supplier_id
+      WHERE l.order_date >= DATE '2026-01-01' AND l.order_date < DATE '2026-06-16'
+      GROUP BY 1
+      ORDER BY line_amount DESC, s.supplier_name
+      LIMIT 5
+    expect: {order_matters: true}
+
+  - id: purchasing-004
+    question: "spend by item category in Q1 2026"
+    tags: [breakdown]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      group_by: [items.category]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2026-01-01", end: "2026-03-31"}
+    reference_sql: |
+      SELECT i.category, SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      LEFT JOIN items i ON i.item_id = l.item_id
+      WHERE l.order_date >= DATE '2026-01-01' AND l.order_date < DATE '2026-04-01'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: purchasing-005
+    question: "How many purchase orders did we place in May 2026?"
+    tags: [count]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: purchase_order_lines.po_number}]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT COUNT(DISTINCT l.po_number) AS purchase_orders
+      FROM purchase_order_lines l
+      WHERE l.order_date >= DATE '2026-05-01' AND l.order_date < DATE '2026-06-01'
+    expect: {order_matters: false}
+
+  - id: purchasing-006
+    question: "What was the average unit price of electrical items in 2025?"
+    tags: [value, average]
+    plan:
+      intent: value
+      measures: [{agg: avg, column: purchase_order_lines.unit_price}]
+      filters:
+        - {column: items.category, op: eq, values: ["Electrical"]}
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT AVG(l.unit_price) AS unit_price
+      FROM purchase_order_lines l
+      JOIN items i ON i.item_id = l.item_id
+      WHERE i.category = 'Electrical'
+        AND l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+    expect: {order_matters: false, notes: ["a price is averaged, never added up"]}
+
+  - id: purchasing-007
+    question: "Quantity received by month for the last 6 months"
+    tags: [trend, A5]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: receipts.received_qty}]
+      time:
+        date: receipts.received_date
+        grain: month
+        window: {kind: last, unit: month, n: 6}
+    reference_sql: |
+      SELECT DATE_TRUNC('month', r.received_date)::DATE AS period, SUM(r.received_qty) AS received_qty
+      FROM receipts r
+      WHERE r.received_date >= DATE '2025-12-01' AND r.received_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 6}
+
+  - id: purchasing-008
+    question: "Ordered against received quantity by item category in 2025"
+    tags: [breakdown, two-facts]
+    plan:
+      intent: breakdown
+      measures:
+        - {agg: sum, column: purchase_order_lines.ordered_qty}
+        - {agg: sum, column: receipts.received_qty}
+      group_by: [items.category]
+      time:
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      WITH o AS (
+        SELECT i.category, SUM(l.ordered_qty) AS ordered_qty
+        FROM purchase_order_lines l
+        LEFT JOIN items i ON i.item_id = l.item_id
+        WHERE l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+        GROUP BY 1),
+      r AS (
+        SELECT i.category, SUM(r.received_qty) AS received_qty
+        FROM receipts r
+        LEFT JOIN items i ON i.item_id = r.item_id
+        WHERE r.received_date >= DATE '2025-01-01' AND r.received_date < DATE '2026-01-01'
+        GROUP BY 1)
+      SELECT COALESCE(o.category, r.category) AS category, o.ordered_qty, r.received_qty
+      FROM o FULL JOIN r ON o.category = r.category
+    expect: {order_matters: false, row_count: 5, notes: ["each table by its own date; receipts reach the item by their own link"]}
+
+  - id: purchasing-009
+    question: "How much did we spend with Smith & Sons Ltd in 2025?"
+    tags: [value, C3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      filters:
+        - {column: suppliers.supplier_name, op: eq, values: ["Smith & Sons Ltd"]}
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      JOIN suppliers s ON s.supplier_id = l.supplier_id
+      WHERE s.supplier_name = 'Smith & Sons Ltd'
+        AND l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: purchasing-010
+    question: "Daily Freight Co spend by quarter in 2025"
+    tags: [trend, C2]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      filters:
+        - {column: suppliers.supplier_name, op: eq, values: ["Daily Freight Co"]}
+      time:
+        date: purchase_order_lines.order_date
+        grain: quarter
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('quarter', l.order_date)::DATE AS period, SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      JOIN suppliers s ON s.supplier_id = l.supplier_id
+      WHERE s.supplier_name = 'Daily Freight Co'
+        AND l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 4, notes: ["'Daily' is part of the name, not a daily grain"]}
+
+  - id: purchasing-011
+    question: "What is the value of our open purchase order lines?"
+    tags: [value, E3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      filters:
+        - {column: purchase_order_lines.status, op: eq, values: ["O"]}
+    reference_sql: |
+      SELECT SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      WHERE l.status = 'O'
+    expect: {order_matters: false}
+
+  - id: purchasing-012
+    question: "spend in 2025 leaving out cancelled lines"
+    tags: [value, E3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      filters:
+        - {column: purchase_order_lines.status, op: ne, values: ["X"]}
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      WHERE l.status <> 'X'
+        AND l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+    expect: {order_matters: false}
+
+  - id: purchasing-013
+    question: "How much is due for delivery in July 2026?"
+    tags: [value, role-date, future]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      time:
+        date: purchase_order_lines.promised_date
+        window: {kind: between, start: "2026-07-01", end: "2026-07-31"}
+    reference_sql: |
+      SELECT SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      WHERE l.promised_date >= DATE '2026-07-01' AND l.promised_date < DATE '2026-08-01'
+    expect: {order_matters: false, notes: ["a promised date runs into the future: the window has rows"]}
+
+  - id: purchasing-014
+    question: "What share of 2025 spend did each buyer place?"
+    tags: [share]
+    plan:
+      intent: share
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      group_by: [buyers.buyer_name]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT b.buyer_name, SUM(l.line_amount) AS line_amount,
+             SUM(l.line_amount) / SUM(SUM(l.line_amount)) OVER () AS share
+      FROM purchase_order_lines l
+      LEFT JOIN buyers b ON b.buyer_id = l.buyer_id
+      WHERE l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false}
+
+  - id: purchasing-015
+    question: "order lines by week in May 2026"
+    tags: [trend, A6, no-calendar]
+    plan:
+      intent: trend
+      measures: [{agg: count, table: purchase_order_lines}]
+      time:
+        date: purchase_order_lines.order_date
+        grain: week
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+    reference_sql: |
+      SELECT DATE_TRUNC('week', l.order_date)::DATE AS period, COUNT(*) AS order_lines
+      FROM purchase_order_lines l
+      WHERE l.order_date >= DATE '2026-05-01' AND l.order_date < DATE '2026-06-01'
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true}
+
+  - id: purchasing-016
+    question: "Spend since March 2026"
+    tags: [value, A3]
+    plan:
+      intent: value
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: since, start: "2026-03-01"}
+    reference_sql: |
+      SELECT SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      WHERE l.order_date >= DATE '2026-03-01' AND l.order_date < DATE '2026-06-16'
+    expect: {order_matters: false}
+
+  - id: purchasing-017
+    question: "Which suppliers' spend grew the most from Q4 2025 to Q1 2026?"
+    tags: [compare, rank, A8]
+    plan:
+      intent: compare
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      group_by: [suppliers.supplier_name]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2026-01-01", end: "2026-03-31"}
+        compare: {kind: window, window: {kind: between, start: "2025-10-01", end: "2025-12-31"}}
+      sort: [{by: change, desc: true}]
+    reference_sql: |
+      SELECT s.supplier_name,
+             SUM(CASE WHEN l.order_date < DATE '2026-01-01' THEN l.line_amount END) AS spend_before,
+             SUM(CASE WHEN l.order_date >= DATE '2026-01-01' THEN l.line_amount END) AS line_amount,
+             COALESCE(SUM(CASE WHEN l.order_date >= DATE '2026-01-01' THEN l.line_amount END), 0)
+               - COALESCE(SUM(CASE WHEN l.order_date < DATE '2026-01-01' THEN l.line_amount END), 0) AS change
+      FROM purchase_order_lines l
+      LEFT JOIN suppliers s ON s.supplier_id = l.supplier_id
+      WHERE l.order_date >= DATE '2025-10-01' AND l.order_date < DATE '2026-04-01'
+      GROUP BY 1
+      ORDER BY change DESC, s.supplier_name
+    expect: {order_matters: true, notes: ["lines for a supplier missing from the list show as an empty supplier"]}
+
+  - id: purchasing-018
+    question: "Spend by year"
+    tags: [trend, A7]
+    plan:
+      intent: trend
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      time:
+        date: purchase_order_lines.order_date
+        grain: year
+        window: {kind: all}
+    reference_sql: |
+      SELECT DATE_TRUNC('year', l.order_date)::DATE AS period, SUM(l.line_amount) AS line_amount
+      FROM purchase_order_lines l
+      GROUP BY 1
+      ORDER BY 1
+    expect: {order_matters: true, row_count: 3, partial_periods: ["2026-01-01"]}
+
+  - id: purchasing-019
+    question: "list our suppliers in Mexico"
+    tags: [list]
+    plan:
+      intent: list
+      group_by: [suppliers.supplier_name]
+      filters:
+        - {column: suppliers.country, op: eq, values: ["Mexico"]}
+    reference_sql: |
+      SELECT s.supplier_name FROM suppliers s WHERE s.country = 'Mexico' ORDER BY 1
+    expect: {order_matters: true, row_count: 3}
+
+  - id: purchasing-020
+    question: "How many items are on the item list?"
+    tags: [count, listed-vs-active]
+    plan:
+      intent: count
+      measures: [{agg: count_distinct, column: items.item_id}]
+    reference_sql: |
+      SELECT COUNT(DISTINCT i.item_id) AS items FROM items i
+    expect: {order_matters: false, notes: ["80 listed; 55 ever ordered"]}
+
+  - id: purchasing-021
+    question: "Top 3 items by quantity ordered in 2025"
+    tags: [rank]
+    plan:
+      intent: rank
+      measures: [{agg: sum, column: purchase_order_lines.ordered_qty}]
+      group_by: [items.item_name]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+      sort: [{by: purchase_order_lines.ordered_qty, desc: true}]
+      limit: 3
+    reference_sql: |
+      SELECT i.item_name, SUM(l.ordered_qty) AS ordered_qty
+      FROM purchase_order_lines l
+      LEFT JOIN items i ON i.item_id = l.item_id
+      WHERE l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+      GROUP BY 1
+      ORDER BY ordered_qty DESC, i.item_name
+      LIMIT 3
+    expect: {order_matters: true}
+
+  - id: purchasing-022
+    question: "How many receipts did we book last month?"
+    tags: [count, previous]
+    plan:
+      intent: count
+      measures: [{agg: count, table: receipts}]
+      time:
+        date: receipts.received_date
+        window: {kind: previous, unit: month}
+    reference_sql: |
+      SELECT COUNT(*) AS receipts
+      FROM receipts r
+      WHERE r.received_date >= DATE '2026-05-01' AND r.received_date < DATE '2026-06-01'
+    expect: {order_matters: false}
+
+  - id: purchasing-023
+    question: "Rejected quantity by supplier in 2025"
+    tags: [breakdown, fact-to-fact]
+    plan:
+      intent: breakdown
+      measures: [{agg: sum, column: receipts.rejected_qty}]
+      group_by: [suppliers.supplier_name]
+      time:
+        date: receipts.received_date
+        window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+    reference_sql: |
+      SELECT s.supplier_name, SUM(r.rejected_qty) AS rejected_qty
+      FROM receipts r
+      LEFT JOIN purchase_order_lines l ON l.po_line_id = r.po_line_id
+      LEFT JOIN suppliers s ON s.supplier_id = l.supplier_id
+      WHERE r.received_date >= DATE '2025-01-01' AND r.received_date < DATE '2026-01-01'
+      GROUP BY 1
+    expect: {order_matters: false, notes: ["a receipt reaches its supplier through the order line it fills"]}
+
+  - id: purchasing-024
+    question: "Spend in May 2026 against May 2025"
+    tags: [compare, same-period-last-year]
+    plan:
+      intent: compare
+      measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+      time:
+        date: purchase_order_lines.order_date
+        window: {kind: between, start: "2026-05-01", end: "2026-05-31"}
+        compare: {kind: same_period_last_year}
+    reference_sql: |
+      SELECT SUM(CASE WHEN l.order_date < DATE '2026-01-01' THEN l.line_amount END) AS spend_before,
+             SUM(CASE WHEN l.order_date >= DATE '2026-01-01' THEN l.line_amount END) AS line_amount,
+             COALESCE(SUM(CASE WHEN l.order_date >= DATE '2026-01-01' THEN l.line_amount END), 0)
+               - COALESCE(SUM(CASE WHEN l.order_date < DATE '2026-01-01' THEN l.line_amount END), 0) AS change
+      FROM purchase_order_lines l
+      WHERE (l.order_date >= DATE '2025-05-01' AND l.order_date < DATE '2025-06-01')
+         OR (l.order_date >= DATE '2026-05-01' AND l.order_date < DATE '2026-06-01')
+    expect: {order_matters: false}
+
+  - id: purchasing-025
+    question: "Spend by item category in 2025, then 2024"
+    tags: [follow-up, B1]
+    turns:
+      - question: "Spend by item category in 2025"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+          group_by: [items.category]
+          time:
+            date: purchase_order_lines.order_date
+            window: {kind: between, start: "2025-01-01", end: "2025-12-31"}
+        reference_sql: |
+          SELECT i.category, SUM(l.line_amount) AS line_amount
+          FROM purchase_order_lines l
+          LEFT JOIN items i ON i.item_id = l.item_id
+          WHERE l.order_date >= DATE '2025-01-01' AND l.order_date < DATE '2026-01-01'
+          GROUP BY 1
+      - question: "and in 2024?"
+        plan:
+          intent: breakdown
+          measures: [{agg: sum, column: purchase_order_lines.line_amount}]
+          group_by: [items.category]
+          time:
+            date: purchase_order_lines.order_date
+            window: {kind: between, start: "2024-01-01", end: "2024-12-31"}
+        reference_sql: |
+          SELECT i.category, SUM(l.line_amount) AS line_amount
+          FROM purchase_order_lines l
+          LEFT JOIN items i ON i.item_id = l.item_id
+          WHERE l.order_date >= DATE '2024-01-01' AND l.order_date < DATE '2025-01-01'
+          GROUP BY 1
+
+  - id: purchasing-026
+    question: "What was the quantity in May?"
+    tags: [asks]
+    expect: {asks: measure, notes: ["ordered, received or rejected: none is the obvious one"]}
+
+  - id: purchasing-027
+    question: "What were our sales last quarter?"
+    tags: [declines]
+    expect: {declines: true, notes: ["purchasing holds what was bought, not what was sold"]}

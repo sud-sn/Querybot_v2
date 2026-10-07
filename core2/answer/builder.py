@@ -490,9 +490,18 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         complete = [r for r in complete if _number(r[m.name]) is not None] or complete     # a period with a value
         first, last = complete[0], complete[-1]
         peak = max(complete, key=lambda r: _number(r[m.name]) or float("-inf"))
+        # The highest is named once: beside the first or last period when it is one of them, and not
+        # at all between two periods (one of two is plainly the higher).
+        top = " (the highest)" if len(complete) > 2 else ""
         text = f"{lead}, by {grain.replace('fiscal_', 'fiscal ')}: {value(first)} in {name(first)}"
+        if peak is first:
+            text += top
         if len(complete) > 1:
-            text += f", {value(last)} in {name(last)}; highest {value(peak)} in {name(peak)}"
+            text += f", {value(last)} in {name(last)}"
+            if peak is last:
+                text += top
+            elif peak is not first:
+                text += f"; highest {value(peak)} in {name(peak)}"
         return text + "."
     if members and not periods:
         g = members[0]
