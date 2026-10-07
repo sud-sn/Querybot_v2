@@ -375,7 +375,7 @@ def _header(c: OutColumn) -> str:
 
 def _noun(label: str) -> str:
     """What a grouping counts, in the plural: "Warehouse name" -> "warehouses", "Day of week" -> "days of week"."""
-    words = label.lower().split()
+    words = [w if w.isupper() and len(w) > 1 else w.lower() for w in label.split()]   # "GL accounts"
     while len(words) > 1 and words[-1] in ("name", "description", "desc", "code", "label", "title"):
         words.pop()
     if len(words) > 2 and words[1] == "of":

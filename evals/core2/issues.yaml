@@ -1,0 +1,93 @@
+# The 43 issues found in today's pipeline (the core-v2 plan), and where the new core is checked
+# against each. A check is a golden question tagged with the issue (golden:<id>), a test
+# (test:<module>::<function>), a property of the design that leaves nothing to test (design:),
+# or an issue the new core leaves as it is (open:). tests/test_core2_closes_the_issue_list.py
+# keeps this list honest: every test named here exists, and every golden tag has its questions.
+issues:
+  A1: {title: "By month or quarter with a calendar table fails", checks: ["golden:A1"]}
+  A2: {title: "\"Monthly X in P\" returns one total, not a series", checks: ["golden:A2"]}
+  A3: {title: "\"Since\", \"from\", \"after\" read as one period", checks: ["golden:A3"]}
+  A4: {title: "A day range answers the whole month", checks: ["golden:A4"]}
+  A5: {title: "\"Last N months\" grouped by month name, no year, no order", checks: ["golden:A5"]}
+  A6: {title: "Weeks start on different days; labels print as timestamps",
+       checks: ["golden:A6", "test:tests.test_core2_says_what_the_numbers_show::test_weeks_are_monday_weeks_and_read_as_the_week_of"]}
+  A7: {title: "A partial last period compared with whole ones",
+       checks: ["golden:A7", "test:tests.test_core2_says_what_the_numbers_show::test_a_partly_covered_year_is_named_not_compared",
+                "test:tests.test_core2_reads_real_warehouse_shapes::test_a_month_is_whole_unless_its_data_really_stops_short"]}
+  A8: {title: "\"Grew the most from P1 to P2\" asks which date", checks: ["golden:A8"]}
+  A9: {title: "A monthly table's row-write time used as its business date",
+       checks: ["test:tests.test_core2_learns_what_real_warehouses_look_like::test_columns_about_the_load_or_never_filled_are_not_groupings",
+                "test:tests.test_core2_reads_real_warehouse_shapes::test_a_whole_year_row_is_never_added_to_its_months"]}
+  B1: {title: "Follow-ups refused as edits of a cached result",
+       checks: ["test:tests.test_core2_answers_a_question_end_to_end::test_a_follow_up_sees_the_previous_plan"]}
+  B2: {title: "A one-word reply to a question back starts over",
+       checks: ["test:tests.test_core2_answers_a_question_end_to_end::test_a_reply_to_a_question_back_is_read_with_that_question",
+                "test:tests.test_core2_follow_ups_offer_only_what_works::test_a_reply_picks_an_option_by_name_number_or_unambiguous_start"]}
+  B3: {title: "A breakdown after a filtered answer keeps the old filter",
+       checks: ["test:tests.test_core2_answers_a_question_end_to_end::test_a_follow_up_sees_the_previous_plan",
+                "design: the AI writes each turn's whole plan from the previous plan, so nothing is carried over unless the plan says so"]}
+  B4: {title: "Short follow-ups (\"top 3 only\") not understood",
+       checks: ["test:tests.test_core2_answers_a_question_end_to_end::test_a_follow_up_sees_the_previous_plan"]}
+  C1: {title: "The measure a question names is swapped for another", checks: ["golden:C1"]}
+  C2: {title: "Names containing analysis words are not found",
+       checks: ["golden:C2", "test:tests.test_core2_answers_a_question_end_to_end::test_member_names_are_found_and_handed_to_the_ai"]}
+  C3: {title: "Names with symbols are not matched",
+       checks: ["golden:C3", "test:tests.test_core2_closes_the_issue_list::test_names_with_symbols_and_everyday_words"]}
+  C4: {title: "Ordinary requests blocked as database commands",
+       checks: ["test:tests.test_core2_answers_a_question_end_to_end::test_greetings_questions_about_the_data_and_the_unanswerable_are_answered_as_such",
+                "design: a question is never run as SQL; only plans the new core compiles are"]}
+  C5: {title: "\"What data do you have?\" fails or lists table codes",
+       checks: ["test:tests.test_core2_answers_a_question_end_to_end::test_greetings_questions_about_the_data_and_the_unanswerable_are_answered_as_such"]}
+  C6: {title: "A measure word inside a date's name makes it ask which date",
+       checks: ["design: dates are named in the plan by slug (time.date), never matched from question words"]}
+  C7: {title: "Everyday words looked up as data values",
+       checks: ["test:tests.test_core2_closes_the_issue_list::test_names_with_symbols_and_everyday_words"]}
+  D1: {title: "One grouping, two totals by two join paths", checks: ["golden:D1"]}
+  D2: {title: "A join the data supports needs an admin first",
+       checks: ["test:tests.test_core2_learns_each_synthetic_warehouse::test_the_learned_model_meets_the_gate"]}
+  D3: {title: "Two-source questions sent to AI-written SQL",
+       checks: ["golden:D1", "design: the new core has no AI-written SQL path"]}
+  D4: {title: "A metric reading another table's column fails",
+       checks: ["test:tests.test_core2_closes_the_issue_list::test_a_metric_reading_another_table_is_reported_with_its_reason"]}
+  D5: {title: "Admin pages show something other than what answers use",
+       checks: ["test:tests.test_core2_learned_page_shows_what_was_learned::test_what_a_build_learns_is_what_the_page_shows",
+                "test:tests.test_core2_learned_page_shows_what_was_learned::test_a_decision_applies_at_once_and_can_be_undone"]}
+  D6: {title: "A grouping without a *_NAME column cannot be used",
+       checks: ["test:tests.test_core2_learns_each_synthetic_warehouse::test_the_learned_model_meets_the_gate"]}
+  E1: {title: "A percentage shown as money",
+       checks: ["golden:E1", "test:tests.test_core2_brings_over_todays_decisions::test_a_metric_comes_over_as_a_measure_the_new_core_answers_with_the_warehouses_numbers"]}
+  E2: {title: "The write-up quotes a helper row count",
+       checks: ["design: every number in an answer is read from the answer's own rows; there is no separate write-up"]}
+  E3: {title: "Cancelled and credited lines in revenue",
+       checks: ["test:tests.test_core2_learned_page_shows_what_was_learned::test_cancelled_rows_are_left_out_from_the_page_and_answers_follow"]}
+  E4: {title: "Quantities in different units added together",
+       checks: ["test:tests.test_core2_says_what_the_numbers_show::test_stock_on_hand_is_answered_per_unit_never_added_across_units",
+                "test:tests.test_core2_says_what_the_numbers_show::test_a_breakdown_keeps_units_apart_and_draws_the_unit_most_items_are_in"]}
+  F1: {title: "A ranking of months drawn as a time line in ranked order",
+       checks: ["test:tests.test_core2_says_what_the_numbers_show::test_a_ranking_of_months_names_the_leading_month_and_is_drawn_as_ranked_bars"]}
+  F2: {title: "Forecasts show technical columns and quote a projection as fact",
+       checks: ["test:tests.test_core2_explains_why_and_forecasts::test_a_forecast_projects_complete_months_and_names_what_it_left_out"]}
+  F3: {title: "\"Flat\" said of a series with a spike",
+       checks: ["test:tests.test_core2_says_what_the_numbers_show::test_a_series_with_a_spike_names_its_highest_period_and_is_never_called_flat"]}
+  F4: {title: "Analysis answers come without a chart",
+       checks: ["test:tests.test_core2_explains_why_and_forecasts::test_a_why_question_gives_the_change_and_the_groupings_that_carry_it"]}
+  G1: {title: "\"Why this pattern?\" runs no breakdown",
+       checks: ["test:tests.test_core2_explains_why_and_forecasts::test_a_why_question_gives_the_change_and_the_groupings_that_carry_it"]}
+  G2: {title: "\"Why the drop?\" on a daily series compares two days",
+       checks: ["test:tests.test_core2_explains_why_and_forecasts::test_a_why_about_a_daily_series_compares_weeks_not_two_days"]}
+  G3: {title: "A comparison of a series offered, then fails",
+       checks: ["test:tests.test_core2_follow_ups_offer_only_what_works::test_a_series_offers_why_for_its_last_complete_period_and_a_forecast_never_a_comparison"]}
+  G4: {title: "The comparison sentence drops the direction",
+       checks: ["test:tests.test_core2_says_what_the_numbers_show::test_when_every_member_fell_none_is_said_to_have_risen",
+                "test:tests.test_core2_says_what_the_numbers_show::test_a_rise_is_signed_and_a_fall_is_signed"]}
+  H1: {title: "Snowflake password-only sign-in ends",
+       checks: ["test:tests.test_snowflake_signs_in_as_a_service_user::TestTheConnectorArguments.test_a_key_pair_connection_sends_its_key_and_no_password"]}
+  H2: {title: "A new dataset needs many admin steps",
+       checks: ["test:tests.test_core2_learns_each_synthetic_warehouse::test_the_learned_model_meets_the_gate",
+                "test:tests.test_core2_brings_over_todays_decisions::test_a_build_brings_todays_setup_over_and_answers_by_it"]}
+  H3: {title: "Built-in rules assume one ERP's naming",
+       checks: ["test:tests.test_core2_answers_the_golden_questions_right::test_every_golden_question_gets_the_reference_answer"]}
+  H4: {title: "Starter metrics only for stock tables",
+       checks: ["test:tests.test_core2_learns_each_synthetic_warehouse::test_the_learned_model_meets_the_gate"]}
+  H5: {title: "The monthly question limit stops a demo",
+       checks: ["open: the limit is today's setting (0 and empty mean 500); raise it on the workspace page before testing"]}
