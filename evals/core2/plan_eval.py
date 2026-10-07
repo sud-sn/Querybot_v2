@@ -11,7 +11,7 @@ The synthetic warehouses hold no customer data, so any provider may see them.
     export QUERYBOT_EVAL_API_KEY=...
     python -m evals.core2.plan_eval retail --provider azure_openai --model <deployment> \\
         --endpoint https://<resource>.openai.azure.com --api-version 2024-10-21
-    python -m evals.core2.plan_eval inventory --provider anthropic --model claude-sonnet-5-5
+    python -m evals.core2.plan_eval inventory --provider anthropic --model <model name>
 
 Every AI answer is written to ``--record`` (default
 ``evals/core2/recorded/<domain>.<model>.json``); ``--replay <file>`` runs the
