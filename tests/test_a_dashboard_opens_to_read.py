@@ -98,3 +98,10 @@ def test_the_dashboards_page_lists_the_dashboards_first():
 def test_no_dashboards_yet_says_how_to_make_one():
     body = _markup(render(artifact=False, library=[]))
     assert "No dashboards yet" in body and 'href="/portal/chat"' in body
+
+
+def test_the_trail_names_the_page_as_the_menu_does():
+    """It said "Dashboard", in English for every reader, under a menu saying "Dashboards"."""
+    trail = _page()
+    trail = trail[trail.index('class="breadcrumb'):]
+    assert "Dashboards" in trail[:trail.index("</nav>")]

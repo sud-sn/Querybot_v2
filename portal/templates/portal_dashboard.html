@@ -3,7 +3,7 @@
 {% from "macros.html" import breadcrumb, alert %}
 {% block title %}{{ t('ui.shell.dashboard') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block breadcrumb %}
-{{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
+{{ breadcrumb([{"label": t('ui.shell.dashboard'), "href": ""}]) }}
 {% endblock %}
 {% block head %}
 <script src="{{ asset('vendor/echarts.min.js') }}"></script>
