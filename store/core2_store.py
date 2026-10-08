@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import uuid
 from typing import Any
 
@@ -106,20 +107,24 @@ def list_core2_overrides(account_id: str, db_config_id: int | None) -> list[dict
     return out
 
 
-# This service process: a Learn runs inside the process that started it, so one started by
-# another process (before a restart) will never finish.
-_RUNNER = uuid.uuid4().hex
+_RUNNER_ENV = "QUERYBOT_CORE2_RUNNER"
 
 
 def core2_runner() -> str:
-    return _RUNNER
+    """This service process. A Learn runs inside the process that started it, so one started by
+    another process (before a restart) will never finish. Kept in the process's environment,
+    which a restart starts afresh and a re-imported module does not."""
+    runner = os.environ.get(_RUNNER_ENV)
+    if not runner:
+        runner = os.environ[_RUNNER_ENV] = uuid.uuid4().hex
+    return runner
 
 
 def start_core2_build(account_id: str, db_config_id: int | None) -> str:
     started = _now()
     with get_db() as conn:
         conn.execute("""INSERT OR IGNORE INTO core2_build(account_id, db_config_id, started_at, status, runner)
-                        VALUES (?, ?, ?, 'running', ?)""", (account_id, int(db_config_id or 0), started, _RUNNER))
+                        VALUES (?, ?, ?, 'running', ?)""", (account_id, int(db_config_id or 0), started, core2_runner()))
     return started
 
 

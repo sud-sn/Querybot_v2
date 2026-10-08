@@ -81,7 +81,7 @@ def test_while_learn_runs_the_page_shows_the_steps_and_asks_for_more(workspace):
     assert "Learning now" in page and "each step appears below as it happens" in page
     assert "What QueryBot is doing now" in page and 'id="lq-log"' in page
     assert "Reading 9 tables" in page and "Read ORDER_LINES (1 of 9): 4,000 rows" in page   # one line, spaces kept tidy
-    assert f"/admin/clients/{ACCOUNT}/learned/progress" in page and "window.location.replace" in page
+    assert f'encodeURIComponent("{ACCOUNT}") + "/learned/progress"' in page and "window.location.replace" in page
     assert "QueryBot is studying the database. Each step appears below" in page
     assert "has not studied this database yet" not in page   # it is studying it
     assert "disabled" in page.split("Learn this database")[0].rsplit("<button", 1)[1]
@@ -162,3 +162,22 @@ def test_a_run_cut_off_by_a_restart_is_said_and_does_not_block_learning_again(wo
     page = _page(query="saved=building")
     assert "What QueryBot is doing now" in page and "QueryBot is studying the database" in page
     assert tasks.tasks[0].args == (ACCOUNT, store.latest_core2_build(ACCOUNT, db_id)["started_at"])
+
+
+def test_a_run_is_this_processs_even_when_the_store_module_is_imported_again(workspace):  # noqa: F811
+    """The process a run belongs to survives a re-imported store module (the suite re-imports it)."""
+    import sys
+
+    from admin import core2_routes
+
+    saved = {name: module for name, module in sys.modules.items() if name == "store" or name.startswith("store.")}
+    try:
+        for name in saved:
+            del sys.modules[name]
+        import store as again
+
+        db_id = again.get_client(ACCOUNT)["db_config_id"]
+        again.start_core2_build(ACCOUNT, db_id)
+        assert core2_routes._running(again.latest_core2_build(ACCOUNT, db_id))
+    finally:
+        sys.modules.update(saved)
