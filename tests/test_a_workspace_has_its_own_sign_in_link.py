@@ -9,7 +9,8 @@ goes back to the plain page.
 
 The page never looks the workspace up: it says nothing about whether one
 exists, as the sign-in itself does not. A reader who came by the link and
-mistypes their password tries again on the same link.
+mistypes their password tries again on the same link. An admin may name a
+workspace with any text, so the link takes any, shown as text.
 
 Signed in and out through the real routes, on a fresh store.
 """
@@ -59,11 +60,24 @@ def test_the_link_fills_the_workspace_in(fresh_store):
     assert shown["workspace"] == "acct-retail"
 
 
-@pytest.mark.parametrize("value", ["", "../etc", "a b", "<script>", "x" * 70])
-def test_anything_not_shaped_like_a_workspace_id_is_ignored(fresh_store, value):
+@pytest.mark.parametrize("value", ["", "   ", "a\nb", "a\x00b", "x" * 129])
+def test_anything_that_cannot_be_a_workspace_id_is_ignored(fresh_store, value):
     from portal import routes
 
     assert _call(routes.portal_login_page(_request({"workspace": value})))["workspace"] == ""
+
+
+def test_a_workspace_named_with_any_text_is_filled_in(fresh_store):
+    """The new-client form takes any text as the id, so the link must too."""
+    from portal import routes
+
+    assert _call(routes.portal_login_page(_request({"workspace": "Acme Retail"})))["workspace"] == "Acme Retail"
+
+
+def test_what_the_link_names_is_shown_as_text_never_as_markup():
+    raw = render("portal_login.html", path="/portal/login", workspace='"><script>alert(1)</script>')
+    assert "<script>alert(1)" not in raw
+    assert "&lt;script&gt;" in raw or "&#34;&gt;&lt;script" in raw
 
 
 def test_the_page_asks_only_for_email_and_password():

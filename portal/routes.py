@@ -915,13 +915,14 @@ def _record_suggestions_displayed(user: dict, suggestions: list[dict]) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _linked_workspace(value: str | None) -> str:
-    """The workspace a sign-in link names (/portal/login?workspace=<id>), if it is shaped like one.
+    """The workspace a sign-in link names (/portal/login?workspace=<id>).
 
     Only filled in, never looked up: the page says nothing about whether it exists,
-    as the sign-in itself does not.
+    as the sign-in itself does not. An admin may name a workspace with any text, so
+    any is taken but control characters or more than a workspace id's length.
     """
     value = (value or "").strip()
-    return value if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value) else ""
+    return value if 0 < len(value) <= 128 and value.isprintable() else ""
 
 
 def _landing(user: dict | None) -> str:
