@@ -17,7 +17,7 @@ from typing import Any
 
 from core2.bootstrap import names
 from core2.compile.compiler import Compiled, OutColumn
-from core2.resolve.resolver import Logical
+from core2.resolve.resolver import Condition, Logical
 from core2.resolve.time import Range, label as period_label
 
 _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -118,6 +118,85 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
     if unit and unit.strip().casefold() in _LIKE_A_SIZE:
         return f"{text} (unit {unit.strip()})"
     return f"{text} {unit}" if unit else text
+
+
+_OP_TEXT = {"gt": "above", "gte": "at least", "lt": "below", "lte": "at most"}
+
+
+def _listed(values: list, joiner: str) -> str:
+    shown = [str(v) for v in values[:3]]
+    if len(values) > 3:
+        return f"{', '.join(shown)} {joiner} {len(values) - 3} more"
+    return shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} {joiner} {shown[-1]}"
+
+
+def _compared(op: str, values: list[str]) -> str:
+    """A comparison in words: "above 10", "between 7 and 14", "not 3"."""
+    if op == "between" and len(values) == 2:
+        return f"between {values[0]} and {values[1]}"
+    if op in _OP_TEXT and values:
+        return f"{_OP_TEXT[op]} {values[0]}"
+    if op in ("ne", "not_in"):
+        return f"not {_listed(values, 'or')}"
+    return _listed(values, "or") if values else ""
+
+
+def condition_words(c: Condition) -> str:
+    """A condition as the answer's sentence names it: "for customer type Wholesale"."""
+    if c.kind == "activity":
+        return f"with {'an' if c.label[:1] in 'aeiou' else 'a'} {c.label}"
+    if c.kind == "by":
+        return f"by {c.label}"
+    if c.kind == "snapshot":
+        return "at the last snapshot"
+    if c.kind == "date":
+        return f"with {c.label} {span_words(c.dates)}" if c.dates is not None else ""
+    if c.kind == "days":
+        return f"where {c.label} is {_compared(c.op, [fmt(v, 'number') for v in c.values])} days"
+    if c.kind == "total":
+        # A threshold as written: "$250,000", not "$250,000.00".
+        amounts = [f"${float(v):,.0f}" if c.format == "currency" and _number(v) is not None
+                   and float(v).is_integer() else fmt(v, c.format or "number") for v in c.values]
+        return f"with {c.label} {_compared(c.op, amounts)}"
+    if c.op in ("eq", "in"):
+        return f"for {c.label} {_listed(c.values, 'or')}"
+    if c.op in ("ne", "not_in"):
+        return f"excluding {c.label} {_listed(c.values, 'and')}"
+    if c.op in ("contains", "starts_with"):
+        return f"where {c.label} {c.op.replace('_', ' ')} \u201c{c.values[0] if c.values else ''}\u201d"
+    if c.op == "is_null":
+        return f"where {c.label} is empty"
+    if c.op == "not_null":
+        return f"where {c.label} is filled"
+    return f"where {c.label} is {_compared(c.op, [str(v) for v in c.values])}"
+
+
+def scope_words(logical: Logical) -> tuple[str, str]:
+    """What the answer counts, around its period: ("with a customer order invoice", "in Q2 2026 by order
+    date, for customer type Wholesale"). The first goes after the measure, the second is the period and
+    every condition that narrowed the rows, so the sentence never reads as the whole data's figure."""
+    before = " ".join(condition_words(c) for c in logical.conditions if c.kind == "activity")
+    span = span_words(logical.window)
+    by = " ".join(condition_words(c) for c in logical.conditions if c.kind == "by")
+    rest = [w for w in (condition_words(c) for c in logical.conditions if c.kind not in ("activity", "by")) if w]
+    after = " ".join(w for w in (span, by) if w)
+    if rest:
+        after = f"{after}, {', '.join(rest)}" if after else ", ".join(rest)
+    return before, after
+
+
+def scoped_label(logical: Logical, label: str) -> str:
+    """A measure's name with every condition the answer applied: "Gross profit for profit centre X"."""
+    order = {"activity": 0, "by": 1}
+    words = [w for w in (condition_words(c) for c in sorted(logical.conditions, key=lambda c: order.get(c.kind, 2)))
+             if w]
+    return " ".join([label, *words])
+
+
+def conditions_tail(logical: Logical) -> str:
+    """The conditions to repeat in a next question about the same answer: ", for customer type Wholesale"."""
+    words = [w for w in (condition_words(c) for c in logical.conditions) if w]
+    return f", {', '.join(words)}" if words else ""
 
 
 def span_words(rng: Range) -> str:
@@ -288,7 +367,8 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     raw = [{c.name: row[cols.index[c.name]] for c in shown} for row in rows]
     formats = {c.name: _table_format(c) for c in shown}
     labels = {c.name: _header(c) for c in shown}
-    display: dict[str, dict] = {}
+    display: dict[str, dict] = {c.name: _digits(c) for c in shown
+                                if c.role in ("measure", "prior", "change") and _digits(c)}
     for c in cols.of("period"):
         if c.grain and not c.grain.startswith("fiscal"):
             display[c.name] = {"type": "date", "style": _PERIOD_STYLE.get(c.grain, "iso_date")}
@@ -457,20 +537,20 @@ def _signed(number: float, format_: str, unit: str | None = None) -> str:
 def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dict], partial: set[str],
               units: _Units) -> str:
     measures = cols.of("measure")
-    span = span_words(logical.window)
+    before, span = scope_words(logical)
     if not raw:
         return f"No rows match{(' ' + span) if span else ''}."
     if logical.intent == "list" or not measures:
         groups = cols.of("attribute")
         if not groups:
-            return f"{len(raw):,} rows."
+            return f"{len(raw):,} rows{(' ' + span) if span else ''}."
         listed = [str(r[groups[0].name]) for r in shown[:8] if r[groups[0].name] not in (None, "")]
         more = f", and {len(raw) - 8:,} more" if len(raw) > 8 else ""
-        return f"{len(raw):,} {_noun(groups[0].label)}: {', '.join(listed)}{more}."
+        return f"{len(raw):,} {_noun(groups[0].label)}{(' ' + span) if span else ''}: {', '.join(listed)}{more}."
     m = measures[0]
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
     value = lambda r, c=m: fmt(r[c.name], c.format, unit=units.of(r))   # noqa: E731
-    lead = f"{m.label}{(' ' + span) if span else ''}"
+    lead = f"{m.label}{(' ' + before) if before else ''}{(' ' + span) if span else ''}"
     if logical.compare is not None:
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
         pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
@@ -649,7 +729,16 @@ def _lead(logical: Logical, cols: _Columns, raw: list[dict], units: _Units) -> t
                 return value, f"nothing {span_words(logical.compare)} to compare with"
             return value, (f"{'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format, unit=units.of(r))}"
                            f"{pct_text} {versus(logical.compare)}")
-    return value, span_words(logical.window)
+    return value, scope_words(logical)[1]
+
+
+def _digits(column: OutColumn) -> dict:
+    """How many decimals the portal shows for a measure: none for a count, a tenth for days."""
+    if column.format in ("count", "integer"):
+        return {"fraction_digits": 0}
+    if column.format == "days":
+        return {"fraction_digits": 1}
+    return {}
 
 
 def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, str], units: _Units) -> dict | None:
@@ -661,8 +750,8 @@ def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, s
     unit = units.of(raw[0])
     return {"label": f"{m.label} ({unit})" if unit else m.label,
             "value": value if _number(value) is None else _number(value),
-            "format": formats[m.name], "display_format": {},
-            "state": "missing" if _number(value) is None else "ready", "note": span_words(logical.window)}
+            "format": formats[m.name], "display_format": _digits(m),
+            "state": "missing" if _number(value) is None else "ready", "note": scope_words(logical)[1]}
 
 
 def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],

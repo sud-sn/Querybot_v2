@@ -156,7 +156,9 @@ def test_an_empty_answer_is_not_blamed_on_a_member_only_excluded(retail):
             "time": {"window": {"kind": "between", "start": "2030-01-01", "end": "2030-12-31"}},
             "filters": [{"field": "customer.segment", "op": "ne", "values": ["Mail order"]}]}
     (frame,), _ = _conversation(retail, ("net sales in 2030 except the mail order segment", plan))
-    assert "could not find" not in frame["answer"]["headline"] and "Mail order" not in frame["answer"]["headline"]
+    # Not blamed on the member left out; the sentence names it as the condition it is.
+    assert "could not find" not in frame["answer"]["headline"] and "no segment called" not in frame["answer"]["headline"]
+    assert "excluding segment Mail order" in frame["answer"]["headline"]
 
 
 def test_a_total_for_a_customer_the_data_does_not_have_is_said_not_no_value(retail):

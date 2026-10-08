@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core2.answer.builder import span_words
+from core2.answer.builder import condition_words, span_words
 from core2.answer.drivers import Grouping, candidates
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan
@@ -38,9 +38,16 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
     measures = [m for m in logical.measures]
     if not measures or logical.intent == "list":
         return []
-    m = measures[0].label
-    lower = m.lower()
-    span = span_words(logical.window)
+    # The conditions the answer applied go into every next question, so a click never widens it
+    # ("... by month in 2025, where days from order to invoice is above 10 days").
+    before = " ".join(condition_words(c) for c in logical.conditions if c.kind == "activity")
+    by = " ".join(condition_words(c) for c in logical.conditions if c.kind == "by")
+    rest = ", ".join(w for w in (condition_words(c) for c in logical.conditions
+                                 if c.kind not in ("activity", "by")) if w)
+    tail = f", {rest}" if rest else ""
+    m = measures[0].label + (f" {before}" if before else "")
+    lower = measures[0].label.lower() + (f" {before}" if before else "")
+    span = " ".join(w for w in (span_words(logical.window), by) if w)
     bounded = logical.window.start is not None and logical.window.end is not None
     rows = (payload.get("data") or {}).get("rows") or []
     grouped = [g for g in logical.groups if g.kind == "attribute" and g.name != logical.unit_group]
@@ -57,31 +64,31 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
 
                 label = period_label(dt.date.fromisoformat(str(last)[:10]), period.grain,
                                      fiscal_start=logical.fiscal_start)
-                out.append(f"Why did {lower} change in {label}?")
+                out.append(f"Why did {lower} change in {label}{tail}?")
             except ValueError:
                 pass
         if period.grain in _FORECAST_GRAINS:
-            out.append(f"Forecast {lower} for the next 3 {_FORECAST_GRAINS[period.grain]}")
+            out.append(f"Forecast {lower} for the next 3 {_FORECAST_GRAINS[period.grain]}{tail}")
     elif grouped and period is None:
         top = next((str(r.get(grouped[0].name)) for r in rows
                     if r.get(grouped[0].name) not in (None, "", "Unknown")), "")
         if top:
-            out.append(f"Monthly {lower} for {top}")
+            out.append(f"Monthly {lower} for {top}{tail}")
         if bounded and logical.compare is None:
-            out.append(f"Why did {lower} change {span}?")
+            out.append(f"Why did {lower} change {span}{tail}?")
         if not logical.share and logical.compare is None:
-            out.append(f"Share of {lower} by {Grouping('', grouped[0].label, []).word} {span}".strip())
+            out.append(f"Share of {lower} by {Grouping('', grouped[0].label, []).word} {span}".strip() + tail)
     elif not grouped and period is None:
         if bounded:
-            out.append(f"Why did {lower} change {span}?")
-        out.append(f"{m} by month {span}".strip() if bounded else f"{m} by month for the last 12 months")
+            out.append(f"Why did {lower} change {span}{tail}?")
+        out.append((f"{m} by month {span}".strip() if bounded else f"{m} by month for the last 12 months") + tail)
 
     if len(out) < 3 and not grouped and logical.parts:
         skip = {f.field for f in plan.filters}
         slugs = candidates(model, logical.parts[0].table, allowed=allowed, skip=skip)
         word = _word(model, slugs[0]) if slugs else ""
         if word:
-            out.append(f"{m} by {word} {span}".strip())
+            out.append(f"{m} by {word} {span}".strip() + tail)
     seen: set[str] = set()
     unique = [s for s in out if not (s.lower() in seen or seen.add(s.lower()))]   # type: ignore[func-returns-value]
     return [{"label": s, "question": s} for s in unique[:3]]

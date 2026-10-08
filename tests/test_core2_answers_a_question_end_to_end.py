@@ -98,7 +98,7 @@ def test_member_names_are_found_and_handed_to_the_ai():
                               _services(model, warehouse, ai, index=_index(model, warehouse)), Session())
     assert f'{slug} = "Northline Distribution 58"' in ai.sent[0]
     assert payload["kpi"] and round(payload["kpi"]["value"], 2) == 95698.79
-    assert payload["answer"]["short_value"] == "$95,698.79" and payload["answer"]["comparison"] == "in 2025"
+    assert payload["answer"]["short_value"] == "$95,698.79" and payload["answer"]["comparison"] == "in 2025, for customer Northline Distribution 58"
 
 
 def test_a_regulated_tenants_member_values_never_reach_the_ai():

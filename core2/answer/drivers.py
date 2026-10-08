@@ -30,7 +30,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import bar_chart, display_value, fmt, frame, span_words, versus
+from core2.answer.builder import (bar_chart, conditions_tail, display_value, fmt, frame, scoped_label, span_words,
+                                  versus)
 from core2.compile.compiler import CompileError, Compiled, compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Compare, Plan, TimeSpec, Window
@@ -360,7 +361,10 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     fmt_ = m.format
     now, before = span_words(total_logical.window), span_words(total_logical.compare or Range(None, None))
     pct = change / prior if prior else None
-    headline = _headline(m.label, fmt_, current, prior, change, pct, now, before, reported, ranked, additive)
+    # The conditions the question applied are named with the measure: "Gross profit for profit centre X rose".
+    headline = _headline(scoped_label(total_logical, m.label), fmt_, current, prior, change, pct, now, before,
+                         reported, ranked, additive)
+    tail = conditions_tail(total_logical)
 
     notes = [*notes, *total_logical.notes]
     if groupings:
@@ -387,10 +391,10 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     suggestions: list[str] = []
     if reported:
         top = reported[0]
-        suggestions.append(f"{m.label} by {top.word} by month")
+        suggestions.append(f"{m.label} by {top.word} by month{tail}")
         leader = next((x.member for x in top.leaders if x.member != "Unknown"), None)
         if leader:
-            suggestions.append(f"Monthly {m.label.lower()} for {leader}")
+            suggestions.append(f"Monthly {m.label.lower()} for {leader}{tail}")
     payload = frame(question, headline=headline, short_value=short_value, comparison=comparison,
                     caveats=[n for n in notes if n.startswith("The data runs to")][:1], chart=chart, kpi=None,
                     suggestions=suggestions[:3], headers=headers, labels=labels, records=records, formats=formats,

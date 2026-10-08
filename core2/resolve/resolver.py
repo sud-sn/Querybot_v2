@@ -146,6 +146,22 @@ class Part:
 
 
 @dataclass
+class Condition:
+    """A condition the answer applied, kept so its sentence can name it ("for customer type Wholesale").
+
+    Notes say how each was applied; the answer's own sentence, its value card and the
+    next questions it offers say which ones narrowed what it counts.
+    """
+
+    kind: str                # member | days | total | date | by | activity
+    label: str               # what it is on, as a reader reads it: "customer type", "ship date"
+    op: str = ""
+    values: list = field(default_factory=list)
+    format: str = ""         # a total's format, for its amounts
+    dates: Range | None = None
+
+
+@dataclass
 class Group:
     name: str
     label: str
@@ -172,6 +188,7 @@ class Logical:
     max_rows: int = 5000
     unit_group: str | None = None       # the grouping that keeps different units apart, when one was added
     unit_order: list[str] = field(default_factory=list)   # its units, the most used first (when profiled)
+    conditions: list[Condition] = field(default_factory=list)  # what narrowed the rows, for the answer's words
     expected: list[dt.date] = field(default_factory=list)  # a series' periods within the data: one with no row is a gap
     data_last: dt.date | None = None    # the last day the series' date has data (periods after it have none yet)
 
@@ -454,6 +471,25 @@ class _Days:
 _AGG_WORDS = {"avg": "on average", "min": "the shortest", "max": "the longest", "sum": "added up"}
 
 
+def _member_label(model: SemanticModel, kind: str, slug: str, attribute: Attribute) -> str:
+    """What a member filter is on, as a reader says it: "customer" for a customer's name, else the attribute."""
+    entity = model.entities.get(slug) if kind == "entity" else next(
+        (e for e in model.entities.values() if attribute.column in (e.label_column, e.code_column)), None)
+    words = (entity.business_name if entity is not None else attribute.business_name).lower().split()
+    while len(words) > 1 and words[-1] in ("name", "description", "desc", "label", "title"):
+        words.pop()          # "item group name" Valves reads "item group Valves"
+    return " ".join(words)
+
+
+def _via_words(model: SemanticModel, plan: Plan, slug: str) -> str:
+    """The link the plan follows to ``slug``, as the answer names it: "Ship to customer", "Store"."""
+    named = plan.via.get(slug)
+    if not named:
+        return ""
+    found = find_slug(model, named)
+    return found[1].business_name if found and found[0] == "entity" and isinstance(found[1], Entity) else named
+
+
 def _plain(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
 
@@ -499,6 +535,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     chosen: list[tuple[Measure | None, MeasureExpr, str, str, str]] = []   # (measure, expr, table, label, format)
     timed = bool(plan.time.grain) or plan.time.window.kind != "all" or plan.time.compare is not None or any(
         slug in TIME_ATTRIBUTES for slug in plan.group_by)
+    conditions: list[Condition] = []
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
         found = find_slug(model, slug)
         if not found or found[0] != "measure":
@@ -511,6 +548,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             counted, on, said = by_activity
             chosen.append((m, counted, on, m.business_name, m.format))
             notes.append(said)
+            conditions.append(Condition("activity", model.tables[on].business_name.lower()))
             continue
         chosen.append((m, expr, m.table, m.business_name, m.format))
         if m.filters:
@@ -590,6 +628,9 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         first_role = first_role or role
         if plan.time.date and role and role.slug != plan.time.date:
             notes.append(f"{model.tables[table].business_name} is counted by {role.name}.")
+        if plan.time.date and role and role.slug == plan.time.date and not role.is_default and timed and \
+                not any(c.kind == "by" for c in conditions):
+            conditions.append(Condition("by", role.name.lower()))
 
     fiscal_start = model.settings.fiscal_year_start_month
     first, last = _first_last(first_role) if first_role else (None, None)
@@ -636,7 +677,10 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         else:
             assert attribute is not None
             name = _output_name(attribute.slug.replace(".", "_"), out_names)
-            groups.append(Group(name, attribute.business_name, "attribute", attribute=attribute.slug))
+            # A grouping reached through a named link says which: "Customer name (Ship to customer)".
+            via_words = _via_words(model, plan, slug)
+            label = f"{attribute.business_name} ({via_words})" if via_words else attribute.business_name
+            groups.append(Group(name, label, "attribute", attribute=attribute.slug))
             identity = _member_identity(model, attribute)
             if identity is not None:
                 code_name = _output_name(f"{name}_code", out_names)
@@ -725,6 +769,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             for builder, part in dated:
                 part.day_preds.append(DaysPred(builder.date(start_role, kind="left"),
                                                builder.date(end_role, kind="left"), f.op, days))
+            conditions.append(Condition("days", duration.name.lower(), f.op, list(f.values)))
             notes.append(f"Only {model.tables[start_role.table].business_name.lower()} rows whose "
                          f"{duration.name.lower()} is {_op_words(f).split(' ', 1)[-1] if f.op in ('eq', 'ne') else _op_words(f)} days.")
             continue
@@ -739,6 +784,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             if target is None:
                 raise ResolveError("unsupported", f"a filter on {m.business_name} needs it in the answer")
             having.append(Pred("", target.name, f.op, list(f.values), f"{m.business_name} {_op_words(f)}"))
+            conditions.append(Condition("total", m.business_name.lower(), f.op, list(f.values), format=m.format))
             continue
         # Each measure table takes the filters it can reach; in a question about two
         # tables, a filter on one table's own column limits that table's measures only.
@@ -781,6 +827,17 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 raise unreachable
             raise ResolveError("unsupported", f"{getattr(obj, 'name', f.field)} is not a date of what was asked")
         label = getattr(obj, "business_name", "") or getattr(obj, "name", "") or f.field
+        if kind == "date":
+            assert isinstance(obj, DateRole)
+            conditions.append(Condition("date", obj.name.lower(), dates=_date_filter_range(
+                f, [dt.date.fromisoformat(str(v)) for v in f.values])))
+        else:
+            assert isinstance(obj, (Attribute, Entity))
+            attribute = _entity_label(model, f.field) if kind == "entity" else obj
+            assert isinstance(attribute, Attribute)
+            via_words = _via_words(model, plan, f.field)
+            conditions.append(Condition("member", _member_label(model, kind, f.field, attribute)
+                                        + (f" ({via_words.lower()})" if via_words else ""), f.op, list(f.values)))
         if missed:
             limited = ", ".join(o.label for p in took for o in p.measures)
             notes.append(f"{label} {_op_words(f)}: this limits {limited} only.")
@@ -904,11 +961,13 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         profile = model.columns[unit.column].profile
         unit_order = [str(t.value) for t in sorted((profile.top or []) if profile else [], key=lambda t: -t.count)
                       if t.value not in (None, "")]
+    if any(p.snapshot for p in parts) and not plan.time.grain:
+        conditions.append(Condition("snapshot", ""))     # a series of snapshots is read period by period
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
-                   expected=expected, data_last=last if plan.time.grain else None)
+                   expected=expected, data_last=last if plan.time.grain else None, conditions=conditions)
 
 
 _SPLIT_INTENTS = {"value", "breakdown", "rank", "trend", "compare", "count"}
@@ -1033,6 +1092,7 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
         name = _output_name(attr.slug.replace(".", "_"), out_names)
         part.groups.append(PartGroup(name, alias, col.key, "attribute"))
         groups.append(Group(name, attr.business_name, "attribute", attribute=attr.slug))
+    conditions: list[Condition] = []
     for f in plan.filters:
         found = find_slug(model, f.field)
         if not found or found[0] not in ("attribute", "entity"):
@@ -1041,8 +1101,9 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
         assert isinstance(attr, Attribute)
         col = model.columns[attr.column]
         part.preds.append(Pred(builder.reach(col.table), col.key, f.op, list(f.values)))
+        conditions.append(Condition("member", _member_label(model, found[0], f.field, attr), f.op, list(f.values)))
     return Logical(intent="list", parts=[part], groups=groups, measures=[], window=Range(None, None),
-                   sort=[(groups[0].name, False)], limit=plan.limit, max_rows=ctx.max_rows,
+                   sort=[(groups[0].name, False)], limit=plan.limit, max_rows=ctx.max_rows, conditions=conditions,
                    notes=[f"{model.tables[column.table].business_name}: {attribute.business_name.lower()} as listed."])
 
 
