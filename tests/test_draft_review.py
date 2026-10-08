@@ -768,10 +768,13 @@ class TestTheReviewSurface(RealWorkspace):
     def test_the_page_is_linked_from_the_workspace_nav(self):
         # Reachability is the point. Every feature on this branch that shipped
         # broken shipped with working internals and no way in.
-        nav = (Path(__file__).resolve().parents[1] / "admin" / "templates"
-               / "_client_workspace_nav.html").read_text(encoding="utf-8")
-        self.assertIn("/drafts", nav)
-        self.assertIn("'drafts'", nav)
+        # Since the admin clean-up it is reached from Diagnostics, at the foot
+        # of Settings, and the workspace nav names it when it is open.
+        from admin import routes as admin_routes
+        from tests.test_admin_keeps_what_runs_a_workspace import _labels, _nav
+
+        self.assertIn("drafts", [seg for seg, _name, _what in admin_routes._DIAGNOSTIC_PAGES])
+        self.assertEqual(_labels(_nav("drafts"), "secondary"), ["Diagnostics", "Drafted For Review"])
 
     def test_signed_out_is_redirected_not_served(self):
         import admin.routes as routes

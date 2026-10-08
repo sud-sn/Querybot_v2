@@ -2237,7 +2237,37 @@ async def client_egress_page(request: Request, account_id: str):
 
 @router.get("/clients/{account_id}/advanced", response_class=HTMLResponse)
 async def client_advanced_page(request: Request, account_id: str):
-    return await client_detail(request, account_id, active_tab="advanced")
+    """Settings is one page with the danger zone at its foot; this path lands there."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    return RedirectResponse(f"/admin/clients/{account_id}/settings#tab-danger", status_code=302)
+
+
+# Diagnostics: for support, at the foot of Settings. Today's pipeline's own
+# editors and the developer tooling for its compiler, kept reachable but out of
+# the workspace's navigation until every workspace answers with the new core.
+_DIAGNOSTIC_PAGES = (
+    ("model-health", "Model Health", "The semantic compiler's warnings, conflict inbox and versions."),
+    ("evals", "Evaluations", "Golden questions run against today's pipeline."),
+    ("traces", "Timing", "How long each step of a question took."),
+    ("readiness", "What To Model Next", "Remedies ranked by how many question shapes they fix."),
+    ("drafts", "Drafted For Review", "Definitions drafted for the earlier pipeline."),
+    ("mapping", "Source Mapping", "Import and export of joins and terms as CSV."),
+    ("glossary", "Glossary", "Business terms for the earlier pipeline."),
+    ("meanings", "Business Meanings", "Codes and what they mean, for the earlier pipeline."),
+    ("domains", "Subject Areas", "Groups of tables; they return as models in the next phase."),
+    ("reports", "Reports", "Saved reports; readers make their own in the portal."),
+)
+
+
+@router.get("/clients/{account_id}/diagnostics", response_class=HTMLResponse)
+async def client_diagnostics_page(request: Request, account_id: str):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    return _resp(request, "client_diagnostics.html", {"client": client, "pages": _DIAGNOSTIC_PAGES})
 
 
 @router.get("/clients/{account_id}/health-score")

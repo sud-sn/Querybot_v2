@@ -1,0 +1,40 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% block title %}Diagnostics — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Settings", "href": "/admin/clients/" ~ client.account_id ~ "/settings"},
+    {"label": "Diagnostics", "href": ""},
+]) }}
+{% endblock %}
+{% block content %}
+{# Reached from the foot of Settings, for support. Nothing here is part of
+   running a workspace day to day: these are today's pipeline's own editors
+   and the developer tooling for its compiler. The new core imports what was
+   decided in them; they are deleted once every workspace answers with it. #}
+<div class="page-header">
+  <div>
+    <h1>Diagnostics</h1>
+    <p>For support. These pages belong to the earlier answer pipeline and are not needed to run this workspace.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <table class="table">
+      <thead><tr><th scope="col">Page</th><th scope="col">What it is for</th></tr></thead>
+      <tbody>
+        {% for seg, name, what in pages %}
+        <tr>
+          <td><a href="/admin/clients/{{ client.account_id }}/{{ seg }}">{{ name }}</a></td>
+          <td>{{ what }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

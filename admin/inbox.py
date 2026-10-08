@@ -71,7 +71,6 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
     flagged = store.flagged_answers_by_account()
     metric_proposals = store.pending_metric_proposals_by_account()
     errors = store.open_conflicts_by_account("ERROR")
-    all_conflicts = store.open_conflicts_by_account()
     semantic = {
         row["account_id"]: int(row.get("pending") or 0)
         for row in (store.semantic_feedback_pending_summary() or {}).get("clients", [])
@@ -171,12 +170,9 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
                 "accepting one shares it with everyone",
                 "/metrics#proposals", "Review metric requests", account_id, n)
 
-        # ── Worth knowing ────────────────────────────────────────────────────
-        n = all_conflicts.get(account_id, 0) - errors.get(account_id, 0)
-        if n > 0:
-            hit("conflict-warn", "info", "model warnings",
-                "no action required, but the backlog is worth a look",
-                "/model-health/conflicts", "View conflicts", account_id, n)
+        # The semantic compiler's warnings were listed here as "worth knowing"
+        # with no action to take. They are developer tooling for the earlier
+        # pipeline and live under Diagnostics; "Needs you" is for what does.
 
     items = []
     for group in groups.values():

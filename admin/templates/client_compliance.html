@@ -38,10 +38,19 @@
 </style>
 {% endblock %}
 {% block content %}
+{# A Standard workspace sees its profile and what leaves for the AI; the
+   regulated controls (classification, policies, purposes, the simulator,
+   readiness, trust evidence, history and break-glass) appear once a regulated
+   profile is chosen. #}
+{% set _regulated = (profile.industry or 'standard') != 'standard' %}
 <div class="compliance-head">
+  {% if _regulated %}
   <div><h1 style="font-size:var(--font-xl)">Regulated Data Controls</h1><p style="font-size:var(--font-base);color:var(--text-muted)">Technical policy controls and evidence. This does not constitute regulatory certification.</p></div>
+  {% else %}
+  <div><h1 style="font-size:var(--font-xl)">Compliance</h1><p style="font-size:var(--font-base);color:var(--text-muted)">A Standard workspace: its profile, and what may leave for the AI. Choose a regulated profile for the full set of controls.</p></div>
+  {% endif %}
   {% set state = profile.lifecycle_state or 'DRAFT' %}
-  <span class="readiness {% if state == 'REGULATED_READY' %}ready-green{% elif state in ['PILOT_READY','PRODUCTION_BLOCKED','CLASSIFICATION_PENDING','POLICY_PENDING'] %}ready-amber{% else %}ready-red{% endif %}">{{ state }}</span>
+  {% if _regulated %}<span class="readiness {% if state == 'REGULATED_READY' %}ready-green{% elif state in ['PILOT_READY','PRODUCTION_BLOCKED','CLASSIFICATION_PENDING','POLICY_PENDING'] %}ready-amber{% else %}ready-red{% endif %}">{{ state }}</span>{% endif %}
 </div>
 {% if saved %}<div class="alert alert-success">Compliance configuration updated: {{ saved }}.</div>{% endif %}
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
@@ -61,6 +70,7 @@
 {% set _c7_secrets = profile.managed_secrets_enabled %}
 {% set _c8_audit = profile.immutable_audit_enabled and profile.external_audit_destination %}
 {% set _criticals_met = _c1_profile and _c2_classified and _c3_policy and _c4_purposes and _c5_agreement %}
+{% if _regulated %}
 <div class="readiness-checklist">
   {% for num, ok, label, panel in [
     (1, _c1_profile, 'Industry profile', 'profile'),
@@ -84,9 +94,10 @@
   <div class="stat"><strong>v{{ profile.active_policy_version or 0 }}</strong><span>active policy</span></div>
   <div class="stat"><strong>{{ agreements|length }}</strong><span>provider agreements</span></div>
 </div>
+{% endif %}
 
 <div class="compliance-nav qb-tabs" role="tablist" aria-label="Compliance sections" data-qb-tabs data-qb-tabs-hash>
-  {% for id,label in [('profile','Profile'),('classification','Classification'),('policies','Policies'),('purposes','Purposes'),('egress','AI & Egress'),('simulator','Simulator'),('readiness','Readiness'),('trust','Trust evidence'),('history','History'),('emergency','Break-glass')] %}
+  {% for id,label in [('profile','Profile'),('classification','Classification'),('policies','Policies'),('purposes','Purposes'),('egress','AI & Egress'),('simulator','Simulator'),('readiness','Readiness'),('trust','Trust evidence'),('history','History'),('emergency','Break-glass')] if _regulated or id in ['profile', 'egress'] %}
   <button class="qb-tab" type="button" role="tab" data-tab="{{ id }}"
           id="tab-{{ id }}" aria-controls="panel-{{ id }}"
           aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>

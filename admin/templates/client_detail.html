@@ -103,6 +103,8 @@
 {% if saved %}{% from "macros.html" import alert %}{{ alert(message="Settings saved.", type="success", icon_name="check-circle") }}{% endif %}
 {% if request.query_params.get('error') %}{% from "macros.html" import alert %}{{ alert(message=request.query_params.get('error'), type="error", icon_name="alert-triangle") }}{% endif %}
 
+{# The counters belong to the Overview, not to every pane of the workspace. #}
+{% if active_tab == 'overview' %}
 <div class="metrics">
   <div class="metric"><div class="metric-label">Total queries</div><div class="metric-value">{{ stats.total or 0 }}</div></div>
   <div class="metric"><div class="metric-label">This month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
@@ -128,6 +130,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 {# The second tab bar that used to live here is gone. These panes are reached
    from the workspace nav above, which is the console's one navigation system;
@@ -863,8 +866,8 @@
   </div>
 </div>
 
-<!-- DANGER ZONE TAB -->
-<div id="tab-danger" class="tab-pane{% if active_tab == 'danger' %} active{% endif %}">
+<!-- DANGER ZONE: the foot of Settings, one page rather than a tab of its own -->
+<div id="tab-danger" class="tab-pane{% if active_tab in ['danger', 'settings'] %} active{% endif %}">
   <div class="danger-zone">
     <div class="card-header"><h2 style="color:var(--danger)">Danger zone</h2></div>
     <div class="card-body">
@@ -894,6 +897,10 @@
       </div>
     </div>
   </div>
+  <p class="text-sm text-muted" style="margin-top:1rem">
+    For support: <a href="/admin/clients/{{ client.account_id }}/diagnostics">Diagnostics</a>, the earlier
+    answer pipeline's own pages.
+  </p>
 </div>
 
 <script>

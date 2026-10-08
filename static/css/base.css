@@ -194,34 +194,6 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   border-radius: 50%;
   animation: qb-spin .6s linear infinite;
 }
-/* A choice of two or three shown as one control: aria-pressed
-   marks the chosen one. (Content that changes with the choice is
-   a tab bar, .qb-tabs, instead.) */
-.qb-segmented {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-alt);
-}
-.qb-segmented > button {
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-semibold);
-  padding: 7px 14px;
-  cursor: pointer;
-}
-.qb-segmented > button:hover { background: var(--hover-on-alt); color: var(--text); }
-.qb-segmented > button[aria-pressed="true"] {
-  background: var(--surface-raised);
-  border-color: var(--line);
-  color: var(--text-strong);
-  box-shadow: var(--shadow-sm);
-}
 .icon-btn {
   width: 36px;
   height: 36px;

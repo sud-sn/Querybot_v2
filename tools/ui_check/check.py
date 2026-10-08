@@ -177,7 +177,9 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
             a.page.fill("input[name=password]", ADMIN_PASSWORD)
             a.page.click("button[type=submit]")
             a.page.wait_for_load_state("networkidle")
-            for path in ("/admin", f"/admin/clients/{READER[0]}"):
+            workspace = f"/admin/clients/{READER[0]}"
+            for path in ("/admin", workspace, workspace + "/setup", workspace + "/graph", workspace + "/settings",
+                         workspace + "/compliance", workspace + "/diagnostics", "/admin/system"):
                 a.page.goto(base + path, wait_until="networkidle")
                 a.page.wait_for_timeout(800)
                 report.append({"page": path, "view": view, **a.shot("51" + path.replace("/", "_"), full=True)})

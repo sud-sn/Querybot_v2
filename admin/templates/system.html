@@ -116,8 +116,6 @@
 .svc-result.err{color:var(--danger)}
 
 /* ── Database backend section ── */
-.db-panel{display:none;margin-top:1.25rem}
-.db-panel.active{display:block}
 .db-active-status{display:inline-flex;align-items:center;gap:.5rem;font-size:var(--font-sm);padding:.4rem .75rem;border-radius:6px;background:var(--surface-2);border:1px solid var(--border);margin-bottom:1rem}
 .db-active-status .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .db-active-status .dot.sqlite{background:var(--text-muted)}
@@ -502,59 +500,11 @@
         {% endif %}
       </div>
 
-      <!-- Backend toggle -->
-      <div class="qb-segmented" role="group" aria-label="Database backend">
-        <button type="button" data-db-btn="sqlite" aria-pressed="false">SQLite</button>
-        <button type="button" data-db-btn="postgres" aria-pressed="false">PostgreSQL</button>
-      </div>
-
-      <!-- Hidden field submitted with the form -->
-      <input type="hidden" id="db-backend-val" name="database_backend" value="{{ saved_backend }}">
-
-      <!-- ── SQLite panel ── -->
-      <div class="db-panel" data-db-panel="sqlite">
-        <p style="font-size:var(--font-base);color:var(--text-muted);margin:.75rem 0 .4rem">
-          SQLite is the default backend — zero config, single file on disk.
-          Best for evaluation and single-user deployments.
-        </p>
-        <p class="form-note">File path: <code>data/querybot.db</code></p>
-        <p class="form-note" style="color:var(--warning)">
-          ⚠ SQLite serialises all writes — concurrent users will queue.
-          Switch to PostgreSQL for production workloads with multiple simultaneous users.
-        </p>
-      </div>
-
-      <!-- ── PostgreSQL panel ── -->
-      <div class="db-panel" data-db-panel="postgres">
-        <p style="font-size:var(--font-base);color:var(--text-muted);margin:.75rem 0 .75rem">
-          PostgreSQL supports concurrent writers and is recommended for production.
-          All SQL translations are handled automatically — no code changes needed.
-        </p>
-        <div class="form-group">
-          <label for="pg_url">Connection URL</label>
-          <div class="input-reveal-wrap">
-            <input type="password" id="pg_url" name="database_url"
-                   value="{{ saved_pg_url }}"
-                   placeholder="postgresql://user:password@host:5432/dbname"
-                   autocomplete="off">
-            <button type="button" class="input-reveal-btn" data-qb-reveal="pg_url" aria-pressed="false" data-label-show="Show connection URL" data-label-hide="Hide connection URL" aria-label="Show connection URL">{{ ic("eye", 15) }}</button>
-          </div>
-          <p class="form-note">
-            Format: <code>postgresql://user:password@host:5432/dbname</code>
-            — leave blank to keep the existing URL.
-          </p>
-        </div>
-        <div class="provider-test-row">
-          <button type="button" class="btn btn-secondary btn-sm" onclick="testPgConnection()">
-            {{ ic("refresh", 13) }} Test connection
-          </button>
-          <span class="provider-test-result" id="pg-test-result"></span>
-        </div>
-        <p class="form-note" style="color:var(--warning);margin-top:.75rem">
-          ⚠ Existing SQLite data is <strong>not</strong> migrated automatically.
-          Run <code>init_db()</code> against the new PostgreSQL database on first start to create the schema.
-        </p>
-      </div>
+      {# Which database QueryBot keeps its own records in is a deployment
+         setting, not a click: DATABASE_URL in the service's environment
+         (unset is SQLite). The page says what is running. #}
+      <p class="form-note">Set by the deployment: <code>DATABASE_URL</code> in the service's environment
+        (unset means SQLite). A restart applies a change.</p>
 
       <!-- Restart notice (shown when saved ≠ active) -->
       {% if restart_needed %}
@@ -571,9 +521,6 @@
       <div class="restart-strip" id="restart-status" style="display:none"></div>
       {% endif %}
 
-      <div class="llm-save-row">
-        <button type="submit" class="btn btn-secondary btn-sm" name="save_section" value="database">{{ ic("check-circle", 13) }} Save database settings</button>
-      </div>
     </div>
   </div>
 
@@ -917,50 +864,6 @@ function validateSysPw() {
   }
 }
 
-/* ── Database backend toggle ──────────────────────────────────────────── */
-(function(){
-  function syncDb(backend) {
-    document.querySelectorAll('[data-db-btn]').forEach(function(b){
-      b.setAttribute('aria-pressed', b.dataset.dbBtn === backend ? 'true' : 'false');
-    });
-    document.querySelectorAll('[data-db-panel]').forEach(function(p){
-      p.classList.toggle('active', p.dataset.dbPanel === backend);
-    });
-    var hid = document.getElementById('db-backend-val');
-    if (hid) hid.value = backend;
-  }
-
-  document.addEventListener('DOMContentLoaded', function(){
-    var saved = document.getElementById('db-backend-val');
-    syncDb(saved ? saved.value : 'sqlite');
-    document.querySelectorAll('[data-db-btn]').forEach(function(b){
-      b.addEventListener('click', function(){ syncDb(b.dataset.dbBtn); });
-    });
-  });
-
-  window.testPgConnection = function(){
-    var urlInput = document.getElementById('pg_url');
-    var el = document.getElementById('pg-test-result');
-    el.className = 'provider-test-result loading';
-    el.textContent = 'Testing…';
-    var url = urlInput ? encodeURIComponent(urlInput.value) : '';
-    fetch('/admin/system/test-pg?url=' + url)
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        if (data.ok) {
-          el.className = 'provider-test-result ok';
-          el.textContent = '✓ Connected' + (data.version ? ' — ' + data.version : '');
-        } else {
-          el.className = 'provider-test-result err';
-          el.textContent = '✗ ' + (data.error || 'Connection failed');
-        }
-      })
-      .catch(function(err){
-        el.className = 'provider-test-result err';
-        el.textContent = '✗ Request failed (' + err + ')';
-      });
-  };
-})();
 
 /* ── Toast on save (auto-dismissed after 4 s) ─────────────────────────── */
 {% if saved %}

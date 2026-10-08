@@ -275,7 +275,7 @@ def test_a_workspace_page_is_the_current_page_inside_its_section():
     client = {"account_id": "acct", "client_name": "Acme", "state": "READY"}
     marked = _Current(_admin_page("/admin/clients/acct/date-roles", client=client)).marked
     assert ("Dates", "page") in marked
-    assert _is(marked, "Data & Model", "true") and _is(marked, "Clients", "true"), marked
+    assert _is(marked, "Data", "true") and _is(marked, "Clients", "true"), marked
     assert [m for m in marked if m[1] == "page"] == [("Dates", "page")]
 
 

@@ -118,10 +118,13 @@ class TestTheReadinessPageIsReachable(_RealStore):
         self.assertIn("/admin/login", response.headers["location"])
 
     def test_the_nav_links_to_it_and_lights_up_on_it(self):
-        nav = (ROOT / "admin" / "templates"
-               / "_client_workspace_nav.html").read_text(encoding="utf-8")
-        self.assertIn("{{ _b }}/readiness", nav)
-        self.assertIn("'readiness'", nav)
+        # Reached from Diagnostics (the foot of Settings) since the admin
+        # clean-up, and the workspace nav names it when it is open.
+        listed = [seg for seg, _name, _what in routes._DIAGNOSTIC_PAGES]
+        self.assertIn("readiness", listed)
+        from tests.test_admin_keeps_what_runs_a_workspace import _labels, _nav
+        self.assertEqual(_labels(_nav("readiness"), "secondary")[0], "Diagnostics")
+        self.assertIn('class="active"', _nav("readiness").split("client-workspace-secondary", 1)[1])
 
     def test_the_route_the_nav_points_at_exists(self):
         paths = {getattr(r, "path", "") for r in routes.router.routes}
