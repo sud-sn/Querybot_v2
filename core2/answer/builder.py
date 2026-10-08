@@ -598,7 +598,12 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             leaders = (", ".join(named[:-1]) + f" and {named[-1]}" if len(named) <= 3
                        else ", ".join(named[:3]) + f" and {len(named) - 3} more")
             return f"{lead}: {leaders} lead with {value(top)} each{share.replace(' of the total)', ' of the total each)')}{count}."
-        return f"{lead}: {leader} leads with {value(top)}{share}{count}."
+        # The other measures asked for, for the same leader: "and $456K gross profit".
+        others = [f"{fmt(top[c.name], c.format, unit=units.of(top))} {_lower(c.label)}" for c in measures[1:]
+                  if c.name in top]
+        joined = ", ".join(others[:-1]) + f" and {others[-1]}" if len(others) > 1 else "".join(others)
+        also = f", and {joined}{',' if count else ''}" if others else ""
+        return f"{lead}: {leader} leads with {value(top)}{share}{also}{count}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:
             ordered = sorted(raw, key=lambda r: -(_number(r[m.name]) or 0.0))
