@@ -914,6 +914,16 @@ def _record_suggestions_displayed(user: dict, suggestions: list[dict]) -> None:
 # Login / logout
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _linked_workspace(value: str | None) -> str:
+    """The workspace a sign-in link names (/portal/login?workspace=<id>), if it is shaped like one.
+
+    Only filled in, never looked up: the page says nothing about whether it exists,
+    as the sign-in itself does not.
+    """
+    value = (value or "").strip()
+    return value if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value) else ""
+
+
 def _landing(user: dict | None) -> str:
     """Where a reader lands: the chat, where questions are asked, when the workspace has it on."""
     try:
@@ -929,6 +939,7 @@ async def portal_login_page(request: Request):
     if signed_in:
         return RedirectResponse(_landing(signed_in), status_code=303)
     return _resp(request, "portal_login.html", {
+        "workspace": _linked_workspace(request.query_params.get("workspace")),
         "error": request.query_params.get("error", "")
     })
 
@@ -950,6 +961,7 @@ async def portal_login_submit(
     account_id: str = Form(...),
     email:      str = Form(...),
     password:   str = Form(...),
+    from_link:  str = Form(""),
 ):
     lang = _request_language(request)
     identity = store.sign_in_identity("portal", account_id, email)
@@ -972,6 +984,8 @@ async def portal_login_submit(
             return _sign_in_refused(request, lang, wait)
         return _resp(request, "portal_login.html", {
             "error": i18n_t("ui.auth.error.sign_in_failed", lang=lang),
+            # A reader who came by a workspace's link tries again on the same link.
+            "workspace": _linked_workspace(account_id) if from_link else "",
         })
     store.clear_sign_in_failures(identity)
     # An old unsalted hash, or fewer rounds than today's, is renewed now: the

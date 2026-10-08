@@ -16,15 +16,23 @@
     <div class="card-body login-card-body">
       {% if error %}{{ alert(error, 'error', 'x-circle') }}{% endif %}
       <form method="post" action="/portal/login" data-busy-on-submit>
+        {% if workspace %}
+        {# Came by the workspace's own sign-in link: the workspace is filled in. #}
+        <input type="hidden" name="account_id" value="{{ workspace }}">
+        <input type="hidden" name="from_link" value="1">
+        <p class="login-workspace">{{ t('ui.auth.signing_in_to') }} <code>{{ workspace }}</code>
+          · <a href="/portal/login">{{ t('ui.auth.other_workspace') }}</a></p>
+        {% else %}
         <div class="form-group">
           <label for="login-account">{{ t('ui.auth.account_id') }}</label>
           <input id="login-account" type="text" name="account_id" autofocus required
             placeholder="{{ t('ui.auth.account_id_placeholder') }}" class="login-mono-input">
           <p class="form-note">{{ t('ui.auth.account_id_note') }}</p>
         </div>
+        {% endif %}
         <div class="form-group">
           <label for="login-email">{{ t('ui.auth.email') }}</label>
-          <input id="login-email" type="email" name="email" required autocomplete="username"
+          <input id="login-email" type="email" name="email" required autocomplete="username"{% if workspace %} autofocus{% endif %}
             placeholder="{{ t('ui.auth.email_placeholder') }}">
         </div>
         <div class="form-group">
@@ -56,6 +64,8 @@
 .login-mono-input{font-family:var(--font-mono);letter-spacing:.02em;font-size:var(--font-base)}
 .login-submit{width:100%;justify-content:center;padding:10px;margin-top:.25rem}
 .login-footer{text-align:center;font-size:var(--font-sm);color:var(--text-muted);margin-top:1rem}
+.login-workspace{margin:0 0 1rem;font-size:var(--font-sm);color:var(--text-muted)}
+.login-workspace code{font-family:var(--font-mono);color:var(--text)}
 
 /* Folded from production.css, which loaded after this block. */
 .login-shell {

@@ -180,6 +180,8 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
         for view, size in VIEWPORTS.items():
             p = Page(browser, view, size, out, problems)
             page = p.page
+            page.goto(base + f"/portal/login?workspace={READER[0]}", wait_until="networkidle")
+            report.append({"page": "a workspace's sign-in link", "view": view, **p.shot("00b_portal_login_link")})
             page.goto(base + "/portal/login", wait_until="networkidle")
             report.append({"page": "portal sign-in", "view": view, **p.shot("00_portal_login")})
             page.fill("#login-account", READER[0])

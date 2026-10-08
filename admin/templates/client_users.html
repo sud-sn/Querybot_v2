@@ -20,6 +20,22 @@
   </div>
 </div>
 
+{# The workspace's own sign-in link: it fills the workspace in, so a reader
+   types only their email and password. #}
+{% set _sign_in_link = request.base_url ~ "portal/login?workspace=" ~ (client.account_id|urlencode) %}
+<div class="card sign-in-link-card">
+  <div class="card-body">
+    <div class="sign-in-link-label">Sign-in link for this workspace</div>
+    <div class="sign-in-link-row">
+      <code class="sign-in-link-code" id="signInLink">{{ _sign_in_link }}</code>
+      <button type="button" class="btn btn-secondary btn-xs" onclick="copySignInLink(this)" title="Copy the sign-in link">
+        {{ ic("copy", 13) }} Copy
+      </button>
+    </div>
+    <p class="form-note">Send it with a new user's temporary password: the workspace is filled in for them.</p>
+  </div>
+</div>
+
 {% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
 {% if saved and not new_user %}{{ alert(message="Changes saved.", type="success", icon_name="check-circle") }}{% endif %}
 
@@ -50,8 +66,7 @@
     </div>
     <div class="temp-pw-meta">
       {{ ic("info", 12) }}
-      Portal: <strong>{{ request.base_url }}portal/login</strong>
-      &nbsp;·&nbsp; Account ID: <strong>{{ client.account_id }}</strong>
+      Sign in at: <strong>{{ request.base_url }}portal/login?workspace={{ client.account_id|urlencode }}</strong>
       {% if reveal_email %}&nbsp;·&nbsp; Email: <strong>{{ reveal_email }}</strong>{% endif %}
     </div>
   </div>
@@ -344,6 +359,19 @@
 .temp-pw-title { font-weight: var(--weight-bold); font-size: var(--font-sm); color: var(--text); }
 .temp-pw-sub { font-size: var(--font-sm); color: var(--text-muted); margin-top: 2px; }
 .temp-pw-body { display: flex; flex-direction: column; gap: .5rem; }
+.sign-in-link-card { margin-bottom: 1rem; }
+.sign-in-link-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-secondary); margin-bottom: 6px; }
+.sign-in-link-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sign-in-link-code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-sm);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
 .temp-pw-code-wrap {
   display: flex;
   align-items: center;
@@ -473,6 +501,15 @@ function validatePwMatch() {
 
 /* Password reveal toggle */
 /* Copy temp password */
+function copySignInLink(btn) {
+  var text = document.getElementById('signInLink').textContent.trim();
+  navigator.clipboard.writeText(text).then(function() {
+    var orig = btn.innerHTML;
+    btn.innerHTML = '&#10003; Copied';
+    btn.disabled = true;
+    setTimeout(function() { btn.innerHTML = orig; btn.disabled = false; }, 2200);
+  });
+}
 function copyTempPw(btn) {
   var text = document.getElementById('tempPwCode').textContent.trim();
   navigator.clipboard.writeText(text).then(function() {

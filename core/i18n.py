@@ -4835,6 +4835,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Secure data intelligence workspace",
         "fr": "Espace sécurisé d'intelligence des données",
     },
+    # A workspace's own sign-in link fills the workspace in.
+    "ui.auth.signing_in_to": {"en": "Signing in to", "fr": "Connexion à"},
+    "ui.auth.other_workspace": {"en": "another workspace", "fr": "un autre espace de travail"},
     "ui.auth.account_id": {"en": "Account ID", "fr": "Identifiant du compte"},
     "ui.auth.account_id_placeholder": {"en": "e.g. acme-corp", "fr": "ex. acme-corp"},
     "ui.auth.account_id_note": {
