@@ -61,8 +61,10 @@ class MemberIndex:
 
     names: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     longest: int = 1
+    attributes: set[str] = field(default_factory=set)     # the attributes whose members were all read
 
     def add(self, attribute: str, values: Iterable[object]) -> None:
+        self.attributes.add(attribute)
         for value in values:
             if value is None:
                 continue
@@ -74,6 +76,13 @@ class MemberIndex:
             if (attribute, stored) not in entries:
                 entries.append((attribute, stored))
             self.longest = max(self.longest, min(MAX_TOKENS, len(key.split())))
+
+    def stored(self, attribute: str, value: object) -> str | None:
+        """The member ``value`` names, as the data stores it ("retail" -> "RETAIL"); None when there is none.
+
+        Only for an attribute whose members were read: elsewhere nothing can be said.
+        """
+        return next((v for a, v in self.names.get(normalise(str(value)), []) if a == attribute), None)
 
     def match(self, question: str) -> list[ValueMatch]:
         """Whole member names written in the question, longest first, never overlapping."""

@@ -90,7 +90,11 @@ How to plan:
    limits the history to use.
 11. Follow-ups: PREVIOUS PLAN is the plan behind the last answer. When the new question changes it ("by
    week instead", "only for X", "what about returns", "top 5 of those"), return the whole new plan with
-   follow_up "refine"; a question about something else is follow_up "new".
+   follow_up "refine"; a question about something else is follow_up "new". "Those", "them", "the same
+   customers" are the members of the answer on screen, whose names you are not given: never filter on a
+   name that is not in VALUE MATCHES or a previous plan. To follow them into another period ("how did those
+   same customers do in 2025?"), keep the previous plan's group_by, sort, limit and time.window, and put the
+   other period in time.compare, with intent "compare".
 12. notes: one short line for each assumption the user did not state.
 13. chart: only when the question says how to show it ("as a pie", "bar chart", "just the table" -> "table");
    on a follow-up ("show that as a pie") return the previous plan with chart set and follow_up "refine".

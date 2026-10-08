@@ -25,6 +25,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from core2 import ids
+from core2.bootstrap import names
 from core2.answer.builder import build_answer
 from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
@@ -265,6 +266,8 @@ def answer_question(question: str, services: Services, session: Session, *, ques
                               "stopped": " ".join(outcome.problems)}
         return asked
 
+    plan, missing = _members_named(plan, model, services.index)
+
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS)
     try:
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start)
@@ -290,6 +293,17 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
         return _refused(question, f"I cannot answer that from this data yet: {exc}.", plan, services, str(exc),
                         unsupported=True)
+    if missing is not None and _found_nothing(payload):
+        # Nothing matched, and a member the plan named is not one the data had when its members were read:
+        # say so, not "No rows match", which reads as if that member bought nothing. (A member added since
+        # is found by the query, so it is never refused for being new.)
+        thing, value = missing
+        text = _REFUSALS["unknown"].format(message=f'there is no {thing} called "{value}"')
+        if plan.follow_up == "refine":
+            text += (f" If you mean the {names.plural(thing)} in the answer above, ask to compare that answer with "
+                     "the other period, for example \"the same ranking against last year\".")
+        return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
+                        trust={"sql": (payload.get("trust") or {}).get("sql", "")})
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
@@ -317,6 +331,50 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
                            chart_type=plan.chart, **common)
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
     return payload
+
+
+def _found_nothing(payload: dict[str, Any]) -> bool:
+    """No rows, or only empty values: a total over nothing comes back as one row with no value."""
+    rows = (payload.get("data") or {}).get("rows") or []
+    return all(all(v is None for v in row.values()) for row in rows)
+
+
+def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> tuple[Plan, tuple[str, str] | None]:
+    """The plan with each member it filters on spelled as stored, and the first one the index does not know.
+
+    "How did those same customers do in 2025?" was planned with customers the AI
+    was never told the names of (it sees the plan behind the answer on screen,
+    not its rows): the filter matched nothing, and the answer was "No rows
+    match", as if they had bought nothing. A member the index does not know is
+    returned so that an empty answer can say so; the query still runs, since a
+    member added after the index was read is real. One written in another case
+    ("retail") is the stored one ("RETAIL"): the warehouse compares text exactly.
+    """
+    filters = []
+    missing: tuple[str, str] | None = None
+    for f in plan.filters:
+        found = find_slug(model, f.field) if f.op in ("eq", "in", "ne", "not_in") else None
+        attribute: Attribute | None = None
+        thing = ""
+        if found is not None and isinstance(found[1], Attribute):
+            attribute = found[1]
+            thing = attribute.business_name.lower()
+        elif found is not None and isinstance(found[1], Entity):
+            entity = found[1]
+            column = entity.label_column or entity.code_column
+            attribute = next((a for a in model.attributes.values() if a.column == column), None)
+            thing = entity.business_name.lower()
+        if attribute is None or attribute.slug not in index.attributes:
+            filters.append(f)
+            continue
+        values = []
+        for value in f.values:
+            stored = index.stored(attribute.slug, value) if isinstance(value, str) else value
+            if stored is None and f.op in ("eq", "in") and missing is None:
+                missing = (thing, str(value))      # excluding a member there is none of is harmless
+            values.append(value if stored is None else stored)
+        filters.append(f.model_copy(update={"values": values}))
+    return plan.model_copy(update={"filters": filters}), missing
 
 
 def _visible(matches: list[ValueMatch], model: SemanticModel, allowed: set[str] | None) -> list[ValueMatch]:
