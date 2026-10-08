@@ -265,8 +265,10 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
             a.page.click("button[type=submit]")
             a.page.wait_for_load_state("networkidle")
             workspace = f"/admin/clients/{READER[0]}"
-            for path in ("/admin", workspace, workspace + "/setup", workspace + "/graph", workspace + "/settings",
-                         workspace + "/compliance", workspace + "/diagnostics", "/admin/system"):
+            for path in ("/admin", workspace, workspace + "/setup", workspace + "/learned", workspace + "/kb",
+                         workspace + "/graph", workspace + "/date-roles", workspace + "/metrics", workspace + "/users",
+                         workspace + "/settings", workspace + "/compliance", workspace + "/diagnostics",
+                         "/admin/system"):
                 a.page.goto(base + path, wait_until="networkidle")
                 a.page.wait_for_timeout(800)
                 if path.endswith("/graph") and not a.page.evaluate(
