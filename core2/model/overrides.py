@@ -23,6 +23,7 @@ ALLOWED = {
                 "filters", "default_date"},
     "entity": {"business_name", "label_column", "code_column", "synonyms"},
     "attribute": {"business_name", "synonyms"},
+    "settings": {"fiscal_year_start_month"},      # one object: settings:workspace
 }
 # A metric or a link that today's setup has and the build did not find is added
 # whole ("define"), then decided on like any other object.
@@ -40,7 +41,8 @@ def _find(model: SemanticModel, object_key: str) -> tuple[str, BaseModel] | None
     kind, _, key = object_key.partition(":")
     collections: dict[str, dict[str, Any]] = {
         "table": model.tables, "column": model.columns, "join": model.joins, "date_role": model.date_roles,
-        "measure": model.measures, "entity": model.entities, "attribute": model.attributes}
+        "measure": model.measures, "entity": model.entities, "attribute": model.attributes,
+        "settings": {"workspace": model.settings}}
     collection = collections.get(kind)
     if collection is None or key not in collection:
         return None

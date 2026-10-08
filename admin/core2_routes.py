@@ -79,7 +79,7 @@ async def learned_page(request: Request, account_id: str):
     client = store.get_client(account_id)
     if not client:
         return RedirectResponse("/admin/clients", status_code=303)
-    from core2.bootstrap.service import load_model
+    from core2.bootstrap.service import behind_discovery, load_model
     from core2.model.view import learned_view
 
     db_id = client.get("db_config_id")
@@ -109,6 +109,7 @@ async def learned_page(request: Request, account_id: str):
         "imported": imported,
         "problem": problem,
         "has_database": bool(db_id),
+        "behind": bool(model) and behind_discovery(account_id, client),
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
         "engine": store.get_query_engine(account_id),
@@ -141,6 +142,24 @@ async def learned_build(request: Request, account_id: str, bg: BackgroundTasks):
     started = store.start_core2_build(account_id, client["db_config_id"])
     bg.add_task(_run_build, account_id, started)
     return _back(account_id, saved="building")
+
+
+def learn_summary(account_id: str, client: dict[str, Any]) -> dict[str, Any]:
+    """Where Learn stands, for the setup page's last step."""
+    from core2.bootstrap.service import behind_discovery, schema_path
+
+    db_id = client.get("db_config_id")
+    versions = store.list_core2_model_versions(account_id, db_id) if db_id else []
+    build = store.latest_core2_build(account_id, db_id) if db_id else None
+    return {
+        "version": versions[0]["version"] if versions else None,
+        "built_at": versions[0]["built_at"] if versions else "",
+        "running": _running(build),
+        "failed": str((build or {}).get("message") or "") if (build or {}).get("status") == "failed" else "",
+        "behind": bool(versions) and behind_discovery(account_id, client),
+        "discovered": schema_path(account_id, client).exists(),
+        "engine": store.get_query_engine(account_id),
+    }
 
 
 def _value(raw: str) -> Any:

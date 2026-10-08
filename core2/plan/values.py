@@ -77,6 +77,16 @@ class MemberIndex:
                 entries.append((attribute, stored))
             self.longest = max(self.longest, min(MAX_TOKENS, len(key.split())))
 
+    def only(self, attributes: set[str] | frozenset[str]) -> MemberIndex:
+        """This index with the members of ``attributes`` alone (one hidden or marked sensitive since is dropped)."""
+        out = MemberIndex(attributes=self.attributes & set(attributes))
+        for key, entries in self.names.items():
+            kept = [entry for entry in entries if entry[0] in attributes]
+            if kept:
+                out.names[key] = kept
+                out.longest = max(out.longest, min(MAX_TOKENS, len(key.split())))
+        return out
+
     def stored(self, attribute: str, value: object) -> str | None:
         """The member ``value`` names, as the data stores it ("retail" -> "RETAIL"); None when there is none.
 
@@ -104,6 +114,16 @@ class MemberIndex:
         return sorted(found, key=lambda m: (m.start, m.attribute))
 
 
+def listable(model: SemanticModel) -> list[str]:
+    """The attributes whose member names may be read: text, not hidden, not sensitive, values allowed."""
+    out = []
+    for slug, attribute in model.attributes.items():
+        column = model.columns[attribute.column]
+        if column.data_type == "text" and not column.hidden and column.sensitivity == "none" and column.values_allowed:
+            out.append(slug)
+    return out
+
+
 def build_index(model: SemanticModel, fetch: Callable[[str], list[object]], *, values_allowed: bool = True,
                 max_members: int = 20_000, budget_seconds: float | None = None) -> MemberIndex:
     """Members of every attribute whose values may be listed, from profiles or ``fetch(attribute slug)``.
@@ -120,13 +140,12 @@ def build_index(model: SemanticModel, fetch: Callable[[str], list[object]], *, v
     labels = {e.label_column for e in model.entities.values()} | {e.code_column for e in model.entities.values()}
     start = time.monotonic()
     skipped: list[str] = []
+    may = set(listable(model))
     ordered = sorted(model.attributes.items(), key=lambda item: (item[1].column not in labels, item[0]))
     for slug, attribute in ordered:
+        if slug not in may:
+            continue
         column = model.columns[attribute.column]
-        if column.hidden or column.sensitivity != "none" or not column.values_allowed:
-            continue
-        if column.data_type not in ("text",):
-            continue
         p = column.profile
         if p is not None and p.top and p.distinct <= len(p.top):
             index.add(slug, (t.value for t in p.top))

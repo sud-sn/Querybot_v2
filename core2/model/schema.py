@@ -313,7 +313,7 @@ class ReviewItem(_Data):
 
 class ModelSettings(_Data):
     week_start: Literal["monday"] = "monday"
-    fiscal_year_start_month: int | None = None
+    fiscal_year_start_month: int | None = Field(default=None, ge=1, le=12)
     currency: str | None = None
     languages: list[str] = Field(default_factory=lambda: ["en"])
 

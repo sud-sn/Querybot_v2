@@ -35,7 +35,7 @@ from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
 from core2.plan.ir import Clarify, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
-from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index
+from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
@@ -394,7 +394,18 @@ def _visible(matches: list[ValueMatch], model: SemanticModel, allowed: set[str] 
 
 # ── the portal's wiring ────────────────────────────────────────────────────
 
-_INDEXES: OrderedDict[tuple[str, int], MemberIndex] = OrderedDict()
+MEMBERS_HOURS = 12.0          # member names are read again, in the background, after this long
+
+
+@dataclass
+class _Members:
+    index: MemberIndex
+    listable: frozenset[str]      # the attributes that could be listed when it was read
+    read_at: float
+    refreshing: bool = False
+
+
+_INDEXES: OrderedDict[tuple[str, int], _Members] = OrderedDict()
 _SESSIONS: OrderedDict[str, Session] = OrderedDict()
 _LOCK = threading.Lock()
 
@@ -408,13 +419,36 @@ def _session(key: str) -> Session:
         return session
 
 
-def _member_index(account_id: str, model: SemanticModel, db_config: dict[str, Any]) -> MemberIndex:
-    """Members of the attributes QueryBot may list, read once per model version under the service connection."""
+def _member_index(account_id: str, model: SemanticModel, db_config: dict[str, Any], *,
+                  read: bool = True) -> MemberIndex:
+    """Members of the attributes QueryBot may list, read under the service connection.
+
+    Read once per model version and kept, then read again in the background every
+    MEMBERS_HOURS, so customers and items added since are found by name. An attribute
+    the admin hides or marks sensitive is left out at once; one newly allowed is read at
+    once. ``read`` False (the admin turned value indexing off) reads nothing.
+    """
+    if not read:
+        return MemberIndex()
     key = (account_id, model.version)
+    may = frozenset(listable(model))
+    stale = False
     with _LOCK:
-        if key in _INDEXES:
+        kept = _INDEXES.get(key)
+        if kept is not None:
             _INDEXES.move_to_end(key)
-            return _INDEXES[key]
+            stale = not kept.refreshing and time.monotonic() - kept.read_at > MEMBERS_HOURS * 3600
+            kept.refreshing = kept.refreshing or stale
+    if kept is None or not may <= kept.listable:
+        kept = _read_members(key, model, db_config, may)
+    elif stale:
+        threading.Thread(target=_read_again, args=(key, model, db_config, may), daemon=True,
+                         name=f"core2-members-{account_id}").start()
+    return kept.index if may == kept.listable else kept.index.only(may)
+
+
+def _read_members(key: tuple[str, int], model: SemanticModel, db_config: dict[str, Any],
+                  may: frozenset[str]) -> _Members:
     from sqlglot import exp
 
     from core2.warehouse import dialect as D
@@ -430,12 +464,44 @@ def _member_index(account_id: str, model: SemanticModel, db_config: dict[str, An
         return [r[0] for r in warehouse.query(sql, max_rows=50_001).rows]
 
     with QueryBotWarehouse(str(db_config.get("db_type") or ""), db_config["credentials"]) as warehouse:
-        index = build_index(model, fetch, budget_seconds=30.0)
+        kept = _Members(build_index(model, fetch, budget_seconds=30.0), may, time.monotonic())
     with _LOCK:
-        _INDEXES[key] = index
+        _INDEXES[key] = kept
+        _INDEXES.move_to_end(key)
         while len(_INDEXES) > 20:
             _INDEXES.popitem(last=False)
-    return index
+    return kept
+
+
+def _read_again(key: tuple[str, int], model: SemanticModel, db_config: dict[str, Any],
+                may: frozenset[str]) -> None:
+    try:
+        _read_members(key, model, db_config, may)
+    except Exception as exc:  # noqa: BLE001 - the names already read stand, and are tried again after the same wait
+        log.warning("core2: member names of %s could not be read again: %s", key[0], exc)
+        with _LOCK:
+            kept = _INDEXES.get(key)
+            if kept is not None:
+                kept.refreshing, kept.read_at = False, time.monotonic()
+
+
+def read_members(account_id: str) -> int:
+    """Read the workspace's member names now (at the end of Learn, and on the admin's Refresh values).
+
+    Returns how many names were read; 0 when the workspace has no model, or its admin
+    turned value indexing off.
+    """
+    import store
+    from core.value_index import value_index_enabled
+    from core2.bootstrap.service import answering_model
+
+    client = store.get_client(account_id) or {}
+    db_id = int(client.get("db_config_id") or 0)
+    db_config = store.get_db_config(db_id) if db_id else None
+    model = answering_model(account_id, client) if db_config else None
+    if model is None or db_config is None or not value_index_enabled(store.get_client_state(account_id)):
+        return 0
+    return len(_read_members((account_id, model.version), model, db_config, frozenset(listable(model))).index.names)
 
 
 def _allowed_model_tables(model: SemanticModel, allowed: set[str] | None) -> set[str] | None:
@@ -476,8 +542,9 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
     """The new core's answer in the web portal (compare mode, or core2 mode)."""
     import store
     from core.schema import load_known_tables
+    from core.value_index import value_index_enabled
     from core2.bootstrap.ai import workspace_planner
-    from core2.bootstrap.service import load_model
+    from core2.bootstrap.service import answering_model, keep_decisions_current
     from core2.warehouse.governed import GovernedWarehouse
 
     client = store.get_client(account_id) or {}
@@ -485,7 +552,8 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
     db_config = store.get_db_config(db_id) if db_id else None
     if not db_config:
         return _frame(question, "The new core has no database for this workspace yet.")
-    model = load_model(account_id, db_id)
+    keep_decisions_current(account_id, db_id, client)
+    model = answering_model(account_id, client)
     if model is None:
         return _frame(question, "The new core has not learned this workspace yet: an admin can build it on the "
                                 "What QueryBot learned page.")
@@ -495,10 +563,13 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
                                   known_tables=load_known_tables(state.get("schema_dir", "")),
                                   allowed_tables=allowed)
     scrub = question_scrubber(account_id)
+    # The admin's "value indexing" switch, as today's pipeline reads it: off, no member
+    # name is read from the warehouse or put before the AI.
+    indexing = value_index_enabled(state)
     services = Services(
         model=model, warehouse=warehouse, complete=workspace_planner(account_id, client, question=question),
-        index=_member_index(account_id, model, db_config), today=dt.date.today(),
-        values_allowed=scrub is None, allowed_tables=_allowed_model_tables(model, allowed),
+        index=_member_index(account_id, model, db_config, read=indexing), today=dt.date.today(),
+        values_allowed=scrub is None and indexing, allowed_tables=_allowed_model_tables(model, allowed),
         data_source=str(db_config.get("db_type") or ""), scrub=scrub)
     return answer_question(question, services, _session(session_key), question_id=question_id)
 

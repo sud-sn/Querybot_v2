@@ -503,14 +503,19 @@ def read_legacy(account_id: str, kb_dir: str) -> Legacy:
         semantic_model=model)
 
 
+def _wanted(report: Report, existing: list[dict]) -> dict[tuple[str, str], Decision]:
+    """The decisions to hold as imports: all but those on a field an admin decided on the new core's page."""
+    admins = {(o["object_key"], o["field"]) for o in existing if o["author"] != AUTHOR}
+    return {(d.object_key, d.field): d for d in report.decisions if (d.object_key, d.field) not in admins}
+
+
 def write(account_id: str, db_id: int | None, report: Report) -> int:
     """Today's decisions as overrides authored "import"; an admin's own decision on the same field stands."""
     import store
 
     existing = store.list_core2_overrides(account_id, db_id)
-    admins = {(o["object_key"], o["field"]) for o in existing if o["author"] != AUTHOR}
     previous = {(o["object_key"], o["field"]) for o in existing if o["author"] == AUTHOR}
-    wanted = {(d.object_key, d.field): d for d in report.decisions if (d.object_key, d.field) not in admins}
+    wanted = _wanted(report, existing)
     for object_key, field_name in previous - set(wanted):
         store.delete_core2_override(account_id, db_id, object_key, field_name)
     for (object_key, field_name), d in wanted.items():
@@ -518,8 +523,22 @@ def write(account_id: str, db_id: int | None, report: Report) -> int:
     return len(wanted)
 
 
-def import_approvals(account_id: str, db_id: int | None, model: SemanticModel, kb_dir: str) -> dict[str, Any]:
-    """Bring today's decisions over onto ``model`` (as learned); returns what came over and what did not."""
-    report = decisions(model, read_legacy(account_id, kb_dir))
+def changes(account_id: str, db_id: int | None, report: Report) -> bool:
+    """Would writing ``report`` change what came over from today's setup last time?"""
+    import store
+
+    existing = store.list_core2_overrides(account_id, db_id)
+    held = {(o["object_key"], o["field"]): o["value"] for o in existing if o["author"] == AUTHOR}
+    wanted = _wanted(report, existing)
+    return held != {key: json.loads(json.dumps(d.value, default=str)) for key, d in wanted.items()}
+
+
+def import_approvals(account_id: str, db_id: int | None, model: SemanticModel, kb_dir: str, *,
+                     report: Report | None = None) -> dict[str, Any]:
+    """Bring today's decisions over onto ``model`` (as learned); returns what came over and what did not.
+
+    ``report`` is today's setup already read against ``model``, when the caller has it.
+    """
+    report = report or decisions(model, read_legacy(account_id, kb_dir))
     written = write(account_id, db_id, report)
     return {"written": written, "counts": report.counts, "missed": report.missed[:50]}

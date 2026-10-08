@@ -132,6 +132,9 @@ def learned_view(model: SemanticModel) -> dict[str, Any]:
         "tables": table_rows,
         "joins": joins,
         "calendars": calendars,
+        "fiscal": {"month": model.settings.fiscal_year_start_month,
+                   "found": next((c.fiscal_year_start_month for c in model.calendars.values()
+                                  if c.fiscal_year_start_month), None)},
         "quality": [{"message": q.message, "severity": q.severity, "kind": q.kind.replace("_", " ")}
                     for q in sorted(model.quality, key=lambda q: (q.severity != "warning", q.kind))],
         "review": [{"question": r.question, "choice": r.choice_made, "alternatives": r.alternatives,

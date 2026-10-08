@@ -746,6 +746,24 @@ config has one, else `SqlExpr` parsed and checked) with their default dates from
 core2 keys through `_schema.json` (bare and two-part names are resolved against
 it, and an unresolvable name is reported, never guessed).
 
+Every Learn imports; after it, an answer compares today's setup with what came
+over (at most every 10 seconds per workspace) and imports again when it changed,
+so a metric added or retired, or a link confirmed, in today's setup reaches the
+next answer. An admin's own decision on the learned page is never overwritten.
+
+### 12.4.1 Onboarding
+
+Learn is setup's last step (step 5 of the setup page): after discovery, with the
+tables and masking set. The new core does not read the Knowledge Base files or
+the vector index; today's pipeline still does, and answers what the new core
+cannot, so the KB is still built. Learn records a fingerprint of what discovery
+found (tables, columns and types, and what it masks); when discovery runs again
+and finds something else, the setup and learned pages say Learn is out of date.
+Until it learns again, columns discovery masks now keep their values out of the
+catalog and the member index at once. An admin who turned value indexing off
+gets no member values read, kept or shown to the AI. The fiscal year comes from a
+fiscal calendar in the data, or is set on the learned page (`settings:workspace`).
+
 ### 12.5 The first cut, as built
 
 Where it differs from §12.3, the first cut is simpler on purpose:
@@ -785,10 +803,12 @@ Where it differs from §12.3, the first cut is simpler on purpose:
 * **Clarifications** from the new core are written in its answer card with their
   options (no chips, no `pending_id`); the reply is planned with the question it
   answers, which the conversation history carries.
-* **Member names** come from core2's own index, read once per model version under
-  the workspace's service connection (entities' names and codes first, within a
-  30-second budget, only columns whose values may be read), not from
-  `value_index.sqlite`.
+* **Member names** come from core2's own index, read under the workspace's service
+  connection (entities' names and codes first, within a 30-second budget, only
+  columns whose values may be read), not from `value_index.sqlite`. They are read
+  at the end of Learn and on the admin's "Refresh values", and again in the
+  background every 12 hours; a column the admin hides or marks sensitive is left
+  out of the next answer, and one allowed again is read at once.
 * **Recording**: every new-core answer is a row in `core2_answer` (question,
   status, headline, SQL, rows, plan, duration, model version), listed on the
   learned page beside the switch.

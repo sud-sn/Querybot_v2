@@ -11,34 +11,48 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from core2 import ids
 from core2.bootstrap.build import BuildOptions, build_model
 from core2.bootstrap.inventory import Inventory, from_schema_json
 from core2.bootstrap.profiler import ProfileOptions
 from core2.model.overrides import apply_overrides
 from core2.model.schema import SemanticModel
 
+if TYPE_CHECKING:
+    from core2.model.imports import Report
+
 log = logging.getLogger("querybot.core2")
 
 
-def schema_path(account_id: str, client: dict[str, Any]) -> Path:
+def _state(client: dict[str, Any]) -> dict[str, Any]:
     try:
         state = json.loads(client.get("state_data") or "{}")
     except (TypeError, ValueError):
-        state = {}
-    folder = state.get("schema_dir") or str(Path("clients") / account_id / "schema")
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def schema_path(account_id: str, client: dict[str, Any]) -> Path:
+    folder = _state(client).get("schema_dir") or str(Path("clients") / account_id / "schema")
     return Path(folder) / "_schema.json"
 
 
-def values_gate(account_id: str, inventory: Inventory) -> Callable[[str, str], bool]:
-    """May common values of this column be read and shown? The value index's own rules, and masking."""
-    from core.masking import detect_sensitive_columns
-    from core.value_index import _clearance_gate
+def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any]) -> Callable[[str, str], bool]:
+    """May common values of this column be read and shown? The value index's own rules, and masking.
 
+    An admin who turned value indexing off gets none: no column's values are read or kept.
+    """
+    from core.masking import detect_sensitive_columns
+    from core.value_index import _clearance_gate, value_index_enabled
+
+    if not value_index_enabled(state):
+        return lambda _table, _column: False
     cleared, industry = _clearance_gate(account_id)
     sensitive: dict[str, set[str]] = {}
     for key, table in inventory.tables.items():
@@ -69,8 +83,78 @@ def _labeler(account_id: str, client: dict[str, Any], inventory: Inventory) -> C
 
 
 def source_hash(inventory: Inventory) -> str:
-    shape = sorted((k, [(c.name, c.raw_type) for c in t.columns]) for k, t in inventory.tables.items())
+    """What discovery found, as a fingerprint: the tables, their columns and types, and what it masks."""
+    # A table with nothing masked is written as before masking was part of it, so a model
+    # learned then is not called out of date for that alone.
+    shape = sorted((k, [(c.name, c.raw_type) for c in t.columns],
+                    *([sorted(t.masked), t.mask_all] if t.masked or t.mask_all else []))
+                   for k, t in inventory.tables.items())
     return hashlib.sha256(json.dumps(shape).encode()).hexdigest()[:16]
+
+
+_DISCOVERED: dict[str, tuple[float, Inventory]] = {}
+
+
+def discovered(account_id: str, client: dict[str, Any]) -> Inventory | None:
+    """What discovery wrote last (read again only when its file changes); None before discovery."""
+    import store
+
+    path = schema_path(account_id, client)
+    try:
+        stamp = path.stat().st_mtime
+    except OSError:
+        return None
+    kept = _DISCOVERED.get(str(path))
+    if kept is not None and kept[0] == stamp:
+        return kept[1]
+    config = store.get_db_config(int(client.get("db_config_id") or 0)) or {}
+    inventory = from_schema_json(json.loads(path.read_text(encoding="utf-8")), str(config.get("db_type") or ""))
+    _DISCOVERED[str(path)] = (stamp, inventory)
+    return inventory
+
+
+def behind_discovery(account_id: str, client: dict[str, Any]) -> bool:
+    """Has discovery run since the latest Learn, and found other tables, columns or masking?"""
+    import store
+
+    versions = store.list_core2_model_versions(account_id, client.get("db_config_id"))
+    if not versions or not versions[0]["source_hash"]:
+        return False
+    try:
+        inventory = discovered(account_id, client)
+    except Exception as exc:  # noqa: BLE001 - a schema file that cannot be read is discovery's to report
+        log.warning("core2: discovery's schema for %s could not be read: %s", account_id, exc)
+        return False
+    return inventory is not None and source_hash(inventory) != versions[0]["source_hash"]
+
+
+def mask_as_discovered(model: SemanticModel, inventory: Inventory | None) -> None:
+    """Columns discovery masks now keep their values out, though Learn read them before they were masked.
+
+    Masking is set before discovery, and discovery writes it; a column masked after
+    Learn would otherwise have its common values put before the AI, and its members
+    matched, until QueryBot learned again.
+    """
+    if inventory is None:
+        return
+    for key, table in inventory.tables.items():
+        if not (table.masked or table.mask_all):
+            continue
+        masked = {ids.norm(c) for c in table.masked}
+        for column in model.columns.values():
+            if column.table == key and (table.mask_all or ids.norm(column.name) in masked):
+                column.values_allowed = False
+
+
+def answering_model(account_id: str, client: dict[str, Any]) -> SemanticModel | None:
+    """The model questions are answered with: the latest, the admin's decisions, and discovery's masking now."""
+    model = load_model(account_id, client.get("db_config_id"))
+    if model is not None:
+        try:
+            mask_as_discovered(model, discovered(account_id, client))
+        except Exception as exc:  # noqa: BLE001 - the masking Learn read still holds
+            log.warning("core2: discovery's masking for %s could not be read: %s", account_id, exc)
+    return model
 
 
 def build_workspace(account_id: str, started: str | None = None) -> int:
@@ -105,7 +189,7 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
         inventory = from_schema_json(json.loads(path.read_text(encoding="utf-8")), config["db_type"])
         if not inventory.tables:
             raise ValueError("Discovery found no tables to learn from.")
-        options = BuildOptions(profile=ProfileOptions(values_allowed=values_gate(account_id, inventory)),
+        options = BuildOptions(profile=ProfileOptions(values_allowed=values_gate(account_id, inventory, _state(client))),
                                labeler=_labeler(account_id, client, inventory), progress=say)
         say(f"Connecting to the {config['db_type'].replace('_', ' ')} database")
         with QueryBotWarehouse(config["db_type"], config.get("credentials") or {}) as warehouse:
@@ -117,6 +201,14 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
                                          source_hash=source_hash(inventory), stats=stats(model))
         say("Bringing over the decisions already made in today's setup")
         bring_over(account_id, db_id, model, client)
+        say("Reading the member names questions use (customers, products and the like), so the first "
+            "question does not wait for them")
+        try:
+            from core2.service import read_members
+
+            read_members(account_id)
+        except Exception as exc:  # noqa: BLE001 - the first question reads them instead
+            log.warning("core2: member names of %s not read after Learn: %s", account_id, exc)
         left_out = sum("was left out" in note for note in model.notes)
         say(f"Done in {_took(began)}: version {version}, {len(model.tables)} tables, {len(model.measures)} measures"
             + (f"; {left_out} left out, each named in the notes below" if left_out else ""))
@@ -134,22 +226,57 @@ def _took(began: float) -> str:
     return f"{seconds // 60} min {seconds % 60} s" if seconds >= 60 else f"{seconds} s"
 
 
-def bring_over(account_id: str, db_id: int | None, model: SemanticModel, client: dict[str, Any]) -> dict[str, Any]:
+def bring_over(account_id: str, db_id: int | None, model: SemanticModel, client: dict[str, Any], *,
+               report: Report | None = None) -> dict[str, Any]:
     """Today's admin decisions as this model's overrides (core2.model.imports); never fails the build."""
     import store
     from core2.model.imports import import_approvals
 
     try:
-        state = json.loads(client.get("state_data") or "{}")
-    except (TypeError, ValueError):
-        state = {}
-    try:
-        report = import_approvals(account_id, db_id, model, str(state.get("kb_dir") or ""))
+        done = import_approvals(account_id, db_id, model, str(_state(client).get("kb_dir") or ""), report=report)
     except Exception as exc:  # noqa: BLE001 - the model stands without them; the page says so
         log.warning("core2: today's decisions for %s could not be brought over: %s", account_id, exc, exc_info=True)
-        report = {"error": str(exc)}
-    store.set_core2_import_report(account_id, db_id, report)
-    return report
+        done = {"error": str(exc)}
+    store.set_core2_import_report(account_id, db_id, done)
+    return done
+
+
+DECISIONS_EVERY = 10.0       # seconds: how often answers look for decisions made in today's setup since
+_LOOKED: dict[tuple[str, int], float] = {}
+_LOOKING = threading.Lock()
+
+
+def keep_decisions_current(account_id: str, db_id: int | None, client: dict[str, Any]) -> bool:
+    """Bring today's decisions over again when they changed since they last came over.
+
+    A metric added or a link confirmed in today's setup after Learn reached the new
+    core only when an admin pressed "Bring them over again" or learned again. Before
+    an answer, at most every DECISIONS_EVERY seconds per workspace, today's setup is
+    read and compared with what came over; a change (one undone included) is brought
+    over for this answer. True when something came over. Never fails the answer.
+    """
+    from core2.model.imports import changes, decisions, read_legacy
+
+    key = (account_id, int(db_id or 0))
+    now = time.monotonic()
+    with _LOOKING:
+        if now - _LOOKED.get(key, float("-inf")) < DECISIONS_EVERY:
+            return False
+        _LOOKED[key] = now
+    try:
+        model = learned_model(account_id, db_id)
+        if model is None:
+            return False
+        report = decisions(model, read_legacy(account_id, str(_state(client).get("kb_dir") or "")))
+        if not changes(account_id, db_id, report):
+            return False
+    except Exception as exc:  # noqa: BLE001 - the decisions already brought over answer; tried again next time
+        log.warning("core2: could not look for new decisions in today's setup for %s: %s", account_id, exc,
+                    exc_info=True)
+        return False
+    log.info("core2: today's setup changed for %s; bringing its decisions over", account_id)
+    bring_over(account_id, db_id, model, client, report=report)
+    return True
 
 
 def learned_model(account_id: str, db_id: int | None) -> SemanticModel | None:

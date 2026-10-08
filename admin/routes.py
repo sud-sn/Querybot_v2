@@ -9449,8 +9449,17 @@ async def client_setup_page(request: Request, account_id: str):
     except Exception:
         log.warning("per-table description listing failed for %s", account_id, exc_info=True)
 
+    # The new core's Learn, the last setup step.
+    try:
+        from admin.core2_routes import learn_summary
+        learn = learn_summary(account_id, client)
+    except Exception:
+        log.warning("Learn status for the setup page failed for %s", account_id, exc_info=True)
+        learn = None
+
     return _resp(request, "client_setup.html", {
         "client":               client,
+        "learn":                learn,
         "kb_rebuild":           kb_rebuild_needed(client),
         "erp_packs_available":  _list_erp_packs(),
         "client_source_pack":   _setup_source_pack_value(client),
@@ -11360,6 +11369,12 @@ async def admin_refresh_value_index(
                      account_id, stats.get("columns_indexed"), stats.get("values_indexed"))
         except Exception as exc:
             log.error("Value index refresh failed for %s: %s", account_id, exc)
+        # The new core keeps its own list of member names: read it again too.
+        try:
+            from core2.service import read_members
+            await asyncio.to_thread(read_members, account_id)
+        except Exception as exc:
+            log.warning("New core member names not refreshed for %s: %s", account_id, exc)
 
     bg.add_task(_do_refresh)
     from urllib.parse import quote

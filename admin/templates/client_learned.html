@@ -97,6 +97,7 @@
   {% if saved == 'imported' %}{{ alert("Today's decisions were brought over again.", "success") }}{% endif %}
   {% if error %}{{ alert(error, "error") }}{% endif %}
   {% if problem %}{{ alert(problem, "warning") }}{% endif %}
+  {% if behind and not building %}{{ alert("Discovery has run since QueryBot last learned, and found other tables, columns or masking. Learn again so the new core uses them; until then it answers from what it learned.", "warning") }}{% endif %}
 
   {% if build and (building or build_lines) %}
   <section class="lq-section lq-run" aria-labelledby="lq-run">
@@ -407,6 +408,41 @@
     </div>
   </section>
   {% endif %}
+
+  {% set months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] %}
+  {% set fiscal_decided = decisions | selectattr('object_key', 'equalto', 'settings:workspace') | list %}
+  <section class="lq-section" aria-labelledby="lq-fiscal">
+    <h2 id="lq-fiscal">Fiscal year</h2>
+    <div class="lq-body">
+      <p class="lq-intro">
+        {% if view.fiscal.month and view.fiscal.month != 1 %}
+          Fiscal years start in {{ months[view.fiscal.month - 1] }}: FY2026 runs from {{ months[view.fiscal.month - 1] }} 2025 to {{ months[(view.fiscal.month + 10) % 12] }} 2026.
+        {% elif view.fiscal.month == 1 %}
+          The fiscal year is the calendar year.
+        {% else %}
+          QueryBot found no fiscal calendar in the data, so "fiscal year" means the calendar year. If the business's year starts in another month, say so here.
+        {% endif %}
+        {% if fiscal_decided %}(Your decision.){% elif view.fiscal.found %}(Found in the calendar table.){% endif %}
+      </p>
+      <form method="post" action="/admin/clients/{{ client.account_id }}/learned/decide" class="lq-inline">
+        <input type="hidden" name="target" value="settings:workspace">
+        <input type="hidden" name="field" value="fiscal_year_start_month">
+        <label>Fiscal years start in
+          <select name="value">
+            {% for month in months %}<option value="{{ loop.index }}"{% if view.fiscal.month == loop.index or (not view.fiscal.month and loop.index == 1) %} selected{% endif %}>{{ month }}</option>{% endfor %}
+          </select>
+        </label>
+        <button type="submit" class="btn btn-secondary btn-sm">Save</button>
+      </form>
+      {% if fiscal_decided %}
+      <form method="post" action="/admin/clients/{{ client.account_id }}/learned/undo" class="lq-inline">
+        <input type="hidden" name="target" value="settings:workspace">
+        <input type="hidden" name="field" value="fiscal_year_start_month">
+        <button type="submit" class="btn btn-secondary btn-sm">Use what the data says</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
 
   {% if view.quality %}
   <section class="lq-section" aria-labelledby="lq-quality">
