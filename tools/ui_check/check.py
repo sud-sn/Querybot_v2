@@ -229,6 +229,28 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                 page.goto(base + path, wait_until="networkidle")
                 page.wait_for_timeout(1500)
                 report.append({"page": path, "view": view, **p.shot("95" + path.replace("/", "_"), full=True)})
+                tried = page.locator(".kb-learned-try a")
+                if path == "/portal/kb" and tried.count():
+                    # A question to try opens a new thread with it in the box, ready to send.
+                    question = tried.first.inner_text().strip()
+                    tried.first.click()
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(1200)
+                    if page.input_value("#input") != question:
+                        problems.append({"where": f"{view} what you can ask", "problem": "question not in the box",
+                                         "detail": question})
+                    else:
+                        page.keyboard.press("Enter")
+                        try:
+                            page.wait_for_function(
+                                "() => [...document.querySelectorAll('.msg.msg-bot')].some(m => m.querySelector('svg, canvas, table'))",
+                                timeout=90000)
+                            page.wait_for_timeout(2500)
+                            report.append({"page": "a question tried from What you can ask", "view": view,
+                                           **p.shot("97_tried_question", element=page.locator(".msg.msg-bot").last)})
+                        except Exception:  # noqa: BLE001
+                            problems.append({"where": f"{view} what you can ask", "problem": "no answer",
+                                             "detail": question})
                 pinned = page.locator("a", has_text="Store comparison")
                 if path == "/portal/dashboard" and pinned.count():
                     pinned.first.click()

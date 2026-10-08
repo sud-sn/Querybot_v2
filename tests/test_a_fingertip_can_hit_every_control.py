@@ -45,6 +45,18 @@ def test_the_larger_view_is_a_sheet_from_the_bottom_on_a_phone():
     assert ".chat-workspace.artifact-open .artifact-pane{transform:translateY(0)}" in phone
 
 
+def test_the_closed_menu_casts_no_shadow_on_the_page():
+    """Closed, the phone menu sits just off screen; its shadow fell onto the page's left edge."""
+    css = (ROOT / "static/css/portal.css").read_text(encoding="utf-8")
+    phone = css[css.index("@media (max-width: 720px) {"):]
+    phone = phone[:phone.index("\n}\n")]
+    closed = phone[phone.index("  .portal-sidebar {"):]
+    closed = closed[:closed.index("}")]
+    assert "translateX(-101%)" in closed and "box-shadow: none" in closed
+    opened = phone[phone.index(".portal-drawer-open .portal-sidebar {"):]
+    assert "box-shadow: 18px" in opened[:opened.index("}")]
+
+
 def test_the_check_puts_touch_back_after_every_screenshot():
     check = (ROOT / "tools/ui_check/check.py").read_text(encoding="utf-8")
     assert "Emulation.setTouchEmulationEnabled" in check

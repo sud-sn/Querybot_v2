@@ -296,7 +296,8 @@ class TestTheSemanticLayerPage:
         way an inline `s` did, not 500."""
         assert i18n.plural("ui.kb.pending", None, lang="fr") == "None corrections en attente"
         markup = visible(_page("portal_kb.html", "fr", pending_count=None))
-        assert "corrections en attente" in markup
+        assert "Ce que vous pouvez demander" in markup
+        assert "corrections en attente" not in markup, "nothing pending, so no pill"
 
     def test_the_schema_and_column_names_are_the_customer_s(self):
         markup = visible(_page("portal_kb.html", "fr"))

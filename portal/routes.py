@@ -2268,6 +2268,32 @@ async def unpin_chart(
 # Semantic Layer viewer (user sees metadata for their group's tables only)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _what_you_can_ask(user: dict, client: dict, state_data: dict, allowed: set[str] | None):
+    """For a workspace the new core answers: what it learned, as this reader may see it.
+
+    The same description the chat gives to "what data do you have?" (core2/answer/describe.py): a
+    lead, a section per subject with its measures, what they break down by and their dates, and
+    questions to try. None for today's pipeline, or when the new core has not learned the workspace.
+    """
+    account_id = user["account_id"]
+    try:
+        if store.get_query_engine(account_id) != "core2":
+            return None
+        from core.value_index import value_index_enabled
+        from core2.answer.describe import describe
+        from core2.bootstrap.service import answering_model
+        from core2.service import _allowed_model_tables, question_scrubber
+
+        model = answering_model(account_id, client)
+        if model is None:
+            return None
+        return describe(model, [], today=_dt.date.today(), allowed=_allowed_model_tables(model, allowed),
+                        values=question_scrubber(account_id) is None and value_index_enabled(state_data))
+    except Exception as exc:  # noqa: BLE001 - the field list below still stands
+        log.warning("What-you-can-ask could not be read for %s: %s", account_id, exc, exc_info=True)
+        return None
+
+
 @router.get("/kb", response_class=HTMLResponse)
 async def portal_kb(request: Request):
     user = _get_portal_user(request)
@@ -2302,6 +2328,7 @@ async def portal_kb(request: Request):
     return _resp(request, "portal_kb.html", {
         "user":              user,
         "client":            client,
+        "learned":           _what_you_can_ask(user, client, state_data, allowed),
         "semantic_tables":   semantic_tables,
         "visible_tables":    visible_tables,
         "schemas":           schemas,

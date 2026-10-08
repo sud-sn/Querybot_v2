@@ -66,18 +66,28 @@
 .sl-no-results{display:none;padding:3rem;text-align:center;color:var(--text-muted);font-size:var(--font-base)}
 .sl-no-results.visible{display:block}
 .sl-match mark{background:var(--state-selected);color:var(--text);border-radius:2px;padding:0 2px}
+/* ── What the new core learned ── */
+.kb-learned{margin-bottom:1.5rem}
+.kb-learned-lead{font-size:var(--font-md);font-weight:var(--weight-semibold);color:var(--text);margin:0 0 .35rem}
+.kb-learned-note{font-size:var(--font-sm);color:var(--text-muted);margin:0 0 .75rem}
+.kb-learned-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.85rem;margin:.75rem 0 1.25rem}
+.kb-learned-title{font-size:var(--font-base);font-weight:var(--weight-bold);margin:0 0 .5rem}
+.kb-learned-body{font-size:var(--font-sm);color:var(--text-muted);margin:0 0 .4rem}
+.kb-learned-list{margin:0;padding-left:1.1rem;font-size:var(--font-sm);color:var(--text-secondary);line-height:1.6}
+.kb-learned-try{display:flex;flex-wrap:wrap;gap:.5rem}
+.kb-fields-title{margin-top:.5rem}
 </style>
 {% endblock %}
 {% block content %}
 <section class="semantic-hero">
   <div class="semantic-title">
     <h1>{{ t('ui.shell.semantic_layer') }}</h1>
-    <p>{{ t('ui.kb.intro') }}</p>
+    <p>{{ t('ui.kb.intro_learned') if learned else t('ui.kb.intro') }}</p>
   </div>
   <div class="semantic-actions">
-    <span class="status-pill {% if pending_count %}warning{% else %}success{% endif %}">
-      {{ plural('ui.kb.pending', pending_count) }}
-    </span>
+    {% if pending_count %}
+    <span class="status-pill warning">{{ plural('ui.kb.pending', pending_count) }}</span>
+    {% endif %}
     <a href="/portal/chat" class="btn btn-secondary btn-sm">{{ t('ui.kb.back_to_chat') }}</a>
   </div>
 </section>
@@ -89,13 +99,41 @@
 {{ alert(t('ui.kb.empty_submission'), 'error', 'x-circle') }}
 {% endif %}
 
+{% if learned %}
+{# What the new core learned, as this reader may see it: the answer the chat
+   gives to "what data do you have?", with questions to try. #}
+<section class="kb-learned" aria-label="{{ t('ui.shell.semantic_layer') }}">
+  <p class="kb-learned-lead">{{ learned.headline }}</p>
+  {% if learned.note %}<p class="kb-learned-note">{{ learned.note }}</p>{% endif %}
+  <div class="kb-learned-grid">
+    {% for section in learned.sections %}
+    <div class="card"><div class="card-body">
+      <h2 class="kb-learned-title">{{ section.title }}</h2>
+      {% if section.body %}<p class="kb-learned-body">{{ section.body }}</p>{% endif %}
+      {% if section.bullets %}<ul class="kb-learned-list">{% for line in section.bullets %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    </div></div>
+    {% endfor %}
+  </div>
+  {% if learned.examples %}
+  <h2 class="kb-learned-title">{{ t('ui.kb.try_asking') }}</h2>
+  <div class="kb-learned-try">
+    {% for q in learned.examples %}<a class="btn btn-sm" href="/portal/chat?new=1&amp;ask={{ q|urlencode }}">{{ q }}</a>{% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% if semantic_tables %}<h2 class="kb-learned-title kb-fields-title">{{ t('ui.kb.field_definitions') }}</h2>
+<p class="kb-learned-note">{{ t('ui.kb.fields_intro') }}</p>{% endif %}
+{% endif %}
+
 {% if not semantic_tables %}
+{% if not learned %}
 <div class="card">
   <div class="card-body" style="text-align:center;padding:3rem;color:var(--text-muted)">
     <div style="font-size:34px;margin-bottom:1rem">SL</div>
     <p>{{ t('ui.kb.no_metadata') }}</p>
   </div>
 </div>
+{% endif %}
 {% else %}
 <nav class="schema-tabs" aria-label="{{ t('ui.kb.schema_selector') }}">
   {% for schema in schemas %}

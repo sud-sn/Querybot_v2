@@ -462,9 +462,13 @@ body { background: var(--bg); }
     width: min(86vw, 288px);
     display: flex;
     transform: translateX(-101%);
+    /* No shadow while closed: it fell 64px onto the page, a grey band down every phone screen. */
+    box-shadow: none;
+  }
+  .portal-drawer-open .portal-sidebar {
+    transform: translateX(0);
     box-shadow: 18px 0 46px color-mix(in srgb, var(--shadow-tint) 34%, transparent);
   }
-  .portal-drawer-open .portal-sidebar { transform: translateX(0); }
   .portal-drawer-open .portal-drawer-backdrop {
     position: fixed;
     inset: 0;

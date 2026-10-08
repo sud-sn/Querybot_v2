@@ -156,6 +156,9 @@ PLANS = {
     "how many customers ordered in april": {"intent": "count", "measures": ["number_of_customers"],
                                             "time": {"window": APRIL}},
     "what data do you have": {"kind": "describe_data"},
+    # the first question "What you can ask" offers, followed from that page
+    "net amount by store in 2026": {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["store"],
+                                    "time": {"window": H1}},
 }
 
 

@@ -5030,6 +5030,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.notif.day.6": {"en": "Sun", "fr": "Dim"},
 
     # ── The Semantic Layer page ──────────────────────────────────────────────
+    "ui.kb.try_asking": {"en": "Try asking", "fr": "Essayez de demander"},
+    "ui.kb.field_definitions": {"en": "Field definitions", "fr": "Définitions des champs"},
+    "ui.kb.intro_learned": {
+        "en": "What your data covers, and questions to try: pick one to open it in the chat.",
+        "fr": "Ce que couvrent vos données, et des questions à essayer : choisissez-en une pour l'ouvrir dans le chat.",
+    },
+    "ui.kb.fields_intro": {
+        "en": "If a definition is wrong, suggest a correction for your admin to approve.",
+        "fr": "Si une définition est fausse, proposez une correction que votre administrateur validera.",
+    },
     "ui.kb.intro": {
         "en": "Review the field meanings QueryBot uses for your assigned tables. If something is wrong, submit a correction for admin approval instead of changing the live Semantic Layer directly.",
         "fr": "Vérifiez la signification des champs que QueryBot utilise pour les tables qui vous sont attribuées. Si quelque chose est incorrect, soumettez une correction à la validation de l'administrateur plutôt que de modifier directement la couche sémantique en production.",

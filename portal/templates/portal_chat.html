@@ -915,6 +915,8 @@ function _createThreadId() {
 }
 const _threadFromUrl = new URLSearchParams(location.search).get('thread') || '';
 const _requestedNewThread = new URLSearchParams(location.search).get('new') === '1';
+// A question to try, from "What you can ask": put in the box, for the reader to send.
+const _questionFromUrl = (new URLSearchParams(location.search).get('ask') || '').slice(0, 500);
 const _validThreadId = value => /^[A-Za-z0-9_-]{1,80}$/.test(value || '');
 const THREAD_ID = _requestedNewThread
   ? _createThreadId()
@@ -4739,6 +4741,10 @@ class AutoSuggest {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  if (_questionFromUrl) {
+    const box = document.getElementById('input');
+    if (box) { box.value = _questionFromUrl; box.focus(); }
+  }
   const requestedNewThread = _requestedNewThread;
   if (requestedNewThread) {
     clearChatCache();
