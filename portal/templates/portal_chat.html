@@ -3096,6 +3096,10 @@ function appendAssistantResponse(msg, opts = {}){
   if (msg.insight_summary) {
     notes.push({ tier: 'note', icon: '-', text: String(msg.insight_summary) });
   }
+  // The new core's findings, worked out from the answer's own rows: one line each.
+  for (const k of (Array.isArray(msg.key_insights) ? msg.key_insights : [])) {
+    if (k) notes.push({ tier: 'note', icon: '-', text: String(k) });
+  }
 
   // Stable within a tier: the server's order carries meaning the client cannot
   // reconstruct, so only the tier reorders anything.
@@ -3308,7 +3312,8 @@ function appendAssistantResponse(msg, opts = {}){
   const copyBtn = div.querySelector('[data-copy="result"]');
   copyBtn?.addEventListener('click', async (e) => {
     const sectionText = answerSections.flatMap(s => [s.title || '', s.body || '', ...(s.bullets || []).map(b => '- ' + b)]);
-    const copyPayload = [answer.headline || '', sectionText.filter(Boolean).join('\n'), trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
+    const insightText = (Array.isArray(msg.key_insights) ? msg.key_insights : []).filter(Boolean).map(k => '- ' + k).join('\n');
+    const copyPayload = [answer.headline || '', insightText, sectionText.filter(Boolean).join('\n'), trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
     const ok = await copyText(copyPayload);
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = t(ok ? 'ui.chat.card.copied' : 'ui.chat.toast.copy_failed');

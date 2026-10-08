@@ -33,7 +33,7 @@ from core2.answer.forecast import answer_forecast
 from core2.answer.suggestions import follow_ups
 from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
-from core2.plan.ir import Clarify, Plan, Window
+from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
 from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
@@ -338,7 +338,48 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
+    context = _against_before(question, plan, services, ctx, warehouse, logical, payload)
+    if context:
+        payload["key_insights"] = [context, *payload.get("key_insights", [])]
     return payload
+
+
+def _against_before(question: str, plan: Plan, services: Services, ctx: Context, warehouse: Guarded,
+                    logical: Any, payload: dict[str, Any]) -> str:
+    """One number for a period: how it compares with the period before, from one more small query.
+
+    "Gross profit in Q2 2026: $8.51M" says nothing of whether that is good; the
+    period before is the first thing a reader checks. Only for a single value of a
+    bounded period that is not already a comparison; a failure costs the finding,
+    never the answer.
+    """
+    if plan.group_by or plan.time.grain or plan.time.compare or logical.compare is not None \
+            or plan.intent not in (None, "value", "count") or len(logical.measures) != 1:
+        return ""
+    if logical.window.start is None or logical.window.end is None or any(
+            c.kind == "date" for c in logical.conditions):
+        return ""                     # "invoiced in March for orders placed in February" has no period before
+    rows = (payload.get("data") or {}).get("rows") or []
+    if len(rows) != 1 or _found_nothing(payload):
+        return ""
+    before = plan.model_copy(update={"intent": "compare", "time": plan.time.model_copy(
+        update={"compare": Compare(kind="previous_period")})})
+    try:
+        compared = resolve(before, services.model, replace(ctx, split_units=services.split_units))
+        role = compared.parts[0].date.role if compared.parts and compared.parts[0].date else None
+        if compared.compare is None or compared.compare.start is None or role is None or role.first is None \
+                or compared.compare.start < role.first:
+            return ""                 # data that starts later is not a period with nothing in it
+        compiled = compile_query(compared, services.model, warehouse.dialect)
+        result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
+        moved = build_answer(question, compared, compiled, result.columns, result.rows)
+    except Exception as exc:  # noqa: BLE001 - the answer stands without the comparison
+        log.warning("core2 could not compare %r with the period before: %s", question, exc)
+        return ""
+    said = str((moved.get("answer") or {}).get("comparison") or "")
+    if not said or said.startswith("nothing"):
+        return ""
+    return f"{said[:1].upper()}{said[1:]}, the period before."
 
 
 def _found_nothing(payload: dict[str, Any]) -> bool:

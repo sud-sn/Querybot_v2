@@ -10,6 +10,7 @@ the current pipeline sends), so the portal needs no change to show it.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -20,6 +21,7 @@ from core2.compile.compiler import Compiled, OutColumn
 from core2.resolve.resolver import Condition, Logical
 from core2.resolve.time import Range, label as period_label
 
+log = logging.getLogger("querybot.core2")
 _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
            "November", "December"]
@@ -423,7 +425,15 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         else:
             notes.append(f"A {chart_type} chart does not fit this answer; it is shown as a "
                          f"{chart['chart_type']} chart.")
+    from core2.answer.insights import summarize
+
+    try:
+        insights = summarize(logical, cols, raw, units, truncated=truncated)
+    except Exception as exc:  # noqa: BLE001 - the findings are extra; the answer stands without them
+        log.warning("core2 could not work out findings for %r: %s", question, exc)
+        insights = []
     return frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
+                 insights=insights,
                  chart=chart, kpi=_kpi(logical, cols, raw, formats, units),
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
@@ -432,6 +442,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
 
 
 def frame(question: str, *, headline: str, short_value: str = "", comparison: str = "", caveats: list[str],
+          insights: list[str] | None = None,
           chart: dict | None, kpi: dict | None, suggestions: list[str], headers: list[str], labels: dict[str, str],
           records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
           row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
@@ -449,6 +460,7 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
         "kpi": kpi,
         "insight_summary": "",
         "anomaly_callouts": [],
+        "key_insights": list(insights or []),     # what the rows show beyond the first sentence
         "coverage_caveats": caveats,
         "follow_up_suggestions": [s if isinstance(s, dict) else {"label": s, "question": s} for s in suggestions],
         "data": {
@@ -530,6 +542,14 @@ def _lower(label: str) -> str:
     return label if label[1:2].isupper() else label[:1].lower() + label[1:]
 
 
+def _moved(by: float, ratio: float | None, format_: str, unit: str | None) -> str:
+    """ "up $1,200 (+4.0%)", "down 3 (-2.1%)", or "unchanged" when nothing moved at the precision shown."""
+    shown = fmt(abs(by), format_, unit=unit)
+    if shown == fmt(0, format_, unit=unit):
+        return "unchanged"
+    return f"{'up' if by >= 0 else 'down'} {shown}" + (f" ({ratio * 100:+.1f}%)" if ratio is not None else "")
+
+
 def _signed(number: float, format_: str, unit: str | None = None) -> str:
     return ("+" if number > 0 else "") + fmt(number, format_, unit=unit)
 
@@ -554,16 +574,13 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
     if logical.compare is not None:
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
         pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
-        prior_span = span_words(logical.compare).removeprefix("in ")
+        prior_span = span_words(logical.compare).removeprefix("in ").removeprefix("from ")
         against = versus(logical.compare)
         prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
 
         def moved(r: dict, with_unit: bool = True) -> str:
-            by = _number(r[change.name]) or 0.0   # type: ignore[union-attr]
-            ratio = _number(r[pct.name]) if pct else None
-            pct_text = f" ({ratio * 100:+.1f}%)" if ratio is not None else ""
-            unit = units.of(r) if with_unit else None
-            return f"{'up' if by >= 0 else 'down'} {fmt(abs(by), m.format, unit=unit)}{pct_text}"
+            return _moved(_number(r[change.name]) or 0.0, _number(r[pct.name]) if pct else None,   # type: ignore[union-attr]
+                          m.format, units.of(r) if with_unit else None)
 
         if not members and not periods and change is not None:
             if units.column is not None and len(raw) > 1:
@@ -721,14 +738,11 @@ def _lead(logical: Logical, cols: _Columns, raw: list[dict], units: _Units) -> t
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
         pct = next((c for c in cols.columns if c.role == "pct_change" and c.measure == m.measure), None)
         if change is not None:
-            moved = _number(r[change.name]) or 0.0
-            ratio = _number(r[pct.name]) if pct is not None else None
-            pct_text = f" ({ratio * 100:+.1f}%)" if ratio is not None else ""
             prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
             if prior is not None and _number(r[prior.name]) is None:
                 return value, f"nothing {span_words(logical.compare)} to compare with"
-            return value, (f"{'up' if moved >= 0 else 'down'} {fmt(abs(moved), m.format, unit=units.of(r))}"
-                           f"{pct_text} {versus(logical.compare)}")
+            ratio = _number(r[pct.name]) if pct is not None else None
+            return value, f"{_moved(_number(r[change.name]) or 0.0, ratio, m.format, units.of(r))} {versus(logical.compare)}"
     return value, scope_words(logical)[1]
 
 
