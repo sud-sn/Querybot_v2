@@ -228,12 +228,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .ctt-btn{padding:4px 11px;font-size:var(--font-xs);font-weight:var(--weight-bold);border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}
 .ctt-btn:hover{border-color:var(--primary);color:var(--primary)}
 .ctt-btn.ctt-active{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
-/* ── Palette switcher ────────────────────────────────────────────────── */
-.chart-palette-row{display:flex;gap:.3rem;align-items:center;margin-top:.35rem;padding-top:.35rem;border-top:1px solid color-mix(in srgb,var(--border) 40%,transparent)}
-.cpt-label{font-size:var(--font-2xs);font-weight:var(--weight-bold);color:var(--text-muted);margin-right:.15rem;white-space:nowrap}
-.cpt-swatch{width:30px;height:14px;border-radius:5px;border:2px solid transparent;cursor:pointer;transition:transform .12s,border-color .12s;flex-shrink:0}
-.cpt-swatch:hover{transform:scale(1.15)}
-.cpt-swatch.cpt-active{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
 .chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:var(--font-xs);flex-wrap:wrap}
 .assistant-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1rem .95rem;box-shadow:var(--shadow);position:relative}
 .assistant-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary)}
@@ -2061,10 +2055,6 @@ function _updateMemoryBadge() {
 // ── Per-chart payload registry (for type-toggle re-renders) ──────────────────
 window._chartPayloads = window._chartPayloads || {};
 
-// Palettes live in /static/js/chart-palettes.js so this page and the
-// dashboard cannot drift apart.
-const _PALETTES = window.QB_PALETTES;
-
 // French writes the currency symbol AFTER the amount, with a no-break space
 // before it; English writes it in front with nothing between. Both sides come
 // from window.QB_NUM, which core/i18n.py fills, so the page and the server's
@@ -2143,10 +2133,9 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   if (!wrapEl) return;
   const stored = () => window._chartPayloads[chartId] || {};
   const ct   = stored().chart_type || 'bar';
-  const pal  = stored().color_palette || 'default';
 
   // Type toggle
-  const TYPES = ['bar', 'line', 'area', 'pie', 'donut', 'scatter']
+  const TYPES = ['dumbbell', 'bar', 'line', 'area', 'pie', 'donut', 'scatter']
     .map(k => ({k, label: enumLabel('charttype', k)}));
   // `x`, not `t`: t is the translator in this scope, and shadowing it inside a
   // callback is how a lookup silently becomes whatever the callback iterates.
@@ -2156,20 +2145,11 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
     `<button type="button" class="ctt-btn${ct===x.k?' ctt-active':''}" data-type="${x.k}">${escHtml(x.label)}</button>`
   ).join('');
 
-  // Palette switcher: small gradient swatches
-  const palHtml = Object.entries(_PALETTES).map(([name, modes]) => {
-    const cols = modes;
-    return `<button type="button" class="cpt-swatch${pal===name?' cpt-active':''}"
-       data-palette="${name}" title="${name}"
-       style="background:linear-gradient(90deg,${cols[0]} 0%,${cols[0]} 33%,${cols[1]} 33%,${cols[1]} 66%,${cols[2]} 66%)">
-     </button>`;
-  }).join('');
-
+  // No palette picker: one palette, in a fixed order, so a colour means the
+  // same thing on every chart (and two of the six it offered failed the
+  // colour-vision check). The shapes offered are only the ones that fit.
   wrapEl.insertAdjacentHTML('beforeend', `
-    <div class="chart-type-toggle" data-ctrl-for="${chartId}">${typeHtml}</div>
-    <div class="chart-palette-row" data-ctrl-for="${chartId}">
-      <span class="cpt-label">${t('ui.chat.chart.palette')}</span>${palHtml}
-    </div>`);
+    <div class="chart-type-toggle" data-ctrl-for="${chartId}">${typeHtml}</div>`);
 
   // Wire events
   wrapEl.querySelectorAll(`.chart-type-toggle[data-ctrl-for="${chartId}"] .ctt-btn`).forEach(btn => {
@@ -2179,16 +2159,6 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
       window._chartPayloads[chartId] = updated;
       wrapEl.querySelectorAll(`.chart-type-toggle[data-ctrl-for="${chartId}"] .ctt-btn`)
         .forEach(b => b.classList.toggle('ctt-active', b.dataset.type === newType));
-      onUpdate(updated);
-    });
-  });
-  wrapEl.querySelectorAll(`.chart-palette-row[data-ctrl-for="${chartId}"] .cpt-swatch`).forEach(btn => {
-    btn.addEventListener('click', () => {
-      const newPal = btn.dataset.palette;
-      const updated = Object.assign({}, window._chartPayloads[chartId], { color_palette: newPal });
-      window._chartPayloads[chartId] = updated;
-      wrapEl.querySelectorAll(`.chart-palette-row[data-ctrl-for="${chartId}"] .cpt-swatch`)
-        .forEach(b => b.classList.toggle('cpt-active', b.dataset.palette === newPal));
       onUpdate(updated);
     });
   });

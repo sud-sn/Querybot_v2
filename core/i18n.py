@@ -531,6 +531,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.enum.charttype.pie": {"en": "Pie", "fr": "Secteurs"},
     "ui.enum.charttype.donut": {"en": "Donut", "fr": "Anneau"},
     "ui.enum.charttype.scatter": {"en": "Scatter", "fr": "Nuage de points"},
+    "ui.enum.charttype.dumbbell": {"en": "Change", "fr": "Variation"},
     "ui.enum.role.admin": {"en": "Admin", "fr": "Administrateur"},
     "ui.enum.role.analyst": {"en": "Analyst", "fr": "Analyste"},
     "ui.enum.source.governed_query": {"en": "Governed query", "fr": "Requête gouvernée"},
@@ -4468,6 +4469,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.total": {"en": "Total", "fr": "Total"},
     # Under a tooltip, where a click on the mark asks for its breakdown.
     "ui.chart.drill_hint": {"en": "Click to break this down", "fr": "Cliquez pour ventiler"},
+    "ui.chart.change": {"en": "Change", "fr": "Variation"},
 
     # The artifact pane's own copy.
     "ui.chat.artifact.result": {"en": "Analysis result", "fr": "Résultat d'analyse"},
@@ -4833,7 +4835,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.chart.interval": {"en": "95% interval", "fr": "Intervalle à 95 %"},
 
     # ── The chart palette picker ─────────────────────────────────────────────
-    "ui.chat.chart.palette": {"en": "Palette", "fr": "Palette"},
     "ui.chat.chart.outlier": {"en": "Outlier", "fr": "Valeur aberrante"},
 
     # ── The sign-in page ─────────────────────────────────────────────────────

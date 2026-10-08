@@ -187,7 +187,6 @@ class TestTheCatalogueIsWellFormed:
         "ui.chat.trust.source",         # "source" is the same word
         "ui.chat.trust.sources",        # and so is its plural
         "ui.chat.trust.considered.dates",  # "dates" is the same word
-        "ui.chat.chart.palette",        # "palette" is French to begin with
         "ui.report.description",        # same word, same spelling
         "ui.enum.alertstatus.active",   # "active" is the same word
         "ui.kb.matched.tables.one",     # "table" again, singular

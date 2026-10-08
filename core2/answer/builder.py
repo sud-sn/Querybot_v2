@@ -853,9 +853,15 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         return None
     m = measures[0]
     ranked = _ranked_periods(logical, cols) and not members
+    compare: dict | None = None
     if logical.compare is not None and members:
         prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
         x, ys, kind = members[0], [c.name for c in (prior, m) if c is not None], "bar"
+        if prior is not None:
+            # The same members at two times: a dot per period on one line per member, the change beside it.
+            kind = "dumbbell"
+            compare = {"prior": prior.name, "current": m.name, "prior_label": _period_badge(logical.compare),
+                       "current_label": _period_badge(logical.window)}
     elif periods and ranked:
         # A ranking of periods is drawn as ranked bars, named as periods ("Aug 2025"), never as a time line.
         x, ys, kind = periods[0], [m.name], "bar"
@@ -864,8 +870,9 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         if members:   # one line per member
             return _pivot(logical, periods[0], members[0], m, records, formats, labels, display)
     elif members:
-        x, ys = members[0], [m.name]
-        kind = "pie" if logical.share and len(records) <= 6 else "bar"
+        # Every measure asked for is drawn: one of a unit shares a plot, another unit gets a panel.
+        x, ys = members[0], [c.name for c in measures]
+        kind = "pie" if logical.share and len(records) <= 6 and len(ys) == 1 else "bar"
     else:
         return None
     temporal = x.role == "period" and not ranked
@@ -884,11 +891,27 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     rows = [{x.name: x_value(r), **{y: _number(r[y]) for y in ys}} for r in records]
     if temporal:
         rows.sort(key=lambda r: str(r[x.name]))     # a time axis runs forward, whatever order the table is in
-    return {"title": labels[m.name], "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows,
+    facets: list[list[str]] = []
+    if len(ys) > 1 and kind == "bar" and compare is None:
+        by_unit: dict[str, list[str]] = {}
+        for y in ys:
+            by_unit.setdefault(str(roles[y]["format"]), []).append(y)
+        facets = list(by_unit.values()) if len(by_unit) > 1 else []
+    # The shapes that fit: a category is never a line, a ranking of periods is only bars.
+    if kind == "dumbbell":
+        renderable, allowed = ["dumbbell", "bar"], ["dumbbell", "bar"]
+    elif kind == "pie":
+        renderable, allowed = ["pie", "bar"], ["pie", "bar"]
+    elif temporal:
+        renderable, allowed = ["line", "area", "bar"], ["line", "area", "bar"]
+    else:
+        renderable, allowed = ["bar"], ["bar", "pie"] if len(ys) == 1 and not ranked else ["bar"]
+    return {"title": labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and"),
+            "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows,
             "x_style": "" if ranked else (display.get(x.name) or {}).get("style", ""),
             "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
-            "renderable_types": ["bar", "line", "area"] if kind != "pie" else ["pie", "bar"],
-            "allowed_types": ["bar"] if ranked else ["bar", "line", "area", "pie"], "recommended_type": kind,
+            "renderable_types": renderable, "allowed_types": allowed, "recommended_type": kind,
+            "compare": compare, "facets": facets,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
             "intent": logical.intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
 

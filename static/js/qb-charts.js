@@ -383,7 +383,7 @@
 
     const req = String((payload && payload.chart_type) || 'bar').toLowerCase();
     const known = ['pie', 'donut', 'scatter', 'area', 'line', 'waterfall', 'heatmap', 'funnel',
-                   'forecast', 'histogram', 'boxplot', 'treemap', 'bar'];
+                   'forecast', 'histogram', 'boxplot', 'treemap', 'dumbbell', 'bar'];
     const type = known.includes(req) ? req : (temporal ? 'line' : 'bar');
 
     // ── Density ────────────────────────────────────────────────────────────
@@ -392,15 +392,20 @@
     // zoom instead. A pie keeps its total -- the tail becomes one slice.
     const ordered = type === 'line' || type === 'area' || type === 'forecast' || temporal;
     let truncatedFrom = 0;
-    if (!ordered && (type === 'bar' || type === 'pie' || type === 'donut') && yKey) {
+    if (!ordered && (type === 'bar' || type === 'dumbbell' || type === 'pie' || type === 'donut') && yKey) {
       const cap = (type === 'pie' || type === 'donut') ? PIE_CAP : CATEGORY_CAP;
       if (rows.length > cap) {
         truncatedFrom = rows.length;
         // Ranked on the whole bar, not its first segment, so a grouped chart's
-        // largest category survives whichever period happens to come first.
-        const size = r => yKeys.reduce((s, k) => s + Math.abs(num(r && r[k]) || 0), 0);
+        // largest category survives whichever period happens to come first. A
+        // comparison keeps the members that moved most, in the order it came in.
+        const cmp = type === 'dumbbell' && payload && payload.compare;
+        const size = cmp
+          ? r => Math.abs((num(r && r[cmp.current]) || 0) - (num(r && r[cmp.prior]) || 0))
+          : r => yKeys.reduce((s, k) => s + Math.abs(num(r && r[k]) || 0), 0);
         const ranked = rows.slice().sort((a, b) => size(b) - size(a));
         const head = ranked.slice(0, cap);
+        if (cmp) head.sort((a, b) => rows.indexOf(a) - rows.indexOf(b));
         if (type === 'pie' || type === 'donut') {
           const rest = ranked.slice(cap).reduce((s, r) => s + (num(r && r[yKey]) || 0), 0);
           head.push({[xKey]: t('ui.chart.other_bucket', {count: global.qbNum(truncatedFrom - cap)}), [yKey]: rest});
@@ -948,6 +953,68 @@
           itemStyle: {color: colors[0], opacity: 0.9, borderColor: c.surface, borderWidth: 2},
           emphasis: {scale: 1.4},
         }],
+      });
+    }
+
+    // ── Dumbbell: the same members at two times ────────────────────────────
+    // Two bars per member read as twice as many things to compare; one line
+    // per member from its earlier value to its current one reads as a change.
+    // The earlier period is a muted ink dot, the current one the series' hue
+    // (identity is the pair of colours AND the legend that names them), the
+    // line between is neutral, and the change is written past whichever dot
+    // is further right, in text ink -- never on the line.
+    if (type === 'dumbbell') {
+      const cmp = (payload && payload.compare) || {};
+      const priorKey = cmp.prior || yKeys[0];
+      const currentKey = cmp.current || yKeys[yKeys.length - 1];
+      const priorName = cmp.prior_label || columnLabel(payload, priorKey);
+      const currentName = cmp.current_label || columnLabel(payload, currentKey);
+      const prior = rows.map(r => num(r && r[priorKey]));
+      const current = rows.map(r => num(r && r[currentKey]));
+      const signed = d => (d > 0 ? '+' : d < 0 ? '−' : '') + valueFmt(Math.abs(d), currentKey, true);
+      const dot = (name, color, values) => ({
+        name, type: 'scatter', symbolSize: 10, z: 3,
+        data: labels.map((l, i) => [values[i], l]),
+        itemStyle: {color, borderColor: c.surface, borderWidth: 2},
+      });
+      return Object.assign(base, {
+        title: capTitle(24),
+        grid: {left: 8, right: 64, top: 30 + capReserve, bottom: 8, containLabel: true},
+        legend: Object.assign(legendBase([priorName, currentName], false), {icon: 'circle'}),
+        tooltip: Object.assign(tooltipBase(c), {
+          trigger: 'axis', axisPointer: {type: 'shadow'},
+          formatter: params => {
+            const i = (params && params[0] && params[0].dataIndex) || 0;
+            const d = (current[i] || 0) - (prior[i] || 0);
+            return tipHeader(labels[i], c)
+              + tipRow(c.muted, priorName, valueFmt(prior[i], priorKey), c, 'swatch')
+              + tipRow(colors[0], currentName, valueFmt(current[i], currentKey), c, 'swatch')
+              + tipRow(c.axis, t('ui.chart.change'), signed(d), c, 'line');
+          },
+        }),
+        xAxis: {type: 'value', axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true,
+                                           formatter: v => valueFmt(v, currentKey, true)},
+                splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false}},
+        yAxis: {type: 'category', data: labels, inverse: true, axisTick: {show: false},
+                axisLine: {show: false},
+                axisLabel: {color: c.ink2, fontSize: 12, width: 180, overflow: 'truncate', ellipsis: '…'}},
+        series: [
+          // One neutral line per member, earlier to current.
+          ...labels.map((l, i) => ({
+            type: 'line', silent: true, symbol: 'none', z: 2, legendHoverLink: false,
+            data: [[prior[i], l], [current[i], l]],
+            lineStyle: {color: c.axis, width: 2},
+          })),
+          dot(priorName, c.muted, prior),
+          dot(currentName, colors[0], current),
+          // The change, past the further dot.
+          {
+            type: 'scatter', silent: true, symbolSize: 0, z: 4,
+            data: labels.map((l, i) => [Math.max(prior[i] || 0, current[i] || 0), l]),
+            label: {show: true, position: 'right', distance: 10, color: c.ink, fontSize: 12, fontWeight: 600,
+                    formatter: p => signed((current[p.dataIndex] || 0) - (prior[p.dataIndex] || 0))},
+          },
+        ],
       });
     }
 

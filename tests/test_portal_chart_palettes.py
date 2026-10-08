@@ -51,13 +51,20 @@ def test_no_page_carries_its_own_copy_of_the_palettes(name):
 
 @pytest.mark.parametrize("name", CONSUMERS)
 def test_each_page_loads_the_shared_file_before_reading_it(name):
+    """qb-charts.js reads the palettes on every page that draws a chart; the
+    dashboard also reads them itself, for its palette picker. The chat page has
+    no picker (a reader does not choose colours), so it reads them only through
+    qb-charts.js -- the file must load before both readers."""
     source = _consumer(name)
     tag = source.find("src=\"{{ asset('js/chart-palettes.js') }}\"")
     assert tag != -1, f"{name} does not load the shared palette file"
 
+    renderer = source.find("src=\"{{ asset('js/qb-charts.js') }}\"")
+    assert renderer != -1, f"{name} does not load the chart renderer"
+    assert tag < renderer, f"{name} loads qb-charts.js before the palettes it reads"
+
     use = source.find("window.QB_PALETTES")
-    assert use != -1, f"{name} never reads the shared palettes"
-    assert tag < use, (
+    assert use == -1 or tag < use, (
         f"{name} reads window.QB_PALETTES before the script that defines it"
     )
 
