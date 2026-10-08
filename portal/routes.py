@@ -1225,6 +1225,13 @@ def _refresh_chart(
         return result
 
     try:
+        display = json.loads(chart.get("display_config") or "{}")
+    except (TypeError, ValueError):
+        display = {}
+    if isinstance(display, dict) and display.get("core2_plan"):
+        return _refresh_core2_tile(chart, result, user, display["core2_plan"], filters=filters)
+
+    try:
         from core.compliance.governed_query import execute_governed_query
         from core.compliance.policy_engine import evaluate, resolve_context
         from core.compliance.sql_guard import aggregate_only_violations, analyze_sql
@@ -1410,6 +1417,72 @@ def _refresh_chart(
         result["error_next_step"] = _sanitized.get("next_step") or ""
         log.warning("Chart refresh failed for chart %d: %s", chart["id"], e)
 
+    return result
+
+
+def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
+                        filters: list[dict] | None = None) -> dict:
+    """A pinned new-core answer, drawn by running its plan again (core2.service.portal_replay).
+
+    The tile keeps the answer's own shape -- a comparison stays a dumbbell, measures in two
+    units stay in two panels, a total stays a number -- on today's data, as this viewer is
+    allowed to see it. The reader's chosen type is kept when the shape offers it.
+    """
+    from core2.service import portal_replay
+
+    try:
+        payload = portal_replay(user["account_id"], plan, user, question=str(chart.get("question") or ""))
+    except Exception as exc:  # noqa: BLE001 - one tile failing must not take the dashboard with it
+        log.warning("Pinned new-core answer %s could not be drawn: %s", chart.get("id"), exc, exc_info=True)
+        result["error"] = "This chart could not be refreshed."
+        result["error_next_step"] = "Ask the question again in the chat and pin the new answer."
+        return result
+    if payload.get("data") is None:
+        # The plan no longer runs for this viewer (access changed, a column went): its own words say why.
+        answer = payload.get("answer") or {}
+        result["error"] = str(answer.get("headline") or payload.get("text") or "This chart could not be refreshed.")
+        return result
+    if filters:
+        result["filter_warnings"] = ["Dashboard filters do not apply to this tile yet: it is drawn from its "
+                                     "answer's own question."]
+    data = payload.get("data") or {}
+    rows = data.get("rows") or []
+    result["row_count"] = int((payload.get("trust") or {}).get("row_count") or len(rows))
+    kind = str(chart.get("chart_type") or "")
+    shape = payload.get("chart")
+    if kind == "kpi" or (not shape and payload.get("kpi") and kind != "table"):
+        from core.response_builder import _format_number
+
+        kpi = payload.get("kpi")
+        if kpi:
+            result["kpi"] = kpi
+            result["kpi_display"] = _format_number(kpi.get("value"), kpi.get("format"))
+    elif kind == "table" or not shape:
+        from core.response_builder import _format_display_value
+        from core.schema_enrichment import display_label
+
+        headers = list(data.get("headers") or (rows[0].keys() if rows else []))
+        labels = data.get("header_labels") or {}
+        formats = data.get("column_formats") or {}
+        shown = data.get("display_formats") or {}
+        result["table_columns"] = headers
+        result["table_column_labels"] = {h: labels.get(h) or display_label(h) for h in headers}
+        result["table_column_formats"] = formats
+        result["table_rows"] = [
+            {h: {"d": _format_display_value(row.get(h), formats.get(h), shown.get(h)), "v": row.get(h)}
+             for h in headers}
+            for row in rows[:_TABLE_TILE_ROWS]
+        ]
+        result["table_truncated"] = len(rows) > _TABLE_TILE_ROWS
+        result["table_shown"] = len(result["table_rows"])
+    else:
+        drawn = dict(shape)
+        if kind in (drawn.get("renderable_types") or []):
+            drawn["chart_type"] = kind
+        drawn["color_palette"] = chart.get("color_palette") or "default"
+        drawn["chart_id"] = chart["id"]
+        result["chart_json"] = json.dumps(drawn)
+    store.update_chart_refreshed(chart["id"])
     return result
 
 
@@ -1812,6 +1885,15 @@ def _consume_pin_token(token: str) -> dict | None:
             return None
 
 
+def _pin_display_config(pin_data: dict) -> dict:
+    """What the pin carried for drawing its tile (a new-core answer's plan), or nothing."""
+    try:
+        config = json.loads(pin_data.get("display_config") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
 @router.get("/pin-confirm", response_class=HTMLResponse)
 async def pin_confirm_page(request: Request, token: str = ""):
     user = _get_portal_user(request)
@@ -1899,6 +1981,7 @@ async def pin_confirm_submit(
         chart_type=pin_data["chart_type"],
         db_config_id=pin_data["db_config_id"],
         dashboard_id=int(target["id"]),
+        display_config=_pin_display_config(pin_data),
     )
     store.add_chart_to_dashboard(
         target["id"], chart_id, user["id"], user["account_id"],
@@ -2050,6 +2133,7 @@ async def pin_chart_api(request: Request):
         db_config_id=pin_data["db_config_id"],
         color_palette=palette_override,
         dashboard_id=dashboard_id,
+        display_config=_pin_display_config(pin_data),
     )
     if not store.add_chart_to_dashboard(
         dashboard_id,

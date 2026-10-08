@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import logging
+import json
 import secrets
 from contextvars import ContextVar
 
@@ -313,11 +314,14 @@ def _create_learning_candidate(
 def _create_pin_token(
     user_id: int, account_id: str, question: str,
     sql_query: str, chart_type: str, db_config_id: int,
+    display_config: dict | None = None,
 ) -> str:
     """
     Store pending pin data server-side and return a short token.
     The token is passed in the URL — SQL never goes through Zoom markdown.
     Token expires after 30 minutes (user must click the pin link promptly).
+    ``display_config`` travels to the pinned chart: a new-core answer's plan,
+    so its tile is drawn from it.
     """
     token = secrets.token_urlsafe(16)
     with get_db() as conn:
@@ -331,14 +335,15 @@ def _create_pin_token(
                 chart_type   TEXT NOT NULL,
                 db_config_id INTEGER NOT NULL,
                 expires_at   TEXT NOT NULL,
-                created_at   TEXT DEFAULT (datetime('now'))
+                created_at   TEXT DEFAULT (datetime('now')),
+                display_config TEXT NOT NULL DEFAULT '{}'
             )
         """)
         conn.execute("""
             INSERT INTO pin_token
                 (token, user_id, account_id, question, sql_query,
-                 chart_type, db_config_id, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+30 minutes'))
+                 chart_type, db_config_id, expires_at, display_config)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+30 minutes'), ?)
         """, (token, user_id, account_id, question, sql_query,
-              chart_type, db_config_id))
+              chart_type, db_config_id, json.dumps(display_config or {})))
     return token

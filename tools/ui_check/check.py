@@ -123,6 +123,24 @@ class Page:
         return {"errors": errors, "overflow_px": overflow, "overlaps": overlaps}
 
 
+def _pin(page, card, problems: list[dict], view: str) -> None:
+    """Add the answer to a new dashboard, as a reader would: the dashboard page then shows its tile."""
+    button = card.locator('[data-pin="chart"]')
+    if not button.count():
+        problems.append({"where": f"{view} chat", "problem": "no Add to dashboard", "detail": "comparison answer"})
+        return
+    button.first.click()
+    page.click("#dashboardNewMode")
+    page.fill("#dashboardNewName", "Store comparison")
+    page.click("#dashboardPickerSubmit")
+    try:
+        page.wait_for_function("() => !document.getElementById('dashboardPickerBackdrop').classList.contains('open')",
+                               timeout=15000)
+    except Exception:  # noqa: BLE001
+        problems.append({"where": f"{view} chat", "problem": "pin did not finish",
+                         "detail": page.inner_text("#dashboardPickerError")[:200]})
+
+
 def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[dict]]:
     from playwright.sync_api import sync_playwright
 
@@ -165,11 +183,19 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                 card = page.locator(".msg.msg-bot").last
                 report.append({"page": "answer", "view": view, "question": question,
                                **p.shot(f"{i:02d}_{_slug(question)}", element=card)})
+                if question.startswith("Compare") and view == "desktop":
+                    _pin(page, card, problems, view)
             report.append({"page": "chat, whole conversation", "view": view, **p.shot("90_chat_full", full=True)})
             for path in ("/portal/dashboard", "/portal/kb"):
                 page.goto(base + path, wait_until="networkidle")
                 page.wait_for_timeout(1500)
                 report.append({"page": path, "view": view, **p.shot("95" + path.replace("/", "_"), full=True)})
+                pinned = page.locator("a", has_text="Store comparison")
+                if path == "/portal/dashboard" and pinned.count():
+                    pinned.first.click()
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(2500)
+                    report.append({"page": "a pinned dashboard", "view": view, **p.shot("96_dashboard_open", full=True)})
 
             a = Page(browser, view, size, out, problems)
             a.page.goto(base + "/admin/login", wait_until="networkidle")

@@ -465,7 +465,8 @@ CREATE TABLE IF NOT EXISTS pin_token (
     chart_type   TEXT NOT NULL,
     db_config_id INTEGER NOT NULL,
     expires_at   TEXT NOT NULL,
-    created_at   TEXT DEFAULT (datetime('now'))
+    created_at   TEXT DEFAULT (datetime('now')),
+    display_config TEXT NOT NULL DEFAULT '{}'
 );
 
 -- ── Metric registry (deterministic SQL for known metrics) ────────────────────
@@ -1230,6 +1231,8 @@ def _run_migrations() -> None:
         ("pinned_chart", "grid_h", "INTEGER NOT NULL DEFAULT 5"),
         ("pinned_chart", "dashboard_id", "INTEGER DEFAULT NULL"),
         ("pinned_chart", "display_config", "TEXT NOT NULL DEFAULT '{}'"),
+        # A new-core answer's plan travels with its pin, so the tile is drawn from it.
+        ("pin_token", "display_config", "TEXT NOT NULL DEFAULT '{}'"),
         # v41: Ana-style reusable dashboard artifacts and presentation controls.
         ("pinned_chart", "data_source_id", "INTEGER DEFAULT NULL"),
         ("pinned_chart", "dashboard_tab", "TEXT NOT NULL DEFAULT 'Overview'"),

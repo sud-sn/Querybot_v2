@@ -115,6 +115,30 @@ def _keep(account_id: str, portal_user: dict | None, session_id: str, question: 
     return trace_id
 
 
+def _pin(account_id: str, portal_user: dict | None, question: str, payload: dict[str, Any]) -> str:
+    """A pin token for an answer that ran a query, so Add to dashboard can keep it ("" when it cannot).
+
+    The token carries the answer's plan: its tile is drawn by running that plan again
+    (core2.service.portal_replay), so it keeps the answer's shape and moves on with "last month".
+    """
+    import store
+    from core.pipeline_trace import _create_pin_token
+    from core2.service import question_scrubber
+
+    trust = payload.get("trust") or {}
+    sql, plan = str(trust.get("sql") or ""), payload.get("plan")
+    if not (sql and plan and payload.get("data") is not None and portal_user and portal_user.get("id")):
+        return ""
+    db_config_id = int((store.get_client(account_id) or {}).get("db_config_id") or 0)
+    chart = payload.get("chart") or {}
+    chart_type = str(chart.get("chart_type") or ("kpi" if payload.get("kpi") else "table"))
+    scrub = question_scrubber(account_id)
+    return _create_pin_token(int(portal_user["id"]), account_id, scrub(question) if scrub else question, sql,
+                             chart_type, db_config_id,
+                             display_config={"core2_plan": plan,
+                                             "column_formats": chart.get("column_formats") or {}})
+
+
 def _record(account_id: str, portal_user: dict | None, mode: str, question: str, status: str,
             payload: dict[str, Any] | None, duration_ms: int, question_id: str = "") -> None:
     """One row per new-core answer, for comparison. The question is kept as QueryBot keeps
@@ -178,6 +202,15 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
             payload, rows, int((time.perf_counter() - start) * 1000))
     except Exception as exc:     # noqa: BLE001 - the answer stands; its history and usage row are logged as lost
         log.warning("core2 answer could not be kept in history and usage for %s: %s", account_id, exc)
+    try:
+        token = await asyncio.to_thread(_pin, account_id, portal_user, question, payload)
+    except Exception as exc:     # noqa: BLE001 - the answer stands; it just cannot be pinned
+        log.warning("core2 answer could not be given a pin token for %s: %s", account_id, exc)
+        token = ""
+    if token:
+        payload["pin_token"] = token
+        if payload.get("chart"):
+            payload["chart"]["pin_token"] = token
     sent = await _send(adapter, websocket, payload)
     if sent and payload.get("data") is not None:
         _not_todays_result(adapter)
