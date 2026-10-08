@@ -67,7 +67,10 @@ How to plan:
    {"kind": "window", "window": February}; the intent is then "compare".
 8. filters: a member goes in a filter on its attribute with op "eq" (or "in" for several), using the exact
    stored value from VALUE MATCHES when one is given; "excluding X" -> "ne"/"not_in". A condition on a
-   total ("customers with more than 10,000 in sales") is a filter on the measure slug.
+   total ("customers with more than 10,000 in sales") is a filter on the measure slug. A name in VALUE
+   MATCHES can also be what a measure measures ("cost of goods sold" is a ledger account and the cost on
+   sales lines): read it as the member only when that member's table can be broken down and filtered as
+   the question asks; otherwise use the measure.
 9. sort and limit: "top 5" -> sort by the measure (desc) with limit 5; "bottom 5", "least" -> desc false.
    "grew the most" -> sort by "change" desc; "biggest drop" -> "change" with desc false.
 10. intent: value | breakdown | trend | compare | rank | share | list | count | drivers | forecast. "List the
@@ -104,6 +107,7 @@ class Outcome:
     problems: list[str] = field(default_factory=list)   # what the last attempt got wrong, if anything
     raw: list[str] = field(default_factory=list)        # the model's answers, for the record
     masked: Masked | None = None                        # the placeholders used, when values are withheld
+    tried: Plan | None = None                           # the last plan that failed its check, if any
 
 
 def _examples(model: SemanticModel) -> str:
@@ -195,22 +199,62 @@ def parse(text: str) -> Plan:
     return Plan.model_validate(data)
 
 
-def check(plan: Plan, model: SemanticModel, today: dt.date) -> list[str]:
-    """What stops the plan from being answered, in words the planner can act on."""
+def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") -> tuple[list[str], str]:
+    """What stops the plan from being answered, in words the planner can act on; and what it could use instead.
+
+    The problems are plain sentences (a reader may see them); the hint is for
+    the repair round only.
+    """
     if plan.kind == "clarify":
-        return [] if plan.clarify and plan.clarify.question else ["a clarify plan needs clarify.question"]
+        return ([] if plan.clarify and plan.clarify.question else ["a clarify plan needs clarify.question"]), ""
     if plan.kind != "query":
-        return []
+        return [], ""
     try:
         resolve(plan, model, Context(today=today))
     except ResolveError as exc:
         if exc.kind in ("unconfirmed", "denied", "ambiguous"):
-            return []          # not the planner's to fix: the service answers or asks the reader
+            return [], ""          # not the planner's to fix: the service answers or asks the reader
         options = f" Allowed: {', '.join(exc.options[:12])}." if exc.options else ""
-        return [f"{exc.message}.{options}"]
+        return [f"{exc.message}.{options}"], _reaching(model, exc.unlinked, question) if exc.unlinked else ""
     except ValueError as exc:
-        return [str(exc)]
-    return []
+        return [str(exc)], ""
+    return [], ""
+
+
+_COMMON = {"a", "an", "the", "of", "by", "in", "for", "per", "and", "or", "to", "on", "at", "is", "are", "was",
+           "what", "which", "how", "each", "our", "my", "me", "show", "give", "total", "q1", "q2", "q3", "q4"}
+
+
+def _words(text: str) -> set[str]:
+    return {names.singular(w) for w in re.findall(r"[a-z0-9]+", text.casefold())
+            if w not in _COMMON and not w.isdigit()}
+
+
+def _reaching(model: SemanticModel, table: str, question: str) -> str:
+    """The measures that can be broken down by what one could not, those sharing the question's words first.
+
+    "Cost of goods sold by item group": the words found a ledger account of that
+    name, and the ledger has no link to item groups -- but the cost on the
+    invoice lines does. The repair round is shown the measures that reach the
+    breakdown, so it can read the words as the measure they also name.
+    """
+    asked = _words(question)
+    reaches: dict[str, bool] = {}
+    found: list[tuple[int, str, Measure]] = []
+    for m in model.measures.values():
+        if m.hidden or not m.slug or m.table not in model.tables:
+            continue
+        if m.table not in reaches:
+            reaches[m.table] = m.table == table or bool(P.all_paths(model, m.table, table))
+        if reaches[m.table]:
+            said = " ".join([m.business_name, *(w for words in m.synonyms.values() for w in words)])
+            found.append((-len(asked & _words(said)), m.business_name.casefold(), m))
+    if not found:
+        return ""
+    found.sort(key=lambda f: (f[0], f[1]))
+    listed = ", ".join(f"{m.slug} ({m.business_name})" for _, _, m in found[:8])
+    return (f"Measures that can be broken down that way: {listed}. If the question's words name one of them"
+            " (a name in VALUE MATCHES can also be what a measure measures), use that measure instead.")
 
 
 def _plan_shown(plan: Plan, model: SemanticModel | None, masked: Masked | None) -> str:
@@ -247,25 +291,30 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                          scrub=scrub, model=model)
     raw: list[str] = []
     problems: list[str] = []
+    hint = ""
+    # The hint ranks measures by the question's words: the question as the AI saw it, placeholders and all.
+    shown = (scrub or (lambda text: text))(masked.question if masked else question)
+    tried: Plan | None = None
     text = ""
     for attempt in range(2):
         prompt = tail if attempt == 0 else (
             f"{tail}\n\nYOUR PREVIOUS ANSWER:\n{text}\n\nPROBLEMS:\n" + "\n".join(f"- {p}" for p in problems)
-            + "\nReturn the corrected plan as one JSON object.")
+            + (f"\n{hint}" if hint else "") + "\nReturn the corrected plan as one JSON object.")
         text = complete(stable, prompt)
         raw.append(text)
         try:
             plan = _unmask_plan(parse(text), masked)
         except (ValueError, ValidationError) as exc:
-            problems = [_short(exc)]
+            problems, hint = [_short(exc)], ""
             continue
-        problems = check(plan, model, today)
+        problems, hint = check(plan, model, today, shown)
         if not problems:
-            return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked)
+            return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
+        tried = plan
     return Outcome(Plan(kind="clarify", clarify=Clarify(
         about="other", question="I could not work out how to answer that from this data. Could you say it "
         "another way, naming what to measure and for when?")), repaired=True, problems=problems, raw=raw,
-        masked=masked)
+        masked=masked, tried=tried)
 
 
 def _short(exc: Exception) -> str:

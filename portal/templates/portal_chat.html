@@ -3206,9 +3206,15 @@ function appendAssistantResponse(msg, opts = {}){
         ${trust.code_hash ? `<div><strong>${escHtml(t('ui.chat.trust.validated_code', {hash: String(trust.code_hash).slice(0, 12)}))}</strong><span>${escHtml(t('ui.chat.trust.ast_nodes', {count: String(trust.ast_nodes || 0), input: trust.planner_input || t('ui.chat.trust.none')}))}</span></div>` : ''}
       </div>`
     : '';
+  // A question that was not answered says why it stopped, instead of only that no SQL ran.
+  const stoppedHtml = trust.stopped
+    ? `<div class="trust-sql-label"><span>${t('ui.chat.trust.stopped')}</span></div><div class="sql-box">${escHtml(trust.stopped)}</div>`
+    : '';
   const sqlProofHtml = trust.sql
     ? `<div class="trust-sql-label"><span>${t('ui.chat.trust.sql_used')}</span><button class="sql-copy-btn" onclick="copySqlBox(this)">${t('ui.chat.card.copy')}</button></div><div class="sql-box">${escHtml(trust.sql)}</div>`
-    : `<div class="trust-sql-label"><span>${t('ui.chat.trust.execution')}</span></div><div class="sql-box">${escHtml(trust.operation || t('ui.chat.trust.no_sql'))}</div>`;
+    : (trust.stopped ? '' : `<div class="trust-sql-label"><span>${t('ui.chat.trust.execution')}</span></div><div class="sql-box">${escHtml(trust.operation || t('ui.chat.trust.no_sql'))}</div>`);
+  const considered = Array.isArray(trust.considered) ? trust.considered : [];
+  const consideredHtml = considered.map(c => `<div class="trust-item"><div class="trust-k">${escHtml(t('ui.chat.trust.considered.' + c.key))}</div><div class="trust-v">${escHtml(c.value || '')}</div></div>`).join('');
   const dateContexts = Array.isArray(trust.date_context) ? trust.date_context : [];
   const dateContextHtml = dateContexts.map(ctx => {
     const physical = [String(ctx.table || '').split('.').pop(), ctx.column || ''].filter(Boolean).join('.');
@@ -3218,7 +3224,7 @@ function appendAssistantResponse(msg, opts = {}){
     const provenance = t(ctx.inferred ? 'ui.chat.trust.inferred' : 'ui.chat.trust.governed');
     return `<div class="trust-item"><div class="trust-k">${t('ui.chat.trust.business_date')}</div><div class="trust-v">${escHtml(ctx.label || t('ui.chat.trust.business_date'))} · ${escHtml(grain)} · ${escHtml(physical)} · ${escHtml(provenance)}</div></div>`;
   }).join('');
-  const trustHtml = `<details class="trust-box" data-trust-box><summary>${t('ui.chat.trust.summary')}</summary>${confidenceDetailHtml}<div class="trust-grid"><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.rows')}</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.runtime')}</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.data_source')}</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.schema_mode')}</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.result_scope')}</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}</div>${analysisProofHtml}${sqlProofHtml}</details>`;
+  const trustHtml = `<details class="trust-box" data-trust-box><summary>${t('ui.chat.trust.summary')}</summary>${confidenceDetailHtml}<div class="trust-grid"><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.rows')}</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.runtime')}</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.data_source')}</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.schema_mode')}</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.result_scope')}</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}${consideredHtml}</div>${analysisProofHtml}${stoppedHtml}${sqlProofHtml}</details>`;
 
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;

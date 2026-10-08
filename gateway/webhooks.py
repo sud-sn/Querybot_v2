@@ -1032,7 +1032,120 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 log.debug("Could not report a failed chat turn",
                           exc_info=True)
 
-    async def _run_main_question(text: str, table_hint: str, schema_hint: str) -> None:
+    async def _answer_why(text: str, cached: dict) -> bool:
+        """Today's analysis of why the result on screen looks as it does; False when it could not run.
+
+        Detects nothing itself: the receive loop's gate (is_insight_question
+        on the canonical question, with rows on screen) decides it is a "why".
+        """
+        try:
+            provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+            from core.response_builder import generate_analysis_response
+
+            # Put the business context back before asking why.
+            #
+            # The drill-down pipeline needs db_cfg, the original SQL
+            # AND the tenant's KB text; without all three,
+            # generate_analysis_response answers from the top-line
+            # figures alone. adopt_cached_snapshot blanks rag_context
+            # whenever a result is RESTORED rather than answered fresh,
+            # and it is right to: the previous answer's context is not
+            # this result's. But a page reload is exactly that restore,
+            # so "why did this drop?" on the result still on screen ran
+            # zero warehouse queries -- silently, and only after a
+            # reload, which is why it survived every test.
+            #
+            # Retrieved for THIS result's own question, so it is that
+            # result's context and not a leftover.
+            if not cached.get("rag_context") and cached.get("question"):
+                try:
+                    _why_retriever = load_retriever(account_id)
+                    _why_docs = _why_retriever.retrieve(
+                        cached["question"], n=7)
+                    if _why_docs:
+                        cached["rag_context"] = "\n\n---\n\n".join(
+                            _why_docs)
+                        log.info(
+                            "Restored KB context for a why-question on a "
+                            "reloaded result (%s): %d documents",
+                            account_id, len(_why_docs),
+                        )
+                except Exception as _why_ret_exc:
+                    # The caveat on the card will say the breakdown did
+                    # not run. Loud, because a silent failure here is
+                    # what the whole change is about.
+                    log.warning(
+                        "Could not restore KB context for a why-question "
+                        "(%s): %s", account_id, _why_ret_exc,
+                    )
+            with llm_audit_scope(
+                account_id=account_id,
+                question=text,
+                enabled=bool(client.get("enable_llm_audit")),
+                request_id=make_llm_audit_request_id(),
+                question_id=getattr(adapter, "last_question_id", None) or "",
+                component="analysis",
+            ):
+                insight = await generate_analysis_response(
+                    action="why",
+                    rows=cached["rows"],
+                    question=cached.get("question", ""),
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    account_id=account_id,
+                    follow_up=text,
+                    original_sql=cached.get("sql", ""),
+                    # The workspace's own warehouse, when the restored
+                    # snapshot did not carry one. adopt_cached_snapshot
+                    # can only rebuild db_cfg from a db_config_id in
+                    # the snapshot metadata, and a result stored before
+                    # that field existed -- or by a path that did not
+                    # set it -- comes back with none. The connection is
+                    # not result-specific, so this is the same fallback
+                    # the result-card path already makes.
+                    db_cfg=cached.get("db_cfg") or get_client_db(account_id) or {},
+                    context=cached.get("rag_context", ""),
+                    known_tables=_ws_known_tables,
+                    query_executor=_ws_execute_governed,
+                    **az_kwargs,
+                )
+            async with adapter.send_lock:
+                await websocket.send_json(insight)
+            return True
+        except Exception as e:
+            # log.exception, not log.warning("%s", e): this handler
+            # falls through to an ordinary query, so a broken
+            # why-analysis is invisible from outside -- and an
+            # exception whose str() is empty (several of the
+            # governance and provider errors are) logged one word and
+            # a colon.
+            log.exception(
+                "Why-insight failed, falling through to normal query: %r", e)
+        return False
+
+    async def _run_why_question(text: str, cached: dict, table_hint: str, schema_hint: str) -> None:
+        """A "why" about the result on screen, answered by the workspace's engine.
+
+        ``core2``: the new core answers it, with the conversation it holds;
+        what it cannot express goes to today's analysis, then to today's
+        pipeline (_run_main_question). ``compare``: today's analysis answers
+        and the new core's answer follows it as a preview, as for any
+        question. ``legacy``: today's analysis alone. An analysis that cannot
+        run falls through to an ordinary question.
+        """
+        engine = await core2_bridge.engine(account_id)
+        if engine != "core2" and await _answer_why(text, cached):
+            if engine == "compare":
+                await core2_bridge.answer_beside(adapter, websocket, account_id, text, portal_user)
+            async with adapter.send_lock:
+                await websocket.send_json({"type": "typing", "active": False})
+            return
+        await _run_main_question(text, table_hint, schema_hint,
+                                 why_about=cached if engine == "core2" else None)
+
+    async def _run_main_question(text: str, table_hint: str, schema_hint: str, *,
+                                 why_about: dict | None = None) -> None:
         """Answers one question. Runs as a background task (see the send
         loop below) so the receive loop stays free to see a "cancel"
         message mid-flight. Wrapped end-to-end in its own error handling
@@ -1042,6 +1155,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         such an error would propagate to the outer handler and silently
         end the whole connection; this is a strict improvement, not just
         a refactor).
+
+        ``why_about``: the question is a "why" about that result on screen,
+        put to the new core first (``core2`` mode); what it cannot express is
+        today's analysis of the result before it is an ordinary question.
         """
         bg = BackgroundTasks()
         event = adapter.make_event(text)
@@ -1070,7 +1187,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         try:
             engine = await core2_bridge.engine(account_id)
             if not await core2_bridge.answer_instead(engine, adapter, websocket, account_id, text, portal_user):
-                await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
+                if why_about is None or not await _answer_why(text, why_about):
+                    await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
 
             # Run any background tasks synchronously in WebSocket context
             for task in bg.tasks:
@@ -5265,100 +5383,23 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 ))
                 continue
 
-            # Detect "why" follow-up questions about the last result. Read
-            # in canonical form: the gate's vocabulary is English, and a
-            # French "explique ce résultat" typed against the last result
-            # otherwise becomes a fresh, unrelated query. canonical_question
-            # is this module's import -- a local one here would shadow it
-            # for the whole function, including the result_chat branch that
-            # reads it two thousand lines above this point.
+            # A "why" about the result on screen. Read in canonical form: the
+            # gate's vocabulary is English, and a French "explique ce résultat"
+            # typed against the last result otherwise becomes a fresh, unrelated
+            # query. canonical_question is this module's import -- a local one
+            # here would shadow it for the whole function, including the
+            # result_chat branch that reads it two thousand lines above this
+            # point. Its own turn, like a question: the workspace's engine
+            # decides who answers it (_run_why_question).
             from core.insight import is_insight_question
             cached = adapter.last_result
             if is_insight_question(canonical_question(text, (portal_user or {}).get("lang"))) and cached and cached.get("rows"):
-                try:
-                    provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
-                    from core.response_builder import generate_analysis_response
-
-                    # Put the business context back before asking why.
-                    #
-                    # The drill-down pipeline needs db_cfg, the original SQL
-                    # AND the tenant's KB text; without all three,
-                    # generate_analysis_response answers from the top-line
-                    # figures alone. adopt_cached_snapshot blanks rag_context
-                    # whenever a result is RESTORED rather than answered fresh,
-                    # and it is right to: the previous answer's context is not
-                    # this result's. But a page reload is exactly that restore,
-                    # so "why did this drop?" on the result still on screen ran
-                    # zero warehouse queries -- silently, and only after a
-                    # reload, which is why it survived every test.
-                    #
-                    # Retrieved for THIS result's own question, so it is that
-                    # result's context and not a leftover.
-                    if not cached.get("rag_context") and cached.get("question"):
-                        try:
-                            _why_retriever = load_retriever(account_id)
-                            _why_docs = _why_retriever.retrieve(
-                                cached["question"], n=7)
-                            if _why_docs:
-                                cached["rag_context"] = "\n\n---\n\n".join(
-                                    _why_docs)
-                                log.info(
-                                    "Restored KB context for a why-question on a "
-                                    "reloaded result (%s): %d documents",
-                                    account_id, len(_why_docs),
-                                )
-                        except Exception as _why_ret_exc:
-                            # The caveat on the card will say the breakdown did
-                            # not run. Loud, because a silent failure here is
-                            # what the whole change is about.
-                            log.warning(
-                                "Could not restore KB context for a why-question "
-                                "(%s): %s", account_id, _why_ret_exc,
-                            )
-                    with llm_audit_scope(
-                        account_id=account_id,
-                        question=text,
-                        enabled=bool(client.get("enable_llm_audit")),
-                        request_id=make_llm_audit_request_id(),
-                        question_id=getattr(adapter, "last_question_id", None) or "",
-                        component="analysis",
-                    ):
-                        insight = await generate_analysis_response(
-                            action="why",
-                            rows=cached["rows"],
-                            question=cached.get("question", ""),
-                            provider=provider,
-                            model=model,
-                            api_key=api_key,
-                            account_id=account_id,
-                            follow_up=text,
-                            original_sql=cached.get("sql", ""),
-                            # The workspace's own warehouse, when the restored
-                            # snapshot did not carry one. adopt_cached_snapshot
-                            # can only rebuild db_cfg from a db_config_id in
-                            # the snapshot metadata, and a result stored before
-                            # that field existed -- or by a path that did not
-                            # set it -- comes back with none. The connection is
-                            # not result-specific, so this is the same fallback
-                            # the result-card path already makes.
-                            db_cfg=cached.get("db_cfg") or get_client_db(account_id) or {},
-                            context=cached.get("rag_context", ""),
-                            known_tables=_ws_known_tables,
-                            query_executor=_ws_execute_governed,
-                            **az_kwargs,
-                        )
-                    await websocket.send_json(insight)
-                    await websocket.send_json({"type": "typing", "active": False})
-                    continue
-                except Exception as e:
-                    # log.exception, not log.warning("%s", e): this handler
-                    # falls through to an ordinary query, so a broken
-                    # why-analysis is invisible from outside -- and an
-                    # exception whose str() is empty (several of the
-                    # governance and provider errors are) logged one word and
-                    # a colon.
-                    log.exception(
-                        "Why-insight failed, falling through to normal query: %r", e)
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(_guarded_turn(
+                    _run_why_question(text, cached, table_hint, schema_hint)
+                ))
+                continue
 
             # Frontend renders the user message locally before send.
             # Only send processing / assistant events back over the socket.

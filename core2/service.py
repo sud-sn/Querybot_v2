@@ -30,11 +30,11 @@ from core2.answer.drivers import answer_drivers
 from core2.answer.forecast import answer_forecast
 from core2.answer.suggestions import follow_ups
 from core2.compile.compiler import CompileError, compile_query
-from core2.model.schema import SemanticModel
-from core2.plan.ir import Clarify, Plan
+from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
+from core2.plan.ir import Clarify, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
 from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index
-from core2.resolve.resolver import Context, ResolveError, resolve
+from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
 log = logging.getLogger("querybot.core2")
@@ -139,6 +139,87 @@ def _describe(question: str, model: SemanticModel) -> dict[str, Any]:
     return _frame(question, text)
 
 
+_OPS = {"eq": "is", "in": "is one of", "ne": "is not", "not_in": "is none of", "gt": ">", "gte": ">=", "lt": "<",
+        "lte": "<=", "between": "between", "contains": "contains", "starts_with": "starts with",
+        "is_null": "is empty", "not_null": "is not empty"}
+
+
+def _span(window: Window) -> str:
+    unit = f"{'fiscal ' if window.fiscal else ''}{window.unit or 'period'}"
+    n = window.n or 1
+    return {"between": f"{window.start} to {window.end}", "since": f"since {window.start}",
+            "until": f"until {window.end}", "last": f"the last {n} {unit}{'s' if n > 1 else ''}",
+            "this": f"this {unit}", "to_date": f"{unit} to date", "previous": f"the previous {unit}"}.get(window.kind, "")
+
+
+def _window(plan: Plan, model: SemanticModel) -> str:
+    """The plan's dates in words: the date it is on, the window, the grain and the comparison."""
+    time = plan.time
+    said = [_span(time.window)]
+    if time.grain:
+        said.append(f"{time.grain} by {time.grain}")
+    if time.compare is not None:
+        other = _span(time.compare.window) if time.compare.window is not None else ""
+        said.append(f"compared with {other or 'the ' + time.compare.kind.replace('_', ' ')}")
+    text = ", ".join(part for part in said if part)
+    if time.date:
+        found = find_slug(model, time.date)
+        role = found[1] if found is not None and isinstance(found[1], DateRole) else None
+        text = f"{role.name if role is not None and role.name else time.date}: {text}".rstrip(": ")
+    return text
+
+
+def _considered(plan: Plan | None, model: SemanticModel) -> list[dict[str, str]]:
+    """What a plan that was not answered asked for, in the model's names and with each one's table.
+
+    A refusal's "How this answer was produced": no query ran, so this is what
+    was looked at -- the measure and its table, the breakdown, the filters,
+    the dates -- beside why it stopped.
+    """
+    if plan is None or plan.kind != "query":
+        return []
+
+    def table(key: str) -> str:
+        return model.tables[key].business_name if key in model.tables else key
+
+    def named(slug: str) -> str:
+        found = find_slug(model, slug)
+        thing = found[1] if found is not None else None
+        if isinstance(thing, Attribute):
+            column = model.columns.get(thing.column)
+            return f"{thing.business_name or slug} ({table(column.table)})" if column else thing.business_name or slug
+        if isinstance(thing, DateRole):
+            return f"{thing.name or slug} ({table(thing.table)})"
+        if isinstance(thing, (Measure, Entity)):
+            return f"{thing.business_name or slug} ({table(thing.table)})"
+        return slug.removeprefix("time:").replace("_", " ")
+
+    rows: list[dict[str, str]] = []
+    measures = [named(s) for s in plan.measures]
+    measures += [f"{d.name} ({d.op} of {' and '.join(named(m) for m in d.measures)})" for d in plan.derived]
+    if measures:
+        rows.append({"key": "measure", "value": "; ".join(measures)})
+    if plan.group_by:
+        rows.append({"key": "by", "value": ", ".join(named(s) for s in plan.group_by)})
+    if plan.filters:
+        rows.append({"key": "filter", "value": "; ".join(
+            f"{named(f.field)} {_OPS.get(f.op, f.op)} {', '.join(str(v) for v in f.values)}".strip()
+            for f in plan.filters)})
+    dates = _window(plan, model)
+    if dates:
+        rows.append({"key": "dates", "value": dates})
+    return rows
+
+
+def _refused(question: str, text: str, plan: Plan | None, services: Services, stopped: str,
+             **extra: Any) -> dict[str, Any]:
+    """A refusal, with what was considered and why it stopped under "How this answer was produced"."""
+    trust = {"engine": "core2", "considered": _considered(plan, services.model), "stopped": stopped,
+             "model_version": services.model.version, "data_source": services.data_source,
+             **extra.pop("trust", {})}
+    return _frame(question, text, trust=trust, **extra)
+
+
 _REFUSALS = {
     "denied": "That needs data you do not have access to: {message}.",
     "unconfirmed": "{message}. An admin can confirm it on the What QueryBot learned page.",
@@ -171,12 +252,18 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         return _describe(question, model)
     if plan.kind == "unsupported":
         why = " ".join(plan.notes) or "nothing in this data measures it"
-        return _frame(question, f"I cannot answer that from this data: {why}", unsupported=True)
+        # After a repair round, the plan that was tried first says what was looked at.
+        return _refused(question, f"I cannot answer that from this data: {why}", outcome.tried or plan, services,
+                        why, unsupported=True)
     if plan.kind == "clarify" and plan.clarify is not None:
         # Kept in the conversation: the reply ("the first one") answers this question.
         session.turns.append(Turn(question, plan, outcome.masked))
         del session.turns[:-HISTORY]
-        return _clarification(question, plan.clarify)
+        asked = _clarification(question, plan.clarify)
+        if outcome.problems:      # the planner's plans did not check out: what it tried, and why not
+            asked["trust"] = {**asked["trust"], "considered": _considered(outcome.tried, model),
+                              "stopped": " ".join(outcome.problems)}
+        return asked
 
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS)
     try:
@@ -190,16 +277,19 @@ def answer_question(question: str, services: Services, session: Session, *, ques
             return _clarification(question, Clarify(about="path", question=f"{exc.message}. Which one do you mean",
                                                     options=exc.options))
         template = _REFUSALS.get(exc.kind, "{message}.")
-        return _frame(question, template.format(message=exc.message), unsupported=exc.kind == "unsupported")
+        stopped = exc.message + (f" ({', '.join(exc.options)})" if exc.kind == "unconfirmed" and exc.options else "")
+        return _refused(question, template.format(message=exc.message), plan, services, stopped,
+                        unsupported=exc.kind == "unsupported")
     except QueryFailed as exc:     # a refused or failed query is told, never raised to the socket
         log.warning("core2 query failed for %r: %s", question, exc.cause)
         cause = exc.cause
         reason = str(cause).split(":", 1)[-1].strip() if "Policy" in type(cause).__name__ else "the database refused it"
-        return _frame(question, f"The question was understood but the query could not run ({reason}).",
-                      trust={"engine": "core2", "sql": exc.sql})
+        return _refused(question, f"The question was understood but the query could not run ({reason}).", plan,
+                        services, f"The query could not run: {reason}", trust={"sql": exc.sql})
     except (CompileError, ValueError) as exc:
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
-        return _frame(question, f"I cannot answer that from this data yet: {exc}.", unsupported=True)
+        return _refused(question, f"I cannot answer that from this data yet: {exc}.", plan, services, str(exc),
+                        unsupported=True)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True

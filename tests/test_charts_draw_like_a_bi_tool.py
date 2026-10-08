@@ -136,6 +136,30 @@ class TestTheMarks:
         assert opt(ranking([f"Region number {n}" for n in range(12)]),
                    "opt.xAxis.boundaryGap") == [0, "8%"]
 
+    def test_a_bar_below_zero_has_room_for_its_label_before_the_names(self):
+        # "-$25.8K" was drawn across a customer's name: the axis ended just past
+        # the longest bar below zero, and that bar's label, at its tip, ran out
+        # of the plot into the names beside it. In a browser "-25.8K" is 40px
+        # wide, and a 600px ranking with these names has about 380px of plot:
+        # the low end needs 40px of it, ~13% of the data's span (with the 8%
+        # past the other end). Overlap at 380 and 640px was checked there.
+        labels = [f"Customer ranked number {n}" for n in range(7)]
+        values = [120400.0, 88200.0, 40100.0, 12500.0, -4300.0, -11900.0, -25800.0]
+        low, high = opt(ranking(labels, values, measure="NET_MARGIN"), "opt.xAxis.boundaryGap")
+        assert high == "8%" and float(low.rstrip("%")) >= 13
+        # A column below zero, labelled under its foot, above the names under the chart.
+        low, high = opt(ranking(["North", "South", "West"], [120.0, -80.0, 30.0], measure="NET_MARGIN"),
+                        "opt.yAxis.boundaryGap")
+        assert high == "8%" and float(low.rstrip("%")) >= 8
+        # A wider label ("-149.9K" against "-4.3K") needs more room.
+        def room(lowest):
+            gap = opt(ranking(labels[:3], [120400.0, 88200.0, lowest], measure="NET_MARGIN"), "opt.xAxis.boundaryGap")
+            return float(gap[0].rstrip("%"))
+        assert room(-149900.0) > room(-4300.0) > 0
+
+    def test_a_crowded_value_axis_leaves_amounts_out_rather_than_print_them_over_each_other(self):
+        assert opt(ranking([f"Region number {n}" for n in range(12)]), "opt.xAxis.axisLabel.hideOverlap") is True
+
     def test_a_horizontal_bar_below_zero_rounds_its_left_end(self):
         labels = [f"Region number {n}" for n in range(12)]
         values = [float(50 - n * 9) for n in range(12)]

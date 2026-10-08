@@ -50,6 +50,7 @@ class ResolveError(Exception):
         self.message = message
         self.options = options or []
         self.field: str | None = None   # for "ambiguous": the slug whose link the reader must name (plan.via)
+        self.unlinked: str | None = None   # for "not linked": the table key the measure's table does not reach
 
 
 @dataclass
@@ -190,7 +191,7 @@ def _closest(name: str, candidates: list[str], n: int = 6) -> list[str]:
     return list(dict.fromkeys([*near, *by_words]))[:n] or candidates[:n]
 
 
-def _find_slug(model: SemanticModel, slug: str) -> tuple[str, object] | None:
+def find_slug(model: SemanticModel, slug: str) -> tuple[str, object] | None:
     """What a slug names: a measure, an attribute, an entity (its label) or a date."""
     for m in model.measures.values():
         if m.slug == slug:
@@ -275,8 +276,10 @@ class _PartBuilder:
                     "unconfirmed", f"{label or self.model.tables[table].business_name} is reached through a link "
                     "an admin has not confirmed yet", [f"{self.model.columns[j.from_columns[0]].business_name} -> "
                                                        f"{self.model.tables[j.to_table].business_name}" for j in links])
-            raise ResolveError("unsupported", f"{label or self.model.tables[table].business_name} is not linked to "
-                               f"{self.model.tables[self.part.table].business_name}")
+            error = ResolveError("unsupported", f"{label or self.model.tables[table].business_name} is not linked to "
+                                 f"{self.model.tables[self.part.table].business_name}")
+            error.unlinked = table
+            raise error
         return self._walk(table, path)
 
     def _walk(self, table: str, path: P.Path) -> str:
@@ -353,7 +356,7 @@ def _with_filters(expr: MeasureExpr, filters: list[ColumnFilter]) -> MeasureExpr
 
 def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure, table: str) -> DateRole | None:
     if plan.time.date:
-        found = _find_slug(model, plan.time.date)
+        found = find_slug(model, plan.time.date)
         if not found or found[0] != "date":
             raise ResolveError("unknown", f"no date called {plan.time.date}", _closest(plan.time.date, _slugs(model, "date")))
         role = found[1]
@@ -382,7 +385,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     # Measures, and the table each is counted on.
     chosen: list[tuple[Measure | None, MeasureExpr, str, str, str]] = []   # (measure, expr, table, label, format)
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
-        found = _find_slug(model, slug)
+        found = find_slug(model, slug)
         if not found or found[0] != "measure":
             raise ResolveError("unknown", f"no measure called {slug}", _closest(slug, _slugs(model, "measure")))
         m = found[1]
@@ -398,7 +401,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     for d in plan.derived:
         operands = []
         for slug in d.measures:
-            found = _find_slug(model, slug)
+            found = find_slug(model, slug)
             if not found or found[0] != "measure":
                 raise ResolveError("unknown", f"no measure called {slug}", _closest(slug, _slugs(model, "measure")))
             operands.append(found[1])
@@ -421,7 +424,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         if slug in TIME_ATTRIBUTES:
             wanted.append((slug, None, slug.split(":", 1)[1]))
             continue
-        found = _find_slug(model, slug)
+        found = find_slug(model, slug)
         if not found or found[0] not in ("attribute", "entity"):
             raise ResolveError("unknown", f"nothing to group by called {slug}", _closest(slug, _slugs(model, "group")))
         attribute = _entity_label(model, slug) if found[0] == "entity" else found[1]
@@ -571,7 +574,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     # Filters: attributes, other dates, totals.
     having: list[Pred] = []
     for f in plan.filters:
-        found = _find_slug(model, f.field)
+        found = find_slug(model, f.field)
         if not found:
             raise ResolveError("unknown", f"nothing to filter on called {f.field}", _closest(f.field, _slugs(model, "group") + _slugs(model, "date") + _slugs(model, "measure")))
         kind, obj = found
@@ -789,7 +792,7 @@ def _via(model: SemanticModel, plan: Plan, slug: str) -> tuple[str | None, str |
     named = plan.via.get(slug)
     if not named:
         return None, None
-    found = _find_slug(model, named)
+    found = find_slug(model, named)
     if found and isinstance(found[1], Entity):
         return found[1].table, None
     return None, named.removeprefix("role:").strip()
@@ -832,7 +835,7 @@ def measure_dates(plan: Plan, model: SemanticModel) -> tuple[DateRole | None, dt
     """The date the plan's first measure is counted by, and the first and last day its data covers."""
     measure: Measure | None = None
     for slug in [*plan.measures, *[s for d in plan.derived for s in d.measures]]:
-        found = _find_slug(model, slug)
+        found = find_slug(model, slug)
         if found and found[0] == "measure":
             measure = found[1]  # type: ignore[assignment]
             break
@@ -868,7 +871,7 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
         part.groups.append(PartGroup(name, alias, col.key, "attribute"))
         groups.append(Group(name, attr.business_name, "attribute", attribute=attr.slug))
     for f in plan.filters:
-        found = _find_slug(model, f.field)
+        found = find_slug(model, f.field)
         if not found or found[0] not in ("attribute", "entity"):
             raise ResolveError("unsupported", f"listing cannot filter on {f.field}")
         attr = _entity_label(model, f.field) if found[0] == "entity" else found[1]

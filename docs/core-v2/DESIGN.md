@@ -753,8 +753,26 @@ Where it differs from §12.3, the first cut is simpler on purpose:
 * **The hook** is `gateway/core2_bridge.py`, called from `_run_main_question` in
   `ws_chat`: in `core2` mode before today's pipeline (which answers when the new
   core reports `unsupported` or fails), in `compare` mode after it, under a
-  120-second limit. Turns that today's local pre-routes answer (commands on the
-  result on screen, why-insights) do not reach the new core yet.
+  120-second limit. Side by side, a new core that times out or fails says so on
+  its preview card instead of leaving the reader waiting for one.
+* **A "why" about the answer on screen** is its own turn (`_run_why_question`):
+  in `core2` mode the new core answers it first, then today's analysis of the
+  result on screen, then today's pipeline; in `compare` mode today's analysis
+  answers and the new core's answer follows it as a preview. After a new-core
+  answer with data, today's last result is set aside (`forget_current_result`):
+  it is the answer before, and today's follow-up routes would otherwise explain
+  or re-cut it under the older question's name. Other commands on the result on
+  screen are still today's.
+* **Refusals** say what was looked at: the measure and its table, the breakdown,
+  the filters and the dates (`trust.considered`), and why it stopped
+  (`trust.stopped`), under "How this answer was produced".
+* **A name that is a member and a measure** ("cost of goods sold": a ledger
+  account, and the cost on the invoice lines) is read as the member only when
+  the member's table can be broken down as asked (planner rule 8). A plan that
+  fails because a breakdown is not linked to its measure's table goes to the
+  repair round with the measures that do reach it, those sharing the question's
+  words first -- the question as the AI saw it, so for a regulated workspace a
+  placeholder's words are not used, and there the reading cannot be made.
 * **Clarifications** from the new core are written in its answer card with their
   options (no chips, no `pending_id`); the reply is planned with the question it
   answers, which the conversation history carries.
@@ -765,8 +783,10 @@ Where it differs from §12.3, the first cut is simpler on purpose:
 * **Recording**: every new-core answer is a row in `core2_answer` (question,
   status, headline, SQL, rows, plan, duration, model version), listed on the
   learned page beside the switch.
-* **`core2` mode is early**: its answers are not yet kept in `answer_trace`, not
-  counted by `store.log_query`, and not offered for export; the admin page says so.
+* **`core2` mode** keeps its answers as today's are: an `answer_trace` row (the
+  thread's history, the full CSV export, the audit link), a `store.log_query` row
+  (usage and limits) and the reader's thumbs; at a monthly limit today's
+  pipeline answers and says so.
 * **Regulated tenants**: the question is scrubbed with `scrub_question_pii`, matched
   members are replaced by placeholders, and the catalog carries no values.
 * **Production SQL rules** the compiler meets, checked in tests against the real

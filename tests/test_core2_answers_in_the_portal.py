@@ -5,7 +5,11 @@
 * Through the real portal socket: in "compare" mode today's answer comes first
   and the new core's follows it, badged as a preview; in "core2" mode the new
   core answers alone, and a question it cannot express goes to today's
-  pipeline; a new-core failure never costs the reader today's answer.
+  pipeline; a new-core failure never costs the reader today's answer, and side
+  by side it is said on the preview card instead of the preview never coming.
+* A "why" about the answer on screen is a question like any other: in "core2"
+  mode the new core answers it first (today's analysis only for what it cannot
+  express), and side by side the new core's answer follows today's analysis.
 * The new core's SQL runs through QueryBot's governed executor, whose
   production rules it must pass, and returns the reference numbers.
 * The production wiring finds the stored model, the reader's allowed tables and
@@ -98,17 +102,144 @@ def test_core2_mode_answers_alone_and_hands_on_what_it_cannot_express(tenant):
     assert answers and all(a.get("engine") != "core2" for a in answers) and turn["executed"]
 
 
-def test_a_new_core_failure_never_costs_the_reader_todays_answer(tenant):
+def test_a_new_core_failure_never_costs_the_reader_todays_answer_and_is_said(tenant):
     def broken(*a, **k):
         raise RuntimeError("the new core fell over")
 
     turn = _ask(tenant, "compare", broken)
-    answers = _answers(turn)
-    assert len(answers) == 1 and answers[0].get("engine") != "core2" and turn["executed"]
+    today, card = _answers(turn)
+    assert today.get("engine") != "core2" and turn["executed"]
+    # Side by side, the preview that will not come says so, without the error's own words.
+    assert card["engine"] == "core2" and card["kind"] == "could_not" and card["data"] is None
+    assert card["answer"]["headline"] == ("The new core stopped with an error on this question; the service log "
+                                          "has the details. Today's answer above stands.")
+    assert card["result_scope"]["badge"] == "New core (preview)" and "fell over" not in json.dumps(card)
     import store
 
     logged = store.list_core2_answers(harness.ACCOUNT, 5)
     assert logged and logged[0]["status"] == "failed"
+    assert logged[0]["question_id"] == card["trust"]["question_id"]     # the reader's thumbs reach the row
+
+    turn = _ask(tenant, "core2", broken)      # answering alone, today's pipeline answers instead
+    assert [a.get("engine") != "core2" for a in _answers(turn)] == [True] and turn["executed"]
+
+
+def test_side_by_side_a_new_core_that_takes_too_long_says_so(learned, monkeypatch):
+    import time
+
+    import gateway.core2_bridge as bridge
+
+    def slow(*a, **k):
+        time.sleep(1.5)
+        return json.loads(json.dumps(CANNED))
+
+    monkeypatch.setattr("core2.service.portal_answer", slow)
+    monkeypatch.setattr(bridge, "TIMEOUT_SECONDS", 0.3)
+    sent: list[dict] = []
+
+    class Adapter:
+        thread_id = "t1"
+        send_lock = asyncio.Lock()
+
+    class Socket:
+        async def send_json(self, payload):
+            sent.append(payload)
+
+    asyncio.run(bridge.answer_beside(Adapter(), Socket(), ACCOUNT, "net sales in 2025", {"id": 1}))
+    (card,) = sent
+    assert card["kind"] == "could_not" and card["result_scope"]["badge"] == "New core (preview)"
+    assert card["answer"]["headline"] == "The new core did not answer this within 0 seconds. Today's answer above stands."
+    import store
+
+    assert store.list_core2_answers(ACCOUNT, 1)[0]["status"] == "timeout"
+
+
+# ── a "why" about the answer on screen ────────────────────────────────────
+
+WHY = "why is NORTH DEPOT the highest?"
+EXPLAINED = {**CANNED, "answer": {**CANNED["answer"], "headline": "The new core explains it."}}
+
+
+class _NewCore:
+    """portal_answer as the bridge calls it: what it was asked, and its answer to each question."""
+
+    def __init__(self, answers: dict[str, dict]):
+        self.answers, self.asked = answers, []
+
+    def __call__(self, account_id, question, *args, **kwargs):
+        self.asked.append(question)
+        return json.loads(json.dumps(self.answers.get(question, {**CANNED, "unsupported": True})))
+
+
+def _conversation(tenant, engine: str, new_core: _NewCore):
+    import contextlib
+
+    import gateway.core2_bridge as bridge
+
+    async def setting(account_id):
+        return engine
+
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch.object(bridge, "engine", setting))
+    stack.enter_context(patch("core2.service.portal_answer", new_core))
+    conversation = stack.enter_context(
+        portal.SocketConversation(tenant, harness.ACCOUNT, harness.saved_connection(), idle_seconds=2.0))
+    return stack, conversation
+
+
+def _analyses(turn) -> list[str]:
+    return [str(f.get("title") or "") for f in turn["frames"] if f.get("type") == "assistant_analysis"]
+
+
+def test_in_core2_mode_a_why_about_the_answer_on_screen_is_the_new_cores(tenant):
+    new_core = _NewCore({WHY: EXPLAINED})
+    stack, conversation = _conversation(tenant, "core2", new_core)
+    with stack:
+        first = conversation.ask("stock on hand by warehouse")    # the new core cannot: today's answer, on screen
+        why = conversation.ask(WHY)
+    assert _answers(first) and all(a.get("engine") != "core2" for a in _answers(first))
+    assert new_core.asked == ["stock on hand by warehouse", WHY]
+    assert [a["answer"]["headline"] for a in _answers(why)] == ["The new core explains it."]
+    assert not _analyses(why)                                     # today's analysis did not run first
+
+
+def test_in_core2_mode_what_the_new_core_cannot_explain_is_todays_analysis(tenant):
+    new_core = _NewCore({})
+    stack, conversation = _conversation(tenant, "core2", new_core)
+    with stack:
+        conversation.ask("stock on hand by warehouse")
+        why = conversation.ask(WHY)
+    assert new_core.asked == ["stock on hand by warehouse", WHY]
+    # Today's analysis of the answer on screen: no new answer of its own first (today's pipeline would ask
+    # the warehouse again and analyse that).
+    assert _analyses(why) == ["Why this pattern?"] and not _answers(why)
+
+
+def test_side_by_side_a_why_is_todays_analysis_then_the_new_cores_preview(tenant):
+    new_core = _NewCore({WHY: EXPLAINED})
+    stack, conversation = _conversation(tenant, "compare", new_core)
+    with stack:
+        conversation.ask("stock on hand by warehouse")
+        why = conversation.ask(WHY)
+    kinds = [("analysis" if f.get("type") == "assistant_analysis" else f.get("engine"))
+             for f in why["frames"] if f.get("type") in ("assistant_analysis", "assistant_response")]
+    assert kinds == ["analysis", "core2"], kinds
+    (preview,) = _answers(why)
+    assert preview["answer"]["headline"] == "The new core explains it."
+    assert preview["result_scope"]["badge"] == "New core (preview)"
+    assert why["frames"][-1] == {"type": "typing", "active": False}       # the composer is free after both
+
+
+def test_in_core2_mode_a_follow_up_never_acts_on_todays_older_result(tenant):
+    """After the new core's answer, today's last result is the answer before it: a "why" is not about that."""
+    new_core = _NewCore({"stock value by warehouse": json.loads(json.dumps(CANNED))})
+    stack, conversation = _conversation(tenant, "core2", new_core)
+    with stack:
+        conversation.ask("stock on hand by warehouse")     # today's answer, its rows the current result
+        conversation.ask("stock value by warehouse")       # the new core's answer, now on screen
+        why = conversation.ask("why is that?")             # the new core cannot: an ordinary question now
+    assert new_core.asked[-1] == "why is that?"
+    assert not _analyses(why)                              # not an analysis of the stock on hand answer
 
 
 def _answer_with_rows(n: int):

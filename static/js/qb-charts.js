@@ -966,7 +966,9 @@
     };
     const valueAxis = {
       type: 'value',
-      axisLabel: {color: c.muted, fontSize: 12, formatter: v => valueFmt(v, yKey, true)},
+      // A narrow card has room for fewer amounts than the axis has ticks: one
+      // that would touch its neighbour is left out, not printed over it.
+      axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true, formatter: v => valueFmt(v, yKey, true)},
       splitLine: {lineStyle: {color: c.grid, width: 1, type: 'solid'}},
       axisLine: {show: false},
       axisTick: {show: false},
@@ -1149,6 +1151,22 @@
     // the largest value, that bar's label was clipped by the chart's edge.
     if (labelled) {
       (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, '8%'];
+      // A bar below zero is labelled past its own tip, at the low end of the
+      // axis -- where the category names are, at a ranking's left and under a
+      // column chart -- and with the axis ending at its value the label was
+      // drawn over a name ("-$25.8K" across a customer's). That end gets room
+      // for the widest such label: its share of the plot, by an estimate of
+      // the label's size in pixels.
+      const below = firstValues.filter(v => v != null && v < 0);
+      if (below.length) {
+        const size = v => (horizontal ? valueFmt(v, yKey, true).length * 7 + 8 : 22);
+        const need = Math.max(...below.map(size));
+        const plot = horizontal
+          ? ((layout && layout.width) || 600) - 64 - Math.min(180, maxLabel * 7)
+          : ((layout && layout.height) || 300) - top - 32;
+        const share = 1.2 * need * 1.08 / Math.max(plot - need, plot * 0.3, 40);
+        (horizontal ? option.xAxis : option.yAxis).boundaryGap = [`${Math.ceil(share * 100)}%`, '8%'];
+      }
     }
     option.series = yKeys.map((k, i) => {
       const color = colors[i % colors.length];

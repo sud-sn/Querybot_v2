@@ -161,7 +161,9 @@ class WebhooksWiringTests(unittest.TestCase):
 
     def test_run_main_question_never_silently_swallows_errors(self):
         start = self.src.index("async def _run_main_question(")
-        body = self.src[start:start + 3000]
+        # The whole function, up to the next one beside it -- not a window of
+        # characters a longer docstring pushes the handler out of.
+        body = self.src[start:self.src.index("\n    async def ", start + 1)]
         self.assertIn("except asyncio.CancelledError:", body)
         self.assertIn("except Exception as e:", body)
         self.assertIn('"type": "assistant_error"', body)

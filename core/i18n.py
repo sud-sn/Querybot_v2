@@ -4224,6 +4224,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Aucune requête SQL n'a été exécutée pour ce résultat.",
     },
     "ui.chat.trust.business_date": {"en": "Business date", "fr": "Date métier"},
+    # A question the new core did not answer: what it looked at, and why it stopped.
+    "ui.chat.trust.stopped": {"en": "Why it stopped", "fr": "Pourquoi cela s'est arrêté"},
+    "ui.chat.trust.considered.measure": {"en": "Measure considered", "fr": "Mesure envisagée"},
+    "ui.chat.trust.considered.by": {"en": "Broken down by", "fr": "Ventilé par"},
+    "ui.chat.trust.considered.filter": {"en": "Filters", "fr": "Filtres"},
+    "ui.chat.trust.considered.dates": {"en": "Dates", "fr": "Dates"},
     "ui.chat.trust.grain": {"en": "{grain} grain", "fr": "granularité {grain}"},
     "ui.chat.trust.calendar_grain": {"en": "calendar grain", "fr": "granularité calendaire"},
     "ui.chat.trust.inferred": {"en": "inferred encoded field", "fr": "champ encodé déduit"},
