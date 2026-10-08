@@ -73,8 +73,12 @@ def source_hash(inventory: Inventory) -> str:
     return hashlib.sha256(json.dumps(shape).encode()).hexdigest()[:16]
 
 
-def build_workspace(account_id: str) -> int:
-    """Learn the workspace's database and store a new model version; returns the version."""
+def build_workspace(account_id: str, started: str | None = None) -> int:
+    """Learn the workspace's database and store a new model version; returns the version.
+
+    ``started`` is the build the learned page already recorded as running (so the
+    page shows it at once); without it the build is recorded here.
+    """
     import store
     from core2.warehouse.querybot import QueryBotWarehouse
 
@@ -82,7 +86,7 @@ def build_workspace(account_id: str) -> int:
     if not client or not client.get("db_config_id"):
         raise ValueError("This workspace has no database connected.")
     db_id = int(client["db_config_id"])
-    started = store.start_core2_build(account_id, db_id)
+    started = started or store.start_core2_build(account_id, db_id)
     began = time.monotonic()
 
     def say(line: str) -> None:

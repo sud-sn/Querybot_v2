@@ -116,11 +116,11 @@ async def learned_page(request: Request, account_id: str):
     })
 
 
-def _run_build(account_id: str) -> None:
+def _run_build(account_id: str, started: str | None = None) -> None:
     from core2.bootstrap.service import build_workspace
 
     try:
-        build_workspace(account_id)
+        build_workspace(account_id, started)
     except Exception:  # noqa: BLE001 - recorded in the build log by build_workspace, shown on the page
         pass
 
@@ -136,7 +136,10 @@ async def learned_build(request: Request, account_id: str, bg: BackgroundTasks):
         return _back(account_id, error="Connect a database first.")
     if _running(store.latest_core2_build(account_id, client["db_config_id"])):
         return _back(account_id, error="QueryBot is already learning this database.")
-    bg.add_task(_run_build, account_id)
+    # Recorded as running before the page reloads: the build itself starts after this
+    # response, and a page that got there first showed nothing happening.
+    started = store.start_core2_build(account_id, client["db_config_id"])
+    bg.add_task(_run_build, account_id, started)
     return _back(account_id, saved="building")
 
 

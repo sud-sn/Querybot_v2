@@ -141,9 +141,9 @@ def test_a_run_cut_off_by_a_restart_is_said_and_does_not_block_learning_again(wo
     db_id = store.get_client(ACCOUNT)["db_config_id"]
     started = store.start_core2_build(ACCOUNT, db_id)
     store.add_core2_build_line(ACCOUNT, db_id, started, "Reading 9 tables")
-    with get_db() as conn:   # started by the process a restart replaced
-        conn.execute("UPDATE core2_build SET runner = 'a process before the restart' WHERE started_at = ?",
-                     (started,))
+    with get_db() as conn:   # started this morning by the process a restart replaced
+        conn.execute("UPDATE core2_build SET runner = 'a process before the restart', "
+                     "started_at = '2026-01-01 08:00:00' WHERE started_at = ?", (started,))
     page = _page()
     assert "The last attempt was interrupted: the service restarted" in page
     assert "The last learning run, where it stopped" in page and "Reading 9 tables" in page
@@ -158,3 +158,7 @@ def test_a_run_cut_off_by_a_restart_is_said_and_does_not_block_learning_again(wo
             _request(f"/admin/clients/{ACCOUNT}/learned/build"), ACCOUNT, tasks))
     assert "saved=building" in response.headers["location"] and len(tasks.tasks) == 1
     assert not run.called   # queued, not run here
+    # ...and already recorded as running, so the page the browser goes to shows it at once.
+    page = _page(query="saved=building")
+    assert "What QueryBot is doing now" in page and "QueryBot is studying the database" in page
+    assert tasks.tasks[0].args == (ACCOUNT, store.latest_core2_build(ACCOUNT, db_id)["started_at"])
