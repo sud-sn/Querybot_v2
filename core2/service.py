@@ -198,6 +198,7 @@ def _considered(plan: Plan | None, model: SemanticModel) -> list[dict[str, str]]
     rows: list[dict[str, str]] = []
     measures = [named(s) for s in plan.measures]
     measures += [f"{d.name} ({d.op} of {' and '.join(named(m) for m in d.measures)})" for d in plan.derived]
+    measures += [f"{d.name} (days from {named(d.start)} to {named(d.end)})" for d in plan.durations]
     if measures:
         rows.append({"key": "measure", "value": "; ".join(measures)})
     if plan.group_by:

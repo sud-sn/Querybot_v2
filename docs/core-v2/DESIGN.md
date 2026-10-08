@@ -395,6 +395,8 @@ Plan {
         | "list" | "count" | "forecast" | null
   measures: [slug]
   proposed_measures: [{name, agg, column: slug, filters: [Filter]}]
+  durations: [{name, start: date slug, end: date slug,   # days between two dates of the same rows
+               agg: "avg"|"min"|"max"|"sum", measure: bool}]   # measure false: it only keeps rows
   group_by: [slug | "time:day_of_week" | "time:month_of_year" | ...]
   via: {attribute slug: qualifier slug}        # path qualifier, rarely used
   filters: [Filter]
@@ -419,6 +421,15 @@ Filter { field: slug, op: "in"|"not_in"|"eq"|"ne"|"gt"|"gte"|"lt"|"lte"|"between
                           |"contains"|"starts_with"|"is_null"|"not_null",
          values: [str|number|bool] }
 ```
+
+A duration ("average days from order to invoice") is whole calendar days from
+`start` to `end` on each row, however the dates are stored (a calendar key, a
+DATE, a timestamp, a yyyymmdd number). A row missing either date, or holding a
+placeholder, is left out of the days and still counted by the answer's other
+measures: the dates it reads are joined left. A filter whose field is a
+duration's name keeps rows by their days ("invoiced more than 14 days after
+ordering"); a sort names it the same way. Two dates of different tables, the
+same date twice, or a date kept by month are refused with the reason.
 
 Relative windows are written relatively (`last 6 months`) and resolved by code
 (§8.3), never by the AI's date arithmetic. Explicit dates are written as dates.

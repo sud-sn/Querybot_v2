@@ -277,6 +277,16 @@ def add_months(value: exp.Expression, months: exp.Expression | int, dialect: str
     return _fill(_ADD_MONTHS[dialect], dialect, value, _number(months))
 
 
+_DAYS_BETWEEN = {"snowflake": "DATEDIFF(DAY, __X__, __N__)", "tsql": "DATEDIFF(DAY, __X__, __N__)",
+                 "oracle": "(TRUNC(__N__) - TRUNC(__X__))",
+                 "duckdb": "DATE_DIFF('day', CAST(__X__ AS DATE), CAST(__N__ AS DATE))"}
+
+
+def days_between(start: exp.Expression, end: exp.Expression, dialect: str) -> exp.Expression:
+    """Whole calendar days from ``start`` to ``end`` (negative when ``end`` is earlier), dates or timestamps."""
+    return _fill(_DAYS_BETWEEN[dialect], dialect, start, end)
+
+
 def date_literal(day: dt.date, dialect: str) -> exp.Expression:
     text = day.isoformat()
     if dialect == "oracle":

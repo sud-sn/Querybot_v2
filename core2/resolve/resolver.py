@@ -31,7 +31,7 @@ from core2.model.schema import (
     RefExpr,
     SemanticModel,
 )
-from core2.plan.ir import TIME_ATTRIBUTES, Filter, Plan
+from core2.plan.ir import TIME_ATTRIBUTES, Duration, Filter, Plan
 from core2.resolve import paths as P
 from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back,
                                 year_basis)
@@ -82,10 +82,29 @@ class Joined:
 
 
 @dataclass
+class DaysBetween:
+    """Days from one date of each row to another, aggregated: "average days from order to invoice"."""
+
+    agg: str                 # avg | min | max | sum
+    start: DateUse
+    end: DateUse
+
+
+@dataclass
+class DaysPred:
+    """Rows whose days from one date to the other meet a condition: "invoiced more than 14 days after"."""
+
+    start: DateUse
+    end: DateUse
+    op: str
+    values: list
+
+
+@dataclass
 class OutMeasure:
     name: str                # output column
     label: str
-    expr: MeasureExpr        # column keys resolved against this part's base alias
+    expr: MeasureExpr | DaysBetween   # column keys resolved against this part's base alias
     format: str
     measure: Measure | None
     semi: bool = False
@@ -119,6 +138,7 @@ class Part:
     measures: list[OutMeasure] = field(default_factory=list)
     groups: list[PartGroup] = field(default_factory=list)
     preds: list[Pred] = field(default_factory=list)
+    day_preds: list[DaysPred] = field(default_factory=list)
     date: DateUse | None = None
     date_ranges: list[tuple[DateUse, Range]] = field(default_factory=list)
     snapshot: bool = False
@@ -301,8 +321,12 @@ class _PartBuilder:
             self.paths_used[table] = path
         return alias
 
-    def date(self, role: DateRole) -> DateUse:
-        """Where a date role's date lives, joining its calendar once under the role's own name."""
+    def date(self, role: DateRole, *, kind: str = "inner") -> DateUse:
+        """Where a date role's date lives, joining its calendar once under the role's own name.
+
+        Inner, as a row without a real date is not counted on a date; ``kind`` "left" for a
+        date only read (days between two dates), so the part's other measures keep every row.
+        """
         model = self.model
         column = model.columns[role.column]
         if role.calendar:
@@ -316,7 +340,7 @@ class _PartBuilder:
                 alias = self.aliases.new(role.slug or role.name)
                 self.part.joins.append(Joined(alias=alias, table=role.calendar,
                                               on=[(self.part.alias, join.from_columns[0], join.to_columns[0])],
-                                              kind="inner", what=role.name))
+                                              kind=kind, what=role.name))
                 self.by_path[key] = alias
             alias = self.by_path[key]
             if calendar.grain == "month":
@@ -355,7 +379,7 @@ def _with_filters(expr: MeasureExpr, filters: list[ColumnFilter]) -> MeasureExpr
     return expr
 
 
-def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure, table: str) -> DateRole | None:
+def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure | None, table: str) -> DateRole | None:
     if plan.time.date:
         found = find_slug(model, plan.time.date)
         if not found or found[0] != "date":
@@ -366,7 +390,7 @@ def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure, table: st
             return role
     # A date lives on its own table: a measure counted on another table (members counted by what they
     # did, below) is counted by that table's date, never by its own table's.
-    for key in (measure.default_date, model.tables[table].default_date):
+    for key in (measure.default_date if measure else None, model.tables[table].default_date):
         role = model.date_roles.get(key) if key else None
         if role is not None and role.table == table:
             return role
@@ -416,6 +440,44 @@ def _members_by_activity(model: SemanticModel, plan: Plan, measure: Measure) -> 
     return counted, fact.key, (f"{measure.business_name} counts the {plural(table.business_name.lower())} "
                                f"on {fact.business_name.lower()} rows by {date.name.lower()}, not the "
                                f"{table.business_name.lower()} list itself.")
+
+
+@dataclass
+class _Days:
+    """A duration before its table's part exists: its two dates, read once the part joins them."""
+
+    agg: str
+    start: DateRole
+    end: DateRole
+
+
+_AGG_WORDS = {"avg": "on average", "min": "the shortest", "max": "the longest", "sum": "added up"}
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+
+def _duration_dates(model: SemanticModel, d: Duration) -> tuple[DateRole, DateRole]:
+    """The two dates of ``d``: dates of the same rows, kept to the day."""
+    roles = []
+    for slug in (d.start, d.end):
+        found = find_slug(model, slug)
+        if not found or found[0] != "date":
+            raise ResolveError("unknown", f"no date called {slug}", _closest(slug, _slugs(model, "date")))
+        role = found[1]
+        assert isinstance(role, DateRole)
+        if role.granularity == "month":
+            raise ResolveError("unsupported", f"{role.name} is kept by month, so days cannot be counted from it")
+        roles.append(role)
+    start, end = roles
+    if start.table != end.table:
+        raise ResolveError("unsupported", f"{d.name} needs two dates of the same rows: {start.name} is on "
+                           f"{model.tables[start.table].business_name}, {end.name} on "
+                           f"{model.tables[end.table].business_name}")
+    if start.key == end.key:
+        raise ResolveError("unsupported", f"{d.name} needs two different dates")
+    return start, end
 
 
 def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
@@ -476,6 +538,16 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         scaled = f" × {d.scale:g}" if d.scale != 1 else ""
         notes.append(f"{d.name} = {a.business_name} {sign} {b.business_name}{scaled}, worked out for this question "
                      "(not a saved measure yet).")
+    durations: dict[str, tuple[Duration, DateRole, DateRole]] = {}
+    for duration in plan.durations:
+        start_role, end_role = _duration_dates(model, duration)
+        durations[_plain(duration.name)] = (duration, start_role, end_role)
+        if duration.measure:
+            chosen.append((None, _Days(duration.agg, start_role, end_role), start_role.table,  # type: ignore[arg-type]
+                           duration.name, "days"))
+            notes.append(f"{duration.name}: days from {start_role.name.lower()} to {end_role.name.lower()} on each "
+                         f"{model.tables[start_role.table].business_name.lower()} row, {_AGG_WORDS[duration.agg]}; "
+                         "rows missing either date are left out of it.")
 
     # Groupings asked for.
     wanted: list[tuple[str, Attribute | None, str | None]] = []   # (slug, attribute, time attribute)
@@ -585,7 +657,11 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
         for m, expr, table, label, fmt in items:
             name = _output_name(m.slug if m else label, out_names)
-            out = OutMeasure(name=name, label=label, expr=expr, format=fmt, measure=m,
+            spelled: MeasureExpr | DaysBetween = expr
+            if isinstance(expr, _Days):
+                spelled = DaysBetween(expr.agg, builder.date(expr.start, kind="left"),
+                                      builder.date(expr.end, kind="left"))
+            out = OutMeasure(name=name, label=label, expr=spelled, format=fmt, measure=m,
                              semi=bool(m and m.additivity == "semi_additive"))
             part.measures.append(out)
             measures_out.append(out)
@@ -634,6 +710,24 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     # Filters: attributes, other dates, totals.
     having: list[Pred] = []
     for f in plan.filters:
+        if _plain(f.field) in durations:
+            duration, start_role, end_role = durations[_plain(f.field)]
+            if f.op not in ("gt", "gte", "lt", "lte", "eq", "ne", "between"):
+                raise ResolveError("unsupported", f"{duration.name} can be compared with a number of days, not {f.op}")
+            try:
+                days = [float(v) for v in f.values]
+            except (TypeError, ValueError):
+                raise ResolveError("unsupported", f"{duration.name} is compared with a number of days") from None
+            dated = [(b, p) for b, p in ((b, b.part) for b, _ in builders) if p.table == start_role.table]
+            if not dated:
+                raise ResolveError("unsupported", f"{duration.name} is on "
+                                   f"{model.tables[start_role.table].business_name}, which nothing asked for counts")
+            for builder, part in dated:
+                part.day_preds.append(DaysPred(builder.date(start_role, kind="left"),
+                                               builder.date(end_role, kind="left"), f.op, days))
+            notes.append(f"Only {model.tables[start_role.table].business_name.lower()} rows whose "
+                         f"{duration.name.lower()} is {_op_words(f).split(' ', 1)[-1] if f.op in ('eq', 'ne') else _op_words(f)} days.")
+            continue
         found = find_slug(model, f.field)
         if not found:
             raise ResolveError("unknown", f"nothing to filter on called {f.field}", _closest(f.field, _slugs(model, "group") + _slugs(model, "date") + _slugs(model, "measure")))
@@ -916,8 +1010,9 @@ def measure_dates(plan: Plan, model: SemanticModel) -> tuple[DateRole | None, dt
     return role, first, last
 
 
-def _fallback_measure(model: SemanticModel, table: str) -> Measure:
-    return next(m for m in model.measures.values() if m.table == table)
+def _fallback_measure(model: SemanticModel, table: str) -> Measure | None:
+    """Any measure of ``table`` (for its default date); None for a table with dates and no measures."""
+    return next((m for m in model.measures.values() if m.table == table), None)
 
 
 def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, aliases: _Aliases, intent: str) -> Logical:

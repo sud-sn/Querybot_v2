@@ -144,11 +144,13 @@ def base_plan(plan: Plan, model: SemanticModel, ctx: Context) -> tuple[Plan, lis
     """The total, as a comparison of the two periods the question is about."""
     keep = plan.measures[:1]
     derived = [] if keep else plan.derived[:1]
-    if not keep and not derived:
+    shown = [d for d in plan.durations if d.measure]
+    durations = [] if keep or derived else shown[:1]      # "why did the days to invoice go up?"
+    if not keep and not derived and not durations:
         raise ResolveError("unknown", "a why question needs the measure that changed",
                            sorted(m.slug for m in model.measures.values() if not m.hidden)[:12])
     notes: list[str] = []
-    if len(plan.measures) + len(plan.derived) > 1:
+    if len(plan.measures) + len(plan.derived) + len(shown) > 1:
         notes.append("Explained for the first measure asked about.")
     t = plan.time
     window, compare = t.window, t.compare
@@ -163,6 +165,7 @@ def base_plan(plan: Plan, model: SemanticModel, ctx: Context) -> tuple[Plan, lis
     compare = compare or Compare(kind="previous_period")
     base = plan.model_copy(update={
         "intent": "compare", "measures": keep, "derived": derived, "group_by": [], "via": {}, "sort": [],
+        "durations": durations + [d for d in plan.durations if not d.measure],    # and those keeping rows
         "limit": None, "drivers": None, "forecast": None,
         "time": TimeSpec(date=t.date, grain=None, window=window, compare=compare)})
     return base, notes
@@ -315,8 +318,9 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     m = total_logical.measures[0]
     if m.measure is not None:
         additive = m.measure.additivity != "non_additive" and m.format != "percent"
-    else:
-        additive = bool(base.derived) and base.derived[0].op != "ratio"
+    else:   # a ratio or an average of days is explained by mix and rate, a difference or total by parts
+        additive = (bool(base.derived) and base.derived[0].op != "ratio") or any(
+            d.measure and d.agg == "sum" for d in base.durations)
     sqls = [("the total", total_compiled.sql)]
     rows_read = len(result.rows)
 

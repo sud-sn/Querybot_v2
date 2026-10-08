@@ -33,7 +33,7 @@ from core2.answer.builder import fmt, frame
 from core2.compile.compiler import compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan, TimeSpec
-from core2.resolve.resolver import Context, ResolveError, resolve
+from core2.resolve.resolver import Context, DaysBetween, ResolveError, resolve
 from core2.resolve.time import add_units, label as period_label, unit_start
 from core2.warehouse.runner import Warehouse
 
@@ -204,11 +204,14 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
     grain = plan.time.grain or "month"
     keep = plan.measures[:1]
     derived = [] if keep else plan.derived[:1]
-    if not keep and not derived:
+    shown = [d for d in plan.durations if d.measure]
+    durations = [] if keep or derived else shown[:1]
+    if not keep and not derived and not durations:
         raise ResolveError("unknown", "a forecast needs the measure to project",
                            sorted(m.slug for m in model.measures.values() if not m.hidden)[:12])
     history = plan.model_copy(update={
         "intent": "trend", "measures": keep, "derived": derived, "group_by": [], "via": {}, "sort": [],
+        "durations": durations + [d for d in plan.durations if not d.measure],
         "limit": None, "forecast": None, "drivers": None,
         "time": TimeSpec(date=plan.time.date, grain=grain, window=plan.time.window, compare=None)})
     logical = resolve(history, model, ctx)
@@ -225,7 +228,7 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
         if day is not None and value is not None:
             series[day] = value
     notes = list(logical.notes)
-    if len(plan.measures) + len(plan.derived) > 1:
+    if len(plan.measures) + len(plan.derived) + len(shown) > 1:
         notes.append("Forecast for the first measure asked about.")
     if plan.group_by:
         notes.append("Forecast for the total; a forecast per group is not available yet.")
@@ -327,7 +330,8 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
     per = {"day": "a day", "week": "a week", "month": "a month", "quarter": "a quarter", "year": "a year"}[unit]
     if horizon == 1:
         expected = f"{fmt(fit.values[0], fmt_)} (95% range {fmt(fit.low[0], fmt_)} to {fmt(fit.high[0], fmt_)})"
-    elif snapshot or m.format == "percent" or (m.measure and m.measure.additivity == "non_additive"):
+    elif snapshot or m.format == "percent" or (m.measure and m.measure.additivity == "non_additive") or (
+            isinstance(m.expr, DaysBetween) and m.expr.agg != "sum"):     # an average of days does not add up
         expected = (f"from {fmt(fit.values[0], fmt_)} to {fmt(fit.values[-1], fmt_)} "
                     f"(95% range by {label_of(last_future)}: {fmt(fit.low[-1], fmt_)} to {fmt(fit.high[-1], fmt_)})")
     else:

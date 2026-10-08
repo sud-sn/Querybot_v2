@@ -22,7 +22,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from core2.bootstrap import names
-from core2.model.schema import Measure, SemanticModel
+from core2.model.schema import DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.ir import Clarify, Plan, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
@@ -47,7 +47,13 @@ How to plan:
 2. measures: the measure slugs the question names. Never swap in a different measure because it is close
    (sales is not margin, quantity is not value, count of rows is not count of orders). When the question
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
-   derived with a short name, the op and the two slugs (scale 100 for a percentage).
+   derived with a short name, the op and the two slugs (scale 100 for a percentage). Days between two
+   dates of the same rows ("days from order to invoice", "how long to invoice", "delivery delay", "lead
+   time") go in durations: a short name, start and end (two date slugs on one table, the earlier event as
+   start) and agg (avg; max for "longest", min for "shortest", sum for "total days"). To keep only rows by
+   it ("invoiced more than 14 days after ordering"), add a filter whose field is the duration's name (op
+   gt, gte, lt, lte or between; values in days), with measure false when the rows are only counted. Sort
+   by a duration with its name.
 3. group_by: attribute or entity slugs for "by X", "per X", "each X", "which X"; an entity slug groups by
    its name. A time: attribute for "by weekday", "by month of the year", "weekends". When the catalog lists
    roles for an entity and the question names one ("by ship-to customer", "the customer's home store"),
@@ -151,6 +157,15 @@ def _examples(model: SemanticModel) -> str:
                 "sort": [{"by": "change", "desc": True}]}
         lines.append(f"Q: which {names.plural(e.business_name.lower())} grew the most last month\n"
                      f"A: {json.dumps(plan)}")
+    days = _two_dates(model, m.table)
+    if days is not None:
+        start, end = days
+        name = f"Days from {start.name.lower()} to {end.name.lower()}"
+        plan = {"kind": "query", "intent": "value", "measures": [],
+                "durations": [{"name": name, "start": start.slug, "end": end.slug, "agg": "avg"}],
+                "time": {"window": {"kind": "previous", "unit": "year"}}}
+        lines.append(f"Q: average days from {start.name.lower()} to {end.name.lower()} last year\n"
+                     f"A: {json.dumps(plan)}")
     plan = {"kind": "query", "intent": "drivers", "measures": [m.slug],
             "time": {"window": {"kind": "previous", "unit": "month"}}}
     lines.append(f"Q: why did {m.business_name.lower()} drop last month?\nA: {json.dumps(plan)}")
@@ -160,6 +175,26 @@ def _examples(model: SemanticModel) -> str:
     plan = {"kind": "describe_data", "about": [m.slug]}
     lines.append(f"Q: how is {m.business_name.lower()} calculated?\nA: {json.dumps(plan)}")
     return "\n".join(lines)
+
+
+def _two_dates(model: SemanticModel, table: str) -> tuple[DateRole, DateRole] | None:
+    """Two daily event dates of ``table`` for the worked example, the earlier event first.
+
+    The table's default and a date whose data starts no later (orders come before their
+    invoices); when none does, the default and the date starting soonest after it.
+    """
+    dates = [r for r in model.date_roles.values()
+             if r.table == table and r.kind == "event" and r.granularity != "month" and r.first is not None]
+    default = next((r for r in dates if r.is_default), None)
+    if default is None or default.first is None:
+        return None
+    day = default.first
+    others = [r for r in dates if r.key != default.key and r.first is not None]
+    earlier = sorted((r for r in others if (r.first or day) <= day), key=lambda r: (r.first or day, r.slug))
+    if earlier:
+        return earlier[0], default
+    later = sorted(others, key=lambda r: (r.first or day, r.slug))
+    return (default, later[0]) if later else None
 
 
 def stable_prompt(model: SemanticModel, *, values_allowed: bool = True) -> str:
@@ -274,9 +309,12 @@ def _plan_shown(plan: Plan, model: SemanticModel | None, masked: Masked | None) 
     if masked is None:
         return plan.model_dump_json(exclude_defaults=True)
     data = plan.model_dump(mode="json", exclude_defaults=True)
+    durations = {str(d.get("name", "")).casefold() for d in data.get("durations", [])}
     for f in data.get("filters", []):
         if model is not None and (f.get("field") in model.measures or f.get("field") in model.date_roles):
             continue      # amounts and dates, not member values
+        if str(f.get("field", "")).casefold() in durations:
+            continue      # numbers of days
         f["values"] = [placeholder(v, masked.values) for v in f.get("values", [])]
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 

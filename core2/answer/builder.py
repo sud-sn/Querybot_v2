@@ -107,6 +107,10 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
         return f"{sign}${number:,.2f}"
     if format_ in ("percent", "percentage"):
         return f"{number:,.1f}%"
+    if format_ == "days":
+        whole = float(number).is_integer()
+        text = f"{number:,.0f}" if whole else (f"{number:,.1f}" if abs(number) >= 1 else f"{number:,.2f}")
+        return f"{text} day{'' if abs(number) == 1 else 's'}"
     if format_ in ("count", "integer") or float(number).is_integer():
         text = f"{number:,.0f}"
     else:
@@ -599,8 +603,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
                        else ", ".join(named[:3]) + f" and {len(named) - 3} more")
             return f"{lead}: {leaders} lead with {value(top)} each{share.replace(' of the total)', ' of the total each)')}{count}."
         # The other measures asked for, for the same leader: "and $456K gross profit".
-        others = [f"{fmt(top[c.name], c.format, unit=units.of(top))} {_lower(c.label)}" for c in measures[1:]
-                  if c.name in top]
+        others = [_valued(fmt(top[c.name], c.format, unit=units.of(top)), c) for c in measures[1:] if c.name in top]
         joined = ", ".join(others[:-1]) + f" and {others[-1]}" if len(others) > 1 else "".join(others)
         also = f", and {joined}{',' if count else ''}" if others else ""
         return f"{lead}: {leader} leads with {value(top)}{share}{also}{count}."
@@ -612,10 +615,19 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             tail = f" and {extra} more unit{'s' if extra > 1 else ''}" if extra > 0 else ""
             return f"{lead}: {', '.join(listed)}{tail}."
         r = raw[0]
-        others = [f"{c.label} {fmt(r[c.name], c.format, unit=units.of(r))}" for c in measures[1:]]
+        others = [_valued(fmt(r[c.name], c.format, unit=units.of(r)), c) if c.format == "days"
+                  else f"{c.label} {fmt(r[c.name], c.format, unit=units.of(r))}" for c in measures[1:]]
         tail = f"; {', '.join(others)}" if others else ""
         return f"{lead}: {value(r)}{tail}."
     return f"{lead}: {len(raw):,} rows."
+
+
+def _valued(value: str, column: OutColumn) -> str:
+    """A value beside what it is: "$7.73M gross profit"; "9.5 days from order to invoice", never "days days"."""
+    label = _lower(column.label)
+    if column.format == "days" and label.startswith("days "):
+        return f"{value} {label[5:]}"
+    return f"{value} {label}"
 
 
 def _lead(logical: Logical, cols: _Columns, raw: list[dict], units: _Units) -> tuple[str, str]:

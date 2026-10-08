@@ -34,7 +34,7 @@ from sqlglot.optimizer.scope import traverse_scope
 
 from core2.model import formula
 from core2.model.schema import AggExpr, MeasureExpr, OpExpr, SemanticModel, SqlExpr
-from core2.resolve.resolver import DateUse, Joined, Logical, Part, PartGroup
+from core2.resolve.resolver import DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
 
@@ -189,6 +189,18 @@ class _Compiler:
         return exp.and_(exp.GTE(this=c.copy(), expression=D.date_literal(lo, self.d)),
                         exp.LT(this=c.copy(), expression=D.date_literal(hi, self.d)))
 
+    def days(self, start: DateUse, end: DateUse) -> exp.Expression:
+        """Days from ``start`` to ``end`` on each row; NULL where either is missing or a placeholder."""
+        for use in (start, end):
+            if use.mode in ("month_calendar", "yyyymm"):
+                raise CompileError(f"{use.role.name or 'this date'} is kept by month: it has no days")
+        real = exp.and_(self.range_condition(start, Range(None, None)), self.range_condition(end, Range(None, None)))
+        return exp.Case(ifs=[exp.If(this=real, true=D.days_between(self.date_value(start), self.date_value(end),
+                                                                      self.d))])
+
+    def days_condition(self, p: DaysPred) -> exp.Expr:
+        return self.predicate(self.days(p.start, p.end), p.op, list(p.values))
+
     def bucket(self, use: DateUse, grain: str) -> exp.Expression:
         monthly = use.mode in ("month_calendar", "yyyymm")
         if monthly and grain in ("day", "week"):
@@ -234,7 +246,17 @@ class _Compiler:
         return self.col(g.alias, g.column)
 
     # ── measures ───────────────────────────────────────────────────────────
-    def aggregate(self, expr: MeasureExpr, part: Part, condition: exp.Expr | None = None) -> exp.Expression:
+    def aggregate(self, expr: MeasureExpr | DaysBetween, part: Part,
+                  condition: exp.Expr | None = None) -> exp.Expression:
+        if isinstance(expr, DaysBetween):
+            days = self.days(expr.start, expr.end)
+            if condition is not None:
+                days = exp.Case(ifs=[exp.If(this=condition.copy(), true=days)])
+            if expr.agg == "avg":
+                return exp.Avg(this=_double(days))      # whole days averaged are not truncated
+            if expr.agg == "sum":
+                return exp.Sum(this=days)
+            return exp.Min(this=days) if expr.agg == "min" else exp.Max(this=days)
         if isinstance(expr, AggExpr):
             value: exp.Expression = self.col(part.alias, expr.column) if expr.column else _num(1)
             conds = [self.predicate(self.col(part.alias, f.column), f.op, list(f.values), f.column)
@@ -308,6 +330,7 @@ class _Compiler:
                                  join_type="inner" if j.kind == "inner" else "left")
         conds: list[exp.Expr] = [self.predicate(self.col(p.alias, p.column), p.op, p.values, p.column)
                                        for p in part.preds]
+        conds += [self.days_condition(p) for p in part.day_preds]
         dated = False
         for use, rng in part.date_ranges:
             dated = dated or use is part.date

@@ -73,6 +73,16 @@ class Derived(_Strict):
     scale: float = 1.0               # 100 for a percentage
 
 
+class Duration(_Strict):
+    """Days from one date of the same rows to another: "days from order to invoice"."""
+
+    name: str                        # "Days from order to invoice"
+    start: str                       # date slug: the earlier event
+    end: str                         # date slug: the later event
+    agg: Literal["avg", "min", "max", "sum"] = "avg"
+    measure: bool = True             # false when it only limits the rows ("invoiced more than 14 days after")
+
+
 class Clarify(_Strict):
     about: Literal["measure", "date", "member", "path", "other"]
     question: str
@@ -92,6 +102,7 @@ class Plan(_Strict):
     intent: Intent | None = None
     measures: list[str] = Field(default_factory=list)
     derived: list[Derived] = Field(default_factory=list)
+    durations: list[Duration] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)       # attribute slugs and time:... attributes
     via: dict[str, str] = Field(default_factory=dict)       # attribute slug -> the entity it is reached through
     filters: list[Filter] = Field(default_factory=list)
