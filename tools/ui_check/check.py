@@ -269,6 +269,14 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                          workspace + "/compliance", workspace + "/diagnostics", "/admin/system"):
                 a.page.goto(base + path, wait_until="networkidle")
                 a.page.wait_for_timeout(800)
+                if path.endswith("/graph") and not a.page.evaluate(
+                        "() => { const sb = document.getElementById('eg-sb'); if (!sb) return true;"
+                        " const r = sb.getBoundingClientRect(); if (!r.width) return true;"
+                        " const top = document.elementFromPoint(r.left + r.width / 2, r.top + 120);"
+                        " return !!(top && top.closest('#eg-sb')); }"):
+                    # A closed side panel once lay over the Tables list.
+                    problems.append({"where": f"{view} {path}", "problem": "tables list covered",
+                                     "detail": "something sits over the Tables list"})
                 report.append({"page": path, "view": view, **a.shot("51" + path.replace("/", "_"), full=True)})
         browser.close()
     return report, problems
