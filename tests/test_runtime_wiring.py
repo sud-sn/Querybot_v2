@@ -339,15 +339,11 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("schema_hint", html,
                       "schema_hint not sent in WebSocket payload")
 
-    def test_portal_chat_token_kpi_present(self):
-        """The chat portal must render the user token KPI."""
+    def test_portal_chat_keeps_token_counts_off_the_readers_page(self):
+        """Tokens used are the admin's number (the workspace's "This month"), not
+        the reader's: the redesign took the meter off the chat page."""
         from tests.chat_render import render as render_chat, visible as visible_chat
-        html = _read("portal/templates/portal_chat.html")
-        self.assertIn("token-kpi-pill", html)
-        # The label is a catalogue id in the source now, so the assertion moves
-        # onto the rendered page -- which also proves the meter's numbers reach
-        # it, which reading the template never did.
-        self.assertIn("Tokens this month · 1M", visible_chat(render_chat()))
+        self.assertNotIn("Tokens this month", visible_chat(render_chat()))
 
     def test_schema_selector_is_not_nested_inside_suggestions_only(self):
         """Schema selector should be available even when suggestions are empty."""
@@ -442,7 +438,10 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("Query limit", rendered)
         self.assertIn("497", rendered)           # query_status.remaining_label
         self.assertIn("query_status.remaining_label", dashboard_html)
-        self.assertIn("query-kpi-pill", chat_html)
+        # The chat says the limit only as the reader nears it: a notice above
+        # the question box, kept current by updateQueryLimitKpi.
+        self.assertIn('id="queryLimitNotice"', chat_html)
+        self.assertIn("function updateQueryLimitKpi", chat_html)
         self.assertIn("refreshQueryLimitStatus", chat_html)
         # The label moved into the catalogue, so the chat page carries the id
         # and core.i18n carries the copy. Asserting the id here and the copy

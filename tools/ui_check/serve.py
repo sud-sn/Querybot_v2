@@ -95,11 +95,13 @@ schema_module._run_azure_sql = run_azure_sql
 if fresh:
     from tests.test_core2_learned_page_shows_what_was_learned import _schema_file
 
-    store.upsert_client(RETAIL, "Retail (invented)")
+    store.upsert_client(RETAIL, "portal")
     store.save_compliance_profile(RETAIL, mode="standard")
     rid = store.save_db_config("azure_sql", "Retail warehouse", {"server": "retail", "database": "d", "user": "u",
                                                                   "password": "p"})
-    store.update_client_meta(RETAIL, db_config_id=rid, chat_ui_enabled=1)
+    # Feedback on: the check sees the whole action row a workspace can have.
+    store.update_client_meta(RETAIL, client_name="Retail (invented)", db_config_id=rid, chat_ui_enabled=1,
+                             enable_feedback_collection=1)
     schema_dir = RUN / "clients" / RETAIL / "schema"
     store.update_client_state(RETAIL, "READY", {"schema_dir": str(schema_dir)})
     _schema_file(built, schema_dir)
@@ -110,7 +112,10 @@ if fresh:
     from admin import credentials as admin_credentials
 
     admin_credentials.claim_first(ADMIN_PASSWORD)
-    store.create_user(RETAIL, "Riley Reader", READER[0], role="analyst", password=READER[1])
+    # A reader sees only the tables their group is given: the check reads as one, with the whole warehouse.
+    sales = store.create_group(RETAIL, "Sales team", "Every table of the retail warehouse")
+    store.set_group_tables(sales, RETAIL, [f"MEMORY.MAIN.{physical}" for physical in built.tables.values()])
+    store.create_user(RETAIL, "Riley Reader", READER[0], group_id=sales, role="analyst", password=READER[1])
     store.create_user(inv_account, "Ines Inventory", "ines@example.com", role="admin", password=READER[1])
     store.create_user(RETAIL, "Adi Admin", "adi@example.com", role="admin", password=READER[1])
     STATE.write_text(json.dumps({"inventory": inv_account, "retail": RETAIL}))

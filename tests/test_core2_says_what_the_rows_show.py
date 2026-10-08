@@ -6,7 +6,7 @@ stores were close, whether one carried the rest, or how a month compared with
 the ones before. Today's pipeline adds a summary, but a general one.
 
 Now up to three findings follow the sentence, each worked out from the answer's
-own rows and specific to its shape, under "Key insights":
+own rows and specific to its shape, under "What stands out":
 
 * a breakdown: how much the top 3 make of the total; a ranking from the lowest,
   how little the lowest 3 make; an average or days, its range and median (never
@@ -179,25 +179,17 @@ def test_findings_that_fail_cost_only_the_findings(retail, monkeypatch, caplog):
 # ── the portal ─────────────────────────────────────────────────────────────
 
 
-def _notes(msg: dict) -> str:
-    source = TEMPLATE.read_text(encoding="utf-8")
-    start = source.index("  const NOTE_RANK = ")
-    end = source.index("    : '';", source.index("const notesHtml", start)) + len("    : '';")
-    script = f"""
-const t = key => ({{'ui.chat.card.key_insights': 'Key insights'}})[key] || key;
-const escHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const msg = {json.dumps(msg)};
-{source[start:end]}
-process.stdout.write(notesHtml);
-"""
-    return subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True, timeout=30).stdout
-
-
 @pytest.mark.skipif(shutil.which("node") is None, reason="node runs the portal's own script")
-def test_the_portal_shows_each_finding_under_key_insights():
+def test_the_portal_shows_each_finding_under_what_stands_out():
+    pytest.importorskip("dukpy")
+    from tests.test_the_answer_card import card
+
     findings = ["The top 3 of the 12 stores make 33% of the total.", "A <b> & B are close."]
-    shown = _notes({"key_insights": findings, "coverage_caveats": ["Rows with no store are left out."]})
-    assert shown.index("Rows with no store") < shown.index("Key insights") < shown.index("The top 3")
+    shown = card({"engine": "core2", "answer": {"headline": "Net amount by store."}, "key_insights": findings,
+                  "coverage_caveats": ["Rows with no store are left out."], "trust": {"engine": "core2"}})
+    assert shown.index("Rows with no store") < shown.index("What stands out") < shown.index("The top 3")
     assert shown.count('class="answer-note note"') == 2
     assert "A &lt;b&gt; &amp; B are close." in shown and "<b>" not in shown, "a finding is text, never markup"
-    assert _notes({"key_insights": []}) == "", "no findings, no empty heading"
+    bare = card({"engine": "core2", "answer": {"headline": "Net amount by store."}, "key_insights": [],
+                 "trust": {"engine": "core2"}})
+    assert "What stands out" not in bare, "no findings, no empty heading"

@@ -66,13 +66,13 @@ class _SignedIn(unittest.TestCase):
 class TestTheToggleIsInTheHeader(unittest.TestCase):
     """Markup-level, because placement is the whole request."""
 
-    def test_it_sits_in_the_header_beside_the_status_and_history(self):
+    def test_it_sits_in_the_header_beside_the_status(self):
         header = CHAT[CHAT.index('<div class="chat-shell-header">'):]
         header = header[:header.index("{% if available_schemas")]
         self.assertIn("chat-lang-switch", header)
         # Last in the right-hand group, so it lands in the corner.
         self.assertGreater(header.index("chat-lang-switch"),
-                           header.index('id="historyToggleBtn"'))
+                           header.index('id="connBadge"'))
 
     def test_it_posts_the_same_endpoint_the_sidebar_does(self):
         self.assertIn('action="/portal/api/language"', CHAT)

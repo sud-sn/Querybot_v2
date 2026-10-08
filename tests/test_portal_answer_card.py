@@ -146,34 +146,37 @@ def test_what_to_know_is_one_ranked_region(chat_source):
         )
 
 
-def test_confidence_states_a_verdict_and_hides_its_reasoning(chat_source):
-    """It used to be 74px of permanently-expanded bullets above the result."""
-    assert "trust-pill" in chat_source, "the confidence verdict is gone"
-    assert "confidenceDetailHtml" in chat_source, "confidence reasoning is gone"
+def test_confidence_states_a_verdict_and_hides_its_reasoning():
+    """It used to be 74px of permanently-expanded bullets above the result. The
+    verdict and its reasoning now live in "How it was counted", warnings first:
+    someone opening it wants to know what might be wrong."""
+    pytest.importorskip("dukpy")
+    from tests.test_the_answer_card import BY_STORE, Elements, card
 
-    # The detail must be rendered inside the disclosure, not in the card body.
-    details = re.search(r"<details class=\"trust-box\"[^>]*>.*?confidenceDetailHtml",
-                        chat_source, re.S)
-    assert details, "confidence reasoning is not inside the provenance disclosure"
+    msg = dict(BY_STORE, confidence={"score": 49, "level": "low", "label": "Low confidence",
+                                     "warnings": ["Two tables joined on a guessed key."],
+                                     "reasons": ["A governed measure."]})
+    markup = card(msg)
+    how = Elements(markup).first("answer-how")
+    assert "49/100" in how["text"], "the confidence verdict is gone"
+    assert how["text"].index("Two tables joined") < how["text"].index("A governed measure.")
+    start = markup.index('<details class="trust-box')
+    outside = markup[:start] + markup[markup.index("</details>", start):]
+    assert "A governed measure." not in outside, "the reasoning is outside the disclosure"
 
-    # Warnings before reasons: someone opening this wants to know what is wrong.
-    warn_at = chat_source.index("confidence.warnings")
-    reason_at = chat_source.index("confidence.reasons")
-    assert warn_at < reason_at, (
-        "reasons are listed before warnings; the reader is looking for the risk"
-    )
 
-
-def test_no_container_renders_with_nothing_in_it(chat_source):
+def test_no_container_renders_with_nothing_in_it():
     """An answer with no artifact and no question text used to draw an empty
     33px bubble, and a card with neither confidence nor sources drew an empty
     trust row. Both were invisible in code and obvious on screen."""
-    assert re.search(r"else if \(msg\.question\)", chat_source), (
-        "the result bubble no longer checks for text before rendering"
-    )
-    assert re.search(r"\(confidencePillHtml \|\| citationsHtml\)", chat_source), (
-        "the trust row renders unconditionally again"
-    )
+    pytest.importorskip("dukpy")
+    from tests.test_the_answer_card import card
+
+    markup = card({"engine": "core2", "question": "net sales in 1999",
+                   "answer": {"headline": "No rows match in 1999."}, "trust": {"engine": "core2"}})
+    assert 'class="msg-bubble"' not in markup, "an empty bubble under the sentence"
+    assert "trust-row" not in markup, "a trust row with no verdict and no sources"
+    assert "answer-visual" not in markup and "answer-tiles" not in markup
 
 
 def test_the_template_still_compiles(chat_source):

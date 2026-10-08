@@ -83,6 +83,13 @@ ICONS: dict[str, str] = {
     "lock": "lock",
     "key": "key",
     "loader": "loader-circle",
+    "stop": "square",
+    "calendar": "calendar",
+    "expand": "maximize-2",
+    "help": "circle-help",
+    "share": "share-2",
+    "more": "ellipsis",
+    "table": "table-2",
     # Data and meaning
     "chart-bar": "chart-column",
     "chart-line": "chart-line",

@@ -170,9 +170,8 @@ SPECIAL_BUTTONS = {
     "_styles.html": {"fn-helper-btn", "formula-test-btn", "mr-del-btn"},        # metrics, phase 6
     "admin.css": {"mobile-menu-btn"},                                           # admin shell, 6
     "chat_workspace.css": {"send-btn"},                                         # chat, phase 6
-    "portal_chat.html": {"artifact-head-btn", "chart-btn", "ctt-btn", "dt-csv-btn", "feedback-btn", "hero-btn",
-                         "hero-dismiss-btn", "hero-info-btn", "history-btn", "rc-csv-btn", "send-btn",
-                         "sql-copy-btn"},                                        # chat, phase 6
+    "portal_chat.html": {"artifact-head-btn", "chart-btn", "ctt-btn", "dt-csv-btn", "feedback-btn", "rc-csv-btn",
+                         "send-btn", "sql-copy-btn"},                            # chat, phase 6
     "client_detail.html": {"audit-expand-btn"},                                  # phase 6
     "client_graph.html": {"eg-m-btn", "jc-add-btn", "sf-btn", "tb-btn"},         # relationships, phase 4
     "client_setup.html": {"tbl-fields-btn"},                                     # phase 6

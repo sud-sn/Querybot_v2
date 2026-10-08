@@ -14,29 +14,9 @@ html,body{height:100%;overflow:hidden}
 /* Remove .main padding/max-width for the chat page only */
 body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow:hidden;display:flex;flex-direction:column;flex:1;min-height:0}
 .chat-page{height:100%;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:var(--surface-2)}
-.chat-hero{background:var(--surface);border-bottom:1px solid var(--border);padding:.65rem .9rem;display:flex;justify-content:space-between;gap:.75rem;flex-shrink:0;max-height:150px;overflow:hidden;transition:max-height .35s cubic-bezier(.4,0,.2,1),opacity .3s ease,padding .3s ease}
-.chat-hero.hero-collapsed{max-height:0;opacity:0;padding-top:0;padding-bottom:0;pointer-events:none;border-bottom:none}
-.hero-dismiss-btn{background:none;border:none;color:var(--text-muted);font-size:var(--font-xl);cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1;flex-shrink:0;align-self:flex-start;margin-top:-.1rem;transition:color .15s}
-.hero-dismiss-btn:hover{color:var(--text);background:var(--surface-2)}
-.hero-info-btn{align-items:center;gap:.3rem;background:none;border:none;color:var(--text-muted);font-size:var(--font-sm);cursor:pointer;padding:4px 9px;border-radius:999px;border:1px solid var(--border);line-height:1;flex-shrink:0;transition:all .15s}
-.hero-info-btn:hover{color:var(--primary);border-color:var(--primary)}
-.chat-title{font-size:var(--font-md);font-weight:var(--weight-bold);letter-spacing:0;color:var(--text);margin-bottom:.15rem}
-.chat-subtitle{display:none;color:var(--text-muted);line-height:1.6;max-width:700px}
-.chat-pills,.hero-actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.45rem}
-.chat-pill,.hero-btn{display:inline-flex;align-items:center;gap:.4rem;padding:5px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);font-size:var(--font-xs);font-weight:var(--weight-bold);box-shadow:none}
-.token-kpi-pill{background:linear-gradient(135deg,color-mix(in srgb,var(--primary-soft) 18%,var(--surface) 82%),var(--surface));border-color:color-mix(in srgb,var(--primary) 28%,var(--border) 72%);color:var(--text)}
-.token-kpi-pill .kpi-dot{width:8px;height:8px;border-radius:999px;background:var(--brand-gradient);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary-soft) 30%,transparent)}
-.query-kpi-pill{background:linear-gradient(135deg,color-mix(in srgb,var(--success-soft) 26%,var(--surface) 74%),var(--surface));border-color:color-mix(in srgb,var(--success) 28%,var(--border) 72%);color:var(--text)}
-.query-kpi-pill .kpi-dot{width:8px;height:8px;border-radius:999px;background:var(--success);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-soft) 38%,transparent)}
-.query-kpi-pill.limit-warning{background:linear-gradient(135deg,color-mix(in srgb,var(--warning-soft) 42%,var(--surface) 58%),var(--surface));border-color:color-mix(in srgb,var(--warning) 35%,var(--border) 65%)}
-.query-kpi-pill.limit-warning .kpi-dot{background:var(--warning);box-shadow:0 0 0 4px color-mix(in srgb,var(--warning-soft) 50%,transparent)}
-.query-kpi-pill.limit-blocked{background:linear-gradient(135deg,color-mix(in srgb,var(--danger-soft) 42%,var(--surface) 58%),var(--surface));border-color:color-mix(in srgb,var(--danger) 35%,var(--border) 65%)}
-.query-kpi-pill.limit-blocked .kpi-dot{background:var(--danger);box-shadow:0 0 0 4px color-mix(in srgb,var(--danger-soft) 50%,transparent)}
 .query-limit-notice{display:none;margin:.35rem 0 0;border-radius:var(--radius);padding:.75rem .9rem;font-size:var(--font-sm);font-weight:var(--weight-bold);border:1px solid color-mix(in srgb,var(--warning) 30%,transparent);background:var(--warning-soft);color:var(--warning)}
 .query-limit-notice.show{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
 .query-limit-notice.blocked{border-color:color-mix(in srgb,var(--danger) 30%,transparent);background:var(--danger-soft);color:var(--danger)}
-.hero-btn{cursor:pointer}
-.hero-btn:hover{text-decoration:none;border-color:var(--primary);color:var(--primary)}
 .chat-shell{background:color-mix(in srgb,var(--surface) 94%, transparent);border:0;border-radius:0;box-shadow:none;overflow:hidden;flex:1;display:flex;flex-direction:column;min-height:0}
 .chat-shell-header{padding:.7rem .95rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--surface);flex-shrink:0}
 .chat-lang-switch{display:inline-flex;gap:3px;margin-left:.15rem}
@@ -581,7 +561,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .clarification-option{font-size:var(--font-sm);font-weight:var(--weight-bold);padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}.clarification-option-detailed{border-radius:var(--radius);text-align:left;display:flex;flex-direction:column;gap:2px;padding:9px 13px}.clarification-option-name{font-weight:var(--weight-bold)}.clarification-option-detail{font-size:var(--font-2xs);font-weight:var(--weight-semibold);color:var(--text-muted);letter-spacing:.01em}
 .clarification-option:hover{border-color:var(--primary);color:var(--primary)}
 .clarification-option:disabled{opacity:.55;cursor:not-allowed}
-@media (max-width: 900px){.chat-hero{flex-direction:column}.msg-content{max-width:calc(100% - 52px)}.chart-canvas{height:280px}}
+@media (max-width: 900px){.msg-content{max-width:calc(100% - 52px)}.chart-canvas{height:280px}}
 @media (max-width: 640px){.chat-shell-header{flex-direction:column;align-items:flex-start}.chat-thread{padding:.75rem}.chat-composer{padding:.7rem .75rem}.composer-footer{align-items:flex-start}.msg-content{max-width:100%}.chart-header{flex-direction:column}}
 /* ── Query history side drawer ───────────────────────────────────────── */
 .chat-shell{position:relative}
@@ -615,9 +595,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .hp-badge{font-size:var(--font-2xs);font-weight:var(--weight-bold);padding:2px 6px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
 .hp-badge.ok{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 25%,transparent);color:var(--success)}
 .hp-empty{padding:2.5rem 1rem;text-align:center;font-size:var(--font-sm);color:var(--text-muted);line-height:1.7}
-.history-btn{display:inline-flex;align-items:center;gap:.35rem;padding:6px 11px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;transition:all .15s;white-space:nowrap}
-.history-btn:hover{border-color:var(--primary);color:var(--primary)}
-.history-btn.active{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 30%,transparent);color:var(--primary)}
 /* ── Main data-table CSV export button ──────────────────────────────── */
 .dt-csv-btn{display:inline-flex;align-items:center;gap:.3rem;padding:3px 9px;border-radius:5px;border:1px solid var(--border);background:var(--surface);color:var(--text-soft);font-size:var(--font-xs);font-weight:var(--weight-bold);cursor:pointer;flex-shrink:0;transition:background .12s,color .12s,border-color .12s;white-space:nowrap;line-height:1.5}
 .dt-csv-btn:hover{background:color-mix(in srgb,var(--primary-soft) 22%,var(--surface));color:var(--primary);border-color:var(--primary)}
@@ -628,7 +605,6 @@ body:has(.chat-page) .main { background: var(--bg); }
 .chat-page,
 .chat-inner,
 .chat-wrap { background: var(--bg); }
-.chat-hero { background: var(--surface); padding: 10px 16px; }
 .chat-shell,
 .chat-shell-header,
 .schema-strip,
@@ -666,7 +642,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .msg-bot .msg-bubble { box-shadow: none; }
 .chat-composer { padding: 12px clamp(16px, 4vw, 64px) 14px; }
 .chat-input-bar {
-  width: min(100%, 1120px);
+  width: min(100%, 780px);
   margin-inline: auto;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
@@ -682,6 +658,89 @@ body:has(.chat-page) .main { background: var(--bg); }
 @media (max-width: 900px) {
   .chat-thread { padding: 16px 12px; }
   .chat-composer { padding: 10px 10px calc(12px + env(safe-area-inset-bottom, 0px)); }
+}
+/* ── The answer card (redesign, October 2026) ───────────────────────────────
+   One column the width of a reading line. An answer is not boxed: its badges,
+   its finding and its notes sit on the page, and only the chart is a card.
+   Desktop controls are 28-32px (WCAG 2.5.8 asks 24px); on a phone every one
+   is 44px (Apple's guideline; Material asks 48dp). */
+.msg, .rc-row { width: min(100%, 780px); }
+.msg-bot .msg-content { max-width: 100%; width: 100%; }
+.answer-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.answer-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.answer-badges .badge { min-height: 24px; font-weight: var(--weight-medium); }
+.answer-card .answer-headline { margin: 0; font-size: var(--font-lg); line-height: 1.5; color: var(--text-strong); font-weight: var(--weight-semibold); text-wrap: pretty; }
+.answer-card .answer-headline.is-lead { font-size: var(--font-xl); }
+.answer-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.answer-tiles[data-count="1"] { grid-template-columns: minmax(200px, 320px); }
+.kpi-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; box-shadow: var(--shadow-sm); min-width: 0; }
+.kpi-label { font-size: var(--font-sm); color: var(--text-secondary); font-weight: var(--weight-medium); }
+.kpi-value { font-size: var(--font-3xl); font-weight: var(--weight-bold); color: var(--text-strong); letter-spacing: -0.02em; line-height: 1.2; margin: 4px 0 2px; white-space: nowrap; }
+.kpi-note { font-size: var(--font-sm); color: var(--text-muted); }
+.answer-visual { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px 8px; box-shadow: var(--shadow-sm); min-width: 0; }
+.answer-visual-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; }
+.answer-visual-copy { flex: 1; min-width: 0; }
+.answer-visual-title { font-weight: var(--weight-semibold); color: var(--text-strong); }
+.answer-visual-sub { font-size: var(--font-xs); color: var(--text-muted); }
+.answer-chart { width: 100%; }
+.answer-table .data-table-wrap { margin: 4px 0; }
+.answer-seg { display: inline-flex; gap: 4px; flex: none; }
+.answer-insights { border-left: 2px solid var(--primary); padding-left: 12px; display: flex; flex-direction: column; gap: 4px; }
+.answer-insights-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
+.answer-insights .answer-note { background: none; border: 0; padding: 0; color: var(--text); }
+.answer-insights .answer-note .an-icon { display: none; }
+.answer-notes .answer-note.caveat { font-size: var(--font-sm); }
+.answer-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.answer-grow { flex: 1; }
+.answer-actions [data-open-how] svg { transition: transform var(--t-fast); }
+.answer-actions [data-open-how][aria-expanded="true"] svg { transform: rotate(90deg); }
+.answer-how > summary { display: none; }
+.answer-how { margin: 0; }
+.answer-how-notes { margin: 0 0 8px; padding-left: 18px; color: var(--text); }
+.answer-how-notes li { margin: 2px 0; }
+.answer-next { display: flex; flex-wrap: wrap; gap: 8px; }
+.clarify-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-sm); }
+.clarify-question { margin: 0 0 4px; font-size: var(--font-lg); font-weight: var(--weight-semibold); color: var(--text-strong); }
+.clarify-options { display: flex; flex-direction: column; gap: 8px; }
+.clarify-card .clarify-choice { display: flex; align-items: center; width: 100%; min-height: 48px; padding: 10px 14px; text-align: left;
+  border: 1px solid var(--line-control); border-radius: var(--radius); background: var(--surface-raised); color: var(--text-strong);
+  font-weight: var(--weight-semibold); cursor: pointer; }
+.clarify-card .clarify-choice:hover { border-color: var(--primary); background: var(--primary-soft); }
+.clarify-card .clarify-choice:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
+.answer-next .follow-up-chip { min-height: 32px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: var(--radius-pill);
+  border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: var(--font-sm); font-weight: var(--weight-medium);
+  cursor: pointer; text-align: left; box-shadow: none; }
+.answer-next .follow-up-chip::before { content: "\21B3"; color: var(--text-muted); margin-right: 6px; }
+.answer-next .follow-up-chip:hover { border-color: var(--primary); color: var(--primary-ink); }
+.answer-next .follow-up-chip.is-action::before { content: none; }
+.answer-next .follow-up-chip:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
+.answer-card .feedback-panel { margin: 0; }
+.answer-card .rc-panel { margin: 0; }
+.artifact-kicker { display: block; font-size: var(--font-xs); color: var(--text-muted); font-weight: var(--weight-regular); text-transform: none; letter-spacing: 0; }
+.artifact-head-actions { display: flex; align-items: center; gap: 8px; }
+/* The page around the answers: the workspace's name in a slim header, the
+   connection said only when it is not live, a question as its own words. */
+.chat-shell-header { min-height: 56px; padding: 8px 24px; border-bottom: 1px solid var(--line-subtle); }
+.chat-shell-title h2 { margin: 0; font-size: var(--font-md); font-weight: var(--weight-bold); color: var(--text-strong); }
+.status-badge[data-state="connected"], .status-badge[data-state="connected"] + .status-note { display: none; }
+.answer-card .answer-how:not([open]) { display: none; }
+.answer-card .answer-how[open] { margin: 0; }
+.msg-user .msg-content { max-width: min(80%, 620px); align-items: flex-end; }
+.msg-user .msg-bubble { border-radius: 14px 14px 4px 14px; padding: 9px 14px; font-weight: var(--weight-medium); color: var(--primary-ink); }
+.message-delivery[data-state="complete"], .message-delivery:empty { display: none; }
+.user-message-footer { min-height: 0; }
+.chat-thread { gap: 14px; }
+.msg-bot + .msg-user { margin-top: 18px; }
+.query-limit-notice { width: min(100% - 32px, 780px); margin: 0 auto 8px; }
+.composer-footer { width: min(100%, 780px); margin-inline: auto; }
+/* How many earlier turns the next question carries is the product's bookkeeping, not the reader's. */
+#memoryBadge { display: none !important; }
+@media (max-width: 600px) {
+  .answer-card .btn-icon { width: 44px; }
+  .answer-card .btn, .answer-next .follow-up-chip, .artifact-head .btn { min-height: 44px; }
+  /* A number is never broken across lines: on a phone each tile has the width. */
+  .answer-tiles, .answer-tiles[data-count="1"] { grid-template-columns: 1fr; }
+  .kpi-value { font-size: var(--font-2xl); }
 }
 </style>
 {% endblock %}
@@ -730,54 +789,19 @@ body:has(.chat-page) .main { background: var(--bg); }
 </div>
 {% else %}
 <div class="chat-page">
-  <section class="chat-hero" id="chatHero">
-    <div style="flex:1;min-width:0">
-      <div class="chat-title">{{ t('ui.chat.hero_title') }}</div>
-      <div class="chat-subtitle">{{ t('ui.chat.hero_subtitle') }}</div>
-      <div class="chat-pills">
-        <span class="chat-pill">{{ t('ui.chat.pill_workspace', name=client.client_name or t('ui.chat.your_workspace')) }}</span>
-        <span class="chat-pill">{{ t('ui.chat.pill_role', role=enum_label('role', user.role)) }}</span>
-        <span class="chat-pill">{{ t('ui.chat.pill_group', group=user.group_name or t('ui.chat.not_assigned')) }}</span>
-        <span class="chat-pill token-kpi-pill"
-              title="{{ t('ui.chat.tokens_title', input=token_usage.input_label if token_usage else '0', output=token_usage.output_label if token_usage else '0') }}">
-          <span class="kpi-dot"></span>
-          {{ t('ui.chat.tokens_pill', total=token_usage.total_label if token_usage else '0') }}
-        </span>
-        <span class="chat-pill query-kpi-pill {% if query_status.blocked %}limit-blocked{% elif query_status.warning %}limit-warning{% endif %}"
-              id="queryLimitKpi"
-              title="{{ t('ui.chat.queries_title', used=query_status.used_label, limit=query_status.limit_label) }}">
-          <span class="kpi-dot"></span>
-          <span id="queryLimitText">{{ t('ui.chat.queries_left', count=query_status.remaining_label) }}</span>
-        </span>
-      </div>
-      <div id="queryLimitNotice"
-           class="query-limit-notice {% if query_status.blocked %}blocked show{% elif query_status.warning %}show{% endif %}">
-        <span id="queryLimitNoticeText">{{ query_status.message }}</span>
-      </div>
-    </div>
-    <button class="hero-dismiss-btn" id="heroDismissBtn" title="{{ t('ui.chat.hide_hero') }}" aria-label="{{ t('ui.chat.dismiss_hero') }}" onclick="_collapseHero()">{{ ic("x", 16) }}</button>
-  </section>
 
   <div class="chat-workspace">
     <div class="chat-workspace-main">
   <section class="chat-shell">
     <div class="chat-shell-header">
       <div class="chat-shell-title">
-        <div class="chat-shell-badge"><img src="{{ asset('img/logo-mark.svg') }}" alt="" class="qb-logo-mark"></div>
-        <div>
-          <h2>{{ t('ui.chat.shell_title') }}</h2>
-          <p>{{ t('ui.chat.shell_subtitle') }}</p>
-        </div>
+        <h2>{{ client.client_name or t('ui.chat.your_workspace') }}</h2>
       </div>
       <div class="status-wrap">
-        <div class="status-badge" id="connBadge"><span class="status-led"></span><span id="connText">{{ t('ui.chat.connecting') }}</span></div>
+        {# Said only when the session is not live: a green "Connected" on every
+           page load told the reader nothing they could act on. #}
+        <div class="status-badge" id="connBadge" data-state="connecting"><span class="status-led"></span><span id="connText">{{ t('ui.chat.connecting') }}</span></div>
         <div class="status-note" id="connNote">{{ t('ui.chat.waiting_session') }}</div>
-        <button type="button" class="hero-info-btn" id="heroInfoBtn" title="{{ t('ui.chat.show_info') }}" aria-label="{{ t('ui.chat.show_info_panel') }}" onclick="_expandHero()" style="display:none">{{ ic("info", 14) }} {{ t('ui.chat.info') }}</button>
-        <button type="button" class="history-btn" id="historyToggleBtn"
-                onclick="toggleHistoryPanel()" title="{{ t('ui.chat.view_history') }}" aria-expanded="false">
-          {{ ic("clock", 13) }}
-          {{ t('ui.chat.history') }}
-        </button>
         {# The language toggle, in the corner a reader looks for it.
            It also lives in the sidebar footer, which is below Settings and
            Logout and is the first thing a collapsed sidebar hides — so on the
@@ -872,6 +896,10 @@ body:has(.chat-page) .main { background: var(--bg); }
         {% endif %}
       </div>
 
+      <div id="queryLimitNotice"
+           class="query-limit-notice {% if query_status.blocked %}blocked show{% elif query_status.warning %}show{% endif %}">
+        <span id="queryLimitNoticeText">{{ query_status.message }}</span>
+      </div>
       <div class="chat-composer">
                 <div class="chat-input-bar">
           <div class="chat-input-wrap" id="inputWrap">
@@ -879,7 +907,7 @@ body:has(.chat-page) .main { background: var(--bg); }
             <textarea aria-label="{{ t('ui.chat.composer_label') }}" id="input" class="chat-input" placeholder="{{ t('ui.chat.composer_placeholder') }}" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
           </div>
           <div class="composer-side">
-            <span class="char-count" id="charCount">500</span>
+            <span class="char-count" id="charCount" hidden>500</span>
             <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="{{ t('ui.chat.send') }}" aria-label="{{ t('ui.chat.send') }}"><span id="sendBtnIcon" class="send-btn-icon">↑</span></button>
           </div>
         </div>
@@ -889,15 +917,6 @@ body:has(.chat-page) .main { background: var(--bg); }
             <div class="composer-state" id="composerState" role="status" aria-live="polite"></div>
             <div id="memoryBadge" style="display:none;align-items:center;gap:.35rem;font-size:var(--font-xs);font-weight:var(--weight-bold);padding:3px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);cursor:default" title=""></div>
           </div>
-          {% if suggestions %}
-          <div class="composer-actions">
-            {% for s in suggestions[:3] %}
-            <button type="button" class="composer-chip"
-                    data-fqn="{{ s.fqn | default('') }}"
-                    onclick="sendSuggestion(this)">{{ s.question }}</button>
-            {% endfor %}
-          </div>
-          {% endif %}
         </div>
       </div>
     </div>
@@ -906,11 +925,11 @@ body:has(.chat-page) .main { background: var(--bg); }
     <aside class="artifact-pane" id="artifactPane" aria-label="{{ t('ui.chat.artifact_label') }}" aria-hidden="true" inert>
       <header class="artifact-head">
         <div class="artifact-heading">
-          <span class="artifact-icon" aria-hidden="true">{{ ic("dashboard", 16) }}</span>
-          <span class="artifact-heading-copy"><span class="artifact-kicker" id="artifactKicker">{{ t('ui.chat.artifact_label') }}</span><span class="artifact-title" id="artifactTitle">{{ t('ui.chat.artifact_title') }}</span></span>
+          <span class="artifact-heading-copy"><span class="artifact-title" id="artifactTitle">{{ t('ui.chat.artifact_title') }}</span><span class="artifact-kicker" id="artifactKicker"></span></span>
         </div>
         <div class="artifact-head-actions">
-          <button type="button" class="artifact-head-btn" onclick="closeArtifactPane()" aria-label="{{ t('ui.chat.close_artifact') }}">{{ t('ui.chat.close') }}</button>
+          <span id="artifactActions"></span>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="closeArtifactPane()" aria-label="{{ t('ui.chat.close_artifact') }}" title="{{ t('ui.chat.close_artifact') }}">{{ ic("x", 18) }}</button>
         </div>
       </header>
       <div class="artifact-body" id="artifactBody"><div class="artifact-empty">{{ t('ui.chat.artifact_empty') }}</div></div>
@@ -974,7 +993,6 @@ function t(id, vars){
 }
 const ACCOUNT_ID = {{ (user.account_id or '')|tojson }};
 const USER_NAME = {{ user.name|tojson }};
-const USER_INIT = (USER_NAME[0] || 'U').toUpperCase();
 const USER_EMAIL = {{ user.email|default('', true)|tojson }};
 const DASHBOARD_ID = {{ (selected_dashboard.id if selected_dashboard else 0)|int|tojson }};
 const THREAD_STORAGE_KEY = `querybot.activeThread:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
@@ -1904,7 +1922,8 @@ function appendUser(text, opts = {}){
   const timestamp = timeLabel(opts.timestamp);
   const div = document.createElement('div');
   div.className = 'msg msg-user';
-  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">${t('ui.chat.you')}</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div><div class="user-message-footer"><span class="message-delivery" role="status"></span><span class="user-message-actions"><button type="button" class="message-action message-edit">${t('ui.chat.action.edit')}</button><button type="button" class="message-action message-retry">${t('ui.chat.action.retry')}</button></span></div></div>`;
+  div.dataset.time = timestamp;
+  div.innerHTML = `<div class="msg-content"><div class="msg-bubble">${escHtml(text)}</div><div class="user-message-footer"><span class="message-delivery" role="status"></span><span class="user-message-actions"><button type="button" class="message-action message-edit">${t('ui.chat.action.edit')}</button><button type="button" class="message-action message-retry">${t('ui.chat.action.retry')}</button></span></div></div>`;
   div._querybotOutbound = {
     text,
     tableHint: opts.tableHint || '',
@@ -2602,7 +2621,12 @@ function _mountResultChat(cardEl, rcId) {
   toggleBtn.addEventListener('click', () => {
     const isOpen = panel.classList.toggle('open');
     toggleBtn.classList.toggle('open', isOpen);
-    toggleBtn.textContent = t(isOpen ? 'ui.chat.close' : 'ui.chat.followup.open');
+    toggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    if (toggleBtn.hasAttribute('data-icon-only')) {
+      toggleBtn.setAttribute('aria-label', t(isOpen ? 'ui.chat.close' : 'ui.chat.followup.open'));
+    } else {
+      toggleBtn.textContent = t(isOpen ? 'ui.chat.close' : 'ui.chat.followup.open');
+    }
     if (isOpen) {
       input.focus();
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2901,21 +2925,24 @@ function renderArtifactPreview(msg){
   chartCounter += 1;
   const artifactChartId = `artifact-chart-${chartCounter}`;
   _activeArtifactChartId = hasChart ? artifactChartId : '';
-  const title = msg.chart?.title || msg.answer?.headline || msg.question || t('ui.chat.artifact.result');
+  // Named as the answer names it: the chart's title and what it counted.
+  const title = hasChart ? _answerChartTitle(msg.chart)
+    : (msg.kpi?.label || msg.answer?.headline || msg.question || t('ui.chat.artifact.result'));
   document.getElementById('artifactTitle').textContent = title;
   const dashboard = msg.dashboard_artifact || null;
+  const badges = (Array.isArray(msg.answer?.badges) ? msg.answer.badges : []).map(b => b && b.text).filter(Boolean);
   document.getElementById('artifactKicker').textContent = dashboard
     ? `${dashboard.name} · ${dashboard.status}`
-    : t(msg.analysis_artifact ? 'ui.chat.artifact.isolated' : 'ui.chat.artifact_label');
+    : badges.join(' · ');
   const tabs = [];
   const panels = [];
   if (hasChart || hasKpi) {
-    tabs.push(_artifactTab('visual', t('ui.chat.card.visual'), true));
+    tabs.push(_artifactTab('visual', t('ui.chat.card.chart'), true));
     let visual = '';
-    if (hasKpi) {
+    if (hasKpi && !hasChart) {
       const kpi = msg.kpi || {};
       const value = kpi.state === 'missing' ? 'N/A' : _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {});
-      visual = `<div class="result-kpi ${kpi.state === 'missing' ? 'missing' : ''}" style="min-height:360px;display:flex;flex-direction:column;justify-content:center"><div class="result-kpi-label">${escHtml(kpi.label || t('ui.chat.artifact.value'))}</div><div class="result-kpi-value">${escHtml(value)}</div><div class="result-kpi-note">${escHtml(kpi.note || t('ui.chat.artifact.single_value'))}</div></div>`;
+      visual = `<div class="result-kpi ${kpi.state === 'missing' ? 'missing' : ''}"><div class="result-kpi-label">${escHtml(kpi.label || t('ui.chat.artifact.value'))}</div><div class="result-kpi-value">${escHtml(value)}</div><div class="result-kpi-note">${escHtml(kpi.note || t('ui.chat.artifact.single_value'))}</div></div>`;
     } else {
       visual = `<div id="${artifactChartId}" class="artifact-chart"></div>${renderChartWarnings(msg.chart)}`;
     }
@@ -2923,25 +2950,24 @@ function renderArtifactPreview(msg){
   }
   if (hasData) {
     const active = !hasChart && !hasKpi;
-    tabs.push(_artifactTab('data', t('ui.chat.card.data'), active));
+    tabs.push(_artifactTab('data', t('ui.chat.card.table'), active));
     panels.push(_artifactPanel('data', renderDataTable(msg.data, { question: msg.question || '', trace_id: msg.trace_id || '' }), active));
   }
-  if (msg.trust?.sql) {
-    tabs.push(_artifactTab('query', t('ui.chat.card.query'), false));
-    panels.push(_artifactPanel('query', `<pre class="artifact-query">${escHtml(msg.trust.sql)}</pre>`, false));
-  }
+  const how = _answerHowHtml(msg, {}).replace('<details class="trust-box answer-how" data-trust-box>', '<details class="trust-box answer-how" open>');
+  tabs.push(_artifactTab('query', t('ui.chat.trust.how_counted'), false));
+  panels.push(_artifactPanel('query', how, false));
   const dashboardAction = dashboard
     ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">${escHtml(t('ui.chat.dashboard.open', {name: dashboard.name}))}</a>`
-    : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">' + t('ui.chat.chart.pin') + '</button>');
+    : ((msg.analysis_artifact || !(msg.pin_token || msg.chart?.pin_token)) ? ''
+       : '<button type="button" class="btn btn-sm" onclick="addArtifactToDashboard()">' + qbIcon('layout-grid', 15) + escHtml(t('ui.chat.chart.pin')) + '</button>');
+  document.getElementById('artifactActions').innerHTML = dashboardAction;
   const root = document.getElementById('artifactBody');
-  root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || t('ui.chat.artifact.governed_note'))}</p></div><div class="artifact-tabs qb-tabs" role="tablist" aria-label="${escHtml(t('ui.chat.artifact_label'))}">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
+  root.innerHTML = `<section class="artifact-surface"><div class="artifact-tabs qb-tabs" role="tablist" aria-label="${escHtml(title)}">${tabs.join('')}</div>${panels.join('')}</section>`;
   window.qbTabs(root.querySelector('.artifact-tabs'), {onChange: _artifactTabShown});
   root.querySelectorAll('.data-table-wrap').forEach(wrap => _mountDataTableControls(wrap, msg.question || ''));
   if (hasChart) {
     window._chartPayloads[artifactChartId] = Object.assign({}, msg.chart);
-    const node = document.getElementById(artifactChartId);
-    renderChartInto(node, msg.chart);
-    _mountChartControls(node?.parentElement, artifactChartId, updated => renderChartInto(node, updated));
+    renderChartInto(document.getElementById(artifactChartId), msg.chart);
   }
   openArtifactPane();
 }
@@ -2971,67 +2997,166 @@ function appendDashboardEvent(msg){
 // Registry of active inline chat panels keyed by rcId
 const _rcPanels = {};
 
-function appendAssistantResponse(msg, opts = {}){
-  hideWelcome();
-  lastAssistantText = msg.answer?.headline || '';
-  const timestamp = timeLabel(opts.timestamp);
-  chartCounter += 1;
-  const chartId = `assistant-chart-${chartCounter}`;
+// ── The answer card ─────────────────────────────────────────────────────────
+// One layout for every answer, the finding first: what it counted (badges),
+// one number as a tile or one sentence, the chart inside the answer, what
+// stands out, one row of actions and up to three next questions. How it was
+// counted is a click away, and the larger view opens only when asked for.
+//
+// answerCardHtml() is pure -- the answer in, the card's markup out -- so a
+// test runs it as the page does. appendAssistantResponse() inserts it and
+// wires the buttons.
+const _NUMERIC_FORMATS = ['currency', 'number', 'integer', 'decimal', 'percent', 'percentage', 'ratio'];
+
+function _answerBadgesHtml(msg) {
   const answer = msg.answer || {};
+  const badges = (Array.isArray(answer.badges) ? answer.badges : []).filter(b => b && b.text);
+  const items = badges.map(b => b.kind === 'period'
+    ? `<span class="badge badge-brand">${qbIcon('calendar', 13)}${escHtml(b.text)}</span>`
+    : `<span class="badge">${escHtml(b.text)}</span>`);
+  const scope = (msg.result_scope || {}).badge || answer.scope_badge || '';
+  if (scope) items.push(`<span class="badge">${escHtml(scope)}</span>`);
+  return items.length ? `<div class="answer-badges">${items.join('')}</div>` : '';
+}
+
+// The numbers of an answer that is only numbers: one tile each. A single value
+// comes as msg.kpi; several measures over one row with nothing to group them by
+// come as that row, and a bar chart of three unrelated totals would compare
+// what does not compare.
+function _answerTiles(msg) {
+  const kpi = msg.kpi;
+  if (kpi && kpi.state !== 'missing' && kpi.value !== undefined && kpi.value !== null) {
+    // A note that only names the period says what the badge above already says.
+    const period = ((msg.answer || {}).badges || []).find(b => b && b.kind === 'period');
+    let note = (msg.answer || {}).comparison || kpi.note || '';
+    if (period && note.replace(/^(in|on) /, '') === period.text) note = '';
+    return [{label: kpi.label || '', value: _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {}), note}];
+  }
+  const data = msg.data || {};
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  if (rows.length !== 1) return [];
+  const headers = (Array.isArray(data.headers) && data.headers.length) ? data.headers : Object.keys(rows[0] || {});
+  if (headers.length < 2 || headers.length > 4) return [];
+  const formats = _columnFormatMap(data);
+  const formatOf = h => formats.get(_normaliseColumnKey(h)) || '';
+  // Every column a number (a text or date column is something to group by,
+  // and then the row is a table, not tiles).
+  if (!headers.every(h => _NUMERIC_FORMATS.includes(formatOf(h))
+                          || (!formatOf(h) && _isANumericColumn(rows, h)))) return [];
+  const labels = data.header_labels || {};
+  return headers.map(h => ({label: labels[h] || h,
+                            value: _formatDisplayValue(rows[0][h], formatOf(h) || 'number', _displayFormatSpec(data, h), h),
+                            note: ''}));
+}
+
+function _answerTilesHtml(tiles) {
+  if (!tiles.length) return '';
+  return `<div class="answer-tiles" data-count="${tiles.length}">${tiles.map(tile =>
+    `<div class="kpi-tile"><div class="kpi-label">${escHtml(tile.label)}</div>`
+    + `<div class="kpi-value">${escHtml(tile.value)}</div>`
+    + (tile.note ? `<div class="kpi-note">${escHtml(tile.note)}</div>` : '')
+    + `</div>`).join('')}</div>`;
+}
+
+function _answerChartTitle(chart) {
+  const title = String(chart.title || '');
+  const x = chart.x_key ? ((chart.column_roles || {})[chart.x_key] || {}) : {};
+  // "Store name" is a store: the word that names a member is not what is counted.
+  const by = String(x.label || '').trim().replace(/\s+(name|description|desc|code|label|title)$/i, '');
+  if (!by || / by /i.test(title) || x.role === 'temporal') return title;
+  return `${title} ${t('ui.chat.card.by', {label: by.toLowerCase()})}`;
+}
+
+// A chart inside the answer is as tall as its content: a bar per row for a
+// ranking (so twelve stores are not squeezed into the height of five), a fixed
+// height for a series.
+function _answerChartHeight(chart) {
+  const type = String(chart.chart_type || '').toLowerCase();
+  const temporal = ((chart.chart_spec || {}).x || {}).role === 'temporal';
+  if (temporal || ['line', 'area', 'forecast', 'scatter', 'heatmap'].includes(type)) return 260;
+  if (['pie', 'donut'].includes(type)) return 280;
+  const n = Array.isArray(chart.rows) ? chart.rows.length : 0;
+  return Math.max(200, Math.min(460, n * 28 + 56));
+}
+
+// The chart (or, with no chart, the rows) inside the answer, with a switch to
+// the table and Expand for the larger view.
+function _answerVisualHtml(msg, ids) {
+  const chart = msg.chart;
+  const data = msg.data || {};
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  if (!chart && !rows.length) return '';
+  const period = ((msg.answer || {}).badges || []).find(b => b && b.kind === 'period');
+  const title = chart ? _answerChartTitle(chart) : t('ui.chat.card.table');
+  const switcher = (chart && rows.length)
+    ? `<div class="answer-seg" role="group" aria-label="${escHtml(t('ui.chat.card.view'))}">`
+      + `<button type="button" class="btn btn-xs" aria-pressed="true" data-view="chart">${escHtml(t('ui.chat.card.chart'))}</button>`
+      + `<button type="button" class="btn btn-xs" aria-pressed="false" data-view="table">${escHtml(t('ui.chat.card.table'))}</button></div>`
+    : '';
+  return `<section class="answer-visual">
+      <header class="answer-visual-head">
+        <div class="answer-visual-copy"><div class="answer-visual-title">${escHtml(title)}</div>`
+        + (period ? `<div class="answer-visual-sub">${escHtml(period.text)}</div>` : '') + `</div>
+        ${switcher}
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" data-open-artifact aria-label="${escHtml(t('ui.chat.card.expand'))}" title="${escHtml(t('ui.chat.card.expand'))}">${qbIcon('expand', 16)}</button>
+      </header>
+      ${chart ? `<div class="answer-chart" id="${ids.chartId}" style="height:${_answerChartHeight(chart)}px"></div>${renderChartWarnings(chart)}` : ''}
+      <div class="answer-table"${chart ? ' hidden' : ''}>${chart ? '' : renderDataTable(data, {question: msg.question || '', trace_id: msg.trace_id || ''})}</div>
+    </section>`;
+}
+
+function _answerNotes(msg) {
+  // Tiers describe consequence:
+  //   caveat  something was excluded, so the number means less than it appears
+  //   watch   the number is real, but it is telling you something
+  //   note    context, safe to skip
+  // A caveat stays next to the number; the rest is what stands out.
+  const NOTE_RANK = { caveat: 0, watch: 1, note: 2 };
+  const notes = [];
+  for (const c of (Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [])) {
+    if (c) notes.push({ tier: 'caveat', icon: '!', text: String(c) });
+  }
+  const ds = msg.decision_signal || {};
+  if (ds.line) {
+    notes.push({ tier: ds.tone === 'watch' ? 'watch' : 'note',
+                 icon: { watch: '!', positive: '+', neutral: '-' }[ds.tone] || '-', text: String(ds.line) });
+  }
+  for (const c of (Array.isArray(msg.anomaly_callouts) ? msg.anomaly_callouts : [])) {
+    const sev = String(c.severity || 'info').toLowerCase();
+    const isWarn = sev === 'warn' || sev === 'warning';
+    notes.push({ tier: isWarn ? 'watch' : 'note', icon: isWarn ? '!' : '-', text: String(c.message || '') });
+  }
+  if (msg.insight_summary) notes.push({ tier: 'note', icon: '-', text: String(msg.insight_summary) });
+  // The new core's findings, worked out from the answer's own rows: one line each.
+  for (const k of (Array.isArray(msg.key_insights) ? msg.key_insights : [])) {
+    if (k) notes.push({ tier: 'note', icon: '-', text: String(k) });
+  }
+  // Stable within a tier: the server's order carries meaning the client cannot
+  // reconstruct, so only the tier reorders anything.
+  notes.sort((a, b) => NOTE_RANK[a.tier] - NOTE_RANK[b.tier]);
+  const row = n => `<div class="answer-note ${escHtml(n.tier)}"><span class="an-icon" aria-hidden="true">${escHtml(n.icon)}</span><span>${escHtml(n.text)}</span></div>`;
+  const caveats = notes.filter(n => n.text && n.tier === 'caveat');
+  const insights = notes.filter(n => n.text && n.tier !== 'caveat');
+  return {
+    caveatsHtml: caveats.length ? `<div class="answer-notes">${caveats.map(row).join('')}</div>` : '',
+    insightsHtml: insights.length
+      ? `<div class="answer-insights"><div class="answer-insights-label">${escHtml(t('ui.chat.card.key_insights'))}</div>${insights.map(row).join('')}</div>`
+      : '',
+  };
+}
+
+// How it was counted: the answer's notes in words, what was considered, then
+// the technical record (rows, time, source, SQL) for whoever wants to check.
+function _answerHowHtml(msg, env) {
   const trust = msg.trust || {};
   const confidence = msg.confidence || trust.confidence || {};
   const resultScope = msg.result_scope || (msg.analysis_contract && msg.analysis_contract.result_scope) || {};
-  const hasChart = !!msg.chart;
-  const hasData = !!(msg.data && Array.isArray(msg.data.rows) && msg.data.rows.length);
-  const scopeBadgeHtml = resultScope.badge ? `<div class="scope-badge">${escHtml(resultScope.badge)}</div>` : '';
-  const scopeNoteHtml = (answer.scope_note || resultScope.note)
-    ? `<div class="scope-note">${escHtml(answer.scope_note || resultScope.note || '')}</div>`
-    : '';
-  // An answer about the data itself ("what can you tell me about my data?")
-  // reads as titled parts under its lead, as an analysis does -- not as one
-  // paragraph of bold headline.
-  const answerSections = Array.isArray(msg.sections) ? msg.sections : [];
-  const sectionsHtml = answerSections.map(s => {
-    const sb = Array.isArray(s.bullets) ? s.bullets : [];
-    return `<div class="analysis-section">`
-      + (s.title ? `<div class="analysis-section-title">${escHtml(s.title)}</div>` : '')
-      + (s.body ? `<div class="analysis-body">${escHtml(s.body)}</div>` : '')
-      + (sb.length ? `<ul class="analysis-list">${sb.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : '')
-      + `</div>`;
-  }).join('');
-
-  // The value leads. When there is no single value to show — a list, a chart
-  // with no headline number — the headline takes the lead slot instead, so the
-  // card never opens on a whisper.
-  const hasValue = !!answer.short_value;
-  const answerBlockHtml = hasValue
-    ? `<div class="answer-line">
-         <span class="answer-value">${escHtml(answer.short_value)}</span>
-         ${answer.comparison ? `<span class="answer-delta">${escHtml(answer.comparison)}</span>` : ''}
-       </div>
-       ${answer.headline ? `<p class="answer-headline">${escHtml(answer.headline)}</p>` : ''}`
-    : `<p class="answer-headline is-lead">${escHtml(answer.headline || t('ui.chat.card.answer_ready'))}</p>`;
-
-  // Confidence: a verdict in the footer, its reasoning inside the provenance
-  // disclosure. Warnings come before reasons — someone opening this is looking
-  // for what might be wrong, not for reassurance.
-  const confidenceLevel = String(confidence.level || 'medium').toLowerCase();
   const hasConfidence = confidence.score !== undefined;
-  // A LOW verdict states its reason inline. Reasons and warnings normally live
-  // inside the "How this answer was produced" disclosure so they do not compete
-  // with a good answer — but when the verdict is that the answer may be wrong,
-  // the reason is the thing the reader most needs, and putting it behind a
-  // click meant a 49/100 result looked no different from any other.
-  const lowWarn = (confidenceLevel === 'low' && Array.isArray(confidence.warnings))
-    ? (confidence.warnings[0] || '') : '';
+  const level = String(confidence.level || 'medium').toLowerCase();
   const confidencePillHtml = hasConfidence
-    ? `<button type="button" class="trust-pill ${escHtml(confidenceLevel)}" data-open-trust
-        title="${t('ui.chat.trust.open')}">
-        ${escHtml(confidence.label || 'Confidence')}
-        <span class="tp-score">${escHtml(String(confidence.score))}/100</span>
-      </button>`
-      + (lowWarn ? `<span class="trust-warn">${escHtml(lowWarn)}</span>` : '')
+    ? `<span class="trust-pill ${escHtml(level)}">${escHtml(confidence.label || 'Confidence')} <span class="tp-score">${escHtml(String(confidence.score))}/100</span></span>`
     : '';
+  // Warnings before reasons: someone opening this is looking for what might be wrong.
   const confidenceDetailHtml = hasConfidence
     ? `<div class="confidence-detail">`
       + (Array.isArray(confidence.warnings) ? confidence.warnings : []).map(w =>
@@ -3040,175 +3165,17 @@ function appendAssistantResponse(msg, opts = {}){
           `<div class="cd-line reason"><span class="cd-mark">+</span><span>${escHtml(r)}</span></div>`).join('')
       + `</div>`
     : '';
-
-  const msgTraceId = String(msg.trace_id || msg.trust?.trace_id || msg.trust?.question_id || '');
-  // Ana-style split: narrative and trust stay in chat while the result
-  // artifact renders in the right workspace.
-  let bodyHtml = '';
-  if (msg.kpi || hasChart || hasData) {
-    bodyHtml = `<button type="button" class="msg-action artifact-open-btn" data-open-artifact>${t(msg.kpi ? 'ui.chat.artifact.open_kpi' : (hasChart ? 'ui.chat.artifact.open_visual' : 'ui.chat.artifact.open_data'))} <span aria-hidden="true">→</span></button>`;
-  } else if (msg.question) {
-    bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question)}</div>`;
-  } else {
-    // An answer with no artifact and no question text -- "no rows matched", for
-    // instance -- used to render an empty 33px bubble under the headline. The
-    // headline is the whole answer in that case; nothing else belongs here.
-    bodyHtml = '';
-  }
-
-  // ── What to know before reading the number ────────────────────────────────
-  // Four server-side signals used to render as four separate bands, each with
-  // its own box and its own 12-13px text, in whatever order the code built
-  // them. All are deterministic (no LLM): coverage caveats from
-  // core/date_coverage.py and core/join_coverage.py, the decision signal, the
-  // statistical anomaly callouts, and the insight summary.
-  //
-  // They are one ranked list now. Tiers describe consequence:
-  //   caveat  something was excluded, so the number means less than it appears
-  //   watch   the number is real, but it is telling you something
-  //   note    context, safe to skip
-  const NOTE_RANK = { caveat: 0, watch: 1, note: 2 };
-  const notes = [];
-
-  for (const c of (Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [])) {
-    if (c) notes.push({ tier: 'caveat', icon: '!', text: String(c) });
-  }
-
-  const ds = msg.decision_signal || {};
-  if (ds.line) {
-    notes.push({
-      tier: ds.tone === 'watch' ? 'watch' : 'note',
-      icon: { watch: '!', positive: '+', neutral: '-' }[ds.tone] || '-',
-      text: String(ds.line),
-    });
-  }
-
-  for (const c of (Array.isArray(msg.anomaly_callouts) ? msg.anomaly_callouts : [])) {
-    const sev = String(c.severity || 'info').toLowerCase();
-    const isWarn = sev === 'warn' || sev === 'warning';
-    notes.push({
-      tier: isWarn ? 'watch' : 'note',
-      icon: isWarn ? '!' : '-',
-      text: String(c.message || ''),
-    });
-  }
-
-  if (msg.insight_summary) {
-    notes.push({ tier: 'note', icon: '-', text: String(msg.insight_summary) });
-  }
-  // The new core's findings, worked out from the answer's own rows: one line each.
-  for (const k of (Array.isArray(msg.key_insights) ? msg.key_insights : [])) {
-    if (k) notes.push({ tier: 'note', icon: '-', text: String(k) });
-  }
-
-  // Stable within a tier: the server's order carries meaning the client cannot
-  // reconstruct, so only the tier reorders anything.
-  notes.sort((a, b) => NOTE_RANK[a.tier] - NOTE_RANK[b.tier]);
-
-  // Two groups, not one flat list. A caveat says the number means LESS than it
-  // appears and has to stay next to the number; an insight says what the
-  // number MEANS and reads as a finding. Rendering them identically made every
-  // line look equally like a warning, so the interpretation -- the part a
-  // person actually wants -- was camouflaged by the hedging.
-  const _noteRow = n =>
-    `<div class="answer-note ${escHtml(n.tier)}">`
-    + `<span class="an-icon" aria-hidden="true">${escHtml(n.icon)}</span>`
-    + `<span>${escHtml(n.text)}</span></div>`;
-
-  const _caveats  = notes.filter(n => n.text && n.tier === 'caveat');
-  const _insights = notes.filter(n => n.text && n.tier !== 'caveat');
-
-  const notesHtml = (_caveats.length || _insights.length)
-    ? `<div class="answer-notes">`
-      + _caveats.map(_noteRow).join('')
-      + (_insights.length
-          // .section-label already exists (11px/850/uppercase) and was used
-          // only by the analysis card. This is what it is for.
-          ? `<div class="section-label answer-insights-label">${t('ui.chat.card.key_insights')}</div>`
-            + _insights.map(_noteRow).join('')
-          : '')
-      + `</div>`
-    : '';
-
-  // ── Decision actions — incl. diagnose and other result chips ────────────
-  const actionResultId = trust.result_id || msg.data?.result_id || '';
-  // Never attach an executable action to an unaddressable card. Falling back
-  // to the adapter's latest result could otherwise run an old card's button
-  // against a newer answer after reconnect or thread navigation.
-  const nextActions = actionResultId && Array.isArray(msg.next_actions) ? msg.next_actions : [];
-  const nextActionsHtml = nextActions.length
-    ? nextActions.map(a => {
-        const isDiagnose = a.id === 'diagnose';
-        const cls = isDiagnose ? 'msg-action msg-action-diagnose' : 'msg-action';
-        const icon = isDiagnose
-          ? qbIcon('diagnose', 13, 'qb-icon-lead')
-          : '';
-        return `<button class="${cls}" type="button" data-analysis-action="${escHtml(a.id)}" data-analysis-label="${escHtml(a.label)}">${icon}${escHtml(a.label)}</button>`;
-      }).join('')
-    : '';
-
-  const dashboardToken = msg.pin_token || msg.chart?.pin_token || '';
-  const pinBtnHtml = (dashboardToken && (hasChart || msg.kpi || hasData))
-    ? '<button class="msg-action" type="button" data-pin="chart">' + qbIcon('chart-line', 14, 'qb-icon-lead') + '' + escHtml(t('ui.chat.chart.pin')) + '</button>'
-    : '';
-
-  // Follow-up suggestions — result-aware chips generated from the data brief
-  const followUpSugs = Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : [];
-  const followUpHtml = followUpSugs.length
-    ? `<div class="follow-up-wrap">
-        <div class="suggestions-label">${t('ui.chat.suggestions.label')}</div>
-        <div class="suggestions follow-up-chips">
-          ${followUpSugs.map(_followUpChip).map(c => `<button class="suggestion-chip follow-up-chip" type="button"
-            data-question="${escHtml(c.question)}"
-            data-follow-up="${escHtml(c.label)}" title="${escHtml(c.label)}">
-            <span class="suggestion-card-copy"><small>${t('ui.chat.card.follow_up')}</small><strong>${escHtml(c.label)}</strong></span>
-          </button>`).join('')}
-        </div>
-      </div>`
-    : '';
-
-  // ── Answer feedback thumbs (learning loop) ────────────────────────────────
-  const _qid = trust.question_id || '';
-  const feedbackHtml = (FEEDBACK_ENABLED && _qid)
-    ? `<div class="feedback-row">
-        <span class="feedback-label">${t('ui.chat.card.helpful')}</span>
-        <button class="feedback-btn up" type="button" title="${t('ui.chat.feedback.up')}" aria-label="${t('ui.chat.feedback.up')}">${qbIcon('thumbs-up', 15)}</button>
-        <button class="feedback-btn down" type="button" title="${t('ui.chat.feedback.down')}" aria-label="${t('ui.chat.feedback.not_helpful')}">${qbIcon('thumbs-down', 15)}</button>
-        <span class="feedback-done" style="display:none"></span>
-       </div>
-       <div class="feedback-panel">
-         <select class="feedback-reason">${
-           ['other', 'wrong_metric', 'wrong_dimension', 'wrong_filter',
-            'wrong_join', 'wrong_data', 'incomplete', 'confusing',
-            'expected_data_missing']
-             .map(reason => `<option value="${reason}">${escHtml(t('ui.chat.reason.' + reason))}</option>`)
-             .join('')
-         }</select>
-         <textarea class="feedback-comment" placeholder="${t('ui.chat.feedback.comments')}"></textarea>
-         <button class="feedback-submit" type="button">${t('ui.chat.feedback.submit')}</button>
-       </div>`
-    : '';
-
-  const trustSchema = trust.schema || (_activeSchema
-    ? t('ui.chat.trust.schema_named', {schema: _activeSchema})
-    : t('ui.chat.trust.all_schemas'));
-  const dashboardArtifact = msg.dashboard_artifact || null;
-  const dashboardConfirmHtml = dashboardArtifact
-    ? `<div class="dashboard-confirm"><span><strong>${escHtml(t('ui.chat.confirm.updated', {name: dashboardArtifact.name || t('ui.chat.confirm.dashboard')}))}</strong>${escHtml(t('ui.chat.confirm.saved_as', {kind: dashboardArtifact.item_type || t('ui.chat.confirm.visual'), status: enumLabel('status', dashboardArtifact.status || 'draft')}))}</span><a href="${escHtml(dashboardArtifact.url || '/portal/dashboard')}">${t('ui.chat.artifact.open_dashboard')}</a></div>`
-    : '';
-  const localOperation = msg.result_command || msg.result_exclusion || {};
-  const plannerUsed = localOperation.llm_input_mode === 'metadata_only';
-  const plannerProofTitle = t(plannerUsed ? 'ui.chat.trust.planner_metadata' : 'ui.chat.trust.planner_none');
-  const plannerProofDetail = plannerUsed
-    ? t('ui.chat.trust.planner_metadata_detail')
-    : t('ui.chat.trust.planner_none_detail');
-  const localOperationProofHtml = (localOperation.operation || localOperation.excluded_count)
-    ? `<div class="result-exclusion-proof">
-        <div><strong>${escHtml(t('ui.chat.local_op.title', {operation: String(localOperation.operation || 'exclusion')}))}</strong><span>${escHtml(t('ui.chat.local_op.rows', {count: String(localOperation.rows_after ?? '')}))}</span></div>
-        <div><strong>${plannerProofTitle}</strong><span>${plannerProofDetail}</span></div>
-        <div><strong>${t('ui.chat.trust.no_db_query')}</strong><span>${t('ui.chat.card.duckdb')}</span></div>
-      </div>`
-    : '';
+  const dateContexts = Array.isArray(trust.date_context) ? trust.date_context : [];
+  const notesHtml = dateContexts.map(ctx => {
+    // The new core's notes are sentences: what it assumed and how it counted.
+    if (typeof ctx === 'string') return `<li>${escHtml(ctx)}</li>`;
+    const physical = [String(ctx.table || '').split('.').pop(), ctx.column || ''].filter(Boolean).join('.');
+    const grain = ctx.temporal_grain ? t('ui.chat.trust.grain', {grain: ctx.temporal_grain}) : t('ui.chat.trust.calendar_grain');
+    const provenance = t(ctx.inferred ? 'ui.chat.trust.inferred' : 'ui.chat.trust.governed');
+    return `<li><span class="trust-k">${escHtml(t('ui.chat.trust.business_date'))}</span> ${escHtml(ctx.label || t('ui.chat.trust.business_date'))} · ${escHtml(grain)} · ${escHtml(physical)} · ${escHtml(provenance)}</li>`;
+  }).join('');
+  const considered = (Array.isArray(trust.considered) ? trust.considered : []).map(c =>
+    `<div class="trust-item"><div class="trust-k">${escHtml(t('ui.chat.trust.considered.' + c.key))}</div><div class="trust-v">${escHtml(c.value || '')}</div></div>`).join('');
   const citations = Array.isArray(msg.citations) ? msg.citations : [];
   const citationsHtml = citations.length
     ? `<div class="citation-strip"><span class="citation-label">${t('ui.chat.trust.sources')}</span>${citations.map(c => `<span class="citation-chip" title="${escHtml(c.type || t('ui.chat.trust.source'))}">${escHtml(c.label || '')}</span>`).join('')}</div>`
@@ -3229,99 +3196,238 @@ function appendAssistantResponse(msg, opts = {}){
   const sqlProofHtml = trust.sql
     ? `<div class="trust-sql-label"><span>${t('ui.chat.trust.sql_used')}</span><button class="sql-copy-btn" onclick="copySqlBox(this)">${t('ui.chat.card.copy')}</button></div><div class="sql-box">${escHtml(trust.sql)}</div>`
     : (trust.stopped ? '' : `<div class="trust-sql-label"><span>${t('ui.chat.trust.execution')}</span></div><div class="sql-box">${escHtml(trust.operation || t('ui.chat.trust.no_sql'))}</div>`);
-  const considered = Array.isArray(trust.considered) ? trust.considered : [];
-  const consideredHtml = considered.map(c => `<div class="trust-item"><div class="trust-k">${escHtml(t('ui.chat.trust.considered.' + c.key))}</div><div class="trust-v">${escHtml(c.value || '')}</div></div>`).join('');
-  const dateContexts = Array.isArray(trust.date_context) ? trust.date_context : [];
-  const dateContextHtml = dateContexts.map(ctx => {
-    // The new core's notes are sentences: what it assumed and how it counted.
-    if (typeof ctx === 'string') {
-      return `<div class="trust-item"><div class="trust-k">${t('ui.chat.trust.how_counted')}</div><div class="trust-v">${escHtml(ctx)}</div></div>`;
-    }
-    const physical = [String(ctx.table || '').split('.').pop(), ctx.column || ''].filter(Boolean).join('.');
-    const grain = ctx.temporal_grain
-      ? t('ui.chat.trust.grain', {grain: ctx.temporal_grain})
-      : t('ui.chat.trust.calendar_grain');
-    const provenance = t(ctx.inferred ? 'ui.chat.trust.inferred' : 'ui.chat.trust.governed');
-    return `<div class="trust-item"><div class="trust-k">${t('ui.chat.trust.business_date')}</div><div class="trust-v">${escHtml(ctx.label || t('ui.chat.trust.business_date'))} · ${escHtml(grain)} · ${escHtml(physical)} · ${escHtml(provenance)}</div></div>`;
-  }).join('');
-  const trustHtml = `<details class="trust-box" data-trust-box><summary>${t('ui.chat.trust.summary')}</summary>${confidenceDetailHtml}<div class="trust-grid"><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.rows')}</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.runtime')}</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.data_source')}</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.schema_mode')}</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">${t('ui.chat.trust.result_scope')}</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}${consideredHtml}</div>${analysisProofHtml}${stoppedHtml}${sqlProofHtml}</details>`;
+  const facts = [
+    [t('ui.chat.trust.rows'), String(trust.row_count ?? '')],
+    [t('ui.chat.trust.runtime'), trust.duration_label || ''],
+    [t('ui.chat.trust.data_source'), String(trust.data_source || '').toUpperCase()],
+    [t('ui.chat.trust.schema_mode'), trust.schema || env.schemaLabel || ''],
+    [t('ui.chat.trust.result_scope'), trust.scope_badge || resultScope.badge || ''],
+  ].filter(([, v]) => v).map(([k, v]) => `<div class="trust-item"><div class="trust-k">${escHtml(k)}</div><div class="trust-v">${escHtml(v)}</div></div>`).join('');
+  return `<details class="trust-box answer-how" data-trust-box><summary>${t('ui.chat.trust.how_counted')}</summary>`
+    + (confidencePillHtml ? `<div class="trust-row">${confidencePillHtml}</div>` : '')
+    + confidenceDetailHtml
+    + (notesHtml ? `<ul class="answer-how-notes">${notesHtml}</ul>` : '')
+    + (considered ? `<div class="trust-grid">${considered}</div>` : '')
+    + citationsHtml + analysisProofHtml + stoppedHtml
+    + `<div class="trust-grid trust-facts">${facts}</div>${sqlProofHtml}</details>`;
+}
 
+// A question back is a question, not an answer: the question, and each
+// reading as a choice that answers it (sent as the reader's next question).
+function _clarifyCardHtml(msg) {
+  const clarify = msg.clarify || {};
+  const options = (Array.isArray(clarify.options) ? clarify.options : []).filter(Boolean);
+  const question = clarify.question || (msg.answer || {}).headline || '';
+  return `<article class="answer-card clarify-card" aria-label="${escHtml(question)}">`
+    + `<p class="clarify-question">${escHtml(question)}</p>`
+    + `<div class="clarify-options">${options.map(o =>
+        `<button type="button" class="clarify-choice follow-up-chip" data-question="${escHtml(o)}" data-follow-up="${escHtml(o)}">${escHtml(o)}</button>`).join('')}</div>`
+    + `</article>`;
+}
+
+function answerCardHtml(msg, ids, env) {
+  env = env || {};
+  const answer = msg.answer || {};
+  const trust = msg.trust || {};
+  if (msg.clarify && Array.isArray(msg.clarify.options) && msg.clarify.options.some(Boolean)) return _clarifyCardHtml(msg);
+  const tiles = _answerTiles(msg);
+  const isCore2 = msg.engine === 'core2' || trust.engine === 'core2';
+
+  // The finding. The new core's tile already says its number and what it
+  // counted, so its sentence would only say it again; today's pipeline's
+  // sentence can carry more than the number, so it stays under the tile.
+  let leadHtml = '';
+  const hasValue = !!answer.short_value;
+  if (tiles.length) {
+    leadHtml = _answerTilesHtml(tiles)
+      + ((!isCore2 && answer.headline) ? `<p class="answer-headline">${escHtml(answer.headline)}</p>` : '');
+  } else if (hasValue) {
+    leadHtml = `<div class="answer-line"><span class="answer-value">${escHtml(answer.short_value)}</span>`
+      + (answer.comparison ? `<span class="answer-delta">${escHtml(answer.comparison)}</span>` : '') + `</div>`
+      + (answer.headline ? `<p class="answer-headline">${escHtml(answer.headline)}</p>` : '');
+  } else {
+    leadHtml = `<p class="answer-headline is-lead">${escHtml(answer.headline || t('ui.chat.card.answer_ready'))}</p>`;
+  }
+  // An answer about the data itself reads as titled parts under its lead.
+  const sections = Array.isArray(msg.sections) ? msg.sections : [];
+  const sectionsHtml = sections.map(s => {
+    const sb = Array.isArray(s.bullets) ? s.bullets : [];
+    return `<div class="analysis-section">`
+      + (s.title ? `<div class="analysis-section-title">${escHtml(s.title)}</div>` : '')
+      + (s.body ? `<div class="analysis-body">${escHtml(s.body)}</div>` : '')
+      + (sb.length ? `<ul class="analysis-list">${sb.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : '')
+      + `</div>`;
+  }).join('');
+  const caveats = Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [];
+  const scopeNote = answer.scope_note || (msg.result_scope || {}).note || '';
+  // The new core puts its first caveat in scope_note as well: said once.
+  const scopeNoteHtml = (scopeNote && !caveats.includes(scopeNote)) ? `<div class="scope-note">${escHtml(scopeNote)}</div>` : '';
+  const {caveatsHtml, insightsHtml} = _answerNotes(msg);
+  // A LOW verdict states its reason on the card, beside the finding: the
+  // reasoning normally waits in "How it was counted" so it does not compete
+  // with a good answer, but when the answer may be wrong the reason is the
+  // thing the reader most needs, and a 49/100 result looked like any other.
+  const confidence = msg.confidence || trust.confidence || {};
+  const confidenceLevel = String(confidence.level || '').toLowerCase();
+  const lowWarn = (confidenceLevel === 'low' && Array.isArray(confidence.warnings)) ? (confidence.warnings[0] || '') : '';
+  const lowWarnHtml = lowWarn
+    ? `<div class="answer-notes"><div class="answer-note watch trust-warn"><span class="an-icon" aria-hidden="true">!</span><span>${escHtml(lowWarn)}</span></div></div>`
+    : '';
+  // A question back, a smalltalk reply or an answer with nothing to draw: the
+  // sentence is the whole answer and nothing else belongs here.
+  const visualHtml = tiles.length ? '' : _answerVisualHtml(msg, ids);
+  const bodyHtml = (!visualHtml && !tiles.length && msg.question && !answer.headline)
+    ? `<div class="msg-bubble">${formatBotText(msg.question)}</div>` : '';
+
+  const dashboardArtifact = msg.dashboard_artifact || null;
+  const dashboardConfirmHtml = dashboardArtifact
+    ? `<div class="dashboard-confirm"><span><strong>${escHtml(t('ui.chat.confirm.updated', {name: dashboardArtifact.name || t('ui.chat.confirm.dashboard')}))}</strong>${escHtml(t('ui.chat.confirm.saved_as', {kind: dashboardArtifact.item_type || t('ui.chat.confirm.visual'), status: enumLabel('status', dashboardArtifact.status || 'draft')}))}</span><a href="${escHtml(dashboardArtifact.url || '/portal/dashboard')}">${t('ui.chat.artifact.open_dashboard')}</a></div>`
+    : '';
+  const localOperation = msg.result_command || msg.result_exclusion || {};
+  const plannerUsed = localOperation.llm_input_mode === 'metadata_only';
+  const localOperationProofHtml = (localOperation.operation || localOperation.excluded_count)
+    ? `<div class="result-exclusion-proof">
+        <div><strong>${escHtml(t('ui.chat.local_op.title', {operation: String(localOperation.operation || 'exclusion')}))}</strong><span>${escHtml(t('ui.chat.local_op.rows', {count: String(localOperation.rows_after ?? '')}))}</span></div>
+        <div><strong>${t(plannerUsed ? 'ui.chat.trust.planner_metadata' : 'ui.chat.trust.planner_none')}</strong><span>${t(plannerUsed ? 'ui.chat.trust.planner_metadata_detail' : 'ui.chat.trust.planner_none_detail')}</span></div>
+        <div><strong>${t('ui.chat.trust.no_db_query')}</strong><span>${t('ui.chat.card.duckdb')}</span></div>
+      </div>`
+    : '';
+
+  // One row of actions. Add to dashboard is the one labelled button; copy,
+  // the verdict and asking about the answer are icons with their names.
+  const hasVisual = !!(msg.chart || msg.kpi || tiles.length || ((msg.data || {}).rows || []).length);
+  const pinHtml = (ids.pinToken && hasVisual)
+    ? `<button class="btn btn-sm" type="button" data-pin="chart">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.chart.pin'))}</button>` : '';
+  const iconBtn = (attrs, icon, label) =>
+    `<button type="button" class="btn btn-ghost btn-icon btn-sm" ${attrs} aria-label="${escHtml(label)}" title="${escHtml(label)}">${qbIcon(icon, 16)}</button>`;
+  const feedbackOn = !!(env.feedbackEnabled && trust.question_id);
+  const actionsHtml = `<div class="answer-actions">${pinHtml}`
+    + iconBtn('data-copy="result"', 'copy', t('ui.chat.card.copy_result'))
+    + (feedbackOn ? iconBtn('data-feedback="up"', 'thumbs-up', t('ui.chat.feedback.up'))
+                    + iconBtn('data-feedback="down"', 'thumbs-down', t('ui.chat.feedback.not_helpful')) : '')
+    + (ids.rcId ? iconBtn(`data-rc-toggle="${ids.rcId}" aria-expanded="false" data-icon-only`, 'chat', t('ui.chat.followup.open')) : '')
+    + `<span class="answer-grow"></span>`
+    + `<button type="button" class="btn btn-link btn-sm" data-open-how aria-expanded="false">${escHtml(t('ui.chat.trust.how_counted'))}${qbIcon('chevron-right', 14)}</button></div>`;
+  const feedbackPanelHtml = feedbackOn
+    ? `<span class="feedback-done" role="status" style="display:none"></span><div class="feedback-panel">
+         <select class="feedback-reason" aria-label="${escHtml(t('ui.chat.feedback.down'))}">${
+           ['other', 'wrong_metric', 'wrong_dimension', 'wrong_filter', 'wrong_join', 'wrong_data', 'incomplete',
+            'confusing', 'expected_data_missing'].map(reason => `<option value="${reason}">${escHtml(t('ui.chat.reason.' + reason))}</option>`).join('')
+         }</select>
+         <textarea class="feedback-comment" aria-label="${escHtml(t('ui.chat.feedback.comments'))}" placeholder="${escHtml(t('ui.chat.feedback.comments'))}"></textarea>
+         <button class="feedback-submit" type="button">${t('ui.chat.feedback.submit')}</button>
+       </div>`
+    : '';
+
+  // Next: the analysis actions on this result, then up to three next questions.
+  const actionResultId = trust.result_id || (msg.data || {}).result_id || '';
+  // Never attach an executable action to an unaddressable card: falling back
+  // to the latest result could run an old card's button against a newer answer.
+  const nextActions = actionResultId && Array.isArray(msg.next_actions) ? msg.next_actions : [];
+  const follow = (Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : []).slice(0, 3).map(_followUpChip);
+  const chipsHtml = (nextActions.length || follow.length)
+    ? `<div class="answer-next" role="group" aria-label="${escHtml(t('ui.chat.suggestions.label'))}">`
+      + nextActions.map(a => `<button class="follow-up-chip is-action" type="button" data-analysis-action="${escHtml(a.id)}" data-analysis-label="${escHtml(a.label)}">${escHtml(a.label)}</button>`).join('')
+      + follow.map(c => `<button class="follow-up-chip" type="button" data-question="${escHtml(c.question)}" data-follow-up="${escHtml(c.label)}" title="${escHtml(c.question)}">${escHtml(c.label)}</button>`).join('')
+      + `</div>`
+    : '';
+  const rcHtml = ids.rcId
+    ? `<div class="rc-panel" id="${ids.rcId}">
+        <div class="rc-hint">${t('ui.chat.followup.hint')}</div>
+        <div class="rc-thread" id="${ids.rcId}-thread"></div>
+        <div class="rc-input-row">
+          <textarea class="rc-input" id="${ids.rcId}-input" rows="1" spellcheck="true" autocomplete="off"
+            aria-label="${escHtml(t('ui.chat.followup.placeholder'))}" placeholder="${escHtml(t('ui.chat.followup.placeholder'))}"></textarea>
+          <button class="rc-send" type="button" id="${ids.rcId}-send">${escHtml(t('ui.chat.followup.ask'))}</button>
+        </div>
+      </div>`
+    : '';
+
+  return `<article class="answer-card" aria-label="${escHtml(t('ui.chat.card.answer'))}">`
+    + _answerBadgesHtml(msg)
+    + leadHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
+    + localOperationProofHtml + dashboardConfirmHtml
+    + visualHtml + bodyHtml + insightsHtml
+    + actionsHtml + feedbackPanelHtml
+    + _answerHowHtml(msg, env)
+    + rcHtml + chipsHtml
+    + `</article>`;
+}
+
+function appendAssistantResponse(msg, opts = {}){
+  hideWelcome();
+  lastAssistantText = msg.answer?.headline || '';
+  const timestamp = timeLabel(opts.timestamp);
+  chartCounter += 1;
+  const chartId = `assistant-chart-${chartCounter}`;
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;
+  const trust = msg.trust || {};
+  const dashboardToken = msg.pin_token || msg.chart?.pin_token || '';
+  const trustSchema = trust.schema || (_activeSchema
+    ? t('ui.chat.trust.schema_named', {schema: _activeSchema})
+    : t('ui.chat.trust.all_schemas'));
+  const hasRows = !!(msg.data && Array.isArray(msg.data.rows) && msg.data.rows.length);
 
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML =
-    `<div class="msg-avatar"><img src="${window.QB_MARK_SRC}" alt="" class="qb-logo-mark"></div>
-    <div class="msg-content">
-      <div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div>
-      <div class="assistant-card">
-        <!-- The answer, then what qualifies it, then what to do with it, then
-             where it came from. The "Result" kicker is gone: it labelled the
-             obvious at the same size as the value it sat above. -->
-        <div class="result-topline">
-          <div class="result-answer">
-            ${answerBlockHtml}
-            ${scopeNoteHtml}
-            ${sectionsHtml}
-          </div>
-          ${scopeBadgeHtml}
-        </div>
-        ${notesHtml}
-        ${localOperationProofHtml}
-        ${dashboardConfirmHtml}
-        <div class="result-layout">
-          ${bodyHtml}
-          <div class="msg-actions">
-            ${nextActionsHtml}
-            <button class="msg-action" type="button" data-copy="result">${t('ui.chat.card.copy_result')}</button>
-            ${pinBtnHtml}
-            <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">${t('ui.chat.followup.open')}</button>
-          </div>
-          ${(confidencePillHtml || citationsHtml)
-            ? `<div class="trust-row">${confidencePillHtml}${citationsHtml}</div>`
-            : ''}
-          ${trustHtml}
-        </div>
-      </div>
-      <div class="rc-panel" id="${rcId}">
-        <div class="rc-hint">${t('ui.chat.result_chat.hint')}</div>
-        <div class="rc-thread" id="${rcId}-thread"></div>
-        <div class="rc-input-row">
-          <textarea class="rc-input" id="${rcId}-input" rows="1"
-            spellcheck="true" autocomplete="off"
-            placeholder="${t('ui.chat.followup.placeholder')}"></textarea>
-          <button class="rc-send" type="button" id="${rcId}-send">Ask</button>
-        </div>
-      </div>
-      ${followUpHtml}
-      ${feedbackHtml}
-    </div>`;
-
+  div.dataset.time = timestamp;
+  div.innerHTML = `<div class="msg-content">${answerCardHtml(msg, {chartId, rcId, pinToken: dashboardToken},
+    {feedbackEnabled: !!FEEDBACK_ENABLED, schemaLabel: trustSchema})}</div>`;
   thread().appendChild(div);
   const msgContentEl = div.querySelector('.msg-content');
   if (msgContentEl) msgContentEl._querybotPayload = msg;
-  const rcPanelEl = div.querySelector(`#${rcId}`);
-  const rcHintEl = rcPanelEl ? rcPanelEl.querySelector('.rc-hint') : null;
-  if (rcPanelEl && rcHintEl) {
-    rcHintEl.insertAdjacentHTML('beforebegin', '<div class="rc-scope-strip"><span class="rc-scope-chip">' + escHtml(t('ui.chat.card.rows_first'))
-       + '</span><span class="rc-scope-chip">' + escHtml(t('ui.chat.card.db_fallback')) + '</span></div>');
-    rcHintEl.textContent = t('ui.chat.followup.hint');
+
+  // The chart inside the answer, and its Chart / Table switch. The table is
+  // built the first time it is asked for.
+  const chartEl = div.querySelector(`#${chartId}`);
+  if (chartEl && msg.chart) {
+    window._chartPayloads[chartId] = Object.assign({}, msg.chart);
+    renderChartInto(chartEl, msg.chart);
   }
+  const tableEl = div.querySelector('.answer-table');
+  const _mountTable = () => tableEl?.querySelectorAll('.data-table-wrap').forEach(w => _mountDataTableControls(w, msg.question || ''));
+  _mountTable();
+  div.querySelectorAll('.answer-seg [data-view]').forEach(btn => btn.addEventListener('click', () => {
+    const showTable = btn.dataset.view === 'table';
+    div.querySelectorAll('.answer-seg [data-view]').forEach(b => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+    if (showTable && tableEl && !tableEl.dataset.ready) {
+      tableEl.innerHTML = renderDataTable(msg.data, { question: msg.question || '', trace_id: msg.trace_id || '' });
+      tableEl.dataset.ready = '1';
+      _mountTable();
+    }
+    if (tableEl) tableEl.hidden = !showTable;
+    if (chartEl) {
+      chartEl.hidden = showTable;
+      // A chart drawn while hidden has no size: fitted when shown again.
+      if (!showTable && window.echarts) setTimeout(() => window.QBCharts.fit(echarts.getInstanceByDom(chartEl)), 10);
+    }
+  }));
   div.querySelector('[data-open-artifact]')?.addEventListener('click', () => renderArtifactPreview(msg));
-  const copyBtn = div.querySelector('[data-copy="result"]');
-  copyBtn?.addEventListener('click', async (e) => {
+
+  // How it was counted opens in place, from the link in the action row.
+  const howBtn = div.querySelector('[data-open-how]');
+  const howBox = div.querySelector('[data-trust-box]');
+  if (howBtn && howBox) {
+    howBox.id = chartId + '-how';
+    howBtn.setAttribute('aria-controls', howBox.id);
+    howBtn.addEventListener('click', () => { howBox.open = !howBox.open; });
+    howBox.addEventListener('toggle', () => {
+      howBtn.setAttribute('aria-expanded', howBox.open ? 'true' : 'false');
+      if (howBox.open) howBox.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
+  const answer = msg.answer || {};
+  const answerSections = Array.isArray(msg.sections) ? msg.sections : [];
+  div.querySelector('[data-copy="result"]')?.addEventListener('click', async () => {
     const sectionText = answerSections.flatMap(s => [s.title || '', s.body || '', ...(s.bullets || []).map(b => '- ' + b)]);
     const insightText = (Array.isArray(msg.key_insights) ? msg.key_insights : []).filter(Boolean).map(k => '- ' + k).join('\n');
     const copyPayload = [answer.headline || '', insightText, sectionText.filter(Boolean).join('\n'), trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
     const ok = await copyText(copyPayload);
-    const prev = e.currentTarget.textContent;
-    e.currentTarget.textContent = t(ok ? 'ui.chat.card.copied' : 'ui.chat.toast.copy_failed');
-    setTimeout(() => e.currentTarget.textContent = prev, 1400);
     toast(t(ok ? 'ui.chat.toast.result_copied' : 'ui.chat.toast.copy_failed'));
   });
-  const pinBtn = div.querySelector('[data-pin="chart"]');
-  pinBtn?.addEventListener('click', () => {
+  div.querySelector('[data-pin="chart"]')?.addEventListener('click', () => {
     const live = window._chartPayloads[chartId] || msg.chart || {};
     openDashboardPicker({
       token: dashboardToken,
@@ -3331,67 +3437,41 @@ function appendAssistantResponse(msg, opts = {}){
       dashboard_id: DASHBOARD_ID,
     });
   });
-  renderArtifactPreview(msg);
   // Wire inline result card chat
   _mountResultChat(div, rcId);
-  // Record this turn in frontend history for localStorage persistence
-  // (fires for chart AND data-table responses so follow-ups always have context)
-  if (msg.trust?.sql && msg.question && !msg.result_command && !msg.result_exclusion && !msg.trust?.operation) {
-    const cols = (msg.data?.rows?.length ? Object.keys(msg.data.rows[0]) : []);
-    _pushHistory({
-      question: msg.question,
-      sql: msg.trust.sql,
-      columns: cols,
-      row_count: msg.trust.row_count ?? 0,
-    });
-  }
-
-  // Wire follow-up suggestion chips — pass the element (not the string) so
-  // sendSuggestion() can read btn.textContent and btn.dataset.fqn correctly.
-  div.querySelectorAll('.follow-up-chip').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (wsReady) sendSuggestion(btn);
-    });
-  });
-
-  // Attach autocomplete to the "Ask about this result" input
   const rcInputEl = div.querySelector(`#${rcId}-input`);
   if (rcInputEl) new AutoSuggest(rcInputEl);
 
-  // The confidence pill states the verdict; the reasoning behind it lives in
-  // the provenance disclosure, so the pill opens it and scrolls it into view.
-  const trustPillEl = div.querySelector('[data-open-trust]');
-  const trustBoxEl = div.querySelector('[data-trust-box]');
-  if (trustPillEl && trustBoxEl) {
-    trustPillEl.addEventListener('click', () => {
-      trustBoxEl.open = !trustBoxEl.open;
-      if (trustBoxEl.open) trustBoxEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    });
+  // Record this turn in frontend history for localStorage persistence
+  // (fires for chart AND data-table responses so follow-ups always have context)
+  if (trust.sql && msg.question && !msg.result_command && !msg.result_exclusion && !trust.operation) {
+    const cols = (msg.data?.rows?.length ? Object.keys(msg.data.rows[0]) : []);
+    _pushHistory({ question: msg.question, sql: trust.sql, columns: cols, row_count: trust.row_count ?? 0 });
   }
 
-  // Wire decision / analysis action buttons (Explain, Analyze, Recommend next step…)
-  // Server resolves the action against the cached result — no new DB query runs.
+  // Follow-ups are sent as the reader's next question; an analysis action runs
+  // on the cached result -- no new database query.
+  div.querySelectorAll('.follow-up-chip').forEach(btn => {
+    btn.addEventListener('click', () => { if (wsReady) sendSuggestion(btn); });
+  });
+  const actionResultId = trust.result_id || msg.data?.result_id || '';
   div.querySelectorAll('[data-analysis-action]').forEach(btn => {
     btn.addEventListener('click', () => {
-      sendAnalysisAction(
-        btn.dataset.analysisAction,
-        msg.analysis_contract || {},
-        btn.dataset.analysisLabel || 'Analysis',
-        actionResultId,
-      );
+      sendAnalysisAction(btn.dataset.analysisAction, msg.analysis_contract || {},
+                         btn.dataset.analysisLabel || 'Analysis', actionResultId);
     });
   });
-  // ── Answer feedback thumbs wiring (only when FEEDBACK_ENABLED and qid present) ─
+
+  // ── Answer feedback (learning loop): the thumbs sit in the action row ─────
+  const _qid = trust.question_id || '';
   if (FEEDBACK_ENABLED && _qid) {
-    const fbUp     = div.querySelector('.feedback-btn.up');
-    const fbDown   = div.querySelector('.feedback-btn.down');
+    const fbUp     = div.querySelector('[data-feedback="up"]');
+    const fbDown   = div.querySelector('[data-feedback="down"]');
     const fbPanel  = div.querySelector('.feedback-panel');
     const fbSubmit = div.querySelector('.feedback-submit');
     const fbDone   = div.querySelector('.feedback-done');
     const fbReason = div.querySelector('.feedback-reason');
     const fbComment= div.querySelector('.feedback-comment');
-    let   _pendingRating = -1;  // default direction for panel submit
-
     const _postFeedback = async (rating) => {
       const payload = {
         rating,
@@ -3410,7 +3490,9 @@ function appendAssistantResponse(msg, opts = {}){
         if (data.ok) {
           fbUp?.classList.toggle('active', rating === 1);
           fbDown?.classList.toggle('active', rating === -1);
-          if (fbPanel) fbPanel.classList.remove('open');
+          fbUp?.setAttribute('aria-pressed', rating === 1 ? 'true' : 'false');
+          fbDown?.setAttribute('aria-pressed', rating === -1 ? 'true' : 'false');
+          if (fbPanel && rating === 1) fbPanel.classList.remove('open');
           if (fbDone) { fbDone.textContent = data.message || t('ui.chat.feedback.thanks'); fbDone.style.display = ''; }
           toast(data.message || t('ui.chat.toast.feedback_saved'));
         } else {
@@ -3418,26 +3500,22 @@ function appendAssistantResponse(msg, opts = {}){
         }
       } catch { toast(t('ui.chat.toast.feedback_failed')); }
     };
-
-    // Thumbs-up: immediate submit, no panel
     fbUp?.addEventListener('click', () => _postFeedback(1));
-
-    // Thumbs-down: RECORD IT, then offer the reason panel.
-    // It used to only open the panel, so a user who clicked down and walked
-    // away left no signal at all -- while thumbs-up posted immediately. The
-    // negative signal is the more valuable one and it was the one being
-    // dropped. save_feedback upserts on (question_id, user_id), so the panel
-    // submit that may follow enriches this row rather than duplicating it.
+    // Thumbs-down is RECORDED at once, then offers the reason: a reader who
+    // clicks and walks away still leaves the signal. save_feedback upserts on
+    // (question_id, user_id), so the reason enriches this row, not a second one.
     fbDown?.addEventListener('click', () => {
-      _pendingRating = -1;
       _postFeedback(-1);
       if (fbPanel) fbPanel.classList.add('open');
     });
-
-    // Panel submit button
-    fbSubmit?.addEventListener('click', () => _postFeedback(_pendingRating));
+    fbSubmit?.addEventListener('click', () => _postFeedback(-1));
   }
 
+  // The larger view follows the answer it was opened from: a newer answer
+  // replaces it there, or closes it when it has nothing to show.
+  if (opts.persist !== false && document.querySelector('.chat-workspace')?.classList.contains('artifact-open')) {
+    if (msg.chart || msg.kpi || hasRows) renderArtifactPreview(msg); else closeArtifactPane();
+  }
   if (opts.persist !== false) pushChatCache({ kind:'assistant_response', payload: msg, timestamp });
   scrollBottom();
 }
@@ -3868,7 +3946,6 @@ function sendMessage(tableHint){
     payload,
   });
   _activeOutboundMessage = userMessage;
-  _collapseHero();   // auto-collapse hero on first message send
   try {
     ws.send(JSON.stringify(payload));
     _setUserMessageState(userMessage, 'working');
@@ -3935,6 +4012,8 @@ function updateCharCount(){
   var el  = document.getElementById('charCount');
   var rem = 500 - inp.value.length;
   el.textContent = rem;
+  // Said only as the limit nears: a counter at 500 on every empty box is noise.
+  el.hidden = rem > 120;
   el.style.color = rem <= 50 ? 'var(--danger)' : rem <= 120 ? 'var(--warning)' : '';
   el.style.fontWeight = rem <= 50 ? 'var(--weight-bold)' : '';
 }
@@ -4257,15 +4336,6 @@ function _initComposerMascot() {
 }
 
 // ── Hero collapse / expand ────────────────────────────────────────────────────
-const _HERO_STORAGE_KEY = 'qb-chat-hero-seen';
-function _collapseHero() {
-  const hero = document.getElementById('chatHero');
-  if (!hero || hero.classList.contains('hero-collapsed')) return;
-  hero.classList.add('hero-collapsed');
-  try { localStorage.setItem(_HERO_STORAGE_KEY, '1'); } catch (_) {}
-  const infoBtn = document.getElementById('heroInfoBtn');
-  if (infoBtn) infoBtn.style.display = 'inline-flex';
-}
 /* The run state a message ends in, from the state the server sends beside the
    text (gateway/base.py message_state): 'failed', 'waiting_for_user', or ''.
    Never from the text: a reply that happens to start with a symbol is an
@@ -4276,19 +4346,6 @@ function _terminalRunState(msg) {
   if (state === 'needs_input') return 'waiting_for_user';
   return '';
 }
-function _expandHero() {
-  const hero = document.getElementById('chatHero');
-  if (!hero) return;
-  hero.classList.remove('hero-collapsed');
-  const infoBtn = document.getElementById('heroInfoBtn');
-  if (infoBtn) infoBtn.style.display = 'none';
-}
-function _initHeroCollapse() {
-  try {
-    if (localStorage.getItem(_HERO_STORAGE_KEY)) _collapseHero();
-  } catch (_) {}
-}
-
 function connect(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   setConnectionState(
@@ -4936,7 +4993,6 @@ class AutoSuggest {
 
 document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
-  _initHeroCollapse();
   const requestedNewThread = _requestedNewThread;
   if (requestedNewThread) {
     clearChatCache();

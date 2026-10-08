@@ -4613,7 +4613,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.clar.requested": {"en": "Clarification requested", "fr": "Précision demandée"},
 
     # ── Sections and buttons on an answer ────────────────────────────────────
-    "ui.chat.card.key_insights": {"en": "Key insights", "fr": "Points clés"},
+    "ui.chat.card.key_insights": {"en": "What stands out", "fr": "Ce qui ressort"},
+    "ui.chat.card.answer": {"en": "Answer", "fr": "Réponse"},
+    "ui.chat.card.by": {"en": "by {label}", "fr": "par {label}"},
+    "ui.chat.card.view": {"en": "Show as", "fr": "Afficher en"},
+    "ui.chat.card.chart": {"en": "Chart", "fr": "Graphique"},
+    "ui.chat.card.table": {"en": "Table", "fr": "Tableau"},
+    "ui.chat.card.expand": {"en": "Open larger", "fr": "Agrandir"},
+    "ui.chat.followup.ask": {"en": "Ask", "fr": "Demander"},
     "ui.chat.card.follow_up": {"en": "Follow-up", "fr": "Question de suivi"},
     "ui.chat.card.helpful": {"en": "Was this helpful?", "fr": "Cette réponse vous a-t-elle été utile ?"},
     "ui.chat.card.copy_answer": {"en": "Copy answer", "fr": "Copier la réponse"},

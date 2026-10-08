@@ -30,8 +30,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import (bar_chart, conditions_tail, display_value, fmt, frame, scoped_label, span_words,
-                                  versus)
+from core2.answer.builder import (answer_badges, bar_chart, conditions_tail, display_value, fmt, frame, scoped_label,
+                                  span_words, versus)
 from core2.compile.compiler import CompileError, Compiled, compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Compare, Plan, TimeSpec, Window
@@ -397,6 +397,7 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
             suggestions.append(f"Monthly {m.label.lower()} for {leader}{tail}")
     payload = frame(question, headline=headline, short_value=short_value, comparison=comparison,
                     caveats=[n for n in notes if n.startswith("The data runs to")][:1], chart=chart, kpi=None,
+                    badges=answer_badges(total_logical),
                     suggestions=suggestions[:3], headers=headers, labels=labels, records=records, formats=formats,
                     sql="\n\n".join(f"-- {what}\n{sql}" for what, sql in sqls), row_count=rows_read,
                     duration_ms=(time.perf_counter() - started) * 1000, data_source=data_source,

@@ -24,12 +24,12 @@ from tests.portal_render import unescaped
 
 class TestPlainEnglishMeansPlainLanguage:
 
-    def test_the_hero_does_not_tell_a_french_reader_to_use_english(self):
-        """"Ask your data in plain English" means plain LANGUAGE. Translated
-        literally it becomes an instruction to write questions in English --
-        the opposite of what the French build is for."""
+    def test_the_page_does_not_tell_a_french_reader_to_use_english(self):
+        """"Ask in plain English" means plain LANGUAGE. Translated literally it
+        becomes an instruction to write questions in English -- the opposite of
+        what the French build is for. (The hero that said it is gone; the
+        welcome says it now.)"""
         markup = visible(render(lang="fr"))
-        assert "Interrogez vos données en langage courant" in markup
         assert "anglais" not in markup.lower()
 
     def test_the_welcome_copy_says_the_same_thing(self):
@@ -38,7 +38,6 @@ class TestPlainEnglishMeansPlainLanguage:
 
     def test_english_is_unchanged(self):
         markup = visible(render(lang="en"))
-        assert "Ask your data in plain English" in markup
         assert "Ask a business question in plain English" in markup
 
 
@@ -55,9 +54,10 @@ class TestTheChromeIsTranslated:
             assert expected in markup, expected
 
     def test_the_conversation_shell(self):
+        # The header is the workspace's name and, until the session is live,
+        # its connection state; the history is the sidebar's thread list.
         markup = visible(render(lang="fr"))
-        for expected in ("Analyste QueryBot en direct", "Connexion…",
-                         "En attente de la session en direct", "Historique"):
+        for expected in ("Connexion…", "En attente de la session en direct"):
             assert expected in markup, expected
 
     def test_the_composer(self):
@@ -128,9 +128,10 @@ class TestCustomerDataIsNeverTranslated:
 
     def test_the_role_is_a_label_not_the_raw_column(self):
         """It rendered `{{ user.role|capitalize }}` -- a filter that cannot
-        translate and mangles whatever case the database holds."""
-        assert "Rôle · Analyste" in visible(render(lang="fr"))
-        assert "Role · Analyst" in visible(render(lang="en"))
+        translate and mangles whatever case the database holds. The role is
+        shown once, under the reader's name in the sidebar."""
+        assert "Analysts · Analyste" in visible(render(lang="fr"))
+        assert "Analysts · Analyst" in visible(render(lang="en"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -139,15 +140,14 @@ class TestCustomerDataIsNeverTranslated:
 
 class TestTheMetersAndCounts:
 
-    def test_the_usage_pills_carry_their_numbers_in_french(self):
+    def test_the_usage_meters_are_not_on_a_readers_page(self):
+        """Tokens and queries used are the admin's numbers (the workspace's
+        "This month"); a reader is told about the limit only as they near it,
+        in the notice above the question box."""
         markup = visible(render(lang="fr"))
-        assert "Jetons ce mois-ci · 1M" in markup
-        assert "Requêtes restantes · 497" in markup
-
-    def test_the_hover_titles_too(self):
-        markup = unescaped(render(lang="fr"))
-        assert 'title="Entrée 600K · Sortie 400K"' in markup
-        assert 'title="3 / 500 requêtes utilisées ce mois-ci"' in markup
+        assert "Jetons ce mois-ci" not in markup
+        assert "Requêtes restantes" not in markup
+        assert 'id="queryLimitNotice"' in render(lang="fr")
 
     def test_a_single_table_takes_the_singular(self):
         markup = render(lang="en")

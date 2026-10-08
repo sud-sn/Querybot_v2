@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import conditions_tail, fmt, frame, scoped_label
+from core2.answer.builder import answer_badges, conditions_tail, fmt, frame, scoped_label
 from core2.compile.compiler import compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan, TimeSpec
@@ -362,6 +362,7 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
                                "horizon": horizon, "interval": 0.95}}
     payload = frame(question, headline=headline, short_value=fmt(fit.values[0], fmt_),
                     comparison=f"forecast for {label_of(first_future)}", caveats=caveats, chart=chart, kpi=None,
+                    badges=answer_badges(logical),
                     suggestions=[f"Why did {m.label.lower()} change in {label_of(last_actual)}{conditions_tail(logical)}?",
                                  f"{m.label} by {unit} for the last 12 {unit}s{conditions_tail(logical)}"],
                     headers=headers, labels=labels, records=records, formats=formats, display=display, sql=sqls,

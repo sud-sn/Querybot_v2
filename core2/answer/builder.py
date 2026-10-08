@@ -14,7 +14,7 @@ import logging
 import math
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 
 from core2.bootstrap import names
 from core2.compile.compiler import Compiled, OutColumn
@@ -235,6 +235,37 @@ def versus(rng: Range) -> str:
     return "against " + words.removeprefix("on ").removeprefix("from ")
 
 
+def _period_badge(rng: Range) -> str:
+    """A window as a short label: "April 2026", "Jan–Jun 2026", "Mar 2025 – Feb 2026", "since 1 Jan 2025"."""
+    words = span_words(rng)
+    for lead in ("in ", "on "):
+        if words.startswith(lead):
+            return words[len(lead):]
+    if words.startswith("from "):
+        start, _, end = words[5:].partition(" to ")
+        first, last = start.split(" "), end.split(" ")
+        if len(first) == len(last) == 2 and first[1] == last[1]:
+            return f"{first[0]}–{last[0]} {first[1]}"
+        return f"{start} – {end}"
+    return words
+
+
+def answer_badges(logical: Logical) -> list[dict[str, str]]:
+    """What the answer counted, as short labels above its sentence: the period (and what it is compared
+    with) and the date it was counted by. The sentence and the notes say the same at length."""
+    badges: list[dict[str, str]] = []
+    period = _period_badge(logical.window)
+    if period and logical.compare is not None:
+        prior = _period_badge(logical.compare)
+        period = f"{period} vs {prior}" if prior else period
+    if period:
+        badges.append({"kind": "period", "text": period})
+    roles = list(dict.fromkeys(p.date.role.name.lower() for p in logical.parts if p.date is not None))
+    if roles:
+        badges.append({"kind": "date", "text": "by " + " and ".join(roles)})
+    return badges
+
+
 # ── the table ──────────────────────────────────────────────────────────────
 
 
@@ -433,7 +464,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         log.warning("core2 could not work out findings for %r: %s", question, exc)
         insights = []
     return frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
-                 insights=insights,
+                 insights=insights, badges=answer_badges(logical),
                  chart=chart, kpi=_kpi(logical, cols, raw, formats, units),
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
@@ -442,7 +473,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
 
 
 def frame(question: str, *, headline: str, short_value: str = "", comparison: str = "", caveats: list[str],
-          insights: list[str] | None = None,
+          insights: list[str] | None = None, badges: list[dict[str, str]] | None = None,
           chart: dict | None, kpi: dict | None, suggestions: list[str], headers: list[str], labels: dict[str, str],
           records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
           row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
@@ -454,7 +485,8 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
         "question": question,
         # The portal's answer card: the value leads when there is one, the sentence otherwise.
         "answer": {"headline": headline, "short_value": short_value, "comparison": comparison,
-                   "scope_badge": "", "scope_note": caveats[0] if caveats else ""},
+                   "scope_badge": "", "scope_note": caveats[0] if caveats else "",
+                   "badges": list(badges or [])},
         "result_scope": {"badge": "", "note": ""},
         "chart": chart,
         "kpi": kpi,
@@ -521,11 +553,17 @@ def _header(c: OutColumn) -> str:
     return c.label
 
 
-def _noun(label: str) -> str:
-    """What a grouping counts, in the plural: "Warehouse name" -> "warehouses", "Day of week" -> "days of week"."""
+def _thing(label: str) -> str:
+    """What a grouping counts, in the singular: "Warehouse name" -> "warehouse", "GL account" -> "GL account"."""
     words = [w if w.isupper() and len(w) > 1 else w.lower() for w in label.split()]   # "GL accounts"
     while len(words) > 1 and words[-1] in ("name", "description", "desc", "code", "label", "title"):
         words.pop()
+    return " ".join(words)
+
+
+def _noun(label: str) -> str:
+    """What a grouping counts, in the plural: "Warehouse name" -> "warehouses", "Day of week" -> "days of week"."""
+    words = _thing(label).split()
     if len(words) > 2 and words[1] == "of":
         return " ".join([names.plural(words[0]), *words[1:]])
     return names.plural(" ".join(words))
@@ -716,7 +754,46 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
                   else f"{c.label} {fmt(r[c.name], c.format, unit=units.of(r))}" for c in measures[1:]]
         tail = f"; {', '.join(others)}" if others else ""
         return f"{lead}: {value(r)}{tail}."
+    if periods and members:
+        said = _led_by_period(logical, periods[0], members[0], m, raw, shown, partial, units, value)
+        if said:
+            every = (periods[0].grain or "month").replace("fiscal_", "fiscal ")
+            return f"{lead}, by {every} and {_thing(members[0].label)}: {said}."
     return f"{lead}: {len(raw):,} rows."
+
+
+def _led_by_period(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn, raw: list[dict],
+                   shown: list[dict], partial: set[str], units: _Units, value: Callable[[dict], str]) -> str:
+    """Who led a series broken down by a member: "North led in every month from Jan 2026 to May 2026,
+    among the 5 regions", or the leaders of the first and last whole periods. Never a total over the
+    periods: a share, an average or a distinct count does not add up across them."""
+    grain = period.grain or "month"
+    rows = [i for i in range(len(raw)) if (not units.mixed or units.key(raw[i]) == units.main)
+            and _day(raw[i][period.name]) is not None and _number(raw[i][m.name]) is not None]
+    if not rows:
+        return ""
+    days = sorted({d for d in (_day(raw[i][period.name]) for i in rows) if d is not None})
+    whole = [d for d in days if d.isoformat() not in partial] or days
+
+    def leader(day: dt.date) -> int:
+        return max((i for i in rows if _day(raw[i][period.name]) == day),
+                   key=lambda i: _number(raw[i][m.name]) or 0.0)
+
+    def name(day: dt.date) -> str:
+        text = period_label(day, grain, fiscal_start=logical.fiscal_start)
+        return "the w" + text[1:] if grain == "week" else text
+
+    leaders = [leader(d) for d in whole]
+    who = [str(shown[i][member.name]) for i in leaders]
+    count = len({str(shown[i][member.name]) for i in rows})
+    among = f", among the {count:,} {_noun(member.label)}" if count > 1 else ""
+    if len(whole) == 1:
+        return f"{who[0]} led in {name(whole[0])} with {value(raw[leaders[0]])}{among}"
+    if len(set(who)) == 1:
+        unit = grain.replace("fiscal_", "fiscal ")
+        return f"{who[0]} led in every {unit} from {name(whole[0])} to {name(whole[-1])}{among}"
+    return (f"{who[0]} led in {name(whole[0])} ({value(raw[leaders[0]])}); "
+            f"{who[-1]} in {name(whole[-1])} ({value(raw[leaders[-1]])})")
 
 
 def _valued(value: str, column: OutColumn) -> str:
@@ -834,7 +911,7 @@ def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn,
     roles: dict[str, dict] = {period.name: {"column": period.name, "label": labels[period.name], "role": "temporal"}}
     for s in series:
         roles[s] = {"column": s, "label": s, "role": "measure", "format": formats[m.name]}
-    return {"title": f"{labels[m.name]} by {labels[member.name].lower()}", "chart_type": "line",
+    return {"title": f"{labels[m.name]} by {_thing(labels[member.name])}", "chart_type": "line",
             "x_key": period.name, "y_keys": series, "rows": rows,
             "x_style": (display.get(period.name) or {}).get("style", ""), "column_roles": roles,
             "column_formats": {s: formats[m.name] for s in series}, "renderable_types": ["line", "bar", "area"],

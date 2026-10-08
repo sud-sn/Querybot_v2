@@ -281,13 +281,22 @@ class TestBusinessEntityLabelsAreNotRedacted:
 
 
 def test_a_low_confidence_answer_shows_its_warning_inline():
-    """Reasons and warnings live inside the "How this answer was produced"
-    disclosure so they do not compete with a good answer. When the verdict is
-    that the answer may be wrong, that is precisely the thing the reader needs,
-    and a 49/100 result looked no different from any other."""
-    from pathlib import Path
+    """Reasons and warnings live inside "How it was counted" so they do not
+    compete with a good answer. When the verdict is that the answer may be
+    wrong, that is precisely the thing the reader needs, and a 49/100 result
+    looked no different from any other."""
+    import pytest
 
-    source = Path("portal/templates/portal_chat.html").read_text(encoding="utf-8")
-    assert "const lowWarn" in source
-    assert "confidenceLevel === 'low'" in source
-    assert "trust-warn" in source
+    pytest.importorskip("dukpy")
+    from tests.test_the_answer_card import BY_STORE, card
+
+    def outside(msg: dict) -> str:
+        markup = card(msg)
+        start = markup.index('<details class="trust-box')
+        return markup[:start] + markup[markup.index("</details>", start):]
+
+    warning = "Two tables joined on a guessed key."
+    low = dict(BY_STORE, confidence={"score": 49, "level": "low", "warnings": [warning], "reasons": []})
+    high = dict(BY_STORE, confidence={"score": 92, "level": "high", "warnings": [warning], "reasons": []})
+    assert warning in outside(low), "a low verdict's reason is hidden behind a click"
+    assert warning not in outside(high), "a good answer's warnings compete with it on the card"
