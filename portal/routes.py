@@ -18,6 +18,7 @@ Routes:
 """
 
 import base64
+import datetime as _dt
 import hashlib
 import hmac
 import json
@@ -1187,6 +1188,9 @@ async def _render_dashboard(request: Request, user: dict):
         "selected_tab": selected_tab,
         "dashboard_subscription": dashboard_subscription,
         "welcome":       request.query_params.get("welcome") == "1",
+        # Its tiles were drawn on this request: the header says when.
+        "drawn_at":      (_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                          if requested_dashboard else ""),
     })
 
 
@@ -1448,6 +1452,9 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     data = payload.get("data") or {}
     rows = data.get("rows") or []
     result["row_count"] = int((payload.get("trust") or {}).get("row_count") or len(rows))
+    # The tile says what period it counts ("April 2026 vs March 2026"), as its answer did.
+    badges = (payload.get("answer") or {}).get("badges") or []
+    result["subtitle"] = next((str(b.get("text") or "") for b in badges if b.get("kind") == "period"), "")
     kind = str(chart.get("chart_type") or "")
     shape = payload.get("chart")
     if kind == "kpi" or (not shape and payload.get("kpi") and kind != "table"):

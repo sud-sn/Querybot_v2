@@ -341,6 +341,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.dash.version": {"en": "Version {version}", "fr": "Version {version}"},
     "ui.dash.refresh": {"en": "{schedule} refresh", "fr": "Actualisation {schedule}"},
     "ui.dash.read_only": {"en": "Read only", "fr": "Lecture seule"},
+    "ui.dash.updated_at": {"en": "Updated {at}", "fr": "Mis à jour à {at}"},
+    "ui.dash.edit": {"en": "Edit", "fr": "Modifier"},
+    "ui.dash.done": {"en": "Done", "fr": "Terminé"},
     "ui.dash.following": {"en": "Following · {cadence}", "fr": "Abonné · {cadence}"},
     "ui.dash.unfollow_hint": {
         "en": "Stop following this dashboard",
@@ -458,7 +461,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Organisez les KPI, graphiques et tableaux gouvernés qui guident "
               "les décisions de votre équipe.",
     },
-    "ui.dash.library_title": {"en": "Your dashboard artifacts", "fr": "Vos tableaux de bord"},
+    "ui.dash.library_title": {"en": "Your dashboards", "fr": "Vos tableaux de bord"},
     "ui.dash.library_count": {"en": "{count} saved", "fr": "{count} enregistrés"},
     "ui.dash.shared_with_team": {"en": "Shared with team", "fr": "Partagé avec l'équipe"},
     "ui.dash.welcome": {"en": "Welcome to QueryBot, {name}", "fr": "Bienvenue sur QueryBot, {name}"},

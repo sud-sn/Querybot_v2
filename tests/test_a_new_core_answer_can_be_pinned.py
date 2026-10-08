@@ -114,6 +114,7 @@ def test_a_comparison_is_pinned_as_the_dumbbell_it_was(fresh_store, retail):
     assert drawn["chart_type"] == "dumbbell"
     assert drawn["compare"]["prior_label"] == "March 2026" and drawn["compare"]["current_label"] == "April 2026"
     assert tile["error"] is None and tile["row_count"] > 0
+    assert tile["subtitle"] == "April 2026 vs March 2026", "the tile names its periods, as the answer did"
 
 
 def test_the_type_the_reader_chose_is_kept_when_the_shape_offers_it(fresh_store, retail):

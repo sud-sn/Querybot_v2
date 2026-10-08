@@ -387,16 +387,20 @@ JSON.stringify({updates: updates, badge: badge.textContent, saved: saved,
         assert out["active"] == ["line"]
         assert out["saved"] == [[7, {"chart_type": "line"}]]
 
-    def test_a_palette_chosen_in_the_expanded_view_reaches_the_card(self):
-        out = self._dashboard("en", """
-_syncCardFromModal(7, {color_palette: 'warm'});
-JSON.stringify({updates: updates, badge: badge.textContent,
-                active: swatches.filter(function (b) { return b.active; }).map(function (b) { return b.dataset.palette; })});
-""")
-        assert out["updates"][0][1]["color_palette"] == "warm"
-        assert out["updates"][0][1]["chart_type"] == "bar"        # the type is kept
-        assert out["badge"] == "BAR"                              # and so is its badge
-        assert out["active"] == ["warm"]
+    def test_the_card_offers_no_palette_to_choose(self):
+        # One palette, in a fixed order, so a colour means the same thing on
+        # every chart: the card's controls are its type switch alone.
+        body = self.CONTROLS + f"""
+window._dashPayloads = {{7: {json.dumps(dict(bars(), chart_id=7))}}};
+var cardRow = row();
+{lift(DASHBOARD, "function escHtmlDash(value)")}
+{lift(DASHBOARD, "function t(id, vars)")}
+{lift(DASHBOARD, "function mountDashChartControls(ctrlRow)")}
+mountDashChartControls(cardRow);
+JSON.stringify(cardRow.innerHTML);
+"""
+        drawn = json.loads(_run("portal_dashboard.html", "en", body))
+        assert "dctt-btn" in drawn and "palette" not in drawn
 
     # The two places a reader picks a type: the card's own buttons, and the
     # buttons in its expanded view. Executed through the page's own builders,

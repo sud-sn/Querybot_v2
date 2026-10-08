@@ -66,7 +66,7 @@
 {% endmacro %}
 
 
-<div class="dashboard-page" data-dashboard-user="{{ user.id if user.id is defined else user.name }}">
+<div class="dashboard-page" data-mode="view" data-dashboard-user="{{ user.id if user.id is defined else user.name }}">
 
 {% if welcome %}
 <div class="welcome-banner">
@@ -87,19 +87,26 @@
    was organised around the account rather than around the thing you opened. #}
 <header class="dash-header">
   <div>
-    <div class="dash-header-kicker">{{ t('ui.dash.kicker') }}</div>
     <h1>{{ dashboard_artifact.name }}</h1>
+    {# Who sees it and when its numbers were drawn; the version is in the
+       revision history below. #}
     <div class="dash-header-meta">
-      <span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ enum_label('status', dashboard_artifact.status) }}</span>
-      <span>{{ t('ui.dash.version', version=dashboard_artifact.version) }}</span>
-      <span aria-hidden="true">·</span>
+      {# Draft or published matters only to a dashboard the team shares. #}
+      {% if dashboard_artifact.visibility == 'team' %}<span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ enum_label('status', dashboard_artifact.status) }}</span>{% endif %}
       <span>{{ enum_label('visibility', dashboard_artifact.visibility) }}</span>
-      <span aria-hidden="true">·</span>
-      <span>{{ t('ui.dash.refresh', schedule=enum_label('schedule', dashboard_artifact.refresh_schedule)|lower) }}</span>
+      {# UTC from the server; the page writes it in the reader's own time. #}
+      {% if drawn_at %}<span aria-hidden="true">·</span><span data-drawn-at="{{ drawn_at }}">{{ t('ui.dash.updated_at', at=drawn_at[11:16] ~ ' UTC') }}</span>{% endif %}
+      {% if dashboard_artifact.refresh_schedule and dashboard_artifact.refresh_schedule != 'manual' %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.refresh', schedule=enum_label('schedule', dashboard_artifact.refresh_schedule)|lower) }}</span>{% endif %}
       {% if not _editable %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.read_only') }}</span>{% endif %}
     </div>
   </div>
   <div class="dash-header-actions">
+    {% if _editable and charts %}
+    {# View is the default: no handles, no remove buttons, no type switches.
+       Edit shows them and lets the tiles move. #}
+    <button type="button" class="btn" id="dashEditToggle" aria-pressed="false"
+            data-label-edit="{{ t('ui.dash.edit') }}" data-label-done="{{ t('ui.dash.done') }}">{{ ic("pencil", 14) }}<span>{{ t('ui.dash.edit') }}</span></button>
+    {% endif %}
     {% if dashboard_subscription %}
     <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe" style="margin:0">
       <button class="btn btn-secondary" type="submit" title="{{ t('ui.dash.unfollow_hint') }}">{{ t('ui.dash.following', cadence=enum_label('cadence', dashboard_subscription.cadence)) }}</button>
@@ -146,7 +153,7 @@
 {% if charts %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
   <h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.tab_visuals', tab=selected_tab) }}</h2>
-  <span style="font-size:var(--font-sm);color:var(--text-muted)">{% if dashboard_artifact.can_edit %}{{ t('ui.dash.drag_hint') }} · {% endif %}{{ t('ui.dash.live_data') }}</span>
+  <span style="font-size:var(--font-sm);color:var(--text-muted)">{% if dashboard_artifact.can_edit %}<span class="dash-edit-only">{{ t('ui.dash.drag_hint') }} · </span>{% endif %}{{ t('ui.dash.live_data') }}</span>
 </div>
 <div class="chart-grid">
   {% for chart in charts %}
@@ -163,9 +170,9 @@
            ondblclick, so a team viewer was told to double-click to rename and
            nothing happened. #}
         <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}"
-             {% if _can_edit %}title="{{ t('ui.dash.rename_hint') }}" ondblclick="startRenameChart(this, {{ chart.id|int }})"{% endif %}
+             {% if _can_edit %}title="{{ t('ui.dash.rename_hint') }}" ondblclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
              id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
-        <div class="chart-card-sub">{% if chart.table_truncated %}{{ t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) }}{% else %}{{ plural('ui.dash.rows', chart.row_count) }}{% endif %} · {% if chart.from_cache %}{{ t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') }}{% else %}{{ t('ui.dash.live_refresh') }}{% endif %}</div>
+        <div class="chart-card-sub">{% if chart.subtitle %}{{ chart.subtitle }}{% elif chart.table_truncated %}{{ t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) }}{% else %}{{ plural('ui.dash.rows', chart.row_count) }}{% endif %} · {% if chart.from_cache %}{{ t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') }}{% else %}{{ t('ui.dash.live_refresh') }}{% endif %}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
         {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="{{ t('ui.dash.drag_handle_title') }}" aria-label="{{ t('ui.dash.drag_handle_label') }}">{{ ic("grip", 16) }}</button>{% endif %}
@@ -179,7 +186,7 @@
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
           <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id if dashboard_artifact else 0 }}">
         </form>
-        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
+        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary dash-edit-only" style="color:var(--text-muted)"
           onclick="unpinChart({{ chart.id|int }}, this.closest('.chart-card'))">{{ ic("x", 12, "qb-icon-lead") }}{{ t('ui.dash.remove') }}</button>
         {% endif %}
       </div>
@@ -264,12 +271,18 @@
   <p>{{ t('ui.dash.subtitle') }}</p>
 </div>
 
-{{ workspace_usage(user, charts, monthly_count, query_status, token_status, allowed_tables, t, plural) }}
-
 {% if not dashboard_artifact and dashboards %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=dashboards|length) }}</span></div>
-<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_with_team') }} · {% endif %}{{ enum_label('status', item.status) }} · v{{ item.version }} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
+<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_with_team') }}{% else %}{{ enum_label('visibility', item.visibility) }}{% endif %}{% if item.visibility == 'team' %} · {{ enum_label('status', item.status) }}{% endif %} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
+{% else %}
+<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
 {% endif %}
+
+<details class="artifact-detail" style="margin:1rem 0"><summary>{{ t('ui.dash.workspace_drawer') }}</summary><div style="margin-top:.9rem">
+
+{{ workspace_usage(user, charts, monthly_count, query_status, token_status, allowed_tables, t, plural) }}
+
+</div></details>
 
 {% endif %}
 
@@ -337,10 +350,6 @@ function sortDashboardTable(button, columnIndex){
   button.dataset.sortDirection = ascending ? 'asc' : 'desc';
   button.textContent = button.textContent.replace(/[ ↕↑↓]+$/, '') + (ascending ? ' ↑' : ' ↓');
 }
-// Palettes live in /static/js/chart-palettes.js so this page and the
-// chat cannot drift apart.
-const _PALETTES = window.QB_PALETTES;
-
 // Every chart on this page is drawn by /static/js/qb-charts.js (window.QBCharts),
 // the renderer the chat uses too. This page used to carry its own copy of the
 // option builder, "kept byte-identical" to the chat's by a comment, and the two
@@ -376,7 +385,7 @@ function _setTypeBadge(chartId, type) {
   const badge = document.getElementById(`chart-type-badge-${chartId}`);
   if (badge) badge.textContent = t('ui.enum.charttype.' + type).toUpperCase();
 }
-// A type or palette chosen in the expanded view, carried back to the card
+// A type chosen in the expanded view, carried back to the card
 // behind it: the stored payload, the card's chart, its buttons, its badge,
 // and the saved chart. The card's chart was left in the old type before.
 function _syncCardFromModal(chartId, fields) {
@@ -387,10 +396,6 @@ function _syncCardFromModal(chartId, fields) {
     cardCtrl?.querySelectorAll('.dctt-btn')
       .forEach(b => b.classList.toggle('dctt-active', b.dataset.type === fields.chart_type));
     _setTypeBadge(chartId, fields.chart_type);
-  }
-  if (fields.color_palette) {
-    cardCtrl?.querySelectorAll('.dcpt-swatch')
-      .forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette === fields.color_palette));
   }
   _updateChart(chartId, fields);
 }
@@ -512,15 +517,43 @@ function initDashboardGrid() {
   }
 }
 
+// View is the default; Edit shows the handles, remove buttons and type
+// switches, and lets the tiles move. The grid is static while reading.
+function setDashboardMode(editing) {
+  const page = document.querySelector('.dashboard-page');
+  const toggle = document.getElementById('dashEditToggle');
+  if (!page) return;
+  page.dataset.mode = editing ? 'edit' : 'view';
+  if (toggle) {
+    toggle.setAttribute('aria-pressed', editing ? 'true' : 'false');
+    const label = toggle.querySelector('span');
+    if (label) label.textContent = editing ? toggle.dataset.labelDone : toggle.dataset.labelEdit;
+  }
+  if (dashboardGrid) {
+    try { dashboardGrid.setStatic(!editing); } catch (_) {}
+  }
+  setTimeout(resizeDashboardCharts, 60);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[data-drawn-at]').forEach(el => {
+    const at = new Date(el.dataset.drawnAt);
+    if (!isNaN(at)) el.textContent = t('ui.dash.updated_at', {at: at.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})});
+  });
   initDashboardGrid();
+  setDashboardMode(false);
+  document.getElementById('dashEditToggle')?.addEventListener('click', () => {
+    setDashboardMode(document.querySelector('.dashboard-page')?.dataset.mode !== 'edit');
+  });
   renderDashboardCharts();
   if (!window.ResizeObserver) {
     window.addEventListener('resize', resizeDashboardCharts);
   }
 });
 
-// ── Per-card type toggle + palette switcher ───────────────────────────────────
+// ── Per-card type toggle ──────────────────────────────────────────────────────
+// No palette switcher: one palette, in a fixed order, so a colour means the same
+// thing on every chart (two of the six it offered failed the colour-vision check).
 const DASH_TYPES = ['dumbbell','bar','line','area','pie','donut','scatter'];
 
 function mountDashChartControls(ctrlRow) {
@@ -529,7 +562,6 @@ function mountDashChartControls(ctrlRow) {
   const payload = window._dashPayloads[chartId];
   if (!payload) return;
   const ct  = payload.chart_type || 'bar';
-  const pal = payload.color_palette || 'default';
   const visibleTypes = window.QBCharts.offeredTypes(payload, DASH_TYPES);
 
   // `kind`, not `t`: t is the translator on this page now, and an arrow
@@ -537,15 +569,7 @@ function mountDashChartControls(ctrlRow) {
   const typeHtml = visibleTypes.map(kind =>
     `<button class="dctt-btn${ct===kind?' dctt-active':''}" data-type="${kind}">${escHtmlDash(t('ui.enum.charttype.' + kind))}</button>`
   ).join('');
-  const palHtml = Object.entries(_PALETTES).map(([n,modes]) => {
-    const c = modes;
-    return `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
-       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`;
-  }).join('');
-
-  ctrlRow.innerHTML = typeHtml
-    + `<span class="dash-ctrl-sep"></span>`
-    + palHtml;
+  ctrlRow.innerHTML = typeHtml;
 
   ctrlRow.querySelectorAll('.dctt-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -556,16 +580,6 @@ function mountDashChartControls(ctrlRow) {
       _redrawCard(chartId);
       _setTypeBadge(chartId, newType);
       _updateChart(chartId, { chart_type: newType });
-    });
-  });
-  ctrlRow.querySelectorAll('.dcpt-swatch').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const newPal = btn.dataset.palette;
-      const updated = Object.assign({}, window._dashPayloads[chartId], { color_palette: newPal });
-      window._dashPayloads[chartId] = updated;
-      ctrlRow.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
-      _redrawCard(chartId);
-      _updateChart(chartId, { color_palette: newPal });
     });
   });
 }
@@ -634,20 +648,13 @@ function openChartModal(cardEl) {
   modal.style.display = 'flex';
   modal._chartId = chartId;
 
-  // Build type + palette controls inside modal header
+  // The type switch inside the modal header
   const ctrlEl = document.getElementById('chart-modal-ctrl');
   const ct  = payload.chart_type  || 'bar';
-  const pal = payload.color_palette || 'default';
   const modalTypes = window.QBCharts.offeredTypes(payload, DASH_TYPES);
   ctrlEl.innerHTML = modalTypes.map(kind =>
     `<button class="dctt-btn${ct===kind?' dctt-active':''}" data-type="${kind}">${escHtmlDash(t('ui.enum.charttype.' + kind))}</button>`
-  ).join('')
-  + `<span class="dash-ctrl-sep"></span>`
-  + Object.entries(_PALETTES).map(([n,modes]) => {
-    const c = modes;
-    return `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
-       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`;
-  }).join('');
+  ).join('');
 
   const canvas = document.getElementById('chart-modal-canvas');
   const mc = window.QBCharts.render(canvas, payload, {grow: false});
@@ -663,15 +670,6 @@ function openChartModal(cardEl) {
       ctrlEl.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
       window.QBCharts.update(mc, modal._modalPayload, {grow: false});
       if (chartId) _syncCardFromModal(chartId, { chart_type: newType });
-    });
-  });
-  ctrlEl.querySelectorAll('.dcpt-swatch').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const newPal = btn.dataset.palette;
-      modal._modalPayload = Object.assign({}, modal._modalPayload, { color_palette: newPal });
-      ctrlEl.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
-      window.QBCharts.update(mc, modal._modalPayload, {grow: false});
-      if (chartId) _syncCardFromModal(chartId, { color_palette: newPal });
     });
   });
 
