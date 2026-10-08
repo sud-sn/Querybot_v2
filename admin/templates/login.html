@@ -5,11 +5,8 @@
 {% block auth_content %}
 <div class="auth-card-wrap">
   <div class="auth-brand-identity">
-    {{ brand_motion('admin-auth', 'error' if error else 'idle', 'lg', root_id='adminAuthMark', extra_class='qb-brand-motion--intro') }}
-    <div>
-      <div class="auth-brand-name">Query<span>Bot</span></div>
-      <div class="auth-brand-sub">Secure administration workspace</div>
-    </div>
+    {{ brand_motion('admin-auth', 'idle', 'lg', root_id='adminAuthMark') }}
+    <div class="auth-brand-name">Query<span>Bot</span> <span class="auth-brand-tag">Admin</span></div>
   </div>
 
   <div class="card auth-card">
@@ -22,7 +19,7 @@
       </div>
       {% endif %}
 
-      <form method="post" action="/admin/login" id="loginForm" data-brand-loading data-brand-target="adminAuthMark">
+      <form method="post" action="/admin/login" id="loginForm" data-busy-on-submit>
         <div class="form-group">
           <label for="password">Admin password</label>
           <div class="input-reveal-wrap">
@@ -48,32 +45,13 @@
   margin: 0 auto;
   padding-top: 4rem;
 }
-.auth-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: center;
-  margin-bottom: 4px;
-}
 .auth-brand-identity {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
+  gap: .5rem;
   margin-bottom: 1.5rem;
-}
-.auth-brand-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-lg);
-  background: var(--primary);
-  color: var(--on-primary);
-  font-size: var(--font-xl);
-  font-weight: var(--weight-bold);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 38%, transparent);
+  text-align: center;
 }
 .auth-brand-name {
   font-size: var(--font-2xl);
@@ -81,14 +59,18 @@
   color: var(--text);
   letter-spacing: -.03em;
 }
-.auth-brand-name span { color: var(--primary); }
-.auth-brand-sub {
-  text-align: left;
-  font-size: var(--font-sm);
+.auth-brand-name > span:first-child { color: var(--primary); }
+.auth-brand-tag {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  vertical-align: middle;
+  font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
+  letter-spacing: .08em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  letter-spacing: .04em;
-  margin-top: 3px;
 }
 .auth-card { box-shadow: var(--shadow-md); }
 .auth-card .card-header h1 {

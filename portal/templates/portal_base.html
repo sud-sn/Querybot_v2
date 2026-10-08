@@ -1,4 +1,5 @@
 {% from "icons.html" import ic %}
+{% from "macros.html" import brand_motion %}
 <!DOCTYPE html>
 <html lang="{{ lang or 'en' }}">
 <head>
@@ -7,7 +8,7 @@
 <title>{% block title %}{{ t('ui.title.suffix') }}{% endblock %}</title>
 <!-- The reduced mark: at 16px the full mark's three bars are 1.36px wide
      separated by 0.60px, which is sub-pixel. These two are 2.0 by 1.0. -->
-<link rel="icon" type="image/svg+xml" href="{{ asset('img/logo-mark-sm.svg') }}">
+<link rel="icon" type="image/svg+xml" href="{{ asset('img/logo-mark.svg') }}">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ asset('css/fonts.css') }}">
 <link rel="stylesheet" href="{{ asset('css/tokens.css') }}">
@@ -29,7 +30,6 @@
 window.QB_I18N = {{ i18n_catalogue|tojson }};
 window.QB_LANG = {{ (lang or 'en')|tojson }};
 // The mark's URL, versioned by its content, for replies the page draws itself.
-window.QB_MARK_SRC = {{ asset('img/logo-mark.svg')|tojson }};
 // How this language writes a number, from core/i18n.py's NUMBER_FORMATS --
 // the same pair the server writes prose with, so an amount in a sentence and
 // the same amount in the table below it cannot disagree.
@@ -227,7 +227,7 @@ window.qbEnumLabel = function (group, value) {
   <aside class="portal-sidebar" id="portalSidebar" aria-label="{{ t('ui.shell.nav_label') }}">
     <div class="portal-sidebar-head">
       <a href="/portal/dashboard" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
-        <span class="portal-brand-mark"><img src="{{ asset('img/logo-mark.svg') }}" alt="" class="qb-logo-mark"></span>
+        {{ brand_motion('portal-brand-side', 'idle', 'sm', extra_class='portal-brand-mark') }}
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <button type="button" class="portal-sidebar-toggle" onclick="window.__qbToggleSidebar()" aria-label="{{ t('ui.shell.collapse') }}" title="{{ t('ui.shell.collapse') }}">
@@ -304,7 +304,7 @@ window.qbEnumLabel = function (group, value) {
         {{ ic("menu", 20) }}
       </button>
       <a href="/portal/dashboard" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
-        <span class="portal-brand-mark"><img src="{{ asset('img/logo-mark.svg') }}" alt="" class="qb-logo-mark"></span>
+        {{ brand_motion('portal-brand-bar', 'idle', 'sm', extra_class='portal-brand-mark') }}
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <div class="portal-mobile-actions">

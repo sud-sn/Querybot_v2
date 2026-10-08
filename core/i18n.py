@@ -4105,16 +4105,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.run.cancelled": {"en": "Run cancelled", "fr": "Exécution annulée"},
     "ui.chat.run.read_only": {"en": "read only", "fr": "lecture seule"},
 
-    # The composer mascot's status labels. Short and executive in tone: no
-    # exclamations, no emoji, in either language.
-    "ui.chat.mascot.idle": {"en": "Ready", "fr": "Prêt"},
-    "ui.chat.mascot.focus": {"en": "Listening", "fr": "À l'écoute"},
-    "ui.chat.mascot.typing": {"en": "Attending", "fr": "Attention"},
-    "ui.chat.mascot.thinking": {"en": "Considering", "fr": "Réflexion"},
-    "ui.chat.mascot.send": {"en": "Processing", "fr": "Traitement"},
-    "ui.chat.mascot.ready": {"en": "Response ready", "fr": "Réponse prête"},
-    "ui.chat.mascot.error": {"en": "Connection issue", "fr": "Problème de connexion"},
-
     # ── Chat toasts, drafts, message actions and feedback ────────────────────
     "ui.chat.toast.copied": {"en": "Copied to clipboard", "fr": "Copié dans le presse-papiers"},
     "ui.chat.toast.copy_failed": {"en": "Copy failed", "fr": "Échec de la copie"},
@@ -4682,10 +4672,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Something went wrong — try rephrasing or retry",
         "fr": "Une erreur s'est produite — reformulez ou réessayez",
     },
-    "ui.chat.err.generic_retry": {
-        "en": "Something went wrong — please retry",
-        "fr": "Une erreur s'est produite — veuillez réessayer",
-    },
     "ui.chat.err.generic": {"en": "Something went wrong.", "fr": "Une erreur s'est produite."},
     "ui.chat.err.clarify_format": {"en": "Please clarify the format.", "fr": "Veuillez préciser le format."},
     "ui.chat.err.not_enabled": {
@@ -5229,7 +5215,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Posez une question métier en langage courant et QueryBot transformera vos données gouvernées en une réponse claire et traçable.",
     },
     "ui.chat.thinking": {"en": "Thinking…", "fr": "Réflexion…"},
-    "ui.chat.ready": {"en": "Ready", "fr": "Prêt"},
 
     # Suggestions.
     "ui.chat.suggestions_label": {

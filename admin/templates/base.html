@@ -1,4 +1,5 @@
 {% from "icons.html" import ic %}
+{% from "macros.html" import brand_motion %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,7 +8,7 @@
 <title>{% block title %}QueryBot Admin{% endblock %}</title>
 <!-- The reduced mark: at 16px the full mark's three bars are 1.36px wide
      separated by 0.60px, which is sub-pixel. These two are 2.0 by 1.0. -->
-<link rel="icon" type="image/svg+xml" href="{{ asset('img/logo-mark-sm.svg') }}">
+<link rel="icon" type="image/svg+xml" href="{{ asset('img/logo-mark.svg') }}">
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ asset('css/fonts.css') }}">
 <link rel="stylesheet" href="{{ asset('css/tokens.css') }}">
@@ -44,11 +45,9 @@
   <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
 
     <div class="sidebar-brand">
-      <img src="{{ asset('img/logo-mark.svg') }}" alt="" class="sidebar-brand-mark" width="30" height="30">
-      <div>
-        <div class="sidebar-brand-text">Query<span>Bot</span></div>
-        <div class="sidebar-brand-sub">Admin Panel</div>
-      </div>
+      {{ brand_motion('admin-brand', 'idle', 'sm', extra_class='sidebar-brand-mark') }}
+      <span class="sidebar-brand-text">Query<span>Bot</span></span>
+      <span class="sidebar-brand-tag">Admin</span>
     </div>
 
     <nav class="sidebar-section" role="navigation">

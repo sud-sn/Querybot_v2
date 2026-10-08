@@ -1,88 +1,51 @@
 /* QueryBot brand motion -----------------------------------------------------
-   One restrained motion language for authentication, long-running work, and
-   chat generation.
+   The mark, and the one place it moves.
 
-   THE MARK is a speech bubble with the answer already inside it: a filled
-   bubble (the question) carrying three ascending bars (the data that comes
-   back). The tail is part of the closed fill — two outward-bowed curves to a
-   rounded tip — so it can never be read as a magnifying-glass handle, which is
-   what a straight diagonal stroke leaving a circle always becomes.
+   THE MARK is a speech bubble (the question) with three rising bars cut out
+   of it (the answer). One drawing at every size, on the 24-unit grid the
+   product's icons use, the same as static/img/logo-mark.svg; pages draw it
+   inline with the brand_motion macro so a state can move its bars. The bars
+   are holes, cut with a mask: they show whatever the mark sits on.
 
-   THE MOTION is the life of the answer. The bars REST VISIBLE — they are the
-   mark, not an indicator. When the product starts working they crouch into
-   dots and bounce: the typing indicator everyone already understands. While
-   the answer streams they surge like a live chart. On success they land back
-   as three ascending bars with a small overshoot; on failure they fall flat
-   and the bubble shakes once.
+   THE MOTION is the working wave. While an answer is being worked out the
+   bars rise and fall from their baseline, a beat apart; the mark goes with
+   the working line when the answer arrives. Nothing else moves: no hover
+   tilt, no pop on load, no shake, no red on error -- a failure is said in
+   words beside an alert icon, never by the brand -- and under reduced motion
+   nothing moves at all (WCAG 2.3.3).
 
-   INTERACTIVE: at rest the mark responds — hover tilts the bubble and pops the
-   bars in sequence; press compresses it. Both are scoped to the idle state so
-   they never fight the working animation, and both disappear entirely under
-   prefers-reduced-motion.
-
-   Colour comes from the design tokens, so the mark rebrands with the system.
-   The bubble is a FLAT token fill, deliberately not a gradient: every state
-   recolours the whole glyph through one custom property (--qb-mark-glyph),
-   which a gradient cannot do. The gradient lives only in the standalone
-   logo-mark.svg, which never changes state. The bars are cut in the ground
-   colour (--qb-mark-cut, defaulting to the surface token) so they read as
-   holes through the glyph.
+   The colour is one custom property, --qb-mark-glyph: Primary on a light
+   ground, the shell's accent on the navy sidebar.
    --------------------------------------------------------------------------- */
+
 .qb-brand-motion {
   --qb-mark-size: 32px;
   --qb-mark-glyph: var(--primary);
-  --qb-mark-accent: var(--accent-400);
-  --qb-mark-status: var(--qb-mark-glyph);
-  /* The colour the bars cut through to. On anything that is not the page
-     surface (a tinted hero, a dark panel), set this to the actual ground. */
-  --qb-mark-cut: var(--surface);
-  /* Retained: callers and the error state still set these. */
-  --qb-mark-primary: var(--primary);
-  --qb-mark-secondary: var(--primary-hover);
   display: inline-flex;
   align-items: center;
   gap: .65rem;
   min-width: 0;
   color: var(--text);
 }
-
-.qb-brand-motion--xs { --qb-mark-size: 22px; }
-.qb-brand-motion--sm { --qb-mark-size: 28px; }
-.qb-brand-motion--md { --qb-mark-size: 36px; }
-.qb-brand-motion--lg { --qb-mark-size: 60px; }
+.qb-brand-motion--xs    { --qb-mark-size: 20px; }
+.qb-brand-motion--sm    { --qb-mark-size: 24px; }
+.qb-brand-motion--md    { --qb-mark-size: 32px; }
+.qb-brand-motion--lg    { --qb-mark-size: 48px; }
 
 .qb-brand-motion__mark {
   width: var(--qb-mark-size);
   height: var(--qb-mark-size);
   display: block;
   flex: 0 0 var(--qb-mark-size);
-  overflow: visible;
-  transition: transform .22s cubic-bezier(.34, 1.4, .4, 1);
-  /* No drop-shadow. The original glow was rgba(37,99,235,.2) — the old brand
-     blue, hardcoded in an rgba() where a hex sweep could not find it, casting
-     a blue halo around a green mark. */
 }
-
-/* The bubble: body and tail, one closed fill. */
-.qb-brand-motion__bowl {
-  fill: var(--qb-mark-glyph);
-  transform-box: view-box;
-  transform-origin: 20px 20px;
-}
-
-/* The bars. VISIBLE at rest — they are the mark. Rounded rects rather than
-   circles so the same element can crouch into a dot and rise back into a bar
-   without a shape swap. Each carries its own crouch factor: the scaleY at
-   which its height becomes the 3.4 dot (3.4/6.4, 3.4/9.4, 3.4/12.6). */
+/* The bubble: body and tail, one closed fill, the bars cut through it. */
+.qb-brand-motion__bowl { fill: var(--qb-mark-glyph); }
+/* The bars (in the mask). Anchored on their baseline, so a wave grows them
+   up from where they stand. */
 .qb-brand-motion__dot {
-  fill: var(--qb-mark-cut);
-  opacity: 1;
   transform-box: fill-box;
   transform-origin: bottom center;
 }
-.qb-brand-motion__dot:nth-child(1) { --qb-squash: .531; }
-.qb-brand-motion__dot:nth-child(2) { --qb-squash: .362; }
-.qb-brand-motion__dot:nth-child(3) { --qb-squash: .270; }
 
 .qb-brand-motion__label {
   min-width: 0;
@@ -92,184 +55,29 @@
   color: var(--text-muted);
 }
 
-/* ── Interactive: the resting mark answers the hand ───────────────────────
-   Scoped to idle so hover can never fight a working state's animation. */
-.qb-brand-motion[data-state="idle"]:hover .qb-brand-motion__mark {
-  transform: rotate(-4deg) scale(1.05);
-}
-.qb-brand-motion[data-state="idle"]:hover .qb-brand-motion__dot {
-  animation: qb-bar-pop .5s cubic-bezier(.34, 1.4, .4, 1) 1;
-}
-.qb-brand-motion[data-state="idle"]:hover .qb-brand-motion__dot:nth-child(2) { animation-delay: .06s; }
-.qb-brand-motion[data-state="idle"]:hover .qb-brand-motion__dot:nth-child(3) { animation-delay: .12s; }
-.qb-brand-motion[data-state="idle"]:active .qb-brand-motion__mark {
-  transform: scale(.94);
-  transition-duration: .09s;
-}
-
-/* ── Working: the bars crouch into dots and type ─────────────────────────── */
+/* ── Working: the wave ──────────────────────────────────────────────────── */
 .qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot,
 .qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot,
 .qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot,
-.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot {
-  animation:
-    qb-bar-crouch .26s ease both,
-    qb-bar-bounce 1.05s .26s ease-in-out infinite;
-}
-.qb-brand-motion[data-state="querying"] .qb-brand-motion__dot {
-  animation-duration: .26s, .78s;
+.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot,
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot {
+  animation: qb-wave 1.2s ease-in-out infinite;
 }
 .qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot:nth-child(2),
 .qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot:nth-child(2),
 .qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot:nth-child(2),
-.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(2) { animation-delay: .05s, .41s; }
+.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(2),
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot:nth-child(2) { animation-delay: .15s; }
 .qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot:nth-child(3),
 .qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot:nth-child(3),
 .qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot:nth-child(3),
-.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(3) { animation-delay: .1s, .56s; }
-
-/* ── Answering: the bars surge like a live chart ─────────────────────────── */
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot {
-  animation: qb-bar-stream .9s ease-in-out infinite;
-}
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot:nth-child(2) { animation-delay: .15s; }
+.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(3),
 .qb-brand-motion[data-state="answering"] .qb-brand-motion__dot:nth-child(3) { animation-delay: .3s; }
 
-/* The bubble breathes underneath, so the whole mark is alive without spinning. */
-.qb-brand-motion[data-state="loading"]   .qb-brand-motion__bowl,
-.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__bowl,
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__bowl,
-.qb-brand-motion[data-state="querying"]  .qb-brand-motion__bowl,
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__bowl {
-  animation: qb-bubble-breathe 2.1s ease-in-out infinite;
-}
-
-/* ── Terminal states ──────────────────────────────────────────────────────── */
-.qb-brand-motion[data-state="success"] {
-  --qb-mark-glyph: var(--success);
-  --qb-mark-status: var(--success);
-}
-.qb-brand-motion[data-state="success"] .qb-brand-motion__dot {
-  /* The answer landed: the bars stand back up, with a little pride. */
-  animation: qb-bar-land .55s cubic-bezier(.34, 1.4, .4, 1) 1 both;
-}
-.qb-brand-motion[data-state="success"] .qb-brand-motion__dot:nth-child(2) { animation-delay: .07s; }
-.qb-brand-motion[data-state="success"] .qb-brand-motion__dot:nth-child(3) { animation-delay: .14s; }
-
-.qb-brand-motion[data-state="error"] {
-  --qb-mark-glyph: var(--danger);
-  --qb-mark-accent: var(--danger);
-  --qb-mark-status: var(--danger);
-  --qb-mark-primary: var(--danger);
-}
-.qb-brand-motion[data-state="error"] .qb-brand-motion__bowl {
-  animation: qb-bubble-shake .5s ease-out 1 both;
-}
-.qb-brand-motion[data-state="error"] .qb-brand-motion__dot {
-  animation: qb-bar-drop .38s cubic-bezier(.3, 0, .5, 1) 1 both;
-}
-
-/* ── Entrance ─────────────────────────────────────────────────────────────
-   Auth pages: the bubble pops in, then the bars rise from the baseline. */
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__mark {
-  animation: qb-brand-enter .48s cubic-bezier(.22, .8, .26, 1) both;
-}
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__bowl {
-  animation: qb-bubble-pop .5s cubic-bezier(.34, 1.4, .4, 1) both;
-}
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__dot {
-  animation: qb-bar-rise .45s .28s cubic-bezier(.22, .8, .26, 1) both;
-}
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__dot:nth-child(2) { animation-delay: .38s; }
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__dot:nth-child(3) { animation-delay: .46s; }
-
-.qb-brand-loader-block {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 96px;
-  padding: 1.25rem;
-  color: var(--text-muted);
-  text-align: center;
-}
-.qb-brand-loader-block .qb-brand-motion { margin-inline: auto; }
-
-/* Compact chat-composer placement. */
-.ai-indicator.qb-brand-motion {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  transform: translateY(-50%);
-  z-index: 3;
-  transition: opacity .2s ease, transform .2s ease;
-}
-.ai-indicator.qb-brand-motion .qb-brand-motion__mark {
-  width: 22px;
-  height: 22px;
-  flex-basis: 22px;
-}
-.ai-indicator.qb-brand-motion.ai-focus { transform: translateY(-50%) scale(1.04); }
-.ai-indicator.qb-brand-motion.ai-hidden { opacity: 0; pointer-events: none; }
-
 /* ── Keyframes ──────────────────────────────────────────────────────────── */
-
-/* Bar to dot: the crouch that starts every working state. */
-@keyframes qb-bar-crouch {
-  from { transform: scaleY(1); }
-  to   { transform: scaleY(var(--qb-squash, .4)); }
-}
-/* Typing: the dot lifts and settles while staying a dot. Every frame carries
-   the crouch, because a second transform animation replaces the first rather
-   than composing with it. */
-@keyframes qb-bar-bounce {
-  0%, 60%, 100% { opacity: .55; transform: translateY(0)      scaleY(var(--qb-squash, .4)); }
-  30%           { opacity: 1;   transform: translateY(-2.6px) scaleY(var(--qb-squash, .4)); }
-}
-/* Streaming: the bars surge between mid and full height as rows arrive. */
-@keyframes qb-bar-stream {
-  0%, 100% { opacity: .7; transform: scaleY(.45); }
-  45%      { opacity: 1;  transform: scaleY(1); }
-}
-/* Landed: back to full height with a small overshoot, then still. */
-@keyframes qb-bar-land {
-  0%   { transform: scaleY(var(--qb-squash, .4)); }
-  65%  { transform: scaleY(1.12); }
-  100% { transform: scaleY(1); }
-}
-/* Failed: the chart falls flat. */
-@keyframes qb-bar-drop {
-  from { opacity: 1;   transform: scaleY(1); }
-  to   { opacity: .45; transform: scaleY(.16); }
-}
-/* Hover: a quick proud pop, one bar after another. */
-@keyframes qb-bar-pop {
-  0%   { transform: scaleY(1); }
-  40%  { transform: scaleY(1.18); }
-  100% { transform: scaleY(1); }
-}
-@keyframes qb-bubble-breathe {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(.965); }
-}
-@keyframes qb-bubble-pop {
-  from { opacity: 0; transform: scale(.62); }
-  to   { opacity: 1; transform: scale(1); }
-}
-@keyframes qb-bubble-shake {
-  0%, 100% { transform: translateX(0); }
-  25%      { transform: translateX(-1.6px); }
-  60%      { transform: translateX(1.4px); }
-}
-@keyframes qb-bar-rise {
-  from { transform: scaleY(.15); }
-  to   { transform: scaleY(1); }
-}
-@keyframes qb-brand-enter {
-  from { opacity: 0; transform: translateY(7px) scale(.92); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes qb-wave {
+  0%, 100% { transform: scaleY(.45); }
+  50%      { transform: scaleY(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -278,10 +86,6 @@
     animation: none !important;
     transition: none !important;
   }
-  /* The animations drive opacity and scaleY, so with motion off every part
-     must land on its resting value rather than mid-cycle. The bars rest at
-     FULL height — bubble with three ascending bars IS the static mark. */
-  .qb-brand-motion__bowl { transform: scale(1); opacity: 1; }
-  .qb-brand-motion__dot  { opacity: 1; transform: scaleY(1); }
-  .qb-brand-motion[data-state="idle"]:hover .qb-brand-motion__mark { transform: none; }
+  /* With motion off the bars stand at full height: the still mark. */
+  .qb-brand-motion__dot { transform: scaleY(1); }
 }

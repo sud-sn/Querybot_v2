@@ -147,6 +147,14 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                 before = page.locator(".msg.msg-bot").count()
                 page.fill("#input", question)
                 page.keyboard.press("Enter")
+                if i == 2:
+                    # The pending answer, with the working wave beside its line.
+                    try:
+                        page.wait_for_selector("#answerProgressBrand", timeout=5000)
+                        report.append({"page": "pending answer", "view": view,
+                                       **p.shot("02a_pending", element=page.locator("#skeletonBubble"))})
+                    except Exception:  # noqa: BLE001 - an answer quicker than the capture
+                        pass
                 try:
                     page.wait_for_function("n => document.querySelectorAll('.msg.msg-bot').length > n",
                                            arg=before, timeout=90000)

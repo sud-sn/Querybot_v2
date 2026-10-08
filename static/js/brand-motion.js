@@ -1,6 +1,9 @@
 (function () {
   'use strict';
 
+  // The mark's one motion: while an answer is worked out its bars rise and
+  // fall (data-state="thinking" and the other working states); anything else
+  // leaves it still. Callers set the state through here.
   function resolve(target) {
     if (!target) return null;
     return typeof target === 'string' ? document.getElementById(target) : target;
@@ -18,12 +21,21 @@
 
   window.QBBrandMotion = { setState: setState };
 
+  // A sign-in form says it is working on its own button, not with the brand:
+  // the button is held busy so a second press does not post the form twice.
   document.addEventListener('submit', function (event) {
     var form = event.target;
-    if (!form || !form.matches || !form.matches('form[data-brand-loading]')) return;
-    var targetId = form.getAttribute('data-brand-target');
-    var target = targetId ? document.getElementById(targetId) : form.querySelector('.qb-brand-motion');
-    setState(target, 'loading', form.getAttribute('data-brand-label') || 'Signing in securely');
-    document.body.classList.add('qb-auth-submitting');
+    if (!form || !form.matches || !form.matches('form[data-busy-on-submit]')) return;
+    var button = form.querySelector('[type="submit"]');
+    if (!button) return;
+    button.setAttribute('aria-busy', 'true');
+    button.disabled = true;
   }, true);
+  // Back to the page from the browser's history: the form is usable again.
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('form[data-busy-on-submit] [type="submit"][aria-busy="true"]').forEach(function (button) {
+      button.removeAttribute('aria-busy');
+      button.disabled = false;
+    });
+  });
 })();

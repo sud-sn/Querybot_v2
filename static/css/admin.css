@@ -32,27 +32,32 @@ body {
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: .65rem;
-  padding: 1.2rem 1rem 1rem;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 1rem;
   border-bottom: 1px solid var(--shell-line);
   flex-shrink: 0;
 }
-/* The same mark the portal carries, so both consoles read as one product. */
-.sidebar-brand-mark { flex: 0 0 30px; border-radius: 7px; }
+/* The same lockup the portal carries, so both consoles read as one product:
+   the mark and "Bot" in the sidebar accent, and a quiet tag, not a second logo. */
+.sidebar-brand-mark { flex: 0 0 auto; --qb-mark-glyph: var(--sidebar-accent); }
 .sidebar-brand-text {
   font-size: var(--font-md);
   font-weight: var(--weight-bold);
   color: var(--on-primary);
   letter-spacing: -.02em;
 }
-.sidebar-brand-text span { color: var(--accent-300); }
-.sidebar-brand-sub {
+.sidebar-brand-text span { color: var(--sidebar-accent); }
+.sidebar-brand-tag {
+  margin-left: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--shell-line);
+  border-radius: 4px;
   font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
   letter-spacing: .08em;
   color: var(--shell-muted);
-  margin-top: 3px;
 }
 /* Nav section */
 .sidebar-section {
@@ -533,4 +538,34 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 }
 @media (max-width: 1100px) {
   .page { padding-inline: 18px; }
+}
+
+/* A wait inside a setup step: a thin line that runs, and the step's name.
+   The brand never stands in for progress (the mark moves only beside a
+   pending answer in the chat). */
+.progress-line { padding: 1rem 0; font-size: var(--font-sm); color: var(--text-muted); }
+.progress-line-bar {
+  position: relative;
+  display: block;
+  height: 3px;
+  margin-bottom: .6rem;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line-subtle);
+}
+.progress-line-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  border-radius: 2px;
+  background: var(--primary);
+  animation: progress-line-run 1.4s ease-in-out infinite;
+}
+@keyframes progress-line-run {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(340%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-line-bar::after { animation: none; width: 100%; opacity: .35; }
 }

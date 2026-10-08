@@ -7,17 +7,15 @@
 <h1 class="sr-only">{{ t('ui.title.sign_in') }}</h1>
 <div class="login-shell">
   <div class="login-brand-identity">
-    {{ brand_motion('portal-auth', 'error' if error else 'idle', 'lg', root_id='portalAuthMark', extra_class='qb-brand-motion--intro') }}
-    <div>
-      <div class="login-brand">Query<span>Bot</span></div>
-      <p class="login-tagline">{{ t('ui.auth.tagline') }}</p>
-    </div>
+    {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark') }}
+    <div class="login-brand">Query<span>Bot</span></div>
+    <p class="login-tagline">{{ t('ui.auth.tagline') }}</p>
   </div>
 
   <div class="card">
     <div class="card-body login-card-body">
       {% if error %}{{ alert(error, 'error', 'x-circle') }}{% endif %}
-      <form method="post" action="/portal/login" data-brand-loading data-brand-target="portalAuthMark">
+      <form method="post" action="/portal/login" data-busy-on-submit>
         <div class="form-group">
           <label for="login-account">{{ t('ui.auth.account_id') }}</label>
           <input id="login-account" type="text" name="account_id" autofocus required
@@ -50,10 +48,10 @@
 
 <style>
 .login-shell{max-width:400px;margin:4rem auto}
-.login-brand-identity{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:1.6rem}
-.login-brand{font-size:36px;font-weight:var(--weight-bold);color:var(--navy);letter-spacing:-.03em;text-align:center;margin-bottom:.35rem}
+.login-brand-identity{display:flex;flex-direction:column;align-items:center;gap:.5rem;margin-bottom:1.6rem;text-align:center}
+.login-brand{font-size:var(--font-3xl);font-weight:var(--weight-bold);color:var(--navy);letter-spacing:-.03em;line-height:1.1}
 .login-brand span{color:var(--blue)}
-.login-tagline{color:var(--text-muted);text-align:left;font-size:var(--font-sm);margin:0;line-height:1.45}
+.login-tagline{color:var(--text-muted);font-size:var(--font-sm);margin:0;line-height:1.45}
 .login-card-body{padding:1.75rem}
 .login-mono-input{font-family:var(--font-mono);letter-spacing:.02em;font-size:var(--font-base)}
 .login-submit{width:100%;justify-content:center;padding:10px;margin-top:.25rem}

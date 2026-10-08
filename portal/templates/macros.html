@@ -8,34 +8,30 @@
 <div{% if root_id %} id="{{ root_id }}"{% endif %}
      class="qb-brand-motion qb-brand-motion--{{ size }}{% if extra_class %} {{ extra_class }}{% endif %}"
      data-state="{{ state }}"{% if status %} role="status" aria-live="polite"{% else %} aria-hidden="true"{% endif %}>
-  {# A speech bubble with the answer already inside it: a filled bubble (the
-     question) carrying three ascending bars (the data that comes back). The
-     tail is two outward-bowed quadratics meeting at a rounded tip — part of
-     the closed fill, so it can never be read as a magnifying-glass handle the
-     way a straight diagonal stroke leaving a circle always is.
+  {# A speech bubble (the question) with three rising bars cut out of it (the
+     answer): the same drawing as static/img/logo-mark.svg, on the 24-unit icon
+     grid -- a 2.5-unit margin, bars 2.8 wide with 1.7-unit gaps on one
+     baseline (y = 14.5), corners half the bar width. The bars are holes, cut
+     with a mask, so they show whatever the mark sits on: no second colour to
+     keep in step with the ground.
 
-     The bars REST VISIBLE — they are the mark, not an indicator. While the
-     product works they crouch into dots and bounce (the typing indicator
-     everyone knows), stream while the answer arrives, land as bars again on
-     success, and drop flat on error. So the same three shapes carry the whole
-     turn: promise, work, answer.
-
-     The fill is a flat token colour, deliberately not a gradient: every state
-     recolours the whole glyph through one custom property, and the mark
-     rebrands with the design system. The gradient lives only in the standalone
-     logo-mark.svg, which never changes state.
-
-     Geometry computed, not eyeballed: bubble r=12.6 at (20,19.2); tail spans
-     26..70 degrees with every arc endpoint on the circle; bars share one
-     baseline at y=24.6 and their farthest corner sits at r=9.77, keeping 2.8
-     of glyph around every cut. `uid` is kept for call-site compatibility. #}
-  <svg class="qb-brand-motion__mark" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
-    <path class="qb-brand-motion__bowl" d="M31.32 24.72 A12.6 12.6 0 1 0 24.31 31.04 Q27.6 32.36 33.05 33.69 Q32.61 29.05 31.32 24.72 Z"/>
-    <g class="qb-brand-motion__dots">
-      <rect class="qb-brand-motion__dot" x="13.4" y="18.2" width="3.4" height="6.4"  rx="1.7"/>
-      <rect class="qb-brand-motion__dot" x="18.3" y="15.2" width="3.4" height="9.4"  rx="1.7"/>
-      <rect class="qb-brand-motion__dot" x="23.2" y="12.0" width="3.4" height="12.6" rx="1.7"/>
-    </g>
+     It is still everywhere but one place. While an answer is being worked out
+     its bars rise and fall from the baseline (the working wave); the moment
+     the answer arrives the mark goes with the working line. No hover tilt, no
+     pop on load, no red and no shake on error -- the words carry a failure,
+     never the brand -- and under reduced motion it never moves. #}
+  <svg class="qb-brand-motion__mark" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+    <defs>
+      <mask id="{{ uid }}-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+        <rect width="24" height="24" fill="#FFFFFF"/>
+        <g class="qb-brand-motion__dots">
+          <rect class="qb-brand-motion__dot" x="6.1" y="10.5" width="2.8" height="4" rx="1.4" fill="#000000"/>
+          <rect class="qb-brand-motion__dot" x="10.6" y="8" width="2.8" height="6.5" rx="1.4" fill="#000000"/>
+          <rect class="qb-brand-motion__dot" x="15.1" y="5.5" width="2.8" height="9" rx="1.4" fill="#000000"/>
+        </g>
+      </mask>
+    </defs>
+    <path class="qb-brand-motion__bowl" mask="url(#{{ uid }}-cut)" d="M8 2.5H16A5.5 5.5 0 0 1 21.5 8V12.5A5.5 5.5 0 0 1 16 18H11.4L7.05 21.25C6.35 21.78 5.4 21.17 5.58 20.32L6.05 18.05A5.5 5.5 0 0 1 2.5 12.5V8A5.5 5.5 0 0 1 8 2.5Z"/>
   </svg>
   {% if label %}<span{% if label_id %} id="{{ label_id }}"{% endif %} class="{{ label_class }}" data-brand-label>{{ label }}</span>{% endif %}
 </div>

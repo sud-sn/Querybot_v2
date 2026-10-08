@@ -517,42 +517,7 @@ class TestThePageNarratesItsWork:
 # PROMISE 9 — The product wears one mark.
 # ═════════════════════════════════════════════════════════════════════════════
 
-class TestOneVisualIdentity:
-    def test_the_favicon_and_the_animated_component_draw_the_same_glyph(self):
-        import re
-        from pathlib import Path
-
-        root = Path(__file__).resolve().parents[1]
-        svg = (root / "static" / "img" / "logo-mark.svg").read_text(encoding="utf-8")
-        macro = (root / "portal" / "templates" / "macros.html").read_text(encoding="utf-8")
-        macro = macro.split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
-
-        a = re.search(r'<path[^>]*d="(M31\.32[^"]+)"', svg)
-        b = re.search(r'class="qb-brand-motion__bowl" d="([^"]+)"', macro)
-        assert a and b and a.group(1).strip() == b.group(1).strip()
-
-    def test_the_admin_and_portal_marks_have_not_drifted(self):
-        import re
-        from pathlib import Path
-
-        root = Path(__file__).resolve().parents[1]
-        marks = []
-        for where in ("admin", "portal"):
-            macro = (root / where / "templates" / "macros.html").read_text(encoding="utf-8")
-            macro = macro.split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
-            svg = macro[macro.index("<svg"):macro.index("</svg>")]
-            marks.append(re.sub(r"\s+", " ", svg).strip())
-        assert marks[0] == marks[1]
-
-    def test_the_resting_mark_never_loops(self):
-        """It is the avatar on every assistant message; forty of them animating
-        out of sync down a conversation is noise, not life."""
-        from pathlib import Path
-
-        svg = (Path(__file__).resolve().parents[1] / "static" / "img"
-               / "logo-mark.svg").read_text(encoding="utf-8")
-        assert "infinite" not in svg
-        assert "prefers-reduced-motion" in svg
+# One drawing, one per screen, moving only beside a pending answer: tests/test_the_mark.py.
 
 
 # ═════════════════════════════════════════════════════════════════════════════

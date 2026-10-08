@@ -27,9 +27,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chat-lang-option:hover{color:var(--text);border-color:var(--text-soft);background:var(--surface-2)}
 .chat-lang-option:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
 .chat-shell-title{display:flex;align-items:center;gap:.75rem}
-.chat-shell-badge{width:34px;height:34px;border-radius:var(--radius);background:transparent;display:flex;align-items:center;justify-content:center;color:var(--on-primary);font-weight:var(--weight-bold);box-shadow:none;flex-shrink:0}
-.qb-logo-mark{width:100%;height:100%;display:block;filter:drop-shadow(0 2px 6px color-mix(in srgb, var(--primary) 32%, transparent));transition:transform .22s cubic-bezier(.34,1.4,.4,1)}
-.chat-shell-badge:hover .qb-logo-mark{transform:rotate(-4deg) scale(1.07)}
 .chat-shell-title h2{font-size:var(--font-md);font-weight:var(--weight-bold);color:var(--text);margin-bottom:3px}
 .chat-shell-title p{font-size:var(--font-sm);color:var(--text-muted)}
 .status-wrap{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
@@ -70,9 +67,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .empty-state{padding:1.05rem 1.2rem;border:1px dashed var(--border);border-radius:var(--radius);background:var(--surface-2);color:var(--text-muted);line-height:1.7}
 .msg{display:flex;gap:.8rem;max-width:100%}
 .msg-user{flex-direction:row-reverse}
-.msg-avatar{width:38px;height:38px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;font-size:var(--font-base);font-weight:var(--weight-bold);flex-shrink:0;box-shadow:var(--shadow)}
-.msg-user .msg-avatar{background:var(--primary);color:var(--on-primary)}
-.msg-bot .msg-avatar{background:transparent;color:var(--primary);border:none;box-shadow:none}
 .msg-content{max-width:min(78%,920px);display:flex;flex-direction:column;gap:.4rem}
 .msg-meta{display:flex;align-items:center;gap:.45rem;font-size:var(--font-xs);color:var(--text-muted);padding:0 .15rem}.msg-user .msg-meta{justify-content:flex-end}
 .msg-name{font-weight:var(--weight-bold);color:var(--text-soft)}
@@ -99,6 +93,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .answer-progress-card{width:min(100%,620px);padding:1rem 1.05rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
 .answer-progress-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.8rem}
 .answer-progress-status{display:flex;align-items:center;gap:.7rem;min-width:0}
+.answer-progress-mark{flex:0 0 auto;display:inline-flex}
 .answer-progress-copy{min-width:0}
 .answer-progress-label{display:block;font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text);line-height:1.35}
 .answer-progress-detail{display:block;margin-top:2px;font-size:var(--font-xs);color:var(--text-muted);line-height:1.35}
@@ -133,82 +128,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stage-step-detail{padding:.1rem 0 .4rem 1rem;font-size:var(--font-xs);color:var(--text-muted)}
 .answer-progress-skeleton{display:grid;gap:7px}
 .answer-progress-skeleton .skeleton{margin:0}
-/* ============================================================================
-   Executive AI intelligence indicator — abstract orb that floats around the
-   composer. Replaces the previous cartoon mascot.
-   Design principles: no face, no cartoon, light + form communicate state.
-   States: idle · focus · typing · thinking · send · error
-   ============================================================================ */
 .chat-input-wrap{position:relative;flex:1;display:flex;align-items:center}
-
-.ai-indicator{
-  position:absolute;
-  left:10px;top:50%;
-  width:22px;height:22px;
-  pointer-events:auto;
-  transform:translate(0,-50%);
-  transition:left .45s cubic-bezier(.22,.61,.36,1),
-             transform .45s cubic-bezier(.22,.61,.36,1),
-             opacity .25s;
-  z-index:3;
-}
-.ai-indicator.ai-hidden{opacity:0;pointer-events:none}
-
-
-
-
-
-/* ── Idle — gentle breathing halo, very low intensity ────────────────────── */
-.ai-indicator.ai-idle{animation:ai-drift 7s ease-in-out infinite}
-
-/* ── Focus — user focused the input; indicator slides in slightly, ring brightens */
-.ai-indicator.ai-focus{animation:none;transform:translate(0,-50%) scale(1.05)}
-
-/* ── Typing — attentive. Core brightens, ring rotates with a data stroke ── */
-
-/* ── Thinking — user paused. Deeper tone, slower internal motion ─────────── */
-
-/* ── Processing / Send — focused, stabilized, structured rotation ─────────── */
-
-/* ── Response ready — subtle highlight pulse, does not demand attention ──── */
-.ai-indicator.ai-ready{animation:ai-ready-pulse 1.6s ease-out 1}
-
-/* ── Error — muted red, no shake. Executive: failure should be informative, not theatrical */
-
-/* Tooltip — minimal label, shown on hover/error only */
-.ai-tooltip{
-  position:absolute;bottom:calc(100% + 10px);left:50%;
-  transform:translateX(-50%) translateY(2px);
-  background:var(--surface);border:1px solid var(--border);border-radius:8px;
-  padding:4px 9px;font-size:var(--font-xs);font-weight:var(--weight-medium);color:var(--text-soft);
-  white-space:nowrap;pointer-events:none;
-  opacity:0;transition:opacity .18s,transform .18s;
-  z-index:10;box-shadow:var(--shadow-md);letter-spacing:.01em;
-}
-.ai-indicator:hover .ai-tooltip,
-.ai-indicator.ai-error .ai-tooltip{opacity:1;transform:translateX(-50%) translateY(0)}
-
-/* Motion keyframes */
-@keyframes ai-drift{
-  0%,100%{transform:translate(0,-50%)}
-  25%{transform:translate(1px,calc(-50% - 1.5px))}
-  50%{transform:translate(2px,-50%)}
-  75%{transform:translate(1px,calc(-50% + 1.5px))}
-}
-@keyframes ai-ready-pulse{
-  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--success) 40%,transparent)}
-  100%{box-shadow:0 0 0 18px transparent}
-}
-
-/* Respect reduced-motion preferences (WCAG) */
-@media (prefers-reduced-motion: reduce){
-  .ai-indicator,
-  .ai-indicator *{animation:none !important;transition:opacity .2s !important}
-}
-
-/* Legacy class aliases so the existing websocket handlers keep working.
-   These map `composer-mascot-wrap` selectors to the new `.ai-indicator` shell. */
-.composer-mascot-wrap{display:none} /* hide the old cartoon if still present in DOM */
 
 /* Animations */
 @keyframes dot-bounce{0%,80%,100%{opacity:.3;transform:translateY(0)}40%{opacity:.9;transform:translateY(-4px)}}
@@ -604,7 +524,6 @@ body:has(.chat-page) .main { background: var(--bg); }
 .schema-strip,
 .chat-composer { background: var(--surface); }
 .chat-shell-header { min-height: 58px; padding: 10px 16px; }
-.chat-shell-badge { background: transparent; box-shadow: none; }
 .chat-thread {
   padding: 22px clamp(18px, 4vw, 64px);
   gap: 18px;
@@ -632,7 +551,6 @@ body:has(.chat-page) .main { background: var(--bg); }
      different hue from the fill it sat under. */
   box-shadow: none;
 }
-.msg-user .msg-avatar { background: var(--primary); box-shadow: none; }
 .msg-bot .msg-bubble { box-shadow: none; }
 .chat-composer { padding: 12px clamp(16px, 4vw, 64px) 14px; }
 .chat-input-bar {
@@ -861,7 +779,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 
         <div class="processing-row" id="processingRow" aria-live="polite">
           <div class="stage-status">
-            {{ brand_motion('processing-brand', 'thinking', 'sm', root_id='processingBrand') }}
+            {{ brand_motion('processing-brand', 'idle', 'sm', root_id='processingBrand') }}
             <span class="stage-label" id="stageLabel">{{ t('ui.chat.thinking') }}</span>
           </div>
         </div>
@@ -897,8 +815,7 @@ body:has(.chat-page) .main { background: var(--bg); }
       <div class="chat-composer">
                 <div class="chat-input-bar">
           <div class="chat-input-wrap" id="inputWrap">
-            {{ brand_motion('composer-brand', 'idle', 'xs', t('ui.chat.ready'), 'composerMascot', 'composerTooltip', 'ai-tooltip', 'ai-indicator ai-idle') }}
-            <textarea aria-label="{{ t('ui.chat.composer_label') }}" id="input" class="chat-input" placeholder="{{ t('ui.chat.composer_placeholder') }}" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
+            <textarea aria-label="{{ t('ui.chat.composer_label') }}" id="input" class="chat-input" placeholder="{{ t('ui.chat.composer_placeholder') }}" rows="1" maxlength="500" spellcheck="true" autocomplete="off"></textarea>
           </div>
           <div class="composer-side">
             <span class="char-count" id="charCount" hidden>500</span>
@@ -1553,10 +1470,10 @@ function _showSkeletonBubble(){
   div.className = 'msg msg-bot';
   div.id = 'skeletonBubble';
   div.innerHTML =
-    '<div class="msg-avatar" id="answerProgressBrandSlot"></div>'
-    + '<div class="msg-content" style="flex:1">'
+    '<div class="msg-content" style="flex:1">'
     + '<div class="answer-progress-card">'
     + '<div class="answer-progress-head"><div class="answer-progress-status">'
+    + '<span class="answer-progress-mark" id="answerProgressBrandSlot"></span>'
     + '<span class="answer-progress-copy"><span class="answer-progress-label" id="answerStageLabel">'
     + escHtml(t('ui.chat.delivery.understanding')) + '</span>'
     + '<span class="answer-progress-detail" id="answerStageDetail">'
@@ -1572,16 +1489,19 @@ function _showSkeletonBubble(){
   const sourceBrand = document.getElementById('processingBrand');
   const brandSlot = document.getElementById('answerProgressBrandSlot');
   if (sourceBrand && brandSlot) {
+    // A copy of the hidden template beside the working line. Its mask gets an
+    // id of its own: a copy that pointed at the template's mask would draw
+    // the template's bars, which never move.
     const brand = sourceBrand.cloneNode(true);
     brand.id = 'answerProgressBrand';
     brand.classList.remove('qb-brand-motion--sm');
-    brand.classList.add('qb-brand-motion--sm');
-    brand.dataset.state = sourceBrand.dataset.state || 'thinking';
-    const gradient = brand.querySelector('linearGradient');
-    const badge = brand.querySelector('.qb-brand-motion__badge');
-    if (gradient && badge) {
-      gradient.id = 'answer-progress-brand-bg';
-      badge.setAttribute('fill', 'url(#answer-progress-brand-bg)');
+    brand.classList.add('qb-brand-motion--xs');
+    brand.dataset.state = 'thinking';
+    const mask = brand.querySelector('mask');
+    const cut = brand.querySelector('[mask]');
+    if (mask && cut) {
+      mask.id = 'answer-progress-brand-cut';
+      cut.setAttribute('mask', 'url(#answer-progress-brand-cut)');
     }
     brandSlot.appendChild(brand);
   }
@@ -1599,14 +1519,6 @@ function setProcessing(active){
   processingActive = active;
   const row = document.getElementById('processingRow');
   row.classList.toggle('active', !!active);
-  // The mark is the progress indicator, so it must be SHOWN while working, not
-  // hidden. It was being hidden the moment it had something to say.
-  const cm = document.getElementById('composerMascot');
-  if (cm) {
-    cm.classList.remove('ai-hidden');
-    if (active) cm.dataset.state = 'thinking';
-    else if (!window._mascotInErrorState) cm.dataset.state = 'idle';
-  }
   _setSendButtonMode(!!active);
 
   // The composer says what it is doing rather than waiting to reject the user.
@@ -1990,7 +1902,7 @@ function appendBot(rawText, opts = {}){
   const diagnosticHtml = renderDiagnosticCard(rawText);
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML = `<div class="msg-avatar"><img src="${window.QB_MARK_SRC}" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">${t('ui.chat.card.copy_answer')}</button></div></div>`;
+  div.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">${t('ui.chat.card.copy_answer')}</button></div></div>`;
   if (diagnosticHtml) {
     const bubbleNode = div.querySelector('.msg-bubble');
     if (bubbleNode) bubbleNode.outerHTML = diagnosticHtml;
@@ -2959,7 +2871,7 @@ function appendDashboardEvent(msg){
   const dashboard = msg.dashboard || {};
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML = `<div class="msg-avatar"><img src="${window.QB_MARK_SRC}" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timeLabel()}</span></div><div class="msg-bubble"><strong>${escHtml(msg.title || t('ui.chat.artifact.dashboard_updated'))}</strong><div style="margin-top:.35rem;color:var(--text-muted)">${escHtml(msg.body || t('ui.chat.artifact.dashboard_note'))}</div><div class="msg-actions" style="margin-top:.65rem"><a class="msg-action" href="${escHtml(dashboard.url || '/portal/dashboard')}">${t('ui.chat.artifact.open_dashboard')}</a></div></div></div>`;
+  div.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timeLabel()}</span></div><div class="msg-bubble"><strong>${escHtml(msg.title || t('ui.chat.artifact.dashboard_updated'))}</strong><div style="margin-top:.35rem;color:var(--text-muted)">${escHtml(msg.body || t('ui.chat.artifact.dashboard_note'))}</div><div class="msg-actions" style="margin-top:.65rem"><a class="msg-action" href="${escHtml(dashboard.url || '/portal/dashboard')}">${t('ui.chat.artifact.open_dashboard')}</a></div></div></div>`;
   thread().appendChild(div);
   scrollBottom();
 }
@@ -3525,7 +3437,7 @@ function appendAnalysisResponse(msg, opts = {}){
         ${analysisFollowUps.map(_followUpChip).map(c => `<button class="suggestion-chip follow-up-chip" type="button" data-question="${escHtml(c.question)}">${escHtml(c.label)}</button>`).join('')}
       </div>`
     : '';
-  div.innerHTML = `<div class="msg-avatar"><img src="${window.QB_MARK_SRC}" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || t('ui.chat.card.analysis'))}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">${t('ui.chat.card.next_step_label')}</span>${escHtml(msg.next_step)}</div>` : ''}${caveatHtml}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">${t('ui.chat.card.copy_analysis')}</button></div></div></div>`;
+  div.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || t('ui.chat.card.analysis'))}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${sectionsHtml}${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">${t('ui.chat.card.next_step_label')}</span>${escHtml(msg.next_step)}</div>` : ''}${caveatHtml}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">${t('ui.chat.card.copy_analysis')}</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
     div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
@@ -3563,7 +3475,7 @@ function appendChart(payload, opts = {}){
   // would contradict the table directly below it.
   const _chartRowCount = (typeof payload.row_count === 'number')
     ? payload.row_count : rows.length;
-  div.innerHTML = `<div class="msg-avatar"><img src="${window.QB_MARK_SRC}" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${escHtml(t('ui.chat.chart.rows', {count: _chartRowCount, duration: payload.duration_label || ''}))}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">${t('ui.chat.chart.pin')}</button><button type="button" class="chart-btn" data-action="copy">${t('ui.chat.chart.copy_summary')}</button><button type="button" class="chart-btn" data-action="expand" title="${t('ui.chat.chart.expand')}" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  div.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${escHtml(t('ui.chat.chart.rows', {count: _chartRowCount, duration: payload.duration_label || ''}))}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">${t('ui.chat.chart.pin')}</button><button type="button" class="chart-btn" data-action="copy">${t('ui.chat.chart.copy_summary')}</button><button type="button" class="chart-btn" data-action="expand" title="${t('ui.chat.chart.expand')}" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
   thread().appendChild(div);
   const [pinBtn, copyBtn, expandBtn] = div.querySelectorAll('.chart-btn');
   if (!payload.pin_token) {
@@ -3630,7 +3542,7 @@ function renderClarificationPrompt(data, opts = {}){
   const question = data.question || (options.length
     ? t('ui.chat.clar.choose_one')
     : t('ui.chat.clar.add_detail'));
-  div.innerHTML = `<div class="msg-avatar"><img src="${window.QB_MARK_SRC}" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card" data-pending-id="${escHtml(data.pending_id || '')}"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
+  div.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card" data-pending-id="${escHtml(data.pending_id || '')}"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
   const wrap = div.querySelector('.clarification-options');
   const card = div.querySelector('.clarification-card');
   _markActiveOutbound('complete', t('ui.chat.clar.requested'));
@@ -3907,8 +3819,6 @@ function sendMessage(tableHint){
     window._mascotInClarifyState = false;
     _resetStageSteps();
   }
-  // Reset composer mascot error state
-  if (window._composerMascotReset) window._composerMascotReset();
   const userMessage = appendUser(text, {
     deliveryState: 'sending',
     tableHint: normalizedTableHint,
@@ -4025,9 +3935,9 @@ const BRAND_STAGE_STATES = {
   repairing_query: 'resolving',
   executing_query: 'querying',
   formatting_results: 'answering',
-  chart_ready: 'success',
+  chart_ready: 'idle',
   _idle: 'thinking',
-  _error: 'error',
+  _error: 'idle',
   _clarify: 'thinking'
 };
 
@@ -4037,11 +3947,10 @@ function _setStageState(stageKey) {
   // `if (!body) return;` addressed a robot SVG that was deleted along with
   // this comment's ancestors -- animation names, arm poses, tooltips, eye
   // tints and four tool overlays, none of which had rendered in a long time.
-  const brandState = BRAND_STAGE_STATES[stageKey] || 'thinking';
-  ['processingBrand', 'answerProgressBrand'].forEach(id => {
-    const brand = document.getElementById(id);
-    if (brand) brand.dataset.state = brandState;
-  });
+  // Only the copy beside the pending answer moves; the hidden template it is
+  // cloned from stays still.
+  const brand = document.getElementById('answerProgressBrand');
+  if (brand) brand.dataset.state = BRAND_STAGE_STATES[stageKey] || 'thinking';
 }
 
 function startDoodle() {
@@ -4163,147 +4072,6 @@ function showMascotClarify() {
   window._mascotInClarifyState = true;
 }
 
-// ── Theme-aware mascot color update ─────────────────────────────────────────
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Executive AI intelligence indicator — state machine
-//
-// A minimal, professional floating orb that represents the AI's attentional
-// state. NOT a character. NO face, NO emoji, NO bouncing. Light + form
-// communicate state. Idle → Focus → Typing → Thinking → Send → Ready → Error.
-//
-// Public API (preserved from the old mascot so websocket handlers keep working):
-//   window._composerMascotError(msg)  — enter error state with a tooltip label
-//   window._composerMascotReset()     — return to idle
-// ══════════════════════════════════════════════════════════════════════════════
-function _initComposerMascot() {
-  const inp    = document.getElementById('input');
-  const wrap   = document.getElementById('inputWrap');
-  const orb    = document.getElementById('composerMascot');
-  const tip    = document.getElementById('composerTooltip');
-  if (!inp || !wrap || !orb) return;
-
-  // All valid state tokens. The CSS drives animations off these class names.
-  const STATES = ['ai-idle', 'ai-focus', 'ai-typing', 'ai-thinking',
-                  'ai-send', 'ai-ready', 'ai-error', 'ai-hidden'];
-
-  // Short, executive-tone status labels per state. No exclamations, no emoji.
-  const LABELS = Object.fromEntries(
-    ['idle', 'focus', 'typing', 'thinking', 'send', 'ready', 'error']
-      .map(key => [key, t(`ui.chat.mascot.${key}`)])
-  );
-
-  let current = 'idle';
-  let thinkTimer = null;
-
-  function _setState(name, opts) {
-    opts = opts || {};
-    if (name === current && !opts.force) return;
-    current = name;
-
-    clearTimeout(thinkTimer);
-    // Reset all state classes then apply the target one
-    orb.classList.remove.apply(orb.classList, STATES);
-    orb.classList.add('ai-' + name);
-    const brandState = {
-      idle: 'idle', focus: 'idle', typing: 'thinking', thinking: 'resolving',
-      send: 'querying', ready: 'success', error: 'error', hidden: 'idle'
-    }[name] || 'idle';
-    orb.dataset.state = brandState;
-
-    // Update tooltip label (executive tone; only shown on hover or error)
-    if (tip) {
-      tip.textContent = opts.msg || LABELS[name] || '';
-    }
-
-    // Drive slide position — stays within a defined radius of the input
-    _positionOrb(name);
-  }
-
-  // ── Position ───────────────────────────────────────────────────────────────
-  // The orb floats within a bounded zone at the LEFT edge of the input area.
-  // It NEVER tracks the caret or covers typed text — executive users read
-  // what they type. Position drifts only between idle/focus/thinking,
-  // constrained to a ~6px vertical radius to avoid jitter.
-  function _positionOrb(stateName) {
-    // Horizontal: pinned to the left gutter of the input.
-    // Executive UX: no "chase the cursor" motion. The orb is an ambient
-    // presence, not a follower.
-    const leftPx = 10;  // must match the CSS `left` value so transitions stay smooth
-    orb.style.left = leftPx + 'px';
-
-    // Vertical drift is handled by CSS animation `ai-drift` in idle state.
-    // Other states hold the orb centered.
-  }
-
-  // ── Transition helpers ────────────────────────────────────────────────────
-  function _scheduleThink() {
-    clearTimeout(thinkTimer);
-    thinkTimer = setTimeout(() => {
-      // After 1.4s of inactivity while text is present → thinking state
-      if (current === 'typing' && inp.value.trim()) _setState('thinking');
-    }, 1400);
-  }
-
-  // ── Input listeners ───────────────────────────────────────────────────────
-  // Focus/blur — listening state
-  inp.addEventListener('focus', () => {
-    if (!inp.value.trim()) _setState('focus');
-  });
-  inp.addEventListener('blur', () => {
-    if (!inp.value.trim()) _setState('idle');
-  });
-
-  // Typing — attentive state, with debounced transition to thinking
-  inp.addEventListener('input', () => {
-    const text = inp.value;
-    if (!text.trim()) {
-      _setState('focus');
-      return;
-    }
-    _setState('typing');
-    _scheduleThink();
-  });
-
-  // Submit — processing state. Return to idle after ~1.2s if no websocket
-  // status supersedes it. The WS handler calls _composerMascotReset() on
-  // response-ready, which walks us through `ready` → `idle`.
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) {
-      _setState('send');
-    }
-  });
-
-  // Also catch clicks on the send button if it's the actual submit path
-  const sendBtn = document.getElementById('sendBtn');
-  if (sendBtn) {
-    sendBtn.addEventListener('click', () => {
-      if (inp.value.trim()) _setState('send');
-    });
-  }
-
-  // ── Public hooks (preserved from the previous mascot API) ────────────────
-  window._composerMascotError = function (msg) {
-    _setState('error', { force: true, msg: msg || LABELS.error });
-    // Error state auto-clears after 6s if nothing else supersedes it.
-    clearTimeout(orb._errResetT);
-    orb._errResetT = setTimeout(() => {
-      if (current === 'error') _setState('idle');
-    }, 6000);
-  };
-
-  window._composerMascotReset = function () {
-    // Response-ready flow: briefly show the ready pulse, then return to idle.
-    _setState('ready', { force: true });
-    setTimeout(() => {
-      if (current === 'ready') _setState('idle');
-    }, 1400);
-  };
-
-  // ── Kick off ──────────────────────────────────────────────────────────────
-  _setState('idle', { force: true });
-}
 
 // ── Hero collapse / expand ────────────────────────────────────────────────────
 /* The run state a message ends in, from the state the server sends beside the
@@ -4381,7 +4149,7 @@ function connect(){
         if (terminalState === 'failed') {
           _markActiveOutbound('failed', t('ui.chat.delivery.needs_attention'));
           showMascotError();
-          // Show contextual error on the composer mascot
+          // Say what probably went wrong, in words: the brand never signals an error.
           const isDbPause = msgContent.includes('40613') || msgContent.includes('not currently available');
           const isConn    = msgContent.includes('connection') || msgContent.includes('timeout');
           const errMsg    = isDbPause
@@ -4389,7 +4157,7 @@ function connect(){
             : isConn
               ? t('ui.chat.err.connection')
               : t('ui.chat.err.generic_rephrase');
-          if (window._composerMascotError) window._composerMascotError(errMsg);
+          toast(errMsg);
         } else {
           _markActiveOutbound('complete', t('ui.chat.clar.requested'));
         }
@@ -4509,7 +4277,6 @@ function connect(){
       if (_pendingSuggestion) _genieEvent('executed', _pendingSuggestion);
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
-      if (window._composerMascotError) window._composerMascotError(t('ui.chat.err.generic_retry'));
       _markActiveOutbound('failed', t('ui.chat.delivery.needs_attention'));
       appendSystem(msg.content);
     } else if (msg.type === 'result_chat_typing') {
@@ -4962,7 +4729,6 @@ class AutoSuggest {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  _initComposerMascot();
   const requestedNewThread = _requestedNewThread;
   if (requestedNewThread) {
     clearChatCache();

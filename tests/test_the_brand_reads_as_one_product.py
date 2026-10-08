@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-MARKS = [ROOT / "static" / "img" / "logo-mark.svg", ROOT / "static" / "img" / "logo-mark-sm.svg"]
 
 
 def _tokens() -> dict[str, str]:
@@ -44,66 +42,6 @@ def _lum(hexcolour: str) -> float:
 def _ratio(a: str, b: str) -> float:
     high, low = sorted((_lum(a), _lum(b)), reverse=True)
     return (high + 0.05) / (low + 0.05)
-
-
-def _stops(mark: Path) -> dict[str, list[str]]:
-    svg = mark.read_text(encoding="utf-8")
-    gradients = re.findall(r'<linearGradient id="(\w+)"[^>]*>([\s\S]*?)</linearGradient>', svg)
-    found = {gid: re.findall(r'stop-color="(#[0-9A-Fa-f]{6})"', body) for gid, body in gradients}
-    return {"tile": next(v for k, v in found.items() if "Tile" in k),
-            "glyph": next(v for k, v in found.items() if "Glyph" in k)}
-
-
-class TestTheMark:
-
-    @pytest.mark.parametrize("mark", MARKS, ids=lambda p: p.name)
-    def test_its_tile_is_navy(self, mark):
-        for stop in _stops(mark)["tile"]:
-            r, g, b = _rgb(stop)
-            assert b > g > r and _lum(stop) < 0.05, stop
-
-    @pytest.mark.parametrize("mark", MARKS, ids=lambda p: p.name)
-    def test_its_glyph_is_azure(self, mark):
-        for stop in _stops(mark)["glyph"]:
-            r, g, b = _rgb(stop)
-            assert b > g > r, stop
-
-    @pytest.mark.parametrize("mark", MARKS, ids=lambda p: p.name)
-    def test_its_glyph_stands_off_its_tile(self, mark):
-        # The bars are cut through the glyph to the tile: they read only if
-        # the two differ by the 3:1 WCAG asks of a graphic, at every stop.
-        stops = _stops(mark)
-        for glyph in stops["glyph"]:
-            for tile in stops["tile"]:
-                assert _ratio(glyph, tile) >= 3.0, (glyph, tile)
-
-    def test_the_reduced_mark_is_the_same_mark(self):
-        assert _stops(MARKS[0]) == _stops(MARKS[1])
-
-    @pytest.mark.parametrize("mark", MARKS, ids=lambda p: p.name)
-    def test_every_page_links_it_by_its_content(self, mark):
-        # A recoloured mark reaches a browser that cached the old one only
-        # when every reference changes with it: each is asset(), whose version
-        # is the file's hash (tests/test_asset_urls_follow_the_file.py).
-        linked, by_hand = 0, []
-        for page in list((ROOT / "admin" / "templates").rglob("*.html")) + \
-                list((ROOT / "portal" / "templates").rglob("*.html")):
-            text = page.read_text(encoding="utf-8")
-            linked += text.count(f"asset('img/{mark.name}')")
-            by_hand += [page.name for _ in re.finditer(rf"/static/img/{re.escape(mark.name)}", text)]
-        assert linked and not by_hand, by_hand
-
-
-def test_the_admin_console_carries_the_mark():
-    import admin.routes as routes
-
-    request = MagicMock()
-    request.url.path = "/admin/"
-    html = routes.templates.env.get_template("base.html").render(request=request)
-    brand = re.search(r'<div class="sidebar-brand">[\s\S]*?</div>\s*</div>', html).group(0)
-    source = re.search(r'<img src="(/static/img/logo-mark\.svg)\?v=[\w.-]+"', brand)
-    assert source, brand
-    assert (ROOT / source.group(1).lstrip("/")).is_file()
 
 
 # The chart theme's keys and the tokens they are read from (chart-palettes.js,

@@ -116,12 +116,6 @@ def test_every_link_carries_the_hash_of_the_file_it_names(page):
         assert version == _hash(file), (page, link)
 
 
-def test_the_script_built_mark_is_the_shells():
-    html = render("portal_notifications.html")
-    src = re.search(r'window\.QB_MARK_SRC = "([^"]+)";', html).group(1)
-    assert src == f"/static/img/logo-mark.svg?v={_hash(STATIC / 'img' / 'logo-mark.svg')}"
-
-
 # ── No version written by hand ──────────────────────────────────────────────
 
 def _templates():

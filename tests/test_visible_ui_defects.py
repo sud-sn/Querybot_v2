@@ -113,40 +113,6 @@ class TheEmphasisRulesBehave(unittest.TestCase):
         self.assertEqual(self._render("no markup at all"), "no markup at all")
 
 
-class TheReducedMark(unittest.TestCase):
-    """Drawn on 40 units, rendered at 16. The bars have to survive that."""
-
-    MARK = "static/img/logo-mark-sm.svg"
-
-    def setUp(self):
-        self.svg = _read(self.MARK)
-        self.bars = [
-            (float(x), float(w))
-            for x, w in re.findall(r'<rect x="([\d.]+)"[^>]*width="([\d.]+)"[^>]*fill="url\(#qbTileSm\)"',
-                                   self.svg)
-        ]
-
-    def test_it_exists_and_has_two_bars(self):
-        self.assertEqual(len(self.bars), 2, "two bars, not three — that is the point")
-
-    def test_the_bars_resolve_at_favicon_size(self):
-        scale = 16 / 40
-        (x1, w1), (x2, _w2) = self.bars
-        self.assertGreaterEqual(w1 * scale, 1.5, "a bar under ~1.5px at 16px blurs away")
-        self.assertGreaterEqual((x2 - x1 - w1) * scale, 0.9, "the gap must survive too")
-
-    def test_it_shares_the_optical_centre_of_the_full_mark(self):
-        """Or swapping at a breakpoint visibly shifts the mark."""
-        (x1, _w1), (x2, w2) = self.bars
-        self.assertAlmostEqual((x1 + x2 + w2) / 2, 20.0, places=2)
-
-    def test_both_favicons_point_at_it(self):
-        for page in ("portal/templates/portal_base.html", "admin/templates/base.html"):
-            with self.subTest(page=page):
-                head = _read(page)[:2000]
-                self.assertIn("logo-mark-sm.svg", head)
-
-
 class TheScaleHasACaptionRung(unittest.TestCase):
     """Without it the template sweep cannot start."""
 

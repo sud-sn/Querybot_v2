@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb, alert, brand_motion %}
+{% from "macros.html" import breadcrumb, alert %}
 {% from "icons.html" import ic %}
 {% block title %}Setup — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block head %}
@@ -420,8 +420,8 @@
         </div>
       </div>
       <div id="setup-scope-status" class="scope-status"></div>
-      <div id="setup-scope-loading" class="qb-brand-loader-block" style="display:none">
-        {{ brand_motion('setup-scope-loader', 'loading', 'sm', 'Connecting to database', status=true) }}
+      <div id="setup-scope-loading" class="progress-line" role="status" aria-live="polite" style="display:none">
+        <span class="progress-line-bar" aria-hidden="true"></span><span>Connecting to database…</span>
       </div>
       <div id="setup-scope-tree" class="scope-tree"></div>
       <div id="setup-scope-footer" class="scope-footer">

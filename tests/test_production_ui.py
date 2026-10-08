@@ -253,7 +253,6 @@ def test_brand_motion_is_shared_by_admin_and_portal_shells():
 
     stylesheet = _read("static/css/brand-motion.css")
     assert 'data-state="querying"' in stylesheet
-    assert 'data-state="success"' in stylesheet
     assert "prefers-reduced-motion: reduce" in stylesheet
 
 
@@ -264,8 +263,8 @@ def test_login_and_chat_use_query_lens_motion_states():
 
     assert "adminAuthMark" in admin_login
     assert "portalAuthMark" in portal_login
-    assert "data-brand-loading" in admin_login
-    assert "data-brand-loading" in portal_login
+    assert "data-busy-on-submit" in admin_login
+    assert "data-busy-on-submit" in portal_login
     assert "answerProgressBrand" in chat
     assert "answerStageLabel" in chat
     assert "BRAND_STAGE_STATES" in chat
@@ -376,26 +375,9 @@ def test_the_mark_is_a_bubble_carrying_three_bars():
         )
 
 
-def test_the_tail_is_part_of_the_closed_fill_never_an_open_stroke():
-    """The whole reason the mark has this shape. A straight diagonal leaving a
-    circle reads as a magnifying-glass handle however it is tuned; a tail that
-    is two bowed curves inside one closed filled path cannot."""
-    for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
-        macro = _brand_macro(template)
-        bubble = re.search(r'class="qb-brand-motion__bowl" d="([^"]+)"', macro)
-        assert bubble, f"{template}: no bubble path"
-        d = bubble.group(1).strip()
-        assert d.endswith("Z"), f"{template}: the bubble must be a closed fill"
-        assert "A" in d, f"{template}: the bubble body must be a circular arc"
-        assert d.count("Q") >= 2, (
-            f"{template}: the tail must be bowed curves, not a straight diagonal"
-        )
-    css = _read("static/css/brand-motion.css")
-    bowl = css.split(".qb-brand-motion__bowl {", 1)[1].split("}", 1)[0]
-    assert "fill: var(--qb-mark-glyph)" in bowl, (
-        "the bubble must take a flat token fill, so every state can recolour it"
-    )
-    assert "stroke" not in bowl, "the bubble is a filled shape, never a stroked ring"
+# The drawing, its one motion and where it appears are tests/test_the_mark.py
+# (the logo step, L1): the crouch, stream, land, drop, hover and intro
+# animations these pinned were taken out with it.
 
 
 def test_both_macro_copies_render_an_identical_mark():
@@ -409,111 +391,12 @@ def test_both_macro_copies_render_an_identical_mark():
     assert marks[0] == marks[1], "admin and portal brand_motion marks have drifted apart"
 
 
-def test_the_bars_carry_the_motion_across_every_state():
-    """A single blinking element is not motion. The bars must crouch into dots
-    and type while working, stream while answering, land on success, drop on
-    error, pop on hover, and rise on the auth intro."""
-    css = _read("static/css/brand-motion.css")
-    for keyframes in ("qb-bar-crouch", "qb-bar-bounce", "qb-bar-stream", "qb-bar-land",
-                      "qb-bar-drop", "qb-bar-pop", "qb-bar-rise",
-                      "qb-bubble-breathe", "qb-bubble-pop", "qb-bubble-shake"):
-        assert f"@keyframes {keyframes}" in css, f"{keyframes} is not defined"
-        assert css.count(keyframes) >= 2, f"{keyframes} is defined but never applied"
-
-    bar_rule = css.split(".qb-brand-motion__dot {", 1)[1].split("}", 1)[0]
-    assert "transform-origin: bottom" in bar_rule, (
-        "bars must stretch from their baseline, the way a bar chart does"
-    )
-    assert "opacity: 1" in bar_rule, (
-        "the bars rest VISIBLE -- they are the mark itself, not an indicator"
-    )
-
-
-def test_the_mark_is_interactive_only_at_rest():
-    """Hover and press respond at idle, and are scoped so they can never fight
-    a working state's animation."""
-    css = _read("static/css/brand-motion.css")
-    assert '[data-state="idle"]:hover' in css, "the resting mark must respond to hover"
-    assert '[data-state="idle"]:active' in css, "the resting mark must respond to press"
-    for line in css.splitlines():
-        if ":hover" in line and "qb-brand-motion" in line and "@" not in line:
-            assert '[data-state="idle"]' in line, (
-                f"hover styling outside the idle state would fight the working "
-                f"animation: {line.strip()}"
-            )
-
-
-def test_the_typing_bounce_carries_the_crouch_in_every_frame():
-    """Two transform animations replace each other rather than composing, so if
-    the bounce frames dropped the scaleY crouch the dots would flash back to
-    full-height bars every cycle."""
-    css = _read("static/css/brand-motion.css")
-    bounce = css.split("@keyframes qb-bar-bounce {", 1)[1]
-    bounce = bounce[:bounce.index("@keyframes")]
-    lines = [ln for ln in bounce.splitlines() if "transform:" in ln]
-    assert lines and all("scaleY(var(--qb-squash" in ln for ln in lines), (
-        "every qb-bar-bounce frame must keep scaleY(var(--qb-squash)) or the "
-        "dots pop back into bars mid-bounce"
-    )
-
-
-def test_reduced_motion_leaves_every_animated_part_at_full_value():
-    """The animations drive opacity and scaleY, so switching them off must not
-    leave a bar crouched or the bubble mid-breath."""
-    css = _read("static/css/brand-motion.css")
-    # Split on the @media token, not the phrase: the file header MENTIONS
-    # reduced motion in prose, and splitting there reads the base rules instead.
-    reduced = css.split("@media (prefers-reduced-motion", 1)[1]
-    assert "animation: none" in reduced
-    bowl = reduced.split(".qb-brand-motion__bowl", 1)[1].split("}", 1)[0]
-    assert "scale(1)" in bowl, "the bubble could be left mid-breath"
-    bar = reduced.split(".qb-brand-motion__dot", 1)[1].split("}", 1)[0]
-    assert "opacity: 1" in bar and "scaleY(1)" in bar, (
-        "with motion off the bars must stand at full height -- the bubble with "
-        "three ascending bars IS the static mark"
-    )
-
-
 def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
     """The old blue survived a hex sweep by hiding in an rgba() drop-shadow,
     which put a blue halo around a green mark."""
     css = _strip_css_comments(_read("static/css/brand-motion.css"))
     stale = re.findall(r"rgba?\(\s*37\s*,\s*99\s*,\s*235", css)
     assert not stale, f"brand-motion.css still references the old brand blue: {stale}"
-
-
-def test_the_standalone_mark_matches_the_component_geometry():
-    """logo-mark.svg is the favicon and every chat avatar; the macro is the
-    animated component. If their geometry drifts the product wears two logos."""
-    svg = _read("static/img/logo-mark.svg")
-    macro = _brand_macro("portal/templates/macros.html")
-    svg_bubble = re.search(r'<path[^>]*d="(M31\.32[^"]+)"', svg)
-    macro_bubble = re.search(r'class="qb-brand-motion__bowl" d="([^"]+)"', macro)
-    assert svg_bubble and macro_bubble
-    assert svg_bubble.group(1).strip() == macro_bubble.group(1).strip(), (
-        "the standalone SVG and the component draw different bubbles"
-    )
-    svg_bars = re.findall(
-        r'class="qb-bar" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"', svg)
-    macro_bars = re.findall(
-        r'class="qb-brand-motion__dot" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"',
-        macro)
-    assert svg_bars and svg_bars == macro_bars, (
-        "the bars have drifted between the SVG and the component"
-    )
-
-
-def test_the_standalone_mark_animates_once_and_respects_reduced_motion():
-    """The file is the avatar on every assistant message: it may animate ON
-    LOAD only, and must rest still -- forty marks looping out of sync down a
-    conversation is noise, not life."""
-    svg = _read("static/img/logo-mark.svg")
-    assert "infinite" not in svg, "the standalone mark must not loop"
-    assert "prefers-reduced-motion" in svg, "the standalone mark must honour reduced motion"
-    assert 'gradientUnits="userSpaceOnUse"' in svg, (
-        "the bar cut-outs share the tile gradient; objectBoundingBox would "
-        "restart the gradient inside every bar and the cuts would not match the tile"
-    )
 
 
 # ── Admin console: colour must come from the tokens ──────────────────────────

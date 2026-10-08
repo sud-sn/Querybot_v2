@@ -147,8 +147,6 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
   .chat-workspace-main .status-note,
   .chat-workspace-main .hero-info-btn { display: none !important; }
 
-  .chat-workspace-main .chat-shell-badge { width: 32px; height: 32px; }
-
   .chat-workspace-main .schema-control-row,
   .chat-workspace-main .schema-mode-note { padding-inline: 12px; }
 
@@ -333,7 +331,6 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 .chat-workspace-main .chat-shell-header { min-height: 58px; padding: 9px clamp(14px, 2vw, 24px); }
 .chat-workspace-main .chat-shell-title h2 { font-size: var(--font-base); }
 .chat-workspace-main .chat-shell-title p { font-size: var(--font-xs); }
-.chat-workspace-main .chat-shell-badge { width: 30px; height: 30px; }
 .chat-workspace-main .schema-control-row,
 .chat-workspace-main .schema-mode-note { padding-inline: clamp(14px, 2vw, 24px); }
 .chat-workspace-main .chat-thread { padding: 22px clamp(16px, 3vw, 44px); }
