@@ -239,7 +239,9 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     if pending is not None and picked is not None:
         # The reply names one of the links or dates offered: the waiting plan, completed by code.
         if pending.field == "time.date":
-            role = next((r for r in model.date_roles.values() if r.name == picked), None)
+            # The offered dates are tables' defaults; another table may have a date of the same name.
+            named = [r for r in model.date_roles.values() if r.name == picked]
+            role = next((r for r in named if r.is_default), named[0] if named else None)
             update: dict[str, Any] = {"time": pending.plan.time.model_copy(
                 update={"date": role.slug if role is not None else picked})}
         else:
