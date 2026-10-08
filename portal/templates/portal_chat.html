@@ -91,15 +91,17 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stage-dot:nth-child(2){animation-delay:.18s}
 .stage-dot:nth-child(3){animation-delay:.36s}
 .stage-label{font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-muted)}
-.answer-progress-card{width:min(100%,620px);padding:1rem 1.05rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
-.answer-progress-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.8rem}
-.answer-progress-status{display:flex;align-items:center;gap:.7rem;min-width:0}
+/* The pending answer: one working line (the wave, what it is doing, the seconds, Stop). */
+.answer-progress-card{width:min(100%,780px);padding:.25rem 0}
+.answer-progress-head{display:flex;align-items:center;gap:.6rem;min-width:0}
 .answer-progress-mark{flex:0 0 auto;display:inline-flex}
-.answer-progress-copy{min-width:0}
-.answer-progress-label{display:block;font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text);line-height:1.35}
-.answer-progress-detail{display:block;margin-top:2px;font-size:var(--font-xs);color:var(--text-muted);line-height:1.35}
-.answer-progress-elapsed{display:none;flex-shrink:0;font-size:var(--font-2xs);font-weight:var(--weight-bold);color:var(--text-muted);font-variant-numeric:tabular-nums}
+.answer-progress-copy{flex:1;min-width:0;font-size:var(--font-sm);color:var(--text-muted);line-height:1.4}
+.answer-progress-title{font-weight:var(--weight-semibold);color:var(--text)}
+.answer-progress-label{color:var(--text-muted)}
+.answer-progress-detail[hidden]{display:none}
+.answer-progress-elapsed{display:none;flex-shrink:0;font-size:var(--font-xs);color:var(--text-muted);font-variant-numeric:tabular-nums}
 .answer-progress-elapsed.visible{display:inline-flex}
+.answer-progress-stop{flex-shrink:0;gap:.3rem}
 .agent-run-meta{display:flex;align-items:center;gap:.55rem;margin:-.25rem 0 .75rem;padding-bottom:.7rem;border-bottom:1px solid var(--border);font-size:var(--font-2xs);color:var(--text-muted);min-width:0}
 .agent-run-meta[hidden]{display:none}
 .agent-run-governed{display:inline-flex;align-items:center;gap:.3rem;font-weight:var(--weight-bold);color:var(--primary)}
@@ -112,7 +114,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .agent-run-meta[data-status="blocked"] .agent-run-governed::before,.agent-run-meta[data-status="waiting_for_user"] .agent-run-governed::before{background:var(--amber)}
 .agent-run-meta[data-status="failed"] .agent-run-governed,.agent-run-meta[data-status="cancelled"] .agent-run-governed{color:var(--red)}
 .agent-run-meta[data-status="failed"] .agent-run-governed::before,.agent-run-meta[data-status="cancelled"] .agent-run-governed::before{background:var(--red)}
-.answer-progress-steps{display:grid;gap:1px;margin-top:.7rem;padding-top:.6rem;border-top:1px solid var(--line-subtle)}
+.answer-progress-steps{display:grid;gap:1px;margin:.3rem 0 0 calc(22px + .6rem)}
 .stage-step{font-size:var(--font-xs);color:var(--text-muted);line-height:1.5}
 .stage-step summary,.stage-step--plain{display:flex;align-items:baseline;gap:.45rem;padding:.16rem 0;cursor:default;list-style:none}
 .stage-step summary{cursor:pointer}
@@ -1473,15 +1475,21 @@ function _showSkeletonBubble(){
   div.className = 'msg msg-bot';
   div.id = 'skeletonBubble';
   div.innerHTML =
+    // One working line, as approved: the wave, "Working out the answer · <step>",
+    // the seconds, and Stop. The pipeline's own words (its subtitle, the run
+    // badge) stay in the markup for the code that fills them, never shown.
     '<div class="msg-content" style="flex:1">'
     + '<div class="answer-progress-card">'
-    + '<div class="answer-progress-head"><div class="answer-progress-status">'
+    + '<div class="answer-progress-head">'
     + '<span class="answer-progress-mark" id="answerProgressBrandSlot"></span>'
-    + '<span class="answer-progress-copy"><span class="answer-progress-label" id="answerStageLabel">'
+    + '<span class="answer-progress-copy"><b class="answer-progress-title">'
+    + escHtml(t('ui.chat.working')) + '</b> \u00b7 <span class="answer-progress-label" id="answerStageLabel">'
     + escHtml(t('ui.chat.delivery.understanding')) + '</span>'
-    + '<span class="answer-progress-detail" id="answerStageDetail">'
+    + '<span class="answer-progress-detail" id="answerStageDetail" hidden>'
     + escHtml(t('ui.chat.delivery.understanding_detail')) + '</span></span>'
-    + '</div><span class="answer-progress-elapsed" id="answerProgressElapsed"></span></div>'
+    + '<span class="answer-progress-elapsed" id="answerProgressElapsed"></span>'
+    + '<button type="button" class="btn btn-ghost btn-sm answer-progress-stop" onclick="stopQuery()">'
+    + qbIcon('stop', 14) + escHtml(t('ui.chat.stop')) + '</button></div>'
     + '<div class="agent-run-meta" id="agentRunMeta" hidden data-status="running">'
     + `<span class="agent-run-governed" id="agentRunState">${t('ui.chat.agent.governed')}</span>`
     + `<span class="agent-run-tool" id="agentRunTool">${t('ui.chat.agent.tool_readonly')}</span>`
@@ -1552,8 +1560,8 @@ function setProcessing(active){
       processingElapsedTimer = setInterval(() => {
         const elapsed = Math.floor((Date.now() - processingStartedAt) / 1000);
         const elapsedNode = document.getElementById('answerProgressElapsed');
-        if (elapsedNode && elapsed >= 8) {
-          elapsedNode.textContent = t('ui.chat.elapsed', {seconds: elapsed});
+        if (elapsedNode && elapsed >= 3) {
+          elapsedNode.textContent = t('ui.chat.seconds', {seconds: elapsed});
           elapsedNode.classList.add('visible');
         }
       }, 1000);
@@ -4037,7 +4045,6 @@ function _applyAgentRunEvent(msg) {
   const status = String(msg.run_status || 'running');
   // Keyed by the wire status, which is never translated.
   const runLabel = key => t(`ui.chat.run.${key}`);
-  meta.hidden = false;
   meta.dataset.status = status;
   const state = document.getElementById('agentRunState');
   const tool = document.getElementById('agentRunTool');

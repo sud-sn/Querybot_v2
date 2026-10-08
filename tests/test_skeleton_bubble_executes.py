@@ -68,6 +68,7 @@ var document = {
 };
 function escHtml(s){ return String(s); }
 function scrollBottom(){ }
+function qbIcon(){ return '<svg></svg>'; }
 """
 
 

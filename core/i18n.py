@@ -4433,10 +4433,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "You",
         "fr": "Vous",
     },
-    "ui.chat.elapsed": {
-        "en": "{seconds}s elapsed",
-        "fr": "{seconds} s écoulées",
-    },
+    "ui.chat.working": {"en": "Working out the answer", "fr": "Je prépare la réponse"},
+    "ui.chat.stop": {"en": "Stop", "fr": "Arrêter"},
+    "ui.chat.seconds": {"en": "{seconds} s", "fr": "{seconds} s"},
     "ui.chat.source.live_db": {
         "en": "Live DB",
         "fr": "Base en direct",

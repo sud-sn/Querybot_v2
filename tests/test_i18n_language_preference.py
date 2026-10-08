@@ -215,6 +215,7 @@ class TestTheCatalogueIsWellFormed:
         "guide.schema_entry.other",
         "guide.table_line",
         "ui.chat.hist.duration",        # "ms" is the SI symbol in both
+        "ui.chat.seconds",              # and "s" is the SI symbol for seconds
         # A box plot's whiskers. French abbreviates maximum and minimum the
         # same way; its median does not ("Méd") and its mean does not
         # ("Moyenne"), which is why only these two are here.
