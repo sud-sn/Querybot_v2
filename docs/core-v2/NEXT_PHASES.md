@@ -21,6 +21,54 @@ does not need, fix the product's UI and UX problems, chart rendering included.
 The sweep's findings and the removal list are agreed with the product owner
 before anything is removed or changed.
 
+The sweep (8 October 2026, shared as "QueryBot UI/UX sweep and admin clean-up
+plan") ran the real app locally on invented data: 160 admin pages, 15 chat
+answers, every chart kind, a dashboard, desktop and phone. Main findings:
+
+- Charts never appear in the answer: a side panel squeezes the chat to about
+  450 px, keeps an older answer's chart, and covers the answer on a phone.
+- "Add to dashboard" on a new-core answer fails ("can no longer be pinned").
+- Answer cards: the number repeated in the sentence; three large follow-up
+  cards; a question back styled as an answer; technical stats for readers;
+  a trend by region answered "30 rows".
+- Charts: line/area offered for categories; a palette picker everywhere; only
+  the first of several measures drawn; prior period as strong as current;
+  dashboard notes colliding with the axis.
+- Dashboard page: uneven, touching tiles; "DASHBOARD ARTIFACT" wording; edit
+  controls always on; readers land on a page of usage counters.
+- Admin: 7 tabs and about 30 pages per workspace (11 under Data & Model);
+  counters repeated on 5 pages; pages titled "Overview" that are not; developer
+  internals shown; today's semantic-layer pages beside the new core's learned
+  page, contradicting it.
+
+| Step | What | Size |
+|---|---|---|
+| U0 | Keep the sweep as a repeatable screenshot check (desktop and phone; fails on console errors, sideways overflow, overlapping tiles) | M |
+| U1 | Answer card: chart inside the answer with Expand; panel follows its answer; number once; compact chips; real question card; no technical stats; fix the "N rows" sentence | L |
+| U2 | Pin new-core answers (A1 pulled forward) | M |
+| U3 | Chart rules (C1, C3 pulled forward): fitting shapes only, every measure drawn, prior muted, notes clear of axes, no palette picker for readers | M |
+| U4 | Dashboard page: grid, view/edit mode, plain header and captions | M |
+| U5 | Portal pages: land in chat; dashboards list; reader's semantic layer from the new core; standard forms; one start screen | M |
+| U6 | Admin stage 1 after approval: Overview, Data, Questions, People, Compliance, Settings (about 10 pages); merges, moves, Diagnostics for internals; pages hidden by engine | L |
+| U7 | Phone pass: no sideways scrolling anywhere | S |
+| U8 | Sign-in link per workspace | S |
+| Later | Admin stage 2: delete pages hidden for the new core once every workspace has switched | M |
+
+Admin proposal (each row needs the product owner's approval): keep Dashboard,
+Platforms, Databases, Clients, System (minus the database-backend switch; model
+prices move here), Overview, Setup, What QueryBot learned (the home of the
+semantic layer), Relationships (until merged), Metrics, Flagged Answers (the
+review list), Users, Groups, Compliance (scoped by profile), Usage; merge Queries
+with Timing, Configuration with Advanced, Access Requests into Users; move Source
+Mapping, AI Egress Log, Evaluations; hide then remove Knowledge Base, Dates,
+Glossary, Business Meanings, What To Model Next, Drafted For Review, Subject Areas
+(returns as Models); remove Model Health, Conflict Inbox and Versions from the
+admin view (Diagnostics only); Reports is the product owner's call.
+
+Open decisions for this phase: the admin list; hide-then-delete versus delete
+now; charts in the answer versus panel only; the palette picker; Reports; where
+readers land; whether these shared templates also go to main.
+
 ## What already exists (do not build again)
 
 - Dates declared once per table (kind, calendar, grain, span), a default date per
