@@ -934,6 +934,15 @@ def _landing(user: dict | None) -> str:
     return "/portal/chat" if client.get("chat_ui_enabled") else "/portal/dashboard"
 
 
+@router.get("/home")
+async def portal_home(request: Request):
+    """The logo's link: where this reader lands, as after signing in."""
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    return RedirectResponse(_landing(user), status_code=303)
+
+
 @router.get("/login", response_class=HTMLResponse)
 async def portal_login_page(request: Request):
     signed_in = _get_portal_user(request)
