@@ -80,7 +80,7 @@ def test_stock_on_hand_is_answered_per_unit_never_added_across_units(inventory):
     assert not _same(reference, per_unit, warehouse)
     headline = payload["answer"]["headline"]
     for unit, total in reference.query(per_unit).rows:
-        assert f"{fmt(total, 'number')} {unit}" in headline, headline
+        assert fmt(total, 'number', unit=unit) in headline, headline     # "3,858 (unit M)", "34,118 EA"
     notes = payload["trust"]["date_context"]
     assert any("shown per unit of measure" in n for n in notes)
     assert not any("adds up different units" in n for n in notes)

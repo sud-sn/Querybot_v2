@@ -88,8 +88,12 @@ def _day(value: Any) -> dt.date | None:
     return None
 
 
+# Unit codes a reader takes for a size: "19,000 M" (metres) read as 19 billion beside "$1.2M".
+_LIKE_A_SIZE = {"k", "m", "b", "t", "g", "mm", "bn"}
+
+
 def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
-    """A value as a sentence writes it: $1.2M, 38.0%, 1,234."""
+    """A value as a sentence writes it: $1.2M, 38.0%, 1,234, 19,000 EA, 19,000 (unit M)."""
     number = _number(value)
     if number is None:
         return "no value" if value is None else str(value)
@@ -107,6 +111,8 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
         text = f"{number:,.0f}"
     else:
         text = f"{number:,.2f}"
+    if unit and unit.strip().casefold() in _LIKE_A_SIZE:
+        return f"{text} (unit {unit.strip()})"
     return f"{text} {unit}" if unit else text
 
 
