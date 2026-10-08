@@ -33,75 +33,19 @@ from core2.warehouse import dialect as D
 from core2.warehouse.runner import DuckDBWarehouse
 from evals.core2 import domains
 from evals.core2.framework import materialize
+from evals.core2.warehouse_sql import SpeakingWarehouse, Types, azure_sql_refuses
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
-DB_TYPES = {"tsql": "azure_sql", "snowflake": "snowflake", "oracle": "oracle"}
 # Oracle's TO_CHAR formats and interval arithmetic do not carry back to DuckDB:
 # these are the domains whose every Learn query does.
 CARRIED_BACK = {"tsql": domains.available(), "snowflake": domains.available(), "oracle": ["hr", "subscriptions"]}
 
 
-def _to_duckdb(tree: exp.Expression, dialect: str) -> str:
-    """The query as DuckDB reads it, where sqlglot leaves a warehouse's own idiom untranslated."""
-    units = {"MM": "month", "Q": "quarter", "IW": "week", "YYYY": "year", "DD": "day"}
-
-    def fix(node: exp.Expression) -> exp.Expression:
-        if dialect == "tsql":
-            if isinstance(node, exp.Parameter) and "DATEFIRST" in node.sql().upper():
-                return exp.Literal.number(7)        # Azure SQL's default: Sunday is day 1
-            if isinstance(node, exp.Extract) and node.this.name.upper() == "DAYOFWEEK":
-                return exp.Paren(this=exp.Add(this=node.copy(), expression=exp.Literal.number(1)))
-        if dialect == "oracle":
-            if isinstance(node, exp.Anonymous) and node.name.upper() == "TRUNC" and len(node.expressions) == 1:
-                return exp.DateTrunc(this=node.expressions[0].copy(), unit=exp.Literal.string("day"))
-            if isinstance(node, exp.DateTrunc) and isinstance(node.args.get("unit"), exp.Literal):
-                unit = units.get(node.args["unit"].name.upper())
-                if unit:
-                    node.set("unit", exp.Literal.string(unit))
-        return node
-
-    return tree.transform(fix).sql(dialect="duckdb")
-
-
-def azure_sql_refuses(tree: exp.Expression, types: dict[str, str]) -> list[str]:
-    """What Azure SQL would refuse in this query and DuckDB runs: its own type rules."""
-    refused = []
-    for mod in tree.find_all(exp.Mod):
-        for side in (mod.this, mod.expression):
-            if any(cast.to.this.name in ("FLOAT", "DOUBLE", "REAL") for cast in side.find_all(exp.Cast)) or \
-                    any(types.get(column.name.upper()) == "float" for column in side.find_all(exp.Column)):
-                refused.append(f"the remainder of a float (402): {mod.sql(dialect='tsql')}")
-    for total in tree.find_all(exp.Sum):
-        inner = total.this
-        if total.find_ancestor(exp.Window) or isinstance(inner, exp.Case) or \
-                (isinstance(inner, exp.Cast) and inner.to.this.name in ("BIGINT", "DECIMAL", "FLOAT", "DOUBLE")):
-            continue
-        if any(types.get(column.name.upper()) == "integer" for column in inner.find_all(exp.Column)):
-            refused.append(f"an int sum that overflows past 2,147,483,647 (8115): {total.sql(dialect='tsql')}")
-    return refused
-
-
-class Warehouse(DuckDBWarehouse):
-    """A test warehouse that speaks another warehouse's SQL."""
-
-    def __init__(self, con, dialect: str, types: dict[str, str]):
-        super().__init__(con)
-        self.dialect, self.db_type = dialect, DB_TYPES[dialect]
-        self.types, self.refused = types, []
-
-    def query(self, sql, *, max_rows=None):
-        tree = sqlglot.parse_one(sql, read=self.dialect)
-        if self.dialect == "tsql":
-            self.refused += azure_sql_refuses(tree, self.types)
-        return DuckDBWarehouse.query(self, _to_duckdb(tree, self.dialect), max_rows=max_rows)
-
-
 def _built(name):
     built = materialize(domains.build(name), "warehouse")
     inventory = from_duckdb(DuckDBWarehouse(built.con), declared_fks=built.declared_fks)
-    types = {c.name.upper(): t.type_of(c.name) for t in inventory.tables.values() for c in t.columns}
-    return built, inventory, types
+    return built, inventory, Types.of(inventory)
 
 
 def _learned(model):
@@ -113,7 +57,7 @@ def _learned(model):
 def test_learn_runs_in_the_warehouses_own_sql_and_learns_what_duckdb_learns(dialect, name):
     built, inventory, types = _built(name)
     on_duckdb = build_model(DuckDBWarehouse(built.con), inventory, options=BuildOptions(workers=1))
-    warehouse = Warehouse(built.con, dialect, types)
+    warehouse = SpeakingWarehouse(built.con, dialect, types)
     model = build_model(warehouse, inventory, options=BuildOptions(workers=1))
     assert not warehouse.refused, "\n".join(warehouse.refused)
     assert _learned(model) == _learned(on_duckdb)
@@ -130,7 +74,7 @@ def test_a_date_keys_month_is_read_without_a_float(granularity, key, months):
     candidate = DateCandidate(table="t", column="DT_KEY", via_calendar=None, granularity=granularity)
     count = _months(exp.column("DT_KEY"), candidate, "integer", "tsql")
     tree = sqlglot.parse_one(f"SELECT {count.sql(dialect='tsql')} FROM t", read="tsql")
-    assert not azure_sql_refuses(tree, {"DT_KEY": "integer"})
+    assert not azure_sql_refuses(tree, Types(data={"DT_KEY": "integer"}))
     duck = _months(exp.column("DT_KEY"), candidate, "integer", "duckdb").sql(dialect="duckdb")
     assert duckdb.connect().execute(f"SELECT {duck} FROM (SELECT {key} AS DT_KEY)").fetchone()[0] == months
 
@@ -180,26 +124,67 @@ def test_a_column_the_database_will_not_read_is_left_out_and_named():
     assert sorted(model.tables) == sorted(on_duckdb.tables)
 
 
-def test_a_table_the_database_will_not_read_at_all_still_stops_learn():
-    built, inventory, _types = _built("retail")
-    table = built.t("customers")
-
-    class Down(DuckDBWarehouse):
+def _refusing_table(con, table):
+    class Refusing(DuckDBWarehouse):
         def query(self, sql, *, max_rows=None):
             if table.upper() in sql.upper():
-                raise RuntimeError("connection lost")
+                raise RuntimeError(f"[42000] The SELECT permission was denied on the object '{table}' (229)")
             return super().query(sql, max_rows=max_rows)
+
+    return Refusing(con)
+
+
+def test_a_table_the_database_will_not_read_is_left_out_and_the_rest_is_learned():
+    import dataclasses
 
     from core2.bootstrap.profiler import profile_table
 
-    import dataclasses
-
+    built, inventory, _types = _built("retail")
+    table = built.t("customers")
     key = next(k for k, t in inventory.tables.items() if t.name == table)
     known = dataclasses.replace(inventory.tables[key], row_count=40)   # no row count asked first
-    with pytest.raises(RuntimeError, match="connection lost"):
-        profile_table(Down(built.con), known)
-    with pytest.raises(RuntimeError, match="connection lost"):
-        build_model(Down(built.con), inventory, options=BuildOptions(workers=1))
+    with pytest.raises(RuntimeError, match="permission was denied"):
+        profile_table(_refusing_table(built.con, table), known)   # the table, not one of its columns
+
+    lines: list[str] = []
+    model = build_model(_refusing_table(built.con, table), inventory,
+                        options=BuildOptions(workers=1, progress=lines.append))
+    assert table not in {t.name for t in model.tables.values()}
+    assert [n for n in model.notes if table in n] == \
+        [f"The table {table} was left out: the database refused it ([42000] The SELECT permission was denied "
+         f"on the object '{table}' (229))."]
+    assert any(line.startswith(f"Left out the table {table}") for line in lines)
+    assert len(model.tables) == len(inventory.tables) - 1 and model.measures
+
+
+def test_a_database_that_stops_answering_stops_learn():
+    class Gone(DuckDBWarehouse):
+        calls = 0
+
+        def query(self, sql, *, max_rows=None):
+            Gone.calls += 1
+            if Gone.calls > 3:
+                raise RuntimeError("[08S01] Communication link failure")
+            return super().query(sql, max_rows=max_rows)
+
+    built, inventory, _types = _built("retail")
+    lines: list[str] = []
+    with pytest.raises(RuntimeError, match=r"^\[08S01\] Communication link failure$"):
+        build_model(Gone(built.con), inventory, options=BuildOptions(workers=1, progress=lines.append))
+    # A database that stopped answering refused nothing: nothing is said to be left out.
+    assert not [line for line in lines if line.startswith("Left out")]
+
+
+def test_a_database_that_refuses_every_table_says_so():
+    class Locked(DuckDBWarehouse):
+        def query(self, sql, *, max_rows=None):
+            if sql.strip() != "SELECT 1":
+                raise RuntimeError("[42000] The SELECT permission was denied (229)")
+            return super().query(sql, max_rows=max_rows)
+
+    built, inventory, _types = _built("retail")
+    with pytest.raises(RuntimeError, match="The database refused every table"):
+        build_model(Locked(built.con), inventory, options=BuildOptions(workers=1))
 
 
 @pytest.mark.parametrize("raw, cast", [("NTEXT", "NVARCHAR(MAX)"), ("TEXT", "NVARCHAR(MAX)"),
@@ -209,3 +194,40 @@ def test_old_azure_sql_types_are_read_as_text_it_can_compare(raw, cast):
     sql = _readable(column, "tsql").sql(dialect="tsql")
     assert sql == (f"CAST(NOTE_TXT AS {cast})" if cast else "NOTE_TXT")
     assert _readable(column, "snowflake").sql(dialect="snowflake") == "NOTE_TXT"
+
+
+@pytest.mark.parametrize("raws, collated", [(("nvarchar(20)", "VARCHAR(10)"), True), (("char(3)", "nchar(3)"), True),
+                                            (("uniqueidentifier", "uniqueidentifier"), False),
+                                            (("nvarchar(36)", "uniqueidentifier"), False)])
+def test_text_keys_are_compared_in_the_databases_collation_where_they_have_one(raws, collated):
+    sql = D.same_text(exp.column("A", table="f"), exp.column("K", table="t"), "tsql", raws).sql(dialect="tsql")
+    assert sql == ("f.A COLLATE DATABASE_DEFAULT = t.K COLLATE DATABASE_DEFAULT" if collated else "f.A = t.K")
+    assert D.same_text(exp.column("A"), exp.column("K"), "snowflake", raws).sql(dialect="snowflake") == "A = K"
+
+
+def test_every_golden_answer_query_is_one_azure_sql_runs():
+    """The answers' own SQL, for every golden question, meets the same rules."""
+    import datetime as dt
+
+    from evals.core2.compile_eval import Untranslatable, _Words, golden, learn
+
+    refused, total = [], 0
+    for name in domains.available():
+        if not golden(name):
+            continue
+        cases = golden(name)
+        built, model = learn(domains.build(name), "warehouse")
+        types = Types.of(from_duckdb(DuckDBWarehouse(built.con), declared_fks=built.declared_fks))
+        words = _Words(model, built)
+        for case in cases["questions"]:
+            if not case.get("plan"):
+                continue
+            try:
+                logical = resolve(words.plan(case["plan"]), model,
+                                  Context(today=dt.date.fromisoformat(str(cases["today"]))))
+            except Untranslatable:
+                continue
+            total += 1
+            sql = compile_query(logical, model, "tsql").sql
+            refused += [f"{case['id']}: {r}" for r in azure_sql_refuses(sqlglot.parse_one(sql, read="tsql"), types)]
+    assert total > 100 and not refused, "\n".join(refused)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import uuid
 from typing import Any
 
 from store.db import get_db
@@ -105,11 +106,20 @@ def list_core2_overrides(account_id: str, db_config_id: int | None) -> list[dict
     return out
 
 
+# This service process: a Learn runs inside the process that started it, so one started by
+# another process (before a restart) will never finish.
+_RUNNER = uuid.uuid4().hex
+
+
+def core2_runner() -> str:
+    return _RUNNER
+
+
 def start_core2_build(account_id: str, db_config_id: int | None) -> str:
     started = _now()
     with get_db() as conn:
-        conn.execute("""INSERT OR IGNORE INTO core2_build(account_id, db_config_id, started_at, status)
-                        VALUES (?, ?, ?, 'running')""", (account_id, int(db_config_id or 0), started))
+        conn.execute("""INSERT OR IGNORE INTO core2_build(account_id, db_config_id, started_at, status, runner)
+                        VALUES (?, ?, ?, 'running', ?)""", (account_id, int(db_config_id or 0), started, _RUNNER))
     return started
 
 
@@ -119,6 +129,15 @@ def finish_core2_build(account_id: str, db_config_id: int | None, started_at: st
         conn.execute("""UPDATE core2_build SET finished_at = ?, status = ?, message = ?, version = ?
                         WHERE account_id = ? AND db_config_id = ? AND started_at = ?""",
                      (_now(), status, message[:2000], int(version), account_id, int(db_config_id or 0), started_at))
+
+
+def add_core2_build_line(account_id: str, db_config_id: int | None, started_at: str, line: str) -> None:
+    """One step of a Learn as it happens, timed: what the learned page shows while it runs."""
+    text = " ".join(str(line).split())[:600]
+    with get_db() as conn:
+        conn.execute("""UPDATE core2_build SET log = log || ? WHERE account_id = ? AND db_config_id = ?
+                        AND started_at = ?""", (f"{_now()[11:]} {text}\n", account_id, int(db_config_id or 0),
+                                                started_at))
 
 
 def set_core2_import_report(account_id: str, db_config_id: int | None, report: dict[str, Any]) -> None:

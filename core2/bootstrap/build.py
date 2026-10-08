@@ -19,6 +19,7 @@ from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.joins import JoinFinding, discover_joins
+from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
 from core2.bootstrap.labels import label
 from core2.bootstrap.keys import TableKeys, infer_keys
 from core2.bootstrap.measures import MeasureFinding, classify_tables, find_measures
@@ -49,6 +50,7 @@ class BuildOptions:
     outliers: bool = True
     today: Callable[[], dt.datetime] = field(default=lambda: dt.datetime.now(dt.timezone.utc))
     labeler: Callable[[str, str], str] | None = None   # the AI that names things; None keeps names' readings
+    progress: Callable[[str], None] | None = None      # each step as it happens, for the learned page
 
 
 @dataclass
@@ -69,23 +71,56 @@ class Findings:
 
 _PERIOD_NAMES = {"period", "month", "year", "week", "quarter", "fiscal period", "fiscal month"}
 
+def _watched(warehouse: Warehouse, options: BuildOptions) -> Watched:
+    return warehouse if isinstance(warehouse, Watched) else Watched(warehouse, Journal(options.progress))
+
+
 def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | None = None) -> Findings:
     options = options or BuildOptions()
+    warehouse = _watched(warehouse, options)
+    journal = journal_of(warehouse)
     tables = list(inventory.tables.items())
+    journal.step(f"Reading {len(tables)} tables ({sum(len(t.columns) for _, t in tables):,} columns): "
+                 "counts, ranges and short code values, never rows")
+    done = iter(range(1, len(tables) + 1))
+
+    def read(item: tuple[str, InvTable]) -> TableProfile | None:
+        _key, table = item
+        profile = attempt(warehouse, f"the table {table.name}",
+                          lambda: profile_table(warehouse, table, options.profile), None)
+        if profile is not None:
+            journal.step(f"Read {table.name} ({next(done)} of {len(tables)}): {profile.rows:,} rows"
+                         + (", from a sample" if profile.sampled else ""))
+        return profile
+
     with ThreadPoolExecutor(max_workers=max(1, options.workers)) as pool:
-        profiled = list(pool.map(lambda item: profile_table(warehouse, item[1], options.profile), tables))
-    profiles = {key: p for (key, _), p in zip(tables, profiled)}
+        profiled = list(pool.map(read, tables))
+    profiles = {key: p for (key, _), p in zip(tables, profiled) if p is not None}
+    unread = {key for (key, _), p in zip(tables, profiled) if p is None}
+    if len(unread) == len(tables) and tables:
+        raise RuntimeError("The database refused every table: " + "; ".join(
+            f"{what} ({why})" for what, why in journal.left_out[:3]))
+    if unread:
+        # A table the database will not read is left out of the model, with every key that points at it.
+        inventory = Inventory(tables={k: t for k, t in inventory.tables.items() if k not in unread},
+                              foreign_keys=[fk for fk in inventory.foreign_keys
+                                            if fk.table not in unread and fk.ref_table not in unread])
+        tables = list(inventory.tables.items())
     for key, table in tables:
         for column in table.columns:
             # A generic NUMBER (no scale declared) holding only whole numbers is a whole-number column.
             if column.data_type == "decimal" and "(" not in column.raw_type \
                     and profiles[key].columns[column.name].integer_share == 1.0:
                 column.data_type = "integer"
+    journal.step("Finding each table's key")
     keys = {key: infer_keys(warehouse, table, profiles[key]) for key, table in tables}
+    journal.step("Looking for calendar and period tables")
     calendars = find_calendars(warehouse, inventory, profiles, keys)
     joins = discover_joins(warehouse, inventory, profiles, keys, calendars, max_tests=options.max_join_tests,
                            workers=options.workers)
+    journal.step("Finding the dates each table is about")
     dates = find_date_roles(warehouse, inventory, profiles, keys, calendars, joins)
+    journal.step("Sorting tables into events, snapshots and lists; finding the measures")
     classified = classify_tables(inventory, profiles, keys, calendars, joins, dates)
     kinds = {key: kind for key, (kind, _) in classified.items()}
     measures = find_measures(inventory, profiles, keys, joins, dates, classified)
@@ -102,16 +137,21 @@ def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = 
                 db_type: str | None = None, options: BuildOptions | None = None,
                 findings: Findings | None = None) -> SemanticModel:
     options = options or BuildOptions()
+    warehouse = _watched(warehouse, options)
+    journal = journal_of(warehouse)
+    for note in inventory.notes:
+        journal.step(note)
     f = findings or learn(warehouse, inventory, options)
-    flags = find_quality(warehouse, inventory, f.profiles, f.calendars, f.joins, f.dates, f.measures, f.kinds,
+    journal.step("Checking the data for things worth a look")
+    flags = find_quality(warehouse, f.inventory, f.profiles, f.calendars, f.joins, f.dates, f.measures, f.kinds,
                          outliers=options.outliers)
     model = assemble(f, flags=flags, client_id=client_id, db_id=db_id, db_type=db_type or warehouse.db_type,
                      built_at=options.today())
-    for key, profile in sorted(f.profiles.items()):
-        for column, reason in sorted(profile.unread.items()):
-            model.notes.append(f"{f.inventory.tables[key].name}.{column} was left out: the database would not "
-                               f"read it ({reason}).")
+    model.notes += inventory.notes
+    for what, why in journal.left_out:
+        model.notes.append(f"{what[:1].upper()}{what[1:]} was left out: the database refused it ({why}).")
     if options.labeler is not None:
+        journal.step("Naming tables, columns and measures with the AI")
         model.notes += label(model, options.labeler)
     assign_slugs(model)
     return model

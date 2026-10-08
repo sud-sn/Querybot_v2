@@ -26,6 +26,7 @@ from typing import Any
 from sqlglot import exp
 
 from core2.bootstrap.inventory import InvColumn, InvTable
+from core2.bootstrap.journal import answers, journal_of, reason
 from core2.model.schema import ColumnProfile, TopValue
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
@@ -115,12 +116,8 @@ def _readable(column: InvColumn, dialect: str) -> exp.Expression:
 _UNREAD: Any = object()   # a value the warehouse would not compute
 
 
-def _reason(error: Exception) -> str:
-    return " ".join(str(error).split())[:200]
-
-
 def _select(warehouse: Warehouse, items: list[tuple[str, str, exp.Expression]], source: str, dialect: str,
-            unread: dict[str, str]) -> list[Any]:
+            unread: dict[str, str], table: str) -> list[Any]:
     """Run [(column, stat, expression)] as one SELECT on the table; the values in the same order.
 
     A warehouse can refuse one column's expression: a type it cannot compare,
@@ -137,25 +134,31 @@ def _select(warehouse: Warehouse, items: list[tuple[str, str, exp.Expression]], 
     try:
         return run(items)
     except Exception as first:  # noqa: BLE001 - which column it was is found below, and said
-        log.warning("core2: %s refused a profile query; reading its columns one at a time: %s", source, _reason(first))
+        if not answers(warehouse):
+            raise
+        log.warning("core2: %s refused a profile query; reading its columns one at a time: %s", table, reason(first))
         values: list[Any] = [_UNREAD] * len(items)
         groups: dict[str, list[int]] = {}
         for i, (name, _, _) in enumerate(items):
             groups.setdefault(name, []).append(i)
         read_any = False
+        refused: list[tuple[str, Exception]] = []
         for name, positions in groups.items():
             try:
                 got = run([items[i] for i in positions])
             except Exception as error:  # noqa: BLE001 - this column is left out and named
                 if name:
-                    unread.setdefault(name, _reason(error))
-                    log.warning("core2: %s.%s left out: %s", source, name, _reason(error))
+                    refused.append((name, error))
                 continue
             read_any = True
             for i, value in zip(positions, got):
                 values[i] = value
         if not read_any:
-            raise first
+            raise first   # the table itself, not a column: its caller decides
+        for name, refusal in refused:
+            if name not in unread:
+                unread[name] = reason(refusal)
+                journal_of(warehouse).leave_out(f"{table}.{name}", refusal)
         return values
 
 
@@ -213,6 +216,16 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
     if rows is None:
         rows = int(warehouse.query(f"SELECT COUNT(1) FROM {D.table_sql(table.database, table.schema, table.name, dialect)}").rows[0][0])
     source, sampled = _source(table, dialect, rows, options)
+    if sampled:
+        try:
+            warehouse.query(f"SELECT COUNT(1) FROM {source}")
+        except Exception as error:  # noqa: BLE001 - a view is not sampled on Azure SQL: its first rows then
+            if not answers(warehouse):
+                raise
+            name = D.table_sql(table.database, table.schema, table.name, dialect)
+            source = D.aliased(D.first_rows(name, dialect, rows=options.sample_rows), "first_rows", dialect)
+            journal_of(warehouse).step(f"{table.name} cannot be sampled ({reason(error)}): "
+                                       f"reading its first {options.sample_rows:,} rows instead")
     exact = not sampled and rows <= options.exact_distinct_up_to
     profiles = {c.name: ColumnProfile(rows=rows, sampled=sampled, distinct_is_approx=not exact) for c in table.columns}
     unread: dict[str, str] = {}
@@ -229,7 +242,7 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
                 plan.append((column.name, stat))
                 selects.append(expression)
         values = _select(warehouse, [(name, stat, e) for (name, stat), e in zip(plan, selects)], source, dialect,
-                         unread)
+                         unread, table.name)
         for (name, stat), value in zip(plan, values):
             if value is _UNREAD:
                 continue
@@ -296,7 +309,7 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
         shaped.append((column.name, "min_valid", exp.Min(this=first)))
         shaped.append((column.name, "max_valid", exp.Max(this=first.copy())))
     if shaped:
-        values = _select(warehouse, shaped, source, dialect, unread)
+        values = _select(warehouse, shaped, source, dialect, unread, table.name)
         for (name, pattern, _), value in zip(shaped, values):
             if value is _UNREAD:
                 continue
@@ -334,7 +347,7 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
         dated.append((column.name, "min_valid", exp.Min(this=real_day)))
         dated.append((column.name, "max_valid", exp.Max(this=real_day.copy())))
     if dated:
-        values = _select(warehouse, dated, source, dialect, unread)
+        values = _select(warehouse, dated, source, dialect, unread, table.name)
         for (name, stat, _), value in zip(dated, values):
             if value is _UNREAD:
                 continue
@@ -367,14 +380,16 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
         try:
             counted = common(branches)
         except Exception as error:  # noqa: BLE001 - common values are a help; one column's refusal loses only its own
+            if not answers(warehouse):
+                raise
             log.warning("core2: %s refused the common-values query; reading them one column at a time: %s",
-                        source, _reason(error))
+                        table.name, reason(error))
             counted = []
             for column, branch in zip(low, branches):
                 try:
                     counted += common([branch])
                 except Exception as alone:  # noqa: BLE001 - this column shows no common values
-                    log.warning("core2: %s.%s common values left out: %s", source, column.name, _reason(alone))
+                    journal_of(warehouse).leave_out(f"the common values of {table.name}.{column.name}", alone)
         found: dict[int, list[TopValue]] = {}
         for k, v, n in counted:
             found.setdefault(int(k), []).append(TopValue(value=None if v is None else str(v), count=int(n)))

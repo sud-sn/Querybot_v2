@@ -320,6 +320,43 @@ def sample_clause(dialect: str, *, rows: int, total_rows: int) -> str:
     return f"USING SAMPLE {rows} ROWS"
 
 
+def first_rows(name: str, dialect: str, *, rows: int) -> str:
+    """The first ``rows`` rows of a table or view, as a parenthesised query to alias: where a sample is refused.
+
+    Azure SQL samples only tables (TABLESAMPLE on a view is an error), and a
+    warehouse may refuse its sampling clause on an object for its own reasons;
+    the first rows it returns are a rougher sample, but one every warehouse reads.
+    """
+    if dialect == "tsql":
+        return f"(SELECT TOP ({rows}) * FROM {name})"
+    if dialect == "oracle":
+        return f"(SELECT * FROM {name} FETCH FIRST {rows} ROWS ONLY)"
+    return f"(SELECT * FROM {name} LIMIT {rows})"
+
+
+def aliased(source: str, alias: str, dialect: str) -> str:
+    """A parenthesised query as a FROM source: Azure SQL requires the alias, Oracle refuses AS before it."""
+    return f"{source} {alias}" if dialect == "oracle" else f"{source} AS {alias}"
+
+
+_COLLATED = ("CHAR", "VARCHAR", "NCHAR", "NVARCHAR")
+
+
+def same_text(a: exp.Expression, b: exp.Expression, dialect: str, raw_types: tuple[str, str] = ("", "")) -> exp.Expr:
+    """a = b for two text columns, whatever collation each table was created with.
+
+    Azure SQL refuses to compare text of two different collations (error 468,
+    "Cannot resolve the collation conflict"); comparing both in the database's
+    own collation always works. Only character columns have a collation: a
+    uniqueidentifier refuses one (error 447).
+    """
+    bases = {raw.strip().upper().split("(")[0].strip() for raw in raw_types}
+    if dialect == "tsql" and bases <= set(_COLLATED):
+        a = exp.Collate(this=a, expression=exp.Var(this="DATABASE_DEFAULT"))
+        b = exp.Collate(this=b, expression=exp.Var(this="DATABASE_DEFAULT"))
+    return exp.EQ(this=a, expression=b)
+
+
 def render(expression: exp.Expression, dialect: str) -> str:
     """Print an expression for ``dialect`` and make sure the dialect can read it back."""
     sql = expression.sql(dialect=dialect)

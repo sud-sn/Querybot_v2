@@ -53,6 +53,13 @@
 .lq-default{font-weight:var(--weight-bold)}
 .lq-kind{font-size:var(--font-2xs);text-transform:uppercase;letter-spacing:.05em}
 @media (max-width:640px){.lq-hero{flex-direction:column}}
+.lq-log{list-style:none;margin:0;padding:.6rem .75rem;max-height:22rem;overflow-y:auto;border:1px solid var(--border);
+  border-radius:var(--radius);background:var(--surface-2,var(--surface));font-family:var(--font-mono,monospace);
+  font-size:var(--font-xs);line-height:1.6}
+.lq-log li{white-space:pre-wrap;word-break:break-word}
+.lq-log li.lq-log-left{color:var(--warning-text,#8a5300)}
+.lq-log li.lq-log-stop{color:var(--danger,#b42318);font-weight:var(--weight-semibold)}
+.lq-run summary{cursor:pointer;color:var(--text-muted);font-size:var(--font-sm)}
 </style>
 {% endblock %}
 {% block content %}
@@ -67,7 +74,8 @@
       <div class="lq-meta">
         {% if view %}Version {{ view.version }}{% if view.built_at %}, learned {{ view.built_at.strftime('%d %b %Y %H:%M') if view.built_at.strftime is defined else view.built_at }} UTC{% endif %}.{% endif %}
         {% if build %}
-          {% if building %}Learning now (started {{ build.started_at }} UTC). Refresh in a minute.
+          {% if building %}Learning now (started {{ build.started_at }} UTC): each step appears below as it happens.
+          {% elif interrupted %}The last attempt was interrupted: the service restarted while QueryBot was learning. Learn again.
           {% elif build.status == 'failed' %}The last attempt failed: {{ build.message }}
           {% endif %}
         {% endif %}
@@ -82,13 +90,66 @@
     {% endif %}
   </div>
 
-  {% if saved == 'building' %}{{ alert("QueryBot is studying the database. This page shows the result when it is done.", "info") }}{% endif %}
+  {% if saved == 'building' and building %}{{ alert("QueryBot is studying the database. Each step appears below as it happens; the page shows the result when it is done.", "info") }}{% endif %}
   {% if saved == 'decision' %}{{ alert("Decision saved. It applies now and every time QueryBot learns again.", "success") }}{% endif %}
   {% if saved == 'undone' %}{{ alert("Decision removed. QueryBot's own finding applies again.", "success") }}{% endif %}
   {% if saved == 'engine' %}{{ alert("Saved. The next question in the portal is answered this way.", "success") }}{% endif %}
   {% if saved == 'imported' %}{{ alert("Today's decisions were brought over again.", "success") }}{% endif %}
   {% if error %}{{ alert(error, "error") }}{% endif %}
   {% if problem %}{{ alert(problem, "warning") }}{% endif %}
+
+  {% if build and (building or build_lines) %}
+  <section class="lq-section lq-run" aria-labelledby="lq-run">
+    <h2 id="lq-run">{% if building %}What QueryBot is doing now{% elif build.status == 'failed' or interrupted %}The last learning run, where it stopped{% else %}The last learning run{% endif %}</h2>
+    <div class="lq-body">
+      {% if building or build.status == 'failed' or interrupted %}
+      <ol class="lq-log" id="lq-log" aria-live="polite">
+        {% for line in build_lines %}<li class="{% if ' Left out ' in line %}lq-log-left{% elif ' Stopped ' in line %}lq-log-stop{% endif %}">{{ line }}</li>{% endfor %}
+      </ol>
+      {% else %}
+      <details>
+        <summary>{{ build_lines | length }} steps, {{ build.started_at }} UTC{% if build_left_out %}; {{ build_left_out }} left out{% endif %}</summary>
+        <ol class="lq-log">
+          {% for line in build_lines %}<li class="{% if ' Left out ' in line %}lq-log-left{% endif %}">{{ line }}</li>{% endfor %}
+        </ol>
+      </details>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+  {% if building %}
+  <script>
+  (function () {
+    var list = document.getElementById("lq-log");
+    if (!list) { return; }
+    var url = "/admin/clients/{{ client.account_id | urlencode }}/learned/progress";
+    var shown = list.children.length;
+    function show(lines) {
+      for (var i = shown; i < lines.length; i++) {
+        var item = document.createElement("li");
+        item.textContent = lines[i];
+        if (lines[i].indexOf(" Left out ") >= 0) { item.className = "lq-log-left"; }
+        if (lines[i].indexOf(" Stopped ") >= 0) { item.className = "lq-log-stop"; }
+        list.appendChild(item);
+      }
+      shown = lines.length;
+      list.scrollTop = list.scrollHeight;
+    }
+    function tick() {
+      fetch(url, {credentials: "same-origin", headers: {"Accept": "application/json"}})
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data) { window.setTimeout(tick, 5000); return; }
+          show(data.lines || []);
+          if (data.building) { window.setTimeout(tick, 3000); }
+          else { window.location.replace(window.location.pathname); }   // the result, without the "studying" notice
+        })
+        .catch(function () { window.setTimeout(tick, 5000); });
+    }
+    window.setTimeout(tick, 2000);
+  })();
+  </script>
+  {% endif %}
 
   {% if view %}
   <section class="lq-section" aria-labelledby="lq-engine">
@@ -128,6 +189,7 @@
   {% endif %}
 
   {% if not view %}
+  {% if not building %}
   <div class="lq-section"><div class="lq-body">
     {% if has_database %}
       <p>QueryBot has not studied this database yet. Discovery must have run first; then choose
@@ -137,6 +199,7 @@
       <p>Connect a database to this workspace first.</p>
     {% endif %}
   </div></div>
+  {% endif %}
   {% else %}
 
   <div class="lq-stats">

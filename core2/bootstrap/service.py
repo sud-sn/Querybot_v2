@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -82,6 +83,14 @@ def build_workspace(account_id: str) -> int:
         raise ValueError("This workspace has no database connected.")
     db_id = int(client["db_config_id"])
     started = store.start_core2_build(account_id, db_id)
+    began = time.monotonic()
+
+    def say(line: str) -> None:
+        try:
+            store.add_core2_build_line(account_id, db_id, started, line)
+        except Exception as exc:  # noqa: BLE001 - the progress line is a help; Learn goes on without it
+            log.warning("core2: progress line for %s not saved: %s", account_id, exc)
+
     try:
         config = store.get_db_config(db_id)
         if not config:
@@ -93,20 +102,32 @@ def build_workspace(account_id: str) -> int:
         if not inventory.tables:
             raise ValueError("Discovery found no tables to learn from.")
         options = BuildOptions(profile=ProfileOptions(values_allowed=values_gate(account_id, inventory)),
-                               labeler=_labeler(account_id, client, inventory))
+                               labeler=_labeler(account_id, client, inventory), progress=say)
+        say(f"Connecting to the {config['db_type'].replace('_', ' ')} database")
         with QueryBotWarehouse(config["db_type"], config.get("credentials") or {}) as warehouse:
             model = build_model(warehouse, inventory, client_id=account_id, db_id=db_id, options=options)
         # Stored as learned: decisions are a layer applied when the model is read, so
         # undoing one brings back exactly what the data said.
+        say("Saving what was learned")
         version = store.save_core2_model(account_id, db_id, model.model_dump_json(),
                                          source_hash=source_hash(inventory), stats=stats(model))
-        store.finish_core2_build(account_id, db_id, started, status="done", version=version)
+        say("Bringing over the decisions already made in today's setup")
         bring_over(account_id, db_id, model, client)
+        left_out = sum("was left out" in note for note in model.notes)
+        say(f"Done in {_took(began)}: version {version}, {len(model.tables)} tables, {len(model.measures)} measures"
+            + (f"; {left_out} left out, each named in the notes below" if left_out else ""))
+        store.finish_core2_build(account_id, db_id, started, status="done", version=version)
         return version
     except Exception as exc:
         log.warning("core2 build failed for %s: %s", account_id, exc, exc_info=True)
+        say(f"Stopped after {_took(began)}: {exc}")
         store.finish_core2_build(account_id, db_id, started, status="failed", message=str(exc))
         raise
+
+
+def _took(began: float) -> str:
+    seconds = int(time.monotonic() - began)
+    return f"{seconds // 60} min {seconds % 60} s" if seconds >= 60 else f"{seconds} s"
 
 
 def bring_over(account_id: str, db_id: int | None, model: SemanticModel, client: dict[str, Any]) -> dict[str, Any]:

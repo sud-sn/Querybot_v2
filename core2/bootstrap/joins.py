@@ -23,10 +23,11 @@ from sqlglot import exp
 
 from core2.bootstrap import names
 from core2.bootstrap.calendar import CalendarFinding
-from core2.bootstrap.inventory import Inventory, InvTable
+from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.keys import TableKeys
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import ColumnProfile, Evidence
+from core2.bootstrap.journal import attempt, journal_of
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
@@ -119,6 +120,9 @@ def _value_plausible(a: ColumnProfile, k: ColumnProfile, *, a_type: str, k_is_di
     return False, coverage
 
 
+_NO_COLUMN = InvColumn("", "", "other")
+
+
 def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, profiles: dict[str, TableProfile],
           placeholders: list) -> JoinFinding:
     d = warehouse.dialect
@@ -139,16 +143,25 @@ def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, prof
         selects.append(count_if(exp.In(this=a.copy(), expressions=[
             exp.Literal.number(p) if isinstance(p, (int, float)) else exp.Literal.string(str(p)) for p in placeholders])))
     target = exp.select(exp.column(D.ident(finding.to_column, d))).distinct().from_(exp.to_table("__TGT__"))
+    raws = ((src.column(finding.from_column) or _NO_COLUMN).raw_type, (tgt.column(finding.to_column) or _NO_COLUMN).raw_type)
+    on = D.same_text(a.copy(), k.copy(), d, raws) if src.type_of(finding.from_column) == "text" \
+        else exp.EQ(this=a.copy(), expression=k.copy())
     query = (exp.select(*[s.as_(f"s{i}") for i, s in enumerate(selects)])
              .from_(exp.to_table("__SRC__").as_("f"))
-             .join(target.subquery("t"), on=exp.EQ(this=a.copy(), expression=k.copy()), join_type="left"))
+             .join(target.subquery("t"), on=on, join_type="left"))
     rows = profiles[finding.from_table].rows
-    source = D.table_sql(src.database, src.schema, src.name, d)
+    name = D.table_sql(src.database, src.schema, src.name, d)
+    sql = query.sql(dialect=d).replace("__TGT__", D.table_sql(tgt.database, tgt.schema, tgt.name, d), 1)
     if rows > SAMPLE_ABOVE:
-        source = f"{source} {D.sample_clause(d, rows=1_000_000, total_rows=rows)}"
-    sql = (query.sql(dialect=d).replace("__TGT__", D.table_sql(tgt.database, tgt.schema, tgt.name, d), 1)
-           .replace("__SRC__", source, 1))
-    values = warehouse.query(sql).rows[0]
+        # The sample in its own query: where an alias goes around a sampling clause
+        # differs by warehouse (Azure SQL wants "t AS f TABLESAMPLE", Oracle "t SAMPLE f").
+        sample = f"(SELECT * FROM {name} {D.sample_clause(d, rows=1_000_000, total_rows=rows)})"
+        try:
+            values = warehouse.query(sql.replace("__SRC__", sample, 1)).rows[0]
+        except Exception:  # noqa: BLE001 - a view is not sampled on Azure SQL: its first rows then
+            values = warehouse.query(sql.replace("__SRC__", D.first_rows(name, d, rows=1_000_000), 1)).rows[0]
+    else:
+        values = warehouse.query(sql.replace("__SRC__", name, 1)).rows[0]
     finding.rows, finding.non_null = int(values[0] or 0), int(values[1] or 0)
     finding.unmatched, finding.unmatched_values = int(values[2] or 0), int(values[3] or 0)
     finding.placeholder_rows = int(values[4] or 0) if placeholders else 0
@@ -257,8 +270,17 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     ranked = sorted(candidates.values(), key=lambda f: (-f.declared, -f.name_score, -f.coverage, f.ident))
     tested = ranked[:max_tests]
     placeholder_of = {key: cal.placeholders for key, cal in calendars.items()}
+    journal_of(warehouse).step(f"Testing {len(tested)} possible joins between tables against the data")
+
+    def test(f: JoinFinding) -> JoinFinding:
+        # A test the database refuses leaves the join untested: it then has no match to show and is not trusted.
+        what = (f"the join test {inventory.tables[f.from_table].name}.{f.from_column} -> "
+                f"{inventory.tables[f.to_table].name}.{f.to_column}")
+        return attempt(warehouse, what, lambda: _test(warehouse, inventory, f, profiles,
+                                                      placeholder_of.get(f.to_table, [])), f)
+
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        list(pool.map(lambda f: _test(warehouse, inventory, f, profiles, placeholder_of.get(f.to_table, [])), tested))
+        list(pool.map(test, tested))
 
     for f in tested:
         unmatched_note = (f"; {f.unmatched:,} rows hold {f.unmatched_values:,} values found nowhere"

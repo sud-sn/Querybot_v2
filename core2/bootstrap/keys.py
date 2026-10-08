@@ -18,6 +18,7 @@ from sqlglot import exp
 from core2.bootstrap.inventory import InvTable
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import Evidence
+from core2.bootstrap.journal import attempt
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
@@ -33,6 +34,13 @@ class TableKeys:
 
 
 def _duplicates(warehouse: Warehouse, table: InvTable, columns: list[str]) -> int:
+    """Rows sharing their values in ``columns``; when the check is refused, counted as having some."""
+    columns = list(dict.fromkeys(columns))   # a column named twice is grouped once: Azure SQL refuses it twice (8156)
+    return attempt(warehouse, f"the key check on {table.name} ({', '.join(columns)})",
+                   lambda: _count_duplicates(warehouse, table, columns), 1)
+
+
+def _count_duplicates(warehouse: Warehouse, table: InvTable, columns: list[str]) -> int:
     d = warehouse.dialect
     cols = [exp.column(D.ident(c, d)) for c in columns]
     inner = (exp.select(*[c.copy() for c in cols]).from_(exp.to_table("__SRC__"))
@@ -56,7 +64,8 @@ def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str) -> bool
                                                 true=exp.Literal.number(1))], default=exp.Literal.number(0)))
     query = exp.select(starts, exp.Count(this=exp.Literal.number(1))).from_(inner.subquery("x"))
     sql = query.sql(dialect=d).replace("__SRC__", D.table_sql(table.database, table.schema, table.name, d))
-    started, groups = warehouse.query(sql).rows[0]
+    started, groups = attempt(warehouse, f"the line-number check on {table.name} ({doc}, {seq})",
+                              lambda: warehouse.query(sql).rows[0], (0, 0))
     return bool(groups) and int(started or 0) >= 0.9 * int(groups)
 
 

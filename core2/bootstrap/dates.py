@@ -21,6 +21,8 @@ chosen, and the close call is offered for review.
 
 from __future__ import annotations
 
+from functools import partial
+
 import datetime as dt
 from dataclasses import dataclass, field
 
@@ -33,6 +35,7 @@ from core2.bootstrap.joins import JoinFinding
 from core2.bootstrap.keys import TableKeys, _duplicates
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import Evidence
+from core2.bootstrap.journal import attempt
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
@@ -45,6 +48,10 @@ _PLANNED = {"planned", "plan", "pln", "promised", "requested", "rqs", "req", "ex
 _DUE = {"due", "deadline", "expiry", "expires", "expiration", "maturity"}
 _CANCEL = {"cancel", "cancelled", "canceled", "cnl", "void", "voided", "reversed", "rejected"}
 _PERSONAL = {"birth", "dob", "born", "birthday"}
+# The first, last or original time something happened to what a row describes (a customer's first
+# invoice, an item's last receipt): a fact about that thing, repeated on its rows, not the row's event.
+_MILESTONE = {"first", "fst", "frst", "last", "lst", "latest", "earliest", "original", "orig", "initial", "init",
+              "previous", "prev", "prior", "next", "nxt"}
 MARGIN = 0.1
 
 
@@ -213,22 +220,29 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             elif word_set & _PERSONAL:
                 c.add("personal_name", -0.5, f"the name ({readable}) is a date in a person's life, not an event "
                       "the table records")
+            elif word_set & _MILESTONE:
+                c.add("milestone_name", -0.4, f"the name ({readable}) is the first, last or original time "
+                      "something happened to what the row describes, not the event the row records")
             meaningful = not names.opaque(c.column) and not names.opaque(table.name)
             if meaningful and words and table_words and any(names.same_word(w, t) for w in words for t in table_words):
                 c.add("names_event", 0.25, f"{readable} is the event the table records")
                 if head and any(names.same_word(w, head) for w in words):
                     c.add("names_head", 0.1, f"it names the table's main subject ({head})")
             if c.kind == "event" and c.granularity in ("day", "month"):   # a planned or due date is never a snapshot
-                periodic, why = _periodic(warehouse, inventory, key, c.column, c.granularity, profile.rows,
-                                          entity_columns.get(key, [])) \
+                periodic, why = attempt(
+                    warehouse, f"the snapshot check on {table.name}.{c.column}",
+                    partial(_periodic, warehouse, inventory, key, c.column, c.granularity, profile.rows,
+                            entity_columns.get(key, [])), (False, "")) \
                     if profile.rows >= 50 and p.distinct and profile.rows / p.distinct >= 5 else (False, "")
                 if periodic:
                     c.periodic = True
                     c.kind = "snapshot"
                     c.add("snapshot", 0.35, why)
 
-        _written_later(warehouse, inventory, key, candidates)
-        _load_times(warehouse, inventory, key, candidates)
+        attempt(warehouse, f"the load-date check on {table.name}",
+                partial(_written_later, warehouse, inventory, key, candidates), None)
+        attempt(warehouse, f"the load-time check on {table.name}",
+                partial(_load_times, warehouse, inventory, key, candidates), None)
         business = [c for c in candidates if c.kind in ("event", "snapshot")]
         ranked = sorted(business or [], key=lambda c: (-c.score, [x.name for x in table.columns].index(c.column)))
         if ranked:

@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import store
 # The pages are registered on the admin console's own router (admin/routes.py
@@ -23,7 +23,10 @@ from admin.routes import _is_auth, _resp, router
 
 log = logging.getLogger("querybot.core2")
 
-_BUILD_STALE = dt.timedelta(minutes=45)
+# A Learn runs inside the service process that started it (the service runs one worker): one
+# another process started was cut off by a restart and will never finish. A large warehouse can
+# take hours; past this it is not running, whatever its row says.
+_BUILD_STALE = dt.timedelta(hours=6)
 
 
 def _back(account_id: str, **params: str) -> RedirectResponse:
@@ -31,14 +34,42 @@ def _back(account_id: str, **params: str) -> RedirectResponse:
     return RedirectResponse(f"/admin/clients/{account_id}/learned" + (f"?{query}" if query else ""), status_code=303)
 
 
+def _started(build: dict[str, Any]) -> dt.datetime | None:
+    try:
+        return dt.datetime.strptime(str(build["started_at"]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _running(build: dict[str, Any] | None) -> bool:
     if not build or build.get("status") != "running":
         return False
-    try:
-        started = dt.datetime.strptime(str(build["started_at"]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.timezone.utc)
-    except (TypeError, ValueError):
+    started = _started(build)
+    if started is None or build.get("runner") != store.core2_runner():
         return False
     return dt.datetime.now(dt.timezone.utc) - started < _BUILD_STALE
+
+
+def _interrupted(build: dict[str, Any] | None) -> bool:
+    """A Learn left running by a service that restarted (or one past any sane length)."""
+    return bool(build) and (build or {}).get("status") == "running" and not _running(build)
+
+
+def _lines(build: dict[str, Any] | None) -> list[str]:
+    return [line for line in str((build or {}).get("log") or "").splitlines() if line.strip()]
+
+
+@router.get("/clients/{account_id}/learned/progress")
+async def learned_progress(request: Request, account_id: str):
+    """What the running Learn is doing, for the learned page to show as it happens."""
+    if not _is_auth(request):
+        return JSONResponse({"error": "signed out"}, status_code=401)
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"error": "no such workspace"}, status_code=404)
+    build = store.latest_core2_build(account_id, client.get("db_config_id"))
+    return JSONResponse({"building": _running(build), "status": (build or {}).get("status") or "",
+                         "lines": _lines(build)})
 
 
 @router.get("/clients/{account_id}/learned", response_class=HTMLResponse)
@@ -70,6 +101,9 @@ async def learned_page(request: Request, account_id: str):
         "view": learned_view(model) if model else None,
         "build": build,
         "building": _running(build),
+        "interrupted": _interrupted(build),
+        "build_lines": _lines(build),
+        "build_left_out": sum(" Left out " in line for line in _lines(build)),
         "decisions": [d for d in decisions if d["author"] != "import"],
         "brought_over": [d for d in decisions if d["author"] == "import"],
         "imported": imported,

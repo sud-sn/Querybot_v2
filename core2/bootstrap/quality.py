@@ -8,6 +8,9 @@ answers that touch the flagged object.
 
 from __future__ import annotations
 
+from functools import partial
+from typing import Any
+
 import datetime as dt
 import statistics
 
@@ -21,6 +24,7 @@ from core2.bootstrap.joins import JoinFinding
 from core2.bootstrap.measures import MeasureFinding
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import QualityFlag
+from core2.bootstrap.journal import attempt
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
@@ -128,6 +132,10 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
     return list(unique.values())
 
 
+def _month_rows(warehouse: Warehouse, sql: str) -> list[tuple[Any, ...]]:
+    return warehouse.query(sql, max_rows=2000).rows
+
+
 def _outlier_periods(warehouse: Warehouse, inventory: Inventory, calendars: dict[str, CalendarFinding],
                      dates: dict[str, list[DateCandidate]], measures: list[MeasureFinding],
                      joins: list[JoinFinding]) -> list[QualityFlag]:
@@ -153,6 +161,10 @@ def _outlier_periods(warehouse: Warehouse, inventory: Inventory, calendars: dict
             cal_sql = D.table_sql(ct.database, ct.schema, ct.name, d)
         else:
             day = exp.column(D.ident(default.column, d), table="f")
+            if table.type_of(default.column) not in ("date", "timestamp"):
+                # A yyyymmdd key with no calendar to join: the date it holds. Compared with
+                # dates as a number it is refused (Azure SQL 206, "operand type clash").
+                day = D.from_number(day, "yyyymmdd", d)
             query = exp.select().from_(f)
             cal_sql = ""
         month = D.period_start(day, "month", d)
@@ -164,7 +176,8 @@ def _outlier_periods(warehouse: Warehouse, inventory: Inventory, calendars: dict
         sql = query.sql(dialect=d).replace("__SRC__", D.table_sql(table.database, table.schema, table.name, d), 1)
         if cal_sql:
             sql = sql.replace("__CAL__", cal_sql, 1)
-        rows = warehouse.query(sql, max_rows=2000).rows
+        rows: list[tuple[Any, ...]] = attempt(warehouse, f"the unusual-month check on {table.name}",
+                                              partial(_month_rows, warehouse, sql), [])
         if len(rows) < 6:
             continue
         for i, m in enumerate(candidates):

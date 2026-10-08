@@ -12,6 +12,8 @@ calendar's own period columns can be trusted to match the date.
 
 from __future__ import annotations
 
+from functools import partial
+
 import datetime as dt
 from dataclasses import dataclass, field
 
@@ -21,6 +23,7 @@ from core2.bootstrap.inventory import Inventory, InvTable
 from core2.bootstrap.keys import TableKeys
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import Evidence
+from core2.bootstrap.journal import attempt
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
@@ -238,12 +241,14 @@ def find_calendars(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             # Unique apart from a few sentinel rows, and at least most of a year of days.
             if cp.distinct < MIN_DAYS or cp.distinct < 0.95 * cp.non_null:
                 continue
-            finding = _calendar_in(warehouse, table, profile, keys[key], column.name)
+            finding = attempt(warehouse, f"the calendar check on {table.name}.{column.name}",
+                              partial(_calendar_in, warehouse, table, profile, keys[key], column.name), None)
             if finding:
                 out[key] = finding
                 break
         if key not in out:
-            period = _period_table(warehouse, table, profile, keys[key])
+            period = attempt(warehouse, f"the period-table check on {table.name}",
+                             partial(_period_table, warehouse, table, profile, keys[key]), None)
             if period:
                 out[key] = period
     return out

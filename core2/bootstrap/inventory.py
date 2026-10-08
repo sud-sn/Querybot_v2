@@ -66,6 +66,7 @@ class InvForeignKey:
 class Inventory:
     tables: dict[str, InvTable]
     foreign_keys: list[InvForeignKey] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)   # what was corrected in what discovery wrote
 
 
 _INTEGER = re.compile(r"^(BIG|SMALL|TINY|MEDIUM)?INT(EGER)?\d*$|^(U?INT\d+|HUGEINT|UBIGINT|USMALLINT|UTINYINT|LONG|BYTEINT)$")
@@ -136,6 +137,7 @@ def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
     (``__...``) and non-table entries are skipped.
     """
     tables: dict[str, InvTable] = {}
+    notes: list[str] = []
     by_schema_and_name: dict[tuple[str, str], str] = {}
     for file_key, entry in schema.items():
         if file_key.startswith("__") or not isinstance(entry, dict):
@@ -148,19 +150,23 @@ def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
             database = entry.get("database") or (parts[-3] if len(parts) > 2 else "")
             owner = entry.get("schema") or (parts[-2] if len(parts) > 1 else "")
         raw_columns = entry.get("columns") or []
-        columns = []
+        columns: list[InvColumn] = []
         for column in raw_columns:
             if isinstance(column, str):
-                columns.append(InvColumn(column, "", "other"))
-                continue
-            raw = str(column.get("type") or "")
-            nullable = column.get("nullable")
-            columns.append(InvColumn(str(column.get("name")), raw, normalize_type(raw),
-                                     nullable is not False and str(nullable).upper() not in ("NO", "N", "FALSE"),
-                                     str(column.get("comment") or "")))
+                found = InvColumn(column, "", "other")
+            else:
+                raw = str(column.get("type") or "")
+                nullable = column.get("nullable")
+                found = InvColumn(str(column.get("name")), raw, normalize_type(raw),
+                                  nullable is not False and str(nullable).upper() not in ("NO", "N", "FALSE"),
+                                  str(column.get("comment") or ""))
+            # A column listed twice (discovery merging two sources) is one column: named twice in
+            # one query it is refused (Azure SQL 8156, "specified multiple times").
+            if not any(c.name.casefold() == found.name.casefold() for c in columns):
+                columns.append(found)
         rows = entry.get("row_count")
         table = InvTable(database=database, schema=owner, name=name, columns=columns,
-                         primary_key=list(entry.get("pk_columns") or []),
+                         primary_key=_declared_key(name, entry.get("pk_columns") or [], columns, notes),
                          row_count=int(rows) if isinstance(rows, (int, float)) and rows > 0 else None,
                          comment=str(entry.get("comment") or ""), source_key=file_key,
                          masked={str(c) for c in (entry.get("masked_fields") or [])},
@@ -177,7 +183,29 @@ def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
             or by_schema_and_name.get(("", ids.norm(fk.get("parent_table"))))
         ref = by_schema_and_name.get((ids.norm(fk.get("ref_schema")), ids.norm(fk.get("ref_table")))) \
             or by_schema_and_name.get(("", ids.norm(fk.get("ref_table"))))
-        if parent and ref and fk.get("parent_col") and fk.get("ref_col"):
+        if parent and ref and fk.get("parent_col") and fk.get("ref_col") \
+                and tables[parent].column(str(fk["parent_col"])) and tables[ref].column(str(fk["ref_col"])):
             fks.append(InvForeignKey(parent, [str(fk["parent_col"])], ref, [str(fk["ref_col"])],
                                      str(fk.get("constraint_name") or ""), bool(fk.get("enforced"))))
-    return Inventory(tables=tables, foreign_keys=fks)
+    return Inventory(tables=tables, foreign_keys=fks, notes=notes)
+
+
+def _declared_key(table: str, listed: list[Any], columns: list[InvColumn], notes: list[str]) -> list[str]:
+    """The primary key discovery recorded, as this table's own columns, each once.
+
+    Discovery reads keys by table name across schemas: a table of the same name in
+    another schema adds its key columns to this one's, so a key can name a column
+    twice (CUS_DMS_KEY, CUS_DMS_KEY) or one this table does not have.
+    """
+    key: list[str] = []
+    for name in listed:
+        column = next((c.name for c in columns if c.name.casefold() == str(name).casefold()), None)
+        if column is None:
+            notes.append(f"The key recorded for {table} names {name}, which {table} does not have "
+                         "(a table of the same name in another schema?): the key is found from the data instead.")
+            return []
+        if column not in key:
+            key.append(column)
+    if len(key) < len(listed):
+        notes.append(f"The key recorded for {table} lists {', '.join(key)} more than once: each column is used once.")
+    return key

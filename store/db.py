@@ -1305,6 +1305,8 @@ def _run_migrations() -> None:
         ("answer_trace", "result_rows",                "TEXT NOT NULL DEFAULT '[]'"),
         ("core2_answer", "question_id",                "TEXT NOT NULL DEFAULT ''"),
         ("core2_build", "import_report",               "TEXT NOT NULL DEFAULT ''"),
+        ("core2_build", "log",                         "TEXT NOT NULL DEFAULT ''"),
+        ("core2_build", "runner",                      "TEXT NOT NULL DEFAULT ''"),
         ("answer_trace", "policy_version_at_query",    "INTEGER NOT NULL DEFAULT 0"),
         # v30: self-learning loop — feature flags on client
         ("client", "enable_feedback_collection", "INTEGER NOT NULL DEFAULT 0"),
@@ -1610,6 +1612,8 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             message        TEXT NOT NULL DEFAULT '',
             version        INTEGER NOT NULL DEFAULT 0,
             import_report  TEXT NOT NULL DEFAULT '',
+            log            TEXT NOT NULL DEFAULT '',
+            runner         TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (account_id, db_config_id, started_at)
         );
 
