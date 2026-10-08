@@ -26,3 +26,6 @@ data/.querybot_key
 clients/*/value_index.sqlite
 # A tenant's naming profile is written by its KB build; it is runtime state.
 clients/*/naming_profile.json
+
+# What tools/ui_check/check.py writes: screenshots, its report and the local server state.
+ui-check/
