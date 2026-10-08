@@ -11,6 +11,7 @@ It fails (exit 1) on what a person would see as broken:
   - a console error or an uncaught exception on any page;
   - a page that scrolls sideways (the document wider than the window);
   - tiles that overlap (dashboard tiles, KPI tiles, anything marked data-check-tile);
+  - a button, field or select smaller than 44px on a phone;
   - a question that gets no answer.
 
 It needs Playwright (pip install playwright) for the browser; the server runs under
@@ -81,6 +82,14 @@ class Page:
         self.page.on("pageerror", lambda e: self.errors.append(f"uncaught: {e}"[:300]))
         self.page.on("response", lambda r: self.errors.append(f"HTTP {r.status} {r.request.method} {r.url}"[:300])
                      if r.status >= 400 else None)
+        # A Playwright screenshot drops Chromium's touch emulation, so a phone page
+        # measured after one reads as a mouse page ((pointer: coarse) false). It is
+        # put back after every shot.
+        self._cdp = self.page.context.new_cdp_session(self.page) if mobile else None
+
+    def _touch_again(self) -> None:
+        if self._cdp is not None:
+            self._cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5})
 
     def shot(self, label: str, *, element=None, full: bool = False) -> dict:
         path = self.out / f"{self.name}_{label}.png"
@@ -92,6 +101,7 @@ class Page:
                 self.page.screenshot(path=str(path), full_page=full)
         except Exception:  # noqa: BLE001 - an element that will not shoot is still checked below
             self.page.screenshot(path=str(path))
+        self._touch_again()
         found = self.check(label)
         return {"shot": path.name, **found}
 
@@ -113,6 +123,18 @@ class Page:
                  }
                  return hits.slice(0, 5);
                }""", TILES)
+        small = self.page.evaluate(
+            """() => window.innerWidth >= 600 ? [] : [...document.querySelectorAll(
+                   'a[href], button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, '
+                   + '[role=button], [role=tab]')]
+                 .filter(e => e.offsetParent !== null)
+                 .map(e => [e, e.getBoundingClientRect()])
+                 .filter(([, r]) => r.width > 0 && r.height > 0 && r.right > 0 && r.left < window.innerWidth)
+                 .filter(([, r]) => r.height < 44 || r.width < 44)
+                 .filter(([e]) => !e.closest('.chart-canvas, [data-chart], table'))
+                 .map(([e, r]) => `${e.tagName.toLowerCase()}.${(e.className || '').toString().split(' ')[0]}`
+                                  + ` ${Math.round(r.width)}x${Math.round(r.height)}`)
+                 .slice(0, 40)""")
         errors, self.errors = self.errors, []
         for e in errors:
             self.problems.append({"where": where, "problem": "console error", "detail": e})
@@ -120,7 +142,14 @@ class Page:
             self.problems.append({"where": where, "problem": "scrolls sideways", "detail": f"{overflow}px wider"})
         for a, b in overlaps:
             self.problems.append({"where": where, "problem": "tiles overlap", "detail": f"{a} / {b}"})
-        return {"errors": errors, "overflow_px": overflow, "overlaps": overlaps}
+        # A control a fingertip cannot hit: a button, a field or a select under 44px on a phone.
+        # Links inside a sentence are excepted, as WCAG does; checkboxes are measured by their label.
+        for target in small:
+            kind = target.split(".", 1)[0]
+            if kind in ("button", "select", "input", "textarea") or (kind == "a" and "btn" in target.split(" ")[0]):
+                self.problems.append({"where": where, "problem": "small tap target", "detail": target})
+        # Tap targets under 44px on a phone, reported (not failed) so a pass can follow them.
+        return {"errors": errors, "overflow_px": overflow, "overlaps": overlaps, "small_targets": small}
 
 
 def _pin(page, card, problems: list[dict], view: str) -> None:
@@ -185,6 +214,14 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                                **p.shot(f"{i:02d}_{_slug(question)}", element=card)})
                 if question.startswith("Compare") and view == "desktop":
                     _pin(page, card, problems, view)
+                if question.startswith("Monthly") and card.locator("[data-open-artifact]").count():
+                    # The larger view: a side panel on a desktop, a sheet from the bottom on a phone.
+                    card.locator("[data-open-artifact]").first.click()
+                    page.wait_for_timeout(900)
+                    report.append({"page": "the larger view", "view": view, **p.shot(f"{i:02d}b_expanded")})
+                    page.keyboard.press("Escape")
+                    page.evaluate("() => window.closeArtifactPane && window.closeArtifactPane()")
+                    page.wait_for_timeout(400)
             report.append({"page": "chat, whole conversation", "view": view, **p.shot("90_chat_full", full=True)})
             for path in ("/portal/dashboard", "/portal/kb"):
                 page.goto(base + path, wait_until="networkidle")

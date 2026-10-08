@@ -1279,3 +1279,21 @@ body { background: var(--bg); letter-spacing: 0; }
     transition-duration: .01ms !important;
   }
 }
+
+/* ── Touch targets ────────────────────────────────────────────────────────
+   On a touch screen a control is at least 44px each way (Apple's guideline,
+   WCAG 2.5.5): a fingertip is not a cursor. Only the box grows -- the label,
+   the icon and the rest of the layout stay as they are -- and links inside a
+   sentence keep the sentence's height, as WCAG excepts them. */
+@media (pointer: coarse) {
+  .btn, .icon-btn, button, [role="button"], [role="tab"], select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="range"]) {
+    min-height: 44px;
+  }
+  .btn, .icon-btn, button, [role="button"], [role="tab"] { min-width: 44px; }
+  /* The form fields above set 40px with a more specific selector. */
+  .form-input,
+  .form-group input:not([type="checkbox"], [type="radio"], [type="hidden"], [type="file"], [type="range"], [type="color"]),
+  .form-group select,
+  .form-group textarea { min-height: 44px; }
+}

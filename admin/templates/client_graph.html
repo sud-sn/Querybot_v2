@@ -169,6 +169,8 @@
 .tb-btn.danger{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-soft)}
 .tb-btn.danger:hover{opacity:.85}
 .tb-btn.sm{padding:3px 8px;font-size:var(--font-2xs);min-height:24px;border-radius:5px}
+/* On a touch screen the toolbar's controls are fingertip-sized; after the rules above so they win. */
+@media (pointer: coarse){.tb-btn,.tb-btn.sm,.sb-back,.tb-back-lnk{min-height:44px}.sb-back,.tb-back-lnk{display:inline-flex;align-items:center}}
 .review-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--entity-fact);color:var(--on-primary);font-size:var(--font-2xs);font-weight:var(--weight-bold);margin-left:2px}
 
 /* ── Review queue panel ─────────────────────────────────────────────────────── */

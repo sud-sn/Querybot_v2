@@ -569,3 +569,11 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 @media (prefers-reduced-motion: reduce) {
   .progress-line-bar::after { animation: none; width: 100%; opacity: .35; }
 }
+
+/* The console's menu and workspace tabs are touch targets too. */
+@media (pointer: coarse) {
+  .sidebar-link, .client-workspace-primary a, .client-workspace-secondary a, .client-workspace-back {
+    min-height: 44px;
+  }
+  .client-workspace-back { min-width: 44px; }
+}

@@ -569,3 +569,8 @@ body:not(:has(.portal-app-shell)) .main {
   .main { padding: 16px; padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
   body:not(:has(.portal-app-shell)) .main { padding: 24px 16px; }
 }
+
+/* The menu, the new-thread button and the brand are touch targets too. */
+@media (pointer: coarse) {
+  .portal-nav a, .portal-new-thread, .portal-brand, .portal-sidebar-notifications { min-height: 44px; }
+}
