@@ -161,6 +161,7 @@ def test_thread_detail_hides_internal_clarification_wrapper():
 
 
 def test_thread_detail_does_not_match_another_session():
+    """Another session's turns never come back for this thread: it reads as empty, not as theirs."""
     user = {"id": 7, "account_id": "acct"}
     traces = [{
         "id": 2,
@@ -173,7 +174,8 @@ def test_thread_detail_does_not_match_another_session():
     ):
         response = asyncio.run(portal_query_thread(object(), "abc"))
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert _response_json(response)["turns"] == []
 
 
 def test_new_valid_thread_without_any_owned_traces_is_an_empty_success():

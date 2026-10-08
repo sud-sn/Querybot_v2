@@ -2336,7 +2336,6 @@ async def portal_query_thread(request: Request, thread_id: str):
         portal_user_id=int(user["id"]),
         oldest_first=True,
     )
-    owned_trace_count = len(traces)
     if thread_id.startswith("legacy-"):
         trace_id = int(thread_id.removeprefix("legacy-") or 0)
         traces = [trace for trace in traces if int(trace.get("id") or 0) == trace_id]
@@ -2346,14 +2345,13 @@ async def portal_query_thread(request: Request, thread_id: str):
             trace for trace in traces
             if str(trace.get("session_id") or "").endswith(marker)
         ]
-    if not traces and owned_trace_count == 0:
-        # A valid newly-created thread has no durable answer trace yet. An
-        # empty 200 response is the expected state and avoids a noisy browser
-        # console 404 while still returning 404 when this user owns traces but
-        # the requested thread does not match any of them.
-        return JSONResponse({"ok": True, "thread_id": thread_id, "turns": []})
     if not traces:
-        return JSONResponse({"ok": False, "error": "Thread not found."}, status_code=404)
+        # A thread with no answer yet is an empty thread, not a missing one: the
+        # page asks for its thread on every load, a new thread included, and a
+        # 404 there was a console error on every "New question". Only this
+        # user's own traces are ever looked at, so an id that matches none of
+        # them returns nothing either way.
+        return JSONResponse({"ok": True, "thread_id": thread_id, "turns": []})
 
     import json as _json
     from core.chart import build_chart_payload, detect_chart_type, build_chart_annotations
