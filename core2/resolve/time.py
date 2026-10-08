@@ -95,13 +95,17 @@ def resolve_window(window: Window, *, today: dt.date, first_data: dt.date | None
     base, note = anchor(today, last_data)
     current = unit_start(base, unit, fiscal_start=fs)
     notes = [note] if note else []
+    # Counted back from where the data ends, "this month" is the month holding its last day. The day after it
+    # can start a new month, quarter or fiscal year: "this month" was then that next one, ending where it
+    # began -- "from Jul 2026 to Jun 2026", and no rows.
+    holding = current if base == today else unit_start(base - DAY, unit, fiscal_start=fs)
     if kind == "last":
         n = window.n or 1
         if window.include_current:
-            return Range(add_units(current, unit, -(n - 1)), base + DAY if base == today else base, notes)
+            return Range(add_units(holding, unit, -(n - 1)), base + DAY if base == today else base, notes)
         return Range(add_units(current, unit, -n), current, notes)
     if kind in ("this", "to_date"):
-        return Range(current, (base + DAY) if base == today else base, notes)
+        return Range(holding, (base + DAY) if base == today else base, notes)
     if kind == "previous":
         return Range(add_units(current, unit, -1), current, notes)
     raise ValueError(f"no such window: {kind}")

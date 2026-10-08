@@ -109,3 +109,25 @@ def test_the_share_of_the_top_few_is_of_everything_not_of_the_few_shown(retail):
     assert f"({float(rows[0]['net_amount_share']):.0%} of the total)" in headline, headline
     of_three = float(rows[0]["net_amount"]) / sum(float(r["net_amount"]) for r in rows)
     assert f"({of_three:.0%} of the total)" not in headline
+
+
+def test_a_tie_is_not_a_lead(retail):
+    """Five customer types of 12 customers each were "<the first type> leads with 12 (20% of the total)"."""
+    from core2.answer.builder import build_answer as build
+
+    model, warehouse = retail
+    logical = resolve(Plan.model_validate({"kind": "query", "intent": "breakdown", "measures": ["net_amount"],
+                                           "group_by": ["customer.segment"]}), model, Context(today=TODAY))
+    compiled = compile_query(logical, model, "duckdb")
+    names = [c.name for c in compiled.columns]
+    group, measure = names[0], names[1]
+
+    def headline(values):
+        rows = [tuple(v if c == measure else n for c in names) for n, v in values]
+        return build("q", logical, compiled, names, rows, duration_ms=1)["answer"]["headline"]
+
+    assert headline([("Online", 12), ("Retail", 12), ("Wholesale", 12)]) == \
+        "Net amount: each of the 3 segments has $12.00."
+    two = headline([("Online", 12), ("Retail", 12), ("Wholesale", 6)])
+    assert two.startswith("Net amount: Online and Retail lead with $12.00 each") and "leads" not in two
+    assert "Wholesale leads with $12.00" in headline([("Online", 6), ("Retail", 6), ("Wholesale", 12)])

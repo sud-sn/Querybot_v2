@@ -578,6 +578,15 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         count_of = len({str(r[g.name]) for r in shown})
         # Days of the week and weekends are always the same few: counting them says nothing ("across 2 is weekends").
         count = f" across {count_of:,} {_noun(g.label)}" if count_of > 1 and g.role != "time" else ""
+        # A tie is not a lead: five groups of 12 members each read "<the first group> leads with 12".
+        tied = [i for i in range(len(raw)) if _number(raw[i][m.name]) == _number(top[m.name])]
+        if len(tied) > 1 and not units.mixed:
+            if len(tied) == len(raw):
+                return f"{lead}: each of the {len(raw):,} {_noun(g.label)} has {value(top)}."
+            named = [str(shown[i][g.name]) for i in tied]
+            leaders = (", ".join(named[:-1]) + f" and {named[-1]}" if len(named) <= 3
+                       else ", ".join(named[:3]) + f" and {len(named) - 3} more")
+            return f"{lead}: {leaders} lead with {value(top)} each{share.replace(' of the total)', ' of the total each)')}{count}."
         return f"{lead}: {leader} leads with {value(top)}{share}{count}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:
