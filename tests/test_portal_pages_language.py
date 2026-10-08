@@ -269,7 +269,7 @@ class TestTheSemanticLayerPage:
 
     def test_the_page_is_french(self):
         markup = visible(_page("portal_kb.html", "fr"))
-        assert "Couche sémantique" in markup
+        assert "Ce que vous pouvez demander" in markup
         assert "Proposer une correction" in markup
         assert "Envoyer pour validation" in markup
 

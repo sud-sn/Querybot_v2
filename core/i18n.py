@@ -552,8 +552,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.close_nav": {"en": "Close navigation", "fr": "Fermer la navigation"},
     "ui.shell.new_thread": {"en": "New Thread", "fr": "Nouvelle conversation"},
     "ui.shell.chat": {"en": "Chat", "fr": "Chat"},
-    "ui.shell.dashboard": {"en": "Dashboard", "fr": "Tableau de bord"},
-    "ui.shell.semantic_layer": {"en": "Semantic Layer", "fr": "Couche sémantique"},
+    "ui.shell.dashboard": {"en": "Dashboards", "fr": "Tableaux de bord"},
+    # A reader's word for the semantic layer: what they can ask about.
+    "ui.shell.semantic_layer": {"en": "What you can ask", "fr": "Ce que vous pouvez demander"},
     "ui.shell.notifications": {"en": "Notifications", "fr": "Notifications"},
     "ui.shell.no_group": {"en": "No group", "fr": "Aucun groupe"},
     "ui.shell.account_actions": {"en": "Account actions", "fr": "Actions du compte"},

@@ -275,7 +275,7 @@ class TestThePageShowsDifferentQuestions:
         assert shown == TEN[:4]
 
 
-def _frames_through_the_socket_handler(frames: list[dict]) -> list[dict]:
+def _frames_through_the_socket_handler(frames: list[dict], *, empty_thread: bool = False) -> list[dict]:
     """Feed frames to the handler the page's own connect() installs, and
     report what each one asked appendBot for. Everything the handler calls
     besides appendBot and the page's own reading of a frame's state
@@ -301,6 +301,10 @@ function _setStageState() {{}}
 function _genieEvent() {{}}
 function refreshQueryLimitStatus() {{}}
 function showMascotError() {{}}
+// The start screen is up while the thread is empty; a message in it means it has gone.
+const _startScreen = {{style: {{display: {json.dumps('' if empty_thread else 'none')}}}}};
+var document = {{getElementById: function (id) {{ return id === 'welcomeState' ? _startScreen : null; }}}};
+function thread() {{ return {{querySelector: function () {{ return {json.dumps(empty_thread)} ? null : {{}}; }}}}; }}
 {lift(src, "function _terminalRunState(msg)")};
 {lift(src, "function connect()")}
 connect();
@@ -319,3 +323,12 @@ def test_the_page_keeps_the_questions_under_the_greeting_frame_only():
     ])
     assert appended == [{"text": "Hello, Ada!", "keepSuggestions": True},
                         {"text": "Revenue is up.", "keepSuggestions": False}]
+
+
+def test_an_empty_thread_keeps_its_one_start_screen():
+    """The start screen already greets the reader, with the workspace's questions
+    under it: the connect greeting is not stacked on top of an empty thread."""
+    appended = _frames_through_the_socket_handler([
+        {"type": "message", "role": "assistant", "content": "Hello, Ada!", "greeting": True},
+    ], empty_thread=True)
+    assert appended == []

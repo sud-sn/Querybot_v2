@@ -4184,6 +4184,15 @@ function connect(){
         }
         // ────────────────────────────────────────────────────────────────────
         setAgentRunState('completed', msg);
+        // One start screen: an empty thread already greets the reader, with the
+        // workspace's suggested questions under it. The connect greeting is
+        // shown only when the thread already has something in it.
+        const _startScreen = document.getElementById('welcomeState');
+        if (msg.greeting && _startScreen && _startScreen.style.display !== 'none'
+            && !thread()?.querySelector('.msg')) {
+          refreshQueryLimitStatus({toast:true});
+          return;
+        }
         appendBot(msgContent, { keepSuggestions: !!msg.greeting });
         refreshQueryLimitStatus({toast:true});
         return;

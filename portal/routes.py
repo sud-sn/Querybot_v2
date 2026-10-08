@@ -914,10 +914,20 @@ def _record_suggestions_displayed(user: dict, suggestions: list[dict]) -> None:
 # Login / logout
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _landing(user: dict | None) -> str:
+    """Where a reader lands: the chat, where questions are asked, when the workspace has it on."""
+    try:
+        client = store.get_client((user or {}).get("account_id") or "") or {}
+    except Exception:  # noqa: BLE001 - an unreadable workspace lands where it always did
+        client = {}
+    return "/portal/chat" if client.get("chat_ui_enabled") else "/portal/dashboard"
+
+
 @router.get("/login", response_class=HTMLResponse)
 async def portal_login_page(request: Request):
-    if _get_portal_user(request):
-        return RedirectResponse("/portal/dashboard", status_code=303)
+    signed_in = _get_portal_user(request)
+    if signed_in:
+        return RedirectResponse(_landing(signed_in), status_code=303)
     return _resp(request, "portal_login.html", {
         "error": request.query_params.get("error", "")
     })
@@ -980,7 +990,7 @@ async def portal_login_submit(
         _carry_language_through_login(resp, request, user)
         return resp
 
-    resp = RedirectResponse("/portal/dashboard", status_code=303)
+    resp = RedirectResponse(_landing(user), status_code=303)
     _set_portal_cookie(resp, request, user["id"])
     _carry_language_through_login(resp, request, user)
     return resp
@@ -1660,7 +1670,7 @@ async def change_pw_submit(
                             actor_ip=host if isinstance(host, str) else "")
     # The change ended every session this user had, this one included; this
     # browser gets a new one, the others sign in again.
-    resp = RedirectResponse("/portal/dashboard", status_code=303)
+    resp = RedirectResponse(_landing(user), status_code=303)
     _set_portal_cookie(resp, request, user["id"])
     return resp
 
