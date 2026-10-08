@@ -763,6 +763,15 @@ Where it differs from §12.3, the first cut is simpler on purpose:
   it is the answer before, and today's follow-up routes would otherwise explain
   or re-cut it under the older question's name. Other commands on the result on
   screen are still today's.
+* **Questions about the data itself** ("what can you tell me about my data?",
+  "what does gross profit mean?", "how far back does the data go?") are planned as
+  `describe_data` with what they ask about in `about` (measure, group or date
+  slugs, or a subject's catalog name), and answered from the model, never written
+  by the AI (`core2/answer/describe.py`): a one-sentence lead, a section per
+  subject or thing asked about (measures, breakdowns, dates and the period
+  covered; a measure's definition and how it adds up), and example questions,
+  each a measure and a breakdown that reach each other in a year with data. Only
+  the reader's tables are described.
 * **Refusals** say what was looked at: the measure and its table, the breakdown,
   the filters and the dates (`trust.considered`), and why it stopped
   (`trust.stopped`), under "How this answer was produced".

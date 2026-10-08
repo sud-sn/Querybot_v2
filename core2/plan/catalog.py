@@ -20,11 +20,11 @@ from core2.resolve import paths as P
 
 _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
            "November", "December"]
-_ADDS_UP = {"additive": "adds up", "non_additive": "does not add up (averaged or recomputed)",
+ADDS_UP = {"additive": "adds up", "non_additive": "does not add up (averaged or recomputed)",
             "semi_additive": "a balance: taken on the last day of each period, never added over time"}
 
 
-def _words(model: SemanticModel, expr: MeasureExpr, values: bool = True) -> str:
+def definition(model: SemanticModel, expr: MeasureExpr, values: bool = True) -> str:
     """A measure's definition in words: "sum of Net amount where Status is not C".
 
     Where values stay out of prompts (``values`` false), a filter's values and a formula's
@@ -43,7 +43,7 @@ def _words(model: SemanticModel, expr: MeasureExpr, values: bool = True) -> str:
         return head
     if isinstance(expr, OpExpr):
         sign = {"ratio": "÷", "subtract": "−", "add": "+", "multiply": "×"}[expr.op]
-        text = f" {sign} ".join(f"({_words(model, a, values)})" for a in expr.args)
+        text = f" {sign} ".join(f"({definition(model, a, values)})" for a in expr.args)
         return f"{text} × {expr.scale:g}" if expr.scale != 1 else text
     if isinstance(expr, RefExpr):
         ref = model.measures.get(expr.measure)
@@ -92,8 +92,8 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
                         key=lambda m: m.slug):
             status = " | unconfirmed" if m.status in ("needs_review", "proposed") else ""
             unit = f" in {m.unit}" if m.unit else ""
-            lines.append(f"- {m.slug} | {m.business_name} | {m.format}{unit} | {_ADDS_UP.get(m.additivity, '')} | "
-                         f"{_words(model, m.expr, values_allowed)}{_synonyms(m.synonyms)}{status}")
+            lines.append(f"- {m.slug} | {m.business_name} | {m.format}{unit} | {ADDS_UP.get(m.additivity, '')} | "
+                         f"{definition(model, m.expr, values_allowed)}{_synonyms(m.synonyms)}{status}")
     lines.append("")
 
     lines.append("DATES (slug | name | what it records | data range)")

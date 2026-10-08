@@ -37,9 +37,13 @@ Answer with exactly one JSON object that matches the PLAN SCHEMA. No prose, no m
 How to plan:
 1. kind: "query" for questions about the data. "clarify" only when the question is genuinely ambiguous
    (two measures fit equally, a date that could mean two dates, a name that fits several members): put the
-   question and 2-5 options from the catalog in clarify. "describe_data" for "what data do you have",
-   "what can I ask". "smalltalk" for greetings and thanks. "unsupported" when nothing in the catalog
-   answers it; say why in notes.
+   question and 2-5 options from the catalog in clarify. "describe_data" for questions about the data
+   itself rather than its numbers: "what data do you have", "what can you tell me about my data", "what
+   can I ask", "what does X mean", "how is X calculated", "what dates does the data cover", "how far back
+   does it go", "what do you know about customers", "what can I ask about purchasing". Put what it asks
+   about in about: measure, group or date slugs, or a subject's name as written after ## in the catalog;
+   leave about empty for the data as a whole. "smalltalk" for greetings and thanks. "unsupported" when
+   nothing in the catalog answers it; say why in notes.
 2. measures: the measure slugs the question names. Never swap in a different measure because it is close
    (sales is not margin, quantity is not value, count of rows is not count of orders). When the question
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
@@ -147,6 +151,8 @@ def _examples(model: SemanticModel) -> str:
     plan = {"kind": "query", "intent": "forecast", "measures": [m.slug], "time": {"grain": "month"},
             "forecast": {"periods": 6}}
     lines.append(f"Q: forecast {m.business_name.lower()} for the next 6 months\nA: {json.dumps(plan)}")
+    plan = {"kind": "describe_data", "about": [m.slug]}
+    lines.append(f"Q: how is {m.business_name.lower()} calculated?\nA: {json.dumps(plan)}")
     return "\n".join(lines)
 
 

@@ -26,6 +26,7 @@ from typing import Any
 
 from core2 import ids
 from core2.answer.builder import build_answer
+from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
 from core2.answer.forecast import answer_forecast
 from core2.answer.suggestions import follow_ups
@@ -125,18 +126,17 @@ def _clarification(question: str, clarify: Clarify) -> dict[str, Any]:
                   follow_up_suggestions=[{"label": o, "question": o} for o in options])
 
 
-def _describe(question: str, model: SemanticModel) -> dict[str, Any]:
-    subjects: dict[str, list[str]] = {}
-    for m in sorted(model.measures.values(), key=lambda m: m.business_name):
-        if not m.hidden and m.kind != "count":
-            subjects.setdefault(model.tables[m.table].business_name, []).append(m.business_name.lower())
-    lines = [f"• {subject}: {', '.join(names[:6])}{'…' if len(names) > 6 else ''}"
-             for subject, names in sorted(subjects.items())]
-    groups = sorted({e.business_name.lower() for e in model.entities.values()})
-    text = "Here is what I can answer from this data:\n" + "\n".join(lines)
-    if groups:
-        text += f"\nBroken down by: {', '.join(groups[:12])}."
-    return _frame(question, text)
+def _describe(question: str, plan: Plan, services: Services) -> dict[str, Any]:
+    """A question about the data itself, answered from the model: a short lead, a section per subject or thing
+    asked about, and example questions to ask next (core2/answer/describe.py)."""
+    said = describe(services.model, plan.about, today=services.today, allowed=services.allowed_tables,
+                    values=services.values_allowed)
+    frame = _frame(question, said.headline, sections=said.sections,
+                   follow_up_suggestions=[{"label": q, "question": q} for q in said.examples],
+                   trust={"engine": "core2", "data_source": services.data_source,
+                          "model_version": services.model.version})
+    frame["answer"]["scope_note"] = said.note
+    return frame
 
 
 _OPS = {"eq": "is", "in": "is one of", "ne": "is not", "not_in": "is none of", "gt": ">", "gte": ">=", "lt": "<",
@@ -249,7 +249,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         return _frame(question, "Hello! Ask me about your data, for example a total, a trend or a ranking.",
                       kind="smalltalk")
     if plan.kind == "describe_data":
-        return _describe(question, model)
+        return _describe(question, plan, services)
     if plan.kind == "unsupported":
         why = " ".join(plan.notes) or "nothing in this data measures it"
         # After a repair round, the plan that was tried first says what was looked at.

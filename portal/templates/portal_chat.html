@@ -2987,6 +2987,18 @@ function appendAssistantResponse(msg, opts = {}){
   const scopeNoteHtml = (answer.scope_note || resultScope.note)
     ? `<div class="scope-note">${escHtml(answer.scope_note || resultScope.note || '')}</div>`
     : '';
+  // An answer about the data itself ("what can you tell me about my data?")
+  // reads as titled parts under its lead, as an analysis does -- not as one
+  // paragraph of bold headline.
+  const answerSections = Array.isArray(msg.sections) ? msg.sections : [];
+  const sectionsHtml = answerSections.map(s => {
+    const sb = Array.isArray(s.bullets) ? s.bullets : [];
+    return `<div class="analysis-section">`
+      + (s.title ? `<div class="analysis-section-title">${escHtml(s.title)}</div>` : '')
+      + (s.body ? `<div class="analysis-body">${escHtml(s.body)}</div>` : '')
+      + (sb.length ? `<ul class="analysis-list">${sb.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : '')
+      + `</div>`;
+  }).join('');
 
   // The value leads. When there is no single value to show — a list, a chart
   // with no headline number — the headline takes the lead slot instead, so the
@@ -3243,6 +3255,7 @@ function appendAssistantResponse(msg, opts = {}){
           <div class="result-answer">
             ${answerBlockHtml}
             ${scopeNoteHtml}
+            ${sectionsHtml}
           </div>
           ${scopeBadgeHtml}
         </div>
@@ -3290,7 +3303,8 @@ function appendAssistantResponse(msg, opts = {}){
   div.querySelector('[data-open-artifact]')?.addEventListener('click', () => renderArtifactPreview(msg));
   const copyBtn = div.querySelector('[data-copy="result"]');
   copyBtn?.addEventListener('click', async (e) => {
-    const copyPayload = [answer.headline || '', trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
+    const sectionText = answerSections.flatMap(s => [s.title || '', s.body || '', ...(s.bullets || []).map(b => '- ' + b)]);
+    const copyPayload = [answer.headline || '', sectionText.filter(Boolean).join('\n'), trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
     const ok = await copyText(copyPayload);
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = t(ok ? 'ui.chat.card.copied' : 'ui.chat.toast.copy_failed');
