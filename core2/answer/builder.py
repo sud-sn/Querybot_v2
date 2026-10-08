@@ -551,17 +551,33 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         return text + "."
     if members and not periods:
         g = members[0]
+        # Ranked lowest first ("the 5 items with the least gross profit"), the answer names the lowest:
+        # "leads with" the largest read as the opposite of what was asked.
+        lowest = bool(logical.sort) and not logical.sort[0][1] and logical.sort[0][0] in {c.name for c in measures}
+        if lowest:
+            ranked_by = next(c for c in measures if c.name == logical.sort[0][0])
+            low = min(range(len(raw)), key=lambda i: _number(raw[i][ranked_by.name]) or float("inf"))
+            count_of = len({str(r[g.name]) for r in shown})
+            among = f" of the {count_of:,} {_noun(g.label)} shown" if count_of > 1 and g.role != "time" else ""
+            return f"{lead}: {shown[low][g.name]} is lowest{among}, at {value(raw[low], ranked_by)}."
         best = max(range(len(raw)), key=lambda i: _number(raw[i][m.name]) or float("-inf"))
         top = raw[best]
         leader = str(shown[best][g.name])
         total = sum(_number(r[m.name]) or 0.0 for r in raw)
         share = ""
-        if not units.mixed and (logical.share or (m.format in ("currency", "number", "integer", "count") and total
-                                                  and len(raw) > 1 and not logical.limit)):
+        # The share the query worked out is of everything; the rows shown may be the top 10 of many, and a
+        # share of their sum said "11%" beside a share column saying 3%.
+        worked_out = next((c for c in cols.of("share") if c.measure == (m.measure or None)), None)
+        if not units.mixed and worked_out is not None and _number(top.get(worked_out.name)) is not None:
+            portion = _number(top[worked_out.name]) or 0.0      # a fraction, as the query returns it
+            share = f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
+        elif not units.mixed and (logical.share or (m.format in ("currency", "number", "integer", "count") and total
+                                                    and len(raw) > 1 and not logical.limit)):
             portion = (_number(top[m.name]) or 0.0) / total if total else 0.0
             share = f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
         count_of = len({str(r[g.name]) for r in shown})
-        count = f" across {count_of:,} {_noun(g.label)}" if count_of > 1 else ""
+        # Days of the week and weekends are always the same few: counting them says nothing ("across 2 is weekends").
+        count = f" across {count_of:,} {_noun(g.label)}" if count_of > 1 and g.role != "time" else ""
         return f"{lead}: {leader} leads with {value(top)}{share}{count}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:

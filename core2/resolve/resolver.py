@@ -724,8 +724,16 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             expected = [s for s in starts if (first is None or add_units(s, step, 1) > first)
                         and (last is None or s <= last)]
 
-    sort = [(_sort_name(s.by, measures_out, group_names, model), s.desc) for s in plan.sort]
-    sort = [(n, d) for n, d in sort if n]
+    sort = []
+    for s in plan.sort:
+        name = _sort_name(s.by, measures_out, group_names, model)
+        if not name:
+            # Dropped, the order fell back to the periods: "the month with the highest discount rate"
+            # answered with the first month, as if it were the highest.
+            raise ResolveError("unknown", f"nothing to sort by called {s.by}",
+                               [*(o.measure.slug if o.measure is not None else o.label for o in measures_out),
+                                *group_names, "change", "pct_change", "share", "period"])
+        sort.append((name, s.desc))
     if not sort:
         if plan.time.grain:
             sort = [("period", False)]
@@ -909,8 +917,12 @@ def _sort_name(by: str, measures: list[OutMeasure], groups: dict[str, str], mode
         return f"{measures[0].name}_{by}"
     if by == "period":
         return "period"
+    plain = " ".join(re.findall(r"[a-z0-9]+", by.casefold()))
     for o in measures:
-        if o.measure is not None and o.measure.slug == by or o.name == by:
+        # A measure by its slug; one worked out for the question by the name the plan gave it
+        # ("Discount rate"), however it is written.
+        if o.measure is not None and o.measure.slug == by or o.name == by or \
+                " ".join(re.findall(r"[a-z0-9]+", o.label.casefold())) == plain:
             return o.name
     if by in groups:
         return groups[by]
