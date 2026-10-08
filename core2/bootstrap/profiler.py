@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlglot import exp
 
@@ -27,6 +29,8 @@ from core2.bootstrap.inventory import InvColumn, InvTable
 from core2.model.schema import ColumnProfile, TopValue
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
+
+log = logging.getLogger("querybot.core2")
 
 
 @dataclass
@@ -44,6 +48,8 @@ class TableProfile:
     rows: int
     sampled: bool
     columns: dict[str, ColumnProfile]
+    # Columns the warehouse would not compute, with its reason: left out, never guessed.
+    unread: dict[str, str] = field(default_factory=dict)
 
 
 def _num(value: object) -> float | None:
@@ -90,8 +96,71 @@ def _source(table: InvTable, dialect: str, rows: int, options: ProfileOptions) -
     return name, False
 
 
-def _stats(column: InvColumn, dialect: str, exact: bool) -> list[tuple[str, exp.Expression]]:
+def _readable(column: InvColumn, dialect: str) -> exp.Expression:
+    """The column as the warehouse can count, compare and sort it.
+
+    Azure SQL cannot compare or sort its old text and ntext types (no DISTINCT,
+    MIN, MAX or LEN on them), and reads a uniqueidentifier best as its text.
+    """
     c = exp.column(D.ident(column.name, dialect))
+    if dialect == "tsql":
+        base = column.raw_type.strip().upper().split("(")[0].strip()
+        if base in ("TEXT", "NTEXT"):
+            return exp.Cast(this=c, to=exp.DataType.build("NVARCHAR(MAX)", dialect="tsql"))
+        if base == "UNIQUEIDENTIFIER":
+            return exp.Cast(this=c, to=exp.DataType.build("CHAR(36)"))
+    return c
+
+
+_UNREAD: Any = object()   # a value the warehouse would not compute
+
+
+def _reason(error: Exception) -> str:
+    return " ".join(str(error).split())[:200]
+
+
+def _select(warehouse: Warehouse, items: list[tuple[str, str, exp.Expression]], source: str, dialect: str,
+            unread: dict[str, str]) -> list[Any]:
+    """Run [(column, stat, expression)] as one SELECT on the table; the values in the same order.
+
+    A warehouse can refuse one column's expression: a type it cannot compare,
+    arithmetic it will not do on that type. With every column in one query, that
+    refusal stopped the table and with it the whole Learn. So each column is then
+    asked alone. One it still refuses is left out: its values come back as
+    _UNREAD and it is named in ``unread`` with the warehouse's reason. When nothing
+    can be read, the first error is raised: that is the table or the connection.
+    """
+    def run(part: list[tuple[str, str, exp.Expression]]) -> list[Any]:
+        query = exp.select(*[e.as_(f"s{i}") for i, (_, _, e) in enumerate(part)]).from_(exp.to_table("__SRC__"))
+        return list(warehouse.query(query.sql(dialect=dialect).replace("__SRC__", source, 1)).rows[0])
+
+    try:
+        return run(items)
+    except Exception as first:  # noqa: BLE001 - which column it was is found below, and said
+        log.warning("core2: %s refused a profile query; reading its columns one at a time: %s", source, _reason(first))
+        values: list[Any] = [_UNREAD] * len(items)
+        groups: dict[str, list[int]] = {}
+        for i, (name, _, _) in enumerate(items):
+            groups.setdefault(name, []).append(i)
+        read_any = False
+        for name, positions in groups.items():
+            try:
+                got = run([items[i] for i in positions])
+            except Exception as error:  # noqa: BLE001 - this column is left out and named
+                if name:
+                    unread.setdefault(name, _reason(error))
+                    log.warning("core2: %s.%s left out: %s", source, name, _reason(error))
+                continue
+            read_any = True
+            for i, value in zip(positions, got):
+                values[i] = value
+        if not read_any:
+            raise first
+        return values
+
+
+def _stats(column: InvColumn, dialect: str, exact: bool) -> list[tuple[str, exp.Expression]]:
+    c = _readable(column, dialect)
     out: list[tuple[str, exp.Expression]] = [("non_null", exp.Count(this=c.copy()))]
     kind = column.data_type
     if kind != "other":
@@ -127,7 +196,7 @@ def _mod(value: exp.Expression, n: int) -> exp.Expression:
 
 
 def _yyyymmdd(c: exp.Expression) -> exp.Expr:
-    month = _mod(exp.Floor(this=exp.Div(this=c.copy(), expression=exp.Literal.number(100))), 100)
+    month = _mod(D.floor_div(c.copy(), 100), 100)
     return exp.and_(_between(c.copy(), 19000101, 21001231), _between(_mod(c.copy(), 100), 1, 31),
                     _between(month, 1, 12))
 
@@ -146,6 +215,7 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
     source, sampled = _source(table, dialect, rows, options)
     exact = not sampled and rows <= options.exact_distinct_up_to
     profiles = {c.name: ColumnProfile(rows=rows, sampled=sampled, distinct_is_approx=not exact) for c in table.columns}
+    unread: dict[str, str] = {}
 
     # 1. aggregates
     chunks = [table.columns[i:i + options.columns_per_query]
@@ -158,10 +228,11 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
             for stat, expression in _stats(column, dialect, exact):
                 plan.append((column.name, stat))
                 selects.append(expression)
-        query = exp.select(*[e.as_(f"s{i}") for i, e in enumerate(selects)]).from_(exp.to_table("__SRC__"))
-        sql = query.sql(dialect=dialect).replace("__SRC__", source, 1)
-        values = warehouse.query(sql).rows[0]
+        values = _select(warehouse, [(name, stat, e) for (name, stat), e in zip(plan, selects)], source, dialect,
+                         unread)
         for (name, stat), value in zip(plan, values):
+            if value is _UNREAD:
+                continue
             if stat == "__rows":
                 sample_rows = int(value or 0)
                 continue
@@ -225,9 +296,10 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
         shaped.append((column.name, "min_valid", exp.Min(this=first)))
         shaped.append((column.name, "max_valid", exp.Max(this=first.copy())))
     if shaped:
-        query = exp.select(*[e.as_(f"s{i}") for i, (_, _, e) in enumerate(shaped)]).from_(exp.to_table("__SRC__"))
-        values = warehouse.query(query.sql(dialect=dialect).replace("__SRC__", source, 1)).rows[0]
+        values = _select(warehouse, shaped, source, dialect, unread)
         for (name, pattern, _), value in zip(shaped, values):
+            if value is _UNREAD:
+                continue
             p = profiles[name]
             if pattern in ("min_valid", "max_valid"):
                 setattr(p, "date_min" if pattern == "min_valid" else "date_max", _text(value))
@@ -262,9 +334,10 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
         dated.append((column.name, "min_valid", exp.Min(this=real_day)))
         dated.append((column.name, "max_valid", exp.Max(this=real_day.copy())))
     if dated:
-        query = exp.select(*[e.as_(f"s{i}") for i, (_, _, e) in enumerate(dated)]).from_(exp.to_table("__SRC__"))
-        values = warehouse.query(query.sql(dialect=dialect).replace("__SRC__", source, 1)).rows[0]
+        values = _select(warehouse, dated, source, dialect, unread)
         for (name, stat, _), value in zip(dated, values):
+            if value is _UNREAD:
+                continue
             p = profiles[name]
             if stat == "placeholders":
                 count = int(value or 0)
@@ -280,16 +353,30 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
     if low:
         branches = []
         for i, column in enumerate(low):
-            c = exp.column(D.ident(column.name, dialect))
-            branches.append(exp.select(exp.Literal.number(i).as_("k"), D.as_text(c.copy(), dialect).as_("v"),
+            readable = _readable(column, dialect)
+            branches.append(exp.select(exp.Literal.number(i).as_("k"), D.as_text(readable.copy(), dialect).as_("v"),
                                        exp.Count(this=exp.Literal.number(1)).as_("n"))
-                            .from_(exp.to_table("__SRC__")).group_by(c.copy()))
-        union: exp.Expression = branches[0]
-        for branch in branches[1:]:
-            union = exp.union(union, branch, distinct=False)
-        sql = union.sql(dialect=dialect).replace("__SRC__", source)
+                            .from_(exp.to_table("__SRC__")).group_by(readable.copy()))
+
+        def common(part: list[exp.Select]) -> list[tuple]:
+            union: exp.Expression = part[0]
+            for branch in part[1:]:
+                union = exp.union(union, branch, distinct=False)
+            return warehouse.query(union.sql(dialect=dialect).replace("__SRC__", source)).rows
+
+        try:
+            counted = common(branches)
+        except Exception as error:  # noqa: BLE001 - common values are a help; one column's refusal loses only its own
+            log.warning("core2: %s refused the common-values query; reading them one column at a time: %s",
+                        source, _reason(error))
+            counted = []
+            for column, branch in zip(low, branches):
+                try:
+                    counted += common([branch])
+                except Exception as alone:  # noqa: BLE001 - this column shows no common values
+                    log.warning("core2: %s.%s common values left out: %s", source, column.name, _reason(alone))
         found: dict[int, list[TopValue]] = {}
-        for k, v, n in warehouse.query(sql).rows:
+        for k, v, n in counted:
             found.setdefault(int(k), []).append(TopValue(value=None if v is None else str(v), count=int(n)))
         for i, column in enumerate(low):
             profiles[column.name].top = sorted(found.get(i, []), key=lambda t: (-t.count, t.value or ""))
@@ -298,7 +385,7 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
         p = profiles[column.name]
         if p.pattern is None:
             p.pattern = _pattern(column, p)
-    return TableProfile(rows=rows, sampled=sampled, columns=profiles)
+    return TableProfile(rows=rows, sampled=sampled, columns=profiles, unread=unread)
 
 
 _YES_NO = {"y", "n", "yes", "no", "t", "f", "true", "false", "oui", "non"}

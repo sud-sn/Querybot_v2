@@ -107,6 +107,10 @@ def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = 
                          outliers=options.outliers)
     model = assemble(f, flags=flags, client_id=client_id, db_id=db_id, db_type=db_type or warehouse.db_type,
                      built_at=options.today())
+    for key, profile in sorted(f.profiles.items()):
+        for column, reason in sorted(profile.unread.items()):
+            model.notes.append(f"{f.inventory.tables[key].name}.{column} was left out: the database would not "
+                               f"read it ({reason}).")
     if options.labeler is not None:
         model.notes += label(model, options.labeler)
     assign_slugs(model)

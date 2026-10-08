@@ -156,7 +156,8 @@ def _outlier_periods(warehouse: Warehouse, inventory: Inventory, calendars: dict
             query = exp.select().from_(f)
             cal_sql = ""
         month = D.period_start(day, "month", d)
-        query = query.select(month.as_("m"), *[exp.Sum(this=exp.column(D.ident(m.column or "", d), table="f")).as_(f"s{i}")
+        query = query.select(month.as_("m"), *[D.total(exp.column(D.ident(m.column or "", d), table="f"),
+                                                       table.type_of(m.column or ""), d).as_(f"s{i}")
                                                for i, m in enumerate(candidates)])
         query = query.where(exp.Between(this=day.copy(), low=D.date_literal(_LOW, d), high=D.date_literal(_HIGH, d)))
         query = query.group_by(month.copy())

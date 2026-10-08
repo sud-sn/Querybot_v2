@@ -240,10 +240,10 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
 def _months(value: exp.Expression, candidate: DateCandidate, data_type: str, dialect: str) -> exp.Expression:
     """A date as a month count (year * 12 + month): from a yyyymm or yyyymmdd number, or a date."""
     if candidate.granularity == "month":
-        return D.add(D.mul(exp.Floor(this=D.div(value, 100)), 12), D.mod(value.copy(), 100))
+        return D.add(D.mul(D.floor_div(value, 100), 12), D.mod(value.copy(), 100))
     if data_type in ("integer", "decimal"):
-        return D.add(D.mul(exp.Floor(this=D.div(value, 10000)), 12),
-                     D.mod(exp.Floor(this=D.div(value.copy(), 100)), 100))
+        return D.add(D.mul(D.floor_div(value, 10000), 12),
+                     D.mod(D.floor_div(value.copy(), 100), 100))
     return D.add(D.mul(D.date_part(value, "year", dialect), 12), D.date_part(value.copy(), "month", dialect))
 
 

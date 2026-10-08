@@ -244,7 +244,7 @@ class _Compiler:
             if conds:
                 value = exp.Case(ifs=[exp.If(this=exp.and_(*conds), true=value)])
             if expr.agg == "sum":
-                return exp.Sum(this=value)
+                return D.total(value, self.model.columns[expr.column].data_type if expr.column else "", self.d)
             if expr.agg == "count":
                 return exp.Count(this=value)
             if expr.agg == "count_distinct":

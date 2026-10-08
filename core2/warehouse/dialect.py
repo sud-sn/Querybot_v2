@@ -126,6 +126,29 @@ def mod(a: exp.Expression | int | float, b: exp.Expression | int | float) -> exp
     return exp.Mod(this=_wrap(_number(a)), expression=_wrap(_number(b)))
 
 
+def total(value: exp.Expression, data_type: str, dialect: str) -> exp.Expression:
+    """SUM of a column that cannot overflow.
+
+    Azure SQL sums an int column as an int and stops the query past
+    2,147,483,647 (error 8115, "arithmetic overflow"): a stock quantity summed
+    over a large table gets there. Its whole numbers are summed as a bigint.
+    """
+    if dialect == "tsql" and data_type == "integer":
+        value = exp.Cast(this=value, to=exp.DataType.build("BIGINT"))
+    return exp.Sum(this=value)
+
+
+def floor_div(a: exp.Expression | int | float, b: exp.Expression | int | float) -> exp.Expression:
+    """a / b rounded down, in a's own exact type: a key's leading digits (20260131 -> 202601).
+
+    div() is a true division, which sqlglot writes for Azure SQL as
+    CAST(a AS FLOAT) / b; Azure SQL then refuses the remainder of it (error 402,
+    "float and int are incompatible in the modulo operator"), so the month of a
+    yyyymmdd key could not be read there. An integer stays an integer here.
+    """
+    return exp.Floor(this=exp.Div(this=_wrap(_number(a)), expression=_wrap(_number(b)), typed=True))
+
+
 # ── fragments ──────────────────────────────────────────────────────────────
 
 _PERIOD_START = {
