@@ -536,6 +536,11 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         complete = [r for r in complete if _number(r[m.name]) is not None] or complete     # a period with a value
         first, last = complete[0], complete[-1]
         peak = max(complete, key=lambda r: _number(r[m.name]) or float("-inf"))
+        if len(complete) > 2 and len({_number(r[m.name]) for r in complete}) == 1:
+            # Flat: "60 in Jan 2026 (the highest), 60 in Jun 2026" named a peak there is none of.
+            unit = grain.replace("fiscal_", "fiscal ")
+            return f"{lead}, by {unit}: {value(first)} in every {unit}" + (
+                "." if span else f", {name(first)} to {name(last)}.")
         # The highest is named once: beside the first or last period when it is one of them, and not
         # at all between two periods (one of two is plainly the higher).
         highest = " (the highest)" if len(complete) > 2 else ""

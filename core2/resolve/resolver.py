@@ -364,8 +364,58 @@ def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure, table: st
         assert isinstance(role, DateRole)
         if role.table == table:
             return role
-    key = measure.default_date or model.tables[table].default_date
-    return model.date_roles.get(key) if key else None
+    # A date lives on its own table: a measure counted on another table (members counted by what they
+    # did, below) is counted by that table's date, never by its own table's.
+    for key in (measure.default_date, model.tables[table].default_date):
+        role = model.date_roles.get(key) if key else None
+        if role is not None and role.table == table:
+            return role
+    return None
+
+
+def _members_by_activity(model: SemanticModel, plan: Plan, measure: Measure) -> tuple[MeasureExpr, str, str] | None:
+    """A count of a list's members over a period, counted on the events that name them.
+
+    "How many customers bought in Q2" counted the customer list by a date on the
+    customer itself (when its credit limit last changed): the customers whose credit
+    changed in Q2. Members of a period are those its events name: the distinct
+    customers on the invoice lines dated in Q2. Returns the count, the table it is
+    counted on and a note; None counts the list itself (as for a date on the list the
+    question names: "customers created in 2025").
+    """
+    table = model.tables[measure.table]
+    expr = measure.expr
+    if table.kind != "dimension" or not isinstance(expr, AggExpr) or expr.agg not in ("count", "count_distinct") \
+            or expr.filters or measure.filters:
+        return None
+    links = [j for j in model.joins.values()
+             if j.to_table == measure.table and j.trust != "rejected" and not j.to_calendar and len(j.to_columns) == 1
+             and model.tables[j.from_table].kind == "fact" and model.tables[j.from_table].default_date
+             and (expr.agg == "count" or j.to_columns[0] == expr.column)]
+    named = find_slug(model, plan.time.date) if plan.time.date else None
+    role = named[1] if named and named[0] == "date" else None
+    if isinstance(role, DateRole):
+        if role.table == measure.table:
+            return None
+        links = [j for j in links if j.from_table == role.table]
+    if not links:
+        return None
+    facts = list(dict.fromkeys(j.from_table for j in links))
+    if len(facts) > 1:
+        dates = [model.date_roles[model.tables[f].default_date or ""] for f in facts]
+        error = ResolveError("ambiguous", f"{plural(table.business_name)} in a period are counted by what they did "
+                             "in it", [d.name for d in dates])
+        error.field = "time.date"
+        raise error
+    # One link from that table, or the most trusted, best-matched of several (a bill-to and a ship-to customer).
+    link = max((j for j in links if j.from_table == facts[0]),
+               key=lambda j: (j.trust in ("admin", "declared", "verified"), j.match_rate, j.key))
+    fact = model.tables[facts[0]]
+    counted = AggExpr(agg="count_distinct", column=link.from_columns[0])
+    date = role if isinstance(role, DateRole) else model.date_roles[fact.default_date or ""]
+    return counted, fact.key, (f"{measure.business_name} counts the {plural(table.business_name.lower())} "
+                               f"on {fact.business_name.lower()} rows by {date.name.lower()}, not the "
+                               f"{table.business_name.lower()} list itself.")
 
 
 def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
@@ -385,6 +435,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
 
     # Measures, and the table each is counted on.
     chosen: list[tuple[Measure | None, MeasureExpr, str, str, str]] = []   # (measure, expr, table, label, format)
+    timed = bool(plan.time.grain) or plan.time.window.kind != "all" or plan.time.compare is not None or any(
+        slug in TIME_ATTRIBUTES for slug in plan.group_by)
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
         found = find_slug(model, slug)
         if not found or found[0] != "measure":
@@ -392,6 +444,12 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         m = found[1]
         assert isinstance(m, Measure)
         expr = _with_filters(_measure_expr(model, m), m.filters)
+        by_activity = _members_by_activity(model, plan, m) if timed else None
+        if by_activity is not None:
+            counted, on, said = by_activity
+            chosen.append((m, counted, on, m.business_name, m.format))
+            notes.append(said)
+            continue
         chosen.append((m, expr, m.table, m.business_name, m.format))
         if m.filters:
             notes.append(f"{m.business_name} counts only rows where " + "; ".join(

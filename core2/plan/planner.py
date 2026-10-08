@@ -79,7 +79,9 @@ How to plan:
    "grew the most" -> sort by "change" desc; "biggest drop" -> "change" with desc false.
 10. intent: value | breakdown | trend | compare | rank | share | list | count | drivers | forecast. "List the
    X", "what are the X" with no measure -> intent list with group_by [X] and no measures. "How many X" ->
-   intent count with the "Number of X" measure. "Share of", "% of total", "contribution" -> intent share.
+   intent count with the "Number of X" measure; "how many X bought / ordered / were invoiced in a period"
+   also sets time.date to the date of that event (the invoice date for "bought"), never a date of X's own.
+   "Share of", "% of total", "contribution" -> intent share.
    "Why did X drop/rise/change", "what drove X", "explain the change in X" -> intent drivers with the
    measure; time.window is the period asked about ("in March" -> March 2026), time.compare only when the
    question names the other period (else the period before is used); drivers.dimensions only when the

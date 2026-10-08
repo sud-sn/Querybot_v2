@@ -64,7 +64,7 @@ class Pending:
     """A question back that code completes: the plan waiting for the link the reader names."""
 
     plan: Plan
-    field: str                       # the slug whose link the reply names (plan.via)
+    field: str                       # the slug whose link the reply names (plan.via), or "time.date"
     options: list[str]
     masked: Masked | None = None
 
@@ -237,9 +237,14 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     pending, session.pending = session.pending, None
     picked = choose(question, pending.options) if pending is not None else None
     if pending is not None and picked is not None:
-        # The reply names one of the links offered: the waiting plan, completed by code.
-        outcome = Outcome(pending.plan.model_copy(update={"via": {**pending.plan.via, pending.field: picked},
-                                                          "follow_up": "refine"}), masked=pending.masked)
+        # The reply names one of the links or dates offered: the waiting plan, completed by code.
+        if pending.field == "time.date":
+            role = next((r for r in model.date_roles.values() if r.name == picked), None)
+            update: dict[str, Any] = {"time": pending.plan.time.model_copy(
+                update={"date": role.slug if role is not None else picked})}
+        else:
+            update = {"via": {**pending.plan.via, pending.field: picked}}
+        outcome = Outcome(pending.plan.model_copy(update={**update, "follow_up": "refine"}), masked=pending.masked)
     else:
         matches = _visible(services.index.match(question), model, services.allowed_tables)
         outcome = plan_question(model, question, services.complete, today=services.today,
