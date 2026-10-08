@@ -4271,6 +4271,57 @@ def clear_default_date_role(kb_dir: str, fact_table: str, fact_column: str) -> b
     return True
 
 
+def unapprove_date_role(kb_dir: str, fact_table: str, fact_column: str) -> bool:
+    """Take an admin's approval off one date role: it goes back to review.
+
+    An approved role is required on the questions that name it, can be its
+    fact's default (flagged, or as the only approved role), is what a metric's
+    default time column reads, and is kept by a rebuild. A role in review is
+    none of these. Its mapping and phrases stay as the admin left them, so
+    approving it again is one click. A default flag goes with the approval:
+    only an approved role can be the default (set_default_date_role).
+
+    Writes the top-level and per-table entries, as patch_date_role does.
+    Returns True when an approved role was found and changed.
+    """
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+
+    fact_table_u = (fact_table or "").upper()
+    fact_col_u = (fact_column or "").upper()
+    if not fact_table_u or not fact_col_u:
+        return False
+
+    roles = [
+        dr for dr in (model.get("date_roles", []) or [])
+        if str(dr.get("fact_table") or "").upper() == fact_table_u
+    ]
+    for table in model.get("tables", []) or []:
+        t_qname_u = str(table.get("qualified_name") or table.get("table") or "").upper()
+        t_bare_u = str(table.get("table") or "").upper()
+        if fact_table_u in {t_qname_u, t_bare_u}:
+            roles.extend(table.get("date_roles", []) or [])
+
+    changed = False
+    for dr in roles:
+        if (
+            str(dr.get("fact_column") or "").upper() == fact_col_u
+            and str(dr.get("status") or "") == "approved"
+        ):
+            dr["status"] = "needs_review"
+            dr["confidence"] = 80  # patch_date_role's confidence for a role not approved
+            dr["is_default"] = False
+            changed = True
+    if not changed:
+        return False
+
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+    (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
+
+
 def approve_metric_default_date(
     kb_dir: str, base_table: str, column: str, notes: list[str] | None = None,
 ) -> dict[str, Any]:

@@ -8597,6 +8597,69 @@ async def date_role_set_default(
         )
 
 
+def _metrics_still_on_the_date(account_id: str, fact_table: str, fact_column: str) -> str:
+    """What still names a date role that was just unapproved, as one notice.
+
+    A metric's default time column is read only through an approved role, so
+    it stops being in force; a metric date context keeps its own copy of the
+    mapping, so the admin decides whether it stays.
+    """
+    from core.contextual_dates import same_date_fact
+
+    column_u = fact_column.strip().upper()
+    defaults: list[str] = []
+    contexts: list[str] = []
+    try:
+        for metric in store.list_metrics(account_id):
+            named = str(metric.get("default_time_column") or "").strip().strip("[]`").upper().split(".")[-1]
+            base_table = str(metric.get("base_table") or "")
+            if named == column_u and (not base_table or same_date_fact(fact_table, base_table)):
+                defaults.append(str(metric.get("name") or ""))
+        for binding in store.list_metric_date_contexts(account_id):
+            if (str(binding.get("fact_column") or "").upper() == column_u
+                    and same_date_fact(fact_table, str(binding.get("fact_table") or ""))):
+                contexts.append(f"{binding.get('metric_name') or ''}: {binding.get('context_name') or ''}")
+    except Exception as exc:
+        log.warning("date_role_unapprove: could not list what uses %s.%s for %s: %s",
+                    fact_table, fact_column, account_id, exc)
+        return ""
+    parts = []
+    if defaults:
+        parts.append(f"No longer the default date of {', '.join(sorted(defaults))}.")
+    if contexts:
+        parts.append(f"Metric date contexts still using it: {', '.join(sorted(contexts))}. "
+                     "Remove them below if they should stop.")
+    return " ".join(parts)
+
+
+@router.post("/clients/{account_id}/date-roles/unapprove")
+async def date_role_unapprove(
+    request: Request,
+    account_id: str,
+    fact_table: str = Form(...),
+    fact_column: str = Form(...),
+):
+    """Take the approval off a date role, which puts it back in review."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    state = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+    try:
+        from core.semantic_model import unapprove_date_role
+        if not unapprove_date_role(kb_dir, fact_table.strip(), fact_column.strip()):
+            raise ValueError("This date role is not approved.")
+    except Exception as exc:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/date-roles?error={quote(str(exc)[:180])}",
+            status_code=303,
+        )
+    _after_semantic_approval(account_id, f"date role unapproved on {fact_table.strip()}")
+    notice = _metrics_still_on_the_date(account_id, fact_table.strip(), fact_column.strip())
+    suffix = f"&notice={quote(notice[:220])}" if notice else ""
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/date-roles?saved=unapproved{suffix}", status_code=303)
+
+
 @router.post("/clients/{account_id}/date-contexts/save")
 async def date_context_save(
     request: Request,
