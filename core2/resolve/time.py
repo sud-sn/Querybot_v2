@@ -111,6 +111,31 @@ def resolve_window(window: Window, *, today: dt.date, first_data: dt.date | None
     raise ValueError(f"no such window: {kind}")
 
 
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+                "November", "December")
+
+
+def year_basis(window: Window, rng: Range, *, fiscal_start: int | None) -> list[str]:
+    """Which year a year or a quarter was, where the fiscal year is not the calendar year.
+
+    "Sales in 2025" is January to December; in a workspace whose fiscal years run
+    July to June a reader cannot tell which was meant from the dates alone.
+    """
+    if not fiscal_start or fiscal_start == 1 or rng.start is None or rng.end is None:
+        return []
+    runs = f"fiscal years here run {_MONTH_NAMES[fiscal_start - 1]} to {_MONTH_NAMES[(fiscal_start + 10) % 12]}"
+    if window.fiscal:
+        return [runs[0].upper() + runs[1:] + "."]
+    # Dates the question named that read as a year, a half or a quarter: "2025", "H1 2026", "Q2".
+    months = (rng.end.year - rng.start.year) * 12 + rng.end.month - rng.start.month
+    named = window.kind == "between" and rng.start.day == 1 and rng.end.day == 1 and (
+        (rng.start.month == 1 and months > 0 and months % 12 == 0)
+        or (months == 6 and rng.start.month in (1, 7)) or (months == 3 and rng.start.month in (1, 4, 7, 10)))
+    if window.unit in ("year", "quarter") or named:
+        return [f"Counted by the calendar: {runs}. Ask for the fiscal year to count that way."]
+    return []
+
+
 def year_back(day: dt.date) -> dt.date:
     """The same calendar day a year earlier (29 February becomes the 28th)."""
     try:

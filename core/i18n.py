@@ -4224,6 +4224,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Aucune requête SQL n'a été exécutée pour ce résultat.",
     },
     "ui.chat.trust.business_date": {"en": "Business date", "fr": "Date métier"},
+    "ui.chat.trust.how_counted": {"en": "How it was counted", "fr": "Comment c'est compté"},
     # A question the new core did not answer: what it looked at, and why it stopped.
     "ui.chat.trust.stopped": {"en": "Why it stopped", "fr": "Pourquoi cela s'est arrêté"},
     "ui.chat.trust.considered.measure": {"en": "Measure considered", "fr": "Mesure envisagée"},

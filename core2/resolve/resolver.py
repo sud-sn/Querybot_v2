@@ -33,7 +33,8 @@ from core2.model.schema import (
 )
 from core2.plan.ir import TIME_ATTRIBUTES, Filter, Plan
 from core2.resolve import paths as P
-from core2.resolve.time import Range, add_units, partial_periods, periods, resolve_window, shift, year_back
+from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back,
+                                year_basis)
 from core2.warehouse import dialect as D
 
 # Aliases a validator screens as statements, whatever their quoting.
@@ -465,6 +466,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
                             fiscal_start=fiscal_start)
     notes += window.notes
+    notes += year_basis(plan.time.window, window, fiscal_start=fiscal_start)
     compare: Range | None = None
     if plan.time.compare:
         c = plan.time.compare

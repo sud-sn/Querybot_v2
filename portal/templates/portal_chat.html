@@ -3229,6 +3229,10 @@ function appendAssistantResponse(msg, opts = {}){
   const consideredHtml = considered.map(c => `<div class="trust-item"><div class="trust-k">${escHtml(t('ui.chat.trust.considered.' + c.key))}</div><div class="trust-v">${escHtml(c.value || '')}</div></div>`).join('');
   const dateContexts = Array.isArray(trust.date_context) ? trust.date_context : [];
   const dateContextHtml = dateContexts.map(ctx => {
+    // The new core's notes are sentences: what it assumed and how it counted.
+    if (typeof ctx === 'string') {
+      return `<div class="trust-item"><div class="trust-k">${t('ui.chat.trust.how_counted')}</div><div class="trust-v">${escHtml(ctx)}</div></div>`;
+    }
     const physical = [String(ctx.table || '').split('.').pop(), ctx.column || ''].filter(Boolean).join('.');
     const grain = ctx.temporal_grain
       ? t('ui.chat.trust.grain', {grain: ctx.temporal_grain})
