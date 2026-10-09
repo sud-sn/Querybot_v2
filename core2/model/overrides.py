@@ -15,9 +15,10 @@ from core2.model.schema import AggExpr, Join, Measure, RefExpr, SemanticModel, S
 
 # What an admin may change, per kind of object. Everything else is the data's call.
 ALLOWED = {
-    "table": {"business_name", "description", "kind", "default_date", "hidden", "default_filters"},
+    "table": {"business_name", "description", "kind", "default_date", "hidden", "default_filters",
+              "readers_may_include"},
     "column": {"business_name", "description", "role", "format", "unit", "synonyms", "hidden", "sensitivity"},
-    "join": {"trust", "role", "conditions"},
+    "join": {"trust", "role", "conditions", "keep_unmatched", "cardinality"},
     "date_role": {"name", "kind", "is_default", "synonyms"},
     "measure": {"business_name", "description", "synonyms", "additivity", "time_aggregation", "format", "hidden",
                 "filters", "default_date", "expr", "table"},

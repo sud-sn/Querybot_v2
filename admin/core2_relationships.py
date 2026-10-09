@@ -75,7 +75,7 @@ async def relationships_page(request: Request, account_id: str):
 
     return _resp(request, "client_relationships.html", {
         "client": client, "data": links.view(model) if model else None,
-        "kinds": {k: links.KIND_WORDS[k] for k in _TABLE_KINDS},
+        "kinds": {k: links.KIND_CHOICES[k] for k in _TABLE_KINDS},
         "cardinalities": links.CARDINALITY_WORDS, "ops": links.OP_WORDS,
     })
 
@@ -129,6 +129,10 @@ async def relationships_save_link(request: Request, account_id: str):
         key = existing.key
         if [c.model_dump(mode="json") for c in existing.conditions] != conditions:
             store.set_core2_override(account_id, db_id, target("join", key), "conditions", conditions)
+        if existing.cardinality != spec.cardinality:
+            store.set_core2_override(account_id, db_id, target("join", key), "cardinality", spec.cardinality)
+        if existing.keep_unmatched != spec.keep_unmatched:
+            store.set_core2_override(account_id, db_id, target("join", key), "keep_unmatched", spec.keep_unmatched)
         if existing.trust not in ("admin",):
             store.set_core2_override(account_id, db_id, target("join", key), "trust", "admin")
         return JSONResponse({"ok": True, "key": key})
@@ -233,7 +237,25 @@ async def relationships_check_table(request: Request, account_id: str):
     warehouse = _warehouse(account_id, client)
     if warehouse is None:
         return _refused("This workspace has no database to check against.")
-    return JSONResponse({"ok": True, **links.check_table(model, table, rules, warehouse)})
+    import datetime as dt
+
+    return JSONResponse({"ok": True, **links.check_table(model, table, rules, warehouse, dt.date.today())})
+
+
+@router.post("/clients/{account_id}/relationships/check-all")
+async def relationships_check_all(request: Request, account_id: str):
+    """Every join in use, matched again on today's data."""
+    if not _is_auth(request):
+        return _refused("Signed out.", 401)
+    client, model = _workspace(account_id)
+    if model is None:
+        return _refused("QueryBot has to learn this database first.")
+    from core2.model import links
+
+    warehouse = _warehouse(account_id, client)
+    if warehouse is None:
+        return _refused("This workspace has no database to check against.")
+    return JSONResponse({"ok": True, "joins": links.check_all(model, warehouse)})
 
 
 @router.post("/clients/{account_id}/relationships/save-table")
@@ -269,6 +291,9 @@ async def relationships_save_table(request: Request, account_id: str):
         if role is None or role.table != key:
             return _refused("Choose one of this table's own dates.")
         store.set_core2_override(account_id, db_id, object_key, "default_date", default_date)
+    may_include = data.get("readers_may_include")
+    if isinstance(may_include, bool) and may_include != table.readers_may_include:
+        store.set_core2_override(account_id, db_id, object_key, "readers_may_include", may_include)
     rules_json = [r.model_dump(mode="json") for r in rules]
     if rules_json != [f.model_dump(mode="json") for f in table.default_filters]:
         store.set_core2_override(account_id, db_id, object_key, "default_filters", rules_json)

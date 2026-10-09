@@ -13,6 +13,7 @@ workspace's warehouse: aggregates only, no row leaves it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any
 
 from sqlglot import exp
@@ -21,8 +22,12 @@ from core2 import ids
 from core2.model.schema import ColumnFilter, Join, SemanticModel
 from core2.warehouse import dialect as D
 
-KIND_WORDS = {"fact": "Events", "snapshot": "Balances", "dimension": "Things", "bridge": "Links between things",
-              "calendar": "Calendar", "other": "Other"}
+log = logging.getLogger("querybot.core2")
+
+KIND_WORDS = {"fact": "Fact", "snapshot": "Snapshot", "dimension": "Dimension", "bridge": "Bridge",
+              "calendar": "Date", "other": "Table"}
+KIND_CHOICES = {"fact": "Events (things that happen)", "snapshot": "Balances (a level at a point in time)",
+                "dimension": "Things (what events are about)", "bridge": "Links between things", "other": "Other"}
 CARDINALITY_WORDS = {"many_to_one": "Many to one", "one_to_one": "One to one", "one_to_many": "One to many",
                      "many_to_many": "Many to many"}
 OP_WORDS = {"eq": "is", "ne": "is not", "in": "is one of", "not_in": "is not one of", "gt": "is more than",
@@ -99,6 +104,7 @@ def view(model: SemanticModel) -> dict[str, Any]:
             "dates": [{"key": r.key, "name": r.name} for r in sorted(roles, key=lambda r: r.name)],
             "leaves_out": [{"column": f.column, "op": f.op, "values": list(f.values), "text": condition_text(model, f)}
                            for f in t.default_filters],
+            "readers_may_include": t.readers_may_include,
             "measures": sum(1 for m in model.measures.values() if m.table == t.key and not m.hidden),
             "columns": [{"key": c.key, "name": _column_name(model, c.key), "physical": c.name,
                          "type": _FAMILY.get(c.data_type, "other"), "role": c.role,
@@ -118,6 +124,7 @@ def view(model: SemanticModel) -> dict[str, Any]:
             "cardinality": j.cardinality, "rows_words": CARDINALITY_WORDS.get(j.cardinality, j.cardinality),
             "role": j.role or "", "trust": j.trust, "status": status(j), "match": round(j.match_rate, 4),
             "to_calendar": j.to_calendar, "admin": j.provenance == "admin" and j.trust == "admin",
+            "keep_unmatched": j.keep_unmatched,
             "conditions": [{"column": f.column, "op": f.op, "values": list(f.values),
                             "text": condition_text(model, f)} for f in j.conditions],
         })
@@ -137,6 +144,7 @@ class LinkSpec:
     conditions: list[ColumnFilter] = field(default_factory=list)
     role: str = ""
     cardinality: str = "many_to_one"
+    keep_unmatched: bool = True
 
 
 class LinkError(ValueError):
@@ -176,11 +184,12 @@ def spec_from(model: SemanticModel, data: dict[str, Any]) -> LinkSpec:
         if value_problem(model, f):
             raise LinkError(value_problem(model, f))
         conditions.append(f)
+    # Many to one or one to one: the two a question can walk without counting a row twice.
     cardinality = str(data.get("cardinality") or "many_to_one")
-    if cardinality not in CARDINALITY_WORDS:
+    if cardinality not in ("many_to_one", "one_to_one"):
         cardinality = "many_to_one"
     return LinkSpec(from_table, to_table, pairs, conditions, " ".join(str(data.get("role") or "").split())[:80],
-                    cardinality)
+                    cardinality, data.get("keep_unmatched") is not False)
 
 
 def type_problems(model: SemanticModel, spec: LinkSpec) -> list[str]:
@@ -203,7 +212,7 @@ def as_join(model: SemanticModel, spec: LinkSpec, checked: dict[str, Any] | None
     return Join(key=key_for(model, spec), from_table=spec.from_table, to_table=spec.to_table,
                 from_columns=[f for f, _ in spec.pairs], to_columns=[t for _, t in spec.pairs],
                 cardinality=spec.cardinality, role=spec.role or None, trust="admin", provenance="admin",
-                status="approved", conditions=spec.conditions,
+                status="approved", conditions=spec.conditions, keep_unmatched=spec.keep_unmatched,
                 match_rate=float(checked.get("match") or 0.0), to_unique=(checked.get("most") or 1) <= 1,
                 max_fanout=float(checked.get("most") or 1.0),
                 to_calendar=model.tables[spec.to_table].kind == "calendar")
@@ -275,22 +284,76 @@ def check_link(model: SemanticModel, spec: LinkSpec, warehouse: Any) -> dict[str
         out["problem"] = f"The data refused the check: {str(exc)[:300]}"
         return out
     words = []
+    from_rows, to_rows = _table_name(model, spec.from_table).lower(), _table_name(model, spec.to_table).lower()
+    out["from_rows"], out["to_rows"] = from_rows, to_rows
     if out["twice"]:
         words.append(f"{out['twice']:,} {_table_name(model, spec.from_table).lower()} rows match more than one "
                      f"{_table_name(model, spec.to_table).lower()} row: totals through this link would count them "
                      "more than once.")
     without = out.get("without")
     if without and without["twice"] and not out["twice"]:
-        words.append(f"Without the condition: {without['per_row']:.2f} {_table_name(model, spec.to_table).lower()} "
-                     f"rows per {_table_name(model, spec.from_table).lower()} row, and {without['twice']:,} rows "
-                     "counted more than once.")
+        out["without_words"] = (f"{without['per_row']:.2f}", f"{to_rows} per {from_rows}, and totals by {to_rows} "
+                                f"would be {max(without['per_row'] - 1, 0):.0%} too high.")
     if out["with_key"] and out["match"] < 0.9:
         words.append(f"{1 - out['match']:.0%} of the rows with a value find no match: they show as Unknown.")
     out["words"] = words
     return out
 
 
-def check_table(model: SemanticModel, table_key: str, rules: list[ColumnFilter], warehouse: Any) -> dict[str, Any]:
+def answers_say(model: SemanticModel, table_key: str, rules: list[ColumnFilter]) -> str:
+    """What an answer carries for these rules, word for word: "Order line: rows where Status code is C are left out
+    (a default filter)."
+    """
+    from core2.plan.catalog import left_out_note
+
+    return " ".join(left_out_note(model, table_key, f) for f in rules)
+
+
+def _year_amount(model: SemanticModel, table_key: str, main: Any, rules: list[ColumnFilter], warehouse: Any,
+                 today: Any) -> tuple[float | None, str]:
+    """The main measure in the table's latest year of data, with these rules and without: what they leave out."""
+    from core2.compile.compiler import compile_query
+    from core2.plan.ir import Plan
+    from core2.resolve.resolver import Context, resolve
+
+    role = model.date_roles.get(model.tables[table_key].default_date or "")
+    if role is None or role.last is None:
+        return None, ""
+    year = role.last.year
+    plan = Plan.model_validate({"kind": "query", "measures": [main.slug], "time": {"window": {
+        "kind": "between", "start": f"{year}-01-01", "end": f"{year}-12-31"}}})
+    values = []
+    for with_rules in (False, True):
+        copy = model.model_copy(deep=True)
+        copy.tables[table_key].default_filters = list(rules) if with_rules else []
+        logical = resolve(plan, copy, Context(today=today))
+        compiled = compile_query(logical, copy, warehouse.dialect)
+        result = warehouse.query(compiled.sql, max_rows=2)
+        name = next(c.name for c in compiled.columns if c.role == "measure")
+        row = dict(zip(result.columns, result.rows[0])) if result.rows else {}
+        values.append(float(row.get(name) or 0.0))
+    return values[0] - values[1], str(year)
+
+
+def check_all(model: SemanticModel, warehouse: Any) -> dict[str, Any]:
+    """Every link in use, matched again on today's data (its conditions included)."""
+    out: dict[str, Any] = {}
+    for j in model.joins.values():
+        if j.trust == "rejected" or j.from_table not in model.tables or j.to_table not in model.tables:
+            continue
+        spec = LinkSpec(j.from_table, j.to_table, list(zip(j.from_columns, j.to_columns)), list(j.conditions),
+                        j.role or "", j.cardinality, j.keep_unmatched)
+        try:
+            counts = _link_counts(model, spec, warehouse, spec.conditions)
+        except Exception as exc:  # noqa: BLE001 - one link the data refuses does not stop the others
+            out[j.key] = {"problem": str(exc)[:200]}
+            continue
+        out[j.key] = {"match": counts["match"], "twice": counts["twice"]}
+    return out
+
+
+def check_table(model: SemanticModel, table_key: str, rules: list[ColumnFilter], warehouse: Any,
+                today: Any = None) -> dict[str, Any]:
     """What a table's always-leave-out rules leave out: rows, and the amount of its main measure."""
     from core2.compile.compiler import row_conditions
     from core2.model.schema import AggExpr
@@ -319,8 +382,17 @@ def check_table(model: SemanticModel, table_key: str, rules: list[ColumnFilter],
         out["problem"] = f"The data refused the check: {str(exc)[:300]}"
         return out
     row = dict(zip([c.lower() for c in result.columns], result.rows[0])) if result.rows else {}
-    out.update(rows=int(row.get("rows_all") or 0), left_out=int(row.get("left_out") or 0))
+    out.update(rows=int(row.get("rows_all") or 0), left_out=int(row.get("left_out") or 0),
+               says=answers_say(model, table_key, rules))
     if main is not None:
-        out["amount"] = float(row.get("amount") or 0.0)
-        out["measure"] = main.business_name
+        out["amount"], out["year"] = float(row.get("amount") or 0.0), ""
+        out["measure"], out["format"] = main.business_name, main.format
+        if today is not None:
+            try:
+                amount, year = _year_amount(model, table_key, main, rules, warehouse, today)
+            except Exception as exc:  # noqa: BLE001 - the all-time amount stands
+                log.warning("core2: the amount left out in the latest year could not be read: %s", exc)
+                amount, year = None, ""
+            if amount is not None:
+                out["amount"], out["year"] = amount, year
     return out

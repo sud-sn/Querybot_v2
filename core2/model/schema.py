@@ -156,6 +156,7 @@ class Table(Belief):
     primary_key: list[str] = Field(default_factory=list)
     default_date: str | None = None                     # date role key
     default_filters: list[ColumnFilter] = Field(default_factory=list)
+    readers_may_include: bool = True    # a question may ask for the rows default_filters leave out
     columns: list[str] = Field(default_factory=list)    # column keys, in warehouse order
     slug: str = ""
     profiled_at: datetime | None = None
@@ -180,6 +181,8 @@ class Join(Belief):
     # Rows of the target the link keeps, an admin's: "only the customer's current row".
     # Written into the join itself, so a row with no kept match shows as Unknown, never dropped.
     conditions: list[ColumnFilter] = Field(default_factory=list)
+    # A row with no match is kept (as Unknown); an admin may keep matched rows only.
+    keep_unmatched: bool = True
 
 
 class Calendar(_Data):

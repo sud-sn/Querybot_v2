@@ -32,6 +32,7 @@ from core2.model.schema import (
     SemanticModel,
     SqlExpr,
 )
+from core2.plan.catalog import left_out_note, left_out_words
 from core2.plan.ir import TIME_ATTRIBUTES, Duration, Filter, Plan
 from core2.resolve import paths as P
 from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back,
@@ -343,7 +344,8 @@ class _PartBuilder:
                 new = self.aliases.new(j.role or self.model.tables[j.to_table].slug)
                 self.part.joins.append(Joined(
                     alias=new, table=j.to_table,
-                    on=[(alias, f, t) for f, t in zip(j.from_columns, j.to_columns)], kind="left",
+                    on=[(alias, f, t) for f, t in zip(j.from_columns, j.to_columns)],
+                    kind="left" if j.keep_unmatched else "inner",
                     what=j.role or self.model.tables[j.to_table].business_name,
                     conds=[(c.column, c.op, list(c.values)) for c in j.conditions]))
                 self.by_path[walked] = new
@@ -1026,17 +1028,24 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         else:
             notes.append(f"{label} {_op_words(f)}.")
 
-    # Admin-approved default filters on the measure tables.
+    # Admin-approved default filters on the measure tables, unless the question asked for those rows too
+    # ("including cancelled orders") and the admin lets readers ask.
     for builder, _ in builders:
         owner = model.tables[builder.part.table]
+        if plan.include_left_out and owner.readers_may_include and owner.default_filters:
+            notes.append(f"Including the {(owner.business_name or owner.name).lower()} rows left out by default (" +
+                         "; ".join(left_out_words(model, df) for df in owner.default_filters) + "), as asked.")
+            continue
         for df in owner.default_filters:
             builder.part.preds.append(Pred(builder.part.alias, df.column, df.op, list(df.values)))
-            notes.append(f"{owner.business_name}: {model.columns[df.column].business_name} "
-                         f"{_op_words(df)} (a default filter).")
+            notes.append(left_out_note(model, owner.key, df))
 
-    # Links an admin keeps to some rows of the table they reach.
+    # Links an admin keeps to some rows of the table they reach, or to matched rows only.
     for builder, _ in builders:
         for j in builder.part.joins:
+            if j.kind == "inner" and j.table in model.tables and model.tables[j.table].kind != "calendar":
+                notes.append(f"{model.tables[builder.part.table].business_name} rows with no "
+                             f"{j.what.lower()} are left out (the join keeps matched rows only).")
             for column, op, values in j.conds:
                 notes.append(f"{j.what}: only rows where {model.columns[column].business_name} "
                              f"{_op_words(ColumnFilter(column=column, op=op, values=values))} are matched (a condition "

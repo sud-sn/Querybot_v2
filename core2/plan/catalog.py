@@ -59,6 +59,25 @@ def definition(model: SemanticModel, expr: MeasureExpr, values: bool = True) -> 
     return ""
 
 
+def left_out_words(model: SemanticModel, f, values: bool = True) -> str:
+    """A rule a table leaves rows out by, as the rows it leaves out: "Status code is C"."""
+    kept_as = {"ne": "is", "not_in": "is", "eq": "is not", "in": "is not", "not_null": "is empty",
+               "is_null": "is filled", "gt": "is at most", "gte": "is below", "lt": "is at least", "lte": "is above"}
+    shown = ", ".join(map(str, f.values)) if values else "(a value)"
+    word = kept_as.get(f.op)
+    if word is None:
+        return f"{model.columns[f.column].business_name} not {f.op.replace('_', ' ')} {shown}"
+    return f"{model.columns[f.column].business_name} {word}" + (f" {shown}" if f.op not in ("is_null", "not_null") else "")
+
+
+def left_out_note(model: SemanticModel, table_key: str, f) -> str:
+    """What an answer says of a table's default filter, in the rows it left out:
+    "Order line: rows where Status code is C are left out (a default filter)."
+    """
+    table = model.tables[table_key]
+    return f"{table.business_name or table.name}: rows where {left_out_words(model, f)} are left out (a default filter)."
+
+
 def _synonyms(values: dict[str, list[str]]) -> str:
     words = sorted({w for ws in values.values() for w in ws})
     return f" | also called: {', '.join(words)}" if words else ""
@@ -88,7 +107,12 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
         dates = sorted((r for r in model.date_roles.values() if r.table == table_key and r.kind != "audit"),
                        key=lambda r: (not r.is_default, r.slug))
         counted = ", ".join(f"{r.slug}{' (default)' if r.is_default else ''}" for r in dates) or "no date"
-        lines.append(f"## {table.business_name or table.name} ({table.grain_text or table.kind}); dates: {counted}")
+        leaves = "; ".join(left_out_words(model, f, values_allowed) for f in table.default_filters
+                           if f.column in model.columns)
+        left_out = (f"; leaves out rows unless asked: {leaves}" if table.readers_may_include else
+                    f"; always leaves out: {leaves}") if leaves else ""
+        lines.append(f"## {table.business_name or table.name} ({table.grain_text or table.kind}); dates: {counted}"
+                     f"{left_out}")
         for m in sorted((m for m in model.measures.values() if m.table == table_key and not m.hidden),
                         key=lambda m: m.slug):
             status = " | unconfirmed" if m.status in ("needs_review", "proposed") else ""

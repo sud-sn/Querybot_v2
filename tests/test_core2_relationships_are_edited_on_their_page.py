@@ -178,9 +178,18 @@ def test_rows_a_table_always_leaves_out_are_checked_saved_and_left_out(page):
     body = {"table": table, "name": "Order line", "kind": "fact",
             "leaves_out": [{"column": status, "op": "ne", "values": ["C"]}]}
     checked = client.post(f"/admin/clients/{account}/relationships/check-table", json=body).json()
-    cancelled = warehouse.query("select count(*), sum(net_amount) from order_lines where status_code = 'C'").rows[0]
-    assert (checked["left_out"], checked["measure"]) == (cancelled[0], "Net amount")
-    assert checked["amount"] == pytest.approx(float(cancelled[1]))
+    (cancelled,) = warehouse.query("select count(*) from order_lines where status_code = 'C'").rows[0]
+    assert (checked["left_out"], checked["measure"]) == (cancelled, "Net amount")
+    # The amount is the one left out of the table's latest year, as an answer for that year would show it.
+    role = model.date_roles[model.tables[table].default_date]
+    assert checked["year"] == str(role.last.year)
+    column, year = model.columns[role.column].name, role.last.year
+    in_the_year = (f"{column} between {year}0101 and {year}1231" if role.calendar  # a yyyymmdd key into the calendar
+                   else f"extract(year from {column}) = {year}")
+    (in_year,) = warehouse.query(f"select sum(net_amount) from order_lines where status_code = 'C' "
+                                 f"and {in_the_year}").rows[0]
+    assert checked["amount"] == pytest.approx(float(in_year))
+    assert checked["says"] == "Order line: rows where Status code is C are left out (a default filter)."
     assert client.post(f"/admin/clients/{account}/relationships/save-table", json=body).json()["ok"]
     (row,) = _answer(_model(store, account), warehouse, {"intent": "value", "measures": ["net_amount"]})
     (kept,) = warehouse.query("select sum(net_amount) from order_lines where status_code <> 'C' "
@@ -212,3 +221,109 @@ def test_a_table_renamed_and_given_another_default_date(page):
     r = client.post(f"/admin/clients/{account}/relationships/save-table",
                     json={"table": table, "default_date": another_tables_date})
     assert r.status_code == 400 and "this table's own dates" in r.json()["error"]
+
+
+def _resolved(model, plan: dict):
+    from core2.plan.ir import Plan
+    from core2.resolve.resolver import Context, resolve
+
+    return resolve(Plan.model_validate({"kind": "query", **plan}), model, Context(today=TODAY))
+
+
+def test_a_join_that_keeps_matched_rows_only_leaves_the_others_out_and_says_so(page):
+    client, account, store, warehouse = page
+    model = _model(store, account)
+    link, segment = _link(model, "order_lines", "customers"), _column(model, "customers", "segment")
+    body = {"key": link.key, "from": link.from_table, "to": link.to_table,
+            "pairs": [{"from": f, "to": t} for f, t in zip(link.from_columns, link.to_columns)],
+            "conditions": [{"column": segment, "op": "eq", "values": ["Wholesale"]}], "keep_unmatched": False}
+    assert client.post(f"/admin/clients/{account}/relationships/save-link", json=body).json()["ok"]
+    after = _model(store, account)
+    assert after.joins[link.key].keep_unmatched is False
+    plan = {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["customer.segment"], "time": H1}
+    rows = _answer(after, warehouse, plan)
+    assert {r["customer_segment"] for r in rows} == {"Wholesale"}
+    assert any("rows with no customer are left out" in n for n in _resolved(after, plan).notes)
+    # Kept again, the rows come back as Unknown.
+    assert client.post(f"/admin/clients/{account}/relationships/save-link",
+                       json={**body, "keep_unmatched": True}).json()["ok"]
+    assert {r["customer_segment"] for r in _answer(_model(store, account), warehouse, plan)} == {"Wholesale", None}
+
+
+def test_rows_left_out_come_back_when_a_reader_asks_and_the_admin_lets_them(page):
+    client, account, store, warehouse = page
+    model = _model(store, account)
+    table, status = _link(model, "order_lines", "customers").from_table, _column(model, "order_lines", "status_code")
+    rules = [{"column": status, "op": "ne", "values": ["C"]}]
+    assert client.post(f"/admin/clients/{account}/relationships/save-table",
+                       json={"table": table, "leaves_out": rules, "readers_may_include": True}).json()["ok"]
+    (everything,) = warehouse.query("select sum(net_amount) from order_lines").rows[0]
+    asked = {"intent": "value", "measures": ["net_amount"], "include_left_out": True}
+    (row,) = _answer(_model(store, account), warehouse, asked)
+    assert float(row["net_amount"]) == pytest.approx(float(everything))
+    assert "Including the order line rows left out by default (Status code is C), as asked." in \
+        _resolved(_model(store, account), asked).notes
+    # The admin says readers may not: the rows stay out even when asked.
+    assert client.post(f"/admin/clients/{account}/relationships/save-table",
+                       json={"table": table, "leaves_out": rules, "readers_may_include": False}).json()["ok"]
+    after = _model(store, account)
+    assert after.tables[table].readers_may_include is False
+    (row,) = _answer(after, warehouse, asked)
+    (kept,) = warehouse.query("select sum(net_amount) from order_lines where status_code <> 'C' "
+                              "or status_code is null").rows[0]
+    assert float(row["net_amount"]) == pytest.approx(float(kept))
+
+
+def test_the_planner_is_told_which_rows_a_reader_may_ask_for(page):
+    from core2.plan.catalog import catalog_text
+
+    client, account, store, _ = page
+    model = _model(store, account)
+    table, status = _link(model, "order_lines", "customers").from_table, _column(model, "order_lines", "status_code")
+    rules = [{"column": status, "op": "ne", "values": ["C"]}]
+    client.post(f"/admin/clients/{account}/relationships/save-table", json={"table": table, "leaves_out": rules})
+    assert "leaves out rows unless asked: Status code is C" in catalog_text(_model(store, account))
+    client.post(f"/admin/clients/{account}/relationships/save-table",
+                json={"table": table, "leaves_out": rules, "readers_may_include": False})
+    assert "always leaves out: Status code is C" in catalog_text(_model(store, account))
+
+
+def test_check_all_matches_every_join_in_use_again(page):
+    client, account, store, warehouse = page
+    off = _link(_model(store, account), "returns", "customers").key
+    assert client.post(f"/admin/clients/{account}/relationships/turn-off-link", json={"key": off}).json()["ok"]
+    model = _model(store, account)
+    checked = client.post(f"/admin/clients/{account}/relationships/check-all", json={}).json()
+    assert checked["ok"]
+    in_use = {j.key for j in model.joins.values() if j.trust != "rejected"}
+    assert set(checked["joins"]) == in_use and off not in in_use
+    link = _link(model, "order_lines", "customers")
+    (matched,) = warehouse.query("select avg(case when c.customer_id is null then 0.0 else 1.0 end) from order_lines o "
+                                 "left join customers c on o.customer_id = c.customer_id "
+                                 "where o.customer_id is not null").rows[0]
+    assert checked["joins"][link.key]["match"] == pytest.approx(float(matched), abs=1e-4)
+    assert checked["joins"][link.key]["twice"] == 0
+
+
+def test_the_page_carries_what_its_editor_needs(page):
+    client, account, store, _ = page
+    data = _data(client.get(f"/admin/clients/{account}/relationships").text)
+    join = next(j for j in data["joins"] if (j["from_name"], j["to_name"]) == ("Order line", "Customer"))
+    assert join["keep_unmatched"] is True and join["pairs"] and join["status"] in ("Confirmed", "Suggested")
+    table = next(t for t in data["tables"] if t["name"] == "Order line")
+    assert table["readers_may_include"] is True and table["dates"] and table["columns"]
+    assert data["counts"]["all"] == sum(1 for j in data["joins"] if j["status"] != "Turned off")
+
+
+def test_a_join_said_to_be_one_to_one_is_saved_so(page):
+    client, account, store, _ = page
+    model = _model(store, account)
+    link = _link(model, "order_lines", "customers")
+    body = {"key": link.key, "from": link.from_table, "to": link.to_table, "cardinality": "one_to_one",
+            "pairs": [{"from": f, "to": t} for f, t in zip(link.from_columns, link.to_columns)]}
+    assert client.post(f"/admin/clients/{account}/relationships/save-link", json=body).json() == {"ok": True,
+                                                                                                  "key": link.key}
+    assert _model(store, account).joins[link.key].cardinality == "one_to_one"
+    # Only the two a question can walk: anything else is read as many to one.
+    client.post(f"/admin/clients/{account}/relationships/save-link", json={**body, "cardinality": "many_to_many"})
+    assert _model(store, account).joins[link.key].cardinality == "many_to_one"

@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb, alert, empty_state %}
+{% from "macros.html" import breadcrumb, empty_state %}
 {% from "icons.html" import ic %}
 {% block title %}Relationships — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
@@ -12,579 +12,789 @@
 {% endblock %}
 {% block head %}
 <style>
-.rel-head{display:flex;gap:1rem;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:1rem}
-.rel-head h1{margin:0 0 .25rem}
-.rel-head p{margin:0;color:var(--text-muted);max-width:62ch}
-.rel-tools{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}
-.rel-search{flex:1 1 16rem;max-width:22rem}
-.rel-tools .rel-spacer{flex:1}
-.rel-layout{display:grid;grid-template-columns:minmax(0,1fr) 23rem;gap:1rem;align-items:start}
-.rel-layout.no-diagram{grid-template-columns:minmax(0,1fr)}
-.rel-layout.no-diagram .rel-diagram{display:none}
-.rel-diagram{padding:0;overflow:hidden}
-.rel-diagram-top{display:flex;gap:.5rem;align-items:center;padding:.6rem .75rem;border-bottom:1px solid var(--border)}
-.rel-diagram-top label{font-size:var(--font-sm);color:var(--text-muted)}
-.rel-diagram-top select{width:auto;max-width:16rem}
-.rel-canvas{position:relative;height:30rem;background-color:var(--paper-recessed);
-  background-image:radial-gradient(var(--grid-line) 1px,transparent 1px);background-size:18px 18px}
-.rel-canvas svg{position:absolute;inset:0;width:100%;height:100%}
-.rel-edge{stroke:var(--border-strong);stroke-width:2;fill:none}
-.rel-edge.suggested{stroke:var(--warning);stroke-dasharray:6 5}
-.rel-edge.selected{stroke:var(--primary);stroke-width:3}
-.rel-edge.faded{opacity:.45}
-.rel-hit{stroke:transparent;stroke-width:16;fill:none;cursor:pointer}
-.rel-mark circle{fill:var(--surface);stroke:var(--border-strong);stroke-width:1.5}
-.rel-mark text{font-size:9px;font-weight:700;fill:var(--text-muted);text-anchor:middle;dominant-baseline:central}
-.rel-node{position:absolute;width:11.5rem;min-height:3.4rem;padding:.45rem .65rem .45rem .8rem;text-align:left;cursor:pointer;
-  background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--entity-dim);
-  border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);font:inherit;transform:translate(-50%,-50%)}
-.rel-node b{display:block;font-size:var(--font-sm);color:var(--text-strong)}
-.rel-node small{display:block;color:var(--text-muted);font-size:var(--font-2xs)}
-.rel-node.fact,.rel-node.snapshot{border-left-color:var(--entity-fact)}
-.rel-node.bridge{border-left-color:var(--entity-bridge)}
-.rel-node.calendar{border-left-color:var(--violet)}
-.rel-node.centre{border-color:var(--primary);box-shadow:var(--shadow-md)}
-.rel-node.selected{outline:2px solid var(--primary);outline-offset:2px}
-.rel-node.faded{opacity:.55}
-.rel-node.match{box-shadow:0 0 0 3px var(--primary-soft)}
-.rel-node:focus-visible{outline:2px solid var(--focus-ring-color);outline-offset:2px}
-.rel-chip{display:inline-block;margin:.2rem .2rem 0 0;padding:.05rem .4rem;border-radius:var(--radius-pill);font-size:var(--font-2xs);
-  background:var(--warning-soft);color:var(--warning);border:1px solid var(--warning)}
-.rel-chip.date{background:var(--surface-2);color:var(--violet);border-color:var(--violet)}
-.rel-badge{position:absolute;transform:translate(-50%,-50%);pointer-events:none}
-.rel-legend{display:flex;gap:1rem;flex-wrap:wrap;padding:.55rem .75rem;border-top:1px solid var(--border);font-size:var(--font-xs);color:var(--text-muted)}
-.rel-legend span{display:inline-flex;align-items:center;gap:.35rem}
-.rel-legend i{display:inline-block;width:18px;height:0;border-top:2px solid var(--border-strong)}
-.rel-legend i.suggested{border-top:2px dashed var(--warning)}
-.rel-legend i.selected{border-top:3px solid var(--primary)}
-.rel-legend i.box{width:10px;height:10px;border:0}
-.rel-legend i.fact{background:var(--entity-fact)} .rel-legend i.dim{background:var(--entity-dim)} .rel-legend i.date{background:var(--violet)}
-.rel-panel{position:sticky;top:1rem}
-.rel-panel .card-body{display:grid;gap:.9rem}
-.rel-eyebrow{font-size:var(--font-2xs);font-weight:var(--weight-semibold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
-.rel-panel h2{margin:.1rem 0 0;font-size:var(--font-lg)}
-.rel-sub{color:var(--text-muted);font-size:var(--font-xs);font-family:var(--font-mono)}
-.rel-pair{display:grid;gap:.3rem}
-.rel-pair .rel-eq{text-align:center;font-size:var(--font-xs);color:var(--text-muted)}
-.rel-row{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr) auto;gap:.35rem;align-items:start;
-  padding-bottom:.5rem;border-bottom:1px dashed var(--border)}
-.rel-row>[data-part=column]{grid-column:1/-1}
-.rel-row.two{padding:0;border:0}
-.rel-row.two{grid-template-columns:minmax(0,1fr) auto}
-.rel-field{display:grid;gap:.3rem}
-.rel-field>label,.rel-label{font-size:var(--font-sm);font-weight:var(--weight-semibold)}
-.rel-field>.btn{justify-self:start}
-#rel-conds,#rel-rules{display:grid;gap:.5rem}
-.rel-note{font-size:var(--font-xs);color:var(--text-muted);margin:0}
-.rel-ok{color:var(--success);font-size:var(--font-sm)}
-.rel-warn{color:var(--warning);font-size:var(--font-sm)}
-.rel-error{color:var(--danger);font-size:var(--font-sm)}
-.rel-check{border:1px solid var(--border);border-radius:var(--radius);padding:.75rem;background:var(--surface-2);display:grid;gap:.6rem}
-.rel-check.good{border-color:var(--success);background:var(--success-soft)}
-.rel-check.bad{border-color:var(--warning);background:var(--warning-soft)}
-.rel-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.4rem}
-.rel-stats div{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.45rem .5rem}
-.rel-stats b{display:block;font-size:var(--font-lg)}
-.rel-stats span{font-size:var(--font-2xs);color:var(--text-muted)}
-.rel-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-.rel-actions .rel-spacer{flex:1}
-.rel-list{margin-top:1rem}
-.rel-list td{vertical-align:top}
-.rel-list code{white-space:nowrap}
-.rel-status{white-space:nowrap}
-@media (max-width: 1100px){
-  .rel-layout{grid-template-columns:minmax(0,1fr)}
-  .rel-panel{position:static}
-}
+/* The approved Relationships screen: a diagram centred on one table, the join or table picked edited beside it,
+   every join listed underneath. */
+.rx-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.rx-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.rx-head p{margin:0;color:var(--text-muted);max-width:600px;font-size:var(--font-base)}
+.rx-head-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rx-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.rx-search{min-width:260px}
+.rx-shows{display:inline-flex;gap:4px;flex-wrap:wrap}
+.rx-show{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--grid-line);background:var(--surface);display:inline-flex;
+  align-items:center;gap:6px;font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-medium);
+  color:var(--text-secondary);cursor:pointer}
+.rx-show[aria-pressed="true"]{background:var(--primary-soft);border-color:transparent;color:var(--primary-ink);font-weight:var(--weight-semibold)}
+.rx-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--warning-soft);
+  color:var(--warning);font-size:var(--font-xs);font-weight:var(--weight-bold);line-height:1}
+.rx-grow{flex:1}
+.rx-tabs{display:inline-flex;border:1px solid var(--grid-line);border-radius:8px;overflow:hidden}
+.rx-tab{padding:5px 10px;font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-medium);color:var(--text-secondary);
+  background:var(--surface);border:0;cursor:pointer}
+.rx-tab+.rx-tab{border-left:1px solid var(--grid-line)}
+.rx-tab[aria-pressed="true"]{background:var(--surface-2);color:var(--text-strong);font-weight:var(--weight-semibold)}
+.rx-rel{display:grid;grid-template-columns:minmax(0,1fr) 380px;border:1px solid var(--grid-line);border-radius:12px 12px 0 0;
+  overflow:hidden;background:var(--surface);box-shadow:var(--shadow-sm)}
+.rx-rel.list-only{grid-template-columns:minmax(0,1fr)}
+.rx-rel.list-only .rx-canvas{display:none}
+.rx-rel.list-only .rx-side{border-left:0}
+.rx-rel:fullscreen{border-radius:0;grid-template-rows:1fr;overflow:auto}
+.rx-canvas{position:relative;min-width:0;background-color:var(--bg);background-image:radial-gradient(circle,var(--grid-line) 1px,transparent 1.2px);
+  background-size:16px 16px;padding:48px 12px 52px}
+.rx-focus{position:absolute;top:12px;left:12px;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;background:var(--surface);
+  border:1px solid var(--grid-line);border-radius:8px;font-size:var(--font-sm);color:var(--text-secondary);z-index:1}
+.rx-focus b{color:var(--text-strong);font-weight:var(--weight-semibold)}
+.rx-focus select{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.rx-focus:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.rx-zoom{position:absolute;right:12px;bottom:12px;display:flex;border:1px solid var(--grid-line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.rx-zoom button{width:32px;height:30px;display:grid;place-items:center;color:var(--text-secondary);background:var(--surface);border:0;cursor:pointer;
+  font-size:var(--font-lg)}
+.rx-zoom button+button{border-left:1px solid var(--grid-line)}
+svg.rx-g{width:100%;height:auto;display:block;overflow:visible}
+.rx-g .edge{stroke-width:1.8;fill:none;stroke:var(--border-strong)}
+.rx-g .edge.sug{stroke:var(--warning);stroke-dasharray:5 4}
+.rx-g .edge.sel{stroke:var(--primary);stroke-width:3}
+.rx-g .edge.far{stroke:var(--border);stroke-dasharray:3 3}
+.rx-g .hit{stroke:transparent;stroke-width:14;fill:none;cursor:pointer}
+.rx-g .node{cursor:pointer}
+.rx-g .node rect.nbox{fill:var(--surface);stroke:var(--grid-line);stroke-width:1}
+.rx-g .node.sel rect.nbox,.rx-g .node:focus-visible rect.nbox{stroke:var(--primary);stroke-width:1.8}
+.rx-g .node.match rect.nbox{stroke:var(--primary);stroke-dasharray:3 2}
+.rx-g .node rect.bar{stroke:none;fill:var(--entity-dim)}
+.rx-g .fact rect.bar,.rx-g .snapshot rect.bar{fill:var(--navy)}
+.rx-g .calendar rect.bar{fill:var(--violet)}
+.rx-g .bridge rect.bar{fill:var(--entity-bridge)}
+.rx-g .node.far rect.nbox{fill:var(--surface-2);stroke-dasharray:4 3;stroke:var(--border)}
+.rx-g .node.far rect.bar{fill:var(--border)}
+.rx-g .t1{font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-bold);fill:var(--text-strong)}
+.rx-g .t2{font-family:var(--font-ui);font-size:var(--font-xs);font-weight:var(--weight-medium);fill:var(--text-muted)}
+.rx-g .far .t1{fill:var(--text-secondary)}
+.rx-g .card circle{fill:var(--surface);stroke-width:1.3;stroke:var(--border-strong)}
+.rx-g .card text{font-family:var(--font-ui);font-size:var(--font-xs);font-weight:var(--weight-bold);text-anchor:middle;fill:var(--text-muted)}
+.rx-g .card.sug circle{stroke:var(--warning)}
+.rx-g .card.sug text{fill:var(--warning)}
+.rx-g .card.sel circle{stroke:var(--primary)}
+.rx-g .card.sel text{fill:var(--primary)}
+.rx-g .port{cursor:pointer}
+.rx-g .port rect{fill:var(--violet-light);stroke:var(--violet-line)}
+.rx-g .port text{font-family:var(--font-ui);font-size:var(--font-xs);font-weight:var(--weight-semibold);fill:var(--violet);text-anchor:middle}
+.rx-g .port.on rect,.rx-g .port:focus-visible rect{fill:var(--primary-soft);stroke:var(--primary)}
+.rx-g .port.on text{fill:var(--primary)}
+.rx-g .flag rect{fill:var(--warning-soft);stroke:var(--warning-line)}
+.rx-g .flag text{font-family:var(--font-ui);font-size:var(--font-xs);font-weight:var(--weight-semibold);fill:var(--warning)}
+.rx-legend{display:flex;flex-wrap:wrap;gap:6px 16px;padding:10px 14px;font-size:var(--font-xs);color:var(--text-secondary);background:var(--surface);
+  border:1px solid var(--grid-line);border-top:0;border-radius:0 0 12px 12px}
+.rx-legend span{display:inline-flex;align-items:center;gap:6px}
+.rx-legend .ln{width:18px;border-top:2px solid var(--border-strong)}
+.rx-legend .ln.sug{border-top:2px dashed var(--warning)}
+.rx-legend .ln.sel{border-top:3px solid var(--primary)}
+.rx-legend .sq{width:10px;height:10px;border-radius:2px;background:var(--entity-dim)}
+.rx-legend .sq.fact{background:var(--navy)}
+.rx-legend .sq.date{background:var(--violet)}
+.rx-legend .fl{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:4px;background:var(--warning-soft);
+  border:1px solid var(--warning-line);color:var(--warning);font-style:normal;font-size:var(--font-xs)}
+.rx-side{border-left:1px solid var(--grid-line);display:flex;flex-direction:column;min-width:0}
+.ed-head{display:flex;align-items:flex-start;gap:10px;padding:14px 16px;border-bottom:1px solid var(--grid-line)}
+.ed-head .k{font-size:var(--font-xs);font-weight:var(--weight-semibold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}
+.ed-head h2{margin:2px 0 0;font-size:var(--font-lg);color:var(--text-strong)}
+.ed-head .sub{font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-muted);margin-top:2px}
+.ed-close{margin-left:auto;width:28px;height:28px;display:grid;place-items:center;border:0;background:transparent;color:var(--text-secondary);
+  border-radius:6px;cursor:pointer;font-size:var(--font-lg)}
+.ed-close:hover{background:var(--surface-2)}
+.ed-body{padding:14px 16px;display:grid;gap:14px;flex:1;align-content:start}
+.ed-foot{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--grid-line);background:var(--surface-2)}
+.rx-f>label,.rx-f>.lab{display:block;font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-strong);margin-bottom:6px}
+.rx-help{font-size:var(--font-xs);color:var(--text-muted);margin-top:5px}
+.rx-in{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 10px;border:1px solid var(--border);border-radius:8px;
+  background:var(--surface);color:var(--text-strong);font-size:var(--font-sm)}
+.rx-in:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.rx-in em{margin-left:auto;font-style:normal;font-size:var(--font-xs);color:var(--text-muted)}
+.rx-in .form-input{width:auto;max-width:60%;min-height:26px}
+.ed-body .form-input:not(.form-input-mono){min-height:36px;font-size:var(--font-sm)}
+.rx-two{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end}
+.rx-two.rx-named{grid-template-columns:minmax(0,.75fr) minmax(0,1.25fr)}
+.rx-eqs{text-align:center;font-size:var(--font-xs);color:var(--text-muted);margin:4px 0}
+.rx-ok{font-size:var(--font-xs);color:var(--success);margin-top:5px;font-weight:var(--weight-semibold)}
+.rx-warn{font-size:var(--font-xs);color:var(--warning);margin-top:5px;font-weight:var(--weight-semibold)}
+.rx-addl{color:var(--primary);font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-semibold);margin-top:8px;display:inline-flex;
+  gap:4px;align-items:center;background:none;border:0;padding:0;cursor:pointer}
+.rx-addl:disabled{color:var(--text-muted);cursor:default}
+.rx-rule{display:grid;grid-template-columns:1.15fr .75fr 1.1fr 20px;gap:6px;align-items:center}
+.rx-rule+.rx-rule,.rx-fixed+#rx-rules>.rx-rule:first-child{margin-top:6px}
+.rx-fixed{grid-template-columns:1fr 20px;font-size:var(--font-sm);color:var(--text-secondary)}
+.rx-x{color:var(--text-muted);background:none;border:0;cursor:pointer;font-size:var(--font-sm);padding:0;width:20px;height:28px}
+.rx-scope{display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:var(--font-sm);color:var(--text-secondary)}
+.rx-scope input{margin-top:3px}
+.rx-check{border:1px solid var(--success-line);background:var(--success-soft);border-radius:10px;padding:12px}
+.rx-check.bad{border-color:var(--warning-line);background:var(--warning-soft)}
+.rx-check.wait{border-color:var(--grid-line);background:var(--surface-2)}
+.rx-check .hd{display:flex;align-items:baseline;justify-content:space-between;gap:4px 12px;flex-wrap:wrap}
+.rx-check .hd b{color:var(--success-strong);font-weight:var(--weight-semibold)}
+.rx-check.bad .hd b{color:var(--warning-strong)}
+.rx-check.wait .hd b{color:var(--text-secondary)}
+.rx-check .hd span{font-size:var(--font-xs);color:var(--text-muted)}
+.rx-check .rx-help b{color:var(--text-strong)}
+.rx-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.rx-stats div{background:var(--surface);border:1px solid var(--success-line);border-radius:8px;padding:8px}
+.rx-check.bad .rx-stats div{border-color:var(--warning-line)}
+.rx-stats b{display:block;font-size:var(--font-lg);font-weight:var(--weight-bold);color:var(--text-strong);font-variant-numeric:tabular-nums}
+.rx-stats span{font-size:var(--font-xs);color:var(--text-muted);line-height:1.3;display:block;margin-top:2px}
+.rx-danger{color:var(--danger);font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-semibold);margin-left:auto;
+  background:none;border:0;cursor:pointer;padding:4px}
+.rx-error{color:var(--danger);font-size:var(--font-sm);margin:0}
+.rx-error:empty{display:none}
+.rx-list{margin-top:16px;overflow:hidden;background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm)}
+table.rx-l{width:100%;border-collapse:collapse;background:var(--surface)}
+table.rx-l th{text-align:left;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted);padding:10px 14px;
+  border-bottom:1px solid var(--grid-line);background:var(--surface-2)}
+table.rx-l td{padding:11px 14px;border-bottom:1px solid var(--grid-line);vertical-align:top;font-size:var(--font-sm)}
+table.rx-l tr:last-child td{border-bottom:0}
+table.rx-l tbody tr[tabindex]{cursor:pointer}
+table.rx-l tbody tr[tabindex]:hover td{background:var(--surface-2)}
+table.rx-l tr.sel td{background:var(--primary-soft)}
+table.rx-l tbody tr:focus-visible{outline:2px solid var(--focus-ring-color);outline-offset:-2px}
+table.rx-l td.nm{font-weight:var(--weight-bold);color:var(--text-strong)}
+table.rx-l .n{text-align:right;font-variant-numeric:tabular-nums}
+code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:var(--surface-2);border:1px solid var(--grid-line);border-radius:5px;
+  padding:1px 5px;color:var(--text);white-space:nowrap}
+.rx-tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:var(--font-xs);
+  font-weight:var(--weight-semibold);white-space:nowrap}
+.rx-tag.ok{background:var(--success-soft);color:var(--success)}
+.rx-tag.req{background:var(--warning-soft);color:var(--warning)}
+.rx-tag.off{background:var(--surface-3);color:var(--text-muted)}
+.rx-muted{color:var(--text-muted)}
+@media (max-width: 1100px){ .rx-rel{grid-template-columns:minmax(0,1fr)} .rx-side{border-left:0;border-top:1px solid var(--grid-line)} }
 @media (max-width: 760px){
-  .rel-canvas{height:26rem}
-  .rel-node{width:9.5rem}
-  .rel-layout .rel-node{max-width:calc(50% - 10px)}
-  /* Each link a card of its own: a table this wide only scrolls on a phone. */
-  .rel-list thead{display:none}
-  .rel-list table,.rel-list tbody{display:block;width:100%}
-  .rel-list .qb-table tr{display:grid;grid-template-columns:1fr 1fr;gap:.35rem .75rem;padding:.7rem .85rem;
-    border-bottom:1px solid var(--border)}
-  .rel-list .qb-table td{display:block;padding:0;border:0;text-align:left}
-  .rel-list .qb-table td:first-child,.rel-list .qb-table td[data-label="Matched on"],
-  .rel-list .qb-table td[data-label="Condition"]{grid-column:1/-1}
-  .rel-list td[data-label]::before{content:attr(data-label);display:block;font-size:var(--font-2xs);color:var(--text-muted);
+  .rx-search{min-width:0;flex:1 1 100%}
+  .rx-grow{display:none}
+  table.rx-l thead{display:none}
+  table.rx-l,table.rx-l tbody{display:block;width:100%}
+  table.rx-l tr{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;padding:10px 14px;border-bottom:1px solid var(--grid-line)}
+  table.rx-l td{display:block;padding:0;border:0}
+  table.rx-l td.nm,table.rx-l td[data-label="Matched on"],table.rx-l td[data-label="Condition"]{grid-column:1/-1}
+  table.rx-l td[data-label]::before{content:attr(data-label);display:block;font-size:var(--font-xs);color:var(--text-muted);
     text-transform:uppercase;letter-spacing:.05em}
-  .rel-list code{white-space:normal}
+  table.rx-l .n{text-align:left}
+  .rx-rule{grid-template-columns:1fr 1fr 32px}
+  /* A fingertip's size on a phone. */
+  .ed-body .form-input,.ed-body .form-input:not(.form-input-mono),.rx-in .form-input,.rx-search .form-input,.rx-x{min-height:44px}
+  .rx-x{width:32px}
+  .rx-show,.rx-tab{min-height:44px}
+  .ed-close{width:44px;height:44px}
+  .rx-addl{min-height:44px}
+  .rx-rule [data-part=values]{grid-column:1/3}
 }
 </style>
 {% endblock %}
 {% block content %}
-<div class="rel-head">
+<div class="rx-head">
   <div>
     <h1>Relationships</h1>
-    <p>How the tables connect. Pick a line to change a link, or a table to set the rows it always leaves out.
-      A change can be checked against the data before it is saved, and applies from the next answer.</p>
+    <p>How the tables connect. Pick a line to edit a join, or a table to set the rows it always leaves out. Every
+      change is checked against the data before it is saved.</p>
   </div>
   {% if data %}
-  <div class="rel-actions">
-    <button type="button" class="btn btn-primary" id="rel-new">{{ ic("plus", 14) }} New link</button>
+  <div class="rx-head-actions">
+    <button type="button" class="btn btn-secondary" id="rx-check-all">Check all against the data</button>
+    <button type="button" class="btn btn-primary" id="rx-new">{{ ic("plus", 16) }} New join</button>
   </div>
   {% endif %}
 </div>
 
 {% if not data %}
 <div class="card">{{ empty_state("link", "QueryBot has not learned this database yet",
-    "Learn it first: the links between its tables are found from the data, then you can change them here.",
+    "Learn it first: the joins between its tables are found from the data, then you can change them here.",
     "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
 {% else %}
-<div id="rel-saved" role="status"></div>
-
-<div class="rel-tools">
-  <input type="search" class="form-input rel-search" id="rel-search" placeholder="Search tables and columns"
-         aria-label="Search tables and columns">
-  <div class="rel-actions" role="group" aria-label="Show">
-    <button type="button" class="btn btn-secondary btn-sm" data-filter="all" aria-pressed="true">All links {{ data.counts.all }}</button>
-    <button type="button" class="btn btn-secondary btn-sm" data-filter="review" aria-pressed="false">Needs review {{ data.counts.review }}</button>
-    <button type="button" class="btn btn-secondary btn-sm" data-filter="conditions" aria-pressed="false">With conditions {{ data.counts.conditions }}</button>
-  </div>
-  <span class="rel-spacer"></span>
-  <div class="rel-actions" role="group" aria-label="View">
-    <button type="button" class="btn btn-secondary btn-sm" data-view="diagram" aria-pressed="true">Diagram</button>
-    <button type="button" class="btn btn-secondary btn-sm" data-view="list" aria-pressed="false">List only</button>
-  </div>
+<div id="rx-saved" role="status"></div>
+<div class="rx-toolbar">
+  <label class="input-icon-wrap rx-search">{{ ic("filter", 16) }}<input type="search" class="form-input form-input-sm" id="rx-search"
+    placeholder="Search tables and columns" aria-label="Search tables and columns"></label>
+  <span class="rx-shows" role="group" aria-label="Show">
+    <button type="button" class="rx-show" data-filter="all" aria-pressed="true">All joins {{ data.counts.all }}</button>
+    <button type="button" class="rx-show" data-filter="review" aria-pressed="false">Needs review{% if data.counts.review %} <b class="rx-count">{{ data.counts.review }}</b>{% else %} 0{% endif %}</button>
+    <button type="button" class="rx-show" data-filter="conditions" aria-pressed="false">With conditions {{ data.counts.conditions }}</button>
+  </span>
+  <span class="rx-grow"></span>
+  <span class="rx-tabs" role="group" aria-label="View">
+    <button type="button" class="rx-tab" data-view="diagram" aria-pressed="true">Diagram</button>
+    <button type="button" class="rx-tab" data-view="list" aria-pressed="false">List only</button>
+  </span>
 </div>
 
-<div class="rel-layout" id="rel-layout">
-  <section class="card rel-diagram" aria-label="Diagram">
-    <div class="rel-diagram-top">
-      <label for="rel-centre">Centred on</label>
-      <select id="rel-centre" class="form-input"></select>
+<div class="rx-rel" id="rx-rel">
+  <div class="rx-canvas" id="rx-canvas">
+    <span class="rx-focus">Centred on <b id="rx-centre-name"></b> {{ ic("chevron-down", 14) }}
+      <select id="rx-centre" aria-label="The table the diagram is centred on"></select></span>
+    <div id="rx-svg"></div>
+    <div class="rx-zoom" role="group" aria-label="Zoom">
+      <button type="button" id="rx-zoom-in" aria-label="Zoom in">{{ ic("plus", 14) }}</button>
+      <button type="button" id="rx-zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" id="rx-zoom-fit" aria-label="Full screen">{{ ic("expand", 14) }}</button>
     </div>
-    <div class="rel-canvas" id="rel-canvas"></div>
-    <div class="rel-legend">
-      <span><i></i> Confirmed</span><span><i class="suggested"></i> Suggested</span>
-      <span><i class="selected"></i> Selected</span><span><i class="box fact"></i> Events</span>
-      <span><i class="box dim"></i> Things</span><span><i class="box date"></i> Dates</span>
-      <span>N 1 = many rows to one</span>
-    </div>
-  </section>
-  <aside class="card rel-panel" id="rel-panel" aria-live="polite">
-    <div class="card-body">
-      <p class="rel-note">Pick a link in the list below, or a line or a table in the diagram.</p>
-    </div>
-  </aside>
+  </div>
+  <aside class="rx-side" id="rx-side" aria-live="polite"></aside>
+</div>
+<div class="rx-legend">
+  <span><i class="ln"></i>Confirmed</span><span><i class="ln sug"></i>Suggested</span><span><i class="ln sel"></i>Selected</span>
+  <span><i class="sq fact"></i>Fact</span><span><i class="sq"></i>Dimension</span><span><i class="sq date"></i>Date</span>
+  <span><i class="fl">⏷</i>Has a condition</span><span>N 1 = many rows to one</span>
 </div>
 
-<section class="card rel-list" aria-label="Every link">
-  <div class="qb-table-wrap"><table class="qb-table">
-    <thead><tr><th>Link</th><th>Matched on</th><th>Rows</th><th>Name</th><th>Condition</th><th>Status</th>
-      <th class="num">Rows matched</th><th><span class="sr-only">Actions</span></th></tr></thead>
-    <tbody id="rel-rows"></tbody>
-  </table></div>
-</section>
+<div class="rx-list"><table class="rx-l">
+  <thead><tr><th>Join</th><th>Matched on</th><th>Rows</th><th>Role</th><th>Condition</th><th>Status</th><th class="n">Data check</th></tr></thead>
+  <tbody id="rx-rows"></tbody>
+</table></div>
 
 <script type="application/json" id="rel-data">{{ data | tojson }}</script>
-<script type="application/json" id="rel-words">{{ {"kinds": kinds, "cardinalities": cardinalities, "ops": ops} | tojson }}</script>
+<script type="application/json" id="rel-words">{{ {"kinds": kinds, "ops": ops} | tojson }}</script>
 <script>
 (function () {
   'use strict';
   var DATA = JSON.parse(document.getElementById('rel-data').textContent);
   var WORDS = JSON.parse(document.getElementById('rel-words').textContent);
   var BASE = window.location.pathname.replace(/\/$/, '');
-  var tables = {}; DATA.tables.forEach(function (t) { tables[t.key] = t; });
-  var columns = {}; DATA.tables.forEach(function (t) { t.columns.forEach(function (c) { c.table = t.key; columns[c.key] = c; }); });
-  var state = {centre: null, selected: null, filter: 'all', search: ''};
-  var canvas = document.getElementById('rel-canvas');
-  var panel = document.getElementById('rel-panel');
+  var NS = 'http://www.w3.org/2000/svg';
+  var tables = {}, columns = {};
+  DATA.tables.forEach(function (t) { tables[t.key] = t; t.columns.forEach(function (c) { c.table = t.key; columns[c.key] = c; }); });
+  var state = {centre: null, selected: null, filter: 'all', search: '', zoom: 1, checked: {}};
+  var side = document.getElementById('rx-side');
+  function $(id) { return document.getElementById(id); }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
   function pct(x) { return (Math.round(x * 1000) / 10).toLocaleString() + '%'; }
   function num(x) { return Number(x || 0).toLocaleString(); }
+  function lower(s) { return String(s || '').toLowerCase(); }
+  function plural(s) { s = lower(s); return /(s|x|ch|sh)$/.test(s) ? s + 'es' : /[^aeiou]y$/.test(s) ? s.slice(0, -1) + 'ies' : s + 's'; }
+  function article(s) { return /^[aeiou]/i.test(s) ? 'an ' : 'a '; }
   function live(j) { return j.status !== 'Turned off'; }
   function shown(j) {
     if (state.filter === 'review' && j.status !== 'Suggested') return false;
     if (state.filter === 'conditions' && !j.conditions.length) return false;
     if (!state.search) return true;
-    var hay = [j.from_name, j.to_name, j.role].concat(j.pairs.map(function (p) { return p.from_name + ' ' + p.to_name; }))
-      .join(' ').toLowerCase();
-    return hay.indexOf(state.search) >= 0;
+    return lower([j.from_name, j.to_name, j.role].concat(j.pairs.map(function (p) { return p.from_name + ' ' + p.to_name; })).join(' ')).indexOf(state.search) >= 0;
   }
+  function colName(key) { var c = columns[key]; return c ? c.name : ''; }
+  function isFlag(c) { return !!c && c.type === 'flag'; }
   function shortCondition(c) {
-    var col = columns[c.column];
-    if (c.op === 'eq' && c.values.length === 1) return c.values[0] + ' only';
-    return (col ? col.name : '') + ' ' + (WORDS.ops[c.op] || c.op) + ' ' + c.values.join(', ');
+    var name = colName(c.column);
+    if (c.op === 'eq' && c.values.length === 1) {
+      if (isFlag(columns[c.column]) || /^is /i.test(name)) return name.replace(/^is /i, '').replace(/^./, function (x) { return x.toUpperCase(); }) + ' only';
+      return c.values[0] + ' only';
+    }
+    return c.text;
+  }
+  function leftOutLabel(t) {
+    if (!t.leaves_out.length) return '';
+    if (t.leaves_out.length > 1) return 'Leaves out ' + t.leaves_out.length + ' kinds';
+    var r = t.leaves_out[0];
+    if ((r.op === 'ne' || r.op === 'not_in') && r.values.length) return 'Leaves out ' + r.values.join(', ');
+    return 'Leaves out some rows';
   }
 
-  // ── the centre table: the one with the most links, unless the address names one ──
+  // ── the centre: the table with most joins, unless the page was opened on another ──
   var degree = {};
   DATA.joins.filter(live).forEach(function (j) { degree[j.from] = (degree[j.from] || 0) + 1; degree[j.to] = (degree[j.to] || 0) + 1; });
-  var picker = document.getElementById('rel-centre');
-  DATA.tables.filter(function (t) { return t.kind !== 'calendar'; }).forEach(function (t) {
-    var o = document.createElement('option'); o.value = t.key; o.textContent = t.name; picker.appendChild(o);
-  });
+  var picker = $('rx-centre');
+  var centres = DATA.tables.filter(function (t) { return t.kind !== 'calendar'; });
+  centres.forEach(function (t) { var o = document.createElement('option'); o.value = t.key; o.textContent = t.name; picker.appendChild(o); });
   var params = new URLSearchParams(window.location.search);
-  state.centre = tables[params.get('centre')] ? params.get('centre') : DATA.tables.filter(function (t) { return t.kind !== 'calendar'; })
-    .sort(function (a, b) { return (degree[b.key] || 0) - (degree[a.key] || 0); })[0].key;
-  picker.value = state.centre;
-  picker.addEventListener('change', function () { state.centre = picker.value; draw(); });
+  state.centre = tables[params.get('centre')] ? params.get('centre') :
+    (centres.slice().sort(function (a, b) { return (degree[b.key] || 0) - (degree[a.key] || 0); })[0] || DATA.tables[0]).key;
+  function setCentre(key) { state.centre = key; picker.value = key; $('rx-centre-name').textContent = tables[key].name; }
+  setCentre(state.centre);
+  picker.addEventListener('change', function () { setCentre(picker.value); state.selected = null; draw(); list(); render(); });
 
   // ── the diagram ──
-  function box(el) { return {w: el.offsetWidth, h: el.offsetHeight}; }
-  function edgePoint(c, size, toward) {
-    // Where the line from the centre of a box toward a point leaves the box.
-    var dx = toward.x - c.x, dy = toward.y - c.y;
-    if (!dx && !dy) return {x: c.x, y: c.y};
-    var sx = size.w / 2 / Math.abs(dx || 1e-9), sy = size.h / 2 / Math.abs(dy || 1e-9), s = Math.min(sx, sy);
-    return {x: c.x + dx * s, y: c.y + dy * s};
+  var VW = 720, VH = 540, NW = 190, NH = 58;
+  var SLOTS = [[20, 40], [510, 40], [20, 250], [20, 420], [510, 250], [265, 40]];
+  function el(name, attrs, parent) {
+    var e = document.createElementNS(NS, name);
+    Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function border(box, toward) {
+    var cx = box.x + box.w / 2, cy = box.y + box.h / 2, dx = toward.x - cx, dy = toward.y - cy;
+    if (!dx && !dy) return {x: cx, y: cy};
+    var s = Math.min(box.w / 2 / Math.abs(dx || 1e-9), box.h / 2 / Math.abs(dy || 1e-9));
+    return {x: cx + dx * s, y: cy + dy * s};
+  }
+  function middle(b) { return {x: b.x + b.w / 2, y: b.y + b.h / 2}; }
+  function overlaps(a, list) {
+    return list.some(function (b) { return a.x < b.x + b.w + 14 && b.x < a.x + a.w + 14 && a.y < b.y + b.h + 14 && b.y < a.y + a.h + 14; });
+  }
+  function keys(g, open) {
+    g.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+    g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
   }
   function draw() {
-    canvas.innerHTML = '';
-    var narrow = canvas.clientWidth < 560;
-    canvas.style.height = '';
-    var W = canvas.clientWidth, H = canvas.clientHeight;
+    var host = $('rx-svg'); host.innerHTML = '';
     var links = DATA.joins.filter(function (j) { return live(j) && shown(j); });
     var around = links.filter(function (j) { return j.from === state.centre || j.to === state.centre; });
-    var nodes = {}; var order = [];
-    function add(key, extra) { if (!nodes[key]) { nodes[key] = Object.assign({key: key, roles: []}, extra || {}); order.push(key); } return nodes[key]; }
-    add(state.centre, {centre: true});
-    around.forEach(function (j) { var other = j.from === state.centre ? j.to : j.from; var n = add(other); if (j.role && tables[other].kind === 'calendar') n.roles.push(j.role); });
-    var firstRing = order.slice(1);
-    // One step further from the tables around the centre, faded (not on a phone: there is no room).
-    if (!narrow) links.forEach(function (j) {
-      if (firstRing.indexOf(j.from) >= 0 && !nodes[j.to] && tables[j.to].kind !== 'calendar') add(j.to, {faded: true, parent: j.from});
+    var others = [], calendar = null, ports = {}, roles = [];
+    around.forEach(function (j) {
+      var other = j.from === state.centre ? j.to : j.from;
+      if (tables[other].kind === 'calendar') { calendar = other; roles.push(j); return; }
+      if (others.indexOf(other) < 0) others.push(other);
     });
-    if (narrow) {
-      // A phone: the centre on top, the tables it links to in two columns under it (the calendar,
-      // taller with its dates, last).
-      firstRing.sort(function (a, b) { return (tables[a].kind === 'calendar') - (tables[b].kind === 'calendar'); });
-      H = 190 + Math.ceil(firstRing.length / 2) * 112;
-      canvas.style.height = H + 'px';
-    }
-    var NW = canvas.clientWidth < 700 ? 160 : 196, NH = 66;
-    var cx = W / 2, cy = H / 2, rx = Math.max(W * 0.34, Math.min(150, W / 2 - NW / 2 - 4)), ry = Math.max(H * 0.34, 120);
-    var pos = {}; pos[state.centre] = {x: cx, y: cy};
-    if (narrow) pos[state.centre] = {x: cx, y: 52};
-    firstRing.forEach(function (key, i) {
-      if (narrow) { pos[key] = {x: i % 2 ? W * 0.74 : W * 0.26, y: 170 + Math.floor(i / 2) * 112}; return; }
-      var a = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(firstRing.length, 1) + (firstRing.length === 2 ? Math.PI / 2 : 0);
-      // Kept inside the canvas: on a phone the ring is narrower than a table is wide.
-      pos[key] = {x: Math.min(W - NW / 2 - 4, Math.max(NW / 2 + 4, cx + rx * Math.cos(a))),
-                  y: Math.min(H - NH / 2 - 4, Math.max(NH / 2 + 4, cy + ry * Math.sin(a))), a: a};
-    });
-    // A faded table goes on outward from its parent, turned aside until it lies clear of the others.
-    function clear(x, y) {
-      if (x < NW / 2 + 6 || x > W - NW / 2 - 6 || y < NH / 2 + 6 || y > H - NH / 2 - 6) return false;
-      return Object.keys(pos).every(function (k) { return Math.abs(pos[k].x - x) > NW + 8 || Math.abs(pos[k].y - y) > NH + 8; });
-    }
-    order.filter(function (k) { return nodes[k].faded; }).forEach(function (key) {
-      var p = pos[nodes[key].parent] || {x: cx, y: cy, a: 0};
-      var base = p.a == null ? 0 : p.a, spot = null;
-      [0, 0.6, -0.6, 1.2, -1.2, 1.8, -1.8, 2.6, -2.6, Math.PI].some(function (turn) {
-        return [150, 210].some(function (reach) {
-          var x = p.x + reach * Math.cos(base + turn), y = p.y + reach * 0.7 * Math.sin(base + turn);
-          if (clear(x, y)) { spot = {x: x, y: y}; return true; }
-          return false;
-        });
+    // A steady order: by name, as the places are read (top left, top right, then down the left).
+    others.sort(function (a, b) { return tables[a].name.localeCompare(tables[b].name); });
+    var centre = tables[state.centre], boxes = {}, ring = others.length > SLOTS.length, vh = VH;
+    boxes[state.centre] = {x: 275, y: 240, w: 170, h: centre.leaves_out.length ? 78 : NH};
+    if (ring) {
+      // More joins than the screen has places for: two columns, left and right of the centre, as tall as they need.
+      var rows = Math.ceil(others.length / 2);
+      vh = 40 + rows * 76;
+      boxes[state.centre].y = 40 + (rows * 76 - 14) / 2 - boxes[state.centre].h / 2;
+      others.forEach(function (key, i) {
+        boxes[key] = {x: i % 2 ? 510 : 20, y: 40 + Math.floor(i / 2) * 76, w: NW, h: NH};
       });
-      if (spot) pos[key] = spot; else delete nodes[key];
+    } else {
+      others.forEach(function (key, i) { boxes[key] = {x: SLOTS[i][0], y: SLOTS[i][1], w: NW, h: NH}; });
+    }
+    // The calendar sits bottom right; under the two columns, below them, centred.
+    if (calendar) boxes[calendar] = {x: ring ? 245 : 470, y: ring ? vh + 10 : 370, w: 230, h: 130};
+    if (calendar) {
+      // One port on the calendar for each date that joins it, the table's default date first; the box grows to hold them,
+      // in rows that fit its width, before anything else is placed around it.
+      var main = (centre.dates.filter(function (x) { return x.key === centre.default_date; })[0] || {}).name;
+      roles.sort(function (p, q) { return (p.role === main ? 0 : 1) - (q.role === main ? 0 : 1); });
+      var cal = boxes[calendar], px = 0, py = 0, widest = 0;
+      roles.forEach(function (j) {
+        var label = j.role || colName(j.pairs[0] && j.pairs[0].from), wd = Math.max(56, Math.round(label.length * 6.6) + 18);
+        if (px && px + wd > 216) { px = 0; py += 28; }
+        ports[j.key] = {dx: px, dy: py, w: wd, h: 22, label: label}; px += wd + 6; widest = Math.max(widest, px);
+      });
+      cal.w = Math.max(cal.w, widest + 14); cal.h = Math.max(cal.h, py + 118);
+      if (ring) cal.x = (VW - cal.w) / 2;
+      if (cal.x + cal.w > VW) cal.x = VW - cal.w;
+      if (ring) vh = cal.y + cal.h + 20;
+      Object.keys(ports).forEach(function (k) { ports[k].x = cal.x + 10 + ports[k].dx; ports[k].y = cal.y + 16 + ports[k].dy; });
+    }
+    // One step further out: tables the ones around the centre reach, drawn quieter, where there is room.
+    var placed = Object.keys(boxes).map(function (k) { return boxes[k]; }), far = {};
+    if (!ring) links.forEach(function (j) {
+      if (others.indexOf(j.from) < 0 || boxes[j.to] || tables[j.to].kind === 'calendar') return;
+      var p = boxes[j.from];
+      [[0, 112], [230, 46], [-230, 46], [0, -112], [230, 0]].some(function (d) {
+        var b = {x: p.x + d[0], y: p.y + d[1], w: NW, h: NH};
+        if (b.x < 0 || b.x + b.w > VW || b.y < 0 || b.y + b.h > VH || overlaps(b, placed)) return false;
+        boxes[j.to] = b; placed.push(b); far[j.to] = j.from; return true;
+      });
     });
-    order = order.filter(function (k) { return nodes[k]; });
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('aria-hidden', 'true');
-    canvas.appendChild(svg);
-    var els = {};
-    order.forEach(function (key) {
-      var t = tables[key], n = nodes[key];
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'rel-node ' + t.kind + (n.centre ? ' centre' : '') + (n.faded ? ' faded' : '') +
-        (state.selected === 'table:' + key ? ' selected' : '') +
-        (state.search && (t.name + ' ' + t.physical + ' ' + t.columns.map(function (c) { return c.name + ' ' + c.physical; }).join(' ')).toLowerCase().indexOf(state.search) >= 0 ? ' match' : '');
-      b.style.left = pos[key].x + 'px'; b.style.top = pos[key].y + 'px';
-      var html = '<b>' + esc(t.name) + '</b><small>' + esc(t.kind_words) + ' · ' + esc(t.physical) + '</small>';
-      if (n.roles.length) html += n.roles.map(function (r) { return '<span class="rel-chip date">' + esc(r) + '</span>'; }).join('');
-      if (t.leaves_out.length) html += '<span class="rel-chip">Leaves out ' + t.leaves_out.length + (t.leaves_out.length === 1 ? ' kind' : ' kinds') + '</span>';
-      b.innerHTML = html;
-      b.setAttribute('aria-label', t.name + ', ' + t.kind_words + '. Edit the table');
-      b.addEventListener('click', function () { if (n.faded) { state.centre = key; picker.value = key; } select('table:' + key); });
-      canvas.appendChild(b); els[key] = b;
-    });
-    // The centre's own links, and one step out to the faded tables; links between the same two
-    // tables (three dates on one calendar) are one line, and the panel switches between them.
-    var drawn = {};
-    links.forEach(function (j) {
-      if (!els[j.from] || !els[j.to]) return;
-      var centred = j.from === state.centre || j.to === state.centre;
-      var outward = nodes[j.to] && nodes[j.to].faded && nodes[j.to].parent === j.from;
-      if (!centred && !outward) return;
-      var pair = j.from + '|' + j.to;
-      if (drawn[pair] && state.selected !== 'link:' + j.key) return;
-      drawn[pair] = true;
-      var a = pos[j.from], c = pos[j.to];
-      var pa = edgePoint(a, box(els[j.from]), c), pc = edgePoint(c, box(els[j.to]), a);
-      var faded = nodes[j.from].faded || nodes[j.to].faded;
-      var line = document.createElementNS(svg.namespaceURI, 'line');
-      line.setAttribute('x1', pa.x); line.setAttribute('y1', pa.y); line.setAttribute('x2', pc.x); line.setAttribute('y2', pc.y);
-      line.setAttribute('class', 'rel-edge' + (j.status === 'Suggested' ? ' suggested' : '') + (state.selected === 'link:' + j.key ? ' selected' : '') + (faded ? ' faded' : ''));
-      svg.appendChild(line);
-      var hit = line.cloneNode(); hit.setAttribute('class', 'rel-hit');
-      hit.addEventListener('click', function () { select('link:' + j.key); });
-      var title = document.createElementNS(svg.namespaceURI, 'title'); title.textContent = j.from_name + ' → ' + j.to_name; hit.appendChild(title);
-      svg.appendChild(hit);
-      [[pa, pc, j.cardinality === 'one_to_one' ? '1' : 'N'], [pc, pa, '1']].forEach(function (m) {
-        var len = Math.hypot(m[1].x - m[0].x, m[1].y - m[0].y) || 1, k = Math.min(12 / len, 0.5);
-        var g = document.createElementNS(svg.namespaceURI, 'g'); g.setAttribute('class', 'rel-mark');
-        var x = m[0].x + (m[1].x - m[0].x) * k, y = m[0].y + (m[1].y - m[0].y) * k;
-        g.innerHTML = '<circle cx="' + x + '" cy="' + y + '" r="7"></circle><text x="' + x + '" y="' + y + '">' + m[2] + '</text>';
-        svg.appendChild(g);
+    var w = VW / state.zoom, h = vh / state.zoom;
+    var names = others.map(function (k) { return tables[k].name; }).concat(calendar ? ['the calendar'] : []);
+    var svg = el('svg', {'class': 'rx-g', viewBox: [(VW - w) / 2, (vh - h) / 2, w, h].join(' '), role: 'group',
+      'aria-label': centre.name + ' at the centre, joined to ' + (names.join(', ') || 'no other table')}, host);
+    var edges = el('g', {}, svg), marks = el('g', {}, svg), nodes = el('g', {}, svg), flags = el('g', {}, svg);
+    function edge(j, a, b, quiet) {
+      var sel = state.selected === 'join:' + j.key, tone = sel ? 'sel' : j.status === 'Suggested' ? 'sug' : 'ok';
+      var pb = b.port ? {x: b.x + b.w / 2, y: b.top} : border(b, middle(a)), pa = border(a, b.port ? pb : middle(b));
+      el('line', {'class': 'edge ' + (quiet ? 'far' : tone), x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y}, edges);
+      var hit = el('line', {'class': 'hit', x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y}, edges);
+      el('title', {}, hit).textContent = j.from_name + ' → ' + j.to_name + (j.role ? ' (' + j.role + ')' : '');
+      hit.addEventListener('click', function () { select('join:' + j.key); });
+      if (quiet) return;
+      // N at the many end, 1 at the one end.
+      var fromEnd = a === boxes[j.from] ? pa : pb, toEnd = fromEnd === pa ? pb : pa;
+      [[fromEnd, toEnd, j.cardinality === 'one_to_one' ? '1' : 'N'], [toEnd, fromEnd, '1']].forEach(function (m) {
+        if (b.port && m[0] === pb) return;
+        var len = Math.hypot(m[1].x - m[0].x, m[1].y - m[0].y) || 1, k = 13 / len;
+        var g = el('g', {'class': 'card ' + tone}, marks), cx = m[0].x + (m[1].x - m[0].x) * k, cy = m[0].y + (m[1].y - m[0].y) * k;
+        el('circle', {cx: cx, cy: cy, r: 10}, g); el('text', {x: cx, y: cy + 4}, g).textContent = m[2];
       });
       if (j.conditions.length) {
-        var badge = document.createElement('span');
-        badge.className = 'rel-chip rel-badge';
-        badge.textContent = '▾ ' + shortCondition(j.conditions[0]) + (j.conditions.length > 1 ? ' +' + (j.conditions.length - 1) : '');
-        badge.style.left = (pa.x + pc.x) / 2 + 'px'; badge.style.top = (pa.y + pc.y) / 2 + 'px';
-        canvas.appendChild(badge);
+        var label = '⏷ ' + shortCondition(j.conditions[0]) + (j.conditions.length > 1 ? ' +' + (j.conditions.length - 1) : '');
+        var bw = label.length * 7 + 14, mx = (pa.x + pb.x) / 2 - bw / 2, my = (pa.y + pb.y) / 2 - 11;
+        var fg = el('g', {'class': 'flag'}, flags);
+        el('rect', {x: mx, y: my, width: bw, height: 22, rx: 6}, fg); el('text', {x: mx + 7, y: my + 15}, fg).textContent = label;
+      }
+    }
+    links.forEach(function (j) {
+      if (j.from === state.centre || j.to === state.centre) {
+        var a = boxes[j.from], b = boxes[j.to];
+        if (!a || !b) return;
+        if (ports[j.key]) b = Object.assign({port: true, top: b.y}, ports[j.key]);
+        edge(j, a, b, false);
+      } else if (far[j.to] === j.from) {
+        edge(j, boxes[j.from], boxes[j.to], true);
       }
     });
-  }
-
-  // ── the list ──
-  function list() {
-    var body = document.getElementById('rel-rows');
-    body.innerHTML = '';
-    DATA.joins.filter(shown).forEach(function (j) {
-      var tr = document.createElement('tr');
-      var cond = j.conditions.length ? j.conditions.map(function (c) { return '<span class="rel-chip">▾ ' + esc(c.text) + '</span>'; }).join(' ') : '—';
-      var badge = {Confirmed: 'badge-green', Suggested: 'badge-amber', 'Turned off': 'badge-gray'}[j.status] || 'badge-gray';
-      tr.innerHTML = '<td><b>' + esc(j.from_name) + ' → ' + esc(j.to_name) + '</b></td>' +
-        '<td data-label="Matched on">' + j.pairs.map(function (p) { return '<code>' + esc(p.from_name) + ' = ' + esc(p.to_name) + '</code>'; }).join('<br>') + '</td>' +
-        '<td data-label="Rows">' + (j.cardinality === 'one_to_one' ? '1 : 1' : 'N : 1') + '</td>' +
-        '<td data-label="Name">' + (esc(j.role) || '—') + '</td><td data-label="Condition">' + cond + '</td>' +
-        '<td class="rel-status" data-label="Status"><span class="badge ' + badge + '">' + esc(j.status) + '</span></td>' +
-        '<td class="num" data-label="Rows matched">' + (j.match ? pct(j.match) : '—') + '</td><td class="nowrap"></td>';
-      var act = document.createElement('button');
-      act.type = 'button'; act.className = 'btn btn-link btn-xs';
-      if (live(j)) {
-        act.textContent = 'Edit';
-        act.setAttribute('aria-label', 'Edit the link ' + j.from_name + ' to ' + j.to_name);
-        act.addEventListener('click', function () { state.centre = j.from; picker.value = j.from; select('link:' + j.key); panel.scrollIntoView({block: 'nearest', behavior: 'smooth'}); });
-      } else {
-        act.textContent = 'Turn on';
-        act.setAttribute('aria-label', 'Turn on the link ' + j.from_name + ' to ' + j.to_name);
-        act.addEventListener('click', function () { post('turn-on-link', {key: j.key}).then(function (r) { if (r.ok) reload('turned-on', j.from); }); });
+    Object.keys(boxes).forEach(function (key) {
+      var t = tables[key], b = boxes[key], isCal = t.kind === 'calendar';
+      var hay = lower(t.name + ' ' + t.physical + ' ' + t.columns.map(function (c) { return c.name + ' ' + c.physical; }).join(' '));
+      var g = el('g', {'class': 'node ' + t.kind + (far[key] ? ' far' : '') + (state.selected === 'table:' + key ? ' sel' : '') +
+        (state.search && hay.indexOf(state.search) >= 0 ? ' match' : ''), tabindex: '0', role: 'button',
+        'aria-label': t.name + ', ' + t.kind_words + (far[key] ? '. Centre the diagram on it' : '. Edit the table')}, nodes);
+      el('rect', {'class': 'nbox', x: b.x, y: b.y, width: b.w, height: b.h, rx: 9}, g);
+      el('rect', {'class': 'bar', x: b.x, y: b.y, width: 4, height: b.h, rx: 2}, g);
+      var ty = isCal ? b.y + b.h - 42 : b.y + 24;
+      el('text', {'class': 't1', x: b.x + 16, y: ty}, g).textContent = t.name;
+      el('text', {'class': 't2', x: b.x + 16, y: ty + 18}, g).textContent = t.kind_words + ' · ' + t.physical +
+        (isCal && roles.length ? ' · ' + roles.length + (roles.length === 1 ? ' role' : ' roles') : '');
+      var lo = leftOutLabel(t);
+      if (lo && !isCal && b.h > NH) {
+        var fg = el('g', {'class': 'flag'}, g), label = '⏷ ' + lo, lw = Math.min(b.w - 22, label.length * 7 + 14);
+        el('rect', {x: b.x + 16, y: b.y + 50, width: lw, height: 21, rx: 6}, fg); el('text', {x: b.x + 23, y: b.y + 65}, fg).textContent = label;
       }
-      tr.lastChild.appendChild(act);
+      keys(g, function () { if (far[key]) { setCentre(key); state.selected = null; draw(); list(); render(); } else { select('table:' + key); } });
+    });
+    Object.keys(ports).forEach(function (k) {
+      var p = ports[k], g = el('g', {'class': 'port' + (state.selected === 'join:' + k ? ' on' : ''), tabindex: '0', role: 'button',
+        'aria-label': 'Edit the join on ' + p.label}, nodes);
+      el('rect', {x: p.x, y: p.y, width: p.w, height: p.h, rx: 11}, g); el('text', {x: p.x + p.w / 2, y: p.y + 15}, g).textContent = p.label;
+      keys(g, function () { select('join:' + k); });
+    });
+  }
+  $('rx-zoom-in').addEventListener('click', function () { state.zoom = Math.min(2, state.zoom * 1.25); draw(); });
+  $('rx-zoom-out').addEventListener('click', function () { state.zoom = Math.max(0.6, state.zoom / 1.25); draw(); });
+  $('rx-zoom-fit').addEventListener('click', function () {
+    var box = $('rx-rel');
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (box.requestFullscreen) box.requestFullscreen();
+    state.zoom = 1; draw();
+  });
+
+  // ── every join ──
+  function list() {
+    var body = $('rx-rows'); body.innerHTML = '';
+    function rank(j) {
+      if (j.from === state.centre) return tables[j.to].kind === 'calendar' ? 1 : 0;
+      return j.to === state.centre ? 2 : 3;
+    }
+    DATA.joins.filter(shown).map(function (j, i) { return [rank(j), i, j]; })
+      .sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; }).forEach(function (r) {
+      var j = r[2], tr = document.createElement('tr'), checked = state.checked[j.key] || {};
+      var match = checked.match != null ? checked.match : j.match;
+      tr.tabIndex = 0;
+      tr.className = state.selected === 'join:' + j.key ? 'sel' : '';
+      tr.setAttribute('aria-label', 'Edit the join ' + j.from_name + ' to ' + j.to_name);
+      tr.innerHTML = '<td class="nm">' + esc(j.from_name) + ' → ' + esc(j.to_name) + '</td>' +
+        '<td data-label="Matched on">' + j.pairs.map(function (p) { return '<code class="rx-code">' + esc(p.from_name) + ' = ' + esc(p.to_name) + '</code>'; }).join(' ') + '</td>' +
+        '<td data-label="Rows">' + (j.cardinality === 'one_to_one' ? '1 : 1' : 'N : 1') + '</td>' +
+        '<td data-label="Role">' + (esc(j.role) || '<span class="rx-muted">—</span>') + '</td>' +
+        '<td data-label="Condition">' + (j.conditions.length ? j.conditions.map(function (c) { return '<span class="rx-tag req">⏷ ' + esc(c.text) + '</span>'; }).join(' ') : '<span class="rx-muted">—</span>') + '</td>' +
+        '<td data-label="Status"><span class="rx-tag ' + ({Confirmed: 'ok', Suggested: 'req'}[j.status] || 'off') + '">' + esc(j.status) + '</span></td>' +
+        '<td class="n" data-label="Data check">' + (checked.problem ? '<span class="rx-muted">Could not check</span>' : match ? pct(match) + ' match' : '—') +
+        (checked.twice ? '<br><span class="rx-muted">' + num(checked.twice) + ' counted twice</span>' : '') + '</td>';
+      function open() {
+        if (j.from !== state.centre && j.to !== state.centre) setCentre(tables[j.from].kind === 'calendar' ? j.to : j.from);
+        select('join:' + j.key);
+        side.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+      }
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
       body.appendChild(tr);
     });
-    if (!body.children.length) body.innerHTML = '<tr><td colspan="8" class="rel-note">No link matches.</td></tr>';
+    if (!body.children.length) body.innerHTML = '<tr><td colspan="7" class="rx-muted">No join matches.</td></tr>';
   }
 
-  // ── the side panel ──
-  function select(what) { state.selected = what; draw(); render(); }
+  // ── the editor beside the diagram ──
   function post(path, body) {
-    return fetch(BASE + '/' + path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
-      credentials: 'same-origin'}).then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
+    return fetch(BASE + '/' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)}).then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
       .catch(function () { return {ok: false, error: 'The server could not be reached.'}; });
   }
-  function reload(saved, centre) {
-    var q = new URLSearchParams({saved: saved, centre: centre || state.centre});
-    window.location.href = BASE + '?' + q.toString();
+  function reload(saved, centre, pick) {
+    var q = {saved: saved, centre: centre || state.centre};
+    if (pick) q.pick = pick;
+    window.location.href = BASE + '?' + new URLSearchParams(q).toString();
   }
-  function options(list, value, placeholder) {
+  function select(what) { state.selected = what; draw(); list(); render(); }
+  function closeEditor() { state.selected = null; draw(); list(); render(); }
+  function opts(list, value, placeholder) {
     return (placeholder ? '<option value="">' + esc(placeholder) + '</option>' : '') + list.map(function (o) {
-      return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
-  }
-  function columnOptions(tableKey) {
-    return (tables[tableKey] ? tables[tableKey].columns : []).map(function (c) { return [c.key, c.name + (c.name !== c.physical ? ' (' + c.physical + ')' : '')]; });
+      return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(value) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
   }
   var OPS = Object.keys(WORDS.ops).map(function (k) { return [k, WORDS.ops[k]]; });
-
-  function ruleRow(tableKey, rule, i, kind) {
-    rule = rule || {column: '', op: 'eq', values: []};
-    var col = columns[rule.column];
-    var list = 'rel-ex-' + kind + i;
-    return '<div class="rel-row" data-rule="' + i + '">' +
-      '<select class="form-input" data-part="column" aria-label="Column">' + options(columnOptions(tableKey), rule.column, 'Column') + '</select>' +
-      '<select class="form-input" data-part="op" aria-label="How it compares">' + options(OPS, rule.op) + '</select>' +
-      '<input class="form-input" data-part="values" aria-label="Value" list="' + list + '" value="' + esc(rule.values.join(', ')) + '"' +
-      (rule.op === 'is_null' || rule.op === 'not_null' ? ' disabled' : '') + '>' +
-      '<datalist id="' + list + '">' + (col ? col.examples.map(function (v) { return '<option value="' + esc(v) + '">'; }).join('') : '') + '</datalist>' +
-      '<button type="button" class="btn btn-ghost btn-xs" data-remove="' + i + '" aria-label="Remove">✕</button></div>';
+  // A table keeps the rows its filters keep; the admin names the rows it leaves out. Each is the other's opposite.
+  var OPPOSITE = {eq: 'ne', ne: 'eq', 'in': 'not_in', not_in: 'in', gt: 'lte', lte: 'gt', gte: 'lt', lt: 'gte', is_null: 'not_null', not_null: 'is_null'};
+  var OUT_OPS = OPS.filter(function (o) { return OPPOSITE[o[0]]; });
+  function opposite(r) { return {column: r.column, op: OPPOSITE[r.op], values: r.values.slice()}; }
+  function valueControl(col, rule) {
+    var v = (rule.values || []).join(', ');
+    if (rule.op === 'is_null' || rule.op === 'not_null') return '<select class="form-input" data-part="values" disabled aria-label="Value"><option>—</option></select>';
+    var known = col && col.examples && col.examples.length ? col.examples : isFlag(col) ? ['Yes', 'No'] : [];
+    if (known.length && (isFlag(col) || ((rule.op === 'eq' || rule.op === 'ne') && (!v || known.indexOf(v) >= 0)))) {
+      return '<select class="form-input" data-part="values" aria-label="Value">' + opts(known.map(function (x) { return [x, x]; }), v || known[0]) + '</select>';
+    }
+    var id = known.length ? 'rx-ex-' + Object.keys(columns).indexOf(col.key) : '';
+    return '<input class="form-input" data-part="values" aria-label="Value" value="' + esc(v) + '"' + (id ? ' list="' + id + '"' : '') +
+      (rule.op === 'in' || rule.op === 'not_in' ? ' placeholder="A, B, C"' : rule.op === 'between' ? ' placeholder="From, to"' : '') + '>' +
+      (id ? '<datalist id="' + id + '">' + known.map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist>' : '');
+  }
+  function ruleRow(tableKey, rule, i, ops) {
+    var t = tables[tableKey];
+    return '<div class="rx-rule" data-rule="' + i + '">' +
+      '<select class="form-input" data-part="column" aria-label="Column">' + opts((t ? t.columns : []).map(function (c) { return [c.key, c.name]; }), rule.column, 'Column') + '</select>' +
+      '<select class="form-input" data-part="op" aria-label="How it compares">' + opts(ops || OPS, rule.op) + '</select>' +
+      valueControl(columns[rule.column], rule) + '<button type="button" class="rx-x" data-remove="' + i + '" aria-label="Remove this rule">✕</button></div>';
   }
   function readRules(root) {
+    if (!root) return [];
     return Array.prototype.map.call(root.querySelectorAll('[data-rule]'), function (row) {
-      var op = row.querySelector('[data-part=op]').value;
-      var raw = row.querySelector('[data-part=values]').value;
-      var values = op === 'in' || op === 'not_in' || op === 'between' ? raw.split(',') : [raw];
+      var op = row.querySelector('[data-part=op]').value, field = row.querySelector('[data-part=values]');
+      var raw = field && !field.disabled ? field.value : '';
+      var many = op === 'in' || op === 'not_in' || op === 'between';
       return {column: row.querySelector('[data-part=column]').value, op: op,
-              values: values.map(function (v) { return v.trim(); }).filter(Boolean)};
-    }).filter(function (r) { return r.column; });
+              values: (many ? raw.split(',') : [raw]).map(function (v) { return v.trim(); }).filter(Boolean)};
+    });
+  }
+  // Rules and conditions: a change of column or comparison redraws the row; typing a value only re-checks.
+  function wireRules(root, list, changed) {
+    if (!root) return;
+    root.querySelectorAll('[data-remove]').forEach(function (b) {
+      b.addEventListener('click', function () { changed(); list.splice(+b.getAttribute('data-remove'), 1); changed(true); });
+    });
+    root.querySelectorAll('select[data-part]').forEach(function (s) { s.addEventListener('change', function () { changed(true); }); });
+    root.querySelectorAll('input[data-part=values]').forEach(function (s) { s.addEventListener('input', function () { changed(false); }); });
   }
 
   function render() {
     var sel = state.selected || '';
-    if (sel.indexOf('link:') === 0) return linkPanel(DATA.joins.filter(function (j) { return j.key === sel.slice(5); })[0]);
-    if (sel === 'new') return linkPanel(null);
-    if (sel.indexOf('table:') === 0) return tablePanel(tables[sel.slice(6)]);
-    panel.innerHTML = '<div class="card-body"><p class="rel-note">Pick a link in the list below, or a line or a table in the diagram.</p></div>';
+    if (sel === 'new') return joinPanel(null);
+    if (sel.indexOf('join:') === 0) {
+      var j = DATA.joins.filter(function (o) { return o.key === sel.slice(5); })[0];
+      if (j) return joinPanel(j);
+    }
+    if (sel.indexOf('table:') === 0 && tables[sel.slice(6)]) return tablePanel(tables[sel.slice(6)]);
+    tablePanel(tables[state.centre]);
   }
+  var checkTimer = null, checkRun = 0;
+  function later(fn) { clearTimeout(checkTimer); checkTimer = setTimeout(fn, 450); }
 
-  // A link: its columns, its rows, its name and its conditions.
-  function linkPanel(j) {
-    var draft = j ? {key: j.key, from: j.from, to: j.to, pairs: j.pairs.map(function (p) { return {from: p.from, to: p.to}; }),
-                     conditions: j.conditions.map(function (c) { return {column: c.column, op: c.op, values: c.values.slice()}; }),
-                     role: j.role, cardinality: j.cardinality}
-                  : {key: '', from: state.centre, to: '', pairs: [{from: '', to: ''}], conditions: [], role: '', cardinality: 'many_to_one'};
-    function paint(result) {
-      var fromT = tables[draft.from], toT = tables[draft.to];
-      var tableList = DATA.tables.map(function (t) { return [t.key, t.name]; });
-      var html = '<div class="card-body">' +
-        '<div><div class="rel-eyebrow">' + (j ? 'Link' : 'New link') + '</div>' +
-        '<h2>' + esc(fromT ? fromT.name : 'Choose a table') + ' → ' + esc(toT ? toT.name : 'choose a table') + '</h2></div>';
-      var siblings = j ? DATA.joins.filter(function (o) { return o.from === j.from && o.to === j.to && live(o); }) : [];
-      if (siblings.length > 1) {
-        html += '<div class="rel-actions" role="group" aria-label="Links between these tables">' + siblings.map(function (o) {
-          return '<button type="button" class="btn btn-secondary btn-xs" data-sibling="' + esc(o.key) + '" aria-pressed="' + (o.key === j.key) + '">' +
-            esc(o.role || o.pairs.map(function (p) { return p.from_name; }).join(', ')) + '</button>'; }).join('') + '</div>';
-      }
+  // A join: the columns it matches on, the rows it keeps, its conditions; checked against the data as it changes.
+  function joinPanel(j) {
+    var d = j ? {key: j.key, from: j.from, to: j.to, pairs: j.pairs.map(function (p) { return {from: p.from, to: p.to}; }),
+                 conditions: j.conditions.map(function (c) { return {column: c.column, op: c.op, values: c.values.slice()}; }),
+                 role: j.role, cardinality: j.cardinality === 'one_to_one' ? 'one_to_one' : 'many_to_one', keep_unmatched: j.keep_unmatched !== false}
+              : {key: '', from: state.centre, to: '', pairs: [{from: '', to: ''}], conditions: [], role: '', cardinality: 'many_to_one', keep_unmatched: true};
+    var result = null, off = j && !live(j);
+    function ready() { return d.from && d.to && d.pairs.length && d.pairs.every(function (p) { return p.from && p.to; }); }
+    function paint() {
+      var F = tables[d.from], T = tables[d.to];
+      var siblings = DATA.joins.filter(function (o) { return live(o) && o.from === d.from && o.to === d.to && o.key !== d.key; }).length;
+      var html = '<div class="ed-head"><div><div class="k">' + (j ? 'Join' : 'New join') + (off ? ' · turned off' : '') + '</div><h2>' +
+        esc(F ? F.name : 'Choose a table') + ' → ' + esc(T ? T.name : 'choose a table') + '</h2></div>' +
+        '<button type="button" class="ed-close" id="rx-close" aria-label="Close">✕</button></div><div class="ed-body">';
       if (!j) {
-        html += '<div class="rel-row two"><div class="rel-field"><label for="rel-from">From (many rows)</label><select id="rel-from" class="form-input">' + options(tableList, draft.from, 'Choose') + '</select></div></div>' +
-          '<div class="rel-row two"><div class="rel-field"><label for="rel-to">To (one row each)</label><select id="rel-to" class="form-input">' + options(tableList, draft.to, 'Choose') + '</select></div></div>';
+        var all = DATA.tables.map(function (t) { return [t.key, t.name]; });
+        html += '<div class="rx-two"><div class="rx-f"><label for="rx-from">From (many rows)</label><select class="form-input" id="rx-from">' + opts(all, d.from, 'Choose') + '</select></div>' +
+          '<div class="rx-f"><label for="rx-to">To (one row each)</label><select class="form-input" id="rx-to">' + opts(all, d.to, 'Choose') + '</select></div></div>';
       }
-      html += '<div class="rel-field"><span class="rel-label">Matched on</span>';
-      draft.pairs.forEach(function (p, i) {
+      html += '<div class="rx-f"><span class="lab">Matched on</span>';
+      d.pairs.forEach(function (p, i) {
         var a = columns[p.from], b = columns[p.to];
-        html += '<div class="rel-pair" data-pair="' + i + '">' +
-          '<select class="form-input" data-side="from" aria-label="Column of ' + esc(fromT ? fromT.name : 'the first table') + '">' + options(columnOptions(draft.from), p.from, 'Column of ' + (fromT ? fromT.name : 'the first table')) + '</select>' +
-          '<div class="rel-eq">equals</div>' +
-          '<select class="form-input" data-side="to" aria-label="Column of ' + esc(toT ? toT.name : 'the second table') + '">' + options(columnOptions(draft.to), p.to, 'Column of ' + (toT ? toT.name : 'the second table')) + '</select>' +
-          (a && b ? (a.type === b.type ? '<span class="rel-ok">✓ The types match (' + esc(a.type) + ')</span>' : '<span class="rel-warn">' + esc(a.physical) + ' is ' + esc(a.type) + ' and ' + esc(b.physical) + ' is ' + esc(b.type) + ': they may never be equal</span>') : '') +
-          (draft.pairs.length > 1 ? '<button type="button" class="btn btn-ghost btn-xs" data-drop-pair="' + i + '">Remove this pair</button>' : '') + '</div>';
+        html += (i ? '<div class="rx-eqs">and</div>' : '') +
+          '<div class="rx-in">' + esc(F ? F.name : '') + ' · <select class="form-input form-input-sm form-input-mono" data-pair="' + i + '" data-side="from" aria-label="Column of ' + esc(F ? F.name : 'the first table') + '">' +
+          opts((F ? F.columns : []).map(function (c) { return [c.key, c.physical]; }), p.from, 'column') + '</select><em>' + esc(a ? a.type : '') + '</em></div>' +
+          '<div class="rx-eqs">equals</div>' +
+          '<div class="rx-in">' + esc(T ? T.name : '') + ' · <select class="form-input form-input-sm form-input-mono" data-pair="' + i + '" data-side="to" aria-label="Column of ' + esc(T ? T.name : 'the second table') + '">' +
+          opts((T ? T.columns : []).map(function (c) { return [c.key, c.physical]; }), p.to, 'column') + '</select><em>' + esc(b ? b.type : '') + '</em></div>';
+        if (a && b) html += a.type === b.type ? '<div class="rx-ok">✓ The types match</div>'
+          : '<div class="rx-warn">' + esc(a.physical) + ' holds ' + esc(a.type) + ' values and ' + esc(b.physical) + ' ' + esc(b.type) + ' values: they may never be equal</div>';
+        if (d.pairs.length > 1) html += '<button type="button" class="rx-addl" data-drop-pair="' + i + '">✕ Stop matching on this pair</button>';
       });
-      html += '<button type="button" class="btn btn-link btn-xs" id="rel-add-pair">' + '+ Match on another column too</button></div>';
-      html += '<div class="rel-row two"><div class="rel-field"><label for="rel-card">Rows</label><select id="rel-card" class="form-input">' +
-        options([['many_to_one', 'Many to one'], ['one_to_one', 'One to one']], draft.cardinality) + '</select>' +
-        '<p class="rel-note">Each ' + esc(fromT ? fromT.name.toLowerCase() : 'row') + ' row finds one ' + esc(toT ? toT.name.toLowerCase() : 'row') + ' row.</p></div></div>';
-      html += '<div class="rel-field"><label for="rel-role">Name, when these tables link more than one way</label>' +
-        '<input id="rel-role" class="form-input" maxlength="80" placeholder="e.g. Ship-to customer" value="' + esc(draft.role) + '"></div>';
-      html += '<div class="rel-field"><span class="rel-label">Only join ' + esc(toT ? toT.name.toLowerCase() : '') + ' rows where</span><div id="rel-conds">' +
-        draft.conditions.map(function (c, i) { return ruleRow(draft.to, c, i, 'c'); }).join('') + '</div>' +
-        '<button type="button" class="btn btn-link btn-xs" id="rel-add-cond"' + (toT ? '' : ' disabled') + '>+ Add a condition</button>' +
-        '<p class="rel-note">For a table that keeps a row for every change (a customer\'s address over time): keep the current row only, or each ' +
-        esc(fromT ? fromT.name.toLowerCase() : 'row') + ' counts once per version.</p></div>';
-      if (result) html += checkCard(result);
-      html += '<div class="rel-actions"><button type="button" class="btn btn-secondary btn-sm" id="rel-check">Check against the data</button></div>' +
-        '<p class="rel-error" id="rel-error" role="alert"></p>' +
-        '<div class="rel-actions"><button type="button" class="btn btn-primary" id="rel-save">' + (j ? 'Save link' : 'Add link') + '</button>' +
-        '<button type="button" class="btn btn-secondary" id="rel-cancel">Cancel</button><span class="rel-spacer"></span>' +
-        (j ? '<button type="button" class="btn btn-ghost btn-sm" id="rel-off" data-confirm="Turn this link off? Questions stop using it; you can turn it on again from the list." data-confirm-label="Turn off">Turn off</button>' : '') +
-        '</div></div>';
-      panel.innerHTML = html;
-      wire();
+      html += '<button type="button" class="rx-addl" id="rx-add-pair"' + (F && T ? '' : ' disabled') + '>+ Match on another column too</button></div>';
+      html += '<div class="rx-two"><div class="rx-f"><label for="rx-card">Rows</label><select class="form-input" id="rx-card">' +
+        opts([['many_to_one', 'Many to one'], ['one_to_one', 'One to one']], d.cardinality) + '</select></div>' +
+        '<div class="rx-f"><label for="rx-keep">Keep ' + esc(F ? plural(F.name) : 'rows') + ' without ' + esc(T ? article(T.name) + lower(T.name) : 'a match') + '</label>' +
+        '<select class="form-input" id="rx-keep">' + opts([['yes', 'Yes'], ['no', 'No']], d.keep_unmatched ? 'yes' : 'no') + '</select></div></div>';
+      if (siblings || d.role) html += '<div class="rx-f"><label for="rx-role">Role, when these tables join more than one way</label>' +
+        '<input class="form-input" id="rx-role" maxlength="80" value="' + esc(d.role) + '" placeholder="e.g. Ship date, Bill-to customer"></div>';
+      html += '<div class="rx-f"><span class="lab">Only join rows where</span><div id="rx-conds">' +
+        d.conditions.map(function (c, i) { return ruleRow(d.to, c, i); }).join('') + '</div>' +
+        (T ? '<div class="rx-help">' + esc(T.name) + ' keeps a row for every change? Only the current row should join, or each ' +
+          esc(F ? lower(F.name) : 'row') + ' counts once per version.</div>' : '') +
+        '<button type="button" class="rx-addl" id="rx-add-cond"' + (T ? '' : ' disabled') + '>+ Add a condition</button></div>';
+      html += '<div id="rx-checked">' + checkCard() + '</div><p class="rx-error" id="rx-error" role="alert"></p></div>';
+      html += '<div class="ed-foot">' + (off ? '<button type="button" class="btn btn-primary" id="rx-on">Turn on</button>'
+          : '<button type="button" class="btn btn-primary" id="rx-save">' + (j ? 'Save join' : 'Add join') + '</button>') +
+        '<button type="button" class="btn btn-secondary" id="rx-cancel">Cancel</button>' +
+        (j && !off ? '<button type="button" class="rx-danger" id="rx-delete" data-confirm="Delete this join? Questions stop using it from the next answer. It stays in the list, turned off, and can be turned on again." data-confirm-label="Delete" data-confirm-variant="danger">Delete</button>' : '') + '</div>';
+      side.innerHTML = html; wire();
     }
-    function sync() {
-      Array.prototype.forEach.call(panel.querySelectorAll('[data-pair]'), function (row) {
-        var i = +row.getAttribute('data-pair');
-        draft.pairs[i] = {from: row.querySelector('[data-side=from]').value, to: row.querySelector('[data-side=to]').value};
-      });
-      var conds = document.getElementById('rel-conds');
-      if (conds) draft.conditions = readRules(conds);
-      draft.role = document.getElementById('rel-role').value;
-      draft.cardinality = document.getElementById('rel-card').value;
-    }
-    function wire() {
-      panel.querySelectorAll('[data-sibling]').forEach(function (b) { b.addEventListener('click', function () { select('link:' + b.getAttribute('data-sibling')); }); });
-      var from = document.getElementById('rel-from'), to = document.getElementById('rel-to');
-      if (from) from.addEventListener('change', function () { sync(); draft.from = from.value; draft.pairs = [{from: '', to: ''}]; paint(); });
-      if (to) to.addEventListener('change', function () { sync(); draft.to = to.value; draft.pairs = [{from: '', to: ''}]; draft.conditions = []; paint(); });
-      panel.querySelectorAll('[data-pair] select').forEach(function (s) { s.addEventListener('change', function () { sync(); paint(); }); });
-      panel.querySelectorAll('[data-drop-pair]').forEach(function (b) { b.addEventListener('click', function () { sync(); draft.pairs.splice(+b.getAttribute('data-drop-pair'), 1); paint(); }); });
-      document.getElementById('rel-add-pair').addEventListener('click', function () { sync(); draft.pairs.push({from: '', to: ''}); paint(); });
-      document.getElementById('rel-add-cond').addEventListener('click', function () { sync(); draft.conditions.push({column: '', op: 'eq', values: []}); paint(); });
-      panel.querySelectorAll('#rel-conds [data-remove]').forEach(function (b) { b.addEventListener('click', function () { sync(); draft.conditions.splice(+b.getAttribute('data-remove'), 1); paint(); }); });
-      panel.querySelectorAll('#rel-conds [data-part=column], #rel-conds [data-part=op]').forEach(function (s) { s.addEventListener('change', function () { sync(); paint(); }); });
-      document.getElementById('rel-cancel').addEventListener('click', function () { state.selected = null; draw(); render(); });
-      document.getElementById('rel-check').addEventListener('click', function () {
-        sync(); var btn = this; btn.setAttribute('aria-busy', 'true');
-        post('check-link', draft).then(function (r) { btn.removeAttribute('aria-busy'); if (!r.ok) return fail(r.error); paint(r); });
-      });
-      document.getElementById('rel-save').addEventListener('click', function () {
-        sync(); var btn = this; btn.setAttribute('aria-busy', 'true');
-        post('save-link', draft).then(function (r) { btn.removeAttribute('aria-busy'); if (!r.ok) return fail(r.error); reload('link', draft.from); });
-      });
-      var off = document.getElementById('rel-off');
-      if (off) off.addEventListener('click', function () {
-        post('turn-off-link', {key: j.key}).then(function (r) { if (!r.ok) return fail(r.error); reload('turned-off', draft.from); });
-      });
-    }
-    function checkCard(r) {
-      if (r.problem) return '<div class="rel-check bad"><b>Could not check</b><p class="rel-note">' + esc(r.problem) + '</p></div>';
-      var good = !r.twice && r.match >= 0.9;
-      var html = '<div class="rel-check ' + (good ? 'good' : 'bad') + '"><b>Checked against the data</b><span class="rel-note">' + num(r.rows) + ' ' + esc((tables[draft.from] || {}).name || '') + ' rows</span>' +
-        '<div class="rel-stats"><div><b>' + pct(r.match) + '</b><span>find a match</span></div>' +
-        '<div><b>' + (r.per_row || 0).toFixed(2) + '</b><span>matches per row</span></div>' +
-        '<div><b>' + num(r.twice) + '</b><span>rows counted more than once</span></div></div>';
-      (r.types || []).concat(r.words || []).forEach(function (w) { html += '<p class="rel-note">' + esc(w) + '</p>'; });
+    function checkCard() {
+      if (!ready()) return '';
+      if (!result) return '<div class="rx-check wait"><div class="hd"><b>Checking against the data…</b></div></div>';
+      if (!result.ok || result.problem) return '<div class="rx-check bad"><div class="hd"><b>Could not check</b></div><div class="rx-help">' + esc(result.error || result.problem) + '</div></div>';
+      var good = !result.twice && (result.match >= 0.9 || !result.with_key);
+      var from = result.from_rows || lower(tables[d.from].name), to = result.to_rows || lower(tables[d.to].name);
+      var html = '<div class="rx-check' + (good ? '' : ' bad') + '"><div class="hd"><b>Checked against the data</b><span>just now · ' + num(result.rows) + ' ' + esc(plural(from)) + '</span></div>' +
+        '<div class="rx-stats"><div><b>' + pct(result.match) + '</b><span>find their ' + esc(to) + '</span></div>' +
+        '<div><b>' + (result.per_row || 0).toFixed(2) + '</b><span>' + esc(to) + ' per ' + esc(from) + '</span></div>' +
+        '<div><b>' + num(result.twice) + '</b><span>' + esc(plural(from)) + ' counted twice</span></div></div>';
+      if (result.without_words) html += '<div class="rx-help">Without the condition: <b>' + esc(result.without_words[0]) + '</b> ' + esc(result.without_words[1]) + '</div>';
+      (result.types || []).concat(result.words || []).forEach(function (w) { html += '<div class="rx-help">' + esc(w) + '</div>'; });
       return html + '</div>';
     }
-    paint();
-  }
-  function fail(text) { var e = document.getElementById('rel-error'); if (e) e.textContent = text || 'That did not work.'; }
-
-  // A table: its name, kind, default date and the rows it always leaves out.
-  function tablePanel(t) {
-    var draft = {table: t.key, name: t.name, kind: t.kind, default_date: t.default_date,
-                 leaves_out: t.leaves_out.map(function (r) { return {column: r.column, op: r.op, values: r.values.slice()}; })};
-    function paint(result) {
-      var kinds = Object.keys(WORDS.kinds).map(function (k) { return [k, WORDS.kinds[k]]; });
-      var html = '<div class="card-body"><div><div class="rel-eyebrow">Table</div><h2>' + esc(t.name) + '</h2>' +
-        '<div class="rel-sub">' + esc(t.physical) + (t.rows ? ' · ' + num(t.rows) + ' rows' : '') + '</div></div>' +
-        '<div class="rel-row two"><div class="rel-field"><label for="rel-tname">Name people use</label><input id="rel-tname" class="form-input" maxlength="120" value="' + esc(draft.name) + '"></div></div>' +
-        (t.kind === 'calendar' ? '' : '<div class="rel-field"><label for="rel-kind">Kind</label><select id="rel-kind" class="form-input">' + options(kinds, draft.kind) + '</select></div>') +
-        (t.dates.length ? '<div class="rel-field"><label for="rel-date">Default date</label><select id="rel-date" class="form-input">' +
-          options(t.dates.map(function (d) { return [d.key, d.name]; }), draft.default_date, t.default_date ? '' : 'None') + '</select>' +
-          '<p class="rel-note">The date questions count this table by; a metric can use another.</p></div>' : '') +
-        '<div class="rel-field"><span class="rel-label">Always leave out rows where</span><div id="rel-rules">' +
-        draft.leaves_out.map(function (r, i) { return ruleRow(t.key, r, i, 'r'); }).join('') + '</div>' +
-        '<button type="button" class="btn btn-link btn-xs" id="rel-add-rule">+ Add a rule</button>' +
-        '<p class="rel-note">Answers say what was left out. Cancelled orders and test rows are the usual ones.</p></div>';
-      if (result) {
-        html += result.problem ? '<div class="rel-check bad"><b>Could not check</b><p class="rel-note">' + esc(result.problem) + '</p></div>' :
-          '<div class="rel-check good"><b>Checked against the data</b><div class="rel-stats">' +
-          '<div><b>' + num(result.left_out) + '</b><span>rows left out' + (result.rows ? ' (' + pct(result.left_out / result.rows) + ')' : '') + '</span></div>' +
-          '<div><b>' + (result.amount == null ? '—' : Number(result.amount).toLocaleString(undefined, {maximumFractionDigits: 0})) + '</b><span>' + esc(result.measure ? result.measure.toLowerCase() + ' left out' : 'no amount') + '</span></div>' +
-          '<div><b>' + num(result.metrics) + '</b><span>metrics on this table</span></div></div></div>';
-      }
-      html += '<div class="rel-actions"><button type="button" class="btn btn-secondary btn-sm" id="rel-check">Check against the data</button></div>' +
-        '<p class="rel-error" id="rel-error" role="alert"></p>' +
-        '<div class="rel-actions"><button type="button" class="btn btn-primary" id="rel-save">Save table</button>' +
-        '<button type="button" class="btn btn-secondary" id="rel-cancel">Cancel</button></div></div>';
-      panel.innerHTML = html;
-      wire();
-    }
+    function showCheck() { var box = $('rx-checked'); if (box) box.innerHTML = checkCard(); }
     function sync() {
-      draft.name = document.getElementById('rel-tname').value;
-      var kind = document.getElementById('rel-kind'); if (kind) draft.kind = kind.value;
-      var date = document.getElementById('rel-date'); if (date) draft.default_date = date.value;
-      draft.leaves_out = readRules(document.getElementById('rel-rules'));
+      side.querySelectorAll('select[data-pair]').forEach(function (s) { d.pairs[+s.getAttribute('data-pair')][s.getAttribute('data-side')] = s.value; });
+      d.conditions = readRules($('rx-conds'));
+      d.cardinality = $('rx-card').value; d.keep_unmatched = $('rx-keep').value !== 'no';
+      if ($('rx-role')) d.role = $('rx-role').value;
+    }
+    function recheck() {
+      result = null; showCheck();
+      if (!ready()) return;
+      var run = ++checkRun, body = JSON.parse(JSON.stringify(d));
+      body.conditions = body.conditions.filter(function (c) { return c.column && (c.values.length || c.op === 'is_null' || c.op === 'not_null'); });
+      later(function () { post('check-link', body).then(function (r) { if (run !== checkRun) return; result = r; showCheck(); }); });
     }
     function wire() {
-      document.getElementById('rel-add-rule').addEventListener('click', function () { sync(); draft.leaves_out.push({column: '', op: 'eq', values: []}); paint(); });
-      panel.querySelectorAll('#rel-rules [data-remove]').forEach(function (b) { b.addEventListener('click', function () { sync(); draft.leaves_out.splice(+b.getAttribute('data-remove'), 1); paint(); }); });
-      panel.querySelectorAll('#rel-rules [data-part=column], #rel-rules [data-part=op]').forEach(function (s) { s.addEventListener('change', function () { sync(); paint(); }); });
-      document.getElementById('rel-cancel').addEventListener('click', function () { state.selected = null; draw(); render(); });
-      document.getElementById('rel-check').addEventListener('click', function () {
-        sync(); var btn = this; btn.setAttribute('aria-busy', 'true');
-        post('check-table', draft).then(function (r) { btn.removeAttribute('aria-busy'); if (!r.ok) return fail(r.error); paint(r); });
+      $('rx-close').addEventListener('click', closeEditor);
+      $('rx-cancel').addEventListener('click', closeEditor);
+      if ($('rx-from')) $('rx-from').addEventListener('change', function () { sync(); d.from = this.value; d.pairs = [{from: '', to: ''}]; paint(); recheck(); });
+      if ($('rx-to')) $('rx-to').addEventListener('change', function () { sync(); d.to = this.value; d.pairs = [{from: '', to: ''}]; d.conditions = []; paint(); recheck(); });
+      side.querySelectorAll('select[data-pair]').forEach(function (s) { s.addEventListener('change', function () { sync(); paint(); recheck(); }); });
+      side.querySelectorAll('[data-drop-pair]').forEach(function (b) {
+        b.addEventListener('click', function () { sync(); d.pairs.splice(+b.getAttribute('data-drop-pair'), 1); paint(); recheck(); });
       });
-      document.getElementById('rel-save').addEventListener('click', function () {
-        sync(); var btn = this; btn.setAttribute('aria-busy', 'true');
-        post('save-table', draft).then(function (r) { btn.removeAttribute('aria-busy'); if (!r.ok) return fail(r.error); reload('table', t.key); });
+      $('rx-add-pair').addEventListener('click', function () { sync(); d.pairs.push({from: '', to: ''}); paint(); recheck(); });
+      $('rx-add-cond').addEventListener('click', function () { sync(); d.conditions.push({column: '', op: 'eq', values: []}); paint(); });
+      $('rx-card').addEventListener('change', sync);
+      $('rx-keep').addEventListener('change', sync);
+      wireRules($('rx-conds'), d.conditions, function (redraw) {
+        if (redraw === undefined) return sync();
+        sync(); if (redraw) paint(); recheck();
+      });
+      var save = $('rx-save');
+      if (save) save.addEventListener('click', function () {
+        sync(); save.setAttribute('aria-busy', 'true'); save.disabled = true;
+        // A row left without a column is not a condition yet; one with a column is checked, and refused in words.
+        post('save-link', Object.assign({}, d, {conditions: d.conditions.filter(function (c) { return c.column; })})).then(function (r) {
+          save.removeAttribute('aria-busy'); save.disabled = false;
+          if (!r.ok) { $('rx-error').textContent = r.error; return; }
+          reload('join', tables[d.from].kind === 'calendar' ? d.to : d.from, 'join:' + r.key);
+        });
+      });
+      if ($('rx-on')) $('rx-on').addEventListener('click', function () {
+        post('turn-on-link', {key: j.key}).then(function (r) { if (r.ok) reload('turned-on', state.centre); else $('rx-error').textContent = r.error; });
+      });
+      if ($('rx-delete')) $('rx-delete').addEventListener('click', function () {
+        post('turn-off-link', {key: j.key}).then(function (r) { if (r.ok) reload('deleted', state.centre); else $('rx-error').textContent = r.error; });
       });
     }
-    paint();
+    paint(); recheck();
   }
 
-  // ── tools ──
-  document.getElementById('rel-new').addEventListener('click', function () { select('new'); panel.scrollIntoView({block: 'nearest', behavior: 'smooth'}); });
-  document.getElementById('rel-search').addEventListener('input', function () { state.search = this.value.trim().toLowerCase(); draw(); list(); });
+  // A table: its name, kind, default date and the rows it always leaves out; checked against the data as it changes.
+  function tablePanel(t) {
+    var d = {table: t.key, name: t.name, kind: t.kind, default_date: t.default_date, readers_may_include: t.readers_may_include !== false,
+             leaves_out: t.leaves_out.filter(function (r) { return OPPOSITE[r.op]; }).map(opposite),
+             // A filter with no plain opposite ("contains") is kept as it is, and can be taken off.
+             fixed: t.leaves_out.filter(function (r) { return !OPPOSITE[r.op]; })};
+    var result = null;
+    function asked() {
+      var r = d.leaves_out[0], word = r && r.op === 'eq' && r.values.length ? r.values[0] + ' ' : '';
+      return '“including ' + word + plural(t.name) + '”';
+    }
+    function complete() { return d.leaves_out.filter(function (r) { return r.column && (r.values.length || r.op === 'is_null' || r.op === 'not_null'); }); }
+    function kept() {
+      return d.fixed.map(function (r) { return {column: r.column, op: r.op, values: r.values}; }).concat(complete().map(opposite));
+    }
+    function paint() {
+      var html = '<div class="ed-head"><div><div class="k">Table</div><h2>' + esc(t.name) + '</h2><div class="sub">' + esc(t.physical) +
+        (t.rows ? ' · ' + num(t.rows) + ' rows' : '') + '</div></div>' +
+        '<button type="button" class="ed-close" id="rx-close" aria-label="Close">✕</button></div><div class="ed-body">' +
+        '<div class="rx-two rx-named"><div class="rx-f"><label for="rx-tname">Name people use</label><input class="form-input" id="rx-tname" maxlength="120" value="' + esc(d.name) + '"></div>' +
+        (t.kind === 'calendar' ? '' : '<div class="rx-f"><label for="rx-kind">Kind</label><select class="form-input" id="rx-kind">' +
+          opts(Object.keys(WORDS.kinds).map(function (k) { return [k, WORDS.kinds[k]]; }), d.kind) + '</select></div>') + '</div>' +
+        (t.dates.length ? '<div class="rx-f"><label for="rx-date">Default date</label><select class="form-input" id="rx-date">' +
+          opts(t.dates.map(function (x) { return [x.key, x.name]; }), d.default_date, t.default_date ? '' : 'None') + '</select>' +
+          '<div class="rx-help">Set per table on Dates; a metric can use another.</div></div>' : '') +
+        '<div class="rx-f"><span class="lab">Always leave out rows where</span>' + d.fixed.map(function (r, i) {
+          return '<div class="rx-rule rx-fixed"><span>Keeps only rows where ' + esc(r.text) + '</span><button type="button" class="rx-x" data-unfix="' + i +
+            '" aria-label="Remove this rule">✕</button></div>'; }).join('') + '<div id="rx-rules">' +
+        d.leaves_out.map(function (r, i) { return ruleRow(t.key, r, i, OUT_OPS); }).join('') + '</div>' +
+        '<button type="button" class="rx-addl" id="rx-add-rule">+ Add a rule</button>' +
+        (d.leaves_out.length || d.fixed.length ? '<label class="rx-scope"><input type="checkbox" id="rx-may"' + (d.readers_may_include ? ' checked' : '') +
+          '> A reader can still ask for them: ' + esc(asked()) + '</label>' : '') + '</div>' +
+        '<div id="rx-checked">' + checkCard() + '</div><p class="rx-error" id="rx-error" role="alert"></p></div>' +
+        '<div class="ed-foot"><button type="button" class="btn btn-primary" id="rx-save">Save table</button>' +
+        '<button type="button" class="btn btn-secondary" id="rx-cancel">Cancel</button></div>';
+      side.innerHTML = html; wire();
+    }
+    function compact(v) {
+      var a = Math.abs(v), s = v < 0 ? '−' : '';
+      return s + (a >= 1e9 ? (a / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e3 ? (a / 1e3).toFixed(1) + 'K' : a.toFixed(0));
+    }
+    function checkCard() {
+      if (!kept().length) return '';
+      if (!result) return '<div class="rx-check wait"><div class="hd"><b>Checking against the data…</b></div></div>';
+      if (!result.ok || result.problem) return '<div class="rx-check bad"><div class="hd"><b>Could not check</b></div><div class="rx-help">' + esc(result.error || result.problem) + '</div></div>';
+      var amount = result.amount == null ? '—' : (result.format === 'currency' ? '$' : '') + compact(result.amount);
+      return '<div class="rx-check"><div class="hd"><b>Checked against the data</b><span>just now</span></div><div class="rx-stats">' +
+        '<div><b>' + num(result.left_out) + '</b><span>rows left out' + (result.rows ? ' (' + pct(result.left_out / result.rows) + ')' : '') + '</span></div>' +
+        '<div><b>' + esc(amount) + '</b><span>' + esc(result.measure ? lower(result.measure) + ' left out' + (result.year ? ', ' + result.year : '') : 'no amount on this table') + '</span></div>' +
+        '<div><b>' + num(result.metrics) + '</b><span>metrics affected</span></div></div>' +
+        (result.says ? '<div class="rx-help">Answers say so: “' + esc(result.says) + '”</div>' : '') + '</div>';
+    }
+    function showCheck() { var box = $('rx-checked'); if (box) box.innerHTML = checkCard(); }
+    function sync() {
+      d.name = $('rx-tname').value;
+      if ($('rx-kind')) d.kind = $('rx-kind').value;
+      if ($('rx-date')) d.default_date = $('rx-date').value;
+      d.leaves_out = readRules($('rx-rules'));
+      if ($('rx-may')) d.readers_may_include = $('rx-may').checked;
+    }
+    function recheck() {
+      result = null; showCheck();
+      var rules = kept();
+      if (!rules.length) return;
+      var run = ++checkRun;
+      later(function () { post('check-table', {table: t.key, leaves_out: rules}).then(function (r) { if (run !== checkRun) return; result = r; showCheck(); }); });
+    }
+    function wire() {
+      $('rx-close').addEventListener('click', closeEditor);
+      $('rx-cancel').addEventListener('click', closeEditor);
+      $('rx-add-rule').addEventListener('click', function () { sync(); d.leaves_out.push({column: '', op: 'eq', values: []}); paint(); });
+      side.querySelectorAll('[data-unfix]').forEach(function (b) {
+        b.addEventListener('click', function () { sync(); d.fixed.splice(+b.getAttribute('data-unfix'), 1); paint(); recheck(); });
+      });
+      if ($('rx-may')) $('rx-may').addEventListener('change', sync);
+      wireRules($('rx-rules'), d.leaves_out, function (redraw) {
+        if (redraw === undefined) return sync();
+        sync(); if (redraw) paint(); recheck();
+      });
+      $('rx-save').addEventListener('click', function () {
+        var b = this; sync(); b.setAttribute('aria-busy', 'true'); b.disabled = true;
+        post('save-table', {table: d.table, name: d.name, kind: d.kind, default_date: d.default_date,
+                            readers_may_include: d.readers_may_include,
+                            leaves_out: d.fixed.concat(d.leaves_out.filter(function (r) { return r.column; }).map(opposite))}).then(function (r) {
+          b.removeAttribute('aria-busy'); b.disabled = false;
+          if (!r.ok) { $('rx-error').textContent = r.error; return; }
+          reload('table', t.kind === 'calendar' ? state.centre : t.key);
+        });
+      });
+    }
+    paint(); recheck();
+  }
+
+  // ── the tools above ──
+  $('rx-new').addEventListener('click', function () { select('new'); side.scrollIntoView({block: 'nearest', behavior: 'smooth'}); });
+  $('rx-check-all').addEventListener('click', function () {
+    var b = this; b.setAttribute('aria-busy', 'true'); b.disabled = true;
+    post('check-all', {}).then(function (r) {
+      b.removeAttribute('aria-busy'); b.disabled = false;
+      var s = $('rx-saved');
+      if (!r.ok) { s.className = 'alert alert-error'; s.textContent = r.error; return; }
+      state.checked = r.joins; list();
+      var all = Object.keys(r.joins), twice = all.filter(function (k) { return r.joins[k].twice; }).length;
+      var low = all.filter(function (k) { return r.joins[k].match != null && r.joins[k].match < 0.9; }).length;
+      var failed = all.filter(function (k) { return r.joins[k].problem; }).length;
+      var parts = [];
+      if (twice) parts.push(twice + (twice === 1 ? ' join counts' : ' joins count') + ' some rows more than once');
+      if (low) parts.push(low + (low === 1 ? ' join matches' : ' joins match') + ' fewer than 90% of rows');
+      if (failed) parts.push(failed + (failed === 1 ? ' join' : ' joins') + ' could not be checked');
+      s.className = 'alert ' + (parts.length ? 'alert-amber' : 'alert-success');
+      s.textContent = 'Checked ' + all.length + ' joins against the data. ' + (parts.length ? parts.join('; ') + '.' : 'Every join matches as it should.');
+    });
+  });
+  $('rx-search').addEventListener('input', function () { state.search = this.value.trim().toLowerCase(); draw(); list(); });
   document.querySelectorAll('[data-filter]').forEach(function (b) {
     b.addEventListener('click', function () {
       state.filter = b.getAttribute('data-filter');
@@ -592,20 +802,26 @@
       draw(); list();
     });
   });
-  var layout = document.getElementById('rel-layout');
   function view(which) {
-    layout.classList.toggle('no-diagram', which === 'list');
+    $('rx-rel').classList.toggle('list-only', which === 'list');
     document.querySelectorAll('[data-view]').forEach(function (o) { o.setAttribute('aria-pressed', o.getAttribute('data-view') === which ? 'true' : 'false'); });
-    if (which === 'diagram') draw();
   }
   document.querySelectorAll('[data-view]').forEach(function (b) { b.addEventListener('click', function () { view(b.getAttribute('data-view')); }); });
-  var saved = {link: 'Link saved. It applies from the next answer.', table: 'Table saved. It applies from the next answer.',
-               'turned-off': 'Link turned off. Questions no longer use it.', 'turned-on': 'Link turned on again.'}[params.get('saved')];
-  if (saved) { var s = document.getElementById('rel-saved'); s.className = 'alert alert-success'; s.textContent = saved; }
-  window.addEventListener('resize', function () { if (!layout.classList.contains('no-diagram')) draw(); });
-  list();
-  if (window.matchMedia('(max-width: 760px)').matches) view('list'); else draw();
-  if (params.get('saved') === 'table') select('table:' + state.centre);
+  var saved = {join: 'Join saved. It is used from the next answer.', table: 'Table saved. It is used from the next answer.',
+               deleted: 'Join deleted. Questions no longer use it; it stays in the list and can be turned on again.',
+               'turned-on': 'Join turned on again. It is used from the next answer.'}[params.get('saved')];
+  if (saved) { var s = $('rx-saved'); s.className = 'alert alert-success'; s.textContent = saved; }
+  var pick = params.get('pick') || '';
+  if (pick.indexOf('join:') === 0 && DATA.joins.some(function (j) { return j.key === pick.slice(5); })) state.selected = pick;
+  draw(); list(); render();
+  if (window.matchMedia('(max-width: 760px)').matches) view('list');
+  // A join's learned match was counted without the conditions an admin gave it since: count those again.
+  DATA.joins.filter(function (j) { return live(j) && j.conditions.length; }).forEach(function (j) {
+    post('check-link', {key: j.key, from: j.from, to: j.to, pairs: j.pairs, conditions: j.conditions, role: j.role,
+                        cardinality: j.cardinality, keep_unmatched: j.keep_unmatched}).then(function (r) {
+      if (r.ok && !r.problem) { state.checked[j.key] = {match: r.match, twice: r.twice}; list(); }
+    });
+  });
 })();
 </script>
 {% endif %}
