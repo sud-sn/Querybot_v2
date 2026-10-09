@@ -67,6 +67,15 @@ def coarse_format(spec: dict | None) -> str:
     return str(normalized.get("type") or "number")
 
 
+# A question is not a display instruction: "How much discount did we give in 2025, and what is it as a
+# percentage of gross amount?" was read as "format ... as a percentage" (from "give" and "as a
+# percentage") and refused for want of a result to format, before any engine saw it. A sentence that
+# starts by asking, and "a percentage of X" (a ratio, never a display format), are left to the engines.
+_ASKS = re.compile(r"^\s*(?:how|what|what's|which|who|whom|whose|why|when|where|did|does|do|is|are|was|were|"
+                   r"has|have|had)\b", re.I)
+_SHARE_OF = re.compile(r"(?:\bper\s*cent(?:age)?|\bpercent(?:age)?|%)\s+of\b", re.I)
+
+
 def parse_format_request(text: str) -> dict[str, Any] | None:
     """Parse common natural-language formatting requests without an LLM.
 
@@ -79,7 +88,11 @@ def parse_format_request(text: str) -> dict[str, Any] | None:
         r"\b(?:format|display|show|give|provide|present|return|output|change|convert|round|use|make)\b", lower
     ):
         return None
+    if _SHARE_OF.search(lower):
+        return None
     strong_format_verb = bool(re.search(r"\b(?:format|change|convert|round|use|make)\b", lower))
+    if not strong_format_verb and _ASKS.match(lower):
+        return None
     if not strong_format_verb and re.search(
         r"\b(?:contribution|ratio|average|aggregate|total|sum|count|group|filter|sort|top|bottom)\b",
         lower,
@@ -168,6 +181,8 @@ def parse_format_requests(text: str) -> list[dict[str, Any]]:
         clause = clause.replace("__QB_AND__", "and")
         candidate = clause
         if not re.match(r"^(?:format|display|show|give|provide|present|return|output|change|convert|round|use|make)\b", candidate, re.I):
+            if _ASKS.match(candidate):
+                continue          # "..., and what is it as a percentage?" asks; it does not instruct
             candidate = f"format {candidate}"
         request = parse_format_request(candidate)
         if request:
