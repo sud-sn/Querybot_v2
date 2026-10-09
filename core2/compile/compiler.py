@@ -13,7 +13,9 @@ Nothing here decides meaning: the resolver did. The compiler only spells it:
   quarters and years start in the model's fiscal month;
 * a snapshot is read on its last day in each period (and in each compared window);
 * two measure tables are aggregated separately and lined up on their groupings
-  with a null-safe full join;
+  with a null-safe full join; a measure over both (sales less refunds) is worked
+  out once they are lined up, from each table's own total;
+* a link's own conditions ("only the current customer row") are part of its join;
 * a comparison is two conditional aggregates over one scan, with the change and
   the change in percent computed beside them; a share is of the shown total;
 * one outer query sorts (nulls last everywhere, ties broken by the groupings) and
@@ -33,8 +35,8 @@ from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
 from core2.model import formula
-from core2.model.schema import AggExpr, MeasureExpr, OpExpr, SemanticModel, SqlExpr
-from core2.resolve.resolver import DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup
+from core2.model.schema import AggExpr, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr
+from core2.resolve.resolver import Combined, DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
 
@@ -103,7 +105,14 @@ class _Compiler:
         return table
 
     def on(self, j: Joined) -> exp.Expr:
-        return exp.and_(*[exp.EQ(this=self.col(left, lc), expression=self.col(j.alias, rc)) for left, lc, rc in j.on])
+        keys = [exp.EQ(this=self.col(left, lc), expression=self.col(j.alias, rc)) for left, lc, rc in j.on]
+        kept = [self.predicate(self.col(j.alias, column), op, list(values), column) for column, op, values in j.conds]
+        return exp.and_(*keys, *kept)
+
+    def at(self, part: Part, column_key: str) -> exp.Column:
+        """A column a measure reads: on the part's own table, or where the part reached its table."""
+        owner = self.model.columns[column_key].table
+        return self.col(part.reached.get(owner, part.alias) if owner != part.table else part.alias, column_key)
 
     # ── values ─────────────────────────────────────────────────────────────
     def literal(self, value: object, column_key: str | None = None) -> exp.Expression:
@@ -258,8 +267,8 @@ class _Compiler:
                 return exp.Sum(this=days)
             return exp.Min(this=days) if expr.agg == "min" else exp.Max(this=days)
         if isinstance(expr, AggExpr):
-            value: exp.Expression = self.col(part.alias, expr.column) if expr.column else _num(1)
-            conds = [self.predicate(self.col(part.alias, f.column), f.op, list(f.values), f.column)
+            value: exp.Expression = self.at(part, expr.column) if expr.column else _num(1)
+            conds = [self.predicate(self.at(part, f.column), f.op, list(f.values), f.column)
                      for f in expr.filters]
             if condition is not None:
                 conds.append(condition.copy())
@@ -280,18 +289,36 @@ class _Compiler:
             if len(expr.args) != 2:
                 raise CompileError(f"{expr.op} takes two measures")
             a, b = (self.aggregate(x, part, condition) for x in expr.args)
-            if expr.op == "ratio":
-                result: exp.Expression = D.div(_double(a), exp.Nullif(this=b, expression=_num(0)))
-            elif expr.op == "subtract":
-                result = D.sub(a, b)
-            elif expr.op == "add":
-                result = D.add(a, b)
-            else:
-                result = D.mul(a, b)
-            return D.mul(result, expr.scale) if expr.scale != 1 else result
+            return self.operate(expr, a, b)
         if isinstance(expr, SqlExpr):
             return self.formula(expr, part, condition)
         raise CompileError(f"cannot compile {type(expr).__name__}")
+
+    def operate(self, expr: OpExpr, a: exp.Expression, b: exp.Expression) -> exp.Expression:
+        if expr.op == "ratio":
+            result: exp.Expression = D.div(_double(a), exp.Nullif(this=b, expression=_num(0)))
+        elif expr.op == "subtract":
+            result = D.sub(a, b)
+        elif expr.op == "add":
+            result = D.add(a, b)
+        else:
+            result = D.mul(a, b)
+        return D.mul(result, expr.scale) if expr.scale != 1 else result
+
+    def combined(self, expr: MeasureExpr, alias: str, suffix: str) -> exp.Expression:
+        """A measure over several tables, from their totals lined up under ``alias``.
+
+        A table with no rows for a group adds nothing to it (a store with no returns
+        has refunds of 0), so its total counts as 0 there; a ratio over a 0 is empty.
+        """
+        if isinstance(expr, RefExpr):
+            return exp.Coalesce(this=self.out(alias, f"{expr.measure}{suffix}"), expressions=[_num(0)])
+        if isinstance(expr, OpExpr):
+            if len(expr.args) != 2:
+                raise CompileError(f"{expr.op} takes two measures")
+            a, b = (self.combined(x, alias, suffix) for x in expr.args)
+            return self.operate(expr, a, b)
+        raise CompileError(f"cannot combine {type(expr).__name__}")
 
     def formula(self, expr: SqlExpr, part: Part, condition: exp.Expr | None) -> exp.Expression:
         """An imported formula (core2.model.formula), written from its checked form: every column
@@ -300,10 +327,15 @@ class _Compiler:
         tree = formula.parse_stored(expr.sql)
         by_name = {self.model.columns[k].name.casefold(): k for k in expr.columns if k in self.model.columns}
         for column in list(tree.find_all(exp.Column)):
-            key = by_name.get(column.name.casefold())
-            if key is None:
-                raise CompileError(f"an imported formula reads {column.name}, which is not in the data any more")
-            column.replace(self.col(part.alias, key))
+            # An admin's formula names each field by its key (fields of two tables can share a name);
+            # an imported one by its own table's spelling.
+            key = column.name if column.name in expr.columns else by_name.get(column.name.casefold())
+            if key is None or key not in self.model.columns:
+                raise CompileError(f"a formula reads {column.name}, which is not in the data any more")
+            column.replace(self.at(part, key))
+        kept = [self.predicate(self.at(part, f.column), f.op, list(f.values), f.column) for f in expr.filters]
+        if kept:
+            condition = exp.and_(*kept, *([condition] if condition is not None else []))
         for agg in list(tree.find_all(*formula.AGGREGATES)):
             arg = agg.this
             if condition is not None:
@@ -355,6 +387,8 @@ class _Compiler:
             current = self.range_condition(part.date, self.q.window)
             prior = self.range_condition(part.date, self.q.compare)
         for m in part.measures:
+            if isinstance(m.expr, Combined):
+                raise CompileError(f"{m.label} is worked out over several tables, not in one")
             select = select.select(self.aggregate(m.expr, part, current).as_(self.name(m.name)))
             if prior is not None:
                 select = select.select(self.aggregate(m.expr, part, prior).as_(self.name(f"{m.name}_prior")))
@@ -410,6 +444,8 @@ class _Compiler:
         q = self.q
         selects = [self.part_select(p) for p in q.parts]
         body = selects[0] if len(selects) == 1 else self._line_up(selects)
+        if any(isinstance(m.expr, Combined) for m in q.measures):
+            body = self._combine(body)
 
         columns: list[OutColumn] = []
         for g in q.groups:
@@ -473,6 +509,17 @@ class _Compiler:
         check_references(sql, self.d)
         return Compiled(sql=sql, dialect=self.d, columns=columns, row_cap=cap)
 
+    def _combine(self, body: exp.Select) -> exp.Select:
+        """The groupings and every shown measure, those over several tables worked out from their parts."""
+        suffixes = ["", "_prior"] if self.q.compare is not None else [""]
+        level = exp.select(*[self.out("b", g.name) for g in self.q.groups])
+        for m in self.q.measures:
+            for suffix in suffixes:
+                value = self.combined(m.expr.expr, "b", suffix) if isinstance(m.expr, Combined) \
+                    else self.out("b", f"{m.name}{suffix}")
+                level = level.select(value.as_(self.name(f"{m.name}{suffix}")))
+        return level.from_(body.subquery(self.name("b")))
+
     def _line_up(self, selects: list[exp.Select]) -> exp.Select:
         """Each measure table aggregated on its own, then joined on the groupings (nulls matching nulls)."""
         names = [g.name for g in self.q.groups]
@@ -525,3 +572,10 @@ def check_references(sql: str, dialect: str) -> None:
 def compile_query(logical: Logical, model: SemanticModel, dialect: str) -> Compiled:
     """SQL for ``dialect`` (snowflake | tsql | oracle | duckdb), read back by the dialect before it is returned."""
     return _Compiler(logical, model, dialect).compile()
+
+
+def row_conditions(model: SemanticModel, dialect: str, alias: str, filters: list) -> list[exp.Expr]:
+    """Conditions on one table's rows (a link's, or a table's always-leave-out rules), written as
+    every query writes them: "not X" keeps the rows with no value."""
+    writer = _Compiler(None, model, dialect)  # type: ignore[arg-type] - conditions need no logical query
+    return [writer.predicate(writer.col(alias, f.column), f.op, list(f.values), f.column) for f in filters]

@@ -30,6 +30,7 @@ from core2.model.schema import (
     OpExpr,
     RefExpr,
     SemanticModel,
+    SqlExpr,
 )
 from core2.plan.ir import TIME_ATTRIBUTES, Duration, Filter, Plan
 from core2.resolve import paths as P
@@ -79,6 +80,16 @@ class Joined:
     on: list[tuple[str, str, str]]   # (left alias, left column key, right column key)
     kind: str = "left"
     what: str = ""
+    conds: list[tuple[str, str, list]] = field(default_factory=list)   # the link's own conditions on this table
+
+
+@dataclass
+class Combined:
+    """A measure over the rows of more than one table: each table's part is added up on its own
+    (hidden columns of their parts), and this formula is worked out over them once lined up.
+    Its ``RefExpr`` leaves name those columns."""
+
+    expr: MeasureExpr
 
 
 @dataclass
@@ -104,10 +115,11 @@ class DaysPred:
 class OutMeasure:
     name: str                # output column
     label: str
-    expr: MeasureExpr | DaysBetween   # column keys resolved against this part's base alias
+    expr: MeasureExpr | DaysBetween | Combined   # columns on other tables are read where the part reached them
     format: str
     measure: Measure | None
     semi: bool = False
+    hidden: bool = False     # one table's share of a combined measure: worked with, never shown
 
 
 @dataclass
@@ -143,6 +155,7 @@ class Part:
     date_ranges: list[tuple[DateUse, Range]] = field(default_factory=list)
     snapshot: bool = False
     distinct_only: bool = False
+    reached: dict[str, str] = field(default_factory=dict)   # table key -> alias, for columns a measure reads there
 
 
 @dataclass
@@ -331,7 +344,8 @@ class _PartBuilder:
                 self.part.joins.append(Joined(
                     alias=new, table=j.to_table,
                     on=[(alias, f, t) for f, t in zip(j.from_columns, j.to_columns)], kind="left",
-                    what=j.role or self.model.tables[j.to_table].business_name))
+                    what=j.role or self.model.tables[j.to_table].business_name,
+                    conds=[(c.column, c.op, list(c.values)) for c in j.conditions]))
                 self.by_path[walked] = new
             alias = self.by_path[walked]
         if path.joins:
@@ -390,10 +404,130 @@ def _with_filters(expr: MeasureExpr, filters: list[ColumnFilter]) -> MeasureExpr
     if not filters:
         return expr
     if isinstance(expr, AggExpr):
-        return AggExpr(agg=expr.agg, column=expr.column, filters=[*expr.filters, *filters])
+        return AggExpr(agg=expr.agg, column=expr.column, filters=[*expr.filters, *filters], table=expr.table)
     if isinstance(expr, OpExpr):
         return OpExpr(op=expr.op, args=[_with_filters(a, filters) for a in expr.args], scale=expr.scale)
+    if isinstance(expr, SqlExpr):
+        return SqlExpr(sql=expr.sql, columns=list(expr.columns), filters=[*expr.filters, *filters])
     return expr
+
+
+def _reaches(model: SemanticModel, start: str, goal: str) -> bool:
+    """Can rows of ``start`` read ``goal`` without being multiplied (a many-to-one path)?"""
+    try:
+        return P.best_path(model, start, goal) is not None
+    except P.Ambiguous:
+        return True          # reached; which way is asked when a question uses it
+
+
+def _unit_home(model: SemanticModel, base: str, unit: MeasureExpr) -> str:
+    """The table whose rows a part of a formula adds up.
+
+    Another measure is counted on its own table, and so is a count of a table's rows. A field
+    of a table of events or balances (a refund on the returns table) is added up on its own
+    rows; a field describing what the formula's rows are about (a product's unit cost on an
+    order line) is read on those rows, when they reach it without multiplying.
+    """
+    if isinstance(unit, RefExpr):
+        ref = model.measures.get(unit.measure)
+        if ref is None:
+            raise ResolveError("unknown", f"a measure refers to {unit.measure}, which is not in the data any more")
+        return ref.table
+    if isinstance(unit, AggExpr):
+        if unit.column is None:
+            return unit.table or base
+        own = model.columns[unit.column].table
+        if own == base or model.tables[own].kind in ("fact", "snapshot"):
+            return own
+        return base if _reaches(model, base, own) else own
+    if isinstance(unit, SqlExpr):
+        # A formula on each row: the table every other one it reads is reached from.
+        tables = list(dict.fromkeys(model.columns[c].table for c in unit.columns if c in model.columns))
+        if not tables or base in tables and all(t == base or _reaches(model, base, t) for t in tables):
+            return base
+        return next((t for t in tables if all(o == t or _reaches(model, t, o) for o in tables)), base)
+    return base
+
+
+def _homes(model: SemanticModel, base: str, expr: MeasureExpr, depth: int = 0) -> set[str]:
+    if depth > 5:
+        raise ResolveError("unsupported", "a measure refers to itself")
+    if isinstance(expr, OpExpr):
+        return {h for a in expr.args for h in _homes(model, base, a, depth + 1)}
+    if isinstance(expr, RefExpr):
+        ref = model.measures.get(expr.measure)
+        if ref is not None and isinstance(ref.expr, OpExpr):
+            inner = _homes(model, ref.table, ref.expr, depth + 1)
+            if len(inner) > 1:
+                return inner
+    return {_unit_home(model, base, expr)}
+
+
+@dataclass
+class _Composite:
+    """A measure whose formula adds up the rows of more than one table, split into one part per table."""
+
+    measure: Measure | None
+    label: str
+    format: str
+    tree: MeasureExpr                   # RefExpr("0"), RefExpr("1") ... in place of each component
+    items: list[tuple] = field(default_factory=list)    # one chosen item per component
+    names: list[str] = field(default_factory=list)      # each component's hidden output column, once named
+    at: int = 0                         # where it was asked, among the measures
+
+
+def _split(model: SemanticModel, base: str, expr: MeasureExpr, filters: list[ColumnFilter], label: str,
+           depth: int = 0) -> tuple[MeasureExpr, list[tuple[Measure | None, MeasureExpr, str, str]]]:
+    """``expr`` with each table's component replaced by a numbered reference, and the components.
+
+    A component is (the measure it is, when it is one; its expression with every filter that
+    applies; the table it is added up on; its label). A copy each time: a component is told
+    apart from the same measure asked on its own.
+    """
+    components: list[tuple[Measure | None, MeasureExpr, str, str]] = []
+
+    def walk(e: MeasureExpr, base_table: str, conds: list[ColumnFilter], level: int) -> MeasureExpr:
+        if level > 5:
+            raise ResolveError("unsupported", f"{label} refers to itself")
+        if isinstance(e, OpExpr):
+            return OpExpr(op=e.op, args=[walk(a, base_table, conds, level + 1) for a in e.args], scale=e.scale)
+        if isinstance(e, RefExpr):
+            ref = model.measures[e.measure]
+            if isinstance(ref.expr, OpExpr) and len(_homes(model, ref.table, ref.expr)) > 1:
+                return walk(ref.expr, ref.table, [*conds, *ref.filters], level + 1)
+            unit = _with_filters(_measure_expr(model, ref), [*ref.filters, *conds]).model_copy(deep=True)
+            component = (ref, unit, ref.table, f"{label}: {ref.business_name.lower()}")
+        else:
+            from core2.plan.catalog import definition
+
+            unit = _with_filters(e, conds).model_copy(deep=True)
+            component = (None, unit, _unit_home(model, base_table, e), f"{label}: {definition(model, e, False).lower()}")
+        # The same part twice (net amount over net amount less refunds) is added up once.
+        same = next((i for i, c in enumerate(components)
+                     if c[2] == component[2] and c[1].model_dump() == component[1].model_dump()), None)
+        if same is None:
+            components.append(component)
+            same = len(components) - 1
+        return RefExpr(measure=str(same))
+
+    return walk(expr, base, list(filters), depth), components
+
+
+def _named(tree: MeasureExpr, names: list[str]) -> MeasureExpr:
+    if isinstance(tree, OpExpr):
+        return OpExpr(op=tree.op, args=[_named(a, names) for a in tree.args], scale=tree.scale)
+    if isinstance(tree, RefExpr):
+        return RefExpr(measure=names[int(tree.measure)])
+    return tree
+
+
+def _expr_columns(expr: object) -> list[str]:
+    """Every column a measure's expression reads: what it adds up and what it filters on."""
+    if isinstance(expr, AggExpr):
+        return [c for c in [expr.column, *[f.column for f in expr.filters]] if c]
+    if isinstance(expr, SqlExpr):
+        return [*expr.columns, *[f.column for f in expr.filters]]
+    return [c for arg in getattr(expr, "args", []) for c in _expr_columns(arg)]
 
 
 def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure | None, table: str) -> DateRole | None:
@@ -536,6 +670,22 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     timed = bool(plan.time.grain) or plan.time.window.kind != "all" or plan.time.compare is not None or any(
         slug in TIME_ATTRIBUTES for slug in plan.group_by)
     conditions: list[Condition] = []
+    composites: list[_Composite] = []
+
+    def combine(measure: Measure | None, label: str, fmt: str, tree: MeasureExpr, base: str,
+                filters: list[ColumnFilter]) -> None:
+        split, components = _split(model, base, tree, filters, label)
+        composite = _Composite(measure, label, fmt, split, at=len(chosen))
+        for ref, unit, home, part_label in components:
+            item = (ref, unit, home, part_label, ref.format if ref else fmt)
+            composite.items.append(item)
+            chosen.append(item)
+        composite.names = [""] * len(components)
+        composites.append(composite)
+        tables = list(dict.fromkeys(model.tables[home].business_name for _, _, home, _ in components))
+        notes.append(f"{label} adds up {' and '.join(tables)} each on its own rows, then combines them, so no row "
+                     "is counted twice.")
+
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
         found = find_slug(model, slug)
         if not found or found[0] != "measure":
@@ -550,11 +700,15 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             notes.append(said)
             conditions.append(Condition("activity", model.tables[on].business_name.lower()))
             continue
-        chosen.append((m, expr, m.table, m.business_name, m.format))
+        homes = _homes(model, m.table, m.expr)
+        if len(homes) > 1:
+            combine(m, m.business_name, m.format, m.expr, m.table, m.filters)
+        else:
+            chosen.append((m, expr, homes.pop() if homes else m.table, m.business_name, m.format))
         if m.filters:
             notes.append(f"{m.business_name} counts only rows where " + "; ".join(
-                f"{model.columns[f.column].business_name} {f.op.replace('_', ' ')} {', '.join(map(str, f.values))}"
-                for f in m.filters))
+                f"{model.columns[f.column].business_name} {_op_words(f)}"
+                for f in m.filters) + ".")
         if m.kind == "proposed" or m.status == "proposed":
             notes.append(f"{m.business_name} is a proposed measure, not yet confirmed.")
     for d in plan.derived:
@@ -566,12 +720,16 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             operands.append(found[1])
         a, b = operands
         assert isinstance(a, Measure) and isinstance(b, Measure)
-        if a.table != b.table:
-            raise ResolveError("unsupported", f"{d.name} combines measures from two tables")
         op = {"ratio": "ratio", "difference": "subtract", "sum": "add", "product": "multiply"}[d.op]
-        expr = OpExpr(op=op, args=[_with_filters(_measure_expr(model, a), a.filters),  # type: ignore[arg-type]
-                                   _with_filters(_measure_expr(model, b), b.filters)], scale=d.scale)
-        chosen.append((None, expr, a.table, d.name, "percent" if d.scale == 100 else "number"))
+        fmt = "percent" if d.scale == 100 else "number"
+        if a.table != b.table:
+            # Each measure added up on its own table, then combined.
+            combine(None, d.name, fmt, OpExpr(op=op, args=[RefExpr(measure=a.key), RefExpr(measure=b.key)],
+                                              scale=d.scale), a.table, [])
+        else:
+            expr = OpExpr(op=op, args=[_with_filters(_measure_expr(model, a), a.filters),  # type: ignore[arg-type]
+                                       _with_filters(_measure_expr(model, b), b.filters)], scale=d.scale)
+            chosen.append((None, expr, a.table, d.name, fmt))
         sign = {"ratio": "÷", "difference": "−", "sum": "+", "product": "×"}[d.op]
         scaled = f" × {d.scale:g}" if d.scale != 1 else ""
         notes.append(f"{d.name} = {a.business_name} {sign} {b.business_name}{scaled}, worked out for this question "
@@ -691,6 +849,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
 
     parts: list[Part] = []
     measures_out: list[OutMeasure] = []
+    component_of = {id(item[1]): (c, i) for c in composites for i, item in enumerate(c.items)}
+    position: dict[int, int] = {}       # an output measure's place among those asked for
     for (builder, role), items in zip(builders, by_part.values()):
         part = builder.part
         if role is not None and (uses_time or part.snapshot):
@@ -700,15 +860,29 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         elif uses_time and role is None:
             raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
         for m, expr, table, label, fmt in items:
-            name = _output_name(m.slug if m else label, out_names)
+            component = component_of.get(id(expr))
+            if component is not None:
+                composite, index = component
+                stem = composite.measure.slug if composite.measure else composite.label
+                name = _output_name(f"{stem}_part_{index + 1}", out_names)
+                composite.names[index] = name
+            else:
+                name = _output_name(m.slug if m else label, out_names)
             spelled: MeasureExpr | DaysBetween = expr
             if isinstance(expr, _Days):
                 spelled = DaysBetween(expr.agg, builder.date(expr.start, kind="left"),
                                       builder.date(expr.end, kind="left"))
+            # Fields of the tables this one reaches without multiplying its rows (a customer's segment).
+            for column_key in _expr_columns(spelled):
+                owner = model.columns[column_key].table
+                if owner != part.table and owner not in part.reached:
+                    part.reached[owner] = builder.reach(owner, label=model.columns[column_key].business_name)
             out = OutMeasure(name=name, label=label, expr=spelled, format=fmt, measure=m,
-                             semi=bool(m and m.additivity == "semi_additive"))
+                             semi=bool(m and m.additivity == "semi_additive"), hidden=component is not None)
             part.measures.append(out)
-            measures_out.append(out)
+            if component is None:
+                measures_out.append(out)
+                position[id(out)] = next(i for i, item in enumerate(chosen) if item[1] is expr)
         for slug, attribute, time_attr in wanted:
             name = group_names[slug]
             if time_attr:
@@ -750,6 +924,14 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             notes.append(f"{model.tables[part.table].business_name}: rows for a whole year (month 00) are left "
                          "out; only months are counted.")
         parts.append(part)
+
+    # A measure over more than one table: its formula, over its parts once lined up, in the place it was asked.
+    for c in composites:
+        out = OutMeasure(name=_output_name(c.measure.slug if c.measure else c.label, out_names), label=c.label,
+                         expr=Combined(_named(c.tree, c.names)), format=c.format, measure=c.measure)
+        before = sum(1 for o in measures_out if position.get(id(o), -1) < c.at)
+        measures_out.insert(before, out)
+        position[id(out)] = c.at
 
     # Filters: attributes, other dates, totals.
     having: list[Pred] = []
@@ -850,7 +1032,15 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         for df in owner.default_filters:
             builder.part.preds.append(Pred(builder.part.alias, df.column, df.op, list(df.values)))
             notes.append(f"{owner.business_name}: {model.columns[df.column].business_name} "
-                         f"{df.op.replace('_', ' ')} {', '.join(map(str, df.values))} (a default filter).")
+                         f"{_op_words(df)} (a default filter).")
+
+    # Links an admin keeps to some rows of the table they reach.
+    for builder, _ in builders:
+        for j in builder.part.joins:
+            for column, op, values in j.conds:
+                notes.append(f"{j.what}: only rows where {model.columns[column].business_name} "
+                             f"{_op_words(ColumnFilter(column=column, op=op, values=values))} are matched (a condition "
+                             "on the link); other rows show as Unknown.")
 
     # How it was answered, in words.
     for builder, role in builders:
@@ -1120,7 +1310,7 @@ def _date_filter_range(f: Filter, values: list[dt.date]) -> Range:
     raise ResolveError("unsupported", f"a date filter with {f.op} is not supported")
 
 
-def _op_words(f: Filter) -> str:
+def _op_words(f: Filter | ColumnFilter) -> str:
     values = ", ".join(str(v) for v in f.values)
     return {"eq": f"is {values}", "in": f"is {values}", "ne": f"is not {values}", "not_in": f"is not {values}",
             "gt": f"above {values}", "gte": f"at least {values}", "lt": f"below {values}", "lte": f"at most {values}",

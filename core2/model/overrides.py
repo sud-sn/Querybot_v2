@@ -11,16 +11,16 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from core2.model.schema import AggExpr, Join, Measure, SemanticModel
+from core2.model.schema import AggExpr, Join, Measure, RefExpr, SemanticModel, SqlExpr
 
 # What an admin may change, per kind of object. Everything else is the data's call.
 ALLOWED = {
     "table": {"business_name", "description", "kind", "default_date", "hidden", "default_filters"},
     "column": {"business_name", "description", "role", "format", "unit", "synonyms", "hidden", "sensitivity"},
-    "join": {"trust", "role"},
+    "join": {"trust", "role", "conditions"},
     "date_role": {"name", "kind", "is_default", "synonyms"},
     "measure": {"business_name", "description", "synonyms", "additivity", "time_aggregation", "format", "hidden",
-                "filters", "default_date"},
+                "filters", "default_date", "expr", "table"},
     "entity": {"business_name", "label_column", "code_column", "synonyms"},
     "attribute": {"business_name", "synonyms"},
     "settings": {"fiscal_year_start_month"},      # one object: settings:workspace
@@ -68,9 +68,9 @@ def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str])
         return
     if isinstance(obj, Join):
         known = obj.from_table in model.tables and obj.to_table in model.tables and all(
-            c in model.columns for c in [*obj.from_columns, *obj.to_columns])
+            c in model.columns for c in [*obj.from_columns, *obj.to_columns]) and not _stray_conditions(model, obj)
     else:
-        known = obj.table in model.tables and all(c in model.columns for c in _columns_of(obj.expr))
+        known = obj.table in model.tables and not _unknown_parts(model, obj.expr, obj.filters)
         if obj.default_date not in model.date_roles:
             obj.default_date = None       # a date no longer learned: counted by its table's default
         taken = {m.slug for m in model.measures.values()}
@@ -88,7 +88,31 @@ def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str])
 def _columns_of(expr: Any) -> list[str]:
     if isinstance(expr, AggExpr):
         return [c for c in [expr.column, *[f.column for f in expr.filters]] if c]
+    if isinstance(expr, SqlExpr):
+        return [*expr.columns, *[f.column for f in expr.filters]]
     return [c for arg in getattr(expr, "args", []) for c in _columns_of(arg)]
+
+
+def _unknown_parts(model: SemanticModel, expr: Any, filters: list[Any]) -> list[str]:
+    """What a measure's definition reads that the model does not have: columns, tables, other measures."""
+    missing = [c for c in [*_columns_of(expr), *[f.column for f in filters]] if c not in model.columns]
+
+    def walk(e: Any) -> None:
+        if isinstance(e, AggExpr) and e.table and e.table not in model.tables:
+            missing.append(e.table)
+        if isinstance(e, RefExpr) and e.measure not in model.measures:
+            missing.append(e.measure)
+        for arg in getattr(e, "args", []):
+            walk(arg)
+
+    walk(expr)
+    return missing
+
+
+def _stray_conditions(model: SemanticModel, join: Join) -> list[str]:
+    """Conditions of a link that are not on the table it reaches (or on no column at all)."""
+    return [f.column for f in join.conditions
+            if f.column not in model.columns or model.columns[f.column].table != join.to_table]
 
 
 def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> list[str]:
@@ -133,6 +157,14 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
                 validated = type(obj).model_validate({**obj.model_dump(), field: value})
             except ValidationError:
                 notes.append(f"A decision sets {field} on {key} to a value it cannot take ({value!r}).")
+                continue
+            if isinstance(validated, Join) and field == "conditions" and _stray_conditions(model, validated):
+                notes.append(f"A decision keeps rows of {key} by a column that is not on the table it reaches.")
+                continue
+            if isinstance(validated, Measure) and field in ("expr", "filters", "table") and (
+                    validated.table not in model.tables or _unknown_parts(model, validated.expr, validated.filters)):
+                notes.append(f"A decision changes how {key} is counted, but it reads columns or measures that are "
+                             "not in the data any more.")
                 continue
             setattr(obj, field, getattr(validated, field))
             if kind == "measure" and field == "additivity":

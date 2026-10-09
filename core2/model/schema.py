@@ -177,6 +177,9 @@ class Join(Belief):
     role: str | None = None         # business name when the same tables join more than one way
     trust: JoinTrust = "proposed"
     to_calendar: bool = False       # the target is a calendar: used only as a date role
+    # Rows of the target the link keeps, an admin's: "only the customer's current row".
+    # Written into the join itself, so a row with no kept match shows as Unknown, never dropped.
+    conditions: list[ColumnFilter] = Field(default_factory=list)
 
 
 class Calendar(_Data):
@@ -220,6 +223,7 @@ class AggExpr(_Data):
     agg: Literal["sum", "count", "count_distinct", "avg", "min", "max"]
     column: str | None = None       # None with count = count rows
     filters: list[ColumnFilter] = Field(default_factory=list)
+    table: str | None = None        # whose rows a count with no column counts; None = the measure's own table
 
 
 class OpExpr(_Data):
@@ -237,6 +241,7 @@ class SqlExpr(_Data):
 
     sql: str
     columns: list[str] = Field(default_factory=list)
+    filters: list[ColumnFilter] = Field(default_factory=list)   # rows each of its aggregates counts
 
 
 MeasureExpr = Annotated[Union[AggExpr, OpExpr, RefExpr, SqlExpr], Field(union_mode="left_to_right")]
