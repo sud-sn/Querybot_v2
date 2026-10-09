@@ -36,7 +36,7 @@ _NAV_EXPECTATIONS = [
     ("setup",           "Data",       "Setup"),
     ("learned",         "Data",       "What QueryBot Learned"),
     ("kb",              "Data",       "Knowledge Base"),
-    ("graph",           "Data",       "Relationships"),
+    ("relationships",   "Data",       "Relationships"),
     ("date-roles",      "Data",       "Dates"),
     ("metrics",         "Data",       "Metrics"),
     ("queries",         "Questions",  "Questions"),
@@ -50,6 +50,7 @@ _NAV_EXPECTATIONS = [
     ("settings",        "Settings",   None),
     # Diagnostics, for support, reached from the foot of Settings.
     ("diagnostics",     "Settings",   "Diagnostics"),
+    ("graph",           "Settings",   "Entity Graph"),
     ("model-health",    "Settings",   "Model Health"),
     ("evals",           "Settings",   "Evaluations"),
     ("traces",          "Settings",   "Timing"),

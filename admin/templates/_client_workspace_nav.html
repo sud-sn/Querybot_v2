@@ -19,7 +19,7 @@
 {% set _seg  = _tail.split('/')[0] if _tail else '' %}
 
 {% set _is_overview   = (_seg == '') %}
-{% set _is_data       = _seg in ['setup', 'learned', 'kb', 'graph', 'date-roles', 'metrics'] %}
+{% set _is_data       = _seg in ['setup', 'learned', 'kb', 'relationships', 'date-roles', 'metrics'] %}
 {% set _is_questions  = _seg in ['queries', 'learning-queue', 'billing'] %}
 {% set _is_people     = _seg in ['users', 'groups', 'pending-users'] %}
 {% set _is_compliance = _seg in ['compliance', 'egress'] %}
@@ -27,7 +27,7 @@
    editors and the developer tooling for its compiler. Nothing here is in the
    workspace's day-to-day navigation; the pages are deleted once every
    workspace answers with the new core. #}
-{% set _is_diagnostics = _seg in ['diagnostics', 'model-health', 'evals', 'traces', 'readiness', 'drafts',
+{% set _is_diagnostics = _seg in ['diagnostics', 'graph', 'model-health', 'evals', 'traces', 'readiness', 'drafts',
                                   'mapping', 'glossary', 'meanings', 'domains', 'reports'] %}
 {% set _is_settings   = _seg in ['settings', 'advanced'] or _is_diagnostics %}
 
@@ -58,7 +58,7 @@
     <a href="{{ _b }}/setup" class="{% if _seg == 'setup' %}active{% endif %}" {% if _seg == 'setup' %}aria-current="page"{% endif %}>Setup</a>
     <a href="{{ _b }}/learned" class="{% if _seg == 'learned' %}active{% endif %}" {% if _seg == 'learned' %}aria-current="page"{% endif %}>What QueryBot Learned</a>
     <a href="{{ _b }}/kb" class="{% if _seg == 'kb' %}active{% endif %}" {% if _seg == 'kb' %}aria-current="page"{% endif %}>Knowledge Base</a>
-    <a href="{{ _b }}/graph" class="{% if _seg == 'graph' %}active{% endif %}" {% if _seg == 'graph' %}aria-current="page"{% endif %}>Relationships</a>
+    <a href="{{ _b }}/relationships" class="{% if _seg == 'relationships' %}active{% endif %}" {% if _seg == 'relationships' %}aria-current="page"{% endif %}>Relationships</a>
     <a href="{{ _b }}/date-roles" class="{% if _seg == 'date-roles' %}active{% endif %}" {% if _seg == 'date-roles' %}aria-current="page"{% endif %}>Dates</a>
     <a href="{{ _b }}/metrics" class="{% if _seg == 'metrics' %}active{% endif %}" {% if _seg == 'metrics' %}aria-current="page"{% endif %}>Metrics</a>
   </nav>
@@ -84,7 +84,7 @@
      menu, so eleven tabs would only overflow. #}
   <nav class="client-workspace-secondary" aria-label="Diagnostics, for support">
     <a href="{{ _b }}/diagnostics" class="{% if _seg == 'diagnostics' %}active{% endif %}" {% if _seg == 'diagnostics' %}aria-current="page"{% endif %}>Diagnostics</a>
-    {% for seg, label in [('model-health', 'Model Health'), ('evals', 'Evaluations'), ('traces', 'Timing'),
+    {% for seg, label in [('graph', 'Entity Graph'), ('model-health', 'Model Health'), ('evals', 'Evaluations'), ('traces', 'Timing'),
                           ('readiness', 'What To Model Next'), ('drafts', 'Drafted For Review'),
                           ('mapping', 'Source Mapping'), ('glossary', 'Glossary'), ('meanings', 'Business Meanings'),
                           ('domains', 'Subject Areas'), ('reports', 'Reports')] if seg == _seg %}

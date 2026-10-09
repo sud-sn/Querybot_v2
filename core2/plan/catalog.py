@@ -31,8 +31,9 @@ def definition(model: SemanticModel, expr: MeasureExpr, values: bool = True) -> 
     text values are not written: "where Status is not (a value)".
     """
     if isinstance(expr, AggExpr):
-        target = model.columns[expr.column].business_name if expr.column else "rows"
-        head = {"sum": f"sum of {target}", "count": f"number of {target}" if expr.column else "number of rows",
+        target = model.columns[expr.column].business_name if expr.column else (
+            f"{model.tables[expr.table].business_name} rows" if expr.table in model.tables else "rows")
+        head = {"sum": f"sum of {target}", "count": f"number of {target}",
                 "count_distinct": f"number of distinct {target}", "avg": f"average of {target}",
                 "min": f"smallest {target}", "max": f"largest {target}"}[expr.agg]
         if expr.filters:

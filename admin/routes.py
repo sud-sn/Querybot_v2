@@ -2386,6 +2386,7 @@ async def client_advanced_page(request: Request, account_id: str):
 # editors and the developer tooling for its compiler, kept reachable but out of
 # the workspace's navigation until every workspace answers with the new core.
 _DIAGNOSTIC_PAGES = (
+    ("graph", "Entity Graph", "Joins and entities as the earlier pipeline reads them."),
     ("model-health", "Model Health", "The semantic compiler's warnings, conflict inbox and versions."),
     ("evals", "Evaluations", "Golden questions run against today's pipeline."),
     ("traces", "Timing", "How long each step of a question took."),
@@ -12857,3 +12858,4 @@ async def mapping_download_terms(request: Request, account_id: str):
 # Its pages live in admin/core2_routes.py, which registers them on this router
 # when imported here, like every other admin page.
 from admin import core2_routes as _core2_routes  # noqa: E402,F401
+from admin import core2_relationships as _core2_relationships  # noqa: E402,F401
