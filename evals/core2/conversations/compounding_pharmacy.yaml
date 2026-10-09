@@ -1,0 +1,76 @@
+# Follow-up or new question, compounding pharmacy (see evals/core2/followup_eval.py for the labels).
+domain: compounding_pharmacy
+today: 2026-06-15
+threads:
+  - id: c01
+    turns:
+      - {q: "Fills by month this year"}
+      - {q: "by payer type", label: refine, kind: drill, keeps: [measures, window]}
+      - {q: "only Medicaid", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "and price charged", label: refine, kind: add_measure, keeps: [measures, group_by, filters, window]}
+      - {q: "compare with last year", label: refine, kind: compare, keeps: [measures, filters]}
+      - {q: "Which prescribers wrote the most prescriptions last quarter?", label: new, kind: switch, drops: [filters]}
+  - id: c02
+    turns:
+      - {q: "Paid amount by payer last month"}
+      - {q: "and billed amount", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "paid as a percent of billed", label: refine, kind: measure, keeps: [group_by, window]}
+      - {q: "the lowest one, by month this year", label: refine, kind: reference}
+      - {q: "Rejected claims by reject code this year", label: new, kind: switch, drops: [filters]}
+      - {q: "only Harborview Mutual", label: refine, kind: filter, keeps: [measures, group_by, window]}
+  - id: c03
+    turns:
+      - {q: "Batches compounded by dosage form in May"}
+      - {q: "and waste quantity", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "only capsules", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by technician", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "top 5", label: refine, kind: topn, keeps: [measures, group_by, filters, window]}
+      - {q: "Average potency by formula for potency tests this year", label: new, kind: switch, drops: [filters]}
+  - id: c04
+    turns:
+      - {q: "Prescriptions by prescriber specialty this year"}
+      - {q: "Veterinary only, by prescriber", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "top 10", label: refine, kind: topn, keeps: [measures, filters, window]}
+      - {q: "the first one, by month", label: refine, kind: reference, keeps: [measures, window]}
+      - {q: "Quantity dispensed by route last month", label: new, kind: switch, drops: [filters]}
+      - {q: "How many fills?", label: unclear, kind: bare}
+  - id: c05
+    turns:
+      - {q: "Quality tests by result this quarter"}
+      - {q: "failures by formula", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "last quarter instead", label: refine, kind: period, keeps: [measures, group_by, filters]}
+      - {q: "why did failures rise?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "On-hand quantity by ingredient at the latest snapshot", label: new, kind: switch, drops: [filters]}
+      - {q: "only ingredients measured in grams", label: refine, kind: filter, keeps: [measures, group_by]}
+  - id: c06
+    turns:
+      - {q: "Copay amount by patient state this year"}
+      - {q: "excluding NY", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "by payer instead", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "as a share", label: refine, kind: share, keeps: [measures, group_by, filters, window]}
+      - {q: "Price charged by pharmacist last month", label: new, kind: switch, drops: [filters]}
+      - {q: "and fills for each", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+  - id: c07
+    turns:
+      - {q: "Ingredient cost by month for the last 12 months"}
+      - {q: "for Gabapentin 0.5% Suspension", label: refine, kind: filter, keeps: [measures, group_by, window]}
+      - {q: "and Ketoprofen 0.5% Suspension", label: refine, kind: filter, keeps: [measures, group_by, window]}
+      - {q: "forecast 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
+      - {q: "Pending claims by payer", label: new, kind: switch, drops: [filters, window]}
+      - {q: "What is the total paid amount?", label: unclear, kind: bare}
+  - id: c08
+    turns:
+      - {q: "Average yield by formula last quarter"}
+      - {q: "lowest first", label: refine, kind: sort, keeps: [measures, group_by, window]}
+      - {q: "the first one, by month this year", label: refine, kind: reference, keeps: [measures]}
+      - {q: "and batch size", label: refine, kind: add_measure, keeps: [measures, filters]}
+      - {q: "Which prescribers work at Ashford Clinic 1?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "and how many prescriptions did they write this year?", label: refine, kind: measure, keeps: [filters]}
+  - id: c09
+    turns:
+      - {q: "Fills by payer this year"}
+      - {q: "Batches compounded by formula last month", label: new, kind: switch, drops: [group_by]}
+      - {q: "Which prescribers specialise in Endocrinology?", label: new, kind: switch, drops: [group_by, window]}
+      - {q: "Claims by status in 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "Waste quantity by week this quarter", label: new, kind: switch, drops: [filters, group_by]}
+      - {q: "Average potency of capsule batches this year", label: new, kind: switch, drops: [filters, group_by]}

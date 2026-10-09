@@ -11,6 +11,13 @@ evals/core2/
   learn_eval.py      level 1: the learned model against the ground truth
   compile_eval.py    level 2: golden plans -> SQL -> rows, against the reference SQL
   plan_eval.py       level 3: golden questions -> a real AI -> rows (recorded for replay)
+  benchmark.py       accuracy of joins, metrics and dates: right with no input, sent to review,
+                     right among what is not sent to review (target 85% / 15% / 95%)
+  public.py          public sample warehouses (Chinook, Northwind, Sakila): fetched, hash-checked,
+                     cached outside the repository, with hand-written truth
+  conversations/<name>.yaml   hand-labelled conversations: each turn a follow-up, a new question
+                     or honestly unclear
+  followup_eval.py   follow-up or new: the conversations through a real AI (recorded for replay)
 ```
 
 ```
@@ -23,6 +30,25 @@ python -m evals.core2.plan_eval retail --replay evals/core2/recorded/retail.<dep
 
 Levels 1 and 2 run in CI (`tests/test_core2_*`); level 3 needs a provider and is
 run on demand. The synthetic warehouses hold no customer data.
+
+## The accuracy benchmark
+
+```
+python -m evals.core2.public fetch                      # once: the public warehouses, into ~/.cache/querybot/benchmark
+python -m evals.core2.benchmark                         # every domain and style, ~30 seconds
+python -m evals.core2.benchmark --domains networking --styles generic --misses --json out.json
+QUERYBOT_EVAL_API_KEY=... python -m evals.core2.followup_eval --provider azure_openai --model <deployment> \
+    --endpoint https://<resource>.openai.azure.com
+python -m evals.core2.followup_eval --replay evals/core2/recorded/followups.<deployment>.json
+```
+
+The domains in `domains.DOMAINS` are gated by `learn_eval` in CI. The ones in
+`domains.BENCHMARK` (compounding pharmacy, networking) and the public warehouses
+plant what the learner is known to miss today, so they are measured, never gated;
+a domain moves into `DOMAINS` once the learner passes it. `baselines/phase0.json`
+holds the numbers before any of the accuracy work (Phase 0), every miss listed. Every link, metric and
+date of a domain's truth counts once; a link or metric the learner invents counts
+against it; what it sends to an admin counts as review, not as right.
 
 Every domain is written once with descriptive names and rendered in each style
 (`descriptive`, `warehouse`, `pascal`, `generic`). The ground truth and the

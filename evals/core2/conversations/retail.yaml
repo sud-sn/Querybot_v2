@@ -1,0 +1,76 @@
+# Follow-up or new question, retail (see evals/core2/followup_eval.py for the labels).
+domain: retail
+today: 2026-06-15
+threads:
+  - id: r01
+    turns:
+      - {q: "Net sales by region last month"}
+      - {q: "only North", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "and by store instead of region", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "show that as a bar chart", label: refine, kind: chart, keeps: [measures, group_by, filters, window]}
+      - {q: "which store was lowest?", label: refine, kind: sort, keeps: [measures, filters, window]}
+      - {q: "How many customers do we have in each segment?", label: new, kind: switch, drops: [filters, window]}
+  - id: r02
+    turns:
+      - {q: "Monthly net sales trend for 2025"}
+      - {q: "by week instead", label: refine, kind: grain, keeps: [measures, window]}
+      - {q: "just for Beverages", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "compare with the year before", label: refine, kind: compare, keeps: [measures, filters]}
+      - {q: "why did it drop in March?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "What were refunds by return reason last quarter?", label: new, kind: switch, drops: [filters]}
+  - id: r03
+    turns:
+      - {q: "Top 10 products by gross sales this year"}
+      - {q: "just the top 5", label: refine, kind: topn, keeps: [measures, group_by, window]}
+      - {q: "the first one, by month", label: refine, kind: reference, keeps: [measures, window]}
+      - {q: "what about quantity?", label: refine, kind: measure, keeps: [group_by, filters, window]}
+      - {q: "Gross sales by category for 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "How many orders?", label: unclear, kind: bare}
+  - id: r04
+    turns:
+      - {q: "Discount by store in Q1 2026"}
+      - {q: "exclude the Airport Store", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters, window]}
+      - {q: "and gross sales next to it", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "What is our average margin % by category?", label: new, kind: switch, drops: [filters]}
+      - {q: "lowest first", label: refine, kind: sort, keeps: [measures, group_by]}
+  - id: r05
+    turns:
+      - {q: "Returned quantity by product category this year"}
+      - {q: "and refunds", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "only Household", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "break that down by product", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "sort lowest first", label: refine, kind: sort, keeps: [measures, group_by, filters, window]}
+      - {q: "What's the sales target for each store in 2026?", label: new, kind: switch, drops: [filters]}
+  - id: r06
+    turns:
+      - {q: "Net sales in the North region in March 2026"}
+      - {q: "and in April?", label: refine, kind: period, keeps: [measures, filters]}
+      - {q: "what about the South?", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by store", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "forecast the next 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
+      - {q: "How many orders?", label: unclear, kind: bare}
+  - id: r07
+    turns:
+      - {q: "Cost by category last year"}
+      - {q: "vs net sales", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "as a pie", label: refine, kind: chart, keeps: [group_by, window]}
+      - {q: "Which customers bought the most Snacks in May?", label: new, kind: switch}
+      - {q: "and the least?", label: refine, kind: sort, keeps: [measures, filters, window]}
+      - {q: "the third one, how did they do each month this year?", label: refine, kind: reference, keeps: [measures]}
+  - id: r08
+    turns:
+      - {q: "Average unit price by category"}
+      - {q: "what data do you have about customers?", label: new, kind: describe}
+      - {q: "customers by segment", label: new, kind: switch}
+      - {q: "only Online", label: refine, kind: filter, keeps: [measures]}
+      - {q: "and how many of them bought this month?", label: refine, kind: period, keeps: [filters]}
+      - {q: "Net sales by store for 2025", label: new, kind: restate, drops: [filters]}
+  - id: r09
+    turns:
+      - {q: "Net sales by region this year"}
+      - {q: "Gross sales by category last quarter", label: new, kind: restate, drops: [group_by]}
+      - {q: "Which stores opened in 2025?", label: new, kind: switch, drops: [group_by]}
+      - {q: "Top 5 customers by net sales in May", label: new, kind: restate, drops: [filters]}
+      - {q: "Refunds by return reason this year", label: new, kind: switch, drops: [filters, group_by]}
+      - {q: "Average discount per order line last month", label: new, kind: switch, drops: [filters, group_by]}

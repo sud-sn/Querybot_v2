@@ -1,0 +1,76 @@
+# Follow-up or new question, HR (see evals/core2/followup_eval.py for the labels).
+domain: hr
+today: 2026-06-15
+threads:
+  - id: h01
+    turns:
+      - {q: "Headcount by department at the end of last month"}
+      - {q: "only Toronto", label: refine, kind: filter, keeps: [measures, group_by, window]}
+      - {q: "by job level instead", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "trend over the last 12 months", label: refine, kind: grain, keeps: [measures, filters]}
+      - {q: "why did it drop in March?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "Overtime hours by location this year", label: new, kind: switch, drops: [filters]}
+  - id: h02
+    turns:
+      - {q: "Gross pay by month this year"}
+      - {q: "and net pay", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "for Sales & Marketing", label: refine, kind: filter, keeps: [group_by, window]}
+      - {q: "compare with last year", label: refine, kind: compare, keeps: [filters]}
+      - {q: "as a line", label: refine, kind: chart, keeps: [filters]}
+      - {q: "How many employees were hired in 2025?", label: new, kind: switch, drops: [filters]}
+  - id: h03
+    turns:
+      - {q: "How many employees were hired each month in 2025?"}
+      - {q: "by department", label: refine, kind: drill, keeps: [measures, window]}
+      - {q: "only full-time", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "and how many left?", label: refine, kind: measure, keeps: [filters, window]}
+      - {q: "What was our attrition rate by department over the last 12 months?", label: new, kind: switch}
+      - {q: "Average monthly salary by job level", label: new, kind: switch, drops: [filters]}
+  - id: h04
+    turns:
+      - {q: "FTE by location at the end of May 2026"}
+      - {q: "Canada only", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "compare with May 2025", label: refine, kind: compare, keeps: [measures, group_by, filters]}
+      - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters]}
+      - {q: "the largest one, by department", label: refine, kind: reference, keeps: [measures]}
+      - {q: "How many people?", label: unclear, kind: bare}
+  - id: h05
+    turns:
+      - {q: "Overtime hours by department last quarter"}
+      - {q: "top 3", label: refine, kind: topn, keeps: [measures, group_by, window]}
+      - {q: "the first one, by employee", label: refine, kind: reference, keeps: [measures, window]}
+      - {q: "and their gross pay", label: refine, kind: add_measure, keeps: [measures, group_by, filters, window]}
+      - {q: "Tax withheld by month for 2026", label: new, kind: restate, drops: [filters]}
+      - {q: "forecast it for the next 6 months", label: refine, kind: forecast, keeps: [measures]}
+  - id: h06
+    turns:
+      - {q: "Payroll lines per pay date in May"}
+      - {q: "by location", label: refine, kind: regroup, keeps: [measures, window]}
+      - {q: "excluding contractors", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "How many employees are at job level L5?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "in Montreal", label: refine, kind: filter, keeps: [filters]}
+      - {q: "and Vancouver", label: refine, kind: filter, keeps: [measures]}
+  - id: h07
+    turns:
+      - {q: "Total monthly salary by department at the end of last month"}
+      - {q: "average instead of total", label: refine, kind: measure, keeps: [group_by, window]}
+      - {q: "by location too", label: refine, kind: drill, keeps: [window]}
+      - {q: "only People & Culture", label: refine, kind: filter, keeps: [window]}
+      - {q: "sort by salary", label: refine, kind: sort, keeps: [filters, window]}
+      - {q: "Which managers have the most direct reports?", label: new, kind: switch, drops: [filters, window]}
+  - id: h08
+    turns:
+      - {q: "Headcount at the end of each month this year"}
+      - {q: "for Austin", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "and Toronto", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "what about FTE?", label: refine, kind: measure, keeps: [filters, window]}
+      - {q: "Net pay by department last month", label: new, kind: restate, drops: [filters]}
+      - {q: "What is total gross pay?", label: unclear, kind: bare}
+  - id: h09
+    turns:
+      - {q: "Headcount by location at the end of last month"}
+      - {q: "Gross pay by department in 2025", label: new, kind: switch, drops: [group_by, window]}
+      - {q: "Who was hired in Montreal this year?", label: new, kind: switch, drops: [group_by]}
+      - {q: "Overtime hours by week last quarter", label: new, kind: switch, drops: [filters]}
+      - {q: "FTE by employment type at the end of May", label: new, kind: restate, drops: [filters]}
+      - {q: "How many employees left the company in 2025?", label: new, kind: switch, drops: [filters, group_by]}

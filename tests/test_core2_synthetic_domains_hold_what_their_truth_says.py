@@ -5,7 +5,8 @@ support would grade a correct learner as wrong (or a wrong one as right). These
 checks run the truth against the rows themselves: keys are unique, every join's
 match rate agrees with the trust it is given, every date, measure and label
 column exists with the shape claimed, and every golden question's reference
-query runs and names only columns that exist.
+query runs and names only columns that exist. The benchmark-only domains are held to
+the same checks: the benchmark's numbers are only as true as their truth.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from evals.core2.naming import STYLES
 
 GOLDEN = Path(__file__).resolve().parent.parent / "evals" / "core2" / "golden"
 NAMES = domains.available()
+EVERY = NAMES + list(domains.BENCHMARK)
 _cache: dict[str, tuple[Domain, Built]] = {}
 
 
@@ -44,7 +46,7 @@ def _placeholders(domain: Domain) -> list:
     return list(cal.get("placeholders") or [])
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", EVERY)
 def test_every_style_loads_the_same_rows(name):
     domain, built = _descriptive(name)
     counts = {t.name: len(t.data) for t in domain.tables}
@@ -55,7 +57,7 @@ def test_every_style_loads_the_same_rows(name):
             assert got == n, (style, logical)
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", EVERY)
 def test_primary_keys_are_unique_and_complete(name):
     domain, built = _descriptive(name)
     for table, key in domain.truth.primary_keys.items():
@@ -66,22 +68,32 @@ def test_primary_keys_are_unique_and_complete(name):
         assert total == distinct and not nulls, (table, key)
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", EVERY)
 def test_each_join_matches_as_often_as_its_trust_says(name):
     domain, built = _descriptive(name)
     placeholders = _placeholders(domain)
     for j in domain.truth.joins:
-        assert _column_exists(domain, f"{j.from_table}.{j.from_column}"), j
-        assert _column_exists(domain, f"{j.to_table}.{j.to_column}"), j
+        for from_column, to_column in j.pairs():
+            assert _column_exists(domain, f"{j.from_table}.{from_column}"), j
+            assert _column_exists(domain, f"{j.to_table}.{to_column}"), j
+        to_key = ", ".join(f'"{t}"' for _, t in j.pairs())
         unique = built.con.execute(
-            f'SELECT COUNT(1) = COUNT(DISTINCT "{j.to_column}") FROM "{j.to_table}"').fetchone()[0]
-        assert unique, f"{j.to_table}.{j.to_column} is not unique"
+            f'SELECT COUNT(1) = COUNT(DISTINCT ({to_key})) FROM "{j.to_table}"').fetchone()[0]
+        assert unique, f"{j.to_table}.{to_key} is not unique"
+        if j.cast:
+            # stored as different types ('00042' against 42): the same key once both are read as numbers
+            kinds = {built.con.execute(f'SELECT typeof("{c}") FROM "{t}" LIMIT 1').fetchone()[0]
+                     for t, c in ((j.from_table, j.from_column), (j.to_table, j.to_column))}
+            assert len(kinds) == 2, (j, kinds)
+            on = " AND ".join(f'TRY_CAST(t."{t}" AS BIGINT) = TRY_CAST(f."{f}" AS BIGINT)' for f, t in j.pairs())
+        else:
+            on = " AND ".join(f't."{t}" = f."{f}"' for f, t in j.pairs())
         skip = ""
         if j.to_table == (domain.truth.calendar or {}).get("table") and placeholders:
             skip = f' AND f."{j.from_column}" NOT IN ({", ".join(repr(p) for p in placeholders)})'
         rows, matched = built.con.execute(
             f'SELECT COUNT(1), COUNT(t."{j.to_column}") FROM "{j.from_table}" f '
-            f'LEFT JOIN "{j.to_table}" t ON t."{j.to_column}" = f."{j.from_column}" '
+            f'LEFT JOIN "{j.to_table}" t ON {on} '
             f'WHERE f."{j.from_column}" IS NOT NULL{skip}').fetchone()
         rate = matched / rows if rows else 0.0
         if j.trust == "verified":
@@ -90,7 +102,7 @@ def test_each_join_matches_as_often_as_its_trust_says(name):
             assert 0.5 < rate < 0.99, (j, rate)
 
 
-@pytest.mark.parametrize("name", NAMES)
+@pytest.mark.parametrize("name", EVERY)
 def test_dates_measures_and_labels_point_at_real_columns(name):
     domain, built = _descriptive(name)
     truth = domain.truth

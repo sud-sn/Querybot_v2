@@ -1,0 +1,2470 @@
+{
+ "targets": {
+  "accuracy": 0.85,
+  "review_share": 0.15,
+  "auto_precision": 0.95
+ },
+ "summary": {
+  "overall": {
+   "joins": {
+    "accuracy": 0.852,
+    "review_share": 0.07531380753138076,
+    "auto_precision": 0.9638009049773756,
+    "items": 500
+   },
+   "metrics": {
+    "accuracy": 0.8056338028169014,
+    "review_share": 0.04510108864696734,
+    "auto_precision": 0.9036544850498339,
+    "items": 355
+   },
+   "dates": {
+    "accuracy": 0.7981927710843374,
+    "review_share": 0.21084337349397592,
+    "auto_precision": 0.816793893129771,
+    "items": 332
+   }
+  },
+  "by_style": {
+   "descriptive": {
+    "joins": {
+     "accuracy": 0.9426229508196722,
+     "review_share": 0.0,
+     "auto_precision": 0.9913793103448276,
+     "items": 122
+    },
+    "metrics": {
+     "accuracy": 0.8539325842696629,
+     "review_share": 0.024844720496894408,
+     "auto_precision": 0.925,
+     "items": 89
+    },
+    "dates": {
+     "accuracy": 0.8433734939759037,
+     "review_share": 0.14457831325301204,
+     "auto_precision": 0.8591549295774648,
+     "items": 83
+    }
+   },
+   "warehouse": {
+    "joins": {
+     "accuracy": 0.8870967741935484,
+     "review_share": 0.0,
+     "auto_precision": 0.9734513274336283,
+     "items": 124
+    },
+    "metrics": {
+     "accuracy": 0.8539325842696629,
+     "review_share": 0.031055900621118012,
+     "auto_precision": 0.9240506329113924,
+     "items": 89
+    },
+    "dates": {
+     "accuracy": 0.7590361445783133,
+     "review_share": 0.20481927710843373,
+     "auto_precision": 0.7727272727272727,
+     "items": 83
+    }
+   },
+   "pascal": {
+    "joins": {
+     "accuracy": 0.9426229508196722,
+     "review_share": 0.0,
+     "auto_precision": 0.9913793103448276,
+     "items": 122
+    },
+    "metrics": {
+     "accuracy": 0.8539325842696629,
+     "review_share": 0.024844720496894408,
+     "auto_precision": 0.925,
+     "items": 89
+    },
+    "dates": {
+     "accuracy": 0.8433734939759037,
+     "review_share": 0.14457831325301204,
+     "auto_precision": 0.8591549295774648,
+     "items": 83
+    }
+   },
+   "generic": {
+    "joins": {
+     "accuracy": 0.6515151515151515,
+     "review_share": 0.2706766917293233,
+     "auto_precision": 0.8865979381443299,
+     "items": 132
+    },
+    "metrics": {
+     "accuracy": 0.6590909090909091,
+     "review_share": 0.1,
+     "auto_precision": 0.8225806451612904,
+     "items": 88
+    },
+    "dates": {
+     "accuracy": 0.7469879518072289,
+     "review_share": 0.3493975903614458,
+     "auto_precision": 0.7592592592592593,
+     "items": 83
+    }
+   }
+  },
+  "by_domain": {
+   "retail": {
+    "joins": {
+     "accuracy": 0.9821428571428571,
+     "review_share": 0.0,
+     "auto_precision": 1.0,
+     "items": 56
+    },
+    "metrics": {
+     "accuracy": 0.9375,
+     "review_share": 0.013157894736842105,
+     "auto_precision": 0.9574468085106383,
+     "items": 48
+    },
+    "dates": {
+     "accuracy": 0.875,
+     "review_share": 0.0625,
+     "auto_precision": 0.8666666666666667,
+     "items": 32
+    }
+   },
+   "inventory": {
+    "joins": {
+     "accuracy": 0.9,
+     "review_share": 0.18181818181818182,
+     "auto_precision": 1.0,
+     "items": 40
+    },
+    "metrics": {
+     "accuracy": 0.975,
+     "review_share": 0.1875,
+     "auto_precision": 0.9642857142857143,
+     "items": 40
+    },
+    "dates": {
+     "accuracy": 0.8571428571428571,
+     "review_share": 0.07142857142857142,
+     "auto_precision": 0.8461538461538461,
+     "items": 28
+    }
+   },
+   "finance": {
+    "joins": {
+     "accuracy": 0.96875,
+     "review_share": 0.0,
+     "auto_precision": 1.0,
+     "items": 32
+    },
+    "metrics": {
+     "accuracy": 0.9583333333333334,
+     "review_share": 0.025,
+     "auto_precision": 1.0,
+     "items": 24
+    },
+    "dates": {
+     "accuracy": 0.75,
+     "review_share": 0.5,
+     "auto_precision": 0.5,
+     "items": 16
+    }
+   },
+   "purchasing": {
+    "joins": {
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0,
+     "items": 20
+    },
+    "metrics": {
+     "accuracy": 0.96875,
+     "review_share": 0.0,
+     "auto_precision": 0.96875,
+     "items": 32
+    },
+    "dates": {
+     "accuracy": 0.875,
+     "review_share": 0.125,
+     "auto_precision": 0.9285714285714286,
+     "items": 16
+    }
+   },
+   "hr": {
+    "joins": {
+     "accuracy": 0.96875,
+     "review_share": 0.0,
+     "auto_precision": 1.0,
+     "items": 32
+    },
+    "metrics": {
+     "accuracy": 0.8125,
+     "review_share": 0.1276595744680851,
+     "auto_precision": 1.0,
+     "items": 32
+    },
+    "dates": {
+     "accuracy": 0.75,
+     "review_share": 0.125,
+     "auto_precision": 0.7142857142857143,
+     "items": 16
+    }
+   },
+   "subscriptions": {
+    "joins": {
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0,
+     "items": 28
+    },
+    "metrics": {
+     "accuracy": 0.95,
+     "review_share": 0.02857142857142857,
+     "auto_precision": 1.0,
+     "items": 20
+    },
+    "dates": {
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0,
+     "items": 20
+    }
+   },
+   "compounding_pharmacy": {
+    "joins": {
+     "accuracy": 0.7164179104477612,
+     "review_share": 0.10526315789473684,
+     "auto_precision": 0.9411764705882353,
+     "items": 67
+    },
+    "metrics": {
+     "accuracy": 0.6470588235294118,
+     "review_share": 0.0,
+     "auto_precision": 0.7857142857142857,
+     "items": 68
+    },
+    "dates": {
+     "accuracy": 0.7083333333333334,
+     "review_share": 0.5,
+     "auto_precision": 0.75,
+     "items": 48
+    }
+   },
+   "networking": {
+    "joins": {
+     "accuracy": 0.6744186046511628,
+     "review_share": 0.058823529411764705,
+     "auto_precision": 0.90625,
+     "items": 43
+    },
+    "metrics": {
+     "accuracy": 0.3142857142857143,
+     "review_share": 0.13793103448275862,
+     "auto_precision": 0.6111111111111112,
+     "items": 35
+    },
+    "dates": {
+     "accuracy": 0.7291666666666666,
+     "review_share": 0.375,
+     "auto_precision": 0.6,
+     "items": 48
+    }
+   },
+   "chinook": {
+    "joins": {
+     "accuracy": 0.8888888888888888,
+     "review_share": 0.0,
+     "auto_precision": 0.975609756097561,
+     "items": 45
+    },
+    "metrics": {
+     "accuracy": 0.9,
+     "review_share": 0.0,
+     "auto_precision": 0.9473684210526315,
+     "items": 20
+    },
+    "dates": {
+     "accuracy": 0.6666666666666666,
+     "review_share": 0.3333333333333333,
+     "auto_precision": 1.0,
+     "items": 12
+    }
+   },
+   "northwind": {
+    "joins": {
+     "accuracy": 0.8913043478260869,
+     "review_share": 0.0,
+     "auto_precision": 0.9534883720930233,
+     "items": 46
+    },
+    "metrics": {
+     "accuracy": 0.75,
+     "review_share": 0.0,
+     "auto_precision": 0.782608695652174,
+     "items": 24
+    },
+    "dates": {
+     "accuracy": 0.6,
+     "review_share": 0.3,
+     "auto_precision": 0.7857142857142857,
+     "items": 20
+    }
+   },
+   "sakila": {
+    "joins": {
+     "accuracy": 0.7362637362637363,
+     "review_share": 0.2127659574468085,
+     "auto_precision": 0.9054054054054054,
+     "items": 91
+    },
+    "metrics": {
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0,
+     "items": 12
+    },
+    "dates": {
+     "accuracy": 0.868421052631579,
+     "review_share": 0.02631578947368421,
+     "auto_precision": 0.8648648648648649,
+     "items": 76
+    }
+   }
+  }
+ },
+ "results": [
+  {
+   "domain": "retail",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 14,
+     "expected": 14,
+     "flagged": 0,
+     "concluded": 14,
+     "auto_right": 14,
+     "auto": 14,
+     "misses": [
+      "note returns.customer_id -> customers: trusted as declared, data supports proposed"
+     ],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 12,
+     "expected": 12,
+     "flagged": 0,
+     "concluded": 19,
+     "auto_right": 12,
+     "auto": 12,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 7,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 7,
+     "auto": 8,
+     "misses": [
+      "sales_targets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.875,
+     "review_share": 0.0,
+     "auto_precision": 0.875
+    }
+   }
+  },
+  {
+   "domain": "retail",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 14,
+     "expected": 14,
+     "flagged": 0,
+     "concluded": 14,
+     "auto_right": 14,
+     "auto": 14,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 12,
+     "expected": 12,
+     "flagged": 0,
+     "concluded": 19,
+     "auto_right": 12,
+     "auto": 12,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 7,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 7,
+     "auto": 8,
+     "misses": [
+      "sales_targets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.875,
+     "review_share": 0.0,
+     "auto_precision": 0.875
+    }
+   }
+  },
+  {
+   "domain": "retail",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 14,
+     "expected": 14,
+     "flagged": 0,
+     "concluded": 14,
+     "auto_right": 14,
+     "auto": 14,
+     "misses": [
+      "note returns.customer_id -> customers: trusted as declared, data supports proposed"
+     ],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 12,
+     "expected": 12,
+     "flagged": 0,
+     "concluded": 19,
+     "auto_right": 12,
+     "auto": 12,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 7,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 7,
+     "auto": 8,
+     "misses": [
+      "sales_targets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.875,
+     "review_share": 0.0,
+     "auto_precision": 0.875
+    }
+   }
+  },
+  {
+   "domain": "retail",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 13,
+     "expected": 14,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 13,
+     "auto": 13,
+     "misses": [
+      "returns.order_line_id -> order_lines: not found"
+     ],
+     "accuracy": 0.9285714285714286,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 9,
+     "expected": 12,
+     "flagged": 1,
+     "concluded": 19,
+     "auto_right": 9,
+     "auto": 11,
+     "misses": [
+      "order_lines.unit_price: sum additive, truth avg non_additive",
+      "order_lines.margin_pct: sum additive, truth avg non_additive",
+      "sales_targets.target_amount: sum semi_additive, truth sum additive"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.05263157894736842,
+     "auto_precision": 0.8181818181818182
+    },
+    "dates": {
+     "right": 7,
+     "expected": 8,
+     "flagged": 2,
+     "concluded": 8,
+     "auto_right": 5,
+     "auto": 6,
+     "misses": [
+      "sales_targets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.875,
+     "review_share": 0.25,
+     "auto_precision": 0.8333333333333334
+    }
+   }
+  },
+  {
+   "domain": "inventory",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 10,
+     "expected": 10,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 10,
+     "auto": 10,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 10,
+     "expected": 10,
+     "flagged": 2,
+     "concluded": 16,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.125,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 6,
+     "expected": 7,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 6,
+     "auto": 7,
+     "misses": [
+      "stock_movements.expiry_date: learned due, truth validity"
+     ],
+     "accuracy": 0.8571428571428571,
+     "review_share": 0.0,
+     "auto_precision": 0.8571428571428571
+    }
+   }
+  },
+  {
+   "domain": "inventory",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 10,
+     "expected": 10,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 10,
+     "auto": 10,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 10,
+     "expected": 10,
+     "flagged": 3,
+     "concluded": 16,
+     "auto_right": 7,
+     "auto": 7,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.1875,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 6,
+     "expected": 7,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 6,
+     "auto": 7,
+     "misses": [
+      "stock_movements.expiry_date: learned event, truth validity"
+     ],
+     "accuracy": 0.8571428571428571,
+     "review_share": 0.0,
+     "auto_precision": 0.8571428571428571
+    }
+   }
+  },
+  {
+   "domain": "inventory",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 10,
+     "expected": 10,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 10,
+     "auto": 10,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 10,
+     "expected": 10,
+     "flagged": 2,
+     "concluded": 16,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.125,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 6,
+     "expected": 7,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 6,
+     "auto": 7,
+     "misses": [
+      "stock_movements.expiry_date: learned due, truth validity"
+     ],
+     "accuracy": 0.8571428571428571,
+     "review_share": 0.0,
+     "auto_precision": 0.8571428571428571
+    }
+   }
+  },
+  {
+   "domain": "inventory",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 6,
+     "expected": 10,
+     "flagged": 8,
+     "concluded": 14,
+     "auto_right": 6,
+     "auto": 6,
+     "misses": [
+      "stock_movements.warehouse_id -> warehouses: sent to review",
+      "daily_balances.warehouse_id -> warehouses: sent to review",
+      "monthly_balances.warehouse_id -> warehouses: sent to review",
+      "items.item_group_id -> item_groups: sent to review"
+     ],
+     "accuracy": 0.6,
+     "review_share": 0.5714285714285714,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 9,
+     "expected": 10,
+     "flagged": 5,
+     "concluded": 16,
+     "auto_right": 4,
+     "auto": 5,
+     "misses": [
+      "stock_movements.unit_cost: sum additive, truth avg non_additive"
+     ],
+     "accuracy": 0.9,
+     "review_share": 0.3125,
+     "auto_precision": 0.8
+    },
+    "dates": {
+     "right": 6,
+     "expected": 7,
+     "flagged": 2,
+     "concluded": 7,
+     "auto_right": 4,
+     "auto": 5,
+     "misses": [
+      "stock_movements.expiry_date: learned event, truth validity"
+     ],
+     "accuracy": 0.8571428571428571,
+     "review_share": 0.2857142857142857,
+     "auto_precision": 0.8
+    }
+   }
+  },
+  {
+   "domain": "finance",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 6,
+     "expected": 6,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 6,
+     "auto": 6,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 2,
+     "concluded": 4,
+     "auto_right": 1,
+     "auto": 2,
+     "misses": [
+      "budgets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.5,
+     "auto_precision": 0.5
+    }
+   }
+  },
+  {
+   "domain": "finance",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 6,
+     "expected": 6,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 6,
+     "auto": 6,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 2,
+     "concluded": 4,
+     "auto_right": 1,
+     "auto": 2,
+     "misses": [
+      "budgets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.5,
+     "auto_precision": 0.5
+    }
+   }
+  },
+  {
+   "domain": "finance",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 6,
+     "expected": 6,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 6,
+     "auto": 6,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 2,
+     "concluded": 4,
+     "auto_right": 1,
+     "auto": 2,
+     "misses": [
+      "budgets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.5,
+     "auto_precision": 0.5
+    }
+   }
+  },
+  {
+   "domain": "finance",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 7,
+     "auto": 7,
+     "misses": [
+      "accounts.parent_account_id -> accounts: not found"
+     ],
+     "accuracy": 0.875,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 6,
+     "flagged": 1,
+     "concluded": 10,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [
+      "budgets.budget_amount: sum semi_additive, truth sum additive"
+     ],
+     "accuracy": 0.8333333333333334,
+     "review_share": 0.1,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 2,
+     "concluded": 4,
+     "auto_right": 1,
+     "auto": 2,
+     "misses": [
+      "budgets.period_key: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.5,
+     "auto_precision": 0.5
+    }
+   }
+  },
+  {
+   "domain": "purchasing",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 4,
+     "expected": 4,
+     "flagged": 0,
+     "concluded": 4,
+     "auto_right": 4,
+     "auto": 4,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "purchasing",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 0,
+     "concluded": 4,
+     "auto_right": 3,
+     "auto": 4,
+     "misses": [
+      "purchase_order_lines.promised_date: learned event, truth planned"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.0,
+     "auto_precision": 0.75
+    }
+   }
+  },
+  {
+   "domain": "purchasing",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 4,
+     "expected": 4,
+     "flagged": 0,
+     "concluded": 4,
+     "auto_right": 4,
+     "auto": 4,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "purchasing",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 7,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 7,
+     "auto": 8,
+     "misses": [
+      "purchase_order_lines.unit_price: sum additive, truth avg non_additive"
+     ],
+     "accuracy": 0.875,
+     "review_share": 0.0,
+     "auto_precision": 0.875
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 2,
+     "concluded": 4,
+     "auto_right": 2,
+     "auto": 2,
+     "misses": [
+      "purchase_order_lines.promised_date: learned event, truth planned"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.5,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "hr",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 12,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 0,
+     "concluded": 4,
+     "auto_right": 3,
+     "auto": 4,
+     "misses": [
+      "payroll.pay_date: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.0,
+     "auto_precision": 0.75
+    }
+   }
+  },
+  {
+   "domain": "hr",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 12,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 1,
+     "concluded": 4,
+     "auto_right": 2,
+     "auto": 3,
+     "misses": [
+      "payroll.pay_date: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.25,
+     "auto_precision": 0.6666666666666666
+    }
+   }
+  },
+  {
+   "domain": "hr",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 8,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 12,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 0,
+     "concluded": 4,
+     "auto_right": 3,
+     "auto": 4,
+     "misses": [
+      "payroll.pay_date: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.0,
+     "auto_precision": 0.75
+    }
+   }
+  },
+  {
+   "domain": "hr",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 8,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 7,
+     "auto": 7,
+     "misses": [
+      "employees.manager_id -> employees: not found"
+     ],
+     "accuracy": 0.875,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 2,
+     "expected": 8,
+     "flagged": 6,
+     "concluded": 11,
+     "auto_right": 1,
+     "auto": 1,
+     "misses": [
+      "headcount_monthly.headcount: not a metric",
+      "headcount_monthly.monthly_salary: sum semi_additive, truth sum additive",
+      "payroll.gross_pay: sum semi_additive, truth sum additive",
+      "payroll.tax_withheld: sum semi_additive, truth sum additive",
+      "payroll.net_pay: sum semi_additive, truth sum additive",
+      "payroll.overtime_hours: sum semi_additive, truth sum additive"
+     ],
+     "accuracy": 0.25,
+     "review_share": 0.5454545454545454,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 4,
+     "flagged": 1,
+     "concluded": 4,
+     "auto_right": 2,
+     "auto": 3,
+     "misses": [
+      "payroll.pay_date: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.25,
+     "auto_precision": 0.6666666666666666
+    }
+   }
+  },
+  {
+   "domain": "subscriptions",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 7,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 7,
+     "auto": 7,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 9,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "subscriptions",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 7,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 7,
+     "auto": 7,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 9,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "subscriptions",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 7,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 7,
+     "auto": 7,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 9,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "subscriptions",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 7,
+     "flagged": 0,
+     "concluded": 7,
+     "auto_right": 7,
+     "auto": 7,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 4,
+     "expected": 5,
+     "flagged": 1,
+     "concluded": 8,
+     "auto_right": 3,
+     "auto": 3,
+     "misses": [
+      "mrr_monthly.seats: not a metric"
+     ],
+     "accuracy": 0.8,
+     "review_share": 0.125,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "compounding_pharmacy",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 13,
+     "expected": 16,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 13,
+     "auto": 13,
+     "misses": [
+      "prescriptions.prescriber_npi -> prescribers: not found",
+      "fills.pharmacist_code -> pharmacists: not found",
+      "claims.fill_number+rx_number -> fills: not found"
+     ],
+     "accuracy": 0.8125,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 11,
+     "expected": 17,
+     "flagged": 0,
+     "concluded": 26,
+     "auto_right": 11,
+     "auto": 14,
+     "misses": [
+      "batches.batch_size: not a metric",
+      "batches.waste_qty: not a metric",
+      "batches.yield_pct: not a metric",
+      "fills.price_charged: avg non_additive, truth sum additive",
+      "ingredient_stock_weekly.on_hand_qty: sum additive, truth sum semi_additive",
+      "formula_ingredients.quantity_per_unit: learned as a metric (avg)"
+     ],
+     "accuracy": 0.6470588235294118,
+     "review_share": 0.0,
+     "auto_precision": 0.7857142857142857
+    },
+    "dates": {
+     "right": 7,
+     "expected": 12,
+     "flagged": 6,
+     "concluded": 12,
+     "auto_right": 4,
+     "auto": 6,
+     "misses": [
+      "batches.beyond_use_date: learned event, truth validity",
+      "prescriptions.written_date: learned audit, truth event (default)",
+      "prescriptions.received_ts: learned event (default), truth event",
+      "prescriptions.created_at: learned event, truth audit",
+      "ingredient_stock_weekly.snapshot_date: learned event (default), truth snapshot (default)"
+     ],
+     "accuracy": 0.5833333333333334,
+     "review_share": 0.5,
+     "auto_precision": 0.6666666666666666
+    }
+   }
+  },
+  {
+   "domain": "compounding_pharmacy",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 12,
+     "expected": 17,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 12,
+     "auto": 13,
+     "misses": [
+      "batches.technician_id -> pharmacists: not found",
+      "prescriptions.prescriber_npi -> prescribers: not found",
+      "fills.pharmacist_code -> pharmacists: not found",
+      "claims.fill_number+rx_number -> fills: not found",
+      "invented prescriptions.quantity_prescribed -> prescribers (verified)"
+     ],
+     "accuracy": 0.7058823529411765,
+     "review_share": 0.0,
+     "auto_precision": 0.9230769230769231
+    },
+    "metrics": {
+     "right": 11,
+     "expected": 17,
+     "flagged": 0,
+     "concluded": 25,
+     "auto_right": 11,
+     "auto": 14,
+     "misses": [
+      "batches.batch_size: not a metric",
+      "batches.waste_qty: not a metric",
+      "batches.yield_pct: not a metric",
+      "fills.price_charged: avg non_additive, truth sum additive",
+      "ingredient_stock_weekly.on_hand_qty: sum additive, truth sum semi_additive",
+      "formula_ingredients.quantity_per_unit: learned as a metric (avg)"
+     ],
+     "accuracy": 0.6470588235294118,
+     "review_share": 0.0,
+     "auto_precision": 0.7857142857142857
+    },
+    "dates": {
+     "right": 10,
+     "expected": 12,
+     "flagged": 6,
+     "concluded": 12,
+     "auto_right": 5,
+     "auto": 6,
+     "misses": [
+      "batches.beyond_use_date: learned event, truth validity",
+      "ingredient_stock_weekly.snapshot_date: learned event (default), truth snapshot (default)"
+     ],
+     "accuracy": 0.8333333333333334,
+     "review_share": 0.5,
+     "auto_precision": 0.8333333333333334
+    }
+   }
+  },
+  {
+   "domain": "compounding_pharmacy",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 13,
+     "expected": 16,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 13,
+     "auto": 13,
+     "misses": [
+      "prescriptions.prescriber_npi -> prescribers: not found",
+      "fills.pharmacist_code -> pharmacists: not found",
+      "claims.fill_number+rx_number -> fills: not found"
+     ],
+     "accuracy": 0.8125,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 11,
+     "expected": 17,
+     "flagged": 0,
+     "concluded": 26,
+     "auto_right": 11,
+     "auto": 14,
+     "misses": [
+      "batches.batch_size: not a metric",
+      "batches.waste_qty: not a metric",
+      "batches.yield_pct: not a metric",
+      "fills.price_charged: avg non_additive, truth sum additive",
+      "ingredient_stock_weekly.on_hand_qty: sum additive, truth sum semi_additive",
+      "formula_ingredients.quantity_per_unit: learned as a metric (avg)"
+     ],
+     "accuracy": 0.6470588235294118,
+     "review_share": 0.0,
+     "auto_precision": 0.7857142857142857
+    },
+    "dates": {
+     "right": 7,
+     "expected": 12,
+     "flagged": 6,
+     "concluded": 12,
+     "auto_right": 4,
+     "auto": 6,
+     "misses": [
+      "batches.beyond_use_date: learned event, truth validity",
+      "prescriptions.written_date: learned audit, truth event (default)",
+      "prescriptions.received_ts: learned event (default), truth event",
+      "prescriptions.created_at: learned event, truth audit",
+      "ingredient_stock_weekly.snapshot_date: learned event (default), truth snapshot (default)"
+     ],
+     "accuracy": 0.5833333333333334,
+     "review_share": 0.5,
+     "auto_precision": 0.6666666666666666
+    }
+   }
+  },
+  {
+   "domain": "compounding_pharmacy",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 10,
+     "expected": 18,
+     "flagged": 6,
+     "concluded": 18,
+     "auto_right": 10,
+     "auto": 12,
+     "misses": [
+      "quality_tests.batch_id -> batches: sent to review",
+      "prescriptions.patient_id -> patients: sent to review",
+      "prescriptions.prescriber_npi -> prescribers: not found",
+      "fills.batch_id -> batches: sent to review",
+      "fills.pharmacist_code -> pharmacists: not found",
+      "claims.fill_number+rx_number -> fills: not found",
+      "invented fills.fill_number -> payers (verified)",
+      "invented prescriptions.refills_authorized -> pharmacists (proposed)"
+     ],
+     "accuracy": 0.5555555555555556,
+     "review_share": 0.3333333333333333,
+     "auto_precision": 0.8333333333333334
+    },
+    "metrics": {
+     "right": 11,
+     "expected": 17,
+     "flagged": 0,
+     "concluded": 25,
+     "auto_right": 11,
+     "auto": 14,
+     "misses": [
+      "batches.batch_size: not a metric",
+      "batches.waste_qty: not a metric",
+      "batches.yield_pct: not a metric",
+      "quality_tests.potency_pct: sum additive, truth avg non_additive",
+      "ingredient_stock_weekly.on_hand_qty: sum additive, truth sum semi_additive",
+      "formula_ingredients.quantity_per_unit: learned as a metric (sum)"
+     ],
+     "accuracy": 0.6470588235294118,
+     "review_share": 0.0,
+     "auto_precision": 0.7857142857142857
+    },
+    "dates": {
+     "right": 10,
+     "expected": 12,
+     "flagged": 6,
+     "concluded": 12,
+     "auto_right": 5,
+     "auto": 6,
+     "misses": [
+      "batches.beyond_use_date: learned event, truth validity",
+      "ingredient_stock_weekly.snapshot_date: learned event (default), truth snapshot (default)"
+     ],
+     "accuracy": 0.8333333333333334,
+     "review_share": 0.5,
+     "auto_precision": 0.8333333333333334
+    }
+   }
+  },
+  {
+   "domain": "networking",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 10,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [
+      "interfaces.device_id -> devices: not found",
+      "tickets.circuit_code -> services: not found"
+     ],
+     "accuracy": 0.8,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 9,
+     "flagged": 2,
+     "concluded": 15,
+     "auto_right": 3,
+     "auto": 5,
+     "misses": [
+      "interface_counters.in_octets: not a metric",
+      "interface_counters.out_octets: not a metric",
+      "interface_counters.in_errors: sum additive, truth max non_additive",
+      "service_billing_monthly.billed_amount: sum semi_additive, truth sum additive",
+      "service_billing_monthly.data_usage_gb: sum semi_additive, truth sum additive",
+      "services.bandwidth_mbps: learned as a metric (sum)"
+     ],
+     "accuracy": 0.3333333333333333,
+     "review_share": 0.13333333333333333,
+     "auto_precision": 0.6
+    },
+    "dates": {
+     "right": 9,
+     "expected": 12,
+     "flagged": 4,
+     "concluded": 12,
+     "auto_right": 5,
+     "auto": 8,
+     "misses": [
+      "services.contract_start: learned event (default), truth validity (default)",
+      "services.contract_end: learned event, truth validity",
+      "service_billing_monthly.billing_month: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.3333333333333333,
+     "auto_precision": 0.625
+    }
+   }
+  },
+  {
+   "domain": "networking",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 11,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 7,
+     "auto": 8,
+     "misses": [
+      "devices.uplink_device_id -> devices: not found",
+      "interfaces.device_id -> devices: not found",
+      "tickets.circuit_code -> services: not found",
+      "invented devices.uplink_device_id -> devices_bak (proposed)"
+     ],
+     "accuracy": 0.6363636363636364,
+     "review_share": 0.0,
+     "auto_precision": 0.875
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 9,
+     "flagged": 2,
+     "concluded": 15,
+     "auto_right": 3,
+     "auto": 5,
+     "misses": [
+      "interface_counters.in_octets: not a metric",
+      "interface_counters.out_octets: not a metric",
+      "interface_counters.in_errors: sum additive, truth max non_additive",
+      "service_billing_monthly.billed_amount: sum semi_additive, truth sum additive",
+      "service_billing_monthly.data_usage_gb: sum semi_additive, truth sum additive",
+      "services.bandwidth_mbps: learned as a metric (sum)"
+     ],
+     "accuracy": 0.3333333333333333,
+     "review_share": 0.13333333333333333,
+     "auto_precision": 0.6
+    },
+    "dates": {
+     "right": 9,
+     "expected": 12,
+     "flagged": 4,
+     "concluded": 12,
+     "auto_right": 5,
+     "auto": 8,
+     "misses": [
+      "services.contract_start: learned event (default), truth validity (default)",
+      "services.contract_end: learned event, truth validity",
+      "service_billing_monthly.billing_month: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.3333333333333333,
+     "auto_precision": 0.625
+    }
+   }
+  },
+  {
+   "domain": "networking",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 8,
+     "expected": 10,
+     "flagged": 0,
+     "concluded": 8,
+     "auto_right": 8,
+     "auto": 8,
+     "misses": [
+      "interfaces.device_id -> devices: not found",
+      "tickets.circuit_code -> services: not found"
+     ],
+     "accuracy": 0.8,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 9,
+     "flagged": 2,
+     "concluded": 15,
+     "auto_right": 3,
+     "auto": 5,
+     "misses": [
+      "interface_counters.in_octets: not a metric",
+      "interface_counters.out_octets: not a metric",
+      "interface_counters.in_errors: sum additive, truth max non_additive",
+      "service_billing_monthly.billed_amount: sum semi_additive, truth sum additive",
+      "service_billing_monthly.data_usage_gb: sum semi_additive, truth sum additive",
+      "services.bandwidth_mbps: learned as a metric (sum)"
+     ],
+     "accuracy": 0.3333333333333333,
+     "review_share": 0.13333333333333333,
+     "auto_precision": 0.6
+    },
+    "dates": {
+     "right": 9,
+     "expected": 12,
+     "flagged": 4,
+     "concluded": 12,
+     "auto_right": 5,
+     "auto": 8,
+     "misses": [
+      "services.contract_start: learned event (default), truth validity (default)",
+      "services.contract_end: learned event, truth validity",
+      "service_billing_monthly.billing_month: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.3333333333333333,
+     "auto_precision": 0.625
+    }
+   }
+  },
+  {
+   "domain": "networking",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 6,
+     "expected": 12,
+     "flagged": 2,
+     "concluded": 10,
+     "auto_right": 6,
+     "auto": 8,
+     "misses": [
+      "devices.uplink_device_id -> devices: not found",
+      "interfaces.device_id -> devices: not found",
+      "interface_counters.interface_id -> interfaces: not found",
+      "tickets.circuit_code -> services: not found",
+      "invented devices.uplink_device_id -> devices_bak (proposed)",
+      "invented interface_counters.in_errors -> devices_bak (proposed)"
+     ],
+     "accuracy": 0.5,
+     "review_share": 0.2,
+     "auto_precision": 0.75
+    },
+    "metrics": {
+     "right": 2,
+     "expected": 8,
+     "flagged": 2,
+     "concluded": 13,
+     "auto_right": 2,
+     "auto": 3,
+     "misses": [
+      "interface_counters.in_octets: not a metric",
+      "interface_counters.out_octets: not a metric",
+      "interface_counters.in_errors: not a metric",
+      "interface_counters.utilization_pct: sum additive, truth avg non_additive",
+      "service_billing_monthly.billed_amount: sum semi_additive, truth sum additive",
+      "service_billing_monthly.data_usage_gb: sum semi_additive, truth sum additive"
+     ],
+     "accuracy": 0.25,
+     "review_share": 0.15384615384615385,
+     "auto_precision": 0.6666666666666666
+    },
+    "dates": {
+     "right": 8,
+     "expected": 12,
+     "flagged": 6,
+     "concluded": 12,
+     "auto_right": 3,
+     "auto": 6,
+     "misses": [
+      "devices.last_modified_ts: learned event, truth audit",
+      "services.contract_start: learned event (default), truth validity (default)",
+      "services.contract_end: learned event, truth validity",
+      "service_billing_monthly.billing_month: learned snapshot (default), truth event (default)"
+     ],
+     "accuracy": 0.6666666666666666,
+     "review_share": 0.5,
+     "auto_precision": 0.5
+    }
+   }
+  },
+  {
+   "domain": "chinook",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 11,
+     "expected": 11,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 11,
+     "auto": 11,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 16,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 3,
+     "flagged": 0,
+     "concluded": 3,
+     "auto_right": 3,
+     "auto": 3,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "chinook",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 9,
+     "expected": 11,
+     "flagged": 0,
+     "concluded": 9,
+     "auto_right": 9,
+     "auto": 9,
+     "misses": [
+      "customer.support_rep_id -> employee: not found",
+      "employee.reports_to -> employee: not found"
+     ],
+     "accuracy": 0.8181818181818182,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 17,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 1,
+     "expected": 3,
+     "flagged": 2,
+     "concluded": 3,
+     "auto_right": 1,
+     "auto": 1,
+     "misses": [
+      "employee.hire_date: learned event, truth event (default)",
+      "employee.birth_date: learned event (default), truth event"
+     ],
+     "accuracy": 0.3333333333333333,
+     "review_share": 0.6666666666666666,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "chinook",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 11,
+     "expected": 11,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 11,
+     "auto": 11,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 16,
+     "auto_right": 5,
+     "auto": 5,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 3,
+     "expected": 3,
+     "flagged": 0,
+     "concluded": 3,
+     "auto_right": 3,
+     "auto": 3,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "chinook",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 9,
+     "expected": 12,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 9,
+     "auto": 10,
+     "misses": [
+      "customer.support_rep_id -> employee: not found",
+      "employee.reports_to -> employee: not found",
+      "invented customer.support_rep_id -> media_type (verified)"
+     ],
+     "accuracy": 0.75,
+     "review_share": 0.0,
+     "auto_precision": 0.9
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 19,
+     "auto_right": 3,
+     "auto": 4,
+     "misses": [
+      "invoice_line.quantity: not a metric",
+      "invoice_line.unit_price: sum additive, truth avg non_additive"
+     ],
+     "accuracy": 0.6,
+     "review_share": 0.0,
+     "auto_precision": 0.75
+    },
+    "dates": {
+     "right": 1,
+     "expected": 3,
+     "flagged": 2,
+     "concluded": 3,
+     "auto_right": 1,
+     "auto": 1,
+     "misses": [
+      "employee.hire_date: learned event, truth event (default)",
+      "employee.birth_date: learned event (default), truth event"
+     ],
+     "accuracy": 0.3333333333333333,
+     "review_share": 0.6666666666666666,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "northwind",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 11,
+     "expected": 11,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 11,
+     "auto": 11,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 6,
+     "flagged": 0,
+     "concluded": 14,
+     "auto_right": 5,
+     "auto": 6,
+     "misses": [
+      "order_details.discount: sum additive, truth avg non_additive"
+     ],
+     "accuracy": 0.8333333333333334,
+     "review_share": 0.0,
+     "auto_precision": 0.8333333333333334
+    },
+    "dates": {
+     "right": 4,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 4,
+     "auto": 5,
+     "misses": [
+      "orders.required_date: learned event, truth due"
+     ],
+     "accuracy": 0.8,
+     "review_share": 0.0,
+     "auto_precision": 0.8
+    }
+   }
+  },
+  {
+   "domain": "northwind",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 10,
+     "expected": 11,
+     "flagged": 0,
+     "concluded": 10,
+     "auto_right": 10,
+     "auto": 10,
+     "misses": [
+      "employees.reports_to -> employees: not found"
+     ],
+     "accuracy": 0.9090909090909091,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 6,
+     "flagged": 0,
+     "concluded": 14,
+     "auto_right": 5,
+     "auto": 6,
+     "misses": [
+      "order_details.discount: sum additive, truth avg non_additive"
+     ],
+     "accuracy": 0.8333333333333334,
+     "review_share": 0.0,
+     "auto_precision": 0.8333333333333334
+    },
+    "dates": {
+     "right": 2,
+     "expected": 5,
+     "flagged": 2,
+     "concluded": 5,
+     "auto_right": 2,
+     "auto": 3,
+     "misses": [
+      "orders.required_date: learned event, truth due",
+      "employees.hire_date: learned event, truth event (default)",
+      "employees.birth_date: learned event (default), truth event"
+     ],
+     "accuracy": 0.4,
+     "review_share": 0.4,
+     "auto_precision": 0.6666666666666666
+    }
+   }
+  },
+  {
+   "domain": "northwind",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 11,
+     "expected": 11,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 11,
+     "auto": 11,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "metrics": {
+     "right": 5,
+     "expected": 6,
+     "flagged": 0,
+     "concluded": 14,
+     "auto_right": 5,
+     "auto": 6,
+     "misses": [
+      "order_details.discount: sum additive, truth avg non_additive"
+     ],
+     "accuracy": 0.8333333333333334,
+     "review_share": 0.0,
+     "auto_precision": 0.8333333333333334
+    },
+    "dates": {
+     "right": 4,
+     "expected": 5,
+     "flagged": 0,
+     "concluded": 5,
+     "auto_right": 4,
+     "auto": 5,
+     "misses": [
+      "orders.required_date: learned event, truth due"
+     ],
+     "accuracy": 0.8,
+     "review_share": 0.0,
+     "auto_precision": 0.8
+    }
+   }
+  },
+  {
+   "domain": "northwind",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 9,
+     "expected": 13,
+     "flagged": 0,
+     "concluded": 11,
+     "auto_right": 9,
+     "auto": 11,
+     "misses": [
+      "employees.reports_to -> employees: not found",
+      "employee_territories.territory_id -> territories: not found",
+      "invented order_details.quantity -> products (verified)",
+      "invented employees.reports_to -> categories (verified)"
+     ],
+     "accuracy": 0.6923076923076923,
+     "review_share": 0.0,
+     "auto_precision": 0.8181818181818182
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 6,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 3,
+     "auto": 5,
+     "misses": [
+      "order_details.quantity: not a metric",
+      "order_details.unit_price: sum additive, truth avg non_additive",
+      "order_details.discount: sum additive, truth avg non_additive"
+     ],
+     "accuracy": 0.5,
+     "review_share": 0.0,
+     "auto_precision": 0.6
+    },
+    "dates": {
+     "right": 2,
+     "expected": 5,
+     "flagged": 4,
+     "concluded": 5,
+     "auto_right": 1,
+     "auto": 1,
+     "misses": [
+      "orders.required_date: learned event, truth due",
+      "employees.hire_date: learned event, truth event (default)",
+      "employees.birth_date: learned event (default), truth event"
+     ],
+     "accuracy": 0.4,
+     "review_share": 0.8,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "sakila",
+   "style": "descriptive",
+   "areas": {
+    "joins": {
+     "right": 20,
+     "expected": 22,
+     "flagged": 0,
+     "concluded": 21,
+     "auto_right": 20,
+     "auto": 21,
+     "misses": [
+      "film.language_id -> language: not found",
+      "invented film.rental_duration -> rental (verified)"
+     ],
+     "accuracy": 0.9090909090909091,
+     "review_share": 0.0,
+     "auto_precision": 0.9523809523809523
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 3,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 3,
+     "auto": 3,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 19,
+     "expected": 19,
+     "flagged": 0,
+     "concluded": 19,
+     "auto_right": 19,
+     "auto": 19,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "sakila",
+   "style": "warehouse",
+   "areas": {
+    "joins": {
+     "right": 20,
+     "expected": 22,
+     "flagged": 0,
+     "concluded": 21,
+     "auto_right": 20,
+     "auto": 21,
+     "misses": [
+      "film.language_id -> language: not found",
+      "invented film.rental_duration -> rental (verified)"
+     ],
+     "accuracy": 0.9090909090909091,
+     "review_share": 0.0,
+     "auto_precision": 0.9523809523809523
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 3,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 3,
+     "auto": 3,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 14,
+     "expected": 19,
+     "flagged": 0,
+     "concluded": 19,
+     "auto_right": 14,
+     "auto": 19,
+     "misses": [
+      "category.last_update: learned event (default), truth audit",
+      "country.last_update: learned event (default), truth audit",
+      "language.last_update: learned event (default), truth audit",
+      "staff.last_update: learned event (default), truth audit",
+      "store.last_update: learned event (default), truth audit"
+     ],
+     "accuracy": 0.7368421052631579,
+     "review_share": 0.0,
+     "auto_precision": 0.7368421052631579
+    }
+   }
+  },
+  {
+   "domain": "sakila",
+   "style": "pascal",
+   "areas": {
+    "joins": {
+     "right": 20,
+     "expected": 22,
+     "flagged": 0,
+     "concluded": 21,
+     "auto_right": 20,
+     "auto": 21,
+     "misses": [
+      "film.language_id -> language: not found",
+      "invented film.rental_duration -> rental (verified)"
+     ],
+     "accuracy": 0.9090909090909091,
+     "review_share": 0.0,
+     "auto_precision": 0.9523809523809523
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 3,
+     "flagged": 0,
+     "concluded": 13,
+     "auto_right": 3,
+     "auto": 3,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 19,
+     "expected": 19,
+     "flagged": 0,
+     "concluded": 19,
+     "auto_right": 19,
+     "auto": 19,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    }
+   }
+  },
+  {
+   "domain": "sakila",
+   "style": "generic",
+   "areas": {
+    "joins": {
+     "right": 7,
+     "expected": 25,
+     "flagged": 20,
+     "concluded": 31,
+     "auto_right": 7,
+     "auto": 11,
+     "misses": [
+      "address.city_id -> city: sent to review",
+      "customer.address_id -> address: sent to review",
+      "customer.store_id -> store: sent to review",
+      "film.language_id -> language: not found",
+      "film_actor.film_id -> film: sent to review",
+      "film_category.film_id -> film: not found",
+      "inventory.film_id -> film: sent to review",
+      "inventory.store_id -> store: sent to review",
+      "payment.customer_id -> customer: sent to review",
+      "payment.staff_id -> staff: sent to review",
+      "rental.customer_id -> customer: sent to review",
+      "rental.staff_id -> staff: sent to review",
+      "staff.address_id -> address: not found",
+      "store.address_id -> address: not found",
+      "invented staff.address_id -> language (verified)",
+      "invented store.address_id -> staff (verified)",
+      "invented film.rental_duration -> category (verified)",
+      "invented film.length -> actor (verified)"
+     ],
+     "accuracy": 0.28,
+     "review_share": 0.6451612903225806,
+     "auto_precision": 0.6363636363636364
+    },
+    "metrics": {
+     "right": 3,
+     "expected": 3,
+     "flagged": 0,
+     "concluded": 15,
+     "auto_right": 3,
+     "auto": 3,
+     "misses": [],
+     "accuracy": 1.0,
+     "review_share": 0.0,
+     "auto_precision": 1.0
+    },
+    "dates": {
+     "right": 14,
+     "expected": 19,
+     "flagged": 2,
+     "concluded": 19,
+     "auto_right": 12,
+     "auto": 17,
+     "misses": [
+      "category.last_update: learned event (default), truth audit",
+      "country.last_update: learned event (default), truth audit",
+      "language.last_update: learned event (default), truth audit",
+      "staff.last_update: learned event (default), truth audit",
+      "store.last_update: learned event (default), truth audit"
+     ],
+     "accuracy": 0.7368421052631579,
+     "review_share": 0.10526315789473684,
+     "auto_precision": 0.7058823529411765
+    }
+   }
+  }
+ ]
+}

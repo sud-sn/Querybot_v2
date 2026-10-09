@@ -1,0 +1,76 @@
+# Follow-up or new question, subscriptions (see evals/core2/followup_eval.py for the labels).
+domain: subscriptions
+today: 2026-06-15
+threads:
+  - id: s01
+    turns:
+      - {q: "MRR by plan at the end of last month"}
+      - {q: "only Enterprise customers", label: refine, kind: filter, keeps: [measures, group_by, window]}
+      - {q: "by country instead", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "trend for the last 12 months", label: refine, kind: grain, keeps: [measures, filters]}
+      - {q: "why did it fall in April?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "Invoice amount by month this year", label: new, kind: switch, drops: [filters]}
+  - id: s02
+    turns:
+      - {q: "How many customers signed up each month in 2025?"}
+      - {q: "by segment", label: refine, kind: drill, keeps: [measures, window]}
+      - {q: "only Germany", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "2026 so far", label: refine, kind: period, keeps: [measures, filters]}
+      - {q: "as a bar chart", label: refine, kind: chart, keeps: [measures, filters, window]}
+      - {q: "Seats by plan last month", label: new, kind: switch, drops: [filters]}
+  - id: s03
+    turns:
+      - {q: "Seats by plan last month"}
+      - {q: "and MRR", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "annual plans only", label: refine, kind: filter, keeps: [measures, group_by, window]}
+      - {q: "compare with a year earlier", label: refine, kind: compare, keeps: [measures, group_by, filters]}
+      - {q: "the Growth Annual plan, by customer", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "How many seats?", label: unclear, kind: bare}
+  - id: s04
+    turns:
+      - {q: "Tax amount by country this year"}
+      - {q: "excluding the USA", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "and invoice amount", label: refine, kind: add_measure, keeps: [measures, group_by, filters, window]}
+      - {q: "top 3 countries", label: refine, kind: topn, keeps: [measures, filters, window]}
+      - {q: "Which plans have the most cancelled subscriptions?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "and trials?", label: refine, kind: filter, keeps: [group_by]}
+  - id: s05
+    turns:
+      - {q: "MRR by segment at the end of May 2026"}
+      - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, window]}
+      - {q: "and at the end of May 2025", label: refine, kind: compare, keeps: [measures, group_by]}
+      - {q: "the largest one, by plan", label: refine, kind: reference, keeps: [measures]}
+      - {q: "What is our customer churn by month this year?", label: new, kind: switch, drops: [filters]}
+      - {q: "only SMB", label: refine, kind: filter, keeps: [window]}
+  - id: s06
+    turns:
+      - {q: "Invoices by month for the last 6 months"}
+      - {q: "for Mid-market customers", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "amount instead of count", label: refine, kind: measure, keeps: [group_by, filters, window]}
+      - {q: "forecast the next 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
+      - {q: "What is the total MRR of active subscriptions?", label: new, kind: restate, drops: [filters]}
+      - {q: "by plan", label: refine, kind: drill, keeps: [measures, filters, window]}
+  - id: s07
+    turns:
+      - {q: "Subscriptions started by month this year"}
+      - {q: "monthly billing only", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by plan", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "sort by count", label: refine, kind: sort, keeps: [measures, group_by, filters, window]}
+      - {q: "Which customers in France pay the most?", label: new, kind: switch, drops: [filters]}
+      - {q: "and Canada?", label: refine, kind: filter, keeps: [measures]}
+  - id: s08
+    turns:
+      - {q: "MRR last month"}
+      - {q: "by plan and segment", label: refine, kind: drill, keeps: [measures, window]}
+      - {q: "Starter only", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "what about seats?", label: refine, kind: measure, keeps: [group_by, filters, window]}
+      - {q: "Tax amount on invoices in 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "How many invoices?", label: unclear, kind: bare}
+  - id: s09
+    turns:
+      - {q: "MRR by country at the end of last month"}
+      - {q: "Invoices by plan in 2025", label: new, kind: switch, drops: [group_by, window]}
+      - {q: "Which customers signed up last week?", label: new, kind: switch, drops: [group_by]}
+      - {q: "Seats by segment at the end of March", label: new, kind: restate, drops: [filters]}
+      - {q: "Tax amount by month this year", label: new, kind: switch, drops: [group_by]}
+      - {q: "How many subscriptions were cancelled in 2025?", label: new, kind: switch, drops: [group_by]}

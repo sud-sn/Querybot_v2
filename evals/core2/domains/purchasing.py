@@ -180,7 +180,7 @@ def build(seed: int = 7) -> Domain:
         calendar=None,
         dates=[
             DateTruth("purchase_order_lines", "order_date", "Order date", "event", False, default=True),
-            DateTruth("purchase_order_lines", "promised_date", "Promised date", "event", False),
+            DateTruth("purchase_order_lines", "promised_date", "Promised date", "planned", False),
             DateTruth("receipts", "received_date", "Received date", "event", False, default=True),
             DateTruth("receipts", "loaded_at", "Loaded at", "audit", False),
         ],

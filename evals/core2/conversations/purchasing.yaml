@@ -1,0 +1,76 @@
+# Follow-up or new question, purchasing (see evals/core2/followup_eval.py for the labels).
+domain: purchasing
+today: 2026-06-15
+threads:
+  - id: p01
+    turns:
+      - {q: "Line amount by supplier this year"}
+      - {q: "only German suppliers", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by month", label: refine, kind: grain, keeps: [measures, filters, window]}
+      - {q: "last year", label: refine, kind: period, keeps: [measures, filters]}
+      - {q: "top 5 suppliers", label: refine, kind: topn, keeps: [measures, filters, window]}
+      - {q: "Rejected quantity by item category this quarter", label: new, kind: switch, drops: [filters]}
+  - id: p02
+    turns:
+      - {q: "Purchase orders by buyer last month"}
+      - {q: "and line amount", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "only open orders", label: refine, kind: filter, keeps: [measures, group_by, window]}
+      - {q: "the MRO Desk by week", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "compare with the previous month", label: refine, kind: compare, keeps: [measures, filters]}
+      - {q: "Which items have the highest average unit price?", label: new, kind: switch, drops: [filters, window]}
+  - id: p03
+    turns:
+      - {q: "Received quantity by month this year"}
+      - {q: "and rejected", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "rejected as a percent of received", label: refine, kind: measure, keeps: [group_by, window]}
+      - {q: "for Raw Materials", label: refine, kind: filter, keeps: [group_by, window]}
+      - {q: "why did it go up in May?", label: refine, kind: why, keeps: [filters]}
+      - {q: "How many purchase orders did the Packaging Desk raise in 2025?", label: new, kind: restate, drops: [filters]}
+  - id: p04
+    turns:
+      - {q: "Ordered quantity by item category for lines promised next month"}
+      - {q: "by supplier", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "only Electrical", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "sorted ascending", label: refine, kind: sort, keeps: [measures, group_by, filters, window]}
+      - {q: "as a table", label: refine, kind: chart, keeps: [measures, group_by, filters, window]}
+      - {q: "Line amount by supplier country last quarter", label: new, kind: switch, drops: [filters]}
+  - id: p05
+    turns:
+      - {q: "Average unit price of Steel Plate 4mm by month over the last 12 months"}
+      - {q: "and Copper Rod", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by supplier instead of month", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "which supplier is cheapest?", label: refine, kind: sort, keeps: [measures, filters, window]}
+      - {q: "How many receipts did we get this week?", label: new, kind: switch, drops: [filters]}
+      - {q: "by item", label: refine, kind: drill, keeps: [measures, window]}
+  - id: p06
+    turns:
+      - {q: "Purchase order lines by status"}
+      - {q: "cancelled only, by month", label: refine, kind: filter, keeps: [measures]}
+      - {q: "this year only", label: refine, kind: period, keeps: [measures, filters]}
+      - {q: "by buyer", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "for the Plant Buying Team, which suppliers?", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "How many purchase orders?", label: unclear, kind: bare}
+  - id: p07
+    turns:
+      - {q: "Line amount by supplier payment terms"}
+      - {q: "only 30-day terms", label: refine, kind: filter, keeps: [measures]}
+      - {q: "by supplier", label: refine, kind: drill, keeps: [measures, filters]}
+      - {q: "for 2025", label: refine, kind: period, keeps: [measures, group_by, filters]}
+      - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters, window]}
+      - {q: "What's the total value of open purchase order lines?", label: new, kind: restate, drops: [filters, window]}
+  - id: p08
+    turns:
+      - {q: "Received quantity from Smith & Sons Ltd this year"}
+      - {q: "and from Daily Freight Co", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by month", label: refine, kind: grain, keeps: [measures, filters, window]}
+      - {q: "compare with the same months last year", label: refine, kind: compare, keeps: [measures, filters]}
+      - {q: "Which buyers raised the most purchase orders in May?", label: new, kind: switch, drops: [filters]}
+      - {q: "and in April?", label: refine, kind: period, keeps: [measures, group_by]}
+  - id: p09
+    turns:
+      - {q: "Line amount by buyer this year"}
+      - {q: "Received quantity by supplier last month", label: new, kind: switch, drops: [group_by]}
+      - {q: "Which items are bought from Mexico?", label: new, kind: switch, drops: [group_by, window]}
+      - {q: "Purchase orders by status for 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "Rejected quantity by week this quarter", label: new, kind: switch, drops: [filters, group_by]}
+      - {q: "Average unit price of Resin Pellets this year", label: new, kind: switch, drops: [group_by]}

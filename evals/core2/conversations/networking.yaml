@@ -1,0 +1,76 @@
+# Follow-up or new question, networking (see evals/core2/followup_eval.py for the labels).
+domain: networking
+today: 2026-06-15
+threads:
+  - id: n01
+    turns:
+      - {q: "Alarms by severity last week"}
+      - {q: "only critical, by site", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by device role instead", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "trend by day", label: refine, kind: grain, keeps: [measures, filters, window]}
+      - {q: "why did they spike on Tuesday?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "Billed amount by service type last month", label: new, kind: switch, drops: [filters]}
+  - id: n02
+    turns:
+      - {q: "Tickets opened by priority this month"}
+      - {q: "P1 only, by category", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "compare with last month", label: refine, kind: compare, keeps: [measures, group_by, filters]}
+      - {q: "by site", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "the first one, by day", label: refine, kind: reference, keeps: [measures]}
+      - {q: "Average utilization by device role yesterday", label: new, kind: switch, drops: [filters]}
+  - id: n03
+    turns:
+      - {q: "Average utilization by site over the last 7 days"}
+      - {q: "Ontario sites only", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by day", label: refine, kind: grain, keeps: [measures, filters, window]}
+      - {q: "top 5 sites", label: refine, kind: topn, keeps: [measures, filters, window]}
+      - {q: "as a table", label: refine, kind: chart, keeps: [measures, filters, window]}
+      - {q: "How many devices does each site have?", label: new, kind: switch, drops: [filters, window]}
+  - id: n04
+    turns:
+      - {q: "Billed amount by customer segment this year"}
+      - {q: "and data usage", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "Public sector only, by customer", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "top 10", label: refine, kind: topn, keeps: [measures, filters, window]}
+      - {q: "Tickets by category last quarter", label: new, kind: switch, drops: [filters]}
+      - {q: "How many alarms?", label: unclear, kind: bare}
+  - id: n05
+    turns:
+      - {q: "Input errors by device yesterday"}
+      - {q: "only access switches", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "top 10", label: refine, kind: topn, keeps: [measures, group_by, filters, window]}
+      - {q: "the first one, by interface", label: refine, kind: reference, keeps: [measures, window]}
+      - {q: "How many services of each type do we run?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "only MPLS", label: refine, kind: filter, keeps: [measures]}
+  - id: n06
+    turns:
+      - {q: "Alarms raised by alarm type this month"}
+      - {q: "excluding High CPU", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "by vendor model", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "same for last month", label: refine, kind: period, keeps: [measures, group_by, filters]}
+      - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters, window]}
+      - {q: "Data usage by month for the last 6 months", label: new, kind: switch, drops: [filters]}
+  - id: n07
+    turns:
+      - {q: "Tickets by site region last month"}
+      - {q: "Quebec only, by site", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "and alarms", label: refine, kind: add_measure, keeps: [measures, group_by, filters, window]}
+      - {q: "sort by tickets", label: refine, kind: sort, keeps: [measures, group_by, filters, window]}
+      - {q: "What is the average time to resolve P1 tickets this year?", label: new, kind: switch, drops: [filters]}
+      - {q: "and P2?", label: refine, kind: filter, keeps: [window]}
+  - id: n08
+    turns:
+      - {q: "Billed amount by month this year"}
+      - {q: "Enterprise customers only", label: refine, kind: filter, keeps: [measures, group_by, window]}
+      - {q: "forecast the next 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
+      - {q: "Utilization of tor01-cr01 interfaces last week", label: new, kind: switch, drops: [filters]}
+      - {q: "by day", label: refine, kind: grain, keeps: [measures, filters, window]}
+      - {q: "How many tickets?", label: unclear, kind: bare}
+  - id: n09
+    turns:
+      - {q: "Alarms by site this week"}
+      - {q: "Tickets by priority last month", label: new, kind: switch, drops: [group_by, window]}
+      - {q: "Which devices are firewalls?", label: new, kind: switch, drops: [group_by, window]}
+      - {q: "Billed amount by service type in 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "Data usage by week this quarter", label: new, kind: switch, drops: [group_by]}
+      - {q: "Average utilization of core devices yesterday", label: new, kind: switch, drops: [group_by]}

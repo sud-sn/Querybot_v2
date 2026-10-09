@@ -63,6 +63,8 @@ def _abbreviate(word: str, extra: dict[str, str] | None = None) -> str:
         return extra[word]
     if word in _ABBREVIATIONS:
         return _ABBREVIATIONS[word]
+    if (m := re.fullmatch(r"([a-z]+)(\d+)", word)) and len(word) > 3:
+        return _abbreviate(m.group(1), extra) + m.group(2)     # address2 -> ADDR2, never ADDR again
     if word.isdigit() or len(word) <= 3:
         return word.upper()
     # First letter, then consonants, four letters at most: "transfer" -> "TRNS".

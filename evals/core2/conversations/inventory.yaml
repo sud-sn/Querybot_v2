@@ -1,0 +1,76 @@
+# Follow-up or new question, inventory (see evals/core2/followup_eval.py for the labels).
+domain: inventory
+today: 2026-06-15
+threads:
+  - id: i01
+    turns:
+      - {q: "On-hand value by warehouse today"}
+      - {q: "only Fasteners", label: refine, kind: filter, keeps: [measures, group_by]}
+      - {q: "by item instead", label: refine, kind: regroup, keeps: [measures, filters]}
+      - {q: "top 10", label: refine, kind: topn, keeps: [measures, group_by, filters]}
+      - {q: "the first one, how has its on-hand value moved over the last 6 months?", label: refine, kind: reference, keeps: [measures]}
+      - {q: "Which suppliers did we receive the most quantity from this year?", label: new, kind: switch, drops: [filters]}
+  - id: i02
+    turns:
+      - {q: "Received quantity by month this year"}
+      - {q: "and issued?", label: refine, kind: filter, keeps: [group_by, window]}
+      - {q: "for Northfield DC only", label: refine, kind: filter, keeps: [group_by, window]}
+      - {q: "compare with last year", label: refine, kind: compare, keeps: [measures, filters]}
+      - {q: "why did it rise in April?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "How many items have less than 10 on hand?", label: new, kind: switch, drops: [filters]}
+  - id: i03
+    turns:
+      - {q: "Closing value by item group at the end of last month"}
+      - {q: "and closing quantity", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "split by warehouse region too", label: refine, kind: drill, keeps: [measures, window]}
+      - {q: "only the West", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "as a table", label: refine, kind: chart, keeps: [measures, group_by, filters, window]}
+      - {q: "Extended cost of adjustments by warehouse this quarter", label: new, kind: restate, drops: [filters]}
+  - id: i04
+    turns:
+      - {q: "Movements by movement type last month"}
+      - {q: "excluding transfers", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "by week", label: refine, kind: grain, keeps: [measures, filters, window]}
+      - {q: "for Plumbing items", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "Average unit cost by supplier country", label: new, kind: switch, drops: [filters, window]}
+      - {q: "highest first", label: refine, kind: sort, keeps: [measures, group_by]}
+  - id: i05
+    turns:
+      - {q: "Allocated quantity by warehouse today"}
+      - {q: "as a percent of on hand", label: refine, kind: measure, keeps: [group_by]}
+      - {q: "which warehouse has the most allocated?", label: refine, kind: sort, keeps: [group_by]}
+      - {q: "that warehouse by item group", label: refine, kind: reference}
+      - {q: "On-hand value by item for Riverside Hub", label: new, kind: restate}
+      - {q: "How many items?", label: unclear, kind: bare}
+  - id: i06
+    turns:
+      - {q: "Stock movement quantity by status this year"}
+      - {q: "only posted", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by item group", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "last year instead", label: refine, kind: period, keeps: [measures, group_by, filters]}
+      - {q: "as a monthly trend", label: refine, kind: grain, keeps: [measures, filters, window]}
+      - {q: "What is the total on-hand quantity across all warehouses right now?", label: new, kind: restate, drops: [filters]}
+  - id: i07
+    turns:
+      - {q: "Received quantity by supplier last quarter"}
+      - {q: "only Canadian suppliers", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "and extended cost", label: refine, kind: add_measure, keeps: [measures, group_by, filters, window]}
+      - {q: "top 3", label: refine, kind: topn, keeps: [measures, group_by, filters, window]}
+      - {q: "the second one, month by month this year", label: refine, kind: reference}
+      - {q: "Which warehouse type holds the most on-hand value?", label: new, kind: switch, drops: [filters]}
+  - id: i08
+    turns:
+      - {q: "What can I ask about stock?"}
+      - {q: "On hand by warehouse", label: new, kind: restate}
+      - {q: "now by item group", label: refine, kind: regroup, keeps: [measures]}
+      - {q: "only Depot warehouses", label: refine, kind: filter, keeps: [measures, group_by]}
+      - {q: "how about Paint?", label: refine, kind: filter, keeps: [measures]}
+      - {q: "How many movements?", label: unclear, kind: bare}
+  - id: i09
+    turns:
+      - {q: "On-hand quantity by warehouse today"}
+      - {q: "Issued quantity by item group last month", label: new, kind: switch, drops: [group_by]}
+      - {q: "Which items came from Kestrel Industrial this year?", label: new, kind: switch, drops: [group_by]}
+      - {q: "Closing value by warehouse at the end of March", label: new, kind: restate, drops: [filters]}
+      - {q: "Adjustment movements by week this quarter", label: new, kind: switch, drops: [group_by]}
+      - {q: "Average unit cost of Paint items received in 2025", label: new, kind: switch, drops: [group_by, window]}

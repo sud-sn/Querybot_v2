@@ -45,6 +45,12 @@ class JoinTruth:
     role: str | None = None     # business name of the role when the pair joins more than one way
     declared: bool = True       # declared as a foreign key where the style declares keys
     trust: str = "verified"     # what the data supports: verified (>= 99% match) or proposed
+    also: tuple[tuple[str, str], ...] = ()   # the key's other column pairs: (rx_number, fill_number) -> fills
+    cast: bool = False          # the two sides are stored as different types ('00042' against 42)
+
+    def pairs(self) -> tuple[tuple[str, str], ...]:
+        """Every (from column, to column) of the key, the first one first."""
+        return ((self.from_column, self.to_column), *self.also)
 
 
 @dataclass
@@ -155,12 +161,13 @@ def materialize(domain: Domain, style: str, con: duckdb.DuckDBPyConnection | Non
                 continue
             parent, pcols = names[j.from_table]
             ref, rcols = names[j.to_table]
-            declared_fks.append({
-                "constraint_name": f"fk_{parent}_{pcols[j.from_column]}".lower(),
-                "parent_schema": "main", "parent_table": parent, "parent_col": pcols[j.from_column],
-                "ref_schema": "main", "ref_table": ref, "ref_col": rcols[j.to_column],
-                "ordinal": 1, "enforced": False, "source": "synthetic",
-            })
+            for ordinal, (from_column, to_column) in enumerate(j.pairs(), start=1):
+                declared_fks.append({
+                    "constraint_name": f"fk_{parent}_{pcols[j.from_column]}".lower(),
+                    "parent_schema": "main", "parent_table": parent, "parent_col": pcols[from_column],
+                    "ref_schema": "main", "ref_table": ref, "ref_col": rcols[to_column],
+                    "ordinal": ordinal, "enforced": False, "source": "synthetic",
+                })
     return Built(domain=domain, style=style, con=con,
                  tables={t: names[t][0] for t in names},
                  columns={t: names[t][1] for t in names},

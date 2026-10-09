@@ -1,0 +1,76 @@
+# Follow-up or new question, finance (see evals/core2/followup_eval.py for the labels).
+domain: finance
+today: 2026-06-15
+threads:
+  - id: f01
+    turns:
+      - {q: "Net amount by division last month"}
+      - {q: "only Operations", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by cost centre", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "versus budget", label: refine, kind: add_measure, keeps: [measures, group_by, filters, window]}
+      - {q: "which one is furthest over budget?", label: refine, kind: sort, keeps: [filters, window]}
+      - {q: "Total credits by account type this year", label: new, kind: switch, drops: [filters]}
+  - id: f02
+    turns:
+      - {q: "Journals posted each month in 2026"}
+      - {q: "by document date instead", label: refine, kind: date_role, keeps: [measures, window]}
+      - {q: "only reversed ones", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "last year", label: refine, kind: period, keeps: [measures, filters]}
+      - {q: "why did it spike in November?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "Budget by division for Q3 2026", label: new, kind: switch, drops: [filters]}
+  - id: f03
+    turns:
+      - {q: "Net amount on revenue accounts by month this year"}
+      - {q: "compare with last year", label: refine, kind: compare, keeps: [measures, filters]}
+      - {q: "as a line chart", label: refine, kind: chart, keeps: [measures, filters]}
+      - {q: "and for expense accounts?", label: refine, kind: filter, keeps: [measures]}
+      - {q: "break that down by cost centre", label: refine, kind: drill, keeps: [measures, filters]}
+      - {q: "How many journal lines?", label: unclear, kind: bare}
+  - id: f04
+    turns:
+      - {q: "Debit amount by account for Plant North in May"}
+      - {q: "top 10", label: refine, kind: topn, keeps: [measures, group_by, filters, window]}
+      - {q: "the first one over the last 12 months", label: refine, kind: reference, keeps: [measures]}
+      - {q: "by month", label: refine, kind: grain, keeps: [measures, filters]}
+      - {q: "Which division has the largest budget this year?", label: new, kind: switch, drops: [filters]}
+      - {q: "and the smallest?", label: refine, kind: sort, keeps: [measures, window]}
+  - id: f05
+    turns:
+      - {q: "Budget amount by cost centre this quarter"}
+      - {q: "only the Commercial division", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "next quarter instead", label: refine, kind: period, keeps: [measures, group_by, filters]}
+      - {q: "show net amount alongside", label: refine, kind: add_measure, keeps: [measures, group_by, filters, window]}
+      - {q: "sorted by budget", label: refine, kind: sort, keeps: [measures, group_by, filters, window]}
+      - {q: "Net amount by account type for 2025", label: new, kind: restate, drops: [filters]}
+  - id: f06
+    turns:
+      - {q: "Credit amount last month"}
+      - {q: "by division", label: refine, kind: drill, keeps: [measures, window]}
+      - {q: "and the month before?", label: refine, kind: period, keeps: [measures, group_by]}
+      - {q: "what drove the change?", label: refine, kind: why, keeps: [measures]}
+      - {q: "only posted lines", label: refine, kind: filter, keeps: [measures]}
+      - {q: "How much did we budget for Legal & Compliance this year?", label: new, kind: switch, drops: [filters]}
+  - id: f07
+    turns:
+      - {q: "Net amount by cost centre in Q1 2026"}
+      - {q: "excluding the Research division", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters, window]}
+      - {q: "Q2 instead", label: refine, kind: period, keeps: [measures, group_by, filters]}
+      - {q: "Debit and credit amounts by division for 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "What is total debit?", label: unclear, kind: bare}
+  - id: f08
+    turns:
+      - {q: "Journals entered by month"}
+      - {q: "for the Finance Office", label: refine, kind: filter, keeps: [measures]}
+      - {q: "just the last 6 months", label: refine, kind: period, keeps: [measures, filters]}
+      - {q: "forecast 3 months ahead", label: refine, kind: forecast, keeps: [measures, filters]}
+      - {q: "Net amount by division and month for 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "just Corporate", label: refine, kind: filter, keeps: [measures, window]}
+  - id: f09
+    turns:
+      - {q: "Net amount by division this year"}
+      - {q: "Budget amount by cost centre for Q4 2026", label: new, kind: switch, drops: [group_by, window]}
+      - {q: "Which accounts had reversed journals last month?", label: new, kind: switch, drops: [group_by]}
+      - {q: "Credit amount by account type in 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "Journals posted per week this quarter", label: new, kind: switch, drops: [group_by]}
+      - {q: "Debit amount for People Services last month", label: new, kind: restate, drops: [group_by]}
