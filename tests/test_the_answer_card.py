@@ -35,6 +35,8 @@ FUNCTIONS = [
     "function _answerBadgesHtml(msg)",
     "function _answerTiles(msg)",
     "function _answerTilesHtml(tiles)",
+    "function _shortAmount(value, fmt, spec = {})",
+    "function _tileValue(value, fmt, spec = {}, column = '')",
     "function _answerChartTitle(chart)",
     "function _answerChartHeight(chart)",
     "function _answerVisualHtml(msg, ids)",
@@ -192,7 +194,10 @@ def test_one_number_is_a_tile_and_is_said_once():
 def test_several_numbers_with_nothing_to_group_by_are_one_tile_each():
     shown = Elements(card(THREE_NUMBERS))
     assert [e["text"] for e in shown.all("kpi-label")] == ["Net amount", "Cost amount", "Gross amount"]
-    assert [e["text"] for e in shown.all("kpi-value")] == ["$3,093,601.41", "$1,918,032.53", "$3,150,534.87"]
+    # An amount of a million or more is drawn short in its tile, so it never runs out of it; the exact
+    # amount is right under it.
+    assert [e["text"] for e in shown.all("kpi-value")] == ["$3.09M", "$1.92M", "$3.15M"]
+    assert [e["text"] for e in shown.all("kpi-exact")] == ["$3,093,601.41", "$1,918,032.53", "$3,150,534.87"]
     assert shown.first("answer-tiles")["attrs"]["data-count"] == "3"
 
 

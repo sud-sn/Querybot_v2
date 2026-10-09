@@ -597,7 +597,10 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-tiles[data-count="1"] { grid-template-columns: minmax(200px, 320px); }
 .kpi-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; box-shadow: var(--shadow-sm); min-width: 0; }
 .kpi-label { font-size: var(--font-sm); color: var(--text-secondary); font-weight: var(--weight-medium); }
-.kpi-value { font-size: var(--font-3xl); font-weight: var(--weight-bold); color: var(--text-strong); letter-spacing: -0.02em; line-height: 1.2; margin: 4px 0 2px; white-space: nowrap; }
+.kpi-value { font-size: var(--font-3xl); font-weight: var(--weight-bold); color: var(--text-strong); letter-spacing: -0.02em; line-height: 1.2; margin: 4px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-value.mid { font-size: var(--font-2xl); }
+.kpi-value.long { font-size: var(--font-xl); }
+.kpi-exact { font-size: var(--font-xs); color: var(--text-muted); margin-bottom: 2px; overflow-wrap: anywhere; }
 .kpi-note { font-size: var(--font-sm); color: var(--text-muted); }
 .answer-visual { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px 8px; box-shadow: var(--shadow-sm); min-width: 0; }
 .answer-visual-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; }
@@ -2938,7 +2941,7 @@ function _answerTiles(msg) {
     const period = ((msg.answer || {}).badges || []).find(b => b && b.kind === 'period');
     let note = (msg.answer || {}).comparison || kpi.note || '';
     if (period && note.replace(/^(in|on) /, '') === period.text) note = '';
-    return [{label: kpi.label || '', value: _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {}), note}];
+    return [{label: kpi.label || '', ..._tileValue(kpi.value, kpi.format, kpi.display_format || {}), note}];
   }
   const data = msg.data || {};
   const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -2953,18 +2956,44 @@ function _answerTiles(msg) {
                           || (!formatOf(h) && _isANumericColumn(rows, h)))) return [];
   const labels = data.header_labels || {};
   // A number the data does not have reads as a dash, never as an empty tile.
-  const missing = v => v === null || v === undefined || v === '';
   return headers.map(h => ({label: labels[h] || h,
-                            value: missing(rows[0][h]) ? '—'
-                              : _formatDisplayValue(rows[0][h], formatOf(h) || 'number', _displayFormatSpec(data, h), h),
+                            ..._tileValue(rows[0][h], formatOf(h) || 'number', _displayFormatSpec(data, h), h),
                             note: ''}));
 }
 
+// An amount of a million or more, drawn short in its tile ("$7.36M"); the exact amount goes under it.
+// Empty when the amount is short enough already, or is not an amount.
+function _shortAmount(value, fmt, spec = {}) {
+  if (!['currency', 'number', 'integer'].includes(fmt) || value === null || value === undefined || value === '') return '';
+  const n = _parseServerNumber(String(value));
+  if (isNaN(n) || Math.abs(n) < 1e6) return '';
+  const abs = Math.abs(n);
+  const [unit, id] = abs >= 1e12 ? [1e12, 'trillion'] : abs >= 1e9 ? [1e9, 'billion'] : [1e6, 'million'];
+  const body = window.qbNum(abs / unit, {min: 0, max: 2}) + t('ui.num.compact.' + id);
+  const code = spec.currency_code || 'USD';
+  const amount = fmt === 'currency' ? _qbMoney(body, _QB_CURRENCY_SYMBOL[code] || (code + ' ')) : body;
+  return (n < 0 ? '-' : '') + amount;
+}
+// A value as its tile draws it: short where it is long, with the exact amount kept beside it.
+function _tileValue(value, fmt, spec = {}, column = '') {
+  if (value === null || value === undefined || value === '') return {value: '—', exact: ''};
+  // A count is a whole number: "1,250,000", never "1,250,000.00".
+  const n = _parseServerNumber(String(value));
+  if (['number', 'integer'].includes(fmt) && Number.isInteger(n) && spec.fraction_digits == null) {
+    spec = Object.assign({}, spec, {fraction_digits: 0});
+  }
+  const exact = _formatDisplayValue(value, fmt, spec, column);
+  const short = _shortAmount(value, fmt, spec);
+  return short ? {value: short, exact} : {value: exact, exact: ''};
+}
 function _answerTilesHtml(tiles) {
   if (!tiles.length) return '';
+  // The longer the number, the smaller it is drawn, so it never runs out of its tile.
+  const size = v => (String(v).length > 9 ? ' long' : String(v).length > 7 ? ' mid' : '');
   return `<div class="answer-tiles" data-count="${tiles.length}">${tiles.map(tile =>
     `<div class="kpi-tile"><div class="kpi-label">${escHtml(tile.label)}</div>`
-    + `<div class="kpi-value">${escHtml(tile.value)}</div>`
+    + `<div class="kpi-value${size(tile.value)}"${tile.exact ? ` title="${escHtml(tile.exact)}"` : ''}>${escHtml(tile.value)}</div>`
+    + (tile.exact ? `<div class="kpi-exact">${escHtml(tile.exact)}</div>` : '')
     + (tile.note ? `<div class="kpi-note">${escHtml(tile.note)}</div>` : '')
     + `</div>`).join('')}</div>`;
 }

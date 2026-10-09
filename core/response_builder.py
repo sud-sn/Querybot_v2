@@ -860,6 +860,17 @@ def _format_matches_column_name(fmt: str, column: str) -> bool:
     return False
 
 
+_PERCENT_WORDS = {"percent", "percentage", "pct", "pourcentage", "pourcent"}
+
+
+def _names_a_percentage(column: str) -> bool:
+    """Whether a column's own words say it is a percentage: MARGIN_PCT, InventoryValuePercentChange, "Margin %"."""
+    if "%" in column:
+        return True
+    words = re.split(r"[_\W]+|(?<=[a-z])(?=[A-Z])", column)
+    return any(w.lower() in _PERCENT_WORDS for w in words if w)
+
+
 def _columns_for_metric_format(
     rows: list[dict],
     metric: dict,
@@ -880,6 +891,10 @@ def _columns_for_metric_format(
 
     if fmt in {"currency", "percentage", "number"}:
         candidates = [h for h in headers if h in numeric_cols]
+        if fmt != "percentage":
+            # A metric's own change in percent (INVENTORY_VALUE_PERCENT_CHANGE) is a percentage, not the
+            # metric's money: "-$99.83" read as a loss of 99 dollars.
+            candidates = [h for h in candidates if not _names_a_percentage(h)]
     elif fmt == "date":
         candidates = [h for h in headers if h not in numeric_cols or _format_matches_column_name(fmt, h)]
     else:
@@ -1008,6 +1023,12 @@ def build_column_formats(
             continue
         for header in _columns_for_metric_format(rows, metric, strict=strict):
             formats.setdefault(header, fmt)
+    # A column that names a percentage, and holds numbers, is shown as one wherever the answer draws it:
+    # a tile, the table, the chart (a percent change, a margin %).
+    numeric = set(_numeric_cols(rows))
+    for header in headers:
+        if header not in formats and header in numeric and _names_a_percentage(header):
+            formats[header] = "percentage"
 
     return formats
 
@@ -2874,6 +2895,17 @@ def build_answer(
         col = numeric_cols[0]
         value_fmt = column_formats.get(col)
         values = [_to_float_z(r.get(col)) for r in rows]
+        if len(rows) == 1:
+            # One row of figures is answered by its first figure, not "Returned 1 row for <the question>", and
+            # has no range to tell ("Range $7.3M to $7.3M").
+            return {
+                "headline": _t("answer.note.single_value", label=_display_label(col),
+                               value=format_value(values[0], col)),
+                "short_value": format_value(values[0], col),
+                "comparison": scope.get("badge", ""),
+                "scope_badge": scope.get("badge", ""),
+                "scope_note": scope.get("note", ""),
+            }
         return {
             "headline": _t_plural(
                 "answer.returned_rows", len(rows),
@@ -3529,6 +3561,8 @@ def _build_insight_summary(
             return f"{sentence} {second}" if second else sentence
 
     if mode == "numeric_table":
+        if row_count <= 1:
+            return ""      # one row has no range: "ranges $7.3M to $7.3M, avg $7.3M" says nothing
         value_col = _display_label(ctx.get("value_col") or "")
         mn = ctx.get("min_value", 0)
         mx = ctx.get("max_value", 0)
@@ -3613,6 +3647,8 @@ def _listing_summary(rows: list[dict], ctx: dict, column_formats: dict, format_v
     count = len(rows)
     chosen = (currency or additive or [None])[0]
     if chosen is None:
+        if count <= 1:
+            return ""      # one record has no range: "ranges $7.3M to $7.3M, avg $7.3M" says nothing
         # Nor a range or an average across units.
         ranged = [
             c for c in measures

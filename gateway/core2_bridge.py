@@ -204,9 +204,12 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
         return False
     question_id = new_question_id()
     start = time.perf_counter()
-    _status, payload = await _answer(account_id, question, portal_user,
-                                     _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id)
+    status, payload = await _answer(account_id, question, portal_user,
+                                    _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id)
     if payload is None or payload.get("unsupported"):
+        # Today's pipeline answers instead: the reader is told so, and why, above its answer -- a number that
+        # comes from the other pipeline is never passed off as the new core's.
+        await _send(adapter, websocket, {"type": "system", "content": _handed_back(status, payload)})
         return False
     rows = payload.pop("export_rows", None)
     try:
@@ -245,6 +248,18 @@ _COULD_NOT = {
     "timeout": "The new core did not answer this within {seconds:.0f} seconds.",
     "failed": "The new core stopped with an error on this question; the service log has the details.",
 }
+
+
+def _handed_back(status: str, payload: dict[str, Any] | None) -> str:
+    """Why today's pipeline answers a question in new-core-only mode, in one line."""
+    if status in _COULD_NOT:
+        why = _COULD_NOT[status].format(seconds=TIMEOUT_SECONDS).rstrip(".")
+    else:
+        said = " ".join(str(((payload or {}).get("answer") or {}).get("headline") or "").split())
+        said = said.removeprefix("I cannot answer that from this data: ").rstrip(".")
+        why = f"The new core cannot answer this from the data ({said[:160]})" if said else \
+            "The new core cannot answer this from the data"
+    return f"{why}. Today's pipeline answers it instead."
 
 
 def _could_not(question: str, status: str, question_id: str) -> dict[str, Any]:

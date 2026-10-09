@@ -82,7 +82,7 @@ class TestAListingIsNotARace(unittest.TestCase):
         payload = compose(rows, "list customers with their credit limit percent",
                           "SELECT CUS_NO, CUS_NM, CRD_LMT_PCT FROM c")
         self.assertEqual(payload["insight_summary"],
-                         "4 records — Crd Lmt Percent ranges 10 to 13, avg 11.50.")
+                         "4 records — Crd Lmt Percent ranges 10.00% to 13.00%, avg 11.50%.")
 
     def test_a_single_record_reads_in_the_singular(self):
         payload = compose(INVOICE_LINES[:1], "show invoice INV00", LISTING_SQL)

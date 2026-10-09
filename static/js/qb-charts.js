@@ -83,6 +83,8 @@
     if (abs >= 1e6) return tier(1e6, 'million');
     if (abs >= 1e3) return tier(1e3, 'thousand');
     if (n === 0) return '0';
+    // Hundreds beside thousands: "-$549" next to "$4.6K", not "-$549.25".
+    if (abs >= 100) return global.qbNum(n, {min: 0, max: 0});
     if (abs < 0.01) {
       const kept = Number(n.toPrecision(2));
       const places = (String(kept).split('.')[1] || '').length;
@@ -439,6 +441,9 @@
     if (droppedSeries) capParts.push(t('ui.chart.cap.series_hidden', {count: droppedSeries}));
 
     const maxLabel = labels.reduce((m, v) => Math.max(m, v.length), 0);
+    // The names beside a ranking take at most 180px, and never more than a third of a narrow card (a
+    // phone): past that, the bars are squeezed to slivers and the ranking cannot be read.
+    const nameWidth = Math.round(Math.min(180, Math.max(96, ((layout && layout.width) || 600) / 3)));
     const longLabels = maxLabel > 14;
     const manyLabels = labels.length > 9;
     const labelFmt = v => { const s = String(v == null ? '' : v); return s.length > 22 ? s.slice(0, 21) + '…' : s; };
@@ -997,7 +1002,7 @@
                 splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false}},
         yAxis: {type: 'category', data: labels, inverse: true, axisTick: {show: false},
                 axisLine: {show: false},
-                axisLabel: {color: c.ink2, fontSize: 12, width: 180, overflow: 'truncate', ellipsis: '…'}},
+                axisLabel: {color: c.ink2, fontSize: 12, width: nameWidth, overflow: 'truncate', ellipsis: '…'}},
         series: [
           // One neutral line per member, earlier to current.
           ...labels.map((l, i) => ({
@@ -1051,7 +1056,7 @@
       // the query ranked it -- sits at the top of a horizontal bar chart.
       yAxis: horizontal
         ? Object.assign({}, categoryAxis, {inverse: true, axisLabel: Object.assign({}, categoryAxis.axisLabel, {
-            rotate: 0, interval: 0, hideOverlap: false, width: 180, overflow: 'truncate', ellipsis: '…',
+            rotate: 0, interval: 0, hideOverlap: false, width: nameWidth, overflow: 'truncate', ellipsis: '…',
             formatter: v => String(v == null ? '' : v)})})
         : valueAxis,
       dataZoom: zoom ? [
@@ -1229,7 +1234,7 @@
     if (shareKey && horizontal) {
       const widest = Math.max(...rows.map((r, i) => (valueFmt(num(r && r[yKey]), yKey, true)
         + '  ·  ' + formatValue(shareOf(i), 'percentage', true)).length));
-      const plot = ((layout && layout.width) || 600) - 64 - Math.min(180, maxLabel * 7);
+      const plot = ((layout && layout.width) || 600) - 64 - Math.min(nameWidth, maxLabel * 7);
       const need = widest * 7 + 10;
       shareOnLabel = need <= plot * 0.4;
       if (shareOnLabel) shareGap = `${Math.ceil(need / Math.max(plot - need, 40) * 100)}%`;
@@ -1250,7 +1255,7 @@
         const size = v => (horizontal ? valueFmt(v, yKey, true).length * 7 + 8 : 22);
         const need = Math.max(...below.map(size));
         const plot = horizontal
-          ? ((layout && layout.width) || 600) - 64 - Math.min(180, maxLabel * 7)
+          ? ((layout && layout.width) || 600) - 64 - Math.min(nameWidth, maxLabel * 7)
           : ((layout && layout.height) || 300) - top - 32;
         const share = 1.2 * need * 1.08 / Math.max(plot - need, plot * 0.3, 40);
         (horizontal ? option.xAxis : option.yAxis).boundaryGap = [`${Math.ceil(share * 100)}%`, '8%'];
