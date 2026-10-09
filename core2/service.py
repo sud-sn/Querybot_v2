@@ -35,7 +35,7 @@ from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
-from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable
+from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable, placed
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
@@ -291,7 +291,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
             update = {"via": {**pending.plan.via, pending.field: picked}}
         outcome = Outcome(pending.plan.model_copy(update={**update, "follow_up": "refine"}), masked=pending.masked)
     else:
-        matches = _visible(services.index.match(question), model, services.allowed_tables)
+        matches = services.index.match(question)
+        if session.turns and session.turns[-1].shown:
+            # "Break the first one down": the member in that place of the answer on screen.
+            matches = sorted([*matches, *placed(question, session.turns[-1].shown, matches)], key=lambda m: m.start)
+        matches = _visible(matches, model, services.allowed_tables)
         outcome = plan_question(model, question, services.complete, today=services.today,
                                 history=session.turns[-HISTORY:], matches=matches,
                                 values_allowed=services.values_allowed, scrub=services.scrub)
@@ -319,8 +323,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     plan, missing = _members_named(plan, model, services.index)
 
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS)
+    shown: list[tuple[str, str | None]] = []
     try:
-        payload = _compute(question, plan, services, ctx, question_id=question_id, started=start)
+        payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown)
     except ResolveError as exc:
         if exc.kind == "ambiguous":
             session.turns.append(Turn(question, plan, outcome.masked))     # the reply names the role this asks for
@@ -357,14 +362,18 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
-    session.turns.append(Turn(question, plan, outcome.masked))
+    session.turns.append(Turn(question, plan, outcome.masked, shown))
     del session.turns[:-HISTORY]
     return payload
 
 
 def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, question_id: str,
-             started: float) -> dict[str, Any]:
-    """The answer to a checked plan: one query, or the several a "why" or a forecast needs."""
+             started: float, shown: list[tuple[str, str | None]] | None = None) -> dict[str, Any]:
+    """The answer to a checked plan: one query, or the several a "why" or a forecast needs.
+
+    ``shown``, when given, is filled with the answer's members in the order shown, for a
+    follow-up that names one by its place ("the first one").
+    """
     model = services.model
     warehouse = Guarded(services.warehouse)
     common: dict[str, Any] = {"data_source": services.data_source, "question_id": question_id,
@@ -379,6 +388,8 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     payload = build_answer(question, logical, compiled, result.columns, result.rows,
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
+    if shown is not None:
+        shown.extend(_members_shown(logical, payload))
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
     drill = drills(plan, logical, payload, model, services.allowed_tables) if payload.get("chart") else None
     if drill:
@@ -387,6 +398,19 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     if context:
         payload["key_insights"] = [context, *payload.get("key_insights", [])]
     return payload
+
+
+def _members_shown(logical: Any, payload: dict[str, Any], most: int = 20) -> list[tuple[str, str | None]]:
+    """The members of an answer's first grouping, in the order shown, as (attribute slug, stored value)."""
+    group = next((g for g in logical.groups if g.kind == "attribute" and g.attribute
+                  and g.name != logical.unit_group), None)
+    if group is None or any(g.kind == "period" for g in logical.groups):
+        return []
+    out: list[tuple[str, str | None]] = []
+    for row in (payload.get("export_rows") or (payload.get("data") or {}).get("rows") or [])[:most]:
+        value = row.get(group.name)
+        out.append((group.attribute, None if value in (None, "", "Unknown") else str(value)))
+    return out
 
 
 def _against_before(question: str, plan: Plan, services: Services, ctx: Context, warehouse: Guarded,
@@ -675,15 +699,16 @@ def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, q
     import store
     from core.value_index import value_index_enabled
     from core2.answer.summary import eligible, write
-    from core2.bootstrap.ai import workspace_planner
+    from core2.bootstrap.ai import summary_writer
 
     client = store.get_client(account_id) or {}
     scrub = question_scrubber(account_id)
     values_allowed = scrub is None and value_index_enabled(store.get_client_state(account_id) or {})
     if not eligible(payload, values_allowed=values_allowed):
         return None
-    complete = workspace_planner(account_id, client, question=question, question_id=question_id)
-    return write(payload, scrub(question) if scrub else question, complete)
+    asked = scrub(question) if scrub else question
+    complete = summary_writer(account_id, client, question=asked, question_id=question_id)
+    return write(payload, asked, complete)
 
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,

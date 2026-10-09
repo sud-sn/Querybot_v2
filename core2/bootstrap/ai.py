@@ -69,6 +69,37 @@ def workspace_planner(account_id: str, client: dict[str, Any], *, question: str,
     return complete
 
 
+def summary_writer(account_id: str, client: dict[str, Any], *, question: str,
+                   question_id: str = "") -> Callable[[str, str], str]:
+    """The workspace's AI writing an answer's summary: plain sentences, never the planner's JSON.
+
+    The planner's calls end "Answer with one JSON object."; a summary asked that way came back
+    as {"summary": "..."} and was shown with its braces. Costed to the question it summarises.
+    """
+    from core.llm import Provider, llm_complete, resolve_provider
+    from core.llm_audit import llm_audit_scope
+    from core.prompt_cache import CachedPrompt
+
+    name, model, api_key, extra = resolve_provider(client, purpose="query")
+    provider = cast(Provider, name)
+    request_id = f"core2-summary-{uuid.uuid4().hex[:12]}"
+
+    def complete(stable: str, tail: str) -> str:
+        async def call() -> str:
+            with llm_audit_scope(account_id=account_id, question=question,
+                                 enabled=bool(client.get("enable_llm_audit")), request_id=request_id,
+                                 question_id=question_id or request_id, component="core2_summary",
+                                 egress={"question": question}):
+                text, _, _ = await llm_complete(CachedPrompt(stable=stable, volatile="Reply with plain sentences."),
+                                                tail, provider, model, api_key, max_tokens=1500, temperature=0.0,
+                                                **extra)
+                return text
+
+        return asyncio.run(call())
+
+    return complete
+
+
 def metric_writer(account_id: str, client: dict[str, Any], *, description: str) -> Callable[[str, str], str]:
     """The workspace's AI writing a metric from an admin's words: the model's fields as the
     cached prefix, the words after it; audited as a metric authoring call, and costed as one."""

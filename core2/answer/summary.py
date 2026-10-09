@@ -127,10 +127,28 @@ def _held(value: float, step: float, known: list[float]) -> bool:
     return any(abs(value - k) <= max(step, 0.51) * 1.0001 for k in known)
 
 
+def _sentences(reply: str) -> str:
+    """The sentences of a reply, out of the JSON object some models answer in ({"summary": "..."})."""
+    text = str(reply or "").strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1).strip()
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return ""
+        said = data.get("summary") if isinstance(data, dict) else None
+        if not isinstance(said, str) and isinstance(data, dict):
+            said = next((v for v in data.values() if isinstance(v, str) and v.strip()), "")
+        return said if isinstance(said, str) else ""
+    return text
+
+
 def checked(text: str, payload: dict[str, Any], given: str) -> str | None:
     """The summary when every figure in it is one the answer holds; None otherwise."""
-    text = " ".join(str(text or "").split()).strip().strip('"')
-    if not text or len(text.split()) > MAX_WORDS or text.startswith(("#", "-", "*")):
+    text = " ".join(_sentences(text).split()).strip().strip('"')
+    if not text or len(text.split()) > MAX_WORDS or text.startswith(("#", "-", "*", "{", "[")):
         return None
     known = _known(payload, given)
     stray = [v for v, step in figures(text) if not _held(v, step, known)]

@@ -36,6 +36,11 @@ get got just much many new old only own same see set use very via let lot
 au aux ce ces dans de des du elle en est et il ils je la le les leur mais mes mon ne nos notre nous on ou
 par pas pour qu que quel quelle qui sa se ses son sont sur ta te tes ton tu un une vos votre vous y
 """.split())
+# A quarter, a half or a fiscal year ("in Q1 2026", "H1", "FY26") is a period. Groups coded Q1 or H2 are
+# matched only where the question names their field just before the code ("pdc group Q1"); "deliveries in
+# Q1 2026" was handed to the planner as pdc group = Q1, and every count came back empty.
+PERIOD_WORD = re.compile(r"^(?:q[1-4]|h[12]|fy\d{2}(?:\d{2})?)$")
+_FIELD_NOUNS = frozenset({"code", "codes", "name", "names", "id", "key", "desc", "description", "label"})
 _QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-", "`": "'"})
 _TOKEN = re.compile(r"[\w#&'./+-]+", re.UNICODE)
 
@@ -152,11 +157,52 @@ class MemberIndex:
                 if key in COMMON_WORDS:
                     written = question[start:end]
                     entries = [e for e in entries if cased and e[1] == written]
+                if PERIOD_WORD.match(key):
+                    before = {normalise(w) for w, _, _ in words[max(0, i - 2):i]}
+                    entries = [e for e in entries if before & _field_words(e[0])]
                 for attribute, value in entries:
                     found.append(ValueMatch(question[start:end], start, end, attribute, value))
                 if entries:
                     taken.update(range(i, i + size))
         return sorted(found, key=lambda m: (m.start, m.attribute))
+
+
+def _field_words(attribute: str) -> set[str]:
+    """The words an attribute's slug names it by ("pdc_group.group_code": pdc, group), not "code" or "name"."""
+    return {w for w in re.split(r"[._\s]+", attribute.lower()) if w and w not in _FIELD_NOUNS}
+
+
+_ORDINAL = re.compile(r"\b(?:the\s+)?(first|1st|top|second|2nd|third|3rd|fourth|4th|fifth|5th|last|bottom)"
+                      r"\s+(one|1|[a-z]+)\b", re.IGNORECASE)
+_PLACE = {"first": 0, "1st": 0, "top": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
+          "fifth": 4, "5th": 4, "last": -1, "bottom": -1}
+
+
+def placed(question: str, shown: list[tuple[str, str | None]], taken: list[ValueMatch]) -> list[ValueMatch]:
+    """"The first one", "the second warehouse", "the last one": a member of the answer on screen, by its place.
+
+    ``shown`` is that answer's members in the order shown, as (attribute slug, stored value). The
+    planner is never given the rows, so "break the first one down" had no name to filter on and
+    came back as a placeholder. Only where the words name a row ("one", or the field's own noun,
+    never "the first quarter"), and never over a member the question names itself.
+    """
+    if not shown:
+        return []
+    nouns = {"one", "1"} | _field_words(shown[0][0])
+    out: list[ValueMatch] = []
+    for m in _ORDINAL.finditer(question):
+        word, noun = m.group(1).lower(), m.group(2).lower()
+        # "The top store in March" asks for a ranking; "the top one" points at a row.
+        if noun not in (nouns if word not in ("top", "bottom") else {"one", "1"}) \
+                or any(t.start < m.end() and m.start() < t.end for t in taken):
+            continue
+        place = _PLACE[word]
+        if place >= len(shown):
+            continue
+        attribute, value = shown[place]
+        if value is not None:
+            out.append(ValueMatch(m.group(0), m.start(), m.end(), attribute, value))
+    return out
 
 
 def listable(model: SemanticModel) -> list[str]:

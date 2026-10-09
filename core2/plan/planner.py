@@ -117,6 +117,7 @@ class Turn:
     question: str
     plan: Plan | None = None
     masked: Masked | None = None        # what the AI was shown, when member values are withheld
+    shown: list[tuple[str, str | None]] = field(default_factory=list)   # the answer's members, in order
 
 
 @dataclass

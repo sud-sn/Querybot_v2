@@ -76,6 +76,36 @@ def test_the_planner_is_handed_no_member_for_an_everyday_word(index):
     assert "VALUE MATCHES" not in tail
 
 
+# ── a quarter is a period ────────────────────────────────────────────────────
+
+@pytest.fixture
+def quarters() -> MemberIndex:
+    """Groups coded like periods, as on an inventory workspace (Q1 to Q4, H1, H2)."""
+    out = MemberIndex()
+    out.add("pdc_group.group_code", ["Q1", "Q2", "H1", "FY26", "AB"])
+    return out
+
+
+@pytest.mark.parametrize("question", [
+    "How many deliveries, receipts and returns did we have in Q1 2026?",
+    "Number of receipts in q2",
+    "Sales for H1 against last year",
+    "Receipts in FY26 by month",
+])
+def test_a_quarter_half_or_fiscal_year_is_the_period_not_a_group_coded_the_same(quarters, question):
+    assert _found(quarters, question) == []
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("Deliveries for pdc group Q1", [("pdc_group.group_code", "Q1")]),
+    ("deliveries for group Q2 in Q1 2026", [("pdc_group.group_code", "Q2")]),
+    ("receipts for group code H1", [("pdc_group.group_code", "H1")]),
+    ("receipts for AB in Q1", [("pdc_group.group_code", "AB")]),
+])
+def test_a_group_coded_like_a_period_is_found_where_its_field_is_named(quarters, question, expected):
+    assert _found(quarters, question) == expected
+
+
 # ── a change between two empty dates ─────────────────────────────────────────
 
 @pytest.fixture(scope="module")

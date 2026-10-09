@@ -266,6 +266,24 @@ def test_an_answer_given_before_answers_were_kept_is_the_new_cores_sentence_and_
                                        {"warehouse": "North", "stock_on_hand": 300}]
     assert payload["data"]["header_labels"]["stock_on_hand"] == "Stock on hand"
     assert payload["trace_id"] == trace_id and _pinned_plan(payload["pin_token"]) == PLAN
+    # Drawn as it was drawn when reopened before answers were kept: never a bare table.
+    assert payload["chart"] and payload["chart"]["chart_type"] == "bar"
+    assert payload["chart"]["pin_token"] == payload["pin_token"]
+
+
+def test_a_monthly_answer_given_before_answers_were_kept_comes_back_as_a_chart(tenant):
+    """Reopened as a table only, after answers began to be kept: every older trend lost its chart."""
+    user_id = _reader(harness.ACCOUNT)
+    thread_id = f"oldtrend_{os.urandom(3).hex()}"
+    months = [{"period": f"2026-{m:02d}-01", "number_of_receipts": n} for m, n in ((1, 213), (2, 40), (3, 30),
+                                                                                    (4, 12), (5, 16))]
+    _trace(harness.ACCOUNT, user_id, thread_id, "number of receipts by month", route="core2",
+           sql="SELECT period, receipts FROM dbo.stock", rows=months,
+           summary="Number of receipts, by month: 213 in Jan 2026, 16 in May 2026.")
+    (turn,) = _turns(_portal(user_id), thread_id)
+    chart = turn["payload"]["chart"]
+    assert chart and chart["chart_type"] in ("line", "area", "bar"), chart
+    assert [r["number_of_receipts"] for r in chart["rows"]] == [213, 40, 30, 12, 16]
 
 
 def test_a_kept_answer_with_rows_but_no_query_is_never_shown(tenant):

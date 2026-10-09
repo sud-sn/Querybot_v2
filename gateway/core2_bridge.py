@@ -140,12 +140,12 @@ def _kept_frame(payload: dict[str, Any], question: str) -> dict[str, Any] | None
 
 
 def reopened(account_id: str, portal_user: dict | None, trace: dict[str, Any],
-             rows: list[dict] | None) -> dict[str, Any]:
+             rows: list[dict] | None, *, chart: dict[str, Any] | None = None) -> dict[str, Any]:
     """A new-core answer of a reopened thread, drawn as the new core drew it, with Add to dashboard again.
 
     An answer kept with its frame comes back as it was shown. One given before answers were
-    kept comes back as its sentence and its rows: never rebuilt by today's pipeline, whose
-    wording and chart are another engine's.
+    kept comes back as its sentence and its rows, with ``chart`` (the chart drawn from its rows
+    that such an answer was reopened with before): its wording is never rebuilt.
     """
     import store
 
@@ -160,6 +160,8 @@ def reopened(account_id: str, portal_user: dict | None, trace: dict[str, Any],
         frame = frame if isinstance(frame, dict) else None
     if frame is None:
         frame = _from_rows(trace, question, rows or [])
+        if chart and frame.get("data"):
+            frame["chart"] = chart
         plan = store.get_core2_answer_plan(account_id, str(trace.get("question_id") or ""))
         if plan:
             frame["plan"] = plan

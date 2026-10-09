@@ -210,10 +210,41 @@ def _summarised(account: str, payload: dict, *, scrub) -> tuple[str | None, list
         return complete
 
     with patch.object(service, "question_scrubber", return_value=scrub), \
-            patch("core2.bootstrap.ai.workspace_planner", planner), \
+            patch("core2.bootstrap.ai.summary_writer", planner), \
             patch("core.value_index.value_index_enabled", return_value=True):
         said = service.portal_summary(account, "net sales for Jane Doe by store", payload, question_id="c2-x")
     return said, asked
+
+
+def test_the_summary_is_asked_for_in_sentences_and_shown_without_json():
+    """The real call, to the model layer: the planner's calls end "Answer with one JSON object.", and a
+    summary asked that way came back as {"summary": "..."} and was shown with its braces."""
+    import core2.service as service
+
+    sent: list[str] = []
+    told = "Old Town Store leads at about $1.2M, so watch the leaders."
+
+    async def model(system, user, provider, model_name, api_key, **kwargs):
+        sent.append(system.volatile if hasattr(system, "volatile") else str(system))
+        return json.dumps({"summary": told}), 10, 10
+
+    with patch.object(service, "question_scrubber", return_value=None), \
+            patch("core.llm.resolve_provider", return_value=("anthropic", "m", "k", {})), \
+            patch("core.llm.llm_complete", model), \
+            patch("core.value_index.value_index_enabled", return_value=True):
+        said = service.portal_summary("acct-none", "net sales by store", BY_STORE, question_id="c2-x")
+    assert said == told
+    assert sent and "JSON" not in sent[0], sent
+
+
+def test_a_reply_in_json_or_a_fence_is_read_as_its_sentences():
+    given = summary.material(BY_STORE, "q")
+    plain = "Old Town Store leads; watch the leaders."
+    for reply in (json.dumps({"summary": plain}), "```json\n" + json.dumps({"summary": plain}) + "\n```",
+                  json.dumps({"text": plain})):
+        assert summary.checked(reply, BY_STORE, given) == plain, reply
+    for reply in ('{"summary": ', "[1, 2]", json.dumps({"summary": 3})):
+        assert summary.checked(reply, BY_STORE, given) is None, reply
 
 
 def test_under_compliance_an_answer_naming_members_never_reaches_the_ai():

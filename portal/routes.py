@@ -2650,7 +2650,7 @@ async def portal_query_thread(request: Request, thread_id: str):
             question = extract_original_question(
                 str(trace.get("question_text_sanitized") or "")
             )
-            if new_core:
+            if new_core and _kept_answer(trace) is not None:
                 # Drawn as the new core drew it, never rebuilt by today's
                 # pipeline (another engine's wording and chart), and with
                 # Add to dashboard again.
@@ -2669,6 +2669,17 @@ async def portal_query_thread(request: Request, thread_id: str):
                 )
                 if chart_type else None
             )
+            if new_core:
+                # A new-core answer given before answers were kept: its sentence
+                # and rows, with the chart it was reopened with before (drawn
+                # from its rows), and Add to dashboard again.
+                from gateway.core2_bridge import reopened
+                turns.append({
+                    "question": question,
+                    "payload": reopened(user["account_id"], user, trace, rows, chart=chart),
+                    "created_at": str(trace.get("created_at") or ""),
+                })
+                continue
             payload = build_assistant_response(
                 question=question,
                 rows=rows,
