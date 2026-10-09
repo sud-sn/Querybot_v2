@@ -113,7 +113,7 @@ class Plan(_Strict):
     drivers: Drivers | None = None
     clarify: Clarify | None = None
     about: list[str] = Field(default_factory=list)          # describe_data: what the question asks about
-    chart: Literal["bar", "line", "area", "pie", "table"] | None = None   # "as a pie", "just the table"
+    chart: Literal["bar", "line", "area", "pie", "donut", "table"] | None = None   # "as a pie", "a donut", "just the table"
     follow_up: Literal["new", "refine"] = "new"
     include_left_out: bool = False      # "including cancelled orders": the rows tables leave out by default
     notes: list[str] = Field(default_factory=list)

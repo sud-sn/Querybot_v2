@@ -204,7 +204,15 @@
   // The axis writes the year once, under the first label of each year, so a
   // twelve-month axis reads "Jan / 2024, Feb, Mar ..." instead of repeating
   // the year twelve times.
-  function periodAxisFormatter(labels, column, style) {
+  // The labels a crowded time axis shows: every (step + 1)th, from the first. Chosen here rather
+  // than left to the chart, so the formatter knows which label is shown before each one -- and so
+  // where a year starts on screen.
+  function periodStep(count, width, style) {
+    const each = style === 'year' ? 44 : 58;      // what a label and its gap need, in px
+    const room = Math.max(120, (width || 600) - 80);
+    return Math.max(0, Math.ceil(count * each / room) - 1);
+  }
+  function periodAxisFormatter(labels, column, style, every) {
     if (style === 'key') return value => String(value);
     // A month NUMBER on a month column: 1..12 read as Jan..Dec.
     if (MONTH_COLUMN_RE.test(String(column || '')) && labels.length
@@ -213,11 +221,17 @@
     }
     const parts = labels.map(periodParts);
     if (!parts.length || parts.some(p => !p)) return null;
+    // The year goes under the first label SHOWN in each year. A crowded axis shows
+    // every second or third label, so "the label before" is the one shown before,
+    // not the category before: comparing with a hidden one dropped the year where
+    // the axis jumped years ("Jun, Dec, Nov" read Dec 2022 then Nov 2025).
+    const step = Math.max(1, Number(every) || 1);
     return (value, index) => {
       const p = parts[index] || periodParts(value);
       if (!p) return String(value);
       if (style === 'year') return String(p.year);
-      const prev = index > 0 ? parts[index - 1] : null;
+      // The last label shown before this one: the shown ones are every step-th from the first.
+      const prev = index > 0 ? parts[Math.floor((index - 1) / step) * step] : null;
       const month = global.qbMonth(p.month, true);
       const day = dayOf(p, style);
       const head = style === 'quarter' ? t('date.quarter.short', {quarter: quarterOf(p)})
@@ -775,7 +789,8 @@
       const forecastName = t('ui.chat.chart.forecast');
       const bandName = t('ui.chat.chart.interval');
       const projColor = colors[1] || colors[0];
-      const axisFmt = periodAxisFormatter(periods, periodKey, xStyle);
+      const periodEvery = periodStep(periods.length, layout && layout.width, xStyle) + 1;
+      const axisFmt = periodAxisFormatter(periods, periodKey, xStyle, periodEvery);
       return Object.assign(base, {
         color: [colors[0], projColor],
         title: trendNote ? {text: '', subtext: trendNote, left: 0, top: 22, padding: 0,
@@ -805,7 +820,8 @@
         }),
         xAxis: {
           type: 'category', data: periods, boundaryGap: false,
-          axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true, formatter: axisFmt || labelFmt},
+          axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true, interval: periodEvery - 1,
+                      formatter: axisFmt || labelFmt},
           axisLine: {lineStyle: {color: c.axis}}, axisTick: {show: false},
         },
         yAxis: {
@@ -927,7 +943,8 @@
     const hasAnnotations = Boolean(payload && payload.annotations
       && (payload.annotations.biggest_period_drop || payload.annotations.biggest_period_gain));
     const zoom = ordered && labels.length > 60;
-    const axisFmt = temporal ? periodAxisFormatter(labels, xKey, xStyle) : null;
+    const timeEvery = periodStep(labels.length, layout && layout.width, xStyle) + 1;
+    const axisFmt = temporal ? periodAxisFormatter(labels, xKey, xStyle, timeEvery) : null;
     const top = legendReserve + capReserve + (hasAnnotations ? 22 : 8);
 
     if (type === 'scatter') {
@@ -1029,7 +1046,8 @@
       boundaryGap: type === 'bar',
       axisLabel: {
         color: c.muted, fontSize: 12, hideOverlap: true, lineHeight: 16,
-        interval: (type === 'bar' && labels.length <= 16) || (!temporal && !manyLabels) ? 0 : 'auto',
+        interval: temporal && axisFmt ? timeEvery - 1
+          : (type === 'bar' && labels.length <= 16) || (!temporal && !manyLabels) ? 0 : 'auto',
         rotate: !horizontal && !temporal && longLabels ? 30 : 0,
         formatter: axisFmt || labelFmt,
       },

@@ -24,6 +24,7 @@ quantity kept apart by unit is read in its main unit only.
 
 from __future__ import annotations
 
+import re
 import statistics
 
 from core2.answer.builder import _Columns, _day, _lower, _noun, _number, _Units, fmt
@@ -39,9 +40,12 @@ def summarize(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, 
               truncated: bool = False) -> list[str]:
     """Up to three findings for the answer on screen; none when the rows say nothing more."""
     measures = cols.of("measure")
-    if not raw or not measures or logical.intent == "list":
+    if raw and logical.intent == "list":
+        return _listing(cols, raw)[:MAX_FINDINGS]
+    if not raw or not measures:
         return []
-    periods, members = cols.of("period"), cols.of("attribute")
+    periods = cols.of("period")
+    members = [c for c in cols.of("attribute") if c.name != logical.unit_group]
     rows = units.main_rows(raw)
     unit = units.main if units.column is not None else None
     m = measures[0]
@@ -51,9 +55,97 @@ def summarize(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, 
         found = _compared(logical, cols, rows, m, out.get(m.name), members[0], unit)
     elif periods and not members:
         found = _series(logical, rows, m, periods[0], unit)
+    elif periods and members and logical.compare is None:
+        found = _members_over_time(logical, rows, m, periods[0], members[0], unit)
     elif members and not periods and logical.compare is None:
         found = _breakdown(logical, cols, rows, measures, out, members[0], unit, truncated=truncated)
     return found[:MAX_FINDINGS]
+
+
+# ── a line per member ──────────────────────────────────────────────────────
+
+
+def _members_over_time(logical: Logical, rows: list[dict], m: OutColumn, p: OutColumn, g: OutColumn,
+                       unit: str | None) -> list[str]:
+    """Who led in each period, and who rose and fell most from the first period to the last."""
+    partial = {d.isoformat() for d in logical.partial}
+    series: dict[str, dict] = {}
+    for r in rows:
+        day, value = _day(r[p.name]), _number(r[m.name])
+        if day is None or value is None or day.isoformat() in partial or r[g.name] in (None, ""):
+            continue
+        series.setdefault(str(r[g.name]), {})[day] = value
+    days = sorted({d for points in series.values() for d in points})
+    if len(series) < 2 or len(days) < 2:
+        return []
+    grain = p.grain or "month"
+    name = lambda day: period_label(day, grain, fiscal_start=logical.fiscal_start)   # noqa: E731
+    word = grain.replace("fiscal_", "fiscal ").replace("_", " ")
+    noun = _noun(g.label)
+    found: list[str] = []
+
+    leaders = [max(((member, points[d]) for member, points in series.items() if d in points),
+                   key=lambda x: (x[1], x[0]))[0] for d in days]
+    top = max(set(leaders), key=lambda member: (leaders.count(member), member))
+    times = leaders.count(top)
+    if times == len(days):
+        found.append(f"{top} led in every {word}, of the {len(series)} {noun}.")
+    elif times > len(days) / 2:
+        others = sorted({member for member in leaders if member != top})
+        found.append(f"{top} led in {times} of the {len(days)} {word}s; "
+                     f"{_listed_names(others)} in the others.")
+
+    first, last = days[0], days[-1]
+    moves = [(member, ratio) for member, points in series.items() if first in points and last in points
+             for ratio in [_pct(points[first], points[last])] if ratio is not None]
+    if len(moves) >= 2:
+        up = max(moves, key=lambda x: (x[1], x[0]))
+        down = min(moves, key=lambda x: (x[1], x[0]))
+        if up[1] > 0.005 and down[1] < -0.005:
+            found.append(f"From {name(first)} to {name(last)}, {up[0]} rose most ({_signed_pct(up[1])}) and "
+                         f"{down[0]} fell most ({_signed_pct(down[1])}).")
+        elif up[1] > 0.005:
+            found.append(f"From {name(first)} to {name(last)}, every one of them rose; {up[0]} most "
+                         f"({_signed_pct(up[1])}).")
+        elif down[1] < -0.005:
+            found.append(f"From {name(first)} to {name(last)}, every one of them fell; {down[0]} most "
+                         f"({_signed_pct(down[1])}).")
+    return found
+
+
+def _listed_names(names: list[str]) -> str:
+    if len(names) <= 2:
+        return " and ".join(names)
+    return f"{', '.join(names[:2])} and {len(names) - 2} more"
+
+
+# ── a listing ──────────────────────────────────────────────────────────────
+
+
+def _listing(cols: _Columns, rows: list[dict]) -> list[str]:
+    """What a list holds beyond its count: how its rows fall into a small grouping, and the range of a figure."""
+    found: list[str] = []
+    texts = [c for c in cols.columns if c.role in ("attribute", "member_code") and c.format in (None, "", "text")]
+    for c in texts[1:]:
+        counts: dict[str, int] = {}
+        for r in rows:
+            if r.get(c.name) not in (None, ""):
+                counts[str(r[c.name])] = counts.get(str(r[c.name]), 0) + 1
+        if 2 <= len(counts) <= 8 and sum(counts.values()) == len(rows):
+            ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            shown = ", ".join(f"{k} ({n})" for k, n in ranked[:3])
+            more = f" and {len(ranked) - 3} more" if len(ranked) > 3 else ""
+            word = re.sub(r"\s+(name|description|desc|label|title)$", "", _lower(c.label))
+            found.append(f"By {word}: {shown}{more}.")
+            break
+    for c in cols.columns:
+        if c.role not in ("measure", "attribute") or c.format in (None, "", "text", "date"):
+            continue
+        values = [v for v in (_number(r.get(c.name)) for r in rows) if v is not None]
+        if len(values) >= 3 and min(values) != max(values):
+            found.append(f"{c.label} runs from {fmt(min(values), c.format)} to {fmt(max(values), c.format)}.")
+            break
+    return found
 
 
 # ── what adds up ───────────────────────────────────────────────────────────

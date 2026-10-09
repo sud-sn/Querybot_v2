@@ -434,7 +434,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     headline = _headline(logical, cols, raw, records, partial, units)
     short_value, comparison = _lead(logical, cols, raw, units)
     drawn = [r for r, plain in zip(records, raw) if not units.mixed or units.key(plain) == units.main]
-    chart = _chart(logical, cols, drawn, formats, labels, display)
+    chart = _chart(logical, cols, drawn, formats, labels, display, gaps=bool(gaps))
     if chart is not None and units.main and units.main != "Unknown":
         chart["title"] = f"{chart['title']} ({units.main})"
         if units.mixed:
@@ -448,7 +448,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         chart = None
     elif chart is not None and chart_type and chart_type != chart["chart_type"]:
         temporal = ((chart.get("chart_spec") or {}).get("x") or {}).get("role") == "temporal"
-        allowed = [t for t in chart.get("allowed_types", []) if not (temporal and t == "pie")]
+        allowed = [t for t in chart.get("allowed_types", []) if not (temporal and t in ("pie", "donut"))]
         if chart_type in allowed:
             chart["chart_type"] = chart["recommended_type"] = chart_type
             if chart_type not in chart["renderable_types"]:
@@ -845,8 +845,23 @@ def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, s
             "state": "missing" if _number(value) is None else "ready", "note": scope_words(logical)[1]}
 
 
+MAX_SLICES = 10     # members a pie or donut is offered for (under the renderer's 12, so no "Other" slice)
+
+
+def _with_gaps(rows: list[dict], x: str, ys: list[str], expected: list[dt.date]) -> list[dict]:
+    """A series with a slot for every period it should have: one with no row is drawn as a gap (the
+    line breaks, the axis keeps time) where the answer says "shown as a gap", not squeezed out of it."""
+    days = {_day(r[x]): r for r in rows}
+    if None in days or not rows:
+        return rows                       # not periods the axis can place: drawn as they are
+    tail = str(rows[0][x])[10:]           # the rows' own spelling of a day ("2026-01-01 00:00:00")
+    slots = [days.get(d) or {x: d.isoformat() + tail, **{y: None for y in ys}} for d in expected]
+    slots += [r for d, r in days.items() if d not in set(expected)]
+    return sorted(slots, key=lambda r: str(r[x]))
+
+
 def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],
-           labels: dict[str, str], display: dict[str, dict]) -> dict | None:
+           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False) -> dict | None:
     measures = cols.of("measure")
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
     if not measures or len(records) < 2 or logical.intent == "list":
@@ -872,7 +887,9 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     elif members:
         # Every measure asked for is drawn: one of a unit shares a plot, another unit gets a panel.
         x, ys = members[0], [c.name for c in measures]
-        kind = "pie" if logical.share and len(records) <= 6 and len(ys) == 1 else "bar"
+        # A pie is the whole: not the top 5 of many, whose slices would not add up to it.
+        kind = "pie" if logical.share and len(records) <= 6 and len(ys) == 1 and not logical.limit \
+            and not logical.having else "bar"
     else:
         return None
     temporal = x.role == "period" and not ranked
@@ -898,21 +915,29 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
              **({share.name: _number(r[share.name])} if share is not None else {})} for r in records]
     if temporal:
         rows.sort(key=lambda r: str(r[x.name]))     # a time axis runs forward, whatever order the table is in
+        if gaps:
+            rows = _with_gaps(rows, x.name, ys, logical.expected)
     facets: list[list[str]] = []
     if len(ys) > 1 and kind == "bar" and compare is None:
         by_unit: dict[str, list[str]] = {}
         for y in ys:
             by_unit.setdefault(str(roles[y]["format"]), []).append(y)
         facets = list(by_unit.values()) if len(by_unit) > 1 else []
-    # The shapes that fit: a category is never a line, a ranking of periods is only bars.
+    # The shapes that fit: a category is never a line, a ranking of periods is only bars. A pie (or a
+    # donut, its ring) is offered for parts of a whole: one measure over every member (no top N, no
+    # cut on the totals), a handful of them, none below zero, their shares worked out by the query.
+    whole = len(ys) == 1 and compare is None and not ranked and not logical.limit and not logical.having
+    parts = whole and share is not None and 2 <= len(rows) <= MAX_SLICES \
+        and all((r[ys[0]] or 0) >= 0 for r in rows)
     if kind == "dumbbell":
         renderable, allowed = ["dumbbell", "bar"], ["dumbbell", "bar"]
     elif kind == "pie":
-        renderable, allowed = ["pie", "bar"], ["pie", "bar"]
+        renderable, allowed = ["pie", "donut", "bar"], ["pie", "donut", "bar"]
     elif temporal:
         renderable, allowed = ["line", "area", "bar"], ["line", "area", "bar"]
     else:
-        renderable, allowed = ["bar"], ["bar", "pie"] if len(ys) == 1 and not ranked else ["bar"]
+        renderable = ["bar", "pie", "donut"] if parts else ["bar"]
+        allowed = ["bar", "pie", "donut"] if len(ys) == 1 and not ranked else ["bar"]
     return {"title": labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and"),
             "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows,
             "x_style": "" if ranked else (display.get(x.name) or {}).get("style", ""),

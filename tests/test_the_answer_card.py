@@ -41,6 +41,8 @@ FUNCTIONS = [
     "function _answerChartTitle(chart)",
     "function _answerChartHeight(chart)",
     "function _answerVisualHtml(msg, ids)",
+    "function _answerSummaryHtml(text)",
+    "function _answerChartTypes(chart)",
     "function _answerNotes(msg)",
     "function _answerHowHtml(msg, env)",
     "function escHtml(str)",
@@ -71,7 +73,7 @@ def card(msg: dict, *, pin: str = "", feedback: bool = False, lang: str = "en") 
     script = (f"JSON.stringify(answerCardHtml({json.dumps(msg)}, "
               f"{{chartId: 'c1', rcId: 'rc-1', pinToken: {json.dumps(pin)}}}, "
               f"{{feedbackEnabled: {json.dumps(feedback)}}}));")
-    return run(script, lang=lang, functions=FUNCTIONS, consts=["_NUMERIC_FORMATS", "_QB_CURRENCY_SYMBOL"], preamble=PREAMBLE)
+    return run(script, lang=lang, functions=FUNCTIONS, consts=["_NUMERIC_FORMATS", "_QB_CURRENCY_SYMBOL", "ANSWER_CHART_TYPES"], preamble=PREAMBLE)
 
 
 class Elements(HTMLParser):
@@ -172,7 +174,7 @@ def test_the_chart_is_inside_the_answer_with_chart_table_and_open_larger():
     assert shown.first("answer-chart")["attrs"]["id"] == "c1"
     assert "Net amount by store" in shown.first("answer-visual-title")["text"]
     assert [b["text"] for b in shown.found if b["attrs"].get("data-view")] == ["Chart", "Table"]
-    assert any("data-open-artifact" in e["attrs"] for e in shown.found), "no way to the larger view"
+    assert any("data-expand" in e["attrs"] for e in shown.found), "no way to the larger view"
     assert "artifact-open-btn" not in markup, "the chart is not sent away behind a button any more"
 
 

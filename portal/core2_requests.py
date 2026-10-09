@@ -1,4 +1,4 @@
-"""What you can ask → Suggest a change: a reader's suggestions, sent to their admin.
+"""Data guide → Suggest a change: a reader's suggestions, sent to their admin.
 
 Registered on the portal router when portal/routes.py imports it. A reader suggests what a
 metric or a field means, other names people use for it, the date a metric is counted by,

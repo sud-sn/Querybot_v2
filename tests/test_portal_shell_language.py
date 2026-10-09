@@ -61,7 +61,7 @@ class TestTheSidebarIsTranslated:
     def test_the_navigation_reads_in_french(self):
         markup = visible(_shell(lang="fr"))
         for expected in ("Nouvelle conversation", "Tableaux de bord",
-                         "Ce que vous pouvez demander", "Notifications",
+                         "Guide des données", "Notifications",
                          "Paramètres", "Déconnexion"):
             assert expected in markup, expected
 

@@ -92,7 +92,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stage-dot:nth-child(3){animation-delay:.36s}
 .stage-label{font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-muted)}
 /* The pending answer: one working line (the wave, what it is doing, the seconds, Stop). */
-.answer-progress-card{width:min(100%,780px);padding:.25rem 0}
+.answer-progress-card{width:var(--chat-column);padding:.25rem 0}
 .answer-progress-head{display:flex;align-items:center;gap:.6rem;min-width:0}
 .answer-progress-mark{flex:0 0 auto;display:inline-flex}
 .answer-progress-copy{flex:1;min-width:0;font-size:var(--font-sm);color:var(--text-muted);line-height:1.4}
@@ -564,7 +564,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .msg-bot .msg-bubble { box-shadow: none; }
 .chat-composer { padding: 12px clamp(16px, 4vw, 64px) 14px; }
 .chat-input-bar {
-  width: min(100%, 780px);
+  width: var(--chat-column);
   margin-inline: auto;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
@@ -586,7 +586,14 @@ body:has(.chat-page) .main { background: var(--bg); }
    its finding and its notes sit on the page, and only the chart is a card.
    Desktop controls are 28-32px (WCAG 2.5.8 asks 24px); on a phone every one
    is 44px (Apple's guideline; Material asks 48dp). */
-.msg, .rc-row { width: min(100%, 780px); }
+.msg, .rc-row { width: var(--chat-column); }
+/* The sentences keep a reading line however wide the column is; the chart and the table take it all. */
+.answer-card .answer-headline, .answer-card .answer-line, .answer-card .answer-notes,
+.answer-card .answer-insights, .answer-card .analysis-section { max-width: 80ch; }
+/* Expanded in place: the answer takes the conversation's whole width and its chart grows. */
+.msg.is-expanded { width: 100%; }
+.msg.is-expanded .answer-chart { height: clamp(420px, 62vh, 760px) !important; }
+.msg.is-expanded .answer-table .data-table-wrap { max-height: none; }
 .msg-bot .msg-content { max-width: 100%; width: 100%; }
 .answer-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .answer-badges { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -611,8 +618,16 @@ body:has(.chat-page) .main { background: var(--bg); }
 .own-metric-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .own-metric-used { font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
 .answer-visual { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px 8px; box-shadow: var(--shadow-sm); min-width: 0; }
-.answer-visual-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; }
+.answer-visual { position: relative; }
+.answer-visual-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+.drill-menu { position: absolute; z-index: 5; min-width: 200px; max-width: 240px; display: flex; flex-direction: column; padding: 4px;
+  background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-md); }
+.drill-menu .drill-item { text-align: left; padding: 8px 10px; border: 0; border-radius: calc(var(--radius) - 2px); background: none;
+  color: var(--text-strong); font-size: var(--font-sm); cursor: pointer; }
+.drill-menu .drill-item:hover, .drill-menu .drill-item:focus-visible { background: var(--primary-soft); color: var(--primary-ink); outline: none; }
 .answer-visual-copy { flex: 1; min-width: 0; }
+/* On a phone the title has the line to itself; the shape and view switches wrap under it. */
+@media (max-width: 600px) { .answer-visual-copy { flex: 1 1 calc(100% - 56px); } }
 .answer-visual-title { font-weight: var(--weight-semibold); color: var(--text-strong); }
 .answer-visual-sub { font-size: var(--font-xs); color: var(--text-muted); }
 .answer-chart { width: 100%; }
@@ -620,6 +635,8 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-seg { display: inline-flex; gap: 4px; flex: none; }
 .answer-insights { border-left: 2px solid var(--primary); padding-left: 12px; display: flex; flex-direction: column; gap: 4px; }
 .answer-insights-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
+.answer-summary { max-width: 80ch; display: flex; flex-direction: column; gap: 4px; }
+.answer-summary p { margin: 0; color: var(--text); line-height: 1.6; }
 .answer-insights .answer-note { background: none; border: 0; padding: 0; color: var(--text); }
 .answer-insights .answer-note .an-icon { display: none; }
 .answer-notes .answer-note.caveat { font-size: var(--font-sm); }
@@ -664,8 +681,8 @@ body:has(.chat-page) .main { background: var(--bg); }
 .user-message-footer { min-height: 0; }
 .chat-thread { gap: 14px; }
 .msg-bot + .msg-user { margin-top: 18px; }
-.query-limit-notice { width: min(100% - 32px, 780px); margin: 0 auto 8px; }
-.composer-footer { width: min(100%, 780px); margin-inline: auto; }
+.query-limit-notice { width: min(100% - 32px, var(--chat-column-max)); margin: 0 auto 8px; }
+.composer-footer { width: var(--chat-column); margin-inline: auto; }
 /* How many earlier turns the next question carries is the product's bookkeeping, not the reader's. */
 #memoryBadge { display: none !important; }
 @media (max-width: 600px) {
@@ -935,7 +952,7 @@ function _createThreadId() {
 }
 const _threadFromUrl = new URLSearchParams(location.search).get('thread') || '';
 const _requestedNewThread = new URLSearchParams(location.search).get('new') === '1';
-// A question to try, from "What you can ask": put in the box, for the reader to send.
+// A question to try, from the Data guide: put in the box, for the reader to send.
 const _questionFromUrl = (new URLSearchParams(location.search).get('ask') || '').slice(0, 500);
 const _validThreadId = value => /^[A-Za-z0-9_-]{1,80}$/.test(value || '');
 const THREAD_ID = _requestedNewThread
@@ -2024,8 +2041,67 @@ function renderChartWarnings(payload) {
 // carries (QBCharts.render's opts.drill), so the hint is never shown where a
 // click does nothing.
 function _chartDrillable(payload) {
+  if (payload && payload.drill) return Array.isArray(payload.drill.items) && payload.drill.items.length > 0;
   const type = String(payload?.chart_type || '').toLowerCase();
   return ['bar', 'line', 'area'].includes(type);
+}
+// A new-core chart says what a click opens (payload.drill, core2/answer/suggestions.py): its
+// questions with the member or period clicked in place, as the chart names it. A click on a
+// gap, on a slice that is no member ("Other (3)") or on a line that is no member opens nothing.
+function _drillChoices(payload, params) {
+  const drill = (payload && payload.drill) || {};
+  const raw = String((params && params.name) ?? '').trim();
+  const value = params ? params.value : null;
+  if (!raw || value == null || (Array.isArray(value) && value.every(v => v == null))) return [];
+  const xKey = payload.x_key;
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  if (xKey && rows.length && !rows.some(r => String(r[xKey] ?? '') === raw)) return [];
+  let member = '', period = '';
+  if (drill.on === 'period') {
+    period = (window.QBCharts && window.QBCharts.periodLabel)
+      ? window.QBCharts.periodLabel(raw, false, payload.x_style || '') : raw;
+    if (drill.series === 'member') {
+      member = String(params.seriesName || '').trim();
+      if (!member || !(payload.y_keys || []).includes(member)) return [];
+    }
+  } else {
+    member = raw;
+  }
+  const fill = text => String(text || '').split('{member}').join(member).split('{period}').join(period);
+  return (drill.items || []).map(item => ({label: fill(item.label), question: fill(item.question)}));
+}
+function _closeDrillMenu() {
+  document.querySelectorAll('.drill-menu').forEach(menu => menu.remove());
+}
+function _openDrillMenu(chart, payload, params) {
+  const choices = _drillChoices(payload, params);
+  _closeDrillMenu();
+  if (!choices.length) return;
+  const box = chart.getDom().closest('.answer-visual') || chart.getDom().parentElement;
+  const menu = document.createElement('div');
+  menu.className = 'drill-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', t('ui.chat.drill.menu'));
+  menu.innerHTML = choices.map((c, i) =>
+    `<button type="button" role="menuitem" class="drill-item" data-drill="${i}">${escHtml(c.label)}</button>`).join('');
+  const at = params.event && params.event.event;
+  const boxRect = box.getBoundingClientRect();
+  const x = at ? at.clientX - boxRect.left : boxRect.width / 2;
+  const y = at ? at.clientY - boxRect.top : 40;
+  menu.style.left = `${Math.max(8, Math.min(x, boxRect.width - 248))}px`;
+  menu.style.top = `${Math.max(8, y + 8)}px`;
+  box.appendChild(menu);
+  menu.querySelectorAll('[data-drill]').forEach(btn => btn.addEventListener('click', () => {
+    _closeDrillMenu();
+    sendChartDrill(choices[Number(btn.dataset.drill)].question);
+  }));
+  menu.addEventListener('keydown', (event) => { if (event.key === 'Escape') _closeDrillMenu(); });
+  setTimeout(() => {
+    document.addEventListener('click', function away(event) {
+      if (!menu.contains(event.target)) { _closeDrillMenu(); document.removeEventListener('click', away); }
+    });
+  }, 0);
+  menu.querySelector('[data-drill]')?.focus();
 }
 // The click sends a real follow-up question through the normal chat path,
 // which core/conversation_state.py classifies as a refinement against the
@@ -2039,6 +2115,7 @@ function _wireChartDrillClick(chart, payload) {
     if (!params || params.componentType !== 'series') return;
     const label = String(params.name ?? '').trim();
     if (!label) return;
+    if (payload.drill) { _openDrillMenu(chart, payload, params); return; }
     sendChartDrill(t('ui.chat.drill.break_down_for', {label}));
   });
 }
@@ -3027,8 +3104,29 @@ function _answerChartHeight(chart) {
   return Math.max(200, Math.min(460, n * 28 + 56));
 }
 
+const ANSWER_CHART_TYPES = ['line', 'area', 'bar', 'pie', 'donut', 'dumbbell'];
+function _answerChartTypes(chart) {
+  if (!chart || !Array.isArray(chart.renderable_types)) return [];
+  return ANSWER_CHART_TYPES.filter(k => chart.renderable_types.includes(k));
+}
+
+// Expand grows the answer where it is, to the conversation's whole width with
+// a taller chart; pressed again (or Escape), it goes back. Nothing opens beside it.
+function _toggleAnswerExpanded(div, btn, chartEl, chartId) {
+  const on = !div.classList.contains('is-expanded');
+  div.classList.toggle('is-expanded', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  const label = t(on ? 'ui.chat.card.collapse' : 'ui.chat.card.expand');
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  btn.innerHTML = qbIcon(on ? 'collapse' : 'expand', 16);
+  // Drawn again for its new box: label widths and ticks are laid out for the width it has.
+  if (chartEl && window._chartPayloads[chartId]) renderChartInto(chartEl, window._chartPayloads[chartId]);
+  if (on && div.scrollIntoView) div.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
+
 // The chart (or, with no chart, the rows) inside the answer, with a switch to
-// the table and Expand for the larger view.
+// the table, the shapes it can be drawn as, and Expand in place.
 function _answerVisualHtml(msg, ids) {
   const chart = msg.chart;
   const data = msg.data || {};
@@ -3041,12 +3139,20 @@ function _answerVisualHtml(msg, ids) {
       + `<button type="button" class="btn btn-xs" aria-pressed="true" data-view="chart">${escHtml(t('ui.chat.card.chart'))}</button>`
       + `<button type="button" class="btn btn-xs" aria-pressed="false" data-view="table">${escHtml(t('ui.chat.card.table'))}</button></div>`
     : '';
+  // The shapes this answer can honestly be drawn as (the server says which): a reader picks one here, or
+  // asks for it ("as a donut").
+  const types = _answerChartTypes(chart);
+  const typeSwitch = types.length > 1
+    ? `<div class="answer-seg answer-types" role="group" aria-label="${escHtml(t('ui.chat.card.chart_type'))}">`
+      + types.map(k => `<button type="button" class="btn btn-xs" aria-pressed="${k === chart.chart_type ? 'true' : 'false'}" data-type="${k}">${escHtml(enumLabel('charttype', k))}</button>`).join('')
+      + `</div>`
+    : '';
   return `<section class="answer-visual">
       <header class="answer-visual-head">
         <div class="answer-visual-copy"><div class="answer-visual-title">${escHtml(title)}</div>`
         + (period ? `<div class="answer-visual-sub">${escHtml(period.text)}</div>` : '') + `</div>
-        ${switcher}
-        <button type="button" class="btn btn-ghost btn-icon btn-sm" data-open-artifact aria-label="${escHtml(t('ui.chat.card.expand'))}" title="${escHtml(t('ui.chat.card.expand'))}">${qbIcon('expand', 16)}</button>
+        ${typeSwitch}${switcher}
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" data-expand aria-pressed="false" aria-label="${escHtml(t('ui.chat.card.expand'))}" title="${escHtml(t('ui.chat.card.expand'))}">${qbIcon('expand', 16)}</button>
       </header>
       ${chart ? `<div class="answer-chart" id="${ids.chartId}" style="height:${_answerChartHeight(chart)}px"></div>${renderChartWarnings(chart)}` : ''}
       <div class="answer-table"${chart ? ' hidden' : ''}>${chart ? '' : renderDataTable(data, {question: msg.question || '', trace_id: msg.trace_id || ''})}</div>
@@ -3091,6 +3197,29 @@ function _answerNotes(msg) {
       ? `<div class="answer-insights"><div class="answer-insights-label">${escHtml(t('ui.chat.card.key_insights'))}</div>${insights.map(row).join('')}</div>`
       : '',
   };
+}
+
+// What the answer means, in a few sentences by the workspace's AI from the answer
+// itself (core2/answer/summary.py). It follows the answer: placed under the chart,
+// so nothing the reader is looking at moves when it arrives.
+function _answerSummaryHtml(text) {
+  if (!text) return '';
+  return `<section class="answer-summary" aria-label="${escHtml(t('ui.chat.card.summary'))}">`
+    + `<div class="answer-insights-label">${escHtml(t('ui.chat.card.summary'))}</div>`
+    + `<p>${escHtml(String(text))}</p></section>`;
+}
+function _placeAnswerSummary(questionId, text) {
+  if (!questionId || !text) return false;
+  const card = [...document.querySelectorAll('.msg.msg-bot')]
+    .find(el => el.dataset.questionId === questionId)?.querySelector('.answer-card');
+  if (!card || card.querySelector('.answer-summary')) return false;
+  const after = card.querySelector('.answer-visual') || card.querySelector('.answer-headline');
+  const html = _answerSummaryHtml(text);
+  if (after) after.insertAdjacentHTML('afterend', html);
+  else card.insertAdjacentHTML('afterbegin', html);
+  const payload = card.closest('.msg-content')?._querybotPayload;
+  if (payload) payload.summary = text;
+  return true;
 }
 
 // How it was counted: the answer's notes in words, what was considered, then
@@ -3349,7 +3478,7 @@ function answerCardHtml(msg, ids, env) {
     + _answerBadgesHtml(msg)
     + leadHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
     + localOperationProofHtml + dashboardConfirmHtml
-    + visualHtml + bodyHtml + insightsHtml
+    + visualHtml + bodyHtml + _answerSummaryHtml(msg.summary) + insightsHtml
     + actionsHtml + feedbackPanelHtml
     + _answerHowHtml(msg, env)
     + rcHtml + chipsHtml
@@ -3374,6 +3503,7 @@ function appendAssistantResponse(msg, opts = {}){
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   div.dataset.time = timestamp;
+  div.dataset.questionId = String(trust.question_id || '');
   div.innerHTML = `<div class="msg-content">${answerCardHtml(msg, {chartId, rcId, pinToken: dashboardToken},
     {feedbackEnabled: !!FEEDBACK_ENABLED, schemaLabel: trustSchema})}</div>`;
   thread().appendChild(div);
@@ -3405,7 +3535,22 @@ function appendAssistantResponse(msg, opts = {}){
       if (!showTable && window.echarts) setTimeout(() => window.QBCharts.fit(echarts.getInstanceByDom(chartEl)), 10);
     }
   }));
-  div.querySelector('[data-open-artifact]')?.addEventListener('click', () => renderArtifactPreview(msg));
+  const expandBtn = div.querySelector('[data-expand]');
+  if (expandBtn) {
+    expandBtn.addEventListener('click', () => _toggleAnswerExpanded(div, expandBtn, chartEl, chartId));
+    div.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && div.classList.contains('is-expanded')) _toggleAnswerExpanded(div, expandBtn, chartEl, chartId);
+    });
+  }
+  div.querySelectorAll('.answer-types [data-type]').forEach(btn => btn.addEventListener('click', () => {
+    const updated = Object.assign({}, window._chartPayloads[chartId] || msg.chart, {chart_type: btn.dataset.type});
+    window._chartPayloads[chartId] = updated;
+    div.querySelectorAll('.answer-types [data-type]').forEach(b => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+    if (!chartEl) return;
+    if (chartEl.hidden) div.querySelector('.answer-seg [data-view="chart"]')?.click();
+    chartEl.style.height = `${_answerChartHeight(updated)}px`;
+    renderChartInto(chartEl, updated);
+  }));
   _wireOwnMetric(div);
 
   // How it was counted opens in place, from the link in the action row.
@@ -4334,6 +4479,8 @@ function connect(){
           t('ui.chat.err.action_accepted')
         );
       }
+    } else if (msg.type === 'answer_summary') {
+      _placeAnswerSummary(String(msg.question_id || ''), String(msg.summary || ''));
     } else if (msg.type === 'assistant_response') {
       finishAnalysisAction(msg);
       _markActiveOutbound('complete');

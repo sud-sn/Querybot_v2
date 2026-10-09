@@ -1,3 +1,8 @@
+/* The conversation's column: a reading width on a laptop, wider on a large screen, so a chart
+   and its table use the room instead of leaving it empty on both sides. The sentences inside
+   keep a reading line (portal_chat.html, .answer-card). */
+:root { --chat-column-max: clamp(780px, 62vw, 1180px); --chat-column: min(100%, var(--chat-column-max)); }
+
 /* QueryBot chat workspace: full-height conversation with a persistent history rail. */
 
 body:has(.chat-page) .portal-app-main,
@@ -79,7 +84,7 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
 
 .chat-workspace-main .msg,
 .chat-workspace-main .rc-row {
-  width: min(100%, 780px);
+  width: var(--chat-column);
   margin-inline: auto;
 }
 .chat-workspace-main .msg-bot .msg-content { width: 100%; max-width: 100%; }
@@ -120,7 +125,7 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
 
 .chat-workspace-main .suggestions-wrap { padding-inline: clamp(18px, 3vw, 48px); }
 .chat-workspace-main .chat-composer { padding: 12px clamp(18px, 3vw, 48px) 14px; }
-.chat-workspace-main .chat-input-bar { width: min(100%, 780px); max-width: none; margin-inline: auto; }
+.chat-workspace-main .chat-input-bar { width: var(--chat-column); max-width: none; margin-inline: auto; }
 .chat-workspace-main .chat-input {
   min-height: 42px;
   max-height: 168px;
@@ -130,7 +135,7 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
 .chat-workspace-main .composer-actions { display: none; }
 
 .chat-workspace-main .composer-footer {
-  width: min(100%, 780px);
+  width: var(--chat-column);
   margin-inline: auto;
 }
 
@@ -335,7 +340,7 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 .chat-workspace-main .schema-mode-note { padding-inline: clamp(14px, 2vw, 24px); }
 .chat-workspace-main .chat-thread { padding: 22px clamp(16px, 3vw, 44px); }
 .chat-workspace-main .msg,
-.chat-workspace-main .rc-row { width: min(100%, 780px); margin-inline: auto; }
+.chat-workspace-main .rc-row { width: var(--chat-column); margin-inline: auto; }
 .chat-workspace-main .msg-bot .msg-content { width: 100%; max-width: 100%; }
 .chat-workspace-main .msg-user .msg-content { max-width: min(75%, 720px); }
 
@@ -396,7 +401,7 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 }
 .chat-workspace-main .chat-composer { padding: 12px clamp(16px, 3vw, 44px) 14px; background: var(--surface); }
 .chat-workspace-main .chat-input-bar {
-  width: min(100%, 780px);
+  width: var(--chat-column);
   min-height: 58px;
   margin-inline: auto;
   border: 1px solid var(--border-strong);
@@ -407,7 +412,7 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 .chat-workspace-main .chat-input { min-height: 44px; max-height: 168px; padding-top: 11px; padding-bottom: 11px; }
 .send-btn { border-radius: 7px; background: var(--primary); box-shadow: none; }
 .send-btn:hover { background: var(--primary-hover); box-shadow: none; }
-.chat-workspace-main .composer-footer { width: min(100%, 780px); margin-inline: auto; }
+.chat-workspace-main .composer-footer { width: var(--chat-column); margin-inline: auto; }
 
 /* Conversational message state and recovery controls. */
 .user-message-footer {

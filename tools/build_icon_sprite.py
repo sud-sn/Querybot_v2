@@ -86,6 +86,7 @@ ICONS: dict[str, str] = {
     "stop": "square",
     "calendar": "calendar",
     "expand": "maximize-2",
+    "collapse": "minimize-2",
     "help": "circle-help",
     "share": "share-2",
     "more": "ellipsis",

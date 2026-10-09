@@ -42,6 +42,7 @@ QUESTIONS = [
     "Net sales, cost and gross amount in 2025",
     "Top 5 products by net sales in 2026",
     "Who were our top 10 customers in the first half of 2026?",
+    "Share of net sales by customer segment",
     "Why did net sales drop in April?",
     "List the stores",
     "What data do you have?",
@@ -49,7 +50,7 @@ QUESTIONS = [
     "Margin after returns = net amount minus refunds, divided by net amount, as a percentage. "
     "Show it by month in the first half of 2026",
 ]
-VIEWPORTS = {"desktop": (1440, 900), "phone": (390, 844)}
+VIEWPORTS = {"desktop": (1440, 900), "phone": (390, 844), "wide": (1920, 1080)}
 READER = ("acct-retail", "reader@example.com", "reader-pass-123")
 ADMIN_PASSWORD = "ui-check-admin-pass-1"
 TILES = ".grid-stack-item, .kpi-tile, [data-check-tile]"
@@ -220,14 +221,37 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                                **p.shot(f"{i:02d}_{_slug(question)}", element=card)})
                 if question.startswith("Compare") and view == "desktop":
                     _pin(page, card, problems, view)
-                if question.startswith("Monthly") and card.locator("[data-open-artifact]").count():
-                    # The larger view: a side panel on a desktop, a sheet from the bottom on a phone.
-                    card.locator("[data-open-artifact]").first.click()
+                if question.startswith("Monthly") and card.locator("[data-expand]").count():
+                    # Expand: the answer grows where it is, to the conversation's width; pressed again, back.
+                    card.locator("[data-expand]").first.click()
                     page.wait_for_timeout(900)
-                    report.append({"page": "the larger view", "view": view, **p.shot(f"{i:02d}b_expanded")})
-                    page.keyboard.press("Escape")
-                    page.evaluate("() => window.closeArtifactPane && window.closeArtifactPane()")
+                    report.append({"page": "an answer expanded in place", "view": view,
+                                   **p.shot(f"{i:02d}b_expanded", element=card)})
+                    card.locator("[data-expand]").first.click()
                     page.wait_for_timeout(400)
+                if question.startswith("Share") and card.locator(".answer-types [data-type=donut]").count():
+                    # The shapes the answer fits: a pie, here drawn as a donut.
+                    card.locator(".answer-types [data-type=donut]").first.click()
+                    page.wait_for_timeout(1200)
+                    report.append({"page": "a share drawn as a donut", "view": view,
+                                   **p.shot(f"{i:02d}b_donut", element=card)})
+                if question.startswith("Net sales by store"):
+                    # A click on a bar: what the answer offers next for that store.
+                    opened = page.evaluate("""() => {
+                        const el = [...document.querySelectorAll('.msg.msg-bot .answer-chart')].pop();
+                        const chart = el && window.echarts && echarts.getInstanceByDom(el);
+                        const payload = el && window._chartPayloads[el.id];
+                        if (!chart || !payload || !payload.drill) return false;
+                        _openDrillMenu(chart, payload, {name: String(payload.rows[0][payload.x_key]), value: 1});
+                        return !!document.querySelector('.drill-menu');
+                    }""")
+                    if not opened:
+                        problems.append({"where": f"{view} chat", "problem": "no menu on a bar", "detail": question})
+                    else:
+                        page.wait_for_timeout(300)
+                        report.append({"page": "a click on a bar", "view": view,
+                                       **p.shot(f"{i:02d}b_drill_menu", element=card)})
+                        page.evaluate("() => _closeDrillMenu()")
             report.append({"page": "chat, whole conversation", "view": view, **p.shot("90_chat_full", full=True)})
             for path in ("/portal/dashboard", "/portal/kb"):
                 page.goto(base + path, wait_until="networkidle")
@@ -241,7 +265,7 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                     page.wait_for_load_state("networkidle")
                     page.wait_for_timeout(1200)
                     if page.input_value("#input") != question:
-                        problems.append({"where": f"{view} what you can ask", "problem": "question not in the box",
+                        problems.append({"where": f"{view} data guide", "problem": "question not in the box",
                                          "detail": question})
                     else:
                         page.keyboard.press("Enter")
@@ -253,7 +277,7 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                             report.append({"page": "a question tried from What you can ask", "view": view,
                                            **p.shot("97_tried_question", element=page.locator(".msg.msg-bot").last)})
                         except Exception:  # noqa: BLE001
-                            problems.append({"where": f"{view} what you can ask", "problem": "no answer",
+                            problems.append({"where": f"{view} data guide", "problem": "no answer",
                                              "detail": question})
                 if path == "/portal/kb":
                     # Suggest a change: the form a reader fills in (a sheet from the bottom on a phone).
@@ -266,8 +290,21 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                         report.append({"page": "suggest a change", "view": view, **p.shot("98_suggest_a_change")})
                         page.keyboard.press("Escape")
                     else:
-                        problems.append({"where": f"{view} what you can ask", "problem": "no Suggest a change",
+                        problems.append({"where": f"{view} data guide", "problem": "no Suggest a change",
                                          "detail": "the page offers nothing to suggest a change on"})
+                    coded = page.locator(".ask-coded [data-ask-open]")
+                    if coded.count():
+                        # Names for a field's codes: a box per code, with the name it has now.
+                        coded.first.scroll_into_view_if_needed()
+                        report.append({"page": "the codes a field holds", "view": view,
+                                       **p.shot("98b_codes", element=page.locator(".ask-coded").first)})
+                        coded.first.click()
+                        page.wait_for_timeout(500)
+                        report.append({"page": "suggest names for codes", "view": view, **p.shot("98c_name_codes")})
+                        page.keyboard.press("Escape")
+                    else:
+                        problems.append({"where": f"{view} data guide", "problem": "no codes shown",
+                                         "detail": "the status codes of an order line are not on the page"})
                 pinned = page.locator("a", has_text="Store comparison")
                 if path == "/portal/dashboard" and pinned.count():
                     pinned.first.click()

@@ -65,7 +65,7 @@ def file_request(account_id: str, client: dict[str, Any], user: dict[str, Any], 
         name, changes = R.proposal(model, kind=str(form.get("target_kind") or ""), key=str(form.get("target_key") or ""),
                                    meaning=str(form.get("meaning") or ""), names=form.get("names") or "",
                                    date=str(form.get("date") or ""), note=str(form.get("note") or ""),
-                                   allowed=_allowed_model_tables(model, allowed))
+                                   codes=form.get("codes") or None, allowed=_allowed_model_tables(model, allowed))
     except R.RequestError as exc:
         raise RequestRefused(str(exc)) from None
     request_id = store.add_core2_request(
@@ -101,6 +101,20 @@ def _checked(model, change: dict[str, Any], edited: Any) -> dict[str, Any]:
         if measure is None or role is None or role.table != measure.table or role.kind == "audit":
             raise RequestRefused("That date cannot count this metric.")
         change["value"], change["shown"] = role.key, role.name
+    elif change["field"] == "value_names":
+        # The admin's edit, a line per code: "C = Cancelled".
+        named = {}
+        for line in str(edited).splitlines():
+            code, sep, text = line.partition("=")
+            if sep and code.strip() and " ".join(text.split()):
+                named[code.strip()] = " ".join(text.split())
+        column = model.columns.get(change["object_key"].partition(":")[2])
+        codes = {c["code"] for c in R._codes(model, column.key)} if column is not None else set()
+        stray = sorted(set(named) - codes)
+        if not named or stray or any(len(t) > R.MAX_CODE_NAME for t in named.values()):
+            raise RequestRefused("Name the codes a line each, as code = name, with codes this field has"
+                                 + (f" ({', '.join(stray[:3])} is not one)" if stray else "") + ".")
+        change["value"] = named
     return change
 
 

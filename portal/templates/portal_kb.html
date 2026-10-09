@@ -76,7 +76,7 @@
 .kb-learned-list{margin:0;padding-left:1.1rem;font-size:var(--font-sm);color:var(--text-secondary);line-height:1.6}
 .kb-learned-try{display:flex;flex-wrap:wrap;gap:.5rem}
 .kb-fields-title{margin-top:.5rem}
-/* ── What you can ask: suggest a change (the new core) ── */
+/* ── The Data guide: suggest a change (the new core) ── */
 .ask-bar{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin:.25rem 0 1rem}
 .ask-intro{font-size:var(--font-sm);color:var(--text-muted);max-width:720px;margin:0;line-height:1.6}
 .ask-tabs{margin-bottom:1rem}
@@ -111,6 +111,16 @@
 .ask-mine-head{display:flex;justify-content:space-between;gap:.4rem;align-items:center}
 .ask-dialog{border:none;border-radius:var(--radius-lg);padding:0;margin:auto;width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;box-shadow:var(--shadow-lg);background:var(--surface);color:var(--text)}
 .ask-dialog::backdrop{background:var(--scrim)}
+.ask-subject-head p.ask-subject-meaning{color:var(--text)}
+.ask-codes{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:.25rem .9rem;margin:.35rem 0 .2rem}
+.ask-codes div{display:flex;gap:.45rem;align-items:baseline;min-width:0}
+.ask-codes dt{font-family:var(--font-mono);font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-strong);min-width:2.2rem}
+.ask-codes dd{margin:0;font-size:var(--font-sm);color:var(--text);overflow-wrap:anywhere}
+.ask-unnamed{color:var(--text-muted);font-style:italic}
+.ask-code-fields{border:none;padding:0;margin:0}
+.ask-code-fields legend{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft);margin-bottom:.3rem;padding:0}
+.ask-code-row{display:grid;grid-template-columns:4rem 1fr;gap:.5rem;align-items:center;margin-bottom:.35rem}
+.ask-code-row label{font-family:var(--font-mono);margin:0}
 .ask-dialog form{display:flex;flex-direction:column;gap:.75rem;padding:1.1rem 1.2rem}
 .ask-dialog-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.6rem}
 .ask-dialog-head h2{font-size:var(--font-md);font-weight:var(--weight-bold);margin:0}
@@ -176,6 +186,7 @@
         <header class="ask-subject-head">
           <h2>{{ subject.name }}</h2>
           {% if subject.grain or subject.span %}<p>{{ subject.grain[:1]|upper ~ subject.grain[1:] if subject.grain else '' }}{% if subject.grain and subject.span %} · {% endif %}{{ subject.span }}</p>{% endif %}
+          {% if subject.meaning %}<p class="ask-subject-meaning">{{ subject.meaning }}</p>{% endif %}
         </header>
         <select class="ask-date-source" hidden aria-hidden="true" tabindex="-1">
           {% for d in subject.dates %}<option value="{{ d.key }}">{{ d.name }}</option>{% endfor %}
@@ -210,6 +221,28 @@
           {% endfor %}
           {% if subject.more %}<span class="ask-more">{{ plural('ui.ask.more', subject.more) }}</span>{% endif %}
         </div>
+        {% endif %}
+        {% set coded = subject.breakdowns|selectattr('codes')|list %}
+        {% if coded %}
+        {# The admin's names for the codes a field holds ("C" is Cancelled): what a reader meets in a table. #}
+        <h3 class="ask-h">{{ t('ui.ask.codes') }}</h3>
+        <ul class="ask-list">
+          {% for b in coded %}
+          {% set mine = catalog.mine.get(b.kind ~ ':' ~ b.key) %}
+          <li class="ask-item ask-coded" data-kind="{{ b.kind }}" data-key="{{ b.key }}" data-name="{{ b.name }}"
+              data-meaning="{{ b.meaning }}" data-also="{{ b.also|join(', ') }}" data-codes="{{ b.codes|tojson|forceescape }}">
+            <div class="ask-item-head"><strong>{{ b.name }}</strong></div>
+            <dl class="ask-codes">
+              {% for c in b.codes %}<div><dt>{{ c.code }}</dt><dd>{% if c.name %}{{ c.name }}{% else %}<span class="ask-unnamed">{{ t('ui.ask.code_unnamed') }}</span>{% endif %}</dd></div>{% endfor %}
+            </dl>
+            <div class="ask-foot">
+              {% if mine %}<p class="ask-state"><span class="status-pill {{ {'waiting': 'warning', 'accepted': 'success', 'rejected': 'danger'}.get(mine.status, 'neutral') }}">{{ t('ui.ask.status.' ~ mine.status) }}</span>
+                {% if mine.status == 'waiting' %}{{ t('ui.ask.state.waiting', date=mine.sent_label) }}{% else %}{{ t('ui.ask.state.' ~ mine.status) }}{% if mine.reason %}: {{ mine.reason }}{% endif %}{% endif %}</p>{% else %}<span></span>{% endif %}
+              <button type="button" class="ask-suggest" data-ask-open>{{ ic("pencil", 14) }} {{ t('ui.ask.edit') if catalog.edits_directly else t('ui.ask.suggest') }}</button>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
         {% endif %}
         {% if subject.dates %}
         <h3 class="ask-h">{{ t('ui.ask.dates') }}</h3>
@@ -280,6 +313,11 @@
       <input class="form-input" id="ask-names" name="names" maxlength="400">
       <p class="ask-hint" data-ask-also></p>
     </div>
+    <fieldset data-for="codes" class="ask-code-fields" hidden>
+      <legend>{{ t('ui.ask.form.codes') }}</legend>
+      <div class="ask-code-rows"></div>
+      <p class="ask-hint">{{ t('ui.ask.form.codes_hint') }}</p>
+    </fieldset>
     <div data-for="metric" hidden>
       <label for="ask-date">{{ t('ui.ask.form.date') }}</label>
       <select class="form-input" id="ask-date" name="date"></select>
@@ -332,6 +370,7 @@
     error.hidden = true;
     const isNew = !item;
     form.elements.kind.value = isNew ? 'new_metric' : 'change';
+    show('codes', false);
     show('new', isNew);
     show('change', !isNew);
     show('metric', !isNew && item.dataset.kind === 'measure');
@@ -349,6 +388,26 @@
       also.textContent = item.dataset.also
         ? window.qbT('ui.ask.also', {words: item.dataset.also}) + '. ' + window.qbT('ui.ask.form.names_hint')
         : window.qbT('ui.ask.form.names_hint');
+      // A field of codes: a box per code, with the name it has now.
+      const rows = form.querySelector('.ask-code-rows');
+      let codes = [];
+      try { codes = JSON.parse(item.dataset.codes || '[]'); } catch (exc) { codes = []; }
+      rows.replaceChildren(...codes.map((c, i) => {
+        const row = document.createElement('div');
+        row.className = 'ask-code-row';
+        const label = document.createElement('label');
+        label.htmlFor = 'ask-code-' + i;
+        label.textContent = c.code;
+        const input = document.createElement('input');
+        input.className = 'form-input';
+        input.id = 'ask-code-' + i;
+        input.maxLength = 60;
+        input.dataset.code = c.code;
+        input.value = c.name || '';
+        row.append(label, input);
+        return row;
+      }));
+      show('codes', codes.length > 0);
       if (item.dataset.kind === 'measure') {
         const source = item.closest('.ask-subject').querySelector('.ask-date-source');
         const select = form.elements.date;
@@ -372,6 +431,11 @@
       : {kind: 'change', target_kind: f.target_kind.value, target_key: f.target_key.value, meaning: f.meaning.value,
          names: f.names.value, date: f.target_kind.value === 'measure' ? f.date.value : '',
          note: f.target_kind.value === 'measure' ? f.note.value : f.other_note.value, example: f.example.value};
+    const codes = {};
+    form.querySelectorAll('.ask-code-rows input[data-code]').forEach(input => {
+      if (input.value.trim()) codes[input.dataset.code] = input.value.trim();
+    });
+    if (Object.keys(codes).length) body.codes = codes;
     body.source = 'page';
     try {
       const response = await fetch('/portal/api/requests', {method: 'POST', credentials: 'same-origin',

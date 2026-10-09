@@ -218,6 +218,10 @@ def workspace_planner(account_id, client, *, question="", question_id=""):
     from core.llm_prices import Usage
 
     def complete(stable, tail):
+        if stable.startswith("You write the summary"):
+            # The answer's written summary (core2/answer/summary.py): a stand-in with no figure of its own.
+            return ("Most of it comes from a few of the largest members, so a change in any of them moves the "
+                    "total. Look at how the leaders did in the latest months before deciding where to act.")
         lines = [ln for ln in tail.splitlines() if ln.strip()]
         asked = next((ln for ln in reversed(lines) if re.search("[A-Za-z]", ln) and ln.lower().strip(" :").startswith(
             ("question", "user", "q"))), "") or tail

@@ -49,7 +49,7 @@
 <div class="rq-head">
   <div>
     <h1>Requests</h1>
-    <p>Changes readers asked for, from "What you can ask". Accepting one applies it from the next answer and tells the
+    <p>Changes readers asked for, from the Data guide. Accepting one applies it from the next answer and tells the
       person who asked. Readers with the portal's admin role edit directly; their changes are listed under Accepted
       and can be undone.</p>
   </div>
@@ -70,7 +70,7 @@
 
 {% if not cards %}
 <div class="card">{{ empty_state("inbox", "No requests waiting" if status == 'waiting' else "Nothing here yet",
-    "When a reader suggests a change on What you can ask, it appears here for you to accept or reject.") }}</div>
+    "When a reader suggests a change in the Data guide, it appears here for you to accept or reject.") }}</div>
 {% else %}
 <div class="rq-list">
   {% for c in cards %}
@@ -80,7 +80,7 @@
         'New metric' if c.kind == 'new_metric' else {'measure': 'Metric', 'attribute': 'Field', 'entity': 'Field',
         'date_role': 'Date'}.get(c.target_kind, 'Change') }}</span>
       <strong>{{ c.target_name }}</strong>
-      <span class="rq-who">· {{ c.user_name or 'A reader' }}, from {{ 'the chat' if c.source == 'chat' else 'What you can ask' }},
+      <span class="rq-who">· {{ c.user_name or 'A reader' }}, from {{ 'the chat' if c.source == 'chat' else 'the Data guide' }},
         {{ (c.created_at or '')[:16] }}</span>
       {% if c.status != 'waiting' %}
       <span class="status-pill {{ {'accepted': 'success', 'rejected': 'danger', 'undone': 'neutral'}.get(c.status, 'neutral') }}">{{
@@ -94,21 +94,24 @@
       <span class="rq-label">{{ ch.label }}</span>
       <div class="rq-col"><small>Now</small>
         {% set now = ch.today %}
-        <p>{% if now is string %}{{ now or '' }}{% elif now %}{{ now | join(', ') }}{% endif %}{% if not now %}<span class="rq-empty">nothing</span>{% endif %}</p>
+        <p>{% if now is string %}{{ now or '' }}{% elif now is mapping %}{% for code, text in now.items() %}{{ code }} = {{ text }}{% if not loop.last %}; {% endif %}{% endfor %}{% elif now %}{{ now | join(', ') }}{% endif %}{% if not now %}<span class="rq-empty">nothing</span>{% endif %}</p>
       </div>
-      <div class="rq-col"><small>{{ 'Suggested' if c.status == 'waiting' else 'Applied' if c.status == 'accepted' else 'Suggested' }}{% if ch.merge %} (added to the names there){% endif %}</small>
+      <div class="rq-col"><small>{{ 'Suggested' if c.status == 'waiting' else 'Applied' if c.status == 'accepted' else 'Suggested' }}{% if ch.merge %} ({{ 'with the codes named there' if ch.field == 'value_names' else 'added to the names there' }}){% endif %}</small>
         {% if c.status == 'waiting' %}
           {% if ch.field == 'description' %}
           <textarea class="form-input form-input-sm" rows="2" maxlength="500" data-edit="{{ ch.index }}" aria-label="{{ ch.label }}">{{ ch.value }}</textarea>
           {% elif ch.field == 'synonyms' %}
           <input class="form-input form-input-sm" maxlength="400" data-edit="{{ ch.index }}" aria-label="{{ ch.label }}" value="{{ ch.value | join(', ') }}">
+          {% elif ch.field == 'value_names' %}
+          <textarea class="form-input form-input-sm" rows="{{ [ch.value | length, 2] | max }}" data-edit="{{ ch.index }}" aria-label="{{ ch.label }}, a line each as code = name">{% for code, text in ch.value.items() %}{{ code }} = {{ text }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
           {% elif ch.field == 'default_date' %}
           <select class="form-input form-input-sm" data-edit="{{ ch.index }}" aria-label="{{ ch.label }}">
             {% for d in c.dates %}<option value="{{ d.key }}" {% if d.key == ch.value %}selected{% endif %}>{{ d.name }}</option>{% endfor %}
           </select>
           {% endif %}
         {% else %}
-          <p>{% if ch.field == 'synonyms' %}{{ ch.value | join(', ') }}{% elif ch.field == 'default_date' %}{{ ch.shown or ch.value }}{% else %}{{ ch.value }}{% endif %}</p>
+          <p>{% if ch.field == 'synonyms' %}{{ ch.value | join(', ') }}{% elif ch.field == 'value_names' %}{% for code, text in ch.value.items() %}{{ code }} = {{ text }}{% if not loop.last %}; {% endif %}{% endfor %}{% elif ch.field == 'default_date' %}{{ ch.shown or ch.value }}{% else %}{{ ch.value }}{% endif %}</p>
         {% endif %}
       </div>
       {% if ch.clashes %}<p class="rq-warn">{% for word, other in ch.clashes.items() %}"{{ word }}" is already a name of {{ other }}. {% endfor %}</p>{% endif %}

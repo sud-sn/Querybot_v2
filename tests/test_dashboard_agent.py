@@ -170,8 +170,9 @@ def test_materialize_requires_a_real_executed_result():
 def test_portal_has_ana_style_split_workspace_contract():
     chat = (ROOT / "portal/templates/portal_chat.html").read_text(encoding="utf-8")
     assert 'id="artifactPane"' in chat
-    assert "renderArtifactPreview(msg)" in chat
-    assert "data-open-artifact" in chat
+    # Expand grows an answer where it is; nothing opens beside the conversation for it.
+    assert "data-expand" in chat and "_toggleAnswerExpanded" in chat
+    assert "data-open-artifact" not in chat
     assert "Add to dashboard" in chat
     assert "dashboardPickerBackdrop" in chat
     assert "/portal/api/dashboards" in chat

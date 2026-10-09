@@ -1,6 +1,6 @@
 """Admin → Data → Requests: changes readers asked for, accepted or rejected here.
 
-Readers suggest from "What you can ask" (portal/core2_requests.py): what a metric or a
+Readers suggest from the Data guide (portal/core2_requests.py): what a metric or a
 field means, other names people use for it, the date a metric is counted by, how it
 should be counted, or a metric that is missing. Each waiting request shows what is there
 now beside what was suggested. Accepting writes it as admin decisions (edited first if
@@ -48,7 +48,7 @@ def _kinds(request: dict[str, Any]) -> set[str]:
         out.add("metrics")
     if "description" in fields:
         out.add("meanings")
-    if "synonyms" in fields:
+    if "synonyms" in fields or "value_names" in fields:
         out.add("names")
     if "default_date" in fields or request.get("target_kind") == "date_role":
         out.add("dates")
@@ -68,6 +68,8 @@ def _now_of(model, change: dict[str, Any]) -> Any:
         return thing.description
     if change["field"] == "synonyms":
         return list(dict.fromkeys(w for ws in thing.synonyms.values() for w in ws))
+    if change["field"] == "value_names":
+        return dict(getattr(thing, "value_names", {}) or {})
     if change["field"] == "default_date":
         wanted = thing.default_date or model.tables[thing.table].default_date
         role = model.date_roles.get(wanted or "")

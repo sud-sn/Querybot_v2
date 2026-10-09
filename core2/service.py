@@ -30,7 +30,7 @@ from core2.answer.builder import build_answer
 from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
 from core2.answer.forecast import answer_forecast
-from core2.answer.suggestions import follow_ups
+from core2.answer.suggestions import drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
 from core2.plan.ir import Clarify, Compare, Plan, Window
@@ -380,6 +380,9 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
+    drill = drills(plan, logical, payload, model, services.allowed_tables) if payload.get("chart") else None
+    if drill:
+        payload["chart"]["drill"] = drill
     context = _against_before(question, plan, services, ctx, warehouse, logical, payload)
     if context:
         payload["key_insights"] = [context, *payload.get("key_insights", [])]
@@ -660,6 +663,27 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         # offered only where the question itself may reach the AI as typed.
         write_metric=(lambda words: metric_writer(account_id, client, description=words))
         if scrub is None and indexing else None), None
+
+
+def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, question_id: str = "") -> str | None:
+    """A short written summary of a portal answer by the workspace's AI (core2/answer/summary.py), or None.
+
+    What may reach the AI is decided as for the question: where member values are kept from it
+    (a tenant under compliance, or value indexing off), an answer that names members gets none,
+    and the question goes with its personal data scrubbed.
+    """
+    import store
+    from core.value_index import value_index_enabled
+    from core2.answer.summary import eligible, write
+    from core2.bootstrap.ai import workspace_planner
+
+    client = store.get_client(account_id) or {}
+    scrub = question_scrubber(account_id)
+    values_allowed = scrub is None and value_index_enabled(store.get_client_state(account_id) or {})
+    if not eligible(payload, values_allowed=values_allowed):
+        return None
+    complete = workspace_planner(account_id, client, question=question, question_id=question_id)
+    return write(payload, scrub(question) if scrub else question, complete)
 
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,

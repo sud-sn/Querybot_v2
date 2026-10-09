@@ -270,7 +270,7 @@ JSON.stringify(opt.animation);"""
 
 class TestAClickIsAnnounced:
 
-    HINT = {"en": "Click to break this down", "fr": "Cliquez pour ventiler"}
+    HINT = {"en": "Click to look closer", "fr": "Cliquez pour voir de plus près"}
 
     @pytest.mark.parametrize("lang", ["en", "fr"])
     def test_a_bar_says_a_click_breaks_it_down(self, lang):

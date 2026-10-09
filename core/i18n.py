@@ -554,7 +554,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.chat": {"en": "Chat", "fr": "Chat"},
     "ui.shell.dashboard": {"en": "Dashboards", "fr": "Tableaux de bord"},
     # A reader's word for the semantic layer: what they can ask about.
-    "ui.shell.semantic_layer": {"en": "What you can ask", "fr": "Ce que vous pouvez demander"},
+    "ui.shell.semantic_layer": {"en": "Data guide", "fr": "Guide des données"},
     "ui.shell.notifications": {"en": "Notifications", "fr": "Notifications"},
     "ui.shell.no_group": {"en": "No group", "fr": "Aucun groupe"},
     "ui.shell.account_actions": {"en": "Account actions", "fr": "Actions du compte"},
@@ -4461,7 +4461,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     # The caption under a donut's centre figure.
     "ui.chart.total": {"en": "Total", "fr": "Total"},
     # Under a tooltip, where a click on the mark asks for its breakdown.
-    "ui.chart.drill_hint": {"en": "Click to break this down", "fr": "Cliquez pour ventiler"},
+    "ui.chart.drill_hint": {"en": "Click to look closer", "fr": "Cliquez pour voir de plus près"},
     "ui.chart.change": {"en": "Change", "fr": "Variation"},
 
     # The artifact pane's own copy.
@@ -4614,7 +4614,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.card.view": {"en": "Show as", "fr": "Afficher en"},
     "ui.chat.card.chart": {"en": "Chart", "fr": "Graphique"},
     "ui.chat.card.table": {"en": "Table", "fr": "Tableau"},
-    "ui.chat.card.expand": {"en": "Open larger", "fr": "Agrandir"},
+    "ui.chat.card.expand": {"en": "Expand", "fr": "Agrandir"},
+    "ui.chat.card.collapse": {"en": "Back to its size", "fr": "Revenir à la taille d'origine"},
+    "ui.chat.card.chart_type": {"en": "Chart type", "fr": "Type de graphique"},
+    "ui.chat.card.summary": {"en": "In short", "fr": "En bref"},
+    "ui.chat.drill.menu": {"en": "Look closer", "fr": "Voir de plus près"},
     "ui.chat.followup.ask": {"en": "Ask", "fr": "Demander"},
     "ui.chat.card.follow_up": {"en": "Follow-up", "fr": "Question de suivi"},
     "ui.chat.card.helpful": {"en": "Was this helpful?", "fr": "Cette réponse vous a-t-elle été utile ?"},
@@ -5065,7 +5069,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.own.failed": {"en": "It could not be done: {error}", "fr": "Cela n'a pas pu être fait : {error}"},
     "ui.chat.own.counted_with": {"en": "Counted with your own metric: {names}",
                                  "fr": "Compté avec votre propre indicateur : {names}"},
-    # ── What you can ask: suggestions to the admin (the new core) ────────────
+    # ── The Data guide: suggestions to the admin (the new core) ──────────────
     "ui.ask.intro": {
         "en": "What your data covers and exactly how each number is counted. If something is wrong or missing, "
               "suggest a change: your admin approves it, and you'll see it here.",
@@ -5075,6 +5079,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.ask.subjects": {"en": "Subjects", "fr": "Sujets"},
     "ui.ask.metrics": {"en": "Metrics", "fr": "Indicateurs"},
     "ui.ask.break_down": {"en": "Break it down by", "fr": "Ventiler par"},
+    "ui.ask.codes": {"en": "What the codes mean", "fr": "Ce que veulent dire les codes"},
+    "ui.ask.code_unnamed": {"en": "no name yet", "fr": "pas encore de nom"},
+    "ui.ask.form.codes": {"en": "What each code means", "fr": "Ce que veut dire chaque code"},
+    "ui.ask.form.codes_hint": {"en": "Leave a code as it is to keep its name.",
+                               "fr": "Laissez un code tel quel pour garder son nom."},
     "ui.ask.dates": {"en": "Dates", "fr": "Dates"},
     "ui.ask.counted_by": {"en": "Counted by {date}", "fr": "Compté par {date}"},
     "ui.ask.also": {"en": "people also say {words}", "fr": "on dit aussi {words}"},

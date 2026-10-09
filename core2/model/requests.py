@@ -1,11 +1,12 @@
 """Readers' requests: what they may suggest about the data, and what accepting it changes.
 
-A reader sees what the data covers ("What you can ask"): each subject, its metrics (what
-each means, how it is counted, the date it is counted by, the other names people use),
-what they break down by and the dates. Any of it can be suggested a change: a better
-meaning, another name people use, another date to count a metric by, or how a metric
-should be counted (words for the admin, who changes the formula). A metric that is not
-there can be described.
+A reader sees what the data covers (the Data guide): each subject and what one row of it
+is, its metrics (what each means, how it is counted, the date it is counted by, the other
+names people use), what they break down by and what their codes mean ("C" is Cancelled),
+and the dates: the admin's Knowledge base, as the reader may see it. Any of it can be
+suggested a change: a better meaning, another name people use, a name for a code, another
+date to count a metric by, or how a metric should be counted (words for the admin, who
+changes the formula). A metric that is not there can be described.
 
 A suggestion is checked here against the model as the reader may see it (their tables,
 nothing hidden or sensitive), and turned into the admin decisions accepting it writes
@@ -24,6 +25,7 @@ from core2.answer.describe import _measure_sentence, _Reader, _span
 from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
 
 MAX_NAMES = 10
+MAX_CODE_NAME = 60
 MAX_MEANING = 500
 MAX_NOTE = 1000
 MAX_EXAMPLE = 200
@@ -41,6 +43,22 @@ def _words(synonyms: dict[str, list[str]]) -> list[str]:
 def _visible_column(model: SemanticModel, column_key: str | None) -> bool:
     column = model.columns.get(column_key or "")
     return column is not None and not column.hidden and column.sensitivity == "none"
+
+
+def _codes(model: SemanticModel, column_key: str | None) -> list[dict[str, Any]]:
+    """A field's codes and what each means ("C" is Cancelled), when its values are codes a reader may read:
+    a text field of few values, all known, short (or named by the admin already)."""
+    from core2.model.knowledge import namable
+
+    column = model.columns.get(column_key or "")
+    if column is None or column.hidden or column.sensitivity != "none":
+        return []
+    if any(column.key in (e.code_column, e.label_column, *e.key_columns) for e in model.entities.values()):
+        return []            # a store's code is the store: it is named by the store's name, not here
+    values = namable(column)
+    if not values or not (column.value_names or all(len(v["code"]) <= 4 for v in values)):
+        return []
+    return [{"code": v["code"], "name": v["name"]} for v in values]
 
 
 # ── what the reader sees ─────────────────────────────────────────────────────
@@ -77,7 +95,9 @@ def reader_view(model: SemanticModel, *, today: dt.date, allowed: set[str] | Non
             if entity is not None and entity.label_column == a.column:
                 continue        # the entity itself, listed above
             breakdowns.append({"kind": "attribute", "key": a.slug, "name": a.business_name,
-                               "meaning": column.description, "also": _words(a.synonyms)})
+                               "meaning": column.description, "also": _words(a.synonyms),
+                               # Codes are member values: shown only where this reader may see values.
+                               "codes": _codes(model, a.column) if reader.values else []})
         seen: set[str] = set()
         unique = []
         for b in breakdowns:
@@ -86,6 +106,7 @@ def reader_view(model: SemanticModel, *, today: dt.date, allowed: set[str] | Non
                 unique.append(b)
         subjects.append({
             "key": table, "name": reader.name(table), "grain": model.tables[table].grain_text or "",
+            "meaning": model.tables[table].description or "",
             "span": _span(first.first, first.last, first.granularity) if first else "",
             "metrics": metrics, "breakdowns": unique[:BREAKDOWNS_SHOWN], "more": max(0, len(unique) - BREAKDOWNS_SHOWN),
             "dates": [{"key": r.key, "name": r.name, "default": r.is_default, "also": _words(r.synonyms),
@@ -132,7 +153,7 @@ def _named_elsewhere(model: SemanticModel, word: str, thing: Any) -> str:
 
 
 def proposal(model: SemanticModel, *, kind: str, key: str, meaning: str = "", names: str | list[str] = "",
-             date: str = "", note: str = "", allowed: set[str] | None = None,
+             date: str = "", note: str = "", codes: dict[str, Any] | None = None, allowed: set[str] | None = None,
              today: dt.date | None = None) -> tuple[str, list[dict[str, Any]]]:
     """(the thing's name, the changes) a suggestion asks for, or RequestError with what to fix."""
     reader = _Reader(model, allowed, False, today or dt.date.today())
@@ -174,12 +195,42 @@ def proposal(model: SemanticModel, *, kind: str, key: str, meaning: str = "", na
             changes.append({"object_key": _object_key(thing), "field": "default_date", "label": "Counted by",
                             "now": now_role.name if now_role else "", "value": date, "shown": role.name})
 
+    if codes:
+        changes.extend(_code_names(model, thing, name, codes))
+
     note = " ".join(str(note or "").split())
     if len(note) > MAX_NOTE:
         raise RequestError(f"Keep the note under {MAX_NOTE} characters.")
     if not changes and not note:
         raise RequestError("Nothing to send: change what it means, add a name people use, or say what is wrong.")
     return name, changes
+
+
+def _code_names(model: SemanticModel, thing: Any, name: str, codes: Any) -> list[dict[str, Any]]:
+    """Names for a field's codes, as the change accepting them writes: only codes it has, only names that
+    differ from today's, and no two codes named alike (a reader could not tell them apart)."""
+    column_key = thing.column if isinstance(thing, Attribute) else None
+    known = {c["code"] for c in _codes(model, column_key)}
+    if not known:
+        raise RequestError(f"{name} has no codes to name.")
+    if not isinstance(codes, dict):
+        raise RequestError("Name the codes as code and name.")
+    given = {str(code): " ".join(str(text or "").split()) for code, text in codes.items()}
+    given = {code: text for code, text in given.items() if text}
+    if any(len(text) > MAX_CODE_NAME for text in given.values()):
+        raise RequestError(f"Keep each code's name under {MAX_CODE_NAME} characters.")
+    stray = sorted(set(given) - known)
+    if stray:
+        raise RequestError(f"{', '.join(stray[:3])} is not one of the codes of {name}.")
+    column = model.columns[column_key or ""]
+    new = {code: text for code, text in given.items() if column.value_names.get(code) != text}
+    if not new:
+        return []
+    named = {**column.value_names, **new}
+    if len({text.casefold() for text in named.values()}) < len(named):
+        raise RequestError("Two codes would have the same name: readers could not tell them apart.")
+    return [{"object_key": f"column:{column.key}", "field": "value_names", "label": "What its codes mean",
+             "now": dict(column.value_names), "value": new, "merge": True}]
 
 
 def _object_key(thing: Any) -> str:
@@ -201,6 +252,15 @@ def _meaning_of(model: SemanticModel, thing: Any) -> tuple[str, str] | None:
 def to_write(model: SemanticModel, change: dict[str, Any], *, lang: str = "en") -> tuple[str, str, Any]:
     """The decision one change writes now, against the model as it is now: added names join today's words."""
     object_key, field, value = change["object_key"], change["field"], change["value"]
+    if field == "value_names":
+        # Named codes join today's names; a code named since keeps the name suggested here.
+        column = model.columns.get(object_key.partition(":")[2])
+        if column is None:
+            raise RequestError("It is not in the data any more.")
+        named = {**column.value_names, **{str(k): str(v) for k, v in dict(value).items()}}
+        if len({text.casefold() for text in named.values()}) < len(named):
+            raise RequestError("Two codes would have the same name: readers could not tell them apart.")
+        return object_key, field, named
     if change.get("merge"):
         kind, _, key = object_key.partition(":")
         thing: Any = {"measure": model.measures, "attribute": model.attributes, "entity": model.entities,

@@ -104,7 +104,8 @@ How to plan:
    same customers do in 2025?"), keep the previous plan's group_by, sort, limit and time.window, and put the
    other period in time.compare, with intent "compare".
 12. notes: one short line for each assumption the user did not state.
-13. chart: only when the question says how to show it ("as a pie", "bar chart", "just the table" -> "table");
+13. chart: only when the question says how to show it ("as a pie", "as a donut" or "ring" -> "donut",
+   "bar chart", "just the table" -> "table");
    on a follow-up ("show that as a pie") return the previous plan with chart set and follow_up "refine".
 14. include_left_out: true only when the question asks for rows a table LEAVES OUT by default (listed in the
    catalog), as "including cancelled orders" or "with test orders too"; otherwise leave it out.

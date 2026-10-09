@@ -24,9 +24,10 @@ against the one before for a monthly or longer one.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
@@ -34,11 +35,14 @@ from core2.answer.builder import (answer_badges, bar_chart, conditions_tail, dis
                                   span_words, versus)
 from core2.compile.compiler import CompileError, Compiled, compile_query
 from core2.model.schema import SemanticModel
-from core2.plan.ir import Compare, Plan, TimeSpec, Window
+from core2.plan.ir import Compare, Filter, Plan, TimeSpec, Window
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, Logical, ResolveError, measure_dates, resolve
 from core2.resolve.time import DAY, Range, add_units, resolve_window, unit_start
+from core2.resolve.time import label as period_label
 from core2.warehouse.runner import QueryFailed, QueryResult, Warehouse
+
+log = logging.getLogger("querybot.core2")
 
 MAX_GROUPINGS = 5           # comparison queries beside the total's
 EXPLAINED = 0.67            # the share of a change a grouping's leading members should carry
@@ -178,6 +182,15 @@ def base_plan(plan: Plan, model: SemanticModel, ctx: Context) -> tuple[Plan, lis
 MIN_MATCH = 0.9     # a grouping reached through a link that matches fewer rows is not checked
 
 
+_FLAG_VALUES = {"0", "1", "y", "n", "t", "f", "yes", "no", "true", "false"}
+
+
+def _a_flag(column) -> bool:
+    """A yes/no column (0/1, Y/N): "1 (+2,001,508) and 0 (+78,401)" explains nothing to a reader."""
+    top = column.profile.top if column.profile else None
+    return bool(top) and all(str(t.value).strip().lower() in _FLAG_VALUES for t in top if t.value is not None)
+
+
 def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, skip: set[str]) -> list[str]:
     """Groupings worth checking, most telling first: direct dimensions, their parents, then small categories."""
     scored: list[tuple[tuple, str]] = []
@@ -208,7 +221,7 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
         column = model.columns[a.column]
         members = a.members or (column.profile.distinct if column.profile else 0)
         if a.slug in skip or column.key in names_or_keys or column.hidden or column.sensitivity != "none" \
-                or not 2 <= members <= 50:
+                or not 2 <= members <= 50 or _a_flag(column):
             continue
         n = hops(column.table)
         if n is None or n > 1:
@@ -306,15 +319,102 @@ def rank(groupings: list[Grouping]) -> list[Grouping]:
 # ── the answer ─────────────────────────────────────────────────────────────
 
 
+def _one_unit(base: Plan, model: SemanticModel, ctx: Context) -> tuple[Plan, str | None, str | None]:
+    """The comparison in its main unit, when the quantity is kept in several (EA, FT, BX): added up, they
+    are no amount. The base plan narrowed to that unit, the unit's grouping, and the unit."""
+    try:
+        probe = resolve(base.model_copy(update={"intent": "breakdown"}), model, replace(ctx, split_units=True))
+    except (ResolveError, ValueError):
+        return base, None, None
+    if not probe.unit_group or not probe.unit_order:
+        return base, None, None
+    slug = next((g.attribute for g in probe.groups if g.name == probe.unit_group and g.attribute), None)
+    if slug is None:
+        return base, None, None
+    main = probe.unit_order[0]
+    return base.model_copy(update={"filters": [*base.filters, Filter(field=slug, op="eq", values=[main])]}), slug, main
+
+
+def _unit_unsaid(logical: Logical, unit: str | None) -> Logical:
+    """The unit counted in is said with every amount ("422 EA"), not again as a condition of the measure."""
+    if unit:
+        logical.conditions = [c for c in logical.conditions
+                              if not (c.kind == "member" and [str(v) for v in c.values] == [unit])]
+    return logical
+
+
+def _whole_unit(rng: Range) -> str | None:
+    """The calendar unit a window is exactly (a month, a quarter, a year), if it is one."""
+    if rng.start is None or rng.end is None or rng.start.day != 1:
+        return None
+    for unit in ("month", "quarter", "year"):
+        if unit_start(rng.start, unit) == rng.start and add_units(rng.start, unit, 1) == rng.end:
+            return unit
+    return None
+
+
+LOOK_BACK = {"month": 36, "quarter": 12, "year": 5}
+
+
+def _last_with_data(base: Plan, logical: Logical, model: SemanticModel, ctx: Context,
+                    warehouse: Warehouse) -> tuple[Window, str, str] | None:
+    """When the period before the one asked about has no data (a month never loaded, a snapshot not
+    taken), the last period before it that has: its window, its name and the unit. None when the
+    period before has data, or none before it does."""
+    rng, before = logical.window, logical.compare
+    unit = _whole_unit(rng)
+    if unit is None or before is None or before.start is None or rng.start is None:
+        return None
+    look = add_units(rng.start, unit, -LOOK_BACK[unit])
+    series = base.model_copy(update={"intent": "trend", "time": TimeSpec(
+        date=base.time.date, grain=unit, window=_between(Range(look, rng.start)), compare=None)})
+    trend = resolve(series, model, ctx)
+    compiled = compile_query(trend, model, warehouse.dialect)
+    result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
+    at = _columns(compiled, result)
+    period = next(c for c in compiled.columns if c.role == "period")
+    measure = next(c for c in compiled.columns if c.role == "measure")
+    from core2.answer.builder import _day
+
+    held = sorted(d for row in result.rows for d in [_day(row[at[period.name]])]
+                  if d is not None and row[at[measure.name]] is not None)
+    if not held or held[-1] >= before.start:
+        return None
+    last = held[-1]
+    return _between(Range(last, add_units(last, unit, 1))), period_label(last, unit), unit
+
+
 def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse: Warehouse, ctx: Context,
                    data_source: str = "", question_id: str = "", model_version: int = 0,
                    started: float | None = None) -> dict[str, Any]:
     started = started if started is not None else time.perf_counter()
     base, notes = base_plan(plan, model, ctx)
-    total_logical = resolve(base, model, ctx)
+    base, unit_slug, unit = _one_unit(base, model, ctx)
+    if unit:
+        notes.append(f"Counted in {unit}, the unit of most rows; quantities in other units are not added in.")
+    total_logical = _unit_unsaid(resolve(base, model, ctx), unit)
     total_compiled = compile_query(total_logical, model, warehouse.dialect)
     result = warehouse.query(total_compiled.sql, max_rows=total_compiled.row_cap)
     current, prior = _totals(total_compiled, result)
+    sqls = [("the total", total_compiled.sql)]
+    if not prior and (base.time.compare is None or base.time.compare.kind == "previous_period"):
+        try:
+            found = _last_with_data(base, total_logical, model, ctx, warehouse)
+        except (ResolveError, CompileError, ValueError, QueryFailed, StopIteration) as exc:
+            log.warning("core2 could not look for the last period with data: %s", exc)
+            found = None
+        if found is not None:
+            window, name, unit_word = found
+            assert total_logical.compare is not None and total_logical.compare.start is not None
+            empty = period_label(total_logical.compare.start, unit_word)
+            base = base.model_copy(update={"time": base.time.model_copy(
+                update={"compare": Compare(kind="window", window=window)})})
+            total_logical = _unit_unsaid(resolve(base, model, ctx), unit)
+            total_compiled = compile_query(total_logical, model, warehouse.dialect)
+            result = warehouse.query(total_compiled.sql, max_rows=total_compiled.row_cap)
+            current, prior = _totals(total_compiled, result)
+            sqls = [("the total", total_compiled.sql)]
+            notes.append(f"{empty} has no data: compared with {name}, the last {unit_word} before it that has.")
     change = current - prior
     m = total_logical.measures[0]
     if m.measure is not None:
@@ -322,14 +422,15 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     else:   # a ratio or an average of days is explained by mix and rate, a difference or total by parts
         additive = (bool(base.derived) and base.derived[0].op != "ratio") or any(
             d.measure and d.agg == "sum" for d in base.durations)
-    sqls = [("the total", total_compiled.sql)]
     rows_read = len(result.rows)
 
     asked = list(dict.fromkeys(plan.drivers.dimensions)) if plan.drivers and plan.drivers.dimensions else []
+    skip = {f.field for f in plan.filters} | ({unit_slug} if unit_slug else set())
     slugs = asked[:MAX_GROUPINGS] or candidates(model, total_logical.parts[0].table, allowed=ctx.allowed_tables,
-                                               skip={f.field for f in plan.filters})
+                                               skip=skip)
     groupings: list[Grouping] = []
     skipped: list[str] = []
+    why_not: list[str] = []
     for slug in slugs:
         if time.perf_counter() - started > BUDGET_SECONDS:
             skipped.append(slug)
@@ -339,15 +440,17 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
             logical = resolve(sub, model, ctx)
             compiled = compile_query(logical, model, warehouse.dialect)
             res = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
-        except ResolveError:
+        except ResolveError as exc:
             if asked:
                 raise                    # the reader named this grouping: say what is wrong with it
             skipped.append(slug)
+            why_not.append(f"{_grouping_word(model, slug)} ({str(exc).rstrip('.')})")
             continue
-        except (CompileError, ValueError, QueryFailed):
+        except (CompileError, ValueError, QueryFailed) as exc:
             if asked:
                 raise
             skipped.append(slug)
+            why_not.append(f"{_grouping_word(model, slug)} ({str(exc).splitlines()[0][:120].rstrip('.')})")
             continue
         label = next((g.label for g in logical.groups if g.kind in ("attribute", "time")), slug)
         grouping = Grouping(slug, label, _movers(compiled, res, logical), truncated=res.truncated)
@@ -363,14 +466,17 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     pct = change / prior if prior else None
     # The conditions the question applied are named with the measure: "Gross profit for profit centre X rose".
     headline = _headline(scoped_label(total_logical, m.label), fmt_, current, prior, change, pct, now, before,
-                         reported, ranked, additive)
+                         reported, ranked, additive, unit=unit)
     tail = conditions_tail(total_logical)
 
     notes = [*notes, *total_logical.notes]
     if groupings:
         notes.append("Groupings checked: " + ", ".join(g.word for g in groupings) + ".")
     if skipped:
-        notes.append(f"{len(skipped)} other grouping{'s' if len(skipped) > 1 else ''} could not be checked.")
+        notes.append(f"{len(skipped)} other grouping{'s' if len(skipped) > 1 else ''} could not be checked"
+                     + (": " + "; ".join(why_not[:2]) if why_not else "") + ".")
+    if not slugs:
+        notes.append("No grouping of this measure's rows could be checked for what moved it.")
     if any(g.truncated for g in groupings):
         notes.append("Some groupings have more members than were read; their smallest members are not shown.")
 
@@ -382,11 +488,11 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
         chart = bar_chart(f"Change in {m.label.lower()} by {top.word}", "member", top.label,
                           [("change", "Change", formats["change"])],
                           [{"member": x.member, "change": x.change} for x in shown], intent="drivers")
-    short_value = fmt(current, fmt_)
+    short_value = fmt(current, fmt_, unit=unit)
     comparison = ""
     if prior or current:
         pct_text = f" ({pct * 100:+.1f}%)" if pct is not None else ""
-        comparison = (f"{'up' if change >= 0 else 'down'} {fmt(abs(change), fmt_)}{pct_text} "
+        comparison = (f"{'up' if change >= 0 else 'down'} {fmt(abs(change), fmt_, unit=unit)}{pct_text} "
                       f"{versus(total_logical.compare or Range(None, None))}")
     suggestions: list[str] = []
     if reported:
@@ -409,16 +515,17 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
 
 
 def _headline(label: str, format_: str, current: float, prior: float, change: float, pct: float | None,
-              now: str, before: str, reported: list[Grouping], ranked: list[Grouping], additive: bool) -> str:
+              now: str, before: str, reported: list[Grouping], ranked: list[Grouping], additive: bool,
+              *, unit: str | None = None) -> str:
     if not prior and not current:
         return f"There is no {label.lower()} {now} or {before.removeprefix('in ')}."
     if not change:
-        lead = f"{label} did not change: {fmt(current, format_)} {now}, as {before}."
+        lead = f"{label} did not change: {fmt(current, format_, unit=unit)} {now}, as {before}."
     else:
         moved = "rose" if change > 0 else "fell"
         pct_text = f" ({pct * 100:+.1f}%)" if pct is not None else ""
-        lead = (f"{label} {moved} {fmt(abs(change), format_)}{pct_text}, from {fmt(prior, format_)} {before} "
-                f"to {fmt(current, format_)} {now}.")
+        lead = (f"{label} {moved} {fmt(abs(change), format_, unit=unit)}{pct_text}, from "
+                f"{fmt(prior, format_, unit=unit)} {before} to {fmt(current, format_, unit=unit)} {now}.")
     sentences = [lead]
     what = "rise" if change > 0 else "fall"
     for g in reported:
@@ -434,6 +541,14 @@ def _headline(label: str, format_: str, current: float, prior: float, change: fl
     if not additive and reported:
         sentences.append("The groups' changes do not add up to the total for a ratio; these moved most.")
     return " ".join(sentences)
+
+
+def _grouping_word(model: SemanticModel, slug: str) -> str:
+    if slug in model.entities:
+        return Grouping(slug, model.entities[slug].business_name, []).word
+    if slug in model.attributes:
+        return Grouping(slug, model.attributes[slug].business_name, []).word
+    return slug
 
 
 def _first_upper(text: str) -> str:

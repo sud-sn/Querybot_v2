@@ -211,7 +211,7 @@ class TestTheOtherTabTitles:
 
     def test_the_semantic_layer_page_reuses_the_nav_label(self):
         """One id for the nav item and the tab, so they cannot drift apart."""
-        assert self._title("portal_kb.html", "fr").startswith("Ce que vous pouvez demander — ")
+        assert self._title("portal_kb.html", "fr").startswith("Guide des données — ")
 
     def test_a_page_with_no_title_block_falls_back_to_the_suffix(self):
         assert self._title("portal_base.html", "fr") == "Portail QueryBot"

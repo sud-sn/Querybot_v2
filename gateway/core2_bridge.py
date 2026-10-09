@@ -301,7 +301,45 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
     sent = await _send(adapter, websocket, payload)
     if sent and payload.get("data") is not None:
         _not_todays_result(adapter)
+        from core.background_tasks import spawn
+
+        spawn(_summarize(adapter, websocket, account_id, question, payload), name="core2-summary")
     return sent
+
+
+async def _summarize(adapter: Any, websocket: Any, account_id: str, question: str, payload: dict[str, Any]) -> None:
+    """The answer's written summary, sent after it (the answer never waits for the AI) and kept with it."""
+    from core2.service import portal_summary
+
+    question_id = str((payload.get("trust") or {}).get("question_id") or "")
+    try:
+        # Not on the new core's own threads: a summary never keeps the next question waiting.
+        text = await asyncio.wait_for(asyncio.to_thread(portal_summary, account_id, question, payload,
+                                                        question_id=question_id), TIMEOUT_SECONDS)
+    except Exception as exc:     # noqa: BLE001 - the answer stands without its summary
+        log.warning("core2 could not summarise an answer for %s: %s", account_id, exc)
+        return
+    if not text:
+        return
+    await _send(adapter, websocket, {"type": "answer_summary", "question_id": question_id, "summary": text})
+    if payload.get("trace_id"):
+        try:
+            await asyncio.to_thread(_keep_summary, int(payload["trace_id"]), text)
+        except Exception as exc:     # noqa: BLE001 - shown; only a reopened thread will lack it
+            log.warning("core2 could not keep the summary of trace %s: %s", payload.get("trace_id"), exc)
+
+
+def _keep_summary(trace_id: int, text: str) -> None:
+    """The summary goes into the kept answer, so a reopened thread shows it too."""
+    import store
+
+    trace = store.get_answer_trace(trace_id) or {}
+    try:
+        kept = json.loads(trace.get("answer_frame") or "null")
+    except ValueError:
+        return
+    if isinstance(kept, dict):
+        store.update_answer_trace(trace_id, answer_frame={**kept, "summary": text})
 
 
 def _not_todays_result(adapter: Any) -> None:
