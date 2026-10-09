@@ -23,6 +23,19 @@ from dataclasses import dataclass, field, replace
 from core2.model.schema import SemanticModel
 
 MAX_TOKENS = 8
+
+# Everyday words a question is made of. A member stored as one of them -- a group coded DO, AS, IF or
+# HAD, a province ON, a unit ME -- is matched only where the question writes it as stored ("sales for DO"),
+# never in its ordinary sense ("how many items do we have", "value on 3 September").
+COMMON_WORDS = frozenset("""
+a am an and any are as at be been but by can could did do does each else for from go goes had has have he
+her him his how i if in into is it its may me might more most my no nor not now of off on one or our ours
+out over per she should so some such than that the their them then there these they this those to too two
+up us was we were what when where which while who whom why will with would yes yet you your all also both
+get got just much many new old only own same see set use very via let lot
+au aux ce ces dans de des du elle en est et il ils je la le les leur mais mes mon ne nos notre nous on ou
+par pas pour qu que quel quelle qui sa se ses son sont sur ta te tes ton tu un une vos votre vous y
+""".split())
 _QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-", "`": "'"})
 _TOKEN = re.compile(r"[\w#&'./+-]+", re.UNICODE)
 
@@ -118,10 +131,15 @@ class MemberIndex:
         return next((v for a, v in self._entries(normalise(str(value))) if a == attribute), None)
 
     def match(self, question: str) -> list[ValueMatch]:
-        """Whole member names written in the question, longest first, never overlapping."""
+        """Whole member names written in the question, longest first, never overlapping.
+
+        A member that is also an everyday word is matched only where the question writes it exactly as
+        stored, in a question that is not all capitals (where case says nothing).
+        """
         words = _tokens(question)
         found: list[ValueMatch] = []
         taken: set[int] = set()
+        cased = any(c.islower() for c in question)
         for size in range(min(self.longest, len(words)), 0, -1):
             for i in range(len(words) - size + 1):
                 if any(j in taken for j in range(i, i + size)):
@@ -131,6 +149,9 @@ class MemberIndex:
                 if key.isdigit() and len(key) < 3:
                     continue   # "top 5" is not member "5"
                 entries = self._entries(key)
+                if key in COMMON_WORDS:
+                    written = question[start:end]
+                    entries = [e for e in entries if cased and e[1] == written]
                 for attribute, value in entries:
                     found.append(ValueMatch(question[start:end], start, end, attribute, value))
                 if entries:

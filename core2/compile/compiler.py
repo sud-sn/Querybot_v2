@@ -473,8 +473,13 @@ class _Compiler:
         if q.compare is not None:
             for m in q.measures:
                 cur, pri = self.out("q", m.name), self.out("q", f"{m.name}_prior")
-                change = D.sub(exp.Coalesce(this=cur, expressions=[_num(0)]),
-                               exp.Coalesce(this=pri, expressions=[_num(0)]))
+                # A member missing on one side changed by all of the other ("new this month"); missing on both,
+                # nothing is known, and the change is no value, never 0.
+                change = exp.Case(ifs=[exp.If(this=exp.and_(exp.Is(this=cur.copy(), expression=exp.Null()),
+                                                            exp.Is(this=pri.copy(), expression=exp.Null())),
+                                              true=exp.Null())],
+                                  default=D.sub(exp.Coalesce(this=cur, expressions=[_num(0)]),
+                                                exp.Coalesce(this=pri, expressions=[_num(0)])))
                 outer = outer.select(change.as_(self.name(f"{m.name}_change")))
                 outer = outer.select(D.div(_double(change.copy()), exp.Nullif(this=pri.copy(), expression=_num(0)))
                                      .as_(self.name(f"{m.name}_pct_change")))

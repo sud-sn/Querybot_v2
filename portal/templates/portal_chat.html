@@ -2952,8 +2952,11 @@ function _answerTiles(msg) {
   if (!headers.every(h => _NUMERIC_FORMATS.includes(formatOf(h))
                           || (!formatOf(h) && _isANumericColumn(rows, h)))) return [];
   const labels = data.header_labels || {};
+  // A number the data does not have reads as a dash, never as an empty tile.
+  const missing = v => v === null || v === undefined || v === '';
   return headers.map(h => ({label: labels[h] || h,
-                            value: _formatDisplayValue(rows[0][h], formatOf(h) || 'number', _displayFormatSpec(data, h), h),
+                            value: missing(rows[0][h]) ? '—'
+                              : _formatDisplayValue(rows[0][h], formatOf(h) || 'number', _displayFormatSpec(data, h), h),
                             note: ''}));
 }
 
