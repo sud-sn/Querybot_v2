@@ -1,0 +1,159 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% from "icons.html" import ic %}
+{% block title %}Metrics — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Metrics", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* The approved Metrics screen: every metric the new core answers with, how it is counted, and where it came from. */
+.ms-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.ms-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.ms-head p{margin:0;color:var(--text-muted);max-width:600px;font-size:var(--font-base)}
+.ms-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.ms-search{min-width:300px}
+.ms-shows{display:inline-flex;gap:4px;flex-wrap:wrap}
+.ms-show{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--grid-line);background:var(--surface);display:inline-flex;
+  align-items:center;gap:6px;font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-medium);
+  color:var(--text-secondary);cursor:pointer}
+.ms-show[aria-pressed="true"]{background:var(--primary-soft);border-color:transparent;color:var(--primary-ink);font-weight:var(--weight-semibold)}
+.ms-list{overflow:hidden;background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm)}
+table.ms-l{width:100%;border-collapse:collapse;background:var(--surface)}
+table.ms-l th{text-align:left;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted);padding:10px 14px;
+  border-bottom:1px solid var(--grid-line);background:var(--surface-2);vertical-align:bottom}
+table.ms-l td{padding:12px 14px;border-bottom:1px solid var(--grid-line);vertical-align:top;font-size:var(--font-sm);color:var(--text)}
+table.ms-l tr:last-child td{border-bottom:0}
+table.ms-l tbody tr[data-href]{cursor:pointer}
+table.ms-l tbody tr[data-href]:hover td{background:var(--surface-2)}
+table.ms-l tbody tr:focus-visible{outline:2px solid var(--focus-ring-color);outline-offset:-2px}
+table.ms-l .nm{font-weight:var(--weight-bold);color:var(--text-strong)}
+table.ms-l .what{display:block;margin-top:2px;font-size:var(--font-xs);color:var(--text-muted);max-width:28ch}
+table.ms-l .how{max-width:40ch}
+table.ms-l .n{text-align:right;font-variant-numeric:tabular-nums}
+table.ms-l .act{width:48px;text-align:right}
+.ms-edit{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:6px;color:var(--text-secondary)}
+.ms-edit:hover{background:var(--surface-3);color:var(--text-strong)}
+.ms-tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:var(--font-xs);
+  font-weight:var(--weight-semibold);white-space:nowrap;background:var(--surface-3);color:var(--text-secondary)}
+.ms-tag.admin{background:var(--success-soft);color:var(--success)}
+.ms-tag.changed,.ms-tag.setup{background:var(--primary-soft);color:var(--primary-ink)}
+.ms-tag.off{background:var(--surface-3);color:var(--text-muted)}
+.ms-muted{color:var(--text-muted)}
+.ms-note{margin:10px 0 0;font-size:var(--font-xs);color:var(--text-muted)}
+@media (max-width: 760px){
+  .ms-search{min-width:0;flex:1 1 100%}
+  .ms-show{min-height:44px}
+  table.ms-l thead{display:none}
+  table.ms-l,table.ms-l tbody{display:block;width:100%}
+  table.ms-l tr{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;padding:12px 14px;border-bottom:1px solid var(--grid-line)}
+  table.ms-l td{display:block;padding:0;border:0}
+  table.ms-l td:first-child,table.ms-l td.how{grid-column:1/-1}
+  table.ms-l td[data-label]::before{content:attr(data-label);display:block;font-size:var(--font-xs);color:var(--text-muted);
+    text-transform:uppercase;letter-spacing:.05em}
+  table.ms-l .n{text-align:left}
+  table.ms-l .act{position:absolute;right:8px;margin-top:-4px;width:auto}
+  table.ms-l tr{position:relative}
+  .ms-edit{width:44px;height:44px}
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="ms-head">
+  <div>
+    <h1>Metrics</h1>
+    <p>The numbers people can ask for, and exactly how each is counted. Add your own with your business’s logic; it is
+      checked against the data before anyone uses it.</p>
+  </div>
+  {% if learned %}
+  <a class="btn btn-primary" href="/admin/clients/{{ client.account_id }}/measures/edit">{{ ic("plus", 16) }} Add a metric</a>
+  {% endif %}
+</div>
+
+{% set saved_words = {"metric": "Metric saved. It answers from the next question.",
+                      "draft": "Draft saved. It is hidden from questions until you save it as a metric.",
+                      "hidden": "Metric hidden. Readers are no longer offered it; Show brings it back.",
+                      "shown": "Metric shown to readers again."} %}
+{% if saved in saved_words %}<div class="alert alert-success" role="status">{{ saved_words[saved] }}</div>{% endif %}
+
+{% if not learned %}
+<div class="card">{{ empty_state("chart-bar", "QueryBot has not learned this database yet",
+    "Learn it first: the metrics are found from the data, then you can change them and add your own here.",
+    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
+{% else %}
+{% set count = {} %}
+{% for r in rows %}{% set _ = count.update({r.source: count.get(r.source, 0) + 1}) %}{% endfor %}
+<div class="ms-toolbar">
+  <label class="input-icon-wrap ms-search">{{ ic("filter", 16) }}<input type="search" class="form-input form-input-sm" id="ms-search"
+    placeholder="Search metrics and the words people use" aria-label="Search metrics and the words people use"></label>
+  <span class="ms-shows" role="group" aria-label="Show">
+    <button type="button" class="ms-show" data-source="" aria-pressed="true">All {{ rows | rejectattr("hidden") | list | length }}</button>
+    {% for label, words in [("Learned", "Learned"), ("Added by an admin", "Added by admins"), ("Changed by an admin", "Changed by admins"),
+                            ("From today's setup", "From today's setup"), ("Hidden", "Hidden")] if count.get(label) %}
+    <button type="button" class="ms-show" data-source="{{ label }}" aria-pressed="false">{{ words }} {{ count[label] }}</button>
+    {% endfor %}
+  </span>
+</div>
+
+<div class="ms-list"><table class="ms-l">
+  <thead><tr><th>Metric</th><th>How it is counted</th><th>From</th><th>Default date</th><th class="n">Asked, 30 days</th><th>Source</th>
+    <th class="act"><span class="sr-only">Edit</span></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  {% set href = "/admin/clients/" ~ client.account_id ~ "/measures/edit?key=" ~ (r.key | urlencode) %}
+  <tr data-row data-href="{{ href }}" tabindex="0" aria-label="Edit {{ r.name }}" data-source="{{ r.source }}"
+      data-hidden="{{ 'yes' if r.hidden else 'no' }}"
+      data-words="{{ (r.name ~ ' ' ~ r.slug ~ ' ' ~ r.how ~ ' ' ~ r.from | join(' ') ~ ' ' ~ r.synonyms | join(' ')) | lower }}"
+      {% if r.hidden %}hidden{% endif %}>
+    <td><b class="nm">{{ r.name }}</b>{% if r.description %}<span class="what">{{ r.description }}</span>{% endif %}</td>
+    <td class="how" data-label="How it is counted">{{ r.how | capitalize }}</td>
+    <td data-label="From">{{ r.from | join(" + ") }}</td>
+    <td data-label="Default date">{{ r.date or "—" }}</td>
+    <td class="n" data-label="Asked, 30 days">{{ "{:,}".format(r.asked) if r.asked else "—" }}</td>
+    <td data-label="Source"><span class="ms-tag {{ {'Added by an admin': 'admin', 'Changed by an admin': 'changed', "From today's setup": 'setup', 'Hidden': 'off'}.get(r.source, '') }}">{{ r.source }}</span></td>
+    <td class="act"><a class="ms-edit" href="{{ href }}" aria-label="Edit {{ r.name }}">{{ ic("pencil", 16) }}</a></td>
+  </tr>
+  {% endfor %}
+  <tr id="ms-none" hidden><td colspan="7" class="ms-muted">No metric matches.</td></tr>
+  </tbody>
+</table></div>
+<p class="ms-note">A change answers from the next question, and is kept when QueryBot learns again.</p>
+
+<script>
+(function () {
+  'use strict';
+  var rows = Array.prototype.slice.call(document.querySelectorAll('[data-row]'));
+  var state = {source: '', search: ''};
+  function apply() {
+    var shown = 0;
+    rows.forEach(function (tr) {
+      var source = tr.getAttribute('data-source');
+      var ok = state.source ? source === state.source : tr.getAttribute('data-hidden') === 'no';
+      ok = ok && (!state.search || tr.getAttribute('data-words').indexOf(state.search) >= 0);
+      tr.hidden = !ok; if (ok) shown++;
+    });
+    document.getElementById('ms-none').hidden = shown > 0;
+  }
+  document.getElementById('ms-search').addEventListener('input', function () { state.search = this.value.trim().toLowerCase(); apply(); });
+  document.querySelectorAll('button[data-source]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      state.source = b.getAttribute('data-source');
+      document.querySelectorAll('button[data-source]').forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
+      apply();
+    });
+  });
+  // The whole row opens the metric, as its pencil does.
+  rows.forEach(function (tr) {
+    tr.addEventListener('click', function (e) { if (!e.target.closest('a')) window.location.href = tr.getAttribute('data-href'); });
+    tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target === tr) window.location.href = tr.getAttribute('data-href'); });
+  });
+  apply();
+})();
+</script>
+{% endif %}
+{% endblock %}

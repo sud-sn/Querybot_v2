@@ -123,6 +123,12 @@ class OutMeasure:
     hidden: bool = False     # one table's share of a combined measure: worked with, never shown
 
 
+def _own_conditions(o: OutMeasure) -> set[str]:
+    """The columns a measure's own conditions read (its definition's, and its formula's)."""
+    columns = {f.column for f in (o.measure.filters if o.measure else [])}
+    return columns | {f.column for f in getattr(o.expr, "filters", None) or []}
+
+
 @dataclass
 class PartGroup:
     name: str
@@ -1112,8 +1118,11 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                              f"{int(flag.data.get('used') or 0):,} appear in {used_in}.")
         owner_columns = {c.key for c in model.columns.values() if c.table == part.table}
         for flag in model.quality:
+            # Said only when a measure of the part counts those rows: not when the question, the table or every
+            # measure's own condition already leaves them out.
             if flag.kind == "status_column" and flag.object in owner_columns and flag.object not in filtered \
-                    and not model.tables[part.table].default_filters:
+                    and not model.tables[part.table].default_filters \
+                    and any(flag.object not in _own_conditions(o) for o in part.measures):
                 cancel_like = [str(v) for v in flag.data.get("cancel_like", [])]
                 if cancel_like:
                     notes.append(f"Includes rows whose {model.columns[flag.object].business_name.lower()} is "

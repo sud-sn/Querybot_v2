@@ -2387,6 +2387,7 @@ async def client_advanced_page(request: Request, account_id: str):
 # the workspace's navigation until every workspace answers with the new core.
 _DIAGNOSTIC_PAGES = (
     ("graph", "Entity Graph", "Joins and entities as the earlier pipeline reads them."),
+    ("metrics", "Metric Registry", "The metrics the earlier pipeline answers with."),
     ("model-health", "Model Health", "The semantic compiler's warnings, conflict inbox and versions."),
     ("evals", "Evaluations", "Golden questions run against today's pipeline."),
     ("traces", "Timing", "How long each step of a question took."),
@@ -12859,3 +12860,4 @@ async def mapping_download_terms(request: Request, account_id: str):
 # when imported here, like every other admin page.
 from admin import core2_routes as _core2_routes  # noqa: E402,F401
 from admin import core2_relationships as _core2_relationships  # noqa: E402,F401
+from admin import core2_metrics as _core2_metrics  # noqa: E402,F401

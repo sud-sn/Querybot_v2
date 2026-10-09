@@ -38,7 +38,7 @@ _NAV_EXPECTATIONS = [
     ("kb",              "Data",       "Knowledge Base"),
     ("relationships",   "Data",       "Relationships"),
     ("date-roles",      "Data",       "Dates"),
-    ("metrics",         "Data",       "Metrics"),
+    ("measures",        "Data",       "Metrics"),
     ("queries",         "Questions",  "Questions"),
     ("learning-queue",  "Questions",  "Flagged Answers"),
     ("billing",         "Questions",  "Usage &amp; Billing"),
@@ -51,6 +51,7 @@ _NAV_EXPECTATIONS = [
     # Diagnostics, for support, reached from the foot of Settings.
     ("diagnostics",     "Settings",   "Diagnostics"),
     ("graph",           "Settings",   "Entity Graph"),
+    ("metrics",         "Settings",   "Metric Registry"),
     ("model-health",    "Settings",   "Model Health"),
     ("evals",           "Settings",   "Evaluations"),
     ("traces",          "Settings",   "Timing"),

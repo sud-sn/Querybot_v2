@@ -266,7 +266,8 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
             a.page.wait_for_load_state("networkidle")
             workspace = f"/admin/clients/{READER[0]}"
             for path in ("/admin", workspace, workspace + "/setup", workspace + "/learned", workspace + "/kb",
-                         workspace + "/relationships", workspace + "/graph", workspace + "/date-roles", workspace + "/metrics", workspace + "/users",
+                         workspace + "/relationships", workspace + "/graph", workspace + "/date-roles", workspace + "/metrics", workspace + "/measures",
+                         workspace + "/measures/edit", workspace + "/users",
                          workspace + "/settings", workspace + "/compliance", workspace + "/diagnostics",
                          workspace + "/billing", workspace + "/queries", "/admin/system"):
                 a.page.goto(base + path, wait_until="networkidle")

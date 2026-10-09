@@ -212,3 +212,21 @@ def list_core2_answers(account_id: str, limit: int = 50) -> list[dict[str, Any]]
     keys = ("id", "user_id", "mode", "question", "status", "headline", "sql", "row_count", "plan_json",
             "duration_ms", "model_version", "created_at", "question_id", "rating")
     return [dict(zip(keys, r)) for r in rows]
+
+
+def core2_measure_uses(account_id: str, since: str) -> dict[str, int]:
+    """How many answered questions asked for each measure (by its slug) since ``since``."""
+    with get_db() as conn:
+        rows = conn.execute("""SELECT plan_json FROM core2_answer
+                               WHERE account_id = ? AND created_at >= ? AND status = 'answered'""",
+                            (account_id, since)).fetchall()
+    counts: dict[str, int] = {}
+    for row in rows:
+        try:
+            plan = json.loads(row["plan_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        slugs = set(plan.get("measures") or []) | {s for d in plan.get("derived") or [] for s in d.get("measures") or []}
+        for slug in slugs:
+            counts[str(slug)] = counts.get(str(slug), 0) + 1
+    return counts

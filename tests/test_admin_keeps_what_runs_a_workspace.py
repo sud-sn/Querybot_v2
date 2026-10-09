@@ -30,10 +30,11 @@ from core.static_assets import asset_url
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "admin" / "templates"
 
-DAY_TO_DAY = ["", "setup", "learned", "kb", "relationships", "date-roles", "metrics", "queries", "learning-queue",
+DAY_TO_DAY = ["", "setup", "learned", "kb", "relationships", "date-roles", "measures", "queries", "learning-queue",
               "billing", "users", "groups", "pending-users", "compliance", "egress", "settings"]
-# The entity graph is today's pipeline's own relationships editor: the new core's are on Relationships.
-DIAGNOSTICS = ["graph", "model-health", "evals", "traces", "readiness", "drafts", "mapping", "glossary", "meanings",
+# The entity graph and the metric registry are today's pipeline's own editors: the new core's are on
+# Relationships and Metrics.
+DIAGNOSTICS = ["graph", "metrics", "model-health", "evals", "traces", "readiness", "drafts", "mapping", "glossary", "meanings",
                "domains", "reports"]
 
 

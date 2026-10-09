@@ -1,0 +1,611 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
+{% block title %}{{ "Edit " ~ measure.business_name if measure else "Add a metric" }} — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Metrics", "href": "/admin/clients/" ~ client.account_id ~ "/measures"},
+    {"label": measure.business_name if measure else "Add a metric", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* The approved Add a metric screen: describe it, see how it is counted (as blocks or a formula, with every table's
+   fields suggested as it is typed), name it, say how it behaves; checked against the data beside it as it changes. */
+.me-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.me-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.me-head p{margin:0;color:var(--text-muted);max-width:600px;font-size:var(--font-base)}
+.me-layout{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start}
+.me-main{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm)}
+.me-sec{padding:16px}
+.me-sec+.me-sec{border-top:1px solid var(--grid-line)}
+.me-sec h2{margin:0 0 10px;font-size:var(--font-base);color:var(--text-strong);display:flex;align-items:center;gap:8px}
+.me-n{width:20px;height:20px;border-radius:50%;background:var(--primary-soft);color:var(--primary-ink);display:grid;place-items:center;
+  font-size:var(--font-xs);flex:none}
+.me-grow{flex:1}
+.me-help{font-size:var(--font-xs);color:var(--text-muted);margin:6px 0 0}
+.me-help code{font-family:var(--font-mono);font-size:var(--font-xs);background:var(--surface-2);border:1px solid var(--grid-line);
+  border-radius:5px;padding:1px 5px;color:var(--text)}
+.me-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.me-row .me-help{margin:0}
+.me-tabs{display:inline-flex;border:1px solid var(--grid-line);border-radius:8px;overflow:hidden}
+.me-tab{padding:5px 10px;font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-medium);color:var(--text-secondary);
+  background:var(--surface);border:0;cursor:pointer}
+.me-tab+.me-tab{border-left:1px solid var(--grid-line)}
+.me-tab[aria-pressed="true"]{background:var(--surface-2);color:var(--text-strong);font-weight:var(--weight-semibold)}
+.me-read{border:1px dashed var(--border);border-radius:10px;padding:12px;background:var(--surface-2)}
+.me-blocks{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:44px}
+.me-blk{display:inline-flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--border)}
+.me-blk b{font-size:var(--font-sm);color:var(--text-strong);font-weight:var(--weight-semibold)}
+.me-blk small{font-size:var(--font-xs);color:var(--text-muted)}
+.me-op{font-size:var(--font-lg);color:var(--text-muted);padding:0 2px}
+.me-paren{font-size:var(--font-3xl);color:var(--border);font-weight:var(--weight-regular);line-height:1}
+.me-addl{color:var(--primary);font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-semibold);display:inline-flex;
+  gap:4px;align-items:center;background:none;border:0;padding:4px 0;cursor:pointer}
+.me-lab{display:block;font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-strong);margin:12px 0 6px}
+.me-fxwrap{position:relative}
+.me-fx{font-family:var(--font-mono);font-size:var(--font-md);line-height:1.6;min-height:48px;resize:vertical}
+.me-status{font-size:var(--font-xs);margin:6px 0 0;color:var(--text-muted)}
+.me-status.ok{color:var(--success);font-weight:var(--weight-semibold)}
+.me-status.bad{color:var(--danger)}
+.me-sugg{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:var(--z-dropdown);display:grid;grid-template-columns:minmax(0,1fr) 260px;
+  border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:var(--shadow-lg);overflow:hidden}
+.me-sugg[hidden]{display:none}
+.me-sugg.nodoc{grid-template-columns:minmax(0,1fr)}
+.me-sugg.nodoc .me-doc{display:none}
+.me-opts{max-height:340px;overflow:auto}
+.me-grp{font-size:var(--font-xs);font-weight:var(--weight-semibold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);
+  padding:10px 12px 4px}
+.me-opt{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 12px;cursor:pointer}
+.me-opt.on{background:var(--primary-soft)}
+.me-opt b{color:var(--text-strong);font-weight:var(--weight-semibold);font-size:var(--font-sm)}
+.me-opt b mark{background:none;color:var(--primary);text-decoration:underline;text-underline-offset:3px}
+.me-opt .s{font-size:var(--font-xs);color:var(--text-muted)}
+.me-opt .r{font-size:var(--font-xs);color:var(--text-muted);text-align:right;max-width:150px}
+.me-ty{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;font-size:var(--font-xs);font-weight:var(--weight-bold);
+  background:var(--surface-3);color:var(--text-secondary)}
+.me-ty.ty-number{background:var(--primary-soft);color:var(--primary-ink)}
+.me-ty.ty-metric{background:var(--success-soft);color:var(--success)}
+.me-ty.ty-fn{background:var(--violet-light);color:var(--violet)}
+.me-ty.ty-date{background:var(--warning-soft);color:var(--warning)}
+.me-doc{border-left:1px solid var(--grid-line);padding:12px 14px;font-size:var(--font-sm);color:var(--text);display:grid;gap:6px;align-content:start}
+.me-doc .k{font-size:var(--font-xs);color:var(--text-muted)}
+.me-doc b{font-size:var(--font-md);color:var(--text-strong)}
+.me-doc p{margin:0}
+.me-keys{grid-column:1/-1;display:flex;gap:14px;flex-wrap:wrap;padding:8px 12px;border-top:1px solid var(--grid-line);background:var(--surface-2);
+  font-size:var(--font-xs);color:var(--text-muted)}
+.me-keys kbd{font-family:var(--font-ui);font-size:var(--font-xs);font-weight:var(--weight-semibold);border:1px solid var(--border);
+  border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--text-secondary);background:var(--surface)}
+.me-rule{display:grid;grid-template-columns:1.2fr .8fr 1.3fr 32px;gap:6px;align-items:center}
+.me-rule+.me-rule{margin-top:6px}
+.me-x{color:var(--text-muted);background:none;border:0;cursor:pointer;font-size:var(--font-sm);width:32px;height:36px}
+.me-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.me-three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:start}
+.me-f>label{display:block;font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-strong);margin-bottom:6px}
+.me-f+.me-f{margin-top:10px}
+.me-two .me-f+.me-f,.me-three .me-f+.me-f{margin-top:0}
+.me-main .form-input:not(.me-fx){min-height:38px;font-size:var(--font-sm)}
+.me-aside{display:grid;gap:12px;position:sticky;top:16px}
+.me-card{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm);padding:16px}
+.me-check{border:1px solid var(--success-line);background:var(--success-soft);border-radius:10px;padding:12px}
+.me-check.wait{border-color:var(--grid-line);background:var(--surface-2)}
+.me-check.bad{border-color:var(--warning-line);background:var(--warning-soft)}
+.me-check .hd{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.me-check .hd b{color:var(--success-strong);font-weight:var(--weight-semibold)}
+.me-check.wait .hd b{color:var(--text-secondary)}
+.me-check.bad .hd b{color:var(--warning-strong)}
+.me-check .hd span{font-size:var(--font-xs);color:var(--text-muted)}
+.me-when{margin-top:8px;font-size:var(--font-sm);color:var(--text-muted)}
+.me-big{font-size:var(--font-3xl);font-weight:var(--weight-bold);letter-spacing:-0.02em;color:var(--text-strong);font-variant-numeric:tabular-nums}
+.me-bars{display:grid;gap:6px;margin-top:8px}
+.me-bars div{display:grid;grid-template-columns:80px minmax(0,1fr) 64px;gap:8px;align-items:center;font-size:var(--font-xs);color:var(--text)}
+.me-bars i{display:block;height:10px;border-radius:0 4px 4px 0;background:var(--primary)}
+.me-bars em{font-style:normal;text-align:right;font-variant-numeric:tabular-nums}
+.me-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.me-stats div{background:var(--surface);border:1px solid var(--success-line);border-radius:8px;padding:8px}
+.me-stats b{display:block;font-size:var(--font-lg);font-weight:var(--weight-bold);color:var(--text-strong);font-variant-numeric:tabular-nums}
+.me-stats span{font-size:var(--font-xs);color:var(--text-muted);line-height:1.3;display:block;margin-top:2px}
+.me-warn{margin-top:10px;border:1px solid var(--warning-line);background:var(--warning-soft);border-radius:10px;padding:10px 12px;
+  font-size:var(--font-sm);color:var(--text)}
+.me-warn b{color:var(--warning-strong)}
+.me-notes{margin-top:10px;font-size:var(--font-sm);color:var(--text-secondary)}
+.me-notes summary{cursor:pointer;font-weight:var(--weight-semibold)}
+.me-asks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.me-ask{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 12px;border-radius:999px;border:1px solid var(--grid-line);
+  background:var(--surface);font-size:var(--font-sm);color:var(--text)}
+.me-asks-h{margin-top:12px;font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-strong)}
+.me-save{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.me-save .me-help{margin:0}
+.me-error{color:var(--danger);font-size:var(--font-sm);margin:0 0 8px}
+.me-error:empty{display:none}
+.me-ai{display:grid;gap:4px;margin-top:8px}
+.me-ai:empty{display:none}
+.me-hide{color:var(--text-secondary);font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-semibold);background:none;
+  border:0;padding:4px 0;cursor:pointer;margin-top:10px}
+@media (max-width: 1100px){ .me-layout{grid-template-columns:minmax(0,1fr)} .me-aside{position:static} }
+@media (max-width: 760px){
+  .me-two,.me-three{grid-template-columns:minmax(0,1fr)}
+  .me-rule{grid-template-columns:1fr 1fr 44px}
+  .me-rule [data-part=values]{grid-column:1/3}
+  .me-sugg{grid-template-columns:minmax(0,1fr)}
+  .me-doc{display:none}
+  .me-main .form-input:not(.me-fx),.me-tab,.me-addl,.me-hide{min-height:44px}
+  .me-x{width:44px;height:44px}
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="me-head">
+  <div>
+    <h1>{{ "Edit " ~ measure.business_name if measure else "Add a metric" }}</h1>
+    <p>Say what it counts in your own words. QueryBot writes the definition, you adjust it, and it is checked against the
+      data before it is saved.</p>
+  </div>
+  <a class="btn btn-ghost" href="/admin/clients/{{ client.account_id }}/measures">Cancel</a>
+</div>
+
+<div class="me-layout">
+  <section class="me-main" aria-label="The metric">
+    <div class="me-sec">
+      <h2><span class="me-n">1</span> Describe it</h2>
+      <textarea id="me-describe" class="form-input" rows="2" maxlength="1000" aria-label="What the metric counts, in your words"
+                placeholder="e.g. Gross margin as a percentage of net sales, only completed orders: leave out cancelled ones"></textarea>
+      <div class="me-row">
+        <button type="button" class="btn btn-secondary btn-sm" id="me-write">{{ ic("sparkles", 14) }} Write it for me</button>
+        <p class="me-help" id="me-paste">Or paste a formula.</p>
+      </div>
+      <div class="me-ai" id="me-ai" role="status"></div>
+    </div>
+
+    <div class="me-sec">
+      <h2><span class="me-n">2</span> How QueryBot will count it <span class="me-grow"></span>
+        <span class="me-tabs" role="group" aria-label="Show it as">
+          <button type="button" class="me-tab" data-tab="blocks" aria-pressed="false">Blocks</button>
+          <button type="button" class="me-tab" data-tab="formula" aria-pressed="true">Formula</button>
+        </span>
+      </h2>
+      <div class="me-read">
+        <div id="me-pane-blocks" hidden>
+          <div class="me-blocks" id="me-blocks"></div>
+        </div>
+        <div id="me-pane-formula">
+          <div class="me-fxwrap">
+            <textarea id="me-formula" class="form-input me-fx" rows="2" spellcheck="false" autocomplete="off" role="combobox"
+                      aria-autocomplete="list" aria-expanded="false" aria-controls="me-opts" aria-label="Formula"
+                      placeholder="Start typing a field, a metric or a function"></textarea>
+            <div class="me-sugg" id="me-sugg" hidden>
+              <div class="me-opts" id="me-opts" role="listbox" aria-label="Suggestions"></div>
+              <div class="me-doc" id="me-doc" aria-live="polite"></div>
+              <div class="me-keys"><span><kbd>↑</kbd> <kbd>↓</kbd> move</span><span><kbd>Enter</kbd> or <kbd>Tab</kbd> insert</span>
+                <span><kbd>Esc</kbd> close</span><span class="me-grow"></span><span id="me-via"></span></div>
+            </div>
+          </div>
+        </div>
+        <p class="me-status" id="me-status" role="status"></p>
+        <span class="me-lab">Only count rows where</span>
+        <div id="me-conds"></div>
+        <button type="button" class="me-addl" id="me-add-cond">{{ ic("plus", 14) }} Add a condition</button>
+      </div>
+      <p class="me-help">Fields are shown by the names people use; the table and the column in the database are under each one.</p>
+    </div>
+
+    <div class="me-sec">
+      <h2><span class="me-n">3</span> Name it</h2>
+      <div class="me-two">
+        <div class="me-f"><label for="me-name">Name</label><input id="me-name" class="form-input" maxlength="120"></div>
+        <div class="me-f"><label for="me-syn">People also say</label><input id="me-syn" class="form-input" placeholder="Other words for it, separated by commas"></div>
+      </div>
+      <div class="me-f"><label for="me-desc">What it means</label>
+        <textarea id="me-desc" class="form-input" rows="2" maxlength="500"></textarea></div>
+    </div>
+
+    <div class="me-sec">
+      <h2><span class="me-n">4</span> How it behaves</h2>
+      <div class="me-three">
+        <div class="me-f"><label for="me-format">Shown as</label><select id="me-format" class="form-input"></select></div>
+        <div class="me-f"><label for="me-time">Over time</label><select id="me-time" class="form-input"></select>
+          <p class="me-help">A percentage or an average is worked out per period, never added up across months.</p></div>
+        <div class="me-f"><label for="me-date">Default date</label><select id="me-date" class="form-input"></select>
+          <p class="me-help">“By ship date” in a question still works.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="me-aside">
+    <section class="me-card" aria-label="Checked against the data" aria-live="polite"><div id="me-check"></div></section>
+    <section class="me-card">
+      <p class="me-error" id="me-error" role="alert"></p>
+      <div class="me-save">
+        <button type="button" class="btn btn-primary" id="me-save">Save metric</button>
+        <button type="button" class="btn btn-secondary" id="me-save-draft">Save as draft</button>
+        <span class="me-grow"></span><p class="me-help">Used from the next answer</p>
+      </div>
+      {% if measure %}
+      <button type="button" class="me-hide" id="me-hide" data-hidden="{{ 'yes' if measure.hidden else 'no' }}">
+        {{ "Show it to readers again" if measure.hidden else "Hide it from readers" }}</button>
+      {% endif %}
+    </section>
+  </aside>
+</div>
+
+<template id="me-plus">{{ ic("plus", 14) }}</template>
+<script type="application/json" id="me-data">{{ editor | tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var E = JSON.parse(document.getElementById('me-data').textContent);
+  var BASE = window.location.pathname.replace(/\/edit$/, '');
+  var S = E.state;
+  function $(id) { return document.getElementById(id); }
+  var formula = $('me-formula'), sugg = $('me-sugg'), list = $('me-opts'), doc = $('me-doc'), status = $('me-status');
+  var columns = {}; E.fields.forEach(function (f) { columns[f.key] = f; });
+  var tableName = '', currentTable = S.table || '', lastRead = null;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  function post(path, body) {
+    return fetch(BASE + '/api/' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)}).then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
+      .catch(function () { return {ok: false, error: 'The server could not be reached.'}; });
+  }
+  function options(select, items, value) {
+    select.innerHTML = items.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('');
+  }
+
+  // An example of a formula pasted in place of words, from this workspace's own fields.
+  var money = E.fields.filter(function (f) { return f.kind_words === 'money'; });
+  if (money.length) $('me-paste').innerHTML = 'Or paste a formula, such as <code>' + esc('SUM(' + money[0].name + ')' +
+    (money[1] && money[1].table === money[0].table ? ' - SUM(' + money[1].name + ')' : '')) + '</code>';
+
+  // ── suggestions while typing ──
+  var active = 0, items = [], context = null;
+  function contextAt(any) {
+    var pos = formula.selectionStart, before = formula.value.slice(0, pos);
+    var open = before.lastIndexOf('['), close = before.lastIndexOf(']');
+    if (open > close) return {mode: 'ref', start: open, query: before.slice(open + 1), end: pos};
+    var m = /[A-Za-z_][A-Za-z0-9_]*$/.exec(before);
+    if (m) return {mode: 'word', start: pos - m[0].length, query: m[0], end: pos};
+    return any ? {mode: 'word', start: pos, query: '', end: pos} : null;
+  }
+  function score(text, q) {
+    var t = String(text || '').toLowerCase(), i = t.indexOf(q);
+    if (i < 0) return -1;
+    return (i === 0 ? 0 : (/[\s·_.]/.test(t.charAt(i - 1)) ? 1 : 2)) * 1000 + t.length;
+  }
+  function mark(text, q) {
+    var i = String(text).toLowerCase().indexOf(q);
+    if (!q || i < 0) return esc(text);
+    return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+  }
+  var TY = {number: '#', text: 'Aa', date: 'D', flag: '✓'};
+  function suggest(any) {
+    context = contextAt(any);
+    if (!context) return close();
+    var q = context.query.toLowerCase().replace(/\s+/g, ' ').trim();
+    function ranked(src, texts) {
+      return src.map(function (x) { var s = Math.min.apply(null, texts(x).map(function (t) { var v = score(t, q); return v < 0 ? 1e9 : v; })); return [s, x]; })
+        .filter(function (p) { return !q || p[0] < 1e9; }).sort(function (a, b) { return a[0] - b[0]; }).map(function (p) { return p[1]; });
+    }
+    var fields = ranked(E.fields, function (f) { return [f.field, f.ref, f.name, f.table + ' ' + f.field]; }).slice(0, 8);
+    var metrics = ranked(E.metrics, function (m) { return [m.ref, m.slug]; }).slice(0, 4);
+    var tables = context.mode === 'ref' ? ranked(E.tables, function (t) { return [t.ref]; }).slice(0, 3) : [];
+    var fns = context.mode === 'word' ? E.functions.filter(function (f) { return !q || f.name.toLowerCase().indexOf(q) === 0; }).slice(0, 4) : [];
+    items = []; var html = '';
+    function group(title, src, kind, make) {
+      if (!src.length) return;
+      html += '<div class="me-grp">' + esc(title) + '</div>';
+      src.forEach(function (x) { var i = items.length; items.push({kind: kind, x: x});
+        html += '<div class="me-opt" role="option" id="me-opt-' + i + '" data-i="' + i + '">' + make(x) + '</div>'; });
+    }
+    group('Fields · any table in the model', fields, 'field', function (f) {
+      return '<span class="me-ty ty-' + esc(f.kind) + '">' + (TY[f.kind] || 'Aa') + '</span><div><b>' + mark(f.field, q) + '</b><div class="s">' +
+        esc(f.table) + ' · ' + esc(f.name) + ' · ' + esc(f.kind_words) + '</div></div><span class="r">' + esc(f.hint || '') + '</span>';
+    });
+    group('Metrics', metrics, 'metric', function (m) {
+      return '<span class="me-ty ty-metric">Σ</span><div><b>' + mark(m.ref, q) + '</b><div class="s">' + esc(m.definition) + ' · ' + esc(m.table) + '</div></div><span class="r"></span>';
+    });
+    group('Tables · to count their rows', tables, 'table', function (t) {
+      return '<span class="me-ty">▦</span><div><b>' + mark(t.ref, q) + '</b><div class="s">COUNT([' + esc(t.ref) + '])</div></div><span class="r"></span>';
+    });
+    group('Functions', fns, 'fn', function (f) {
+      return '<span class="me-ty ty-fn">ƒ</span><div><b>' + mark(f.template, q) + '</b><div class="s">' + esc(f.what) + '</div></div><span class="r"></span>';
+    });
+    if (!items.length) return close();
+    list.innerHTML = html;
+    sugg.hidden = false; formula.setAttribute('aria-expanded', 'true');
+    active = Math.min(active, items.length - 1); highlight();
+    list.querySelectorAll('.me-opt').forEach(function (el) {
+      el.addEventListener('mousedown', function (e) { e.preventDefault(); active = +el.getAttribute('data-i'); insert(); });
+      el.addEventListener('mousemove', function () { if (active !== +el.getAttribute('data-i')) { active = +el.getAttribute('data-i'); highlight(); } });
+    });
+  }
+  function linkBetween(a, b) {
+    return E.links.filter(function (l) { return (l.from === a && l.to === b) || (l.from === b && l.to === a); })[0];
+  }
+  function highlight() {
+    list.querySelectorAll('.me-opt').forEach(function (el) { el.classList.toggle('on', +el.getAttribute('data-i') === active); });
+    var el = $('me-opt-' + active); if (el) { el.scrollIntoView({block: 'nearest'}); formula.setAttribute('aria-activedescendant', el.id); }
+    var item = items[active], via = '', html = '';
+    if (item && item.kind === 'field') {
+      var f = item.x;
+      html = '<div class="k">' + esc(f.table) + ' · ' + esc(f.name) + '</div><b>' + esc(f.field) + '</b>' +
+        (f.description ? '<p>' + esc(f.description) + '</p>' : '') + (f.stats ? '<div class="k">' + esc(f.stats) + '</div>' : '');
+      if (tableName && f.table !== tableName) {
+        html += '<p>Combined with ' + esc(tableName) + ' by adding up each table on its own first, so no row is counted twice.</p>';
+        var l = linkBetween(f.table, tableName);
+        via = l ? l.from + ' joins ' + l.to + ' on ' + l.on : '';
+      }
+    } else if (item && item.kind === 'metric') {
+      html = '<div class="k">Metric · ' + esc(item.x.table) + '</div><b>' + esc(item.x.ref) + '</b><p>' + esc(item.x.definition) + '</p>';
+    } else if (item && item.kind === 'fn') {
+      html = '<div class="k">Function</div><b>' + esc(item.x.template) + '</b><p>' + esc(item.x.what) + '</p>';
+    }
+    doc.innerHTML = html; sugg.classList.toggle('nodoc', !html); $('me-via').textContent = via;
+  }
+  function close() { sugg.hidden = true; items = []; formula.setAttribute('aria-expanded', 'false'); formula.removeAttribute('aria-activedescendant'); }
+  function insert() {
+    var item = items[active]; if (!item || !context) return;
+    var x = item.x, text, caret;
+    if (item.kind === 'fn') {
+      text = x.template.replace(/field|value, fallback|value, 0|condition THEN value ELSE other/, '');
+      caret = text.indexOf('(') + 1;
+      if (x.name === 'COUNT DISTINCT') { text = 'COUNT(DISTINCT )'; caret = text.length - 1; }
+      if (x.name === 'CASE') { text = 'CASE WHEN  THEN  END'; caret = 10; }
+    } else {
+      text = '[' + x.ref + ']';
+    }
+    var v = formula.value, after = v.slice(context.end);
+    if (context.mode === 'ref' && after.charAt(0) === ']') after = after.slice(1);
+    formula.value = v.slice(0, context.start) + text + after;
+    var at = context.start + (caret == null ? text.length : caret);
+    formula.setSelectionRange(at, at); formula.focus(); close(); reread();
+  }
+  formula.addEventListener('input', function () { active = 0; suggest(false); reread(); });
+  formula.addEventListener('click', function () { suggest(false); });
+  formula.addEventListener('blur', function () { setTimeout(close, 150); });
+  formula.addEventListener('keydown', function (e) {
+    if (sugg.hidden) {
+      if (e.key === ' ' && e.ctrlKey) { e.preventDefault(); suggest(true); }
+      return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; highlight(); }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insert(); }
+    else if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+
+  // ── what the formula reads as: its blocks, the tables it adds up ──
+  var readTimer = null, readRun = 0;
+  function reread() {
+    clearTimeout(readTimer);
+    readTimer = setTimeout(function () {
+      var text = formula.value.trim(), run = ++readRun;
+      if (!text) { lastRead = null; status.textContent = ''; status.className = 'me-status'; paintBlocks(); scheduleCheck(); return; }
+      post('read', {formula: text}).then(function (r) {
+        if (run !== readRun) return;
+        lastRead = r.ok ? r : null;
+        if (!r.ok) { status.className = 'me-status bad'; status.textContent = r.error; paintBlocks(); scheduleCheck(); return; }
+        status.className = 'me-status ok';
+        status.textContent = '✓ Reads as: ' + r.reads_as + (r.tables.length > 1 ? '. Adds up ' + r.tables.join(' and ') + ' each on its own rows, then combines them.' : '.');
+        tableName = r.tables[0] || '';
+        if (r.table !== currentTable) { currentTable = r.table; dates(r.dates); }
+        paintBlocks(); scheduleCheck();
+      });
+    }, 300);
+  }
+  function paintBlocks() {
+    var box = $('me-blocks');
+    if (!lastRead) {
+      box.innerHTML = '<span class="me-help">' + (formula.value.trim() ? 'The formula needs a correction before it can be shown as blocks.' : 'Write the formula, or describe it above.') + '</span>';
+    } else {
+      box.innerHTML = lastRead.parts.map(function (p) {
+        if (p.kind === 'part') return '<span class="me-blk"><b>' + esc(p.text) + '</b><small>' + esc(p.how) + '</small></span>';
+        if (p.kind === 'open' || p.kind === 'close') return '<span class="me-paren" aria-hidden="true">' + esc(p.text) + '</span>';
+        return '<span class="me-op">' + esc(p.text) + '</span>';
+      }).join('');
+    }
+    var add = document.createElement('button');
+    add.type = 'button'; add.className = 'me-addl'; add.innerHTML = $('me-plus').innerHTML + ' Add a part';
+    add.addEventListener('click', function () {
+      // A part is written in the formula, with the suggestions open.
+      tab('formula');
+      var v = formula.value.replace(/\s+$/, '');
+      formula.value = v ? v + ' + ' : '';
+      formula.focus(); formula.setSelectionRange(formula.value.length, formula.value.length); active = 0; suggest(true);
+    });
+    box.appendChild(add);
+  }
+  function dates(src) {
+    var current = $('me-date').value || S.default_date;
+    options($('me-date'), [['', 'The table’s own default']].concat((src || []).map(function (d) { return [d.key, d.name]; })), current);
+  }
+
+  // ── conditions ──
+  var OPS = Object.keys(E.ops).map(function (k) { return [k, E.ops[k]]; });
+  var conds = S.conditions.map(function (c) { return {column: c.column, op: c.op, values: c.values.slice()}; });
+  function fieldOptions(value) {
+    var byTable = {}; E.fields.forEach(function (f) { (byTable[f.table] = byTable[f.table] || []).push(f); });
+    return '<option value="">Field</option>' + Object.keys(byTable).sort().map(function (t) {
+      return '<optgroup label="' + esc(t) + '">' + byTable[t].map(function (f) {
+        return '<option value="' + esc(f.key) + '"' + (f.key === value ? ' selected' : '') + '>' + esc(f.ref) + '</option>'; }).join('') + '</optgroup>';
+    }).join('');
+  }
+  function valueControl(c, i) {
+    var f = columns[c.column], v = (c.values || []).join(', ');
+    if (c.op === 'is_null' || c.op === 'not_null') return '<select class="form-input" data-part="values" disabled aria-label="Value"><option>—</option></select>';
+    var known = f && f.examples && f.examples.length ? f.examples : (f && f.kind === 'flag' ? ['Yes', 'No'] : []);
+    if (known.length && (c.op === 'eq' || c.op === 'ne') && (!v || known.indexOf(v) >= 0)) {
+      return '<select class="form-input" data-part="values" aria-label="Value">' + known.map(function (x) {
+        return '<option value="' + esc(x) + '"' + (x === (v || known[0]) ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select>';
+    }
+    return '<input class="form-input" data-part="values" aria-label="Value" value="' + esc(v) + '"' + (known.length ? ' list="me-ex-' + i + '"' : '') +
+      (c.op === 'in' || c.op === 'not_in' ? ' placeholder="A, B, C"' : c.op === 'between' ? ' placeholder="From, to"' : '') + '>' +
+      (known.length ? '<datalist id="me-ex-' + i + '">' + known.map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist>' : '');
+  }
+  function paintConds() {
+    $('me-conds').innerHTML = conds.map(function (c, i) {
+      return '<div class="me-rule" data-cond="' + i + '"><select class="form-input" data-part="column" aria-label="Field">' + fieldOptions(c.column) + '</select>' +
+        '<select class="form-input" data-part="op" aria-label="How it compares">' + OPS.map(function (o) {
+          return '<option value="' + o[0] + '"' + (o[0] === c.op ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>' +
+        valueControl(c, i) + '<button type="button" class="me-x" data-drop="' + i + '" aria-label="Remove the condition">✕</button></div>';
+    }).join('');
+    $('me-conds').querySelectorAll('[data-drop]').forEach(function (b) {
+      b.addEventListener('click', function () { readConds(); conds.splice(+b.getAttribute('data-drop'), 1); paintConds(); scheduleCheck(); });
+    });
+    $('me-conds').querySelectorAll('select[data-part]').forEach(function (s) {
+      s.addEventListener('change', function () { readConds(); if (s.getAttribute('data-part') !== 'values') paintConds(); scheduleCheck(); });
+    });
+    $('me-conds').querySelectorAll('input[data-part=values]').forEach(function (s) { s.addEventListener('input', function () { readConds(); scheduleCheck(); }); });
+  }
+  function readConds() {
+    conds = Array.prototype.map.call($('me-conds').querySelectorAll('[data-cond]'), function (row) {
+      var op = row.querySelector('[data-part=op]').value, field = row.querySelector('[data-part=values]');
+      var raw = field && !field.disabled ? field.value : '';
+      return {column: row.querySelector('[data-part=column]').value, op: op,
+              values: (op === 'in' || op === 'not_in' || op === 'between' ? raw.split(',') : [raw]).map(function (v) { return v.trim(); }).filter(Boolean)};
+    });
+    return conds.filter(function (c) { return c.column; });
+  }
+  function complete() {
+    return readConds().every(function (c) { return c.values.length || c.op === 'is_null' || c.op === 'not_null'; });
+  }
+  $('me-add-cond').addEventListener('click', function () { readConds(); conds.push({column: '', op: 'ne', values: []}); paintConds(); });
+
+  // ── the whole metric, and the data's view of it ──
+  function draft(asDraft) {
+    return {key: S.key, formula: formula.value, conditions: readConds(), name: $('me-name').value,
+            synonyms: $('me-syn').value.split(',').map(function (w) { return w.trim(); }).filter(Boolean),
+            description: $('me-desc').value, format: $('me-format').value, over_time: $('me-time').value,
+            default_date: $('me-date').value, draft: !!asDraft};
+  }
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function dayName(d) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? (+m[3]) + ' ' + MONTHS[+m[2] - 1] : d; }
+  function monthName(p) { var m = /^(\d{4})-(\d{2})/.exec(p || ''); return m ? MONTHS[+m[2] - 1] + ' ' + m[1] : (p || 'All time'); }
+  function show(v, compact) {
+    if (v == null) return '—';
+    var fmt = $('me-format').value, a = Math.abs(v), s = v < 0 ? '−' : '';
+    if (fmt === 'percent') return s + a.toFixed(1) + '%';
+    var text;
+    if (compact && a >= 1e4) text = a >= 1e9 ? (a / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : (a / 1e3).toFixed(1) + 'K';
+    else text = a.toLocaleString(undefined, {minimumFractionDigits: fmt === 'currency' && a < 100 ? 2 : 0,
+                                             maximumFractionDigits: fmt === 'count' || fmt === 'integer' ? 0 : a < 100 ? 2 : 0});
+    return s + (fmt === 'currency' ? '$' : '') + text;
+  }
+  var checkTimer = null, checkRun = 0, lastCheck = null;
+  function scheduleCheck() {
+    clearTimeout(checkTimer);
+    var el = $('me-check');
+    if (!lastRead) { checkRun++; lastCheck = null; el.innerHTML = '<div class="me-check wait"><div class="hd"><b>Checked against the data</b></div><p class="me-help">' +
+      'When the formula reads, it is run on the data here: its last months, and what its conditions leave out.</p></div>'; return; }
+    if (!complete()) return;
+    el.innerHTML = '<div class="me-check wait"><div class="hd"><b>Checking against the data…</b></div></div>';
+    var run = ++checkRun;
+    checkTimer = setTimeout(function () {
+      post('check', draft()).then(function (r) { if (run !== checkRun) return; lastCheck = r; showCheck(r); });
+    }, 500);
+  }
+  function showCheck(r) {
+    var el = $('me-check');
+    if (!r || !r.ok || r.problem) { el.innerHTML = '<div class="me-check bad"><div class="hd"><b>Could not check</b></div><p class="me-help">' + esc(r ? r.problem || r.error : '') + '</p></div>'; return; }
+    var months = r.months || [], last = months[months.length - 1] || {};
+    var top = Math.max.apply(null, months.map(function (m) { return Math.abs(m.value || 0); }).concat([1e-9]));
+    var when = r.latest ? monthName(r.latest.period) : '';
+    var html = '<div class="me-check"><div class="hd"><b>Checked against the data</b><span>just now</span></div>' +
+      '<div class="me-when">' + esc(when || 'All time') + (r.latest && r.latest.through ? ' so far, to ' + esc(dayName(r.latest.through)) : '') +
+      (r.latest ? ' · by ' + esc(r.latest.date.toLowerCase()) : '') + '</div><div class="me-big">' + esc(show(last.value)) + '</div>';
+    if (months.length > 1) html += '<div class="me-bars">' + months.map(function (m) {
+      return '<div><span>' + esc(monthName(m.period)) + '</span><i style="width:' + Math.max(2, Math.round(Math.abs(m.value || 0) / top * 100)) + '%"></i><em>' + esc(show(m.value, true)) + '</em></div>';
+    }).join('') + '</div>';
+    var inWhen = when ? ' in ' + when.split(' ')[0] : '';
+    if (r.rows != null) html += '<div class="me-stats"><div><b>' + Number(r.rows).toLocaleString() + '</b><span>rows counted' + esc(inWhen) + '</span></div>' +
+      '<div><b>' + Number(r.left_out || 0).toLocaleString() + '</b><span>left out by your conditions</span></div>' +
+      '<div><b>' + (r.empty == null ? '—' : Number(r.empty).toLocaleString()) + '</b><span>rows with no ' + esc((r.empty_field || 'value').toLowerCase()) + '</span></div></div>';
+    html += '</div>';
+    if (r.empty) html += '<div class="me-warn"><b>Worth a look:</b> ' + esc(r.empty_field) + ' is empty on ' + Number(r.empty).toLocaleString() + ' rows' + esc(inWhen) + '; they add nothing to it.</div>';
+    if ((r.notes || []).length) html += '<details class="me-notes"><summary>What answers will say (' + r.notes.length + ')</summary>' +
+      r.notes.map(function (n) { return '<p class="me-help">' + esc(n) + '</p>'; }).join('') + '</details>';
+    var name = $('me-name').value.trim(), by = (lastRead && lastRead.by) || [], year = r.latest ? r.latest.period.slice(0, 4) : '';
+    if (name) {
+      var asks = by.length ? [name + ' by ' + by[0] + (year ? ' in ' + year : '')] : [];
+      if (r.latest) asks.push('Monthly ' + name.charAt(0).toLowerCase() + name.slice(1) + ' since January');
+      if (by.length > 1) asks.push(name + ' by ' + by[1]);
+      if (asks.length) html += '<div class="me-asks-h">Questions it will answer</div><div class="me-asks">' + asks.map(function (a) {
+        return '<span class="me-ask">↳ ' + esc(a) + '</span>'; }).join('') + '</div>';
+    }
+    el.innerHTML = html;
+  }
+  ['me-format', 'me-time', 'me-date'].forEach(function (id) {
+    $(id).addEventListener('change', function () { if (id === 'me-format' && lastCheck) showCheck(lastCheck); else scheduleCheck(); });
+  });
+  $('me-name').addEventListener('change', function () { if (lastCheck) showCheck(lastCheck); });
+
+  function save(asDraft) {
+    var b = asDraft ? $('me-save-draft') : $('me-save'); b.setAttribute('aria-busy', 'true'); b.disabled = true; $('me-error').textContent = '';
+    post('save', draft(asDraft)).then(function (r) {
+      b.removeAttribute('aria-busy'); b.disabled = false;
+      if (!r.ok) { $('me-error').textContent = r.error; return; }
+      window.location.href = BASE + '?saved=' + (asDraft ? 'draft' : 'metric');
+    });
+  }
+  $('me-save').addEventListener('click', function () { save(false); });
+  $('me-save-draft').addEventListener('click', function () { save(true); });
+  if ($('me-hide')) $('me-hide').addEventListener('click', function () {
+    var hide = this.getAttribute('data-hidden') !== 'yes';
+    post('hide', {key: S.key, hidden: hide}).then(function (r) {
+      if (!r.ok) { $('me-error').textContent = r.error; return; }
+      window.location.href = BASE + '?saved=' + (hide ? 'hidden' : 'shown');
+    });
+  });
+
+  // ── written from the admin's words, or a formula pasted in their place ──
+  function written(r) {
+    if (r.formula) { formula.value = r.formula; reread(); }
+    if (r.conditions && r.conditions.length) { conds = r.conditions; paintConds(); }
+    if (r.name && !$('me-name').value) $('me-name').value = r.name;
+    if (r.synonyms && r.synonyms.length && !$('me-syn').value) $('me-syn').value = r.synonyms.join(', ');
+    if (r.description && !$('me-desc').value) $('me-desc').value = r.description;
+    if (r.format) $('me-format').value = r.format;
+    var html = '';
+    if (r.problem) html += '<p class="me-status bad">' + esc(r.problem) + '</p>';
+    (r.assumptions || []).forEach(function (a) { html += '<p class="me-help">Assumed: ' + esc(a) + '</p>'; });
+    if (r.question) html += '<p class="me-help"><b>To check:</b> ' + esc(r.question) + '</p>';
+    $('me-ai').innerHTML = html;
+    tab('blocks');
+  }
+  function write() {
+    var b = $('me-write'), text = $('me-describe').value.trim(), notes = $('me-ai');
+    if (!text) { notes.innerHTML = '<p class="me-status bad">Say what the metric counts, in a sentence.</p>'; return; }
+    b.setAttribute('aria-busy', 'true'); b.disabled = true; notes.innerHTML = '<p class="me-help">Writing it…</p>';
+    // A formula pasted here is read as one, with no AI asked.
+    post('read', {formula: text}).then(function (r) {
+      if (r.ok) { b.removeAttribute('aria-busy'); b.disabled = false; written({formula: r.formula}); return; }
+      post('describe', {description: text}).then(function (d) {
+        b.removeAttribute('aria-busy'); b.disabled = false;
+        if (!d.ok) { notes.innerHTML = '<p class="me-status bad">' + esc(d.error) + '</p>'; return; }
+        written(d);
+      });
+    });
+  }
+  $('me-write').addEventListener('click', write);
+  $('me-describe').addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); write(); } });
+
+  // ── blocks or formula ──
+  function tab(which) {
+    document.querySelectorAll('[data-tab]').forEach(function (o) { o.setAttribute('aria-pressed', o.getAttribute('data-tab') === which ? 'true' : 'false'); });
+    $('me-pane-formula').hidden = which !== 'formula'; $('me-pane-blocks').hidden = which !== 'blocks';
+  }
+  document.querySelectorAll('[data-tab]').forEach(function (b) { b.addEventListener('click', function () { tab(b.getAttribute('data-tab')); }); });
+
+  options($('me-format'), Object.keys(E.formats).map(function (k) { return [k, E.formats[k]]; }), S.format);
+  options($('me-time'), [['', 'Decided from the formula']].concat(Object.keys(E.over_time).map(function (k) { return [k, E.over_time[k]]; })), S.over_time);
+  dates(E.dates[S.table] || []);
+  formula.value = S.formula; $('me-name').value = S.name; $('me-syn').value = S.synonyms.join(', '); $('me-desc').value = S.description;
+  paintConds(); paintBlocks(); scheduleCheck();
+  tab(S.formula ? 'blocks' : 'formula');
+  if (S.formula) reread();
+})();
+</script>
+{% endblock %}

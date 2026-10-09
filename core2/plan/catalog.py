@@ -51,6 +51,10 @@ def definition(model: SemanticModel, expr: MeasureExpr, values: bool = True) -> 
         return ref.business_name if ref else expr.measure
     if isinstance(expr, SqlExpr):
         tree = formula.parse_stored(expr.sql)
+        for column in list(tree.find_all(exp.Column)):
+            if column.name in model.columns:      # an admin's formula names fields by their keys
+                column.replace(exp.column(exp.to_identifier(model.columns[column.name].business_name
+                                                            or model.columns[column.name].name, quoted=True)))
         if not values:
             for literal in list(tree.find_all(exp.Literal)):
                 if literal.is_string:

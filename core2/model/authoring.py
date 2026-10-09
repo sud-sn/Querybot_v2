@@ -19,6 +19,8 @@ can be combined: each table is added up on its own rows and the results combined
 
 from __future__ import annotations
 
+import datetime as dt
+
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -99,8 +101,41 @@ def _hint(column: Column) -> str:
     return ""
 
 
+def _kind_words(column: Column, money: bool) -> str:
+    """The kind of a field in a reader's words: money, whole number, number, text, date, yes or no."""
+    kind = _kind(column)
+    if kind == "number":
+        if money or column.format == "currency":
+            return "money"
+        p = column.profile
+        return "whole number" if column.data_type == "integer" or (p and p.integer_share == 1) else "number"
+    return {"date": "date", "flag": "yes or no"}.get(kind, "text")
+
+
+def _stats(column: Column) -> str:
+    """How much of the field there is: "1,198 rows · 31 empty · from 2023-01-19 to 2026-06-14"."""
+    p = column.profile
+    if p is None or not p.rows:
+        return ""
+    out = [f"{p.rows:,} rows", f"{p.rows - p.non_null:,} empty"]
+    if _kind(column) == "date" and (p.date_min or p.min) and (p.date_max or p.max):
+        out.append(f"from {(p.date_min or p.min)[:10]} to {(p.date_max or p.max)[:10]}")
+    return " · ".join(out)
+
+
+def _examples(column: Column) -> list[str]:
+    """The field's common values, to pick a condition's value from: only where values may be shown."""
+    p = column.profile
+    if p is None or not p.top or not column.values_allowed or column.sensitivity != "none":
+        return []
+    return [str(v.value) for v in p.top[:12] if v.value is not None]
+
+
 def fields(model: SemanticModel, allowed_tables: set[str] | None = None) -> list[dict[str, Any]]:
     """Every field a metric may read, for the editor to suggest as the admin types."""
+    # A field a money metric adds up is money.
+    money = {m.expr.column for m in model.measures.values()
+             if m.format == "currency" and isinstance(m.expr, AggExpr) and m.expr.column}
     out = []
     for column in model.columns.values():
         table = model.tables.get(column.table)
@@ -110,7 +145,8 @@ def fields(model: SemanticModel, allowed_tables: set[str] | None = None) -> list
             continue
         out.append({"ref": field_ref(model, column.key), "key": column.key, "table": table_name(model, column.table),
                     "field": field_name(column), "name": column.name, "kind": _kind(column), "role": column.role,
-                    "hint": _hint(column), "description": column.description,
+                    "hint": _hint(column), "description": column.description, "kind_words": _kind_words(column, column.key in money),
+                    "stats": _stats(column), "examples": _examples(column),
                     "sensitive": column.sensitivity != "none"})
     return sorted(out, key=lambda f: (f["kind"] != "number", f["table"].casefold(), f["field"].casefold()))
 
@@ -122,6 +158,29 @@ def metrics(model: SemanticModel) -> list[dict[str, Any]]:
                     "definition": definition(model, m.expr, False)}
                    for m in model.measures.values() if not m.hidden and m.table in model.tables),
                   key=lambda m: m["ref"].casefold())
+
+
+def links(model: SemanticModel) -> list[dict[str, Any]]:
+    """The tables that join, and on which columns, for the editor to say how a field from another table is reached."""
+    out = []
+    for j in model.joins.values():
+        if j.trust == "rejected" or j.to_calendar or j.from_table not in model.tables or j.to_table not in model.tables:
+            continue
+        out.append({"from": table_name(model, j.from_table), "to": table_name(model, j.to_table),
+                    "on": ", ".join(model.columns[c].name for c in j.from_columns if c in model.columns)})
+    return out
+
+
+def broken_down_by(model: SemanticModel, table_key: str, limit: int = 2) -> list[str]:
+    """What a metric on this table can be broken down by: the things its rows are about, joined one step away."""
+    out = []
+    for j in sorted(model.joins.values(), key=lambda j: (j.trust != "admin", j.key)):
+        if (j.from_table == table_key and j.trust != "rejected" and not j.to_calendar and j.to_table in model.tables
+                and model.tables[j.to_table].kind == "dimension" and j.cardinality in ("many_to_one", "one_to_one")):
+            name = table_name(model, j.to_table).lower()
+            if name not in out:
+                out.append(name)
+    return out[:limit]
 
 
 def tables(model: SemanticModel) -> list[dict[str, Any]]:
@@ -429,7 +488,10 @@ def check(model: SemanticModel, measure: Any, warehouse: Any, today: Any) -> dic
                                       "value": _number(record.get(value))})
             out["notes"] = [n for n in logical.notes if _DRAFT not in n]
             latest_window = {"kind": "between", "start": _month_start(last).isoformat(), "end": last.isoformat()}
-            out["latest"] = {"period": _month_start(last).isoformat()[:7], "date": role.name}
+            # A month the data stops part way through is said so: it is not a drop.
+            month_end = _months_back(last, -1) - dt.timedelta(days=1)
+            out["latest"] = {"period": _month_start(last).isoformat()[:7], "date": role.name,
+                             "through": last.isoformat() if last < month_end else ""}
         else:
             single = Plan.model_validate({"kind": "query", "intent": "value", "measures": [_DRAFT]})
             logical = resolve(single, model, Context(today=today))
@@ -490,4 +552,215 @@ def _row_counts(model: SemanticModel, draft: Any, warehouse: Any, today: Any,
     every, kept = int(_number(by_key.get(f"{_DRAFT}all")) or 0), int(_number(by_key.get(f"{_DRAFT}kept")) or 0)
     valued = by_key.get(f"{_DRAFT}valued")
     return {"rows": kept, "left_out": every - kept if conditions else 0,
-            "empty": kept - int(_number(valued) or 0) if valued is not None else None}
+            "empty": kept - int(_number(valued) or 0) if valued is not None else None,
+            "empty_field": field_name(model.columns[expr.column]) if valued is not None else ""}
+
+
+# ── written by the AI from the admin's words ─────────────────────────────────
+
+_OPS = ("eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "between", "is_null", "not_null", "contains",
+        "starts_with")
+_FORMATS = ("currency", "percent", "count", "number", "integer")
+
+
+def describe_prompt(model: SemanticModel) -> str:
+    """The stable half: how a metric is written, and every field and metric it may use.
+
+    Field names, kinds and descriptions; common values only for a field whose values may be
+    shown to the AI (the admin's setting, as everywhere else) and that holds nothing sensitive.
+    """
+    lines = [
+        "You write one business metric for QueryBot's semantic layer, as JSON, from an admin's description.",
+        "Use only the fields and metrics listed below, written exactly as listed, in square brackets.",
+        "The formula: SUM, AVG, MIN, MAX, COUNT or COUNT(DISTINCT ...) of one field, as SUM([Table · Field]);",
+        "COUNT([Table]) counts a table's rows; a metric by its name, as [Net amount]; combine them with + - * /;",
+        "a number only scales a calculation (... * 100 for a percentage); arithmetic on each row goes inside one",
+        "aggregate, as SUM([Table · Quantity] * [Table · Unit price]). Fields of different tables may be combined:",
+        "each table is added up on its own rows.",
+        "Rows to leave out are conditions, not part of the formula: each {\"field\": \"[Table · Field]\", \"op\": one of",
+        f"{', '.join(_OPS)}, \"values\": [...]}}, with values as the data holds them (a code, when the field lists",
+        "its codes).",
+        'Reply with one JSON object: {"formula": "...", "conditions": [...], "name": "...", "synonyms": ["..."],',
+        '"description": "one sentence for a business reader", "format": one of ' + ", ".join(_FORMATS) + ",",
+        '"assumptions": ["what you assumed, in a few words"], "question": "what to ask the admin when the',
+        'description could mean two different things, otherwise an empty string"}.',
+        "",
+        "FIELDS (reference | kind | what it holds):",
+    ]
+    for f in fields(model):
+        if f["sensitive"]:
+            continue
+        hint = f["description"] or ""
+        if f["hint"] and f["hint"].startswith("e.g."):
+            hint = f"{hint} {f['hint']}".strip()
+        lines.append(f"[{f['ref']}] | {f['kind']}" + (f" | {hint}" if hint else ""))
+    lines += ["", "METRICS (name | how it is counted):"]
+    lines += [f"[{m['ref']}] | {m['definition']}" for m in metrics(model)]
+    return "\n".join(lines)
+
+
+def describe(model: SemanticModel, description: str, complete: Any) -> dict[str, Any]:
+    """The AI's metric for ``description``, read and checked like one the admin typed.
+
+    Returns what the editor fills in; anything the AI wrote that cannot be read comes back
+    with ``problem``, and the formula as written, for the admin to correct.
+    """
+    import json
+
+    text = str(description or "").strip()
+    if not text:
+        return {"problem": "Say what the metric counts, in a sentence."}
+    try:
+        reply = complete(describe_prompt(model), f"The admin's description: {text}")
+    except Exception as exc:  # noqa: BLE001 - the provider's refusal is the admin's to read
+        return {"problem": f"The AI could not be reached: {str(exc)[:200]}"}
+    match = re.search(r"\{.*\}", str(reply or ""), re.S)
+    try:
+        data = json.loads(match.group(0)) if match else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict) or not data.get("formula"):
+        return {"problem": "The AI did not write a formula. Describe it again, or write the formula yourself."}
+    out: dict[str, Any] = {
+        "formula": str(data.get("formula") or ""), "name": " ".join(str(data.get("name") or "").split())[:120],
+        "synonyms": [str(s).strip() for s in (data.get("synonyms") or []) if str(s).strip()][:12],
+        "description": str(data.get("description") or "").strip()[:500],
+        "format": data.get("format") if data.get("format") in _FORMATS else "number",
+        "assumptions": [str(a) for a in (data.get("assumptions") or [])][:6],
+        "question": str(data.get("question") or "").strip()[:300], "conditions": [], "problem": ""}
+    try:
+        written = read(model, out["formula"])
+        out["formula"] = to_text(model, written.expr)
+    except AuthoringError as exc:
+        out["problem"] = f"The AI's formula needs a correction: {exc}"
+    names = _Names(model)
+    for c in data.get("conditions") or []:
+        if not isinstance(c, dict):
+            continue
+        try:
+            column = names.field(_REF.sub(lambda m: m.group(1), str(c.get("field") or "")).strip())
+        except AuthoringError:
+            column = None
+        op = str(c.get("op") or "")
+        if column is None or op not in _OPS:
+            out["problem"] = out["problem"] or f"A condition the AI wrote cannot be read: {c.get('field')}"
+            continue
+        values = c.get("values") if isinstance(c.get("values"), list) else [c.get("values")]
+        out["conditions"].append({"column": column, "op": op,
+                                  "values": [v for v in values if v is not None and str(v).strip()]})
+    return out
+
+
+# ── the metrics page ─────────────────────────────────────────────────────────
+
+OVER_TIME = {
+    "added": ("additive", None, "Added up over time"),
+    "per_period": ("non_additive", None, "Worked out per period"),
+    "end": ("semi_additive", "last", "Taken at the end of each period"),
+    "average": ("semi_additive", "average", "Averaged over the period"),
+}
+FORMAT_WORDS = {"currency": "Money", "percent": "Percentage", "count": "Count", "number": "Number",
+                "integer": "Whole number"}
+ADMIN_PREFIX = "admin:"
+
+
+def over_time(additivity: str, time_aggregation: str | None) -> str:
+    for key, (a, t, _) in OVER_TIME.items():
+        if a == additivity and (t == time_aggregation or (a != "semi_additive")):
+            return key
+    return "added"
+
+
+def source(m: Any) -> str:
+    if m.hidden:
+        return "Hidden"
+    if m.key.startswith(ADMIN_PREFIX):
+        return "Added by an admin"
+    if m.provenance == "admin":
+        return "Changed by an admin"
+    if m.provenance == "import":
+        return "From today's setup"
+    return "Learned"
+
+
+def counted_on(model: SemanticModel, m: Any) -> list[str]:
+    """The tables a metric adds up rows of (one for most; two for sales less refunds)."""
+    from core2.resolve.resolver import ResolveError, _homes
+
+    try:
+        homes = _homes(model, m.table, m.expr)
+    except (ResolveError, KeyError):
+        homes = {m.table}
+    return sorted(table_name(model, t) for t in homes if t in model.tables)
+
+
+def listing(model: SemanticModel, uses: dict[str, int]) -> list[dict[str, Any]]:
+    from core2.plan.catalog import definition
+
+    out = []
+    for m in model.measures.values():
+        if m.table not in model.tables:
+            continue
+        role = model.date_roles.get(m.default_date or model.tables[m.table].default_date or "")
+        conditions = [f for f in m.filters if f.column in model.columns]
+        how = definition(model, m.expr, True)
+        if conditions:
+            from core2.model.links import condition_text
+
+            how += ", only rows where " + "; ".join(condition_text(model, f) for f in conditions)
+        out.append({"key": m.key, "slug": m.slug, "name": m.business_name or m.slug, "how": how,
+                    "from": counted_on(model, m), "date": role.name if role else "", "asked": uses.get(m.slug, 0),
+                    "source": source(m), "hidden": m.hidden, "description": m.description,
+                    "synonyms": sorted({w for ws in m.synonyms.values() for w in ws})})
+    # The ones people ask for most first; the hidden ones last.
+    return sorted(out, key=lambda r: (r["hidden"], -r["asked"], r["name"].casefold()))
+
+
+def editor_state(model: SemanticModel, m: Any | None) -> dict[str, Any]:
+    """A metric as the editor shows it: its formula as text, conditions, names and behaviour."""
+    if m is None:
+        return {"key": "", "formula": "", "conditions": [], "name": "", "synonyms": [], "description": "",
+                "format": "number", "over_time": "", "default_date": "", "hidden": False, "table": ""}
+    return {"key": m.key, "formula": to_text(model, m.expr),
+            "conditions": [{"column": f.column, "op": f.op, "values": list(f.values)} for f in m.filters],
+            "name": m.business_name, "synonyms": sorted({w for ws in m.synonyms.values() for w in ws}),
+            "description": m.description, "format": m.format, "over_time": over_time(m.additivity, m.time_aggregation),
+            "default_date": m.default_date or "", "hidden": m.hidden, "table": m.table}
+
+
+def parts(model: SemanticModel, expr: MeasureExpr) -> list[dict[str, str]]:
+    """The formula as blocks: each part (what is added up, how, on which table) and the signs between."""
+    out: list[dict[str, str]] = []
+
+    def walk(e: MeasureExpr, top: bool) -> None:
+        if isinstance(e, OpExpr):
+            if not top:
+                out.append({"kind": "open", "text": "("})
+            for i, arg in enumerate(e.args):
+                if i:
+                    out.append({"kind": "op", "text": {"ratio": "÷", "subtract": "−", "add": "+",
+                                                       "multiply": "×"}[e.op]})
+                walk(arg, False)
+            if not top:
+                out.append({"kind": "close", "text": ")"})
+            if e.scale != 1:
+                out.append({"kind": "op", "text": f"× {e.scale:g}" if e.scale >= 1 else f"÷ {1 / e.scale:g}"})
+            return
+        if isinstance(e, AggExpr):
+            target = field_name(model.columns[e.column]) if e.column else "Rows"
+            table = table_name(model, model.columns[e.column].table) if e.column else table_name(
+                model, e.table) if e.table in model.tables else ""
+            how = {"sum": "Sum", "avg": "Average", "count": "Count", "count_distinct": "Different values",
+                   "min": "Smallest", "max": "Largest"}[e.agg]
+            out.append({"kind": "part", "text": target, "how": f"{how} · {table}" if table else how})
+        elif isinstance(e, RefExpr):
+            metric = model.measures.get(e.measure)
+            out.append({"kind": "part", "text": metric.business_name if metric else e.measure,
+                        "how": f"Metric · {table_name(model, metric.table)}" if metric and metric.table in model.tables
+                        else "Metric"})
+        elif isinstance(e, SqlExpr):
+            tables_read = sorted({table_name(model, model.columns[c].table) for c in e.columns if c in model.columns})
+            out.append({"kind": "part", "text": to_text(model, e), "how": "Each row · " + ", ".join(tables_read)})
+
+    walk(expr, True)
+    return out

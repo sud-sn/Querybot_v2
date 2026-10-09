@@ -67,3 +67,30 @@ def workspace_planner(account_id: str, client: dict[str, Any], *, question: str,
         return asyncio.run(call())
 
     return complete
+
+
+def metric_writer(account_id: str, client: dict[str, Any], *, description: str) -> Callable[[str, str], str]:
+    """The workspace's AI writing a metric from an admin's words: the model's fields as the
+    cached prefix, the words after it; audited as a metric authoring call, and costed as one."""
+    from core.llm import Provider, llm_complete, resolve_provider
+    from core.llm_audit import llm_audit_scope
+    from core.prompt_cache import CachedPrompt
+
+    name, model, api_key, extra = resolve_provider(client, purpose="query")
+    provider = cast(Provider, name)
+    request_id = f"core2-metric-{uuid.uuid4().hex[:12]}"
+
+    def complete(stable: str, tail: str) -> str:
+        async def call() -> str:
+            with llm_audit_scope(account_id=account_id, question=description,
+                                 enabled=bool(client.get("enable_llm_audit")), request_id=request_id,
+                                 question_id=request_id, component="core2_metric_authoring",
+                                 egress={"question": description}):
+                text, _, _ = await llm_complete(CachedPrompt(stable=stable, volatile="Answer with one JSON object."),
+                                                tail, provider, model, api_key, max_tokens=1200, temperature=0.0,
+                                                **extra)
+                return text
+
+        return asyncio.run(call())
+
+    return complete

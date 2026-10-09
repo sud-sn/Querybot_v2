@@ -177,6 +177,7 @@ from store.core2_store import (
     set_core2_override, delete_core2_override, list_core2_overrides,
     start_core2_build, finish_core2_build, latest_core2_build, add_core2_build_line, core2_runner,
     get_query_engine, set_query_engine, log_core2_answer, list_core2_answers, set_core2_import_report,
+    core2_measure_uses,
 )
 from store.llm_usage_store import (
     record_llm_usage, question_usage, usage_by_question, usage_totals, usage_daily, user_usage_this_month,
@@ -314,6 +315,7 @@ __all__ = [
     "set_core2_override","delete_core2_override","list_core2_overrides",
     "start_core2_build","finish_core2_build","latest_core2_build","add_core2_build_line","core2_runner",
     "get_query_engine","set_query_engine","log_core2_answer","list_core2_answers","set_core2_import_report",
+    "core2_measure_uses",
     "record_llm_usage","question_usage","usage_by_question","usage_totals","usage_daily","user_usage_this_month",
     "list_llm_prices","save_llm_price","delete_llm_price","unpriced_models","deployments_used",
     "reprice_unpriced",
