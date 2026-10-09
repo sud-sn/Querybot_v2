@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import functools
+import json
 import logging
 import time
 import uuid
@@ -33,6 +34,7 @@ log = logging.getLogger("querybot.core2")
 
 TIMEOUT_SECONDS = 120.0
 PREVIEW_BADGE = "New core (preview)"
+MAX_KEPT_FRAME = 2_000_000      # characters of a kept answer; a larger one is reopened from its rows
 
 # The new core's own threads. Today's pipeline runs its warehouse queries on the
 # default pool; a slow AI or warehouse call here ties up these instead. A question
@@ -103,16 +105,91 @@ def _keep(account_id: str, portal_user: dict | None, session_id: str, question: 
     trace_id = store.create_answer_trace(account_id=account_id, question_id=question_id, question_text=text,
                                          portal_user_id=user_id, session_id=session_id, request_source="portal",
                                          route="core2")
+    kept = _kept_frame(payload, text)
     store.update_answer_trace(trace_id, generated_sql=sql, db_type=str(trust.get("data_source") or ""),
                               query_row_count=row_count, query_duration_ms=duration_ms, answer_type="core2",
                               final_answer_summary=str((payload.get("answer") or {}).get("headline") or "")[:500],
-                              sql_validation_status="governed", status="success")
+                              sql_validation_status="governed", status="success",
+                              **({"answer_frame": kept} if kept is not None else {}))
     if rows:
         store.store_protected_result_rows(account_id, question_id, rows)
     if sql and payload.get("data") is not None:      # a question back or a greeting ran no query: not counted
         store.log_query(account_id, text, sql, row_count=row_count, success=True, duration_ms=duration_ms,
                         portal_user_id=user_id, question_id=question_id, llm_provider="core2")
     return trace_id
+
+
+def _kept_frame(payload: dict[str, Any], question: str) -> dict[str, Any] | None:
+    """The answer as the reader saw it, kept for a reopened thread (None when it is too large to keep).
+
+    The question is the one kept in the trace (personal data scrubbed for a tenant under
+    compliance). The tokens behind its buttons end with the chat, so they are not kept: a
+    reopened answer gets a new Add to dashboard token, and a metric the reader made shows
+    without the buttons that would save or forget it.
+    """
+    frame = {k: v for k, v in payload.items() if k not in ("pin_token", "trace_id", "export_rows")}
+    frame["question"] = question
+    if isinstance(frame.get("own_metric"), dict):
+        frame["own_metric"] = {k: v for k, v in frame["own_metric"].items() if k != "token"}
+    if isinstance(frame.get("chart"), dict):
+        frame["chart"] = {k: v for k, v in frame["chart"].items() if k != "pin_token"}
+    if len(json.dumps(frame, default=str)) > MAX_KEPT_FRAME:
+        log.warning("A new-core answer of over %d characters is kept by its rows only", MAX_KEPT_FRAME)
+        return None
+    return frame
+
+
+def reopened(account_id: str, portal_user: dict | None, trace: dict[str, Any],
+             rows: list[dict] | None) -> dict[str, Any]:
+    """A new-core answer of a reopened thread, drawn as the new core drew it, with Add to dashboard again.
+
+    An answer kept with its frame comes back as it was shown. One given before answers were
+    kept comes back as its sentence and its rows: never rebuilt by today's pipeline, whose
+    wording and chart are another engine's.
+    """
+    import store
+
+    question = str(trace.get("question_text_sanitized") or "")
+    frame: dict[str, Any] | None = None
+    raw = str(trace.get("answer_frame") or "")
+    if raw:
+        try:
+            frame = json.loads(raw)
+        except ValueError:
+            log.warning("The kept answer of trace %s cannot be read; it is shown from its rows", trace.get("id"))
+        frame = frame if isinstance(frame, dict) else None
+    if frame is None:
+        frame = _from_rows(trace, question, rows or [])
+        plan = store.get_core2_answer_plan(account_id, str(trace.get("question_id") or ""))
+        if plan:
+            frame["plan"] = plan
+    frame["trace_id"] = int(trace.get("id") or 0)
+    try:
+        token = _pin(account_id, portal_user, question, frame)
+    except Exception as exc:     # noqa: BLE001 - the answer shows; it just cannot be pinned
+        log.warning("A reopened new-core answer could not be given a pin token for %s: %s", account_id, exc)
+        token = ""
+    if token:
+        frame["pin_token"] = token
+        if isinstance(frame.get("chart"), dict):
+            frame["chart"]["pin_token"] = token
+    return frame
+
+
+def _from_rows(trace: dict[str, Any], question: str, rows: list[dict]) -> dict[str, Any]:
+    from core2.answer.builder import PREVIEW_ROWS
+    from core2.service import _frame
+
+    headers = list(rows[0].keys()) if rows else []
+    data = {"headers": headers,
+            "header_labels": {h: (h.replace("_", " ").strip().capitalize() or h) for h in headers},
+            "rows": rows[:PREVIEW_ROWS], "total_rows": len(rows), "truncated": len(rows) > PREVIEW_ROWS,
+            "column_formats": {}, "display_formats": {}, "currency_columns": []} if rows else None
+    return _frame(question, str(trace.get("final_answer_summary") or ""), data=data,
+                  trust={"engine": "core2", "sql": str(trace.get("generated_sql") or ""),
+                         "row_count": int(trace.get("query_row_count") or 0),
+                         "data_source": str(trace.get("db_type") or ""),
+                         "question_id": str(trace.get("question_id") or "")})
 
 
 def _pin(account_id: str, portal_user: dict | None, question: str, payload: dict[str, Any]) -> str:

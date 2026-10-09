@@ -2459,21 +2459,26 @@ async def portal_query_limit_status(request: Request):
                              user["account_id"], _request_language(request))})
 
 
+MAX_LISTED_THREADS = 150
+
+
 @router.get("/api/history")
 async def portal_query_history(request: Request):
-    """Return recent server-backed threads owned by the signed-in user."""
+    """Return the signed-in user's server-backed threads, newest first.
+
+    Every thread with an answer is listed, read from the reader's own answers
+    without their rows: a thread is not dropped because many answers came after
+    it, nor because its turns ran no query (a new-core question back, or an
+    answer about the data itself, is kept with the answer it gave).
+    """
     user = _get_portal_user(request)
     if not user:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
-    traces = store.list_answer_traces(
-        user["account_id"],
-        limit=200,
-        portal_user_id=int(user["id"]),
-    )
+    heads = store.list_thread_heads(user["account_id"], int(user["id"]))
     grouped: dict[str, dict] = {}
     from core.clarification import extract_original_question
-    for t in traces:
-        if t.get("status") != "success" or not t.get("generated_sql"):
+    for t in heads:
+        if t.get("status") != "success" or not (t.get("has_sql") or t.get("has_frame")):
             continue
         session_id = str(t.get("session_id") or "")
         if ":thread:" in session_id:
@@ -2486,6 +2491,8 @@ async def portal_query_history(request: Request):
             str(t.get("question_text_sanitized") or "")
         ) or "Untitled thread"
         if thread_id not in grouped:
+            if len(grouped) >= MAX_LISTED_THREADS:
+                continue
             grouped[thread_id] = {
                 "id": thread_id,
                 "thread_id": thread_id,
@@ -2500,7 +2507,19 @@ async def portal_query_history(request: Request):
         else:
             grouped[thread_id]["question"] = question
             grouped[thread_id]["turn_count"] += 1
-    return JSONResponse({"ok": True, "items": list(grouped.values())[:40]})
+    return JSONResponse({"ok": True, "items": list(grouped.values())})
+
+
+def _kept_answer(trace: dict) -> dict | None:
+    """The new-core answer a trace kept as it was shown, or None (none kept, or unreadable)."""
+    import json as _json
+
+    try:
+        frame = _json.loads(trace.get("answer_frame") or "null")
+    except (TypeError, ValueError):
+        log.warning("The kept answer of trace %s cannot be read", trace.get("id"))
+        return None
+    return frame if isinstance(frame, dict) else None
 
 
 def _trace_tables_still_granted(sql: str, db_type: str, allowed, account_id: str) -> bool:
@@ -2554,16 +2573,21 @@ async def portal_query_thread(request: Request, thread_id: str):
     if not re.fullmatch(r"(?:[A-Za-z0-9_-]{1,80}|legacy-[0-9]+)", thread_id):
         return JSONResponse({"ok": False, "error": "Invalid thread id."}, status_code=400)
 
-    traces = store.list_answer_traces(
-        user["account_id"],
-        limit=200,
-        portal_user_id=int(user["id"]),
-        oldest_first=True,
-    )
+    # Read in the database by the thread's own id: a thread is found however
+    # many answers its reader has given since (a cap on the reader's answers,
+    # taken oldest first, lost every thread after the 200th answer).
+    # Checked again here, as before: only this thread's own turns come back.
     if thread_id.startswith("legacy-"):
         trace_id = int(thread_id.removeprefix("legacy-") or 0)
+        traces = store.list_answer_traces(
+            user["account_id"], limit=1, portal_user_id=int(user["id"]), trace_id=trace_id,
+        )
         traces = [trace for trace in traces if int(trace.get("id") or 0) == trace_id]
     else:
+        traces = store.list_answer_traces(
+            user["account_id"], limit=500, portal_user_id=int(user["id"]),
+            thread_id=thread_id, oldest_first=True,
+        )
         marker = f":thread:{thread_id}"
         traces = [
             trace for trace in traces
@@ -2599,9 +2623,17 @@ async def portal_query_thread(request: Request, thread_id: str):
     turns = []
     try:
         for trace in traces:
-            if trace.get("status") != "success" or not trace.get("generated_sql"):
+            if trace.get("status") != "success":
                 continue
-            if not _trace_tables_still_granted(
+            new_core = trace.get("route") == "core2"
+            if not trace.get("generated_sql"):
+                # A turn that ran no query is shown only when the new core kept
+                # what it said (a question back, an answer about the data), and
+                # never with rows: nothing here can check a grant for them.
+                frame = _kept_answer(trace) if new_core else None
+                if frame is None or frame.get("data"):
+                    continue
+            elif not _trace_tables_still_granted(
                 str(trace.get("generated_sql") or ""),
                 str(trace.get("db_type") or ""),
                 allowed_tables,
@@ -2618,6 +2650,17 @@ async def portal_query_thread(request: Request, thread_id: str):
             question = extract_original_question(
                 str(trace.get("question_text_sanitized") or "")
             )
+            if new_core:
+                # Drawn as the new core drew it, never rebuilt by today's
+                # pipeline (another engine's wording and chart), and with
+                # Add to dashboard again.
+                from gateway.core2_bridge import reopened
+                turns.append({
+                    "question": question,
+                    "payload": reopened(user["account_id"], user, trace, rows),
+                    "created_at": str(trace.get("created_at") or ""),
+                })
+                continue
             chart_type = detect_chart_type(rows, question=question) if rows else None
             chart = (
                 build_chart_payload(

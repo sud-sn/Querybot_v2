@@ -4247,7 +4247,11 @@ function connect(){
         _markActiveOutbound('stopped', 'Stopped');
         setAgentRunState('cancelled', msg);
       }
-      appendSystem(msg.content, { persist: !/^Connected as /i.test(msg.content || '') });
+      // "Connected as ..." is said on every (re)connect: an idle tab or a
+      // restarted server reconnects mid-conversation, and the notice landed
+      // between two answers. A thread with messages carries on without it.
+      if (msg.connect && thread()?.querySelector('.msg')) return;
+      appendSystem(msg.content, { persist: !msg.connect });
     } else if (msg.type === 'clarification_prompt') {
       setAgentRunState('waiting_for_user', msg);
       showMascotClarify();
@@ -4305,11 +4309,12 @@ function connect(){
         // ────────────────────────────────────────────────────────────────────
         setAgentRunState('completed', msg);
         // One start screen: an empty thread already greets the reader, with the
-        // workspace's suggested questions under it. The connect greeting is
-        // shown only when the thread already has something in it.
+        // workspace's suggested questions under it. A thread with messages is
+        // a conversation going on: a greeting sent on reconnecting (a new
+        // portal session after an idle spell) is not dropped into the middle of it.
         const _startScreen = document.getElementById('welcomeState');
-        if (msg.greeting && _startScreen && _startScreen.style.display !== 'none'
-            && !thread()?.querySelector('.msg')) {
+        if (msg.greeting && ((_startScreen && _startScreen.style.display !== 'none')
+            || thread()?.querySelector('.msg'))) {
           refreshQueryLimitStatus({toast:true});
           return;
         }

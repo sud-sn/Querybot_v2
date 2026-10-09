@@ -15,6 +15,12 @@ def _response_json(response):
     return json.loads(response.body.decode("utf-8"))
 
 
+def _heads(traces):
+    """Traces as the thread list reads them: without their SQL, which only says whether there is some."""
+    return [{**{k: v for k, v in t.items() if k != "generated_sql"},
+             "has_sql": int(bool(t.get("generated_sql"))), "has_frame": 0} for t in traces]
+
+
 def test_web_adapter_cache_and_history_are_thread_scoped():
     first = WebAdapter(_FakeWebSocket(), "acct", "user", thread_id="thread-a")
     second = WebAdapter(_FakeWebSocket(), "acct", "user", thread_id="thread-b")
@@ -61,12 +67,12 @@ def test_history_api_filters_by_portal_user_and_groups_thread_turns():
         },
     ]
     with patch("portal.routes._get_portal_user", return_value=user), patch(
-        "portal.routes.store.list_answer_traces", return_value=traces
-    ) as list_traces:
+        "portal.routes.store.list_thread_heads", return_value=_heads(traces)
+    ) as list_heads:
         response = asyncio.run(portal_query_history(object()))
 
     payload = _response_json(response)
-    list_traces.assert_called_once_with("acct", limit=200, portal_user_id=7)
+    list_heads.assert_called_once_with("acct", 7)
     assert payload["items"][0]["thread_id"] == "abc"
     assert payload["items"][0]["question"] == "Original question"
     assert payload["items"][0]["turn_count"] == 2
@@ -92,7 +98,7 @@ def test_history_api_hides_internal_clarification_wrapper():
         "created_at": "2026-07-31 12:00:00",
     }]
     with patch("portal.routes._get_portal_user", return_value=user), patch(
-        "portal.routes.store.list_answer_traces", return_value=traces
+        "portal.routes.store.list_thread_heads", return_value=_heads(traces)
     ):
         response = asyncio.run(portal_query_history(object()))
 
@@ -125,7 +131,7 @@ def test_thread_detail_reconstructs_result_for_owner_only():
     assert payload["turns"][0]["payload"]["trust"]["sql"] == "SELECT 2 AS total"
     assert payload["turns"][0]["payload"]["data"]["rows"] == [{"total": "2"}]
     list_traces.assert_called_once_with(
-        "acct", limit=200, portal_user_id=7, oldest_first=True
+        "acct", limit=500, portal_user_id=7, thread_id="abc", oldest_first=True
     )
 
 

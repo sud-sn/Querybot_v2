@@ -200,6 +200,20 @@ def log_core2_answer(account_id: str, *, user_id: str, mode: str, question: str,
              json.dumps(plan or {}), duration_ms, model_version, question_id))
 
 
+def get_core2_answer_plan(account_id: str, question_id: str) -> dict[str, Any] | None:
+    """The plan a new-core answer was given from, by its question id (None when none was kept)."""
+    if not question_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute("SELECT plan_json FROM core2_answer WHERE account_id=? AND question_id=? "
+                           "ORDER BY id DESC LIMIT 1", (account_id, question_id)).fetchone()
+    try:
+        plan = json.loads(row["plan_json"] or "{}") if row else None
+    except (TypeError, ValueError):
+        return None
+    return plan if isinstance(plan, dict) and plan else None
+
+
 def list_core2_answers(account_id: str, limit: int = 50) -> list[dict[str, Any]]:
     """The new core's recent answers, with the reader's thumbs on each when they gave one."""
     with get_db() as conn:

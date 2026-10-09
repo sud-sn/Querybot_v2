@@ -894,6 +894,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             "type":    "system",
             "content": _t("reply.session.connected",
                           name=portal_user.get("name", portal_user.get("id", "user"))),
+            # Said on connecting: the chat page shows it on an empty thread
+            # only, never again in a conversation the socket reconnects to.
+            "connect": True,
         })
 
     # Restore structural multi-turn context from governed server traces. Raw

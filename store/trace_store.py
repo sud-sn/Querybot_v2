@@ -76,6 +76,7 @@ def update_answer_trace(trace_id: int | None, **fields: Any) -> None:
         "sql_validation_error", "db_type", "query_row_count", "query_duration_ms",
         "answer_type", "final_answer_summary", "error_message", "status",
         "result_rows", "policy_version_at_query", "contract_version", "code_release",
+        "answer_frame",
     }
     assignments, params = [], []
     for key, value in fields.items():
@@ -83,7 +84,7 @@ def update_answer_trace(trace_id: int | None, **fields: Any) -> None:
             continue
         if key in {
             "allowed_tables_snapshot", "retrieved_kb_chunk_ids",
-            "retrieved_kb_scores", "result_rows",
+            "retrieved_kb_scores", "result_rows", "answer_frame",
         }:
             value = _json(value)
         assignments.append(f"{key}=?")
@@ -506,15 +507,27 @@ def get_answer_trace_by_question_id(account_id: str, question_id: str) -> dict |
     return get_answer_trace(int(row[0]))
 
 
+def _like_suffix(text: str) -> str:
+    """A LIKE pattern for text ending in ``text`` (escape character "!"): "_" and "%" are literal."""
+    return "%" + re.sub(r"([!%_])", r"!\1", text)
+
+
 def list_answer_traces(
     account_id: str,
     limit: int = 50,
     *,
     portal_user_id: int | None = None,
     session_id: str | None = None,
+    thread_id: str | None = None,
+    trace_id: int | None = None,
     oldest_first: bool = False,
 ) -> list[dict]:
-    """List traces with optional portal-user and thread isolation."""
+    """List traces with optional portal-user and thread isolation.
+
+    ``thread_id`` keeps the traces of one portal thread (a session id ending in
+    ":thread:<id>"), read in the database: a thread is found however many
+    answers its reader has given since.
+    """
     where = ["account_id=?"]
     params: list[Any] = [account_id]
     if portal_user_id is not None:
@@ -523,6 +536,12 @@ def list_answer_traces(
     if session_id is not None:
         where.append("session_id=?")
         params.append(str(session_id))
+    if thread_id is not None:
+        where.append("session_id LIKE ? ESCAPE '!'")
+        params.append(_like_suffix(f":thread:{thread_id}"))
+    if trace_id is not None:
+        where.append("id=?")
+        params.append(int(trace_id))
     params.append(int(limit))
     order = "ASC" if oldest_first else "DESC"
     with get_db() as conn:
@@ -530,5 +549,26 @@ def list_answer_traces(
             f"SELECT * FROM answer_trace WHERE {' AND '.join(where)} "
             f"ORDER BY created_at {order}, id {order} LIMIT ?",
             params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_thread_heads(account_id: str, portal_user_id: int, limit: int = 3000) -> list[dict]:
+    """A reader's answers, newest first, without their rows or SQL: what the thread list needs.
+
+    Light enough to read thousands, so the list holds every thread a reader has
+    rather than those of their last few hundred answers.
+    """
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, session_id, question_text_sanitized, status, route, created_at,
+                   query_row_count, query_duration_ms,
+                   CASE WHEN generated_sql <> '' THEN 1 ELSE 0 END AS has_sql,
+                   CASE WHEN answer_frame <> '' THEN 1 ELSE 0 END AS has_frame
+            FROM answer_trace WHERE account_id=? AND portal_user_id=?
+            ORDER BY created_at DESC, id DESC LIMIT ?
+            """,
+            (account_id, int(portal_user_id), int(limit)),
         ).fetchall()
     return [dict(r) for r in rows]

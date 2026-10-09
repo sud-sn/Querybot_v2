@@ -130,7 +130,7 @@ from store.date_context_store import (
 )
 from store.trace_store import (
     create_answer_trace, update_answer_trace, log_answer_trace_step,
-    finish_answer_trace, kb_chunk_refs, get_answer_trace, list_answer_traces,
+    finish_answer_trace, kb_chunk_refs, get_answer_trace, list_answer_traces, list_thread_heads,
     get_kb_doc_quality,
     get_answer_trace_by_question_id,
     store_protected_result_rows,
@@ -176,7 +176,7 @@ from store.core2_store import (
     save_core2_model, load_core2_model, list_core2_model_versions,
     set_core2_override, delete_core2_override, list_core2_overrides,
     start_core2_build, finish_core2_build, latest_core2_build, add_core2_build_line, core2_runner,
-    get_query_engine, set_query_engine, log_core2_answer, list_core2_answers, set_core2_import_report,
+    get_query_engine, set_query_engine, log_core2_answer, get_core2_answer_plan, list_core2_answers, set_core2_import_report,
     core2_measure_uses, add_core2_request, get_core2_request, list_core2_requests, count_core2_requests,
     waiting_core2_requests, decide_core2_request, get_core2_override,
 )
@@ -279,7 +279,7 @@ __all__ = [
     "save_metric_date_context","list_metric_date_contexts",
     "get_metric_date_context","delete_metric_date_context",
     "create_answer_trace","update_answer_trace","log_answer_trace_step",
-    "finish_answer_trace","kb_chunk_refs","get_answer_trace","list_answer_traces",
+    "finish_answer_trace","kb_chunk_refs","get_answer_trace","list_answer_traces","list_thread_heads",
     "get_kb_doc_quality",
     "get_answer_trace_by_question_id",
     "store_protected_result_rows",
@@ -315,7 +315,7 @@ __all__ = [
     "save_core2_model","load_core2_model","list_core2_model_versions",
     "set_core2_override","delete_core2_override","list_core2_overrides",
     "start_core2_build","finish_core2_build","latest_core2_build","add_core2_build_line","core2_runner",
-    "get_query_engine","set_query_engine","log_core2_answer","list_core2_answers","set_core2_import_report",
+    "get_query_engine","set_query_engine","log_core2_answer","get_core2_answer_plan","list_core2_answers","set_core2_import_report",
     "core2_measure_uses", "add_core2_request", "get_core2_request", "list_core2_requests",
     "count_core2_requests", "waiting_core2_requests", "decide_core2_request", "get_core2_override",
     "record_llm_usage","question_usage","usage_by_question","usage_totals","usage_daily","user_usage_this_month",

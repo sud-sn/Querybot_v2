@@ -1438,6 +1438,11 @@ def _run_migrations() -> None:
         # MAX(seq)+1 inside the inserting transaction, so ordering is exact
         # from here on. Declared HERE ONLY, not in _SCHEMA.
         ("policy_decision_log", "seq", "INTEGER NOT NULL DEFAULT 0"),
+        # A new-core answer as the reader saw it (its sentences, chart and
+        # table), so a reopened thread shows that answer again rather than one
+        # rebuilt by today's pipeline from its rows. Empty for every other
+        # answer. Declared HERE ONLY, as above.
+        ("answer_trace", "answer_frame", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

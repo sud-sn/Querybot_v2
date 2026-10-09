@@ -275,7 +275,8 @@ class TestThePageShowsDifferentQuestions:
         assert shown == TEN[:4]
 
 
-def _frames_through_the_socket_handler(frames: list[dict], *, empty_thread: bool = False) -> list[dict]:
+def _frames_through_the_socket_handler(frames: list[dict], *, empty_thread: bool = False,
+                                      start_screen: bool | None = None) -> list[dict]:
     """Feed frames to the handler the page's own connect() installs, and
     report what each one asked appendBot for. Everything the handler calls
     besides appendBot and the page's own reading of a frame's state
@@ -302,7 +303,7 @@ function _genieEvent() {{}}
 function refreshQueryLimitStatus() {{}}
 function showMascotError() {{}}
 // The start screen is up while the thread is empty; a message in it means it has gone.
-const _startScreen = {{style: {{display: {json.dumps('' if empty_thread else 'none')}}}}};
+const _startScreen = {{style: {{display: {json.dumps('' if (empty_thread if start_screen is None else start_screen) else 'none')}}}}};
 var document = {{getElementById: function (id) {{ return id === 'welcomeState' ? _startScreen : null; }}}};
 function thread() {{ return {{querySelector: function () {{ return {json.dumps(empty_thread)} ? null : {{}}; }}}}; }}
 {lift(src, "function _terminalRunState(msg)")};
@@ -320,9 +321,19 @@ def test_the_page_keeps_the_questions_under_the_greeting_frame_only():
     appended = _frames_through_the_socket_handler([
         {"type": "message", "role": "assistant", "content": "Hello, Ada!", "greeting": True},
         {"type": "message", "role": "assistant", "content": "Revenue is up."},
-    ])
+    ], empty_thread=True, start_screen=False)
     assert appended == [{"text": "Hello, Ada!", "keepSuggestions": True},
                         {"text": "Revenue is up.", "keepSuggestions": False}]
+
+
+def test_a_conversation_going_on_is_not_greeted_again():
+    """A socket that reconnects after an idle spell greets the reader as a new
+    session: in a thread with messages, the greeting landed between two answers."""
+    appended = _frames_through_the_socket_handler([
+        {"type": "message", "role": "assistant", "content": "Hello, Ada!", "greeting": True},
+        {"type": "message", "role": "assistant", "content": "Revenue is up."},
+    ])
+    assert appended == [{"text": "Revenue is up.", "keepSuggestions": False}]
 
 
 def test_an_empty_thread_keeps_its_one_start_screen():
