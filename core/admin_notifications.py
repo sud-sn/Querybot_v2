@@ -77,6 +77,19 @@ async def notify_semantic_feedback_changed(
     })
 
 
+async def notify_core2_request_changed(*, account_id: str, action: str, request_id: int | None = None) -> None:
+    """A reader's request was sent or decided: the admin's Requests count follows."""
+    client = store.get_client(account_id) or {}
+    await admin_notification_hub.broadcast({
+        "type": "core2_request",
+        "action": action,
+        "account_id": account_id,
+        "client_name": client.get("client_name") or account_id,
+        "request_id": request_id,
+        "waiting": store.count_core2_requests(account_id).get("waiting", 0),
+    })
+
+
 async def notify_kb_build_changed(
     *,
     account_id: str,

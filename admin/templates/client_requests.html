@@ -1,0 +1,197 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% from "icons.html" import ic %}
+{% block title %}Requests — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Requests", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* The approved Requests screen: changes readers asked for, accepted or rejected here. */
+.rq-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.rq-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.rq-head p{margin:0;color:var(--text-muted);max-width:640px;font-size:var(--font-base)}
+.rq-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.rq-tabs,.rq-kinds{display:inline-flex;gap:4px;flex-wrap:wrap}
+.rq-tabs a,.rq-kinds a{height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--grid-line);background:var(--surface);
+  display:inline-flex;align-items:center;gap:6px;font-size:var(--font-sm);color:var(--text);text-decoration:none}
+.rq-tabs a[aria-current="page"],.rq-kinds a[aria-current="page"]{background:var(--primary-soft);border-color:var(--primary);color:var(--primary-ink);
+  font-weight:var(--weight-semibold)}
+.rq-tabs small{color:var(--text-muted)}
+.rq-list{display:grid;gap:12px}
+.rq-card{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm);padding:14px 16px;
+  display:grid;gap:10px}
+.rq-card-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rq-card-head strong{font-size:var(--font-md);color:var(--text-strong)}
+.rq-who{font-size:var(--font-sm);color:var(--text-muted)}
+.rq-change{display:grid;grid-template-columns:24px 170px minmax(0,1fr) minmax(0,1fr);gap:10px;align-items:start;padding:8px 0;
+  border-top:1px solid var(--grid-line)}
+.rq-change .rq-label{font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-strong)}
+.rq-col small{display:block;font-size:var(--font-xs);color:var(--text-muted);margin-bottom:3px}
+.rq-col p{margin:0;font-size:var(--font-sm);color:var(--text)}
+.rq-empty{color:var(--text-muted);font-style:italic}
+.rq-warn{grid-column:3/-1;margin:0;font-size:var(--font-xs);color:var(--warning-ink, var(--text))}
+.rq-note{border-top:1px solid var(--grid-line);padding-top:8px;font-size:var(--font-sm)}
+.rq-note small{display:block;font-size:var(--font-xs);color:var(--text-muted);margin-bottom:3px}
+.rq-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.rq-status{font-size:var(--font-sm);color:var(--text-muted)}
+.rq-error{color:var(--danger);font-size:var(--font-sm);margin:0}
+@media(max-width:900px){.rq-change{grid-template-columns:24px minmax(0,1fr)}.rq-change .rq-col{grid-column:2}}
+@media(max-width:600px){.rq-card .form-input{min-height:44px}.rq-card input[type=checkbox]{width:24px;height:24px}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="rq-head">
+  <div>
+    <h1>Requests</h1>
+    <p>Changes readers asked for, from "What you can ask". Accepting one applies it from the next answer and tells the
+      person who asked. Readers with the portal's admin role edit directly; their changes are listed under Accepted
+      and can be undone.</p>
+  </div>
+</div>
+
+<div class="rq-bar">
+  <nav class="rq-tabs" aria-label="Requests by state">
+    {% for key, label in [('waiting', 'Waiting'), ('accepted', 'Accepted'), ('rejected', 'Rejected')] %}
+    <a href="?status={{ key }}&amp;kind={{ kind }}" {% if status == key %}aria-current="page"{% endif %}>{{ label }} <small>{{ counts[key] }}</small></a>
+    {% endfor %}
+  </nav>
+  <nav class="rq-kinds" aria-label="Kind of request">
+    {% for key, label in kinds.items() %}
+    <a href="?status={{ status }}&amp;kind={{ key }}" {% if kind == key %}aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+</div>
+
+{% if not cards %}
+<div class="card">{{ empty_state("inbox", "No requests waiting" if status == 'waiting' else "Nothing here yet",
+    "When a reader suggests a change on What you can ask, it appears here for you to accept or reject.") }}</div>
+{% else %}
+<div class="rq-list">
+  {% for c in cards %}
+  <article class="rq-card" data-request="{{ c.id }}">
+    <div class="rq-card-head">
+      <span class="badge {{ 'badge-accent' if c.kind == 'new_metric' else 'badge-brand' }}">{{
+        'New metric' if c.kind == 'new_metric' else {'measure': 'Metric', 'attribute': 'Field', 'entity': 'Field',
+        'date_role': 'Date'}.get(c.target_kind, 'Change') }}</span>
+      <strong>{{ c.target_name }}</strong>
+      <span class="rq-who">· {{ c.user_name or 'A reader' }}, from {{ 'the chat' if c.source == 'chat' else 'What you can ask' }},
+        {{ (c.created_at or '')[:16] }}</span>
+      {% if c.status != 'waiting' %}
+      <span class="status-pill {{ {'accepted': 'success', 'rejected': 'danger', 'undone': 'neutral'}.get(c.status, 'neutral') }}">{{
+        {'accepted': 'Accepted', 'rejected': 'Rejected', 'undone': 'Undone'}.get(c.status, c.status) }}</span>
+      {% endif %}
+    </div>
+
+    {% for ch in c.changes %}
+    <div class="rq-change">
+      {% if c.status == 'waiting' %}<input type="checkbox" checked data-take="{{ ch.index }}" aria-label="Accept this change">{% else %}<span></span>{% endif %}
+      <span class="rq-label">{{ ch.label }}</span>
+      <div class="rq-col"><small>Now</small>
+        {% set now = ch.today %}
+        <p>{% if now is string %}{{ now or '' }}{% elif now %}{{ now | join(', ') }}{% endif %}{% if not now %}<span class="rq-empty">nothing</span>{% endif %}</p>
+      </div>
+      <div class="rq-col"><small>{{ 'Suggested' if c.status == 'waiting' else 'Applied' if c.status == 'accepted' else 'Suggested' }}{% if ch.merge %} (added to the names there){% endif %}</small>
+        {% if c.status == 'waiting' %}
+          {% if ch.field == 'description' %}
+          <textarea class="form-input form-input-sm" rows="2" maxlength="500" data-edit="{{ ch.index }}" aria-label="{{ ch.label }}">{{ ch.value }}</textarea>
+          {% elif ch.field == 'synonyms' %}
+          <input class="form-input form-input-sm" maxlength="400" data-edit="{{ ch.index }}" aria-label="{{ ch.label }}" value="{{ ch.value | join(', ') }}">
+          {% elif ch.field == 'default_date' %}
+          <select class="form-input form-input-sm" data-edit="{{ ch.index }}" aria-label="{{ ch.label }}">
+            {% for d in c.dates %}<option value="{{ d.key }}" {% if d.key == ch.value %}selected{% endif %}>{{ d.name }}</option>{% endfor %}
+          </select>
+          {% endif %}
+        {% else %}
+          <p>{% if ch.field == 'synonyms' %}{{ ch.value | join(', ') }}{% elif ch.field == 'default_date' %}{{ ch.shown or ch.value }}{% else %}{{ ch.value }}{% endif %}</p>
+        {% endif %}
+      </div>
+      {% if ch.clashes %}<p class="rq-warn">{% for word, other in ch.clashes.items() %}"{{ word }}" is already a name of {{ other }}. {% endfor %}</p>{% endif %}
+    </div>
+    {% endfor %}
+
+    {% if c.note %}
+    <div class="rq-note"><small>{{ 'What it counts' if c.kind == 'new_metric' else 'How it should be counted' if c.target_kind == 'measure' else 'Note' }}</small>{{ c.note }}</div>
+    {% endif %}
+    {% if c.example %}<div class="rq-note"><small>Example question</small>{{ c.example }}</div>{% endif %}
+    {% if c.reason %}<div class="rq-note"><small>Why it was not accepted</small>{{ c.reason }}</div>{% endif %}
+
+    <div class="rq-actions">
+      {% if c.status == 'waiting' %}
+        {% if c.changes %}
+        <button type="button" class="btn btn-primary btn-sm" data-act="accept">{{ ic("check", 14) }} Accept for everyone</button>
+        {% else %}
+        <button type="button" class="btn btn-secondary btn-sm" data-act="accept" title="Mark it done once you have changed it">{{ ic("check", 14) }} Mark as done</button>
+        {% endif %}
+        {% if c.kind == 'new_metric' %}
+        <a class="btn btn-secondary btn-sm" href="/admin/clients/{{ client.account_id }}/measures/edit?describe={{ c.note | urlencode }}&amp;name={{ c.target_name | urlencode }}">{{ ic("sparkles", 14) }} Write it in the editor</a>
+        {% elif c.editor %}
+        <a class="btn btn-secondary btn-sm" href="/admin/clients/{{ client.account_id }}/measures/edit?key={{ c.target_key | urlencode }}">{{ ic("pencil", 14) }} Open in the editor</a>
+        {% endif %}
+        <button type="button" class="btn btn-ghost btn-sm" data-act="reject">Reject…</button>
+      {% elif c.status == 'accepted' %}
+        <span class="rq-status">{{ c.decided_by }}, {{ (c.decided_at or '')[:16] }}</span>
+        {% if c.applied %}<button type="button" class="btn btn-ghost btn-sm" data-act="undo">{{ ic("rotate", 14) }} Undo</button>{% endif %}
+      {% else %}
+        <span class="rq-status">{{ c.decided_by }}, {{ (c.decided_at or '')[:16] }}</span>
+      {% endif %}
+      <p class="rq-error" role="alert" hidden></p>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script type="application/json" id="rq-data">{{ {"account": client.account_id} | tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var data = JSON.parse(document.getElementById('rq-data').textContent);
+  var BASE = '/admin/clients/' + encodeURIComponent(data.account) + '/requests/api/';
+  function post(path, body) {
+    return fetch(BASE + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body || {})}).then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
+      .catch(function () { return {ok: false, error: 'The server could not be reached.'}; });
+  }
+  document.querySelectorAll('.rq-card').forEach(function (card) {
+    var id = card.getAttribute('data-request');
+    var error = card.querySelector('.rq-error');
+    function done(r) {
+      if (r && r.ok) { window.location.reload(); return; }
+      error.textContent = (r && r.error) || 'It could not be saved.';
+      error.hidden = false;
+    }
+    card.querySelectorAll('[data-act]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var act = button.getAttribute('data-act');
+        if (act === 'accept') {
+          var edits = {}, skip = [];
+          card.querySelectorAll('[data-edit]').forEach(function (el) { edits[el.getAttribute('data-edit')] = el.value; });
+          card.querySelectorAll('[data-take]').forEach(function (el) { if (!el.checked) skip.push(Number(el.getAttribute('data-take'))); });
+          post(id + '/accept', {edits: edits, skip: skip}).then(done);
+        } else if (act === 'reject') {
+          window.qbConfirm({title: 'Reject this request?', body: 'Say why: the reader who asked is shown this.',
+                            confirm: 'Reject', variant: 'danger', input: {placeholder: 'Why it is not accepted'}})
+            .then(function (reason) { if (reason !== false) post(id + '/reject', {reason: reason}).then(done); });
+        } else if (act === 'undo') {
+          post(id + '/undo').then(function (r) {
+            if (r && r.ok && r.kept && r.kept.length && window.qbToast) {
+              window.qbToast.notify({title: 'Undone', tone: 'warning', duration: 0,
+                body: 'Except what was changed again since: ' + r.kept.join(', ') + '.'});
+              setTimeout(function () { window.location.reload(); }, 2500);
+              return;
+            }
+            done(r);
+          });
+        }
+      });
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -252,6 +252,19 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                         except Exception:  # noqa: BLE001
                             problems.append({"where": f"{view} what you can ask", "problem": "no answer",
                                              "detail": question})
+                if path == "/portal/kb":
+                    # Suggest a change: the form a reader fills in (a sheet from the bottom on a phone).
+                    page.goto(base + path, wait_until="networkidle")
+                    page.wait_for_timeout(800)
+                    opener = page.locator(".ask-item [data-ask-open]")
+                    if opener.count():
+                        opener.first.click()
+                        page.wait_for_timeout(500)
+                        report.append({"page": "suggest a change", "view": view, **p.shot("98_suggest_a_change")})
+                        page.keyboard.press("Escape")
+                    else:
+                        problems.append({"where": f"{view} what you can ask", "problem": "no Suggest a change",
+                                         "detail": "the page offers nothing to suggest a change on"})
                 pinned = page.locator("a", has_text="Store comparison")
                 if path == "/portal/dashboard" and pinned.count():
                     pinned.first.click()
@@ -268,7 +281,8 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
             workspace = f"/admin/clients/{READER[0]}"
             for path in ("/admin", workspace, workspace + "/setup", workspace + "/learned", workspace + "/knowledge", workspace + "/dates", workspace + "/kb",
                          workspace + "/relationships", workspace + "/graph", workspace + "/date-roles", workspace + "/metrics", workspace + "/measures",
-                         workspace + "/measures/edit", workspace + "/users",
+                         workspace + "/measures/edit", workspace + "/requests", workspace + "/requests?status=accepted",
+                         workspace + "/users",
                          workspace + "/settings", workspace + "/compliance", workspace + "/diagnostics",
                          workspace + "/billing", workspace + "/queries", "/admin/system", "/admin/clients",
                          "/admin/clients/new", "/admin/databases", "/admin/platforms"):
@@ -288,7 +302,8 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                 if target and a.page.locator(target).count():
                     a.page.locator(target).first.click()
                     a.page.wait_for_timeout(500)
-                report.append({"page": path, "view": view, **a.shot("51" + path.replace("/", "_"), full=True)})
+                report.append({"page": path, "view": view, **a.shot("51" + path.replace("/", "_").replace("?", "_").replace("=", "-"),
+                                                                   full=True)})
         browser.close()
     return report, problems
 

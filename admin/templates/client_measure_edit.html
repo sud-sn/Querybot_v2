@@ -152,7 +152,7 @@
     <div class="me-sec">
       <h2><span class="me-n">1</span> Describe it</h2>
       <textarea id="me-describe" class="form-input" rows="2" maxlength="1000" aria-label="What the metric counts, in your words"
-                placeholder="e.g. Gross margin as a percentage of net sales, only completed orders: leave out cancelled ones"></textarea>
+                placeholder="e.g. Gross margin as a percentage of net sales, only completed orders: leave out cancelled ones">{{ describe or '' }}</textarea>
       <div class="me-row">
         <button type="button" class="btn btn-secondary btn-sm" id="me-write">{{ ic("sparkles", 14) }} Write it for me</button>
         <p class="me-help" id="me-paste">Or paste a formula.</p>

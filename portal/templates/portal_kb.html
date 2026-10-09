@@ -76,13 +76,60 @@
 .kb-learned-list{margin:0;padding-left:1.1rem;font-size:var(--font-sm);color:var(--text-secondary);line-height:1.6}
 .kb-learned-try{display:flex;flex-wrap:wrap;gap:.5rem}
 .kb-fields-title{margin-top:.5rem}
+/* ── What you can ask: suggest a change (the new core) ── */
+.ask-bar{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin:.25rem 0 1rem}
+.ask-intro{font-size:var(--font-sm);color:var(--text-muted);max-width:720px;margin:0;line-height:1.6}
+.ask-tabs{margin-bottom:1rem}
+.ask-tabs .ui-chip{cursor:pointer}
+.ask-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:1.1rem;align-items:start}
+.ask-subject-head h2{font-size:var(--font-md);font-weight:var(--weight-bold);margin:0}
+.ask-subject-head p{font-size:var(--font-sm);color:var(--text-muted);margin:.2rem 0 0}
+.ask-h{font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);font-weight:var(--weight-bold);margin:1.1rem 0 .5rem}
+.ask-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.6rem}
+.ask-item{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);padding:.8rem .95rem;transition:border-color .15s ease,box-shadow .15s ease}
+.ask-item:hover{border-color:color-mix(in srgb,var(--primary) 30%,var(--border));box-shadow:var(--shadow-sm)}
+.ask-item-head{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.ask-item-head strong{font-size:var(--font-base);color:var(--text)}
+.ask-meaning{font-size:var(--font-sm);color:var(--text-soft);margin:.3rem 0 0;line-height:1.55}
+.ask-how{font-size:var(--font-sm);color:var(--text-muted);margin:.25rem 0 0;line-height:1.55}
+.ask-meta{font-size:var(--font-xs);color:var(--text-muted);margin:.35rem 0 0}
+.ask-foot{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap;margin-top:.45rem}
+.ask-state{font-size:var(--font-xs);color:var(--text-soft);margin:0}
+.ask-suggest{border:none;background:none;color:var(--primary);font-size:var(--font-xs);font-weight:var(--weight-bold);cursor:pointer;display:inline-flex;align-items:center;gap:.3rem;padding:.2rem 0}
+.ask-suggest:hover{text-decoration:underline}
+.ask-fields .ui-chip{cursor:pointer}
+.ask-fields .ui-chip:hover{color:var(--primary);box-shadow:var(--shadow-sm)}
+.ask-more{font-size:var(--font-xs);color:var(--text-muted)}
+.ask-dates{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.35rem;font-size:var(--font-sm);color:var(--text-soft)}
+.ask-dates li{display:flex;justify-content:space-between;gap:.6rem;align-items:baseline;flex-wrap:wrap}
+.ask-side .card-body{display:flex;flex-direction:column;gap:.55rem}
+.ask-side h3{font-size:var(--font-sm);font-weight:var(--weight-bold);margin:0}
+.ask-side p{font-size:var(--font-xs);color:var(--text-muted);margin:0}
+.ask-mine{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.45rem}
+.ask-mine li{font-size:var(--font-xs);color:var(--text-soft);display:flex;flex-direction:column;gap:.15rem;padding-bottom:.45rem;border-bottom:1px solid var(--border)}
+.ask-mine li:last-child{border-bottom:none}
+.ask-mine-head{display:flex;justify-content:space-between;gap:.4rem;align-items:center}
+.ask-dialog{border:none;border-radius:var(--radius-lg);padding:0;margin:auto;width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;box-shadow:var(--shadow-lg);background:var(--surface);color:var(--text)}
+.ask-dialog::backdrop{background:var(--scrim)}
+.ask-dialog form{display:flex;flex-direction:column;gap:.75rem;padding:1.1rem 1.2rem}
+.ask-dialog-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.6rem}
+.ask-dialog-head h2{font-size:var(--font-md);font-weight:var(--weight-bold);margin:0}
+.ask-dialog label{display:block;font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft);margin-bottom:.3rem}
+.ask-hint{font-size:var(--font-2xs);color:var(--text-muted);margin:.25rem 0 0}
+.ask-actions{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap}
+.ask-error{color:var(--danger);font-size:var(--font-sm);margin:0}
+@media(max-width:900px){.ask-layout{grid-template-columns:1fr}.ask-bar{flex-direction:column}}
+@media(max-width:600px){
+  .ask-dialog{width:100vw;max-width:100vw;margin:auto 0 0;border-radius:var(--radius-lg) var(--radius-lg) 0 0}
+}
+@media(prefers-reduced-motion:reduce){.ask-item{transition:none}}
 </style>
 {% endblock %}
 {% block content %}
 <section class="semantic-hero">
   <div class="semantic-title">
     <h1>{{ t('ui.shell.semantic_layer') }}</h1>
-    <p>{{ t('ui.kb.intro_learned') if learned else t('ui.kb.intro') }}</p>
+    <p>{{ t('ui.ask.intro') if catalog else t('ui.kb.intro_learned') if learned else t('ui.kb.intro') }}</p>
   </div>
   <div class="semantic-actions">
     {% if pending_count %}
@@ -99,7 +146,255 @@
 {{ alert(t('ui.kb.empty_submission'), 'error', 'x-circle') }}
 {% endif %}
 
-{% if learned %}
+{% if request.query_params.get('sent') %}
+{% set sent_note = t('ui.ask.saved_direct') if request.query_params.get('sent') == 'direct' else t('ui.ask.sent') %}
+{{ alert(sent_note, 'success', 'check-circle') }}
+{% endif %}
+
+{% if learned and catalog %}
+{# What the new core learned, as this reader may see it, each metric, field and date with how it is
+   counted and what people also call it -- and a suggestion to the admin wherever it is wrong or missing. #}
+<section class="kb-learned" aria-label="{{ t('ui.shell.semantic_layer') }}">
+  <p class="kb-learned-lead">{{ learned.headline }}</p>
+  <div class="ask-bar">
+    <p class="ask-intro">{{ learned.note or '' }}</p>
+    <button type="button" class="btn btn-primary btn-sm" data-ask-new>{{ ic("plus", 15) }} {{ t('ui.ask.new_metric') }}</button>
+  </div>
+  {% if catalog.subjects|length > 1 %}
+  <div class="chip-row ask-tabs" role="tablist" aria-label="{{ t('ui.ask.subjects') }}">
+    {% for subject in catalog.subjects %}
+    <button type="button" class="ui-chip{% if loop.first %} active{% endif %}" role="tab" id="ask-tab-{{ loop.index }}"
+            aria-controls="ask-subject-{{ loop.index }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ subject.name }}</button>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="ask-layout">
+    <div class="ask-main">
+      {% for subject in catalog.subjects %}
+      <section class="ask-subject card" id="ask-subject-{{ loop.index }}" role="tabpanel"
+               aria-labelledby="ask-tab-{{ loop.index }}"{% if not loop.first %} hidden{% endif %}><div class="card-body">
+        <header class="ask-subject-head">
+          <h2>{{ subject.name }}</h2>
+          {% if subject.grain or subject.span %}<p>{{ subject.grain[:1]|upper ~ subject.grain[1:] if subject.grain else '' }}{% if subject.grain and subject.span %} · {% endif %}{{ subject.span }}</p>{% endif %}
+        </header>
+        <select class="ask-date-source" hidden aria-hidden="true" tabindex="-1">
+          {% for d in subject.dates %}<option value="{{ d.key }}">{{ d.name }}</option>{% endfor %}
+        </select>
+        {% if subject.metrics %}
+        <h3 class="ask-h">{{ t('ui.ask.metrics') }}</h3>
+        <ul class="ask-list">
+          {% for m in subject.metrics %}
+          {% set mine = catalog.mine.get('measure:' ~ m.key) %}
+          <li class="ask-item" data-kind="measure" data-key="{{ m.key }}" data-name="{{ m.name }}"
+              data-meaning="{{ m.meaning }}" data-also="{{ m.also|join(', ') }}" data-date="{{ m.date_key }}">
+            <div class="ask-item-head"><strong>{{ m.name }}</strong>{% if m.by_admin %}<span class="badge badge-brand">{{ t('ui.ask.by_admin') }}</span>{% endif %}</div>
+            {% if m.meaning %}<p class="ask-meaning">{{ m.meaning }}</p>{% endif %}
+            <p class="ask-how">{{ m.how }}</p>
+            <p class="ask-meta">{% if m.date %}{{ t('ui.ask.counted_by', date=m.date|lower) }}{% endif %}{% if m.date and m.also %} · {% endif %}{% if m.also %}{{ t('ui.ask.also', words=m.also|join(', ')) }}{% endif %}</p>
+            <div class="ask-foot">
+              {% if mine %}<p class="ask-state"><span class="status-pill {{ {'waiting': 'warning', 'accepted': 'success', 'rejected': 'danger'}.get(mine.status, 'neutral') }}">{{ t('ui.ask.status.' ~ mine.status) }}</span>
+                {% if mine.status == 'waiting' %}{{ t('ui.ask.state.waiting', date=mine.sent_label) }}{% else %}{{ t('ui.ask.state.' ~ mine.status) }}{% if mine.reason %}: {{ mine.reason }}{% endif %}{% endif %}</p>{% else %}<span></span>{% endif %}
+              <button type="button" class="ask-suggest" data-ask-open>{{ ic("pencil", 14) }} {{ t('ui.ask.edit') if catalog.edits_directly else t('ui.ask.suggest') }}</button>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if subject.breakdowns %}
+        <h3 class="ask-h">{{ t('ui.ask.break_down') }}</h3>
+        <div class="chip-row ask-fields">
+          {% for b in subject.breakdowns %}
+          <button type="button" class="ui-chip ask-item" data-ask-open data-kind="{{ b.kind }}" data-key="{{ b.key }}" data-name="{{ b.name }}"
+                  data-meaning="{{ b.meaning }}" data-also="{{ b.also|join(', ') }}"
+                  title="{{ t('ui.ask.edit') if catalog.edits_directly else t('ui.ask.suggest') }}">{{ b.name }}</button>
+          {% endfor %}
+          {% if subject.more %}<span class="ask-more">{{ plural('ui.ask.more', subject.more) }}</span>{% endif %}
+        </div>
+        {% endif %}
+        {% if subject.dates %}
+        <h3 class="ask-h">{{ t('ui.ask.dates') }}</h3>
+        <ul class="ask-dates">
+          {% for d in subject.dates %}
+          <li class="ask-item" data-kind="date_role" data-key="{{ d.key }}" data-name="{{ d.name }}" data-also="{{ d.also|join(', ') }}">
+            <span><strong>{{ d.name }}</strong>{% if d.default and subject.dates|length > 1 %} ({{ t('ui.ask.default_date') }}){% endif %}{% if d.span %} · {{ d.span }}{% endif %}{% if d.also %} · {{ t('ui.ask.also', words=d.also|join(', ')) }}{% endif %}</span>
+            <button type="button" class="ask-suggest" data-ask-open>{{ ic("pencil", 14) }} {{ t('ui.ask.edit') if catalog.edits_directly else t('ui.ask.suggest') }}</button>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div></section>
+      {% endfor %}
+    </div>
+    <aside class="ask-side">
+      {% if learned.examples %}
+      <div class="card"><div class="card-body">
+        <h3>{{ t('ui.kb.try_asking') }}</h3>
+        <div class="chip-row kb-learned-try">
+          {% for q in learned.examples %}<a class="ui-chip" href="/portal/chat?new=1&amp;ask={{ q|urlencode }}">{{ q }}</a>{% endfor %}
+        </div>
+      </div></div>
+      {% endif %}
+      <div class="card" style="margin-top:.85rem"><div class="card-body">
+        <h3>{{ t('ui.ask.your_suggestions') }}</h3>
+        <p>{{ plural('ui.ask.waiting', catalog.waiting) }} · {{ plural('ui.ask.accepted_month', catalog.accepted_this_month) }}</p>
+        {% if catalog.requests %}
+        <ul class="ask-mine">
+          {% for r in catalog.requests %}
+          <li>
+            <span class="ask-mine-head"><strong>{{ r.target_name or t('ui.ask.new_metric_label') }}</strong>
+              <span class="status-pill {{ {'waiting': 'warning', 'accepted': 'success', 'rejected': 'danger'}.get(r.status, 'neutral') }}">{{ t('ui.ask.status.' ~ r.status) }}</span></span>
+            {% if r.kind == 'new_metric' %}<span>{{ t('ui.ask.new_metric_label') }}</span>{% endif %}
+            {% if r.reason %}<span>{{ r.reason }}</span>{% endif %}
+            {% if r.status == 'waiting' %}<button type="button" class="ask-suggest" data-ask-withdraw="{{ r.id }}">{{ t('ui.ask.withdraw') }}</button>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}<p>{{ t('ui.ask.none_yet') }}</p>{% endif %}
+      </div></div>
+    </aside>
+  </div>
+</section>
+
+<dialog class="ask-dialog" id="ask-dialog" data-direct="{{ '1' if catalog.edits_directly else '0' }}" aria-labelledby="ask-dialog-title">
+  <form method="dialog" novalidate>
+    <div class="ask-dialog-head">
+      <h2 id="ask-dialog-title"></h2>
+      <button type="button" class="btn btn-ghost btn-sm" data-ask-close aria-label="{{ t('ui.ask.form.cancel') }}">{{ ic("x", 16) }}</button>
+    </div>
+    <input type="hidden" name="kind"><input type="hidden" name="target_kind"><input type="hidden" name="target_key">
+    <div data-for="new" hidden>
+      <label for="ask-new-name">{{ t('ui.ask.new.name') }}</label>
+      <input class="form-input" id="ask-new-name" name="name" maxlength="120">
+    </div>
+    <div data-for="new" hidden>
+      <label for="ask-new-what">{{ t('ui.ask.new.what') }}</label>
+      <textarea class="form-input" id="ask-new-what" name="description" rows="3" maxlength="1000"></textarea>
+      <p class="ask-hint">{{ t('ui.ask.new.what_hint') }}</p>
+    </div>
+    <div data-for="meaning" hidden>
+      <label for="ask-meaning">{{ t('ui.ask.form.meaning') }}</label>
+      <textarea class="form-input" id="ask-meaning" name="meaning" rows="2" maxlength="500"></textarea>
+    </div>
+    <div data-for="change" hidden>
+      <label for="ask-names">{{ t('ui.ask.form.names') }}</label>
+      <input class="form-input" id="ask-names" name="names" maxlength="400">
+      <p class="ask-hint" data-ask-also></p>
+    </div>
+    <div data-for="metric" hidden>
+      <label for="ask-date">{{ t('ui.ask.form.date') }}</label>
+      <select class="form-input" id="ask-date" name="date"></select>
+    </div>
+    <div data-for="metric" hidden>
+      <label for="ask-how">{{ t('ui.ask.form.how') }}</label>
+      <textarea class="form-input" id="ask-how" name="note" rows="2" maxlength="1000"></textarea>
+      <p class="ask-hint">{{ t('ui.ask.form.how_hint') }}</p>
+    </div>
+    <div data-for="other" hidden>
+      <label for="ask-note">{{ t('ui.ask.form.note') }}</label>
+      <textarea class="form-input" id="ask-note" name="other_note" rows="2" maxlength="1000"></textarea>
+    </div>
+    <div>
+      <label for="ask-example">{{ t('ui.ask.form.example') }}</label>
+      <input class="form-input" id="ask-example" name="example" maxlength="200">
+    </div>
+    <p class="ask-error" role="alert" hidden></p>
+    <div class="ask-actions">
+      <span class="ask-hint">{{ t('ui.ask.form.direct') if catalog.edits_directly else t('ui.ask.form.told') }}</span>
+      <span>
+        <button type="button" class="btn btn-secondary btn-sm" data-ask-close>{{ t('ui.ask.form.cancel') }}</button>
+        <button type="submit" class="btn btn-primary btn-sm">{{ t('ui.ask.form.save') if catalog.edits_directly else t('ui.ask.form.send') }}</button>
+      </span>
+    </div>
+  </form>
+</dialog>
+<script>
+(function () {
+  const dlg = document.getElementById('ask-dialog');
+  if (!dlg) return;
+  const form = dlg.querySelector('form');
+  const direct = dlg.dataset.direct === '1';
+  const error = dlg.querySelector('.ask-error');
+  const show = (part, on) => form.querySelectorAll('[data-for="' + part + '"]').forEach(el => { el.hidden = !on; });
+
+  // The subject tabs: one subject at a time.
+  document.querySelectorAll('.ask-tabs [role="tab"]').forEach(tab => tab.addEventListener('click', () => {
+    document.querySelectorAll('.ask-tabs [role="tab"]').forEach(other => {
+      const on = other === tab;
+      other.classList.toggle('active', on);
+      other.setAttribute('aria-selected', on ? 'true' : 'false');
+      const panel = document.getElementById(other.getAttribute('aria-controls'));
+      if (panel) panel.hidden = !on;
+    });
+  }));
+
+  function open(item) {
+    form.reset();
+    error.hidden = true;
+    const isNew = !item;
+    form.elements.kind.value = isNew ? 'new_metric' : 'change';
+    show('new', isNew);
+    show('change', !isNew);
+    show('metric', !isNew && item.dataset.kind === 'measure');
+    show('meaning', !isNew && item.dataset.kind !== 'date_role');
+    show('other', !isNew && item.dataset.kind !== 'measure');
+    const title = document.getElementById('ask-dialog-title');
+    if (isNew) {
+      title.textContent = window.qbT('ui.ask.new_metric');
+    } else {
+      title.textContent = window.qbT(direct ? 'ui.ask.form.edit_title' : 'ui.ask.form.title', {name: item.dataset.name});
+      form.elements.target_kind.value = item.dataset.kind;
+      form.elements.target_key.value = item.dataset.key;
+      form.elements.meaning.value = item.dataset.meaning || '';
+      const also = dlg.querySelector('[data-ask-also]');
+      also.textContent = item.dataset.also
+        ? window.qbT('ui.ask.also', {words: item.dataset.also}) + '. ' + window.qbT('ui.ask.form.names_hint')
+        : window.qbT('ui.ask.form.names_hint');
+      if (item.dataset.kind === 'measure') {
+        const source = item.closest('.ask-subject').querySelector('.ask-date-source');
+        const select = form.elements.date;
+        select.replaceChildren(...Array.from(source.options).map(o => new Option(o.textContent, o.value)));
+        select.value = item.dataset.date || '';
+      }
+    }
+    dlg.showModal();
+  }
+
+  document.querySelectorAll('[data-ask-open]').forEach(button => button.addEventListener('click', () =>
+    open(button.closest('.ask-item'))));
+  document.querySelectorAll('[data-ask-new]').forEach(button => button.addEventListener('click', () => open(null)));
+  dlg.querySelectorAll('[data-ask-close]').forEach(button => button.addEventListener('click', () => dlg.close()));
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const f = form.elements;
+    const body = f.kind.value === 'new_metric'
+      ? {kind: 'new_metric', name: f.name.value, description: f.description.value, example: f.example.value}
+      : {kind: 'change', target_kind: f.target_kind.value, target_key: f.target_key.value, meaning: f.meaning.value,
+         names: f.names.value, date: f.target_kind.value === 'measure' ? f.date.value : '',
+         note: f.target_kind.value === 'measure' ? f.note.value : f.other_note.value, example: f.example.value};
+    body.source = 'page';
+    try {
+      const response = await fetch('/portal/api/requests', {method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error || response.statusText);
+      location.href = '/portal/kb?sent=' + (data.request && data.request.status === 'accepted' ? 'direct' : '1');
+    } catch (exc) {
+      error.textContent = window.qbT('ui.ask.failed', {error: exc.message});
+      error.hidden = false;
+    }
+  });
+
+  document.querySelectorAll('[data-ask-withdraw]').forEach(button => button.addEventListener('click', async () => {
+    const response = await fetch('/portal/api/requests/' + encodeURIComponent(button.dataset.askWithdraw) + '/withdraw',
+                                 {method: 'POST', credentials: 'same-origin'});
+    if (response.ok) location.reload();
+  }));
+})();
+</script>
+{% if semantic_tables %}<h2 class="kb-learned-title kb-fields-title">{{ t('ui.kb.field_definitions') }}</h2>
+<p class="kb-learned-note">{{ t('ui.kb.fields_intro') }}</p>{% endif %}
+{% elif learned %}
 {# What the new core learned, as this reader may see it: the answer the chat
    gives to "what data do you have?", with questions to try. #}
 <section class="kb-learned" aria-label="{{ t('ui.shell.semantic_layer') }}">

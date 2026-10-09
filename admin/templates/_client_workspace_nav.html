@@ -8,7 +8,8 @@
    Compliance · Settings) and the open area's own menu on a band beneath.
 
    Data holds the new core's semantic layer an admin corrects: Setup, what QueryBot
-   learned, the knowledge base, relationships, dates and metrics. Questions is the log, the
+   learned, the knowledge base, relationships, dates and metrics, and the changes
+   readers asked for (Requests). Questions is the log, the
    answers readers flagged and usage. The AI egress log sits with its policy under
    Compliance. Settings is one page with the danger zone at its foot.
 
@@ -21,7 +22,7 @@
 {% set _seg  = _tail.split('/')[0] if _tail else '' %}
 
 {% set _is_overview   = (_seg == '') %}
-{% set _is_data       = _seg in ['setup', 'learned', 'knowledge', 'relationships', 'dates', 'measures'] %}
+{% set _is_data       = _seg in ['setup', 'learned', 'knowledge', 'relationships', 'dates', 'measures', 'requests'] %}
 {% set _is_questions  = _seg in ['queries', 'learning-queue', 'billing'] %}
 {% set _is_people     = _seg in ['users', 'groups', 'pending-users'] %}
 {% set _is_compliance = _seg in ['compliance', 'egress'] %}
@@ -41,7 +42,7 @@
 {# The open area's menu: (path segment, label). #}
 {% if _is_data %}
   {% set _menu = [('setup', 'Setup'), ('learned', 'What QueryBot learned'), ('knowledge', 'Knowledge base'),
-                  ('relationships', 'Relationships'), ('dates', 'Dates'), ('measures', 'Metrics')] %}
+                  ('relationships', 'Relationships'), ('dates', 'Dates'), ('measures', 'Metrics'), ('requests', 'Requests')] %}
 {% elif _is_questions %}
   {% set _menu = [('queries', 'Questions'), ('learning-queue', 'Flagged answers'), ('billing', 'Usage & billing')] %}
 {% elif _is_people %}
@@ -90,7 +91,8 @@
 <nav class="client-workspace-secondary ws-menu" aria-label="{{ 'Diagnostics, for support' if _is_diagnostics else _area }}">
   {% for seg, label in _menu %}
   <a href="{{ _b }}/{{ seg }}" class="{% if seg == _seg %}active{% endif %}" {% if seg == _seg %}aria-current="page"{% endif %}>{{ label | e }}
-    {%- if seg == 'pending-users' and pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
+    {%- if seg == 'pending-users' and pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}
+    {%- if seg == 'requests' and requests_waiting is defined %}{% set _waiting = requests_waiting(client.account_id) %}{% if _waiting %}<span class="client-nav-count">{{ _waiting }}</span>{% endif %}{% endif %}</a>
   {% endfor %}
 </nav>
 {% endif %}

@@ -118,6 +118,27 @@ if fresh:
     store.create_user(RETAIL, "Riley Reader", READER[0], group_id=sales, role="analyst", password=READER[1])
     store.create_user(inv_account, "Ines Inventory", "ines@example.com", role="admin", password=READER[1])
     store.create_user(RETAIL, "Adi Admin", "adi@example.com", role="admin", password=READER[1])
+    # Readers' requests: one waiting (a meaning, other names and another date for a metric), a metric described in
+    # words, and one a reader who edits directly made.
+    from core2.bootstrap.service import load_model
+    from core2.request_service import file_request
+
+    model = load_model(RETAIL, store.get_client(RETAIL).get("db_config_id"))
+    net = next(m for m in model.measures.values() if m.business_name == "Net amount")
+    ship = next(r for r in model.date_roles.values() if r.table == net.table and r.name == "Ship date")
+    riley = store.get_user_by_email(RETAIL, READER[0])
+    adi = store.get_user_by_email(RETAIL, "adi@example.com")
+    file_request(RETAIL, store.get_client(RETAIL), riley, {
+        "kind": "change", "target_kind": "measure", "target_key": net.key,
+        "meaning": "Sale value after discounts, before tax; delivery charges are not included.",
+        "names": "sales, turnover", "date": ship.key, "note": "Orders refunded in full still count today.",
+        "example": "Net sales by store last quarter"}, allowed=None)
+    file_request(RETAIL, store.get_client(RETAIL), riley, {
+        "kind": "new_metric", "name": "Margin after returns",
+        "description": "Net amount minus refunds, divided by net amount, completed orders only.",
+        "example": "Margin after returns by month"}, allowed=None)
+    file_request(RETAIL, store.get_client(RETAIL), adi, {"kind": "change", "target_kind": "entity",
+                                                         "target_key": "store", "names": "shop, outlet"}, allowed=None)
     # An Azure deployment with no model or price on file yet: System asks for its price.
     from core import llm
     from core.llm_audit import llm_audit_scope

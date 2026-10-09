@@ -49,13 +49,14 @@ class _Signals:
     """Context manager: no signals except the ones named."""
 
     def __init__(self, access=None, flagged=None, conflicts=None, errors=None,
-                 semantic=None, metric_proposals=None):
+                 semantic=None, metric_proposals=None, reader_requests=None):
         self.access = access or {}
         self.flagged = flagged or {}
         self.conflicts = conflicts or {}
         self.errors = errors or {}
         self.semantic = semantic or {}
         self.metric_proposals = metric_proposals or {}
+        self.reader_requests = reader_requests or {}
         self._patches: list = []
 
     def _by_severity(self, severity: str = ""):
@@ -74,6 +75,7 @@ class _Signals:
             # its signal is then untested however broken it is.
             patch("admin.inbox.store.pending_metric_proposals_by_account",
                   return_value=self.metric_proposals),
+            patch("admin.inbox.store.waiting_core2_requests", return_value=self.reader_requests),
         ]
         for p in self._patches:
             p.start()

@@ -69,9 +69,15 @@ async def measure_edit_page(request: Request, account_id: str):
         return RedirectResponse(f"/admin/clients/{account_id}/measures", status_code=303)
     dates = {t: [{"key": r.key, "name": r.name} for r in sorted(model.date_roles.values(), key=lambda r: r.name)
                  if r.table == t] for t in model.tables}
+    state = authoring.editor_state(model, measure)
+    # A new metric a reader described (Data → Requests): their name and words, ready to be written.
+    describe = " ".join(request.query_params.get("describe", "").split())[:1000] if measure is None else ""
+    if describe:
+        state = {**state, "name": " ".join(request.query_params.get("name", "").split())[:120] or state.get("name", ""),
+                 "description": describe}
     return _resp(request, "client_measure_edit.html", {
-        "client": client, "measure": measure,
-        "editor": {"state": authoring.editor_state(model, measure), "fields": authoring.fields(model),
+        "client": client, "measure": measure, "describe": describe,
+        "editor": {"state": state, "fields": authoring.fields(model),
                    "metrics": [m for m in authoring.metrics(model) if m["key"] != key],
                    "tables": authoring.tables(model), "links": authoring.links(model),
                    "functions": [{"name": n, "template": t, "what": w} for n, t, w in authoring.FUNCTIONS],

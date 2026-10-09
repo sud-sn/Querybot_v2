@@ -12882,3 +12882,4 @@ from admin import core2_routes as _core2_routes  # noqa: E402,F401
 from admin import core2_relationships as _core2_relationships  # noqa: E402,F401
 from admin import core2_metrics as _core2_metrics  # noqa: E402,F401
 from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401
+from admin import core2_requests as _core2_requests  # noqa: E402,F401

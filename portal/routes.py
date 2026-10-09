@@ -2327,6 +2327,46 @@ def _what_you_can_ask(user: dict, client: dict, state_data: dict, allowed: set[s
         return None
 
 
+def _reader_catalog(user: dict, client: dict, state_data: dict, allowed: set[str] | None) -> dict | None:
+    """The data as this reader may ask about it, to suggest changes on, with their own suggestions beside it."""
+    account_id = user["account_id"]
+    try:
+        from core.value_index import value_index_enabled
+        from core2.bootstrap.service import answering_model
+        from core2.model.requests import reader_view
+        from core2.service import _allowed_model_tables, question_scrubber
+
+        model = answering_model(account_id, client)
+        if model is None:
+            return None
+        view = reader_view(model, today=_dt.date.today(), allowed=_allowed_model_tables(model, allowed),
+                           values=question_scrubber(account_id) is None and value_index_enabled(state_data))
+        from core.i18n import format_date
+
+        mine = [r for r in store.list_core2_requests(account_id, user_id=str(user["id"]), limit=100)
+                if r["status"] != "withdrawn"]
+        for r in mine:
+            try:
+                r["sent_label"] = format_date(_dt.date.fromisoformat(str(r.get("created_at") or "")[:10]),
+                                              "day_month_short_year")
+            except ValueError:
+                r["sent_label"] = ""
+        latest: dict[str, dict] = {}
+        for r in mine:          # newest first: the latest suggestion on each thing is the one shown on it
+            latest.setdefault(f"{r.get('target_kind')}:{r.get('target_key')}", r)
+        view["mine"] = latest
+        view["waiting"] = sum(1 for r in mine if r["status"] == "waiting")
+        month = _dt.date.today().strftime("%Y-%m")
+        view["accepted_this_month"] = sum(1 for r in mine if r["status"] == "accepted"
+                                          and str(r.get("decided_at") or "").startswith(month))
+        view["requests"] = mine[:20]
+        view["edits_directly"] = user.get("role") == "admin"
+        return view
+    except Exception as exc:  # noqa: BLE001 - the page still shows what the data covers
+        log.warning("The reader catalog could not be read for %s: %s", account_id, exc, exc_info=True)
+        return None
+
+
 @router.get("/kb", response_class=HTMLResponse)
 async def portal_kb(request: Request):
     user = _get_portal_user(request)
@@ -2358,10 +2398,12 @@ async def portal_kb(request: Request):
         if (t["schema"] or "DEFAULT").upper() == selected_schema
     ]
 
+    learned = _what_you_can_ask(user, client, state_data, allowed)
     return _resp(request, "portal_kb.html", {
         "user":              user,
         "client":            client,
-        "learned":           _what_you_can_ask(user, client, state_data, allowed),
+        "learned":           learned,
+        "catalog":           _reader_catalog(user, client, state_data, allowed) if learned else None,
         "semantic_tables":   semantic_tables,
         "visible_tables":    visible_tables,
         "schemas":           schemas,
@@ -2381,6 +2423,13 @@ async def portal_semantic_feedback_updates(request: Request):
         int(user["id"]),
         limit=50,
     )
+    # The reader's suggestions to the new core, decided this week, told the same way.
+    from core2.request_service import recent_decisions
+
+    rows = list(rows) + [{"id": f"c2r-{r['id']}", "status": "approved" if r["status"] == "accepted" else "rejected",
+                          "table_fqn": "", "column_name": r.get("target_name") or "", "suggested_meaning": "",
+                          "suggested_use_case": "", "admin_note": r.get("reason") or ""}
+                         for r in recent_decisions(user["account_id"], str(user["id"]))]
     return JSONResponse({"ok": True, "items": rows})
 
 
@@ -2980,3 +3029,7 @@ async def portal_suggestions_event(request: Request):
         log.debug("portal_suggestions_event: record_event failed (non-fatal): %s", exc)
 
     return JSONResponse({"ok": True})
+
+
+# A reader's suggestions to the new core live in portal/core2_requests.py, registered on this router here.
+from portal import core2_requests as _core2_requests  # noqa: E402,F401

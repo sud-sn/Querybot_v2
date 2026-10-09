@@ -70,6 +70,7 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
     access = store.pending_access_by_account()
     flagged = store.flagged_answers_by_account()
     metric_proposals = store.pending_metric_proposals_by_account()
+    reader_requests = store.waiting_core2_requests()
     errors = store.open_conflicts_by_account("ERROR")
     semantic = {
         row["account_id"]: int(row.get("pending") or 0)
@@ -169,6 +170,15 @@ def build_inbox(clients: list[dict], db_ids: set[str] | None = None) -> list[dic
                 "composed in chat or suggested by the knowledge-base build; "
                 "accepting one shares it with everyone",
                 "/metrics#proposals", "Review metric requests", account_id, n)
+
+        n = reader_requests.get(account_id, 0)
+        if n:
+            # "warn": the reader who asked still gets answers; what waits is whether
+            # everyone's answers change.
+            hit("reader-request", "warn", "reader requests awaiting a decision",
+                "readers suggested what a metric or field means, other names for it, "
+                "the date it is counted by, or a metric to add",
+                "/requests", "Review requests", account_id, n)
 
         # The semantic compiler's warnings were listed here as "worth knowing"
         # with no action to take. They are developer tooling for the earlier

@@ -1,4 +1,4 @@
-"""Persistence for core2: semantic model versions, admin overrides, build runs.
+"""Persistence for core2: semantic model versions, admin overrides, build runs, readers' requests.
 
 A workspace's model is identified by (account_id, db_config_id); every build
 writes a new version and the last ``KEEP_VERSIONS`` are kept. Overrides are one
@@ -230,3 +230,114 @@ def core2_measure_uses(account_id: str, since: str) -> dict[str, int]:
         for slug in slugs:
             counts[str(slug)] = counts.get(str(slug), 0) + 1
     return counts
+
+
+# ── readers' requests ────────────────────────────────────────────────────────
+# A change a reader asked for (what a metric means, the other names people use, the date it is
+# counted by), or a metric they want added. An admin accepts it, which writes it as admin decisions
+# (``applied`` keeps what each decision was before, so it can be undone), or rejects it with a reason
+# the reader is shown.
+
+REQUEST_STATUSES = ("waiting", "accepted", "rejected", "withdrawn", "undone")
+
+
+def _request(row: Any) -> dict[str, Any]:
+    out = dict(row)
+    for key, empty in (("changes_json", []), ("applied_json", []), ("definition_json", None)):
+        try:
+            out[key.removesuffix("_json")] = json.loads(row[key]) if row[key] else empty
+        except (TypeError, ValueError):
+            out[key.removesuffix("_json")] = empty
+        out.pop(key, None)
+    return out
+
+
+def add_core2_request(account_id: str, db_config_id: int | None, *, kind: str, user_id: str, user_name: str,
+                      target_kind: str = "", target_key: str = "", target_name: str = "",
+                      changes: list[dict[str, Any]] | None = None, note: str = "", example: str = "",
+                      definition: dict[str, Any] | None = None, source: str = "page", question_id: str = "") -> int:
+    with get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO core2_request(account_id, db_config_id, kind, target_kind, target_key, target_name,
+                                         changes_json, note, example, definition_json, source, question_id,
+                                         user_id, user_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (account_id, int(db_config_id or 0), kind, target_kind, target_key, target_name,
+             json.dumps(changes or [], default=str), note, example,
+             json.dumps(definition, default=str) if definition else "", source, question_id, str(user_id),
+             user_name, _now()))
+        return int(cur.lastrowid)
+
+
+def get_core2_request(account_id: str, request_id: int) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM core2_request WHERE account_id = ? AND id = ?",
+                           (account_id, int(request_id))).fetchone()
+    return _request(row) if row else None
+
+
+def list_core2_requests(account_id: str, *, status: str | None = None, user_id: str | None = None,
+                        limit: int = 200) -> list[dict[str, Any]]:
+    where, params = ["account_id = ?"], [account_id]
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if user_id is not None:
+        where.append("user_id = ?")
+        params.append(str(user_id))
+    with get_db() as conn:
+        rows = conn.execute(f"SELECT * FROM core2_request WHERE {' AND '.join(where)} "
+                            "ORDER BY created_at DESC, id DESC LIMIT ?", (*params, int(limit))).fetchall()
+    return [_request(r) for r in rows]
+
+
+def count_core2_requests(account_id: str) -> dict[str, int]:
+    """How many requests are in each state."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT status, COUNT(*) AS n FROM core2_request WHERE account_id = ? GROUP BY status",
+                            (account_id,)).fetchall()
+    return {**{s: 0 for s in REQUEST_STATUSES}, **{r["status"]: int(r["n"]) for r in rows}}
+
+
+def waiting_core2_requests() -> dict[str, int]:
+    """Requests waiting for an admin, per workspace (the admin inbox)."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT account_id, COUNT(*) AS n FROM core2_request WHERE status = 'waiting' "
+                            "GROUP BY account_id").fetchall()
+    return {r["account_id"]: int(r["n"]) for r in rows}
+
+
+def decide_core2_request(account_id: str, request_id: int, *, status: str, decided_by: str, reason: str = "",
+                         applied: list[dict[str, Any]] | None = None, changes: list[dict[str, Any]] | None = None,
+                         expect: tuple[str, ...] = ("waiting",)) -> bool:
+    """Move a request on: only from a state in ``expect``, so two admins cannot both decide it."""
+    if status not in REQUEST_STATUSES:
+        raise ValueError(f"no such request status: {status!r}")
+    sets = ["status = ?", "decided_by = ?", "reason = ?", "decided_at = ?"]
+    params: list[Any] = [status, decided_by, reason, _now()]
+    if applied is not None:
+        sets.append("applied_json = ?")
+        params.append(json.dumps(applied, default=str))
+    if changes is not None:
+        sets.append("changes_json = ?")
+        params.append(json.dumps(changes, default=str))
+    marks = ", ".join("?" for _ in expect)
+    with get_db() as conn:
+        cur = conn.execute(f"UPDATE core2_request SET {', '.join(sets)} WHERE account_id = ? AND id = ? "
+                           f"AND status IN ({marks})", (*params, account_id, int(request_id), *expect))
+        return cur.rowcount == 1
+
+
+def get_core2_override(account_id: str, db_config_id: int | None, object_key: str, field: str) -> dict[str, Any] | None:
+    """One decision as stored, or None: what an accepted request replaced, so it can be put back."""
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT value_json, author, note FROM core2_override
+               WHERE account_id = ? AND db_config_id = ? AND object_key = ? AND field = ?""",
+            (account_id, int(db_config_id or 0), object_key, field)).fetchone()
+    if not row:
+        return None
+    try:
+        return {"value": json.loads(row["value_json"]), "author": row["author"], "note": row["note"]}
+    except (TypeError, ValueError):
+        return None

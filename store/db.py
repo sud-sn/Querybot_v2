@@ -1674,6 +1674,31 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             created_at     TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_core2_answer_account ON core2_answer (account_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS core2_request (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL,
+            db_config_id    INTEGER NOT NULL DEFAULT 0,
+            kind            TEXT NOT NULL DEFAULT 'change',
+            target_kind     TEXT NOT NULL DEFAULT '',
+            target_key      TEXT NOT NULL DEFAULT '',
+            target_name     TEXT NOT NULL DEFAULT '',
+            changes_json    TEXT NOT NULL DEFAULT '[]',
+            note            TEXT NOT NULL DEFAULT '',
+            example         TEXT NOT NULL DEFAULT '',
+            definition_json TEXT NOT NULL DEFAULT '',
+            source          TEXT NOT NULL DEFAULT 'page',
+            question_id     TEXT NOT NULL DEFAULT '',
+            user_id         TEXT NOT NULL DEFAULT '',
+            user_name       TEXT NOT NULL DEFAULT '',
+            status          TEXT NOT NULL DEFAULT 'waiting',
+            reason          TEXT NOT NULL DEFAULT '',
+            applied_json    TEXT NOT NULL DEFAULT '[]',
+            decided_by      TEXT NOT NULL DEFAULT '',
+            decided_at      TEXT NOT NULL DEFAULT '',
+            created_at      TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_core2_request_account ON core2_request (account_id, status, created_at);
         """
     )
 
