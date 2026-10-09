@@ -95,6 +95,12 @@ def test_too_many_members_or_a_top_n_are_offered_as_bars_only(retail):
     assert _answer(retail, TOP_10)["chart"]["renderable_types"] == ["bar"]          # ten of many customers
 
 
+def test_a_whys_changes_by_member_are_offered_as_bars_only(retail):
+    chart = _answer(retail, {"intent": "drivers", "measures": ["net_amount"],
+                             "time": {"window": {"kind": "between", "start": "2026-04-01", "end": "2026-04-30"}}})["chart"]
+    assert chart["chart_type"] == "bar" and chart["renderable_types"] == ["bar"]
+
+
 def test_a_question_can_ask_for_a_donut(retail):
     chart = _answer(retail, {**SHARE, "chart": "donut"})["chart"]
     assert chart["chart_type"] == "donut"

@@ -534,7 +534,8 @@ def bar_chart(title: str, x: str, x_label: str, ys: list[tuple[str, str, str]], 
             "rows": [{x: "" if r.get(x) is None else str(r[x]), **{y: _number(r.get(y)) for y, _, _ in ys}}
                      for r in rows],
             "x_style": "", "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
-            "renderable_types": ["bar", "line", "area"], "allowed_types": ["bar", "line", "area"],
+            # Members, never a time line: bars only (a "why"'s changes by store offered Line and Area).
+            "renderable_types": ["bar"], "allowed_types": ["bar"],
             "recommended_type": "bar", "chart_spec": {"x": {"column": x, "role": "dimension"}, "column_roles": roles},
             "intent": intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
 
