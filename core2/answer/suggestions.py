@@ -16,7 +16,7 @@ from core2.answer.builder import condition_words, span_words
 from core2.answer.drivers import Grouping, candidates
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan
-from core2.resolve.resolver import Logical, measure_dates
+from core2.resolve.resolver import Logical, adds_up, measure_dates
 from core2.resolve.time import label as period_label
 
 _FORECAST_GRAINS = {"month": "months", "quarter": "quarters", "week": "weeks"}
@@ -76,7 +76,7 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
             out.append(f"Monthly {lower} for {top}{tail}")
         if bounded and logical.compare is None:
             out.append(f"Why did {lower} change {span}{tail}?")
-        if not logical.share and logical.compare is None:
+        if not logical.share and logical.compare is None and logical.measures and adds_up(logical.measures[0]):
             out.append(f"Share of {lower} by {Grouping('', grouped[0].label, []).word} {span}".strip() + tail)
     elif not grouped and period is None:
         if bounded:

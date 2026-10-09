@@ -100,7 +100,9 @@ How to plan:
    week instead", "only for X", "what about returns", "top 5 of those"), return the whole new plan with
    follow_up "refine"; a question about something else is follow_up "new". "Those", "them", "the same
    customers" are the members of the answer on screen, whose names you are not given: never filter on a
-   name that is not in VALUE MATCHES or a previous plan. To follow them into another period ("how did those
+   name that is not in VALUE MATCHES or a previous plan. "The first one", "the lowest one", "that
+   division" are in VALUE MATCHES when the member they point at is known: filter on its value. Never put
+   such words themselves ("lowest", "that division") in a filter; when they are not matched, ask (clarify). To follow them into another period ("how did those
    same customers do in 2025?"), keep the previous plan's group_by, sort, limit and time.window, and put the
    other period in time.compare, with intent "compare".
 12. notes: one short line for each assumption the user did not state.
@@ -117,7 +119,7 @@ class Turn:
     question: str
     plan: Plan | None = None
     masked: Masked | None = None        # what the AI was shown, when member values are withheld
-    shown: list[tuple[str, str | None]] = field(default_factory=list)   # the answer's members, in order
+    shown: list[tuple] = field(default_factory=list)   # the answer's members in order: (attribute, value, number)
 
 
 @dataclass

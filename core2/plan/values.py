@@ -176,33 +176,57 @@ _ORDINAL = re.compile(r"\b(?:the\s+)?(first|1st|top|second|2nd|third|3rd|fourth|
                       r"\s+(one|1|[a-z]+)\b", re.IGNORECASE)
 _PLACE = {"first": 0, "1st": 0, "top": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
           "fifth": 4, "5th": 4, "last": -1, "bottom": -1}
+# "The lowest one" is the row with the lowest number, wherever the answer put it.
+_BY_VALUE = re.compile(r"\b(?:the\s+)?(highest|largest|biggest|lowest|smallest)\s+(one)\b", re.IGNORECASE)
+_HIGH = {"highest", "largest", "biggest"}
+# "That division": the one member of that field the answer on screen showed.
+_THAT = re.compile(r"\b(that|this)\s+([a-z]+)\b", re.IGNORECASE)
+
+Shown = tuple  # (attribute slug, stored value or None, the answer's number for it or None)
 
 
-def placed(question: str, shown: list[tuple[str, str | None]], taken: list[ValueMatch]) -> list[ValueMatch]:
-    """"The first one", "the second warehouse", "the last one": a member of the answer on screen, by its place.
+def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[ValueMatch]:
+    """"The first one", "the lowest one", "that division": a member of the answer on screen.
 
-    ``shown`` is that answer's members in the order shown, as (attribute slug, stored value). The
-    planner is never given the rows, so "break the first one down" had no name to filter on and
-    came back as a placeholder. Only where the words name a row ("one", or the field's own noun,
-    never "the first quarter"), and never over a member the question names itself.
+    ``shown`` is that answer's members in the order shown, as (attribute slug, stored value,
+    its number). The planner is never given the rows: "break the first one down" had no name to
+    filter on and came back as a placeholder, and "which division does the lowest one belong to?"
+    was filtered on a profit centre called "lowest". By place ("the first one", "the second
+    warehouse", "the last one"), by value ("the lowest one", "the highest one"), or as the one member
+    of a field the answer showed ("that division"). Only where the words name a row ("one", or the
+    field's own noun, never "the first quarter"), and never over a member the question names itself.
     """
     if not shown:
         return []
-    nouns = {"one", "1"} | _field_words(shown[0][0])
+    words = _field_words(shown[0][0])
+    nouns = {"one", "1"} | words
     out: list[ValueMatch] = []
+
+    def free(m: re.Match) -> bool:
+        return not any(t.start < m.end() and m.start() < t.end for t in [*taken, *out])
+
     for m in _ORDINAL.finditer(question):
         word, noun = m.group(1).lower(), m.group(2).lower()
         # "The top store in March" asks for a ranking; "the top one" points at a row.
-        if noun not in (nouns if word not in ("top", "bottom") else {"one", "1"}) \
-                or any(t.start < m.end() and m.start() < t.end for t in taken):
+        if noun not in (nouns if word not in ("top", "bottom") else {"one", "1"}) or not free(m):
             continue
         place = _PLACE[word]
         if place >= len(shown):
             continue
-        attribute, value = shown[place]
+        attribute, value = shown[place][0], shown[place][1]
         if value is not None:
             out.append(ValueMatch(m.group(0), m.start(), m.end(), attribute, value))
-    return out
+    numbered = [s for s in shown if s[1] is not None and len(s) > 2 and isinstance(s[2], (int, float))]
+    for m in _BY_VALUE.finditer(question):
+        if not numbered or not free(m):
+            continue
+        pick = (max if m.group(1).lower() in _HIGH else min)(numbered, key=lambda s: s[2])
+        out.append(ValueMatch(m.group(0), m.start(), m.end(), pick[0], pick[1]))
+    members = {s[1] for s in shown if s[1] is not None}
+    for m in _THAT.finditer(question):
+        if m.group(2).lower() in words and len(members) == 1 and free(m):
+            out.append(ValueMatch(m.group(0), m.start(), m.end(), shown[0][0], next(iter(members))))
+    return sorted(out, key=lambda v: v.start)
 
 
 def listable(model: SemanticModel) -> list[str]:

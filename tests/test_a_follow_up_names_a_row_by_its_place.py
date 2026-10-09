@@ -36,8 +36,10 @@ def retail():
     return learn(domains.build("retail"), "descriptive")
 
 
-def _converse(retail, second: str, *, values_allowed: bool = True) -> tuple[dict, dict, list[str]]:
-    """Ask for the top stores, then ``second``; the AI's second plan filters on whatever member it is handed."""
+def _converse(retail, second: str, *, values_allowed: bool = True, first_plan: dict = TOP,
+              filtered_on: str | None = None, index: MemberIndex | None = None) -> tuple[dict, dict, list[str]]:
+    """Ask ``first_plan``, then ``second``; the AI's second plan filters on whatever member it is handed
+    (or on the words ``filtered_on``, as an AI that wrote the reference itself into the filter)."""
     from core2.warehouse.runner import DuckDBWarehouse
 
     built, model = retail
@@ -46,16 +48,18 @@ def _converse(retail, second: str, *, values_allowed: bool = True) -> tuple[dict
     def planner(stable: str, tail: str) -> str:
         tails.append(tail)
         if len(tails) == 1:
-            return json.dumps(TOP)
+            return json.dumps(first_plan)
         handed = re.findall(r'-> (\S+) = "([^"]+)"', tail)
         plan = {"kind": "query", "intent": "breakdown", "measures": ["net_amount"], "group_by": ["category"],
                 "time": {"window": H1}, "follow_up": "refine"}
-        if handed:
+        if filtered_on is not None:
+            plan["filters"] = [{"field": "store.name", "op": "eq", "values": [filtered_on]}]
+        elif handed:
             plan["filters"] = [{"field": handed[0][0], "op": "eq", "values": [handed[0][1]]}]
         return json.dumps(plan)
 
-    services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=planner, index=MemberIndex(),
-                        today=TODAY, values_allowed=values_allowed)
+    services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=planner,
+                        index=index or MemberIndex(), today=TODAY, values_allowed=values_allowed)
     session = Session()
     first = answer_question("Which 5 stores sold the most?", services, session)
     then = answer_question(second, services, session)
@@ -113,3 +117,41 @@ def test_a_member_the_question_names_itself_is_never_replaced():
     assert [m.value for m in placed("and the top one?", shown, [])] == ["Old Town Store"]
     assert [m.value for m in placed("the last store", shown, [])] == ["Riverside"]
     assert placed("the first one", [("store.name", None), *shown], []) == []    # an unnamed row has no value
+
+
+# ── by value, and "that region" ─────────────────────────────────────────────
+
+LEAST = {**TOP, "sort": [{"by": "net_amount", "desc": False}]}
+
+
+def test_the_lowest_one_and_the_highest_one_are_found_by_their_number_not_their_place(retail):
+    """"Which division does the lowest one belong to?" was filtered on a profit centre called "lowest"."""
+    first, then, tails = _converse(retail, "Which category does the lowest one sell most?")
+    assert f'"the lowest one" -> ' in tails[1] and f'= "{_stores(first)[-1]}"' in tails[1], tails[1]
+    assert then.get("data", {}).get("rows"), then["answer"]["headline"]
+    first, _, tails = _converse(retail, "and the highest one?", first_plan=LEAST)    # least first: the last row
+    assert f'= "{_stores(first)[-1]}"' in tails[1], tails[1]
+
+
+def test_that_region_is_the_one_region_the_answer_on_screen_showed():
+    shown = [("region.name", "North", 1200.0)]
+    assert [(m.text, m.value) for m in placed("net sales for that region by month", shown, [])] == \
+        [("that region", "North")]
+    two = [("region.name", "North", 1200.0), ("region.name", "South", 900.0)]
+    assert placed("net sales for that region by month", two, []) == []          # which one: not guessed
+    assert placed("net sales for that month", shown, []) == []                   # not the field's noun
+
+
+def test_words_that_point_at_a_row_are_never_refused_as_a_missing_name(retail):
+    """The AI wrote the reference into the filter itself: the reply asks which, never "no store called 'lowest'"."""
+    first, _, _ = _converse(retail, "q")
+    index = MemberIndex()
+    index.add("store.name", _stores(first))
+    _, then, _ = _converse(retail, "Which category does the lowest one sell most?", filtered_on="lowest",
+                           index=index)
+    said = then["answer"]["headline"]
+    assert re.search(r'I could not tell which store( name)? "lowest" means', said) and "called" not in said, said
+    _, then, _ = _converse(retail, "net sales for nowhere", filtered_on="Nowhere Store", index=index)
+    said = then["answer"]["headline"]
+    assert re.search(r'there is no store( name)? called "Nowhere Store"', said) and "the first one" in said, said
+    assert "compare that answer with the other period" not in said

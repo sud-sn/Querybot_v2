@@ -29,8 +29,7 @@ import statistics
 
 from core2.answer.builder import _Columns, _day, _lower, _noun, _number, _Units, fmt
 from core2.compile.compiler import OutColumn
-from core2.model.schema import AggExpr
-from core2.resolve.resolver import DaysBetween, Logical, OutMeasure
+from core2.resolve.resolver import Logical, OutMeasure, adds_up
 from core2.resolve.time import label as period_label
 
 MAX_FINDINGS = 3
@@ -153,14 +152,7 @@ def _listing(cols: _Columns, rows: list[dict]) -> list[str]:
 
 def _adds_up(o: OutMeasure | None, column: OutColumn) -> bool:
     """Do the groups' values add up to the whole (a sum or a count), so shares of it mean something?"""
-    if o is None or column.format in ("percent", "percentage", "days"):
-        return False
-    if o.measure is not None and o.measure.additivity == "non_additive":
-        return False
-    expr = o.expr
-    if isinstance(expr, DaysBetween):
-        return expr.agg == "sum"
-    return isinstance(expr, AggExpr) and expr.agg in ("sum", "count")
+    return o is not None and column.format not in ("percent", "percentage", "days") and adds_up(o)
 
 
 def _pct(a: float, b: float) -> float | None:

@@ -123,6 +123,21 @@ class OutMeasure:
     hidden: bool = False     # one table's share of a combined measure: worked with, never shown
 
 
+def adds_up(o: OutMeasure) -> bool:
+    """Do the groups' values of ``o`` add up to the whole (a sum or a count), so a share of it means something?
+
+    An average, a ratio ("gross profit per invoice") or a percentage does not: its values over eight
+    profit centres added together are no total, and "14% of the total" of them said nothing.
+    """
+    if o.format in ("percent", "percentage", "days"):
+        return False
+    if o.measure is not None and o.measure.additivity == "non_additive":
+        return False
+    if isinstance(o.expr, DaysBetween):
+        return o.expr.agg == "sum"
+    return isinstance(o.expr, AggExpr) and o.expr.agg in ("sum", "count")
+
+
 def _own_conditions(o: OutMeasure) -> set[str]:
     """The columns a measure's own conditions read (its definition's, and its formula's)."""
     columns = {f.column for f in (o.measure.filters if o.measure else [])}
@@ -1197,8 +1212,13 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                       if t.value not in (None, "")]
     if any(p.snapshot for p in parts) and not plan.time.grain:
         conditions.append(Condition("snapshot", ""))     # a series of snapshots is read period by period
+    share = intent == "share"
+    if share and not all(adds_up(o) for o in measures_out if not o.hidden):
+        share = False
+        notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not add up "
+                     "across its groups (an average or a ratio): no share of a total is worked out.")
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
-                   sort=sort, limit=limit, share=intent == "share", having=having, notes=_unique(notes),
+                   sort=sort, limit=limit, share=share, having=having, notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
                    expected=expected, data_last=last if plan.time.grain else None, conditions=conditions)

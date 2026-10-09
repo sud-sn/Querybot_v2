@@ -323,7 +323,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     plan, missing = _members_named(plan, model, services.index)
 
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS)
-    shown: list[tuple[str, str | None]] = []
+    shown: list[tuple] = []
     try:
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown)
     except ResolveError as exc:
@@ -356,10 +356,16 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # say so, not "No rows match", which reads as if that member bought nothing. (A member added since
         # is found by the query, so it is never refused for being new.)
         thing, value = missing
-        text = _REFUSALS["unknown"].format(message=f'there is no {thing} called "{value}"')
-        if plan.follow_up == "refine":
-            text += (f" If you mean the {names.plural(thing)} in the answer above, ask to compare that answer with "
-                     "the other period, for example \"the same ranking against last year\".")
+        if _REFERENCE.match(str(value)):
+            # The planner filtered on the words that point at a row ("lowest", "that division"): they name no member.
+            text = (f'I could not tell which {thing} "{value}" means. Name it, or point at one in the answer above: '
+                    '"the first one", "the lowest one".')
+        else:
+            text = _REFUSALS["unknown"].format(message=f'there is no {thing} called "{value}"')
+            if plan.follow_up == "refine":
+                text += (f' If you mean one of the {names.plural(thing)} in the answer above, say which ("the first '
+                         'one", "the lowest one"), or ask for the same answer in another period ("the same ranking '
+                         'against last year").')
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
@@ -371,7 +377,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
 
 
 def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, question_id: str,
-             started: float, shown: list[tuple[str, str | None]] | None = None) -> dict[str, Any]:
+             started: float, shown: list[tuple] | None = None) -> dict[str, Any]:
     """The answer to a checked plan: one query, or the several a "why" or a forecast needs.
 
     ``shown``, when given, is filled with the answer's members in the order shown, for a
@@ -403,16 +409,18 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     return payload
 
 
-def _members_shown(logical: Any, payload: dict[str, Any], most: int = 20) -> list[tuple[str, str | None]]:
-    """The members of an answer's first grouping, in the order shown, as (attribute slug, stored value)."""
+def _members_shown(logical: Any, payload: dict[str, Any], most: int = 500) -> list[tuple]:
+    """The members of an answer's first grouping, in the order shown: (attribute slug, stored value, its number)."""
     group = next((g for g in logical.groups if g.kind == "attribute" and g.attribute
                   and g.name != logical.unit_group), None)
     if group is None or any(g.kind == "period" for g in logical.groups):
         return []
-    out: list[tuple[str, str | None]] = []
+    measure = next((o.name for o in logical.measures if not o.hidden), None)
+    out: list[tuple] = []
     for row in (payload.get("export_rows") or (payload.get("data") or {}).get("rows") or [])[:most]:
-        value = row.get(group.name)
-        out.append((group.attribute, None if value in (None, "", "Unknown") else str(value)))
+        value, number = row.get(group.name), row.get(measure) if measure else None
+        out.append((group.attribute, None if value in (None, "", "Unknown") else str(value),
+                    number if isinstance(number, (int, float)) and not isinstance(number, bool) else None))
     return out
 
 
@@ -469,6 +477,12 @@ def _against_before(question: str, plan: Plan, services: Services, ctx: Context,
     if not said or said.startswith("nothing"):
         return ""
     return f"{said[:1].upper()}{said[1:]}, the period before."
+
+
+# Words that point at something rather than name it: "lowest", "the first one", "that division", "it".
+_REFERENCE = re.compile(r"^\s*(?:(?:that|this|these|those|its|their)\b|(?:the\s+)?(?:first|second|third|last|top|"
+                        r"bottom|lowest|highest|biggest|smallest|largest|best|worst|previous|same)\b|(?:it|them|one)\s*$)",
+                        re.IGNORECASE)
 
 
 def _found_nothing(payload: dict[str, Any]) -> bool:

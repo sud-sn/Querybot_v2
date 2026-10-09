@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 from core2.bootstrap import names
 from core2.compile.compiler import Compiled, OutColumn
-from core2.resolve.resolver import Condition, Logical
+from core2.resolve.resolver import Condition, Logical, adds_up
 from core2.resolve.time import Range, label as period_label
 
 log = logging.getLogger("querybot.core2")
@@ -570,6 +570,12 @@ def _noun(label: str) -> str:
     return names.plural(" ".join(words))
 
 
+def _sums(logical: Logical, m: OutColumn) -> bool:
+    """Is ``m`` a sum or a count, whose groups add up to a total (never an average or a ratio)?"""
+    o = next((o for o in logical.measures if o.name == m.name), None)
+    return o is not None and adds_up(o)
+
+
 def _ranked_periods(logical: Logical, cols: _Columns) -> bool:
     """Periods ordered by a measure ("which month had the most"), not by time."""
     periods = cols.of("period")
@@ -723,7 +729,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             portion = _number(top[worked_out.name]) or 0.0      # a fraction, as the query returns it
             share = f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
         elif not units.mixed and (logical.share or (m.format in ("currency", "number", "integer", "count") and total
-                                                    and len(raw) > 1 and not logical.limit)):
+                                                    and len(raw) > 1 and not logical.limit and _sums(logical, m))):
             portion = (_number(top[m.name]) or 0.0) / total if total else 0.0
             share = f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
         count_of = len({str(r[g.name]) for r in shown})
