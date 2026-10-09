@@ -63,9 +63,21 @@ async def send_request(request: Request):
     client = store.get_client(user["account_id"]) or {}
     if store.get_query_engine(user["account_id"]) != "core2":
         return _refused("Suggestions go to your admin from here once the new core answers your questions.")
+    definition = None
+    if form.get("kind") == "new_metric" and form.get("token"):
+        # A metric the reader made in a chat: its definition is the one the server kept, found by its token.
+        from core2.service import own_metric
+
+        made = own_metric(str(form["token"]), user["account_id"], str(user["id"]))
+        if made is None:
+            return _refused("That metric is not in your chat any more: define it again, then ask.")
+        measure = made["measure"]
+        definition = measure.model_dump(mode="json")
+        form = {"kind": "new_metric", "name": measure.business_name, "description": made["words"],
+                "example": str(form.get("example") or ""), "source": "chat", "question_id": made["question_id"]}
     try:
         filed = file_request(user["account_id"], client, user, form, allowed=store.get_allowed_tables(user),
-                             lang=get_active_language())
+                             lang=get_active_language(), definition=definition)
     except RequestRefused as exc:
         return _refused(str(exc))
     try:
@@ -91,4 +103,21 @@ async def withdraw_request(request: Request, request_id: int):
         withdraw(user["account_id"], found, user_id=str(user["id"]))
     except RequestRefused as exc:
         return _refused(str(exc))
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/own-metrics/forget")
+async def forget_own_metric(request: Request):
+    """Don't keep it: a metric the reader made in a chat leaves that chat."""
+    user = _routes._get_portal_user(request)
+    if not user:
+        return _refused("Sign in again.", 401)
+    from core2.service import forget_own_metric as forget
+
+    try:
+        token = str((await request.json() or {}).get("token") or "")
+    except (ValueError, json.JSONDecodeError, AttributeError):
+        token = ""
+    if not forget(token, user["account_id"], str(user["id"])):
+        return _refused("That metric is not in your chat any more.", 404)
     return JSONResponse({"ok": True})

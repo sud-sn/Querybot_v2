@@ -33,6 +33,7 @@ FUNCTIONS = [
     "function answerCardHtml(msg, ids, env)",
     "function _clarifyCardHtml(msg)",
     "function _answerBadgesHtml(msg)",
+    "function _ownMetricHtml(msg)",
     "function _answerTiles(msg)",
     "function _answerTilesHtml(tiles)",
     "function _shortAmount(value, fmt, spec = {})",

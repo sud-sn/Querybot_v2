@@ -5273,6 +5273,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     _guarded_turn(_run_analysis_work(text)))
                 continue
 
+            # A metric the reader defines for the new core ("X = how it is
+            # counted. Show it by month") is a question of its own: never an
+            # operation on the result on screen, whatever its last sentence says.
+            from core2.plan.own_metric import definition_in
+
+            if definition_in(text) is not None and await core2_bridge.engine(account_id) in ("core2", "compare"):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(_guarded_turn(
+                    _run_main_question(text, table_hint, schema_hint)
+                ))
+                continue
+
             # Conversational result operations run before every insight/LLM
             # route. Recognised commands fail closed: a sensitive value in an
             # exclusion command can never fall through into a model prompt.

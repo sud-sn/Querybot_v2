@@ -5046,6 +5046,25 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.kb.pending.one": {"en": "{count} pending review", "fr": "{count} correction en attente"},
     "ui.kb.pending.other": {"en": "{count} pending reviews", "fr": "{count} corrections en attente"},
     "ui.kb.back_to_chat": {"en": "Back to chat", "fr": "Retour au chat"},
+    # ── A metric the reader made in the chat (the new core) ─────────────────
+    "ui.chat.own.title": {"en": "A new metric, for this chat", "fr": "Un nouvel indicateur, pour ce chat"},
+    "ui.chat.own.used": {
+        "en": "I used it for the answer below. Only you see it, in this chat, until your admin saves it for everyone.",
+        "fr": "Je l'ai utilisé pour la réponse ci-dessous. Vous seul le voyez, dans ce chat, jusqu'à ce que votre "
+              "administrateur l'enregistre pour tous.",
+    },
+    "ui.chat.own.only": {"en": "Only {conditions}", "fr": "Seulement {conditions}"},
+    "ui.chat.own.ask": {"en": "Ask my admin to save it for everyone",
+                        "fr": "Demander à mon administrateur de l'enregistrer pour tous"},
+    "ui.chat.own.change": {"en": "Change it", "fr": "Le modifier"},
+    "ui.chat.own.forget": {"en": "Don't keep it", "fr": "Ne pas le garder"},
+    "ui.chat.own.asked": {"en": "Sent to your admin. You'll be told when it's saved for everyone.",
+                          "fr": "Envoyé à votre administrateur. Vous serez prévenu quand il sera enregistré pour tous."},
+    "ui.chat.own.saved": {"en": "Saved for everyone.", "fr": "Enregistré pour tous."},
+    "ui.chat.own.forgotten": {"en": "Removed from this chat.", "fr": "Retiré de ce chat."},
+    "ui.chat.own.failed": {"en": "It could not be done: {error}", "fr": "Cela n'a pas pu être fait : {error}"},
+    "ui.chat.own.counted_with": {"en": "Counted with your own metric: {names}",
+                                 "fr": "Compté avec votre propre indicateur : {names}"},
     # ── What you can ask: suggestions to the admin (the new core) ────────────
     "ui.ask.intro": {
         "en": "What your data covers and exactly how each number is counted. If something is wrong or missing, "

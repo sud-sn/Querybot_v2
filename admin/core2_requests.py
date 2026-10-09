@@ -84,7 +84,20 @@ def _card(model, request: dict[str, Any]) -> dict[str, Any]:
                  if r.table == table and r.kind != "audit"]
     changes = [{**c, "index": i, "today": _now_of(model, c) if request["status"] == "waiting" else c.get("now")}
                for i, c in enumerate(request.get("changes") or [])]
-    return {**request, "changes": changes, "dates": dates, "kinds": sorted(_kinds(request)),
+    made = None
+    if request.get("definition") and model is not None:
+        # A metric the reader made in a chat: how it is counted, as the admin reads a metric on the Metrics page.
+        from core2.model import authoring
+        from core2.model.schema import Measure
+        from core2.plan.catalog import definition, left_out_words
+
+        try:
+            measure = Measure.model_validate(request["definition"])
+            made = {"formula": authoring.to_text(model, measure.expr), "reads_as": definition(model, measure.expr),
+                    "only": [left_out_words(model, f) for f in measure.filters if f.column in model.columns]}
+        except Exception as exc:  # noqa: BLE001 - shown as unreadable; accepting it says why
+            made = {"formula": "", "reads_as": f"It cannot be read any more ({str(exc)[:120]}).", "only": []}
+    return {**request, "changes": changes, "dates": dates, "kinds": sorted(_kinds(request)), "made": made,
             "editor": target_kind == "measure" and target_key in (model.measures if model is not None else {})}
 
 

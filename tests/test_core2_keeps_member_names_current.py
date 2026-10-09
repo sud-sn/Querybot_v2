@@ -304,3 +304,40 @@ def test_value_indexing_turned_off_after_learn_stops_the_names_at_the_next_quest
     member = _a_member(built, _model(store))
     service.portal_answer(ACCOUNT, f"net sales for {member}", {"id": 1, "role": "admin"}, session_key="w")
     assert seen and MATCHES not in seen[0] and seen[0].count(member) == 1
+
+
+# ── a reader's own metric, made in the chat ──────────────────────────────────
+
+def _writes(monkeypatch) -> list[str]:
+    import core2.bootstrap.ai as ai
+
+    written: list[str] = []
+
+    def writer(account_id, client, *, description=""):
+        written.append(description)
+        return lambda stable, tail: "{}"
+
+    monkeypatch.setattr(ai, "metric_writer", writer)
+    return written
+
+
+DEFINITION = "Margin after returns = net amount minus refunds, divided by net amount"
+
+
+def test_a_metric_of_the_readers_own_is_written_by_the_ai_where_questions_reach_it(workspace, monkeypatch):  # noqa: F811
+    from core2 import service
+
+    monkeypatch.setattr(service, "_INDEXES", type(service._INDEXES)())
+    _learn_and_ask(*workspace, monkeypatch)
+    written = _writes(monkeypatch)
+    service.portal_answer(ACCOUNT, DEFINITION, {"id": 1, "role": "admin"}, session_key="own-on")
+    assert written == ["net amount minus refunds, divided by net amount"]
+
+
+def test_value_indexing_turned_off_offers_no_metric_of_the_readers_own(unindexed, monkeypatch):
+    from core2 import service
+
+    _learn_and_ask(*unindexed, monkeypatch)
+    written = _writes(monkeypatch)
+    payload = service.portal_answer(ACCOUNT, DEFINITION, {"id": 1, "role": "admin"}, session_key="own-off")
+    assert written == [] and "own_metric" not in payload

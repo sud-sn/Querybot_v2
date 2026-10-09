@@ -691,3 +691,20 @@ def test_a_masked_column_stays_masked_in_the_new_cores_answer_on_every_warehouse
                                  mask_exempt_outputs=analysis.mask_exempt_outputs)
         assert "Person 1" not in str(protected), (dialect, protected)
         assert 12.5 in protected[0].values(), (dialect, protected)     # the total is not masked
+
+
+def test_a_metric_the_reader_defines_reaches_the_new_core_not_the_result_on_screen(tenant):
+    # "... as a percentage. Show it by month" reads like a change to the answer on screen (a format, a regrouping):
+    # a definition is a question of its own.
+    asked: list[str] = []
+
+    def answer(account_id, question, portal_user, **kwargs):
+        asked.append(question)
+        return {**json.loads(json.dumps(CANNED)), "own_metric": {"name": "Margin after returns", "token": "t"}}
+
+    question = ("Margin after returns = net amount minus refunds, divided by net amount, as a percentage. "
+                "Show it by month in the first half of 2026")
+    turn = _ask(tenant, "core2", answer, question)
+    assert asked == [question]
+    assert [a["engine"] for a in _answers(turn)] == ["core2"]
+    assert not [f for f in turn["frames"] if f.get("type") == "assistant_error"]

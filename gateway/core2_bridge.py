@@ -129,6 +129,8 @@ def _pin(account_id: str, portal_user: dict | None, question: str, payload: dict
     sql, plan = str(trust.get("sql") or ""), payload.get("plan")
     if not (sql and plan and payload.get("data") is not None and portal_user and portal_user.get("id")):
         return ""
+    if payload.get("own_metrics_used"):
+        return ""           # a tile is drawn again outside the chat, where the reader's own metric is not
     db_config_id = int((store.get_client(account_id) or {}).get("db_config_id") or 0)
     chart = payload.get("chart") or {}
     chart_type = str(chart.get("chart_type") or ("kpi" if payload.get("kpi") else "table"))

@@ -57,6 +57,8 @@ class Services:
     data_source: str = ""
     scrub: Callable[[str], str] | None = None   # personal data out of the question before the AI (regulated)
     split_units: bool = True                    # a quantity in several units is answered per unit (issue E4)
+    # The workspace's AI writing a metric from a reader's words ("X = ..." in the chat); None: not offered.
+    write_metric: Callable[[str], Complete] | None = None
 
 
 @dataclass
@@ -73,6 +75,7 @@ class Pending:
 class Session:
     turns: list[Turn] = field(default_factory=list)
     pending: Pending | None = None
+    own: dict[str, Measure] = field(default_factory=dict)     # metrics the reader defined in this chat
 
 
 _ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
@@ -233,7 +236,45 @@ _REFUSALS = {
 
 
 def answer_question(question: str, services: Services, session: Session, *, question_id: str = "") -> dict[str, Any]:
-    """The portal frame answering ``question``; the session keeps the plan for follow-ups."""
+    """The portal frame answering ``question``; the session keeps the plan for follow-ups.
+
+    A question that defines a metric ("X = how it is counted. Show it by month") has it written by the
+    workspace's AI and kept in this chat (core2.plan.own_metric); the rest of the question is answered with it,
+    and the frame carries the metric so the reader sees how it was counted and can ask their admin to keep it.
+    """
+    from core2.plan import own_metric
+
+    defined = own_metric.definition_in(question) if services.write_metric is not None else None
+    made: Measure | None = None
+    if defined is not None:
+        # Defined again under the same name: the new definition replaces the old one, under the same slug.
+        kept = {k: m for k, m in session.own.items() if m.business_name.casefold() != defined.name.casefold()}
+        try:
+            made = own_metric.write(own_metric.with_own(services.model, kept), defined,
+                                    services.write_metric(defined.how), allowed=services.allowed_tables,
+                                    taken={m.slug for m in kept.values()})
+        except own_metric.OwnMetricError as exc:
+            return _frame(question, f"I could not make {defined.name} a metric: {exc}", kind="own_metric_refused")
+        except Exception as exc:  # noqa: BLE001 - said to the reader, never raised into their turn
+            log.warning("core2: a reader's metric could not be written: %s", exc, exc_info=True)
+            return _frame(question, f"I could not make {defined.name} a metric: something went wrong while writing "
+                                    "it. Try saying how it is counted another way.", kind="own_metric_refused")
+        session.own = {**kept, made.key: made}
+    if session.own:
+        services = replace(services, model=own_metric.with_own(services.model, session.own))
+    payload = _answer_question(defined.ask if defined is not None else question, services, session,
+                               question_id=question_id)
+    if made is not None:
+        payload["question"] = question
+        payload["own_metric"] = {**own_metric.card(services.model, made, defined), "measure": made}
+    used = {m for m in ((payload.get("plan") or {}).get("measures") or []) if isinstance(m, str)}
+    mine = [m.business_name for m in session.own.values() if m.slug in used]
+    if mine:
+        payload["own_metrics_used"] = mine
+    return payload
+
+
+def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "") -> dict[str, Any]:
     start = time.perf_counter()
     model = services.model
     pending, session.pending = session.pending, None
@@ -586,7 +627,7 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     import store
     from core.schema import load_known_tables
     from core.value_index import value_index_enabled
-    from core2.bootstrap.ai import workspace_planner
+    from core2.bootstrap.ai import metric_writer, workspace_planner
     from core2.bootstrap.service import answering_model, keep_decisions_current
     from core2.warehouse.governed import GovernedWarehouse
 
@@ -614,7 +655,11 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         complete=workspace_planner(account_id, client, question=question, question_id=question_id),
         index=_member_index(account_id, model, db_config, read=indexing), today=dt.date.today(),
         values_allowed=scrub is None and indexing, allowed_tables=_allowed_model_tables(model, allowed),
-        data_source=str(db_config.get("db_type") or ""), scrub=scrub), None
+        data_source=str(db_config.get("db_type") or ""), scrub=scrub,
+        # A reader's own metric is written by the AI from their words, unscrubbed and beside the fields' values:
+        # offered only where the question itself may reach the AI as typed.
+        write_metric=(lambda words: metric_writer(account_id, client, description=words))
+        if scrub is None and indexing else None), None
 
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,
@@ -623,7 +668,52 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
     services, refused = _portal_services(account_id, question, portal_user, question_id)
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
-    return answer_question(question, services, _session(session_key), question_id=question_id)
+    payload = answer_question(question, services, _session(session_key), question_id=question_id)
+    own = payload.get("own_metric")
+    if own and isinstance(own.get("measure"), Measure):
+        # The definition stays on the server; the reader's buttons name it by a token only they can use.
+        own["token"] = _own_token(account_id, str((portal_user or {}).get("id") or ""), session_key,
+                                  own.pop("measure"), own.get("words", ""), question_id)
+    return payload
+
+
+# A reader's metric made in a chat, by token: "Ask my admin to save it for everyone" and "Don't keep it".
+_OWN_TOKENS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+
+
+def _own_token(account_id: str, user_id: str, session_key: str, measure: Measure, words: str,
+               question_id: str) -> str:
+    import secrets
+
+    token = secrets.token_urlsafe(18)
+    with _LOCK:
+        _OWN_TOKENS[token] = {"account_id": account_id, "user_id": user_id, "session_key": session_key,
+                              "measure": measure, "words": words, "question_id": question_id}
+        while len(_OWN_TOKENS) > 2000:
+            _OWN_TOKENS.popitem(last=False)
+    return token
+
+
+def own_metric(token: str, account_id: str, user_id: str) -> dict[str, Any] | None:
+    """The reader's own metric a token names, if it is theirs."""
+    with _LOCK:
+        found = _OWN_TOKENS.get(str(token or ""))
+    if found is None or found["account_id"] != account_id or found["user_id"] != str(user_id):
+        return None
+    return found
+
+
+def forget_own_metric(token: str, account_id: str, user_id: str) -> bool:
+    """Take a reader's metric out of the chat it was made in ("Don't keep it")."""
+    found = own_metric(token, account_id, user_id)
+    if found is None:
+        return False
+    with _LOCK:
+        session = _SESSIONS.get(found["session_key"])
+        if session is not None:
+            session.own.pop(found["measure"].key, None)
+        _OWN_TOKENS.pop(token, None)
+    return True
 
 
 def portal_replay(account_id: str, plan_data: dict[str, Any], portal_user: dict[str, Any] | None, *,

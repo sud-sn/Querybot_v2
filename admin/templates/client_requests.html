@@ -115,20 +115,32 @@
     </div>
     {% endfor %}
 
+    {% if c.made %}
+    <div class="rq-change">
+      <span></span><span class="rq-label">Name</span>
+      <div class="rq-col" style="grid-column:3/-1">
+        {% if c.status == 'waiting' %}<input class="form-input form-input-sm" maxlength="120" data-edit="name" aria-label="Name" value="{{ c.target_name }}">
+        {% else %}<p>{{ c.target_name }}</p>{% endif %}
+      </div>
+    </div>
+    <div class="rq-note"><small>How it is counted (made in the chat, checked against the model)</small>
+      <code>{{ c.made.formula }}</code><br>{{ c.made.reads_as }}
+      {% if c.made.only %}<br>Only: {{ c.made.only | join('; ') }}{% endif %}</div>
+    {% endif %}
     {% if c.note %}
-    <div class="rq-note"><small>{{ 'What it counts' if c.kind == 'new_metric' else 'How it should be counted' if c.target_kind == 'measure' else 'Note' }}</small>{{ c.note }}</div>
+    <div class="rq-note"><small>{{ 'In the reader\'s words' if c.made else 'What it counts' if c.kind == 'new_metric' else 'How it should be counted' if c.target_kind == 'measure' else 'Note' }}</small>{{ c.note }}</div>
     {% endif %}
     {% if c.example %}<div class="rq-note"><small>Example question</small>{{ c.example }}</div>{% endif %}
     {% if c.reason %}<div class="rq-note"><small>Why it was not accepted</small>{{ c.reason }}</div>{% endif %}
 
     <div class="rq-actions">
       {% if c.status == 'waiting' %}
-        {% if c.changes %}
+        {% if c.changes or c.made %}
         <button type="button" class="btn btn-primary btn-sm" data-act="accept">{{ ic("check", 14) }} Accept for everyone</button>
         {% else %}
         <button type="button" class="btn btn-secondary btn-sm" data-act="accept" title="Mark it done once you have changed it">{{ ic("check", 14) }} Mark as done</button>
         {% endif %}
-        {% if c.kind == 'new_metric' %}
+        {% if c.kind == 'new_metric' and not c.made %}
         <a class="btn btn-secondary btn-sm" href="/admin/clients/{{ client.account_id }}/measures/edit?describe={{ c.note | urlencode }}&amp;name={{ c.target_name | urlencode }}">{{ ic("sparkles", 14) }} Write it in the editor</a>
         {% elif c.editor %}
         <a class="btn btn-secondary btn-sm" href="/admin/clients/{{ client.account_id }}/measures/edit?key={{ c.target_key | urlencode }}">{{ ic("pencil", 14) }} Open in the editor</a>

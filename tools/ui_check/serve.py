@@ -191,6 +191,9 @@ PLANS = {
     "how many customers ordered in april": {"intent": "count", "measures": ["number_of_customers"],
                                             "time": {"window": APRIL}},
     "what data do you have": {"kind": "describe_data"},
+    # a reader's own metric, defined in the chat ("Margin after returns = ..."), by month
+    "margin after returns": {"intent": "trend", "measures": ["margin_after_returns"],
+                             "time": {"grain": "month", "window": H1}},
     # the first question "What you can ask" offers, followed from that page
     "net amount by store in 2026": {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["store"],
                                     "time": {"window": H1}},
@@ -228,6 +231,20 @@ def workspace_planner(account_id, client, *, question="", question_id=""):
 
 
 ai.workspace_planner = workspace_planner
+
+
+def metric_writer(account_id, client, *, description=""):
+    """The metric a reader defines in the chat, as the AI would write it."""
+    def complete(stable, tail):
+        return json.dumps({"formula": "(SUM([Order line · Net amount]) - SUM([Return · Refund amount])) / "
+                                      "SUM([Order line · Net amount]) * 100", "conditions": [],
+                           "name": "Margin after returns", "synonyms": [], "format": "percent",
+                           "description": "What is kept of net amount after refunds, as a share of it.",
+                           "assumptions": [], "question": ""})
+    return complete
+
+
+ai.metric_writer = metric_writer
 
 if __name__ == "__main__":
     import uvicorn

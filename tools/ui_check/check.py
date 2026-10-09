@@ -45,6 +45,9 @@ QUESTIONS = [
     "Why did net sales drop in April?",
     "List the stores",
     "What data do you have?",
+    # A reader's own metric, made in the chat and used for the rest of the question.
+    "Margin after returns = net amount minus refunds, divided by net amount, as a percentage. "
+    "Show it by month in the first half of 2026",
 ]
 VIEWPORTS = {"desktop": (1440, 900), "phone": (390, 844)}
 READER = ("acct-retail", "reader@example.com", "reader-pass-123")

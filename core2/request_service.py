@@ -34,10 +34,11 @@ def _model(account_id: str, client: dict[str, Any]):
 
 
 def file_request(account_id: str, client: dict[str, Any], user: dict[str, Any], form: dict[str, Any], *,
-                 allowed: set[str] | None, lang: str = "en") -> dict[str, Any]:
+                 allowed: set[str] | None, lang: str = "en", definition: dict[str, Any] | None = None) -> dict[str, Any]:
     """File a reader's suggestion; a reader who edits directly has it accepted at once.
 
-    ``allowed`` is the reader's tables as QueryBot names them (None: every table).
+    ``allowed`` is the reader's tables as QueryBot names them (None: every table). ``definition`` is a metric
+    the reader made in a chat (core2.plan.own_metric), as the server kept it: never one sent from a browser.
     """
     from core2.service import _allowed_model_tables
 
@@ -57,7 +58,8 @@ def file_request(account_id: str, client: dict[str, Any], user: dict[str, Any], 
             raise RequestRefused(f"Keep the description under {R.MAX_NOTE} characters.")
         request_id = store.add_core2_request(
             account_id, client.get("db_config_id"), kind="new_metric", user_id=user_id, user_name=user_name,
-            target_name=name, note=description, example=example, source=source, question_id=question_id)
+            target_name=name, note=description, example=example, source=source, question_id=question_id,
+            definition=definition)
         return store.get_core2_request(account_id, request_id) or {}
     try:
         name, changes = R.proposal(model, kind=str(form.get("target_kind") or ""), key=str(form.get("target_key") or ""),
@@ -112,6 +114,8 @@ def accept(account_id: str, client: dict[str, Any], request: dict[str, Any], *, 
     changes = [_checked(model, c, (edits or {}).get(str(i))) for i, c in enumerate(request.get("changes") or [])
                if i not in (skip or set())]
     writes = []
+    if request.get("kind") == "new_metric" and request.get("definition"):
+        writes.append(_defined_for_everyone(model, request["definition"], (edits or {}).get("name")))
     for change in changes:
         try:
             writes.append(R.to_write(model, change, lang=lang))
@@ -130,6 +134,32 @@ def accept(account_id: str, client: dict[str, Any], request: dict[str, Any], *, 
     store.decide_core2_request(account_id, int(request["id"]), status="accepted", decided_by=decided_by,
                                applied=applied, expect=("accepted",))
     return store.get_core2_request(account_id, int(request["id"])) or {}
+
+
+def _defined_for_everyone(model, definition: dict[str, Any], name: Any = None) -> tuple[str, str, Any]:
+    """A metric a reader made in a chat, as an admin's metric everyone's answers can use: checked against the
+    model as it is now, under its own name (or the admin's), never one an existing metric has."""
+    from core2 import ids
+    from core2.model.authoring import ADMIN_PREFIX
+    from core2.model.overrides import _unknown_parts, target
+    from core2.model.schema import Measure
+
+    try:
+        measure = Measure.model_validate(definition)
+    except Exception:  # noqa: BLE001 - a definition this release cannot read is said so
+        raise RequestRefused("The metric's definition cannot be read any more.") from None
+    if measure.table not in model.tables or _unknown_parts(model, measure.expr, measure.filters):
+        raise RequestRefused("The metric reads fields that are not in the data any more.")
+    called = " ".join(str(name or measure.business_name).split())[:120]
+    if not called:
+        raise RequestRefused("Give the metric a name.")
+    if any(m.business_name.casefold() == called.casefold() and not m.hidden for m in model.measures.values()):
+        raise RequestRefused(f"There is already a metric called {called}: accept it under another name.")
+    slug = ids.unique_slug(ids.slug(called, fallback="metric"), {m.slug for m in model.measures.values()})
+    key = ADMIN_PREFIX + slug
+    shared = measure.model_copy(update={"key": key, "slug": slug, "business_name": called, "provenance": "admin",
+                                        "status": "approved", "kind": "metric", "tested": True, "hidden": False})
+    return target("measure", key), "define", shared.model_dump(mode="json")
 
 
 def reject(account_id: str, request: dict[str, Any], *, decided_by: str, reason: str) -> dict[str, Any]:

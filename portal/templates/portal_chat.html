@@ -602,6 +602,14 @@ body:has(.chat-page) .main { background: var(--bg); }
 .kpi-value.long { font-size: var(--font-xl); }
 .kpi-exact { font-size: var(--font-xs); color: var(--text-muted); margin-bottom: 2px; overflow-wrap: anywhere; }
 .kpi-note { font-size: var(--font-sm); color: var(--text-muted); }
+/* A metric the reader made in this chat: how it is counted, and that it is theirs until their admin keeps it. */
+.own-metric { border: 1px dashed color-mix(in srgb, var(--primary) 45%, var(--line)); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--primary) 4%, var(--surface)); padding: 12px 14px; display: grid; gap: 6px; }
+.own-metric-title { font-size: var(--font-xs); font-weight: var(--weight-bold); color: var(--primary); display: flex; align-items: center; gap: 6px; }
+.own-metric-name { font-size: var(--font-md); font-weight: var(--weight-bold); color: var(--text-strong); }
+.own-metric-formula { font-family: var(--font-mono); font-size: var(--font-sm); color: var(--text); overflow-wrap: anywhere; }
+.own-metric-only, .own-metric-note, .own-metric-done { font-size: var(--font-sm); color: var(--text-muted); margin: 0; }
+.own-metric-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.own-metric-used { font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
 .answer-visual { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px 8px; box-shadow: var(--shadow-sm); min-width: 0; }
 .answer-visual-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; }
 .answer-visual-copy { flex: 1; min-width: 0; }
@@ -3165,6 +3173,59 @@ function _clarifyCardHtml(msg) {
     + `</article>`;
 }
 
+// A metric the reader defined in this chat ("X = how it is counted"): shown above the answer it was used for,
+// with its formula, and the reader's choice to ask their admin to keep it for everyone, change it or drop it.
+function _ownMetricHtml(msg) {
+  const own = msg.own_metric;
+  if (!own || !own.name) {
+    const used = Array.isArray(msg.own_metrics_used) ? msg.own_metrics_used.filter(Boolean) : [];
+    return used.length ? `<p class="own-metric-used">${escHtml(t('ui.chat.own.counted_with', {names: used.join(', ')}))}</p>` : '';
+  }
+  const only = (Array.isArray(own.only) ? own.only : []).filter(Boolean);
+  return `<section class="own-metric" data-own-token="${escHtml(own.token || '')}" data-own-name="${escHtml(own.name)}" aria-label="${escHtml(t('ui.chat.own.title'))}">`
+    + `<div class="own-metric-title">${qbIcon('plus', 14)}${escHtml(t('ui.chat.own.title'))}</div>`
+    + `<div class="own-metric-name">${escHtml(own.name)}</div>`
+    + (own.formula ? `<div class="own-metric-formula">${escHtml(own.formula)}</div>` : '')
+    + (only.length ? `<p class="own-metric-only">${escHtml(t('ui.chat.own.only', {conditions: only.join('; ')}))}</p>` : '')
+    + `<p class="own-metric-note">${escHtml(t('ui.chat.own.used'))}</p>`
+    + (own.token ? `<div class="own-metric-actions">`
+      + `<button type="button" class="btn btn-secondary btn-sm" data-own="ask">${qbIcon('users', 14)}${escHtml(t('ui.chat.own.ask'))}</button>`
+      + `<button type="button" class="btn btn-ghost btn-sm" data-own="change">${qbIcon('pencil', 14)}${escHtml(t('ui.chat.own.change'))}</button>`
+      + `<button type="button" class="btn btn-ghost btn-sm" data-own="forget">${escHtml(t('ui.chat.own.forget'))}</button>`
+      + `</div>` : '')
+    + `<p class="own-metric-done" role="status" hidden></p>`
+    + `</section>`;
+}
+
+function _wireOwnMetric(root) {
+  const box = root.querySelector('.own-metric[data-own-token]');
+  if (!box || !box.dataset.ownToken) return;
+  const done = box.querySelector('.own-metric-done');
+  const say = (text) => { done.textContent = text; done.hidden = false; };
+  const post = async (url, body) => {
+    try {
+      const response = await fetch(url, {method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+      return await response.json();
+    } catch (exc) { return {ok: false, error: exc.message}; }
+  };
+  box.querySelectorAll('[data-own]').forEach(button => button.addEventListener('click', async () => {
+    const act = button.dataset.own;
+    if (act === 'change') {
+      const input = document.getElementById('input');
+      if (input) { input.value = box.dataset.ownName + ' = '; input.focus(); }
+      return;
+    }
+    const data = act === 'ask'
+      ? await post('/portal/api/requests', {kind: 'new_metric', token: box.dataset.ownToken})
+      : await post('/portal/api/own-metrics/forget', {token: box.dataset.ownToken});
+    if (!data.ok) { say(t('ui.chat.own.failed', {error: data.error || ''})); return; }
+    box.querySelector('.own-metric-actions')?.remove();
+    say(t(act === 'ask' ? (data.request && data.request.status === 'accepted' ? 'ui.chat.own.saved' : 'ui.chat.own.asked')
+                        : 'ui.chat.own.forgotten'));
+  }));
+}
+
 function answerCardHtml(msg, ids, env) {
   env = env || {};
   const answer = msg.answer || {};
@@ -3284,6 +3345,7 @@ function answerCardHtml(msg, ids, env) {
     : '';
 
   return `<article class="answer-card" aria-label="${escHtml(t('ui.chat.card.answer'))}">`
+    + _ownMetricHtml(msg)
     + _answerBadgesHtml(msg)
     + leadHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
     + localOperationProofHtml + dashboardConfirmHtml
@@ -3344,6 +3406,7 @@ function appendAssistantResponse(msg, opts = {}){
     }
   }));
   div.querySelector('[data-open-artifact]')?.addEventListener('click', () => renderArtifactPreview(msg));
+  _wireOwnMetric(div);
 
   // How it was counted opens in place, from the link in the action row.
   const howBtn = div.querySelector('[data-open-how]');
