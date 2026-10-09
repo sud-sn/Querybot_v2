@@ -118,14 +118,31 @@ def from_duckdb(warehouse: Warehouse, *, schema: str = "main",
         key = ids.table_key(database, schema, table_name)
         if key in tables:
             tables[key].primary_key = list(columns)
-    fks: list[InvForeignKey] = []
+    rows: list[tuple[str, str, dict[str, Any]]] = []
     for fk in declared_fks or []:
         parent = ids.table_key(database, fk.get("parent_schema") or schema, fk["parent_table"])
         ref = ids.table_key(database, fk.get("ref_schema") or schema, fk["ref_table"])
         if parent in tables and ref in tables:
-            fks.append(InvForeignKey(parent, [fk["parent_col"]], ref, [fk["ref_col"]],
-                                     fk.get("constraint_name", ""), bool(fk.get("enforced"))))
-    return Inventory(tables=tables, foreign_keys=fks)
+            rows.append((parent, ref, fk))
+    return Inventory(tables=tables, foreign_keys=_grouped(rows))
+
+
+def _grouped(rows: list[tuple[str, str, dict[str, Any]]]) -> list[InvForeignKey]:
+    """Declared foreign keys, one per constraint: the rows of a two-column key (order + line) are one key
+    with its columns in order, never two single-column keys that each point at half of it."""
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for n, (parent, ref, fk) in enumerate(rows):
+        name = str(fk.get("constraint_name") or "")
+        groups.setdefault((parent, ref, name or f"#{n}"), []).append(fk)
+    out = []
+    for (parent, ref, name), parts in groups.items():
+        parts = sorted(parts, key=lambda fk: int(fk.get("ordinal") or 0))
+        if len({str(fk["parent_col"]).casefold() for fk in parts}) != len(parts):
+            parts = parts[:1]      # the same column listed twice: a reader's duplicate, not a key
+        out.append(InvForeignKey(parent, [str(fk["parent_col"]) for fk in parts], ref,
+                                 [str(fk["ref_col"]) for fk in parts], "" if name.startswith("#") else name,
+                                 bool(parts[0].get("enforced"))))
+    return out
 
 
 def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
@@ -175,7 +192,7 @@ def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
         by_schema_and_name[(ids.norm(owner), ids.norm(name))] = table.key
         by_schema_and_name.setdefault(("", ids.norm(name)), table.key)
 
-    fks: list[InvForeignKey] = []
+    rows: list[tuple[str, str, dict[str, Any]]] = []
     for fk in schema.get("__db_fk_constraints__") or []:
         if not isinstance(fk, dict):
             continue
@@ -185,9 +202,8 @@ def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
             or by_schema_and_name.get(("", ids.norm(fk.get("ref_table"))))
         if parent and ref and fk.get("parent_col") and fk.get("ref_col") \
                 and tables[parent].column(str(fk["parent_col"])) and tables[ref].column(str(fk["ref_col"])):
-            fks.append(InvForeignKey(parent, [str(fk["parent_col"])], ref, [str(fk["ref_col"])],
-                                     str(fk.get("constraint_name") or ""), bool(fk.get("enforced"))))
-    return Inventory(tables=tables, foreign_keys=fks, notes=notes)
+            rows.append((parent, ref, fk))
+    return Inventory(tables=tables, foreign_keys=_grouped(rows), notes=notes)
 
 
 def _declared_key(table: str, listed: list[Any], columns: list[InvColumn], notes: list[str]) -> list[str]:

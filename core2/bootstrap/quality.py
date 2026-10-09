@@ -89,7 +89,7 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
                 flags.append(_flag(col_key[(key, c.column)], "load_timestamp",
                                    f"{names.readable(c.column)} records when rows were written, not a business date"))
 
-    linked = {(j.from_table, j.from_column) for j in joins}
+    linked = {(j.from_table, c) for j in joins for c in j.from_columns}
     dated = {(k, c.column) for k, roles in dates.items() for c in roles}
     for key, table in inventory.tables.items():
         if kinds.get(key) not in ("fact", "snapshot"):

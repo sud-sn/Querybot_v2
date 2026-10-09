@@ -58,10 +58,21 @@ class JoinFinding:
     trust: str = "proposed"           # declared | verified | proposed | rejected
     role: str | None = None
     evidence: list[Evidence] = field(default_factory=list)
+    also: list[tuple[str, str]] = field(default_factory=list)   # a multi-column key's other (from, to) pairs
+    to_alternate: bool = False        # the target is another unique column of its table, not its key
 
     @property
     def ident(self) -> tuple[str, str, str, str]:
         return (self.from_table, self.from_column, self.to_table, self.to_column)
+
+    @property
+    def pairs(self) -> list[tuple[str, str]]:
+        """Every (from column, to column) of the key, the first one first."""
+        return [(self.from_column, self.to_column), *self.also]
+
+    @property
+    def from_columns(self) -> list[str]:
+        return [f for f, _ in self.pairs]
 
 
 def _compatible(a: str, b: str) -> bool:
@@ -132,6 +143,12 @@ def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, prof
     k = exp.column(D.ident(finding.to_column, d), table="t")
     one = exp.Literal.number(1)
 
+    def equal(from_column: str, to_column: str) -> exp.Expression:
+        fa = exp.column(D.ident(from_column, d), table="f")
+        tk = exp.column(D.ident(to_column, d), table="t")
+        raws = ((src.column(from_column) or _NO_COLUMN).raw_type, (tgt.column(to_column) or _NO_COLUMN).raw_type)
+        return D.same_text(fa, tk, d, raws) if src.type_of(from_column) == "text" else exp.EQ(this=fa, expression=tk)
+
     def count_if(condition: exp.Expr) -> exp.Expression:
         return exp.Sum(this=exp.Case(ifs=[exp.If(this=condition, true=one.copy())], default=exp.Literal.number(0)))
 
@@ -142,10 +159,9 @@ def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, prof
     if placeholders:
         selects.append(count_if(exp.In(this=a.copy(), expressions=[
             exp.Literal.number(p) if isinstance(p, (int, float)) else exp.Literal.string(str(p)) for p in placeholders])))
-    target = exp.select(exp.column(D.ident(finding.to_column, d))).distinct().from_(exp.to_table("__TGT__"))
-    raws = ((src.column(finding.from_column) or _NO_COLUMN).raw_type, (tgt.column(finding.to_column) or _NO_COLUMN).raw_type)
-    on = D.same_text(a.copy(), k.copy(), d, raws) if src.type_of(finding.from_column) == "text" \
-        else exp.EQ(this=a.copy(), expression=k.copy())
+    target = exp.select(*[exp.column(D.ident(t, d)) for _, t in finding.pairs]).distinct().from_(
+        exp.to_table("__TGT__"))
+    on = exp.and_(*[equal(f, t) for f, t in finding.pairs])
     query = (exp.select(*[s.as_(f"s{i}") for i, s in enumerate(selects)])
              .from_(exp.to_table("__SRC__").as_("f"))
              .join(target.subquery("t"), on=on, join_type="left"))
@@ -178,6 +194,9 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
 
     # Targets: single-column unique keys; for calendars only their key (or date).
     targets: list[tuple[str, str]] = []
+    # A table's other unique keys (a circuit code beside the service id): pointed at only by a column
+    # of the same name, or one the database declares; values alone would find them by accident.
+    alternates: set[tuple[str, str]] = set()
     for key, table in inventory.tables.items():
         if key in calendars:
             cal = calendars[key]
@@ -195,9 +214,12 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 # accident: a warehouse's profit-centre code is unique in a small
                 # warehouse table, and still the profit centre's, not the warehouse's.
                 words = names.tokens(unique)
-                if not (words and words[-1] in names.KEY_SUFFIXES) or profiles[key].rows < 20 \
-                        or not _names_its_table(unique, table.name):
-                    continue
+                if not (words and words[-1] in names.KEY_SUFFIXES):
+                    continue   # a unique name or title is what a member is called, not what points at it
+                if profiles[key].rows < 20 or not _names_its_table(unique, table.name):
+                    if any(other != key and _names_its_table(unique, t.name) for other, t in inventory.tables.items()):
+                        continue   # FILM_ID unique on a film's one category row is still the film's key
+                    alternates.add((key, unique))
             if kind == "text" and (p.avg_len or 0) > 24:
                 continue   # names and descriptions are not what keys point at
             if kind == "decimal" and p.integer_share != 1.0:
@@ -211,10 +233,34 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         if any(table.type_of(c) == "text" and c not in keys[key].primary_key for c in keys[key].unique_columns)}
 
     candidates: dict[tuple[str, str, str, str], JoinFinding] = {}
+    # What the database declares is a candidate whatever the values look like: one value in every row
+    # (every film in one language), a key of two columns, a target that is not the table's own key.
+    for fk in inventory.foreign_keys:
+        src, tgt = inventory.tables.get(fk.table), inventory.tables.get(fk.ref_table)
+        if src is None or tgt is None or len(fk.columns) != len(fk.ref_columns):
+            continue
+        pairs = [(_named(src, a), _named(tgt, b)) for a, b in zip(fk.columns, fk.ref_columns)]
+        if any(a is None or b is None for a, b in pairs) \
+                or not all(_compatible(src.type_of(a), tgt.type_of(b)) for a, b in pairs):  # type: ignore[arg-type]
+            continue
+        (first, to_first), *rest = pairs
+        score, role = name_score(first, tgt.name, to_first)  # type: ignore[arg-type]
+        a, k = profiles[fk.table].columns[first], profiles[fk.ref_table].columns[to_first]  # type: ignore[index]
+        candidates[(fk.table, first, fk.ref_table, to_first)] = JoinFinding(  # type: ignore[index]
+            fk.table, first, fk.ref_table, to_first, declared=True, name_score=score,  # type: ignore[arg-type]
+            role_tokens=role, to_calendar=fk.ref_table in calendars,
+            coverage=min(1.0, a.distinct / k.distinct) if k.distinct else 0.0,
+            from_unique=len(pairs) == 1 and first in keys[fk.table].unique_columns,
+            also=rest)  # type: ignore[arg-type]
+
     for key, table in inventory.tables.items():
         tkeys = keys[key]
         is_calendar = key in calendars
-        sequence_columns = {c for alt in tkeys.alternate_keys for c in alt[1:]}
+        # A key's later columns that restart inside each of its first column's values (order number +
+        # line 1, 2, 3) number lines, and point nowhere; a later column with more values than the first
+        # (interface name + device) is an ordinary column of the key, free to point at its own table.
+        sequence_columns = {c for alt in tkeys.alternate_keys for c in alt[1:]
+                            if profiles[key].columns[c].distinct < profiles[key].columns[alt[0]].distinct}
         for column in table.columns:
             a = profiles[key].columns[column.name]
             own_key = column.name in tkeys.primary_key and len(tkeys.primary_key) == 1
@@ -229,11 +275,15 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             for to_table, to_column in targets:
                 if to_table == key and to_column == column.name:
                     continue
+                if (key, column.name, to_table, to_column) in candidates:
+                    continue          # declared, and already a candidate
                 if not _compatible(column.data_type, inventory.tables[to_table].type_of(to_column)):
                     continue
                 ident = (key, column.name, to_table, to_column)
                 is_declared = (key, names_norm(column.name), to_table, names_norm(to_column)) in declared
                 score, role = name_score(column.name, inventory.tables[to_table].name, to_column)
+                if (to_table, to_column) in alternates and not (is_declared or score >= 0.95):
+                    continue          # another unique column of the table: named the same, or declared
                 k = profiles[to_table].columns[to_column]
                 plausible, coverage = _value_plausible(a, k, a_type=column.data_type,
                                                        k_is_dimension=to_table in dimension_like)
@@ -265,7 +315,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     continue
                 candidates[ident] = JoinFinding(*ident, declared=is_declared, name_score=score, role_tokens=role,
                                                 to_calendar=to_calendar, coverage=coverage,
-                                                from_unique=column.name in tkeys.unique_columns)
+                                                from_unique=column.name in tkeys.unique_columns,
+                                                to_alternate=(to_table, to_column) in alternates)
 
     ranked = sorted(candidates.values(), key=lambda f: (-f.declared, -f.name_score, -f.coverage, f.ident))
     tested = ranked[:max_tests]
@@ -305,20 +356,23 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             f.trust = "verified"
         elif f.declared and f.match_rate >= PROPOSED:
             f.trust = "declared"   # usable, as the database says; the unmatched rows are reported
-        elif f.match_rate >= PROPOSED or ((f.declared or f.name_score >= 0.95) and f.match_rate > 0):
+        elif f.match_rate >= PROPOSED or (
+                (f.declared or f.name_score >= 0.95 and not f.to_alternate) and f.match_rate > 0):
             # A join its names (or the database) vouch for stays usable when most keys
             # find nothing: the answer reports the unmatched rows rather than losing
-            # the grouping altogether.
+            # the grouping altogether. Not so for another table's same-named unique column:
+            # two tables' postal codes share a name, and a few values, and neither points at the other.
             f.trust = "proposed"
         else:
             f.trust = "rejected"
 
     # One target per column: the best-supported one. A tie between value-only
     # candidates is not decided here.
-    by_column: dict[tuple[str, str], list[JoinFinding]] = {}
+    by_column: dict[tuple[str, tuple[str, ...]], list[JoinFinding]] = {}
     for f in tested:
         if f.trust != "rejected":
-            by_column.setdefault((f.from_table, f.from_column), []).append(f)
+            # A key of two columns is its own choice: the order number in it may also point at the orders.
+            by_column.setdefault((f.from_table, tuple(f.from_columns)), []).append(f)
     kept: list[JoinFinding] = []
     for group in by_column.values():
         order = {"verified": 0, "declared": 1, "proposed": 2}
@@ -337,6 +391,12 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
 
     _name_roles(kept, inventory)
     return sorted(kept, key=lambda f: f.ident)
+
+
+def _named(table: InvTable, name: str) -> str | None:
+    """The table's column of that name, as the table spells it."""
+    wanted = names_norm(name)
+    return next((c.name for c in table.columns if names_norm(c.name) == wanted), None)
 
 
 def names_norm(name: str) -> str:

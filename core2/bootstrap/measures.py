@@ -104,7 +104,7 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
         # day does not make invoices into balances, and nothing numbered as a
         # document or a line (invoice no., line no.) is a balance.
         periodic = [c for c in roles if c.periodic and c.is_default]
-        documents = _document_numbers(table, {j.from_column for j in outgoing})
+        documents = _document_numbers(table, {c for j in outgoing for c in j.from_columns})
         evidence: list[Evidence] = []
         if periodic and documents:
             evidence.append(Evidence(kind="documents", weight=1, detail=(
@@ -170,7 +170,7 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
     table = inventory.tables[key]
     profile = profiles[key]
     excluded = set(keys[key].primary_key) | {c for alt in keys[key].alternate_keys for c in alt}
-    excluded |= {j.from_column for j in joins if j.from_table == key and j.trust != "rejected"}
+    excluded |= {c for j in joins if j.from_table == key and j.trust != "rejected" for c in j.from_columns}
     excluded |= {c.column for c in dates.get(key, [])}
     out = []
     for column in table.columns:
@@ -267,7 +267,7 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             p = profile.columns[column.name]
             if column.data_type not in ("text", "integer") or column.name in keys[key].unique_columns:
                 continue
-            if any(j.from_table == key and j.from_column == column.name and j.trust != "rejected" for j in joins):
+            if any(j.from_table == key and column.name in j.from_columns and j.trust != "rejected" for j in joins):
                 continue
             if not profile.rows or not (profile.rows / 1000 < p.distinct < profile.rows):
                 continue

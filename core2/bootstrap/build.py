@@ -208,11 +208,12 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
     # Joins first: column roles and entities depend on them.
     join_key_of: dict[tuple[str, str], str] = {}
     for j in f.joins:
-        key = ids.join_key(j.from_table, [j.from_column], j.to_table, [j.to_column])
-        join_key_of[(j.from_table, j.from_column)] = key
+        key = ids.join_key(j.from_table, j.from_columns, j.to_table, [t for _, t in j.pairs])
+        if not j.also:     # one column's own link (its date's calendar, its review question)
+            join_key_of[(j.from_table, j.from_column)] = key
         model.joins[key] = Join(
-            key=key, from_table=j.from_table, from_columns=[ck[(j.from_table, j.from_column)]],
-            to_table=j.to_table, to_columns=[ck[(j.to_table, j.to_column)]],
+            key=key, from_table=j.from_table, from_columns=[ck[(j.from_table, c)] for c in j.from_columns],
+            to_table=j.to_table, to_columns=[ck[(j.to_table, t)] for _, t in j.pairs],
             cardinality="one_to_one" if j.from_unique else "many_to_one", match_rate=j.match_rate,
             null_rate=j.null_rate, orphan_rows=j.unmatched, to_unique=True, role=j.role,
             trust="verified" if j.trust == "verified" else ("declared" if j.trust == "declared" else "proposed"),
@@ -280,7 +281,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
 
     # Tables and columns.
     measure_columns = {(m.table, m.column) for m in f.measures if m.column}
-    fk_columns = {(j.from_table, j.from_column): j for j in f.joins}
+    fk_columns = {(j.from_table, c): j for j in f.joins for c in j.from_columns}
     status_columns = {fl.object for fl in flags if fl.kind == "status_column"}
     for key, table in inv.tables.items():
         kind = f.kinds[key]

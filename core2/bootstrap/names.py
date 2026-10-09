@@ -130,7 +130,9 @@ def same_word(a: str, b: str) -> bool:
     short, long_ = (a, b) if len(a) <= len(b) else (b, a)
     if len(short) < 3:
         return False
-    return long_.startswith(short) or _skeleton(long_).startswith(_skeleton(short)) and len(short) >= 3
+    # By consonants, three at least: CUST is a customer and DEPT a department, but LINE is not a
+    # language, DATE not a detail and NAME not a number for sharing two.
+    return long_.startswith(short) or len(_skeleton(short)) >= 3 and _skeleton(long_).startswith(_skeleton(short))
 
 
 def core_column(name: str) -> list[str]:

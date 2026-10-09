@@ -127,7 +127,8 @@ def test_a_moved_default_date_counts_against_both_dates(retail):
 
 
 def test_a_two_column_link_is_right_whichever_order_its_columns_are_in():
-    built = materialize(domains.build("compounding_pharmacy"), "descriptive")
+    # Where the key is declared Learn finds it; in the warehouse style no key is declared.
+    built = materialize(domains.build("compounding_pharmacy"), "warehouse")
     model = benchmark.learn(built)
     before = _graded(built, model)["joins"]
     assert any("claims.fill_number+rx_number -> fills: not found" in m for m in before.misses)
