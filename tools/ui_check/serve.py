@@ -146,6 +146,9 @@ PLANS = {
     "top 5 products by net sales in 2026": {"intent": "rank", "measures": ["net_amount"], "group_by": ["product.name"],
                                             "sort": [{"by": "net_amount", "desc": True}], "limit": 5,
                                             "time": {"window": H1}},
+    "who were our top 10 customers in the first half of 2026": {
+        "intent": "share", "measures": ["net_amount"], "group_by": ["customer"],
+        "sort": [{"by": "net_amount", "desc": True}], "limit": 10, "time": {"window": H1}},
     "share of net sales by customer segment": {"intent": "share", "measures": ["net_amount"],
                                                "group_by": ["customer.segment"], "time": {"window": H1}},
     "compare net sales by store in april against march": {

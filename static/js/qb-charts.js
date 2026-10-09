@@ -1203,10 +1203,18 @@
 
     // ── Bar (default) ──────────────────────────────────────────────────────
     const multi = yKeys.length > 1;
+    // Each bar's share of the whole, when the answer worked it out (core2: share_key): said beside its
+    // value, quieter, so the reader sees the size and the portion at once and the axis keeps one unit.
+    const shareKey = !multi && payload && payload.share_key ? String(payload.share_key) : '';
+    const shareOf = i => (shareKey && rows[i] ? num(rows[i][shareKey]) : null);
+    const shareLabel = shareKey ? columnLabel(payload, shareKey, t('ui.chart.value')) : '';
     option.tooltip = Object.assign(tooltipBase(c), multi
       ? {trigger: 'axis', axisPointer: {type: 'shadow', shadowStyle: {color: 'rgba(22,30,26,0.05)'}}, formatter: multiTip}
       : {trigger: 'item', formatter: p => tipHeader(`${xLabel}: ${shownLabel(p.name)}`, c)
-          + tipRow(p.color, yLabel, valueFmt(p.value, yKey), c, 'swatch') + drillHint});
+          + tipRow(p.color, yLabel, valueFmt(p.value, yKey), c, 'swatch')
+          + (shareOf(p.dataIndex) != null ? tipRow('transparent', shareLabel,
+                                                   formatValue(shareOf(p.dataIndex), 'percentage'), c, 'swatch') : '')
+          + drillHint});
     // A variance or a change carries its direction in the product's delta
     // colours, and in a sign on its label; any other single measure keeps one
     // colour for every bar -- a hue per bar would encode the length twice.
@@ -1214,10 +1222,23 @@
     const mixedSigns = firstValues.some(v => v != null && v < 0) && firstValues.some(v => v != null && v > 0);
     const delta = !multi && mixedSigns && /(variance|^var_|_var$|change|delta|diff|gap|growth|chg)/i.test(String(yKey));
     const labelled = !multi && rows.length <= (horizontal ? 20 : 12);
+    // The share rides on the label where there is room for it; on a narrow card (a phone) the bars would be
+    // squeezed to make room, so there it is in the tooltip alone.
+    let shareOnLabel = !!shareKey;
+    let shareGap = '8%';
+    if (shareKey && horizontal) {
+      const widest = Math.max(...rows.map((r, i) => (valueFmt(num(r && r[yKey]), yKey, true)
+        + '  ·  ' + formatValue(shareOf(i), 'percentage', true)).length));
+      const plot = ((layout && layout.width) || 600) - 64 - Math.min(180, maxLabel * 7);
+      const need = widest * 7 + 10;
+      shareOnLabel = need <= plot * 0.4;
+      if (shareOnLabel) shareGap = `${Math.ceil(need / Math.max(plot - need, 40) * 100)}%`;
+    }
     // A labelled bar needs room past its tip: with the axis ending exactly at
     // the largest value, that bar's label was clipped by the chart's edge.
     if (labelled) {
-      (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, '8%'];
+      // "$1.3M · 3.0%" is longer than the value alone: the axis ends far enough past the longest bar for it.
+      (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, horizontal && shareOnLabel ? shareGap : '8%'];
       // A bar below zero is labelled past its own tip, at the low end of the
       // axis -- where the category names are, at a ranking's left and under a
       // column chart -- and with the axis ending at its value the label was
@@ -1262,7 +1283,15 @@
         label: labelled ? {
           show: true, position: horizontal ? 'right' : 'top',
           color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 4,
-          formatter: p => (delta && p.value > 0 ? '+' : '') + valueFmt(p.value, k, true),
+          formatter: p => {
+            const shown = (delta && p.value > 0 ? '+' : '') + valueFmt(p.value, k, true);
+            const part = shareOnLabel ? shareOf(p.dataIndex) : null;
+            if (part == null) return shown;
+            // Beside a bar, on one line; above a column, under its value.
+            return `{v|${shown}}${horizontal ? '{s|  ·  ' : '\n{s|'}${formatValue(part, 'percentage', true)}}`;
+          },
+          rich: shareOnLabel ? {v: {color: c.ink2, fontSize: 12, fontFamily: c.font},
+                            s: {color: c.muted, fontSize: 12, fontFamily: c.font, lineHeight: 16}} : undefined,
         } : undefined,
         emphasis: {focus: multi ? 'series' : 'none', itemStyle: {opacity: 0.9}},
         animationDelay: stagger,

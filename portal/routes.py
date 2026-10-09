@@ -26,7 +26,9 @@ import logging
 import os
 import re
 import time
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Form, HTTPException, WebSocket, WebSocketDisconnect
@@ -1393,6 +1395,7 @@ def _refresh_chart(
                     for column in result["table_columns"]
                 }
                 result["table_column_formats"] = _column_formats
+                result["table_numeric"] = _numeric_columns(rows, result["table_columns"], _column_formats)
                 # Each cell carries BOTH the display string and the raw value.
                 # The sort used to parse the number back out of the rendered
                 # text, which is a silent wrong-answer path: strip "$,% " from
@@ -1458,6 +1461,25 @@ def _refresh_chart(
     return result
 
 
+_AMOUNT_FORMATS = {"currency", "percentage", "percent", "number", "integer", "count", "decimal"}
+
+
+def _numeric_columns(rows: list[dict], columns: list[str], formats: dict[str, Any]) -> list[str]:
+    """The columns of amounts in a table tile (aligned right, as in the chat): by the format the answer gave
+    each, else every value a number. A column said to be text or a date is never one."""
+    out = []
+    for column in columns:
+        fmt = str(formats.get(column) or "").lower()
+        if fmt:
+            if fmt in _AMOUNT_FORMATS:
+                out.append(column)
+            continue
+        values = [row.get(column) for row in rows[:50] if row.get(column) not in (None, "")]
+        if values and all(isinstance(v, (int, float, Decimal)) and not isinstance(v, bool) for v in values):
+            out.append(column)
+    return out
+
+
 def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
                         filters: list[dict] | None = None) -> dict:
     """A pinned new-core answer, drawn by running its plan again (core2.service.portal_replay).
@@ -1509,6 +1531,7 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         result["table_columns"] = headers
         result["table_column_labels"] = {h: labels.get(h) or display_label(h) for h in headers}
         result["table_column_formats"] = formats
+        result["table_numeric"] = _numeric_columns(rows, headers, formats)
         result["table_rows"] = [
             {h: {"d": _format_display_value(row.get(h), formats.get(h), shown.get(h)), "v": row.get(h)}
              for h in headers}

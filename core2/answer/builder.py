@@ -888,7 +888,14 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             return period_label(_day(r[x.name]) or dt.date.min, x.grain or "month", fiscal_start=logical.fiscal_start)
         return "" if r[x.name] is None else str(r[x.name])
 
-    rows = [{x.name: x_value(r), **{y: _number(r[y]) for y in ys}} for r in records]
+    # The share of the whole each bar is, when the query worked it out: drawn beside the bar's value (a
+    # second measure on its own axis would read as one more amount).
+    share = next((c for c in cols.of("share") if c.measure == m.measure), None) \
+        if len(ys) == 1 and compare is None and kind in ("bar", "pie") else None
+    if share is not None:
+        roles[share.name] = {"column": share.name, "label": labels[share.name], "role": "share", "format": "percentage"}
+    rows = [{x.name: x_value(r), **{y: _number(r[y]) for y in ys},
+             **({share.name: _number(r[share.name])} if share is not None else {})} for r in records]
     if temporal:
         rows.sort(key=lambda r: str(r[x.name]))     # a time axis runs forward, whatever order the table is in
     facets: list[list[str]] = []
@@ -911,7 +918,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             "x_style": "" if ranked else (display.get(x.name) or {}).get("style", ""),
             "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
             "renderable_types": renderable, "allowed_types": allowed, "recommended_type": kind,
-            "compare": compare, "facets": facets,
+            "compare": compare, "facets": facets, "share_key": share.name if share is not None else None,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
             "intent": logical.intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
 

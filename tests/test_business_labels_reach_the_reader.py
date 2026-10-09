@@ -744,6 +744,10 @@ function _isANumericColumn(rows, header) {
   return rows.slice(0, 20).map(function (r) { return r[header]; })
     .some(function (v) { return v !== null && v !== '' && !isNaN(_parseServerNumber(v)); });
 }
+function _isNumericColumn(rows, header, format) {
+  if (format) return ['currency', 'percentage', 'number', 'integer'].indexOf(format) >= 0;
+  return _isANumericColumn(rows, header);
+}
 function t(id) { return id; }
 function plural(id, n, v) { return String(n); }
 var _dtIdCounter = 0;

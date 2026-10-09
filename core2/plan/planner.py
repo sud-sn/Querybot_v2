@@ -229,6 +229,13 @@ def question_tail(question: str, *, today: dt.date, history: list[Turn], matches
             shown = next((t for t, v in masked.values.items() if v == m.value), m.text) if masked else m.text
             stored = shown if masked else m.value
             lines.append(f'- "{shown}" -> {m.attribute} = "{stored}"')
+    if model is not None:
+        # Read from the question as the AI is shown it: with member values withheld, a name never shows through.
+        from core2.plan.words import readings_text
+
+        said = readings_text(model, clean(masked.question if masked else question))
+        if said:
+            lines.append(said)
     lines.append(f"QUESTION: {clean(masked.question if masked else question)}")
     return "\n".join(lines)
 

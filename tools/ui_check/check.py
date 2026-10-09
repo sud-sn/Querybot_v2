@@ -41,6 +41,7 @@ QUESTIONS = [
     "Compare net sales by store in April against March",
     "Net sales, cost and gross amount in 2025",
     "Top 5 products by net sales in 2026",
+    "Who were our top 10 customers in the first half of 2026?",
     "Why did net sales drop in April?",
     "List the stores",
     "What data do you have?",

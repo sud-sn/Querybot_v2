@@ -139,6 +139,19 @@ def _pin(account_id: str, portal_user: dict | None, question: str, payload: dict
                                              "column_formats": chart.get("column_formats") or {}})
 
 
+async def _with_pin(account_id: str, portal_user: dict | None, question: str, payload: dict[str, Any]) -> None:
+    """Give the answer its pin token (Add to dashboard), when it ran a query; a failure leaves it unpinnable."""
+    try:
+        token = await asyncio.to_thread(_pin, account_id, portal_user, question, payload)
+    except Exception as exc:     # noqa: BLE001 - the answer stands; it just cannot be pinned
+        log.warning("core2 answer could not be given a pin token for %s: %s", account_id, exc)
+        token = ""
+    if token:
+        payload["pin_token"] = token
+        if payload.get("chart"):
+            payload["chart"]["pin_token"] = token
+
+
 def _record(account_id: str, portal_user: dict | None, mode: str, question: str, status: str,
             payload: dict[str, Any] | None, duration_ms: int, question_id: str = "") -> None:
     """One row per new-core answer, for comparison. The question is kept as QueryBot keeps
@@ -202,15 +215,7 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
             payload, rows, int((time.perf_counter() - start) * 1000))
     except Exception as exc:     # noqa: BLE001 - the answer stands; its history and usage row are logged as lost
         log.warning("core2 answer could not be kept in history and usage for %s: %s", account_id, exc)
-    try:
-        token = await asyncio.to_thread(_pin, account_id, portal_user, question, payload)
-    except Exception as exc:     # noqa: BLE001 - the answer stands; it just cannot be pinned
-        log.warning("core2 answer could not be given a pin token for %s: %s", account_id, exc)
-        token = ""
-    if token:
-        payload["pin_token"] = token
-        if payload.get("chart"):
-            payload["chart"]["pin_token"] = token
+    await _with_pin(account_id, portal_user, question, payload)
     sent = await _send(adapter, websocket, payload)
     if sent and payload.get("data") is not None:
         _not_todays_result(adapter)
@@ -273,4 +278,6 @@ async def answer_beside(adapter: Any, websocket: Any, account_id: str, question:
     if isinstance(payload.get("answer"), dict):
         payload["answer"]["scope_badge"] = PREVIEW_BADGE
     payload.setdefault("result_scope", {})["badge"] = PREVIEW_BADGE
+    # A preview's chart can be added to a dashboard as the new core's: its tile runs the preview's own plan.
+    await _with_pin(account_id, portal_user, question, payload)
     await _send(adapter, websocket, payload)

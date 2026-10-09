@@ -201,10 +201,11 @@
         <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.45rem">{{ chart.kpi.note or 'Single-value result' }}</div>
       </div>
       {% elif chart.table_rows %}
-      <div style="width:100%;height:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
-        <table style="width:100%;border-collapse:collapse;font-size:var(--font-sm);white-space:nowrap">
-          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0|int }})">{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }} ↕</button>{% else %}{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }}{% endif %}</th>{% endfor %}</tr></thead>
-          <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}{% set cell = row[col] %}<td data-sort="{{ cell.v if cell.v is not none else '' }}" style="padding:.5rem .65rem;border-bottom:1px solid var(--border)">{{ cell.d }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      {% set numeric = chart.table_numeric or [] %}
+      <div class="dash-table-wrap">
+        <table class="dash-table">
+          <thead><tr>{% for col in chart.table_columns %}<th{% if col in numeric %} class="num"{% endif %}>{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0|int }})">{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }} ↕</button>{% else %}{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }}{% endif %}</th>{% endfor %}</tr></thead>
+          <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}{% set cell = row[col] %}<td data-sort="{{ cell.v if cell.v is not none else '' }}"{% if col in numeric %} class="num"{% endif %}>{{ cell.d }}</td>{% endfor %}</tr>{% endfor %}</tbody>
         </table>
       </div>
       {% elif chart.chart_json %}

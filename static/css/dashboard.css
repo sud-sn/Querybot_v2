@@ -125,7 +125,19 @@
 
 /* Was style="all:unset", which also unset the focus outline -- and this is the
    only keyboard-reachable control inside a table tile. */
-.dash-th-sort { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; font-weight: var(--weight-bold); color: inherit; cursor: pointer; text-align: left; }
+.dash-th-sort { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; font-weight: var(--weight-bold); color: inherit; cursor: pointer; text-align: inherit; }
+/* A table tile reads like the answer it came from: amounts (and their headings) aligned right, every other
+   row lightly shaded, the row under the pointer lifted with a quick wash and a thin accent at its start. */
+.dash-table-wrap { width: 100%; height: 100%; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.dash-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); white-space: nowrap; }
+.dash-table th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); padding: .55rem .65rem; text-align: left; border-bottom: 1px solid var(--border); }
+.dash-table td { padding: .5rem .65rem; border-bottom: 1px solid var(--border); transition: background-color .16s ease, box-shadow .16s ease; }
+.dash-table th.num { text-align: right; }
+.dash-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.dash-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-3) 50%, var(--surface)); }
+.dash-table tbody tr:hover td { background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
+.dash-table tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+@media (prefers-reduced-motion: reduce) { .dash-table td { transition: none; } }
 .dash-th-sort:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--radius-sm); }
 
 /* ── Dashboard chart controls ───────────────────────────────────────────── */

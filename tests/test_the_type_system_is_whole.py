@@ -257,8 +257,8 @@ class TestTheResultTableMarksItsNumbers:
         page = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(encoding="utf-8")
         data = {"headers": list(rows[0]), "rows": rows}
         return dukpy.evaljs("\n".join([
-            _TABLE_STUBS, lift(page, "function renderDataTable(data,"),
-            f"renderDataTable({json.dumps(data)})",
+            _TABLE_STUBS, lift(page, "function _isNumericColumn(rows, header, format)"),
+            lift(page, "function renderDataTable(data,"), f"renderDataTable({json.dumps(data)})",
         ]))
 
     def cells(self, html):
