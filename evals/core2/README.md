@@ -46,7 +46,9 @@ The domains in `domains.DOMAINS` are gated by `learn_eval` in CI. The ones in
 `domains.BENCHMARK` (compounding pharmacy, networking) and the public warehouses
 plant what the learner is known to miss today, so they are measured, never gated;
 a domain moves into `DOMAINS` once the learner passes it. `baselines/phase0.json`
-holds the numbers before any of the accuracy work (Phase 0), every miss listed. Every link, metric and
+holds the numbers before any of the accuracy work (Phase 0), every miss listed;
+`baselines/metrics_and_dates.json` the numbers after the first join fix and the
+metric and date work. Every link, metric and
 date of a domain's truth counts once; a link or metric the learner invents counts
 against it; what it sends to an admin counts as review, not as right.
 

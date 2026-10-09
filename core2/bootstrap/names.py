@@ -31,7 +31,10 @@ FLOW_WORDS = {"purchase", "purchased", "pch", "pur", "bought",
               "quota", "hours", "spent", "spend", "movement", "mvt", "shipped", "ship", "shp", "transfer", "tfr",
               "returned", "rtn", "ret", "return", "adjusted", "adj", "consumed", "produced", "scrap", "delivered", "dlv",
               "invoiced", "pay", "payroll", "wage", "wages", "earnings", "earned", "withheld", "deduction",
-              "deductions", "bonus", "commission", "overtime", "whld", "hrs"}
+              "deductions", "bonus", "commission", "overtime", "whld", "hrs",
+              "billed", "bill", "billing", "bil", "usage", "used", "charge", "charges", "charged", "fee", "fees",
+              "premium", "premiums", "claimed", "consumption", "dispensed", "compounded", "wasted", "waste",
+              "blld", "usg"}
 
 # A fallback reading of common abbreviations (weak evidence; AI labels and admins win).
 EXPANSIONS = {

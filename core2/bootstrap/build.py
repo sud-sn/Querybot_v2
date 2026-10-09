@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from core2 import ids
 from core2.bootstrap import names
+from core2.bootstrap.arithmetic import check_arithmetic, find_counters
 from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
@@ -35,6 +36,7 @@ from core2.model.schema import (
     Evidence,
     Join,
     Measure,
+    QualityFlag,
     ReviewItem,
     SemanticModel,
     Table,
@@ -67,6 +69,8 @@ class Findings:
     measures: list[MeasureFinding]
     # May a column's member values be read and shown (governance), whatever their number.
     values_allowed: Callable[[str, str], bool] = field(default=lambda table_key, column: True)
+    # Pairs of measure columns holding the same values: (table, column, other column, share of rows).
+    same_values: list[tuple[str, str, str, float]] = field(default_factory=list)
 
 
 _PERIOD_NAMES = {"period", "month", "year", "week", "quarter", "fiscal period", "fiscal month"}
@@ -124,13 +128,32 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     classified = classify_tables(inventory, profiles, keys, calendars, joins, dates)
     kinds = {key: kind for key, (kind, _) in classified.items()}
     measures = find_measures(inventory, profiles, keys, joins, dates, classified)
+    journal.step("Checking how each number adds up against the rows")
+    pointing: dict[str, list[str]] = {}
+    for j in sorted(joins, key=lambda j: -profiles[j.to_table].rows):     # the biggest thing first: products
+        if j.trust != "rejected" and not j.to_calendar:
+            pointing.setdefault(j.from_table, []).append(j.from_column)
+    same = check_arithmetic(warehouse, inventory, profiles, measures, pointing)
+    stamped = {key: c.column for key, cs in dates.items() for c in cs
+               if c.is_default and c.granularity == "timestamp" and kinds.get(key) == "fact"}
+    about = {}
+    for j in joins:
+        if j.trust != "rejected" and not j.to_calendar and j.from_table in stamped:
+            about.setdefault(j.from_table, []).append(j.from_column)
+    find_counters(warehouse, inventory, profiles, {k: v.primary_key for k, v in keys.items()}, about, stamped,
+                  measures)
     for key, kind in list(kinds.items()):
         # A periodic table whose numbers are all amounts for the period (targets,
-        # budgets) adds up over time like any fact.
+        # budgets) adds up over time like any fact, and its period dates events, not balances.
         if kind == "snapshot" and not any(m.table == key and m.additivity == "semi_additive" for m in measures):
             kinds[key] = "fact"
+            for c in dates.get(key, []):
+                if c.kind == "snapshot":
+                    c.kind = "event"
+                    c.add("flows", 0.0, "its numbers are amounts for each period, added up over time: the period "
+                          "dates what happened in it, not a balance")
     return Findings(inventory, profiles, keys, calendars, joins, dates, kinds, measures,
-                    values_allowed=options.profile.values_allowed)
+                    values_allowed=options.profile.values_allowed, same_values=same)
 
 
 def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = "", db_id: int | None = None,
@@ -364,6 +387,20 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
     _entities_and_attributes(model, f, ck, taken)
 
     model.quality = flags
+    for table, a, b, share in f.same_values:
+        # One figure twice (an allocated quantity that is the on-hand quantity again): an admin says which is meant.
+        key_a, key_b = f"m:{table}.{a.casefold()}", f"m:{table}.{b.casefold()}"
+        if key_a not in model.measures or key_b not in model.measures:
+            continue
+        name_a, name_b = model.measures[key_a].business_name, model.measures[key_b].business_name
+        message = (f"{name_a} equals {name_b} on {share:.0%} of rows: one of the two may read the wrong column, "
+                   "and answers about either would show the same figure.")
+        model.quality.append(QualityFlag(key=f"same_values:{key_a}|{key_b}", object=key_a, kind="same_values",
+                                         message=message, severity="warning", data={"other": key_b, "share": share}))
+        model.review.append(ReviewItem(key=f"same_values:{key_a}|{key_b}", object=key_a,
+                                       question=f"{name_a} equals {name_b} on {share:.0%} of rows. Are both defined "
+                                                "right?", choice_made="both kept as they are",
+                                       alternatives=[f"{name_a} reads the wrong column", f"{name_b} reads the wrong column"]))
     for fl in flags:
         if fl.kind == "status_column":
             model.review.append(ReviewItem(key=f"default_filter:{fl.object}", object=fl.object,

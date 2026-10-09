@@ -303,7 +303,7 @@ class QualityFlag(_Data):
     key: str
     object: str                     # table, column, measure or join key
     kind: Literal["outlier_period", "negative_values", "constant", "low_match_rate", "status_column",
-                  "placeholder_dates", "listed_vs_active", "load_timestamp", "unit_mix", "other"]
+                  "placeholder_dates", "listed_vs_active", "load_timestamp", "unit_mix", "same_values", "other"]
     message: str
     severity: Literal["info", "warning", "serious"] = "info"
     data: dict[str, Any] = Field(default_factory=dict)

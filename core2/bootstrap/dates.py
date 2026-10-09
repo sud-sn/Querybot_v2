@@ -30,7 +30,7 @@ from sqlglot import exp
 
 from core2.bootstrap import names
 from core2.bootstrap.calendar import CalendarFinding
-from core2.bootstrap.inventory import Inventory
+from core2.bootstrap.inventory import Inventory, InvTable
 from core2.bootstrap.joins import JoinFinding
 from core2.bootstrap.keys import TableKeys, _duplicates
 from core2.bootstrap.profiler import TableProfile
@@ -39,15 +39,32 @@ from core2.bootstrap.journal import attempt
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
-AUDIT_WORDS = _AUDIT = {"loaded", "load", "ld", "etl", "updated", "upd", "update", "modified", "mod", "inserted", "ins",
-          "entered",
+AUDIT_WORDS = _AUDIT = {"loaded", "load", "ld", "etl", "updated", "upd", "updt", "update", "modified", "mod", "inserted",
+          "ins", "insrt", "entered",
           "batch", "sync", "synced", "ingest", "ingested", "extract", "extracted", "audit", "written", "refresh",
           "refreshed", "processed", "staged", "stg"}
-_PLANNED = {"planned", "plan", "pln", "promised", "requested", "rqs", "req", "expected", "exp", "target",
-            "scheduled", "sched", "forecast", "estimated", "est"}
-_DUE = {"due", "deadline", "expiry", "expires", "expiration", "maturity"}
+# Words that stamp a row only on a timestamp: a prescription's WRITTEN_DATE is when the doctor wrote it.
+_STAMP_ONLY = {"written", "entered", "processed", "batch"}
+# A row written moments after the event it records: its stamp, when the name says it was made then.
+_MADE = {"created", "crt", "crtd", "inserted", "insrt", "recorded", "logged", "captured"}
+_PLANNED = {"planned", "plan", "pln", "promised", "prms", "requested", "rqs", "req", "expected", "exp", "target",
+            "scheduled", "sched", "schd", "forecast", "estimated", "est", "estm"}
+_DUE = {"due", "deadline", "maturity", "required", "rqrd", "needed", "need"}
+# The end of a row's validity (an expiry, a beyond-use date), or either end of a contract's term.
+_VALIDITY = {"valid", "validity", "effective", "eff", "expiry", "expires", "expiration", "expire", "expr", "exprt",
+             "beyond", "bynd", "until", "thru"}
+_TERM = {"contract", "cntrct", "cntr", "coverage", "policy", "lease", "warranty", "license", "licence", "membership",
+         "agreement", "term"}
+# The date the books count by: a journal is dated by its posting, though its document is dated first.
+_POSTING = {"posting", "posted", "post", "pst", "booked", "booking", "accounting", "acctg", "gl", "ledger"}
+_TERM_ENDS = {"start", "strt", "begin", "from", "end", "to", "finish", "stop"}
+_STARTS = {"start", "strt", "begin", "from", "effective", "eff"}
+# Steps a row goes through after the event it records: never the row's own date when an earlier one exists.
+_PROGRESS = {"acknowledged", "ack", "ackd", "acknowledgement", "resolved", "rslv", "cleared", "clr", "closed",
+             "completed", "cmpl", "done", "finished", "paid", "settled", "shipped", "shp", "delivered", "dlv",
+             "approved", "apprvd", "fulfilled", "received", "rcv", "rcvd", "responded", "escalated"}
 _CANCEL = {"cancel", "cancelled", "canceled", "cnl", "void", "voided", "reversed", "rejected"}
-_PERSONAL = {"birth", "dob", "born", "birthday"}
+_PERSONAL = {"birth", "brth", "bth", "dob", "born", "birthday"}
 # The first, last or original time something happened to what a row describes (a customer's first
 # invoice, an item's last receipt): a fact about that thing, repeated on its rows, not the row's event.
 _MILESTONE = {"first", "fst", "frst", "last", "lst", "latest", "earliest", "original", "orig", "initial", "init",
@@ -96,7 +113,7 @@ def _parse_day(value: object, granularity: str) -> dt.date | None:
 
 
 def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: str, granularity: str,
-              rows: int, entity_columns: list[str]) -> tuple[bool, str]:
+              rows: int, entity_columns: list[str], key_rest: list[str] | None = None) -> tuple[bool, str]:
     """Is ``column`` the period of a snapshot: one row per thing per period, things recurring?
 
     The things a row is about are found by adding the table's links one at a
@@ -105,7 +122,7 @@ def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: st
     period; an event table's month-end or evenly spread dates do not make it a
     snapshot, because its rows are not one per thing and period.
     """
-    if not entity_columns:
+    if not entity_columns and not key_rest:
         return False, ""
     t = inventory.tables[table]
     d = warehouse.dialect
@@ -121,7 +138,11 @@ def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: st
         if not _duplicates(warehouse, t, [column, *chosen]):
             break
     else:
-        return False, ""   # several rows per thing and period: events, not a snapshot
+        # The links alone do not tell a row's thing (stock per ingredient and lot): the rest of the
+        # table's own key, beside the period, may.
+        if not key_rest or _duplicates(warehouse, t, [column, *key_rest]):
+            return False, ""   # several rows per thing and period: events, not a snapshot
+        chosen = list(key_rest)
     things_q = exp.select(exp.Count(this=exp.Literal.number(1))).from_(
         exp.select(*[exp.column(D.ident(e, d)) for e in chosen]).distinct().from_(exp.to_table("__SRC__")).subquery("e"))
     things = int(warehouse.query(things_q.sql(dialect=d).replace("__SRC__", source)).rows[0][0] or 0)
@@ -205,10 +226,19 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                       "rows are stamped when they are loaded")
             if p.distinct == 1:
                 c.add("constant", -0.6, f"{readable} has the same value on every row")
+                if c.granularity == "timestamp" and profile.rows >= 2 and (p.time_share or 0) > 0:
+                    c.kind = "audit"
+                    c.add("one_stamp", -0.5, f"every row carries the same moment ({p.min}): when they were loaded")
             word_set = set(names.tokens(c.column))
-            if word_set & _AUDIT and not names.opaque(c.column):
+            if word_set & _AUDIT and not names.opaque(c.column) and (
+                    word_set & (_AUDIT - _STAMP_ONLY) or c.granularity == "timestamp"):
                 c.kind = "audit"
                 c.add("audit_name", -1.0, f"the name ({readable}) says when the row was written")
+            elif word_set & _VALIDITY or word_set & _TERM and word_set & _TERM_ENDS:
+                c.kind = "validity"
+                starts = bool(word_set & _STARTS)
+                c.add("validity_name", 0.0 if starts else -0.25,
+                      f"the name ({readable}) says when a term {'starts' if starts else 'ends'}: a validity date")
             elif word_set & _DUE:
                 c.kind = "due"
                 c.add("due_name", -0.25, f"the name ({readable}) says it is a due date")
@@ -232,7 +262,9 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                 periodic, why = attempt(
                     warehouse, f"the snapshot check on {table.name}.{c.column}",
                     partial(_periodic, warehouse, inventory, key, c.column, c.granularity, profile.rows,
-                            entity_columns.get(key, [])), (False, "")) \
+                            entity_columns.get(key, []),
+                            [k for k in keys[key].primary_key if k != c.column] if c.column in keys[key].primary_key
+                            else None), (False, "")) \
                     if profile.rows >= 50 and p.distinct and profile.rows / p.distinct >= 5 else (False, "")
                 if periodic:
                     c.periodic = True
@@ -243,7 +275,15 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                 partial(_written_later, warehouse, inventory, key, candidates), None)
         attempt(warehouse, f"the load-time check on {table.name}",
                 partial(_load_times, warehouse, inventory, key, candidates), None)
-        business = [c for c in candidates if c.kind in ("event", "snapshot")]
+        _old_dates(candidates)
+        attempt(warehouse, f"the row-stamp check on {table.name}",
+                partial(_made_with, warehouse, inventory, key, candidates), None)
+        for c in candidates:
+            if c.kind == "event" and set(names.tokens(c.column)) & _POSTING and not names.opaque(c.column):
+                c.add("posting_name", 0.3, f"the name ({names.readable(c.column)}) is the date the books count by")
+        attempt(warehouse, f"the date-order check on {table.name}",
+                partial(_first_of, warehouse, inventory, key, candidates), None)
+        business = [c for c in candidates if _business(c)]
         ranked = sorted(business or [], key=lambda c: (-c.score, [x.name for x in table.columns].index(c.column)))
         if ranked:
             ranked[0].is_default = True
@@ -321,9 +361,105 @@ def _load_times(warehouse: Warehouse, inventory: Inventory, key: str, candidates
             stamp.kind = "audit"
 
 
+def _sample(t: InvTable, dialect: str) -> str:
+    """The first rows of a table, enough to see how two dates of a row relate without reading all of it."""
+    return D.aliased(D.first_rows(D.table_sql(t.database, t.schema, t.name, dialect), dialect, rows=200_000),
+                     "s", dialect)
+
+
+def _business(c: DateCandidate) -> bool:
+    """A date a table may be dated by: its events, its snapshot's period, or the start of a term."""
+    return c.kind in ("event", "snapshot") or c.kind == "validity" and bool(set(names.tokens(c.column)) & _STARTS)
+
+
+def _old_dates(candidates: list[DateCandidate]) -> None:
+    """A date whose values end decades before the table's other dates is a date in a life (a birth), not an
+    event the table records: an employee is dated by the hire, not the birthday."""
+    lasts = [c.last for c in candidates if c.last and c.kind in ("event", "snapshot")]
+    if len(lasts) < 2:
+        return
+    latest = max(lasts)
+    for c in candidates:
+        if c.kind == "event" and c.last and c.last.year < latest.year - 10:
+            c.add("old_dates", -0.4, f"its dates end in {c.last.year}, {latest.year - c.last.year} years before the "
+                  "table's others: a date in the life of what a row describes, not the event it records")
+
+
+def _made_with(warehouse: Warehouse, inventory: Inventory, key: str, candidates: list[DateCandidate]) -> None:
+    """A timestamp named for when the row was made (CREATED_AT) that follows another time of the same rows
+    within a day records the row being written for that event, not a second event."""
+    anchors = [c for c in candidates if c.kind == "event" and c.granularity == "timestamp"
+               and not set(names.tokens(c.column)) & _MADE]
+    stamps = [c for c in candidates if c.kind == "event" and c.granularity == "timestamp"
+              and set(names.tokens(c.column)) & _MADE and not names.opaque(c.column)]
+    if not anchors or not stamps:
+        return
+    d = warehouse.dialect
+    t = inventory.tables[key]
+    for stamp in stamps:
+        for anchor in anchors:
+            a, s = exp.column(D.ident(anchor.column, d)), exp.column(D.ident(stamp.column, d))
+            close = exp.and_(exp.GTE(this=s.copy(), expression=a.copy()),
+                             exp.LTE(this=D.days_between(a.copy(), s.copy(), d), expression=exp.Literal.number(1)))
+            query = exp.select(exp.Count(this=exp.Literal.number(1)).as_("n"), exp.Sum(this=exp.Case(
+                ifs=[exp.If(this=close, true=exp.Literal.number(1))], default=exp.Literal.number(0))).as_("near")
+            ).from_(exp.to_table("__SRC__")).where(exp.and_(exp.not_(exp.Is(this=a.copy(), expression=exp.Null())),
+                                                            exp.not_(exp.Is(this=s.copy(), expression=exp.Null()))))
+            n, near = warehouse.query(query.sql(dialect=d).replace("__SRC__", _sample(t, d), 1)).rows[0]
+            if n and int(near or 0) / int(n) >= 0.95:
+                stamp.kind = "audit"
+                stamp.add("made_with", -1.0, f"{int(near) / int(n):.0%} of rows were made within a day after their "
+                          f"{names.readable(anchor.column).lower()}: it records the row being written")
+                break
+
+
+def _first_of(warehouse: Warehouse, inventory: Inventory, key: str, candidates: list[DateCandidate]) -> None:
+    """Dates that follow one another on every row (raised, acknowledged, cleared; written, received) date
+    the row by the first: the event the row records starting. What comes after is its progress."""
+    events = [c for c in candidates if c.kind == "event"]
+    if len(events) < 2:
+        return
+    d = warehouse.dialect
+    t = inventory.tables[key]
+
+    def comparable(c: DateCandidate) -> str:
+        """Dates with dates, keys with keys of the same kind: a timestamp is never compared with 20260315."""
+        kind = t.type_of(c.column)
+        return "date" if c.via_calendar is None and kind in ("date", "timestamp") else f"{kind}:{c.via_calendar is None}"
+
+    def precedes(a: DateCandidate, b: DateCandidate) -> bool:
+        x, y = exp.column(D.ident(a.column, d)), exp.column(D.ident(b.column, d))
+
+        def count(condition: exp.Expression) -> exp.Expression:
+            return exp.Sum(this=exp.Case(ifs=[exp.If(this=condition, true=exp.Literal.number(1))],
+                                         default=exp.Literal.number(0)))
+
+        query = exp.select(exp.Count(this=exp.Literal.number(1)), count(exp.LTE(this=x.copy(), expression=y.copy())),
+                           count(exp.LT(this=x.copy(), expression=y.copy()))).from_(exp.to_table("__SRC__")).where(
+            exp.and_(exp.not_(exp.Is(this=x.copy(), expression=exp.Null())),
+                     exp.not_(exp.Is(this=y.copy(), expression=exp.Null()))))
+        n, before, strictly = warehouse.query(query.sql(dialect=d).replace("__SRC__", _sample(t, d), 1)).rows[0]
+        n = int(n or 0)
+        return n >= 20 and int(before or 0) / n >= 0.98 and int(strictly or 0) / n >= 0.2
+
+    if len({comparable(c) for c in events}) > 1:
+        return      # a date key and a timestamp are not compared: the first of some would not be the first of all
+    for c in events:
+        others = [o for o in events if o is not c]
+        if all(precedes(c, o) for o in others):
+            # What follows and is often still empty (acknowledged, resolved, paid) is the row's progress: the
+            # first date is the row's own. Two dates every row has (a document's and its posting) are a
+            # convention the order cannot settle: a nudge, and the admin is asked.
+            progress = all(o.coverage < 0.99 or set(names.tokens(o.column)) & _PROGRESS for o in others)
+            c.add("first_event", 0.15 if progress else 0.05,
+                  "it comes before " + ", ".join(names.readable(o.column).lower() for o in others)
+                  + " on every row" + (": the event each row starts with" if progress else ""))
+            return
+
+
 def close_call(candidates: list[DateCandidate]) -> DateCandidate | None:
     """The runner-up when it is within the margin of the default."""
-    business = sorted((c for c in candidates if c.kind in ("event", "snapshot")), key=lambda c: -c.score)
+    business = sorted((c for c in candidates if _business(c)), key=lambda c: -c.score)
     if len(business) >= 2 and business[0].score - business[1].score < MARGIN:
         return business[1]
     return None

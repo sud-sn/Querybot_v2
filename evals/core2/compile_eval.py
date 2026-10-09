@@ -287,6 +287,13 @@ def admin_answers(model: SemanticModel, built: Built, domain: Domain) -> list[di
             if t.time_aggregation and t.time_aggregation != m.time_aggregation:
                 out.append({"object_key": target("measure", m.key), "field": "time_aggregation",
                             "value": t.time_aggregation})
+    # A table whose default date was put to the admin: the admin picks the truth's.
+    defaults = {d.table: f"{d.table}.{d.column}" for d in domain.truth.dates if d.default}
+    asked = {r.object for r in model.review if r.key.startswith("default_date:")}
+    for role in model.date_roles.values():
+        logical_table = tables.get(role.table)
+        if role.table in asked and defaults.get(logical_table or "") == columns.get(role.column) and not role.is_default:
+            out.append({"object_key": target("date_role", role.key), "field": "is_default", "value": True})
     # A number the build read as a code (a headcount of 1 on every row, called C05): the admin defines it.
     key_of = {logical: key for key, logical in columns.items()}
     table_of = {logical: key for key, logical in tables.items()}

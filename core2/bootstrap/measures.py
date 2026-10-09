@@ -43,6 +43,9 @@ _CODE = {"id", "key", "code", "cd", "no", "nbr", "num", "seq", "sequence", "line
          "status", "sts", "flag", "flg", "year", "yr", "month", "mth", "day", "week", "wk", "quarter", "qtr",
          "version", "level", "lvl", "rank", "priority", "grade", "zip", "postal", "phone"}
 _UNIT_WORDS = {"uom", "unit", "units", "unt", "um", "measure"}
+# What a thing can do (a port's speed, a circuit's bandwidth), not an amount of anything: never added up.
+_CAPACITY = {"speed", "bandwidth", "capacity", "mbps", "gbps", "kbps", "bps", "threshold", "limit", "lmt", "rpm",
+             "ghz", "mhz"}
 _UNIT_VALUES = {"ea", "each", "pc", "pcs", "piece", "kg", "g", "lb", "lbs", "oz", "ft", "m", "cm", "mm", "l", "ml",
                 "box", "bx", "cs", "case", "pk", "pack", "pallet", "unk", "units", "unit", "dz", "doz", "gal", "ton"}
 _CURRENCIES = {"usd", "cad", "eur", "gbp", "jpy", "aud", "chf", "cny", "inr", "mxn", "brl", "sek", "nok", "dkk",
@@ -104,7 +107,9 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
         # day does not make invoices into balances, and nothing numbered as a
         # document or a line (invoice no., line no.) is a balance.
         periodic = [c for c in roles if c.periodic and c.is_default]
-        documents = _document_numbers(table, {c for j in outgoing for c in j.from_columns})
+        # The rest of a balance's own key beside its period (a lot number) says what is counted, not a document.
+        grain = set(keys[key].primary_key) if any(c.column in keys[key].primary_key for c in periodic) else set()
+        documents = _document_numbers(table, {c for j in outgoing for c in j.from_columns} | grain)
         evidence: list[Evidence] = []
         if periodic and documents:
             evidence.append(Evidence(kind="documents", weight=1, detail=(
@@ -162,7 +167,8 @@ def _label_like(column: InvColumn | None, p: ColumnProfile) -> bool:
     if column is None or column.data_type != "text":
         return False
     spread = (p.max_len or 0) - (p.min_len or 0)
-    return spread >= 4 or (p.avg_len or 0) >= 12
+    # Long and all of one width (B241214-0000) is a code, however long; names vary in length.
+    return spread >= 4 or (p.avg_len or 0) >= 12 and spread > 0
 
 
 def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], keys: dict[str, TableKeys],
@@ -185,6 +191,10 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
         if not names.opaque(column.name) and words & _CODE and not words & (_MONEY | _QUANTITY | _PERCENT | _RATE) \
                 and not _counted(column.name):
             continue
+        if words & _CAPACITY and not words & (_MONEY | _QUANTITY):
+            continue   # a port's speed, a circuit's bandwidth: what a thing can do, not an amount of it
+        if "per" in words and not dates.get(key):
+            continue   # a recipe's grams per capsule: a ratio of the link, with no date to add it up over
         if column.data_type == "integer" and names.opaque(column.name) and p.distinct <= 10:
             continue   # a small set of whole numbers with no name reads as a code
         out.append(column.name)

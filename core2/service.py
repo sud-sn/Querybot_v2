@@ -30,6 +30,7 @@ from core2.answer.builder import build_answer
 from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
 from core2.answer.forecast import answer_forecast
+from core2.answer.snapshots import complete_snapshots
 from core2.answer.suggestions import drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
@@ -392,6 +393,8 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     if plan.intent == "forecast":
         return answer_forecast(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
     logical = resolve(plan, model, replace(ctx, split_units=services.split_units))
+    if any(part.snapshot for part in logical.parts):
+        logical = complete_snapshots(logical, model, warehouse)     # a snapshot still loading is not the latest
     compiled = compile_query(logical, model, warehouse.dialect)
     result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
     payload = build_answer(question, logical, compiled, result.columns, result.rows,
