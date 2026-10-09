@@ -341,6 +341,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     except QueryFailed as exc:     # a refused or failed query is told, never raised to the socket
         log.warning("core2 query failed for %r: %s", question, exc.cause)
         cause = exc.cause
+        if unavailable(cause):
+            return _refused(question, UNAVAILABLE, plan, services, "The database was not available.",
+                            trust={"sql": exc.sql})
         reason = str(cause).split(":", 1)[-1].strip() if "Policy" in type(cause).__name__ else "the database refused it"
         return _refused(question, f"The question was understood but the query could not run ({reason}).", plan,
                         services, f"The query could not run: {reason}", trust={"sql": exc.sql})
@@ -411,6 +414,23 @@ def _members_shown(logical: Any, payload: dict[str, Any], most: int = 20) -> lis
         value = row.get(group.name)
         out.append((group.attribute, None if value in (None, "", "Unknown") else str(value)))
     return out
+
+
+UNAVAILABLE = ("The database is not available right now: Azure SQL says so while a paused database is resuming, "
+               "or during a failover. Ask again in a minute.")
+
+
+def unavailable(exc: BaseException | None) -> bool:
+    """Is ``exc`` the warehouse being briefly unavailable (Azure SQL resuming from a pause, a failover)?"""
+    from core.schema import _azure_transient_number
+
+    for _ in range(5):
+        if exc is None:
+            return False
+        if _azure_transient_number(exc):
+            return True
+        exc = getattr(exc, "cause", None) or exc.__cause__
+    return False
 
 
 def _against_before(question: str, plan: Plan, services: Services, ctx: Context, warehouse: Guarded,
@@ -677,10 +697,19 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     # The admin's "value indexing" switch, as today's pipeline reads it: off, no member
     # name is read from the warehouse or put before the AI.
     indexing = value_index_enabled(state)
+    try:
+        index = _member_index(account_id, model, db_config, read=indexing)
+    except Exception as exc:  # noqa: BLE001 - names are a help to the planner; the question is answered without them
+        if unavailable(exc):
+            log.warning("core2: the database of %s was not available to read member names: %s", account_id, exc)
+            return None, _frame(question, UNAVAILABLE)
+        log.warning("core2: member names of %s could not be read; answering without them: %s", account_id, exc,
+                    exc_info=True)
+        index = MemberIndex()
     return Services(
         model=model, warehouse=warehouse,
         complete=workspace_planner(account_id, client, question=question, question_id=question_id),
-        index=_member_index(account_id, model, db_config, read=indexing), today=dt.date.today(),
+        index=index, today=dt.date.today(),
         values_allowed=scrub is None and indexing, allowed_tables=_allowed_model_tables(model, allowed),
         data_source=str(db_config.get("db_type") or ""), scrub=scrub,
         # A reader's own metric is written by the AI from their words, unscrubbed and beside the fields' values:

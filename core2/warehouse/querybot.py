@@ -23,6 +23,10 @@ class QueryBotWarehouse:
     db_type: str                     # snowflake | azure_sql | oracle
     credentials: dict[str, Any]
     timeout_seconds: int = 120
+    # Azure SQL answers 40613 while a paused database resumes (a minute or so) and during a failover:
+    # four tries over about a minute, as today's pipeline makes. One try failed every question asked
+    # while the database was waking up.
+    connect_retries: int = 4
     dialect: str = ""
     _local: threading.local = field(default_factory=threading.local, repr=False)
     _all: list[Any] = field(default_factory=list, repr=False)
@@ -45,7 +49,7 @@ class QueryBotWarehouse:
             finally:
                 cur.close()
         elif self.db_type == "azure_sql":
-            conn = _az_connect({**self.credentials, "login_timeout": 20}, max_retries=1)
+            conn = _az_connect({**self.credentials, "login_timeout": 20}, max_retries=self.connect_retries)
             conn.timeout = int(self.timeout_seconds)
         elif self.db_type == "oracle":
             conn = _ora_connect(self.credentials, max_retries=1)
