@@ -479,10 +479,11 @@ def _against_before(question: str, plan: Plan, services: Services, ctx: Context,
     return f"{said[:1].upper()}{said[1:]}, the period before."
 
 
-# Words that point at something rather than name it: "lowest", "the first one", "that division", "it".
-_REFERENCE = re.compile(r"^\s*(?:(?:that|this|these|those|its|their)\b|(?:the\s+)?(?:first|second|third|last|top|"
-                        r"bottom|lowest|highest|biggest|smallest|largest|best|worst|previous|same)\b|(?:it|them|one)\s*$)",
-                        re.IGNORECASE)
+# Words that point at something rather than name it, and nothing more: "lowest", "the first one", "that
+# division", "it". A name that only starts so ("Top Customer A", "Best Buy") is a name.
+_REFERENCE = re.compile(r"^\s*(?:(?:the\s+)?(?:first|second|third|last|top|bottom|lowest|highest|biggest|smallest|"
+                        r"largest|best|worst|previous|same)(?:\s+one)?|(?:that|this|these|those)(?:\s+[\w-]+){1,2}|"
+                        r"it|them|one|its|their)\s*$", re.IGNORECASE)
 
 
 def _found_nothing(payload: dict[str, Any]) -> bool:

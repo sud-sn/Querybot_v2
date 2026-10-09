@@ -110,8 +110,9 @@ def test_a_customer_the_data_does_not_have_is_said_not_no_rows(retail):
     (_, then), watched = _conversation(retail, ("top 3 customers in H1 2026", TOP),
                                        ("how did those same customers do in H1 2025?", guessed))
     assert then["answer"]["headline"].startswith(
-        'I could not find that in this data: there is no customer called "Top Customer A". If you mean the '
-        "customers in the answer above, ask to compare that answer with the other period")
+        'I could not find that in this data: there is no customer called "Top Customer A". If you mean one of the '
+        'customers in the answer above, say which ("the first one", "the lowest one"), or ask for the same answer '
+        'in another period ("the same ranking against last year").')
     assert then["data"] is None and "No rows match" not in json.dumps(then)
     assert then["trust"]["stopped"] == 'No customer is called "Top Customer A", and nothing matched.'
     assert "Top Customer A" in then["trust"]["sql"]                 # the query ran, and it is shown
