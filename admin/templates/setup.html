@@ -35,7 +35,7 @@
         </div>
 
         <hr style="border:none;border-top:1px solid var(--gray-200);margin:1.25rem 0">
-        <p style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--gray-700);margin-bottom:.75rem">LLM DEFAULTS (can be changed per client later)</p>
+        <p style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--gray-700);margin-bottom:.75rem">LLM DEFAULTS (can be changed per workspace later)</p>
 
         <div class="form-grid">
           <div class="form-group">
@@ -63,7 +63,7 @@
             <option value="{{ model }}" {% if model == "claude-opus-4-5" %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
-          <p class="form-note">Used once per client to enrich the knowledge base</p>
+          <p class="form-note">Used once per workspace to enrich the knowledge base</p>
         </div>
 
         <button type="submit" class="btn btn-primary" style="width:100%;margin-top:.5rem">

@@ -74,7 +74,7 @@
 .kb-progress-percent{font-size:var(--font-sm);font-weight:var(--weight-bold);min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
 .kb-progress-step{font-size:var(--font-sm);font-weight:var(--weight-bold);color:inherit}
 /* ── Setup wizard step indicator ─────────────────────────── */
-.wizard-steps{display:flex;align-items:center;margin-bottom:1.5rem;padding:.75rem 1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+.wizard-steps{display:flex;align-items:center;overflow-x:auto;margin-bottom:1.5rem;padding:.75rem 1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 .wizard-step{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
 .wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:var(--font-xs);font-weight:var(--weight-bold);flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
 .wizard-step.done .wizard-step-circle{background:var(--green);border-color:var(--green);color:var(--on-primary)}
@@ -105,7 +105,7 @@
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
-    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": "Workspaces", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
     {"label": "Setup",     "href": ""},
 ]) }}
@@ -253,7 +253,7 @@
               Other / custom database (normal schema)
             </option>
             {% if client_source_pack == 'multiple' %}
-            <option value="multiple" selected disabled>Multiple packs configured in Client Settings</option>
+            <option value="multiple" selected disabled>Multiple packs set in the workspace’s settings</option>
             {% endif %}
             {# Source systems only. An industry pack layers ON TOP of one of
                these; offering it in a single-choice list would let an admin

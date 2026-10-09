@@ -114,12 +114,15 @@
           The LAST item is the current page (no link rendered).
 
    {{ breadcrumb([
-       {"label": "Clients",  "href": "/admin/clients"},
+       {"label": "Workspaces", "href": "/admin/clients"},
        {"label": "Acme Inc", "href": ""},
    ]) }}
 #}
 {% macro breadcrumb(items) -%}
-{% if items %}
+{# The Dashboard sits beside the other places in the sidebar, not above them, so a trail starts at the place
+   itself; and a trail of one is the page's own title, so a top-level page has none. #}
+{% set items = items[1:] if items and items[0].label == 'Dashboard' else items %}
+{% if items and items | length > 1 %}
 <nav class="breadcrumb" aria-label="Breadcrumb">
   {% for item in items %}
     {% if not loop.last %}

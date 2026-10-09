@@ -2,14 +2,15 @@
 {% block title %}Answer Traces — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block head %}
 <style>
-.trace-grid{display:grid;grid-template-columns:360px 1fr;gap:1rem}
+.trace-grid{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:1rem}
+@media (max-width: 900px){.trace-grid{grid-template-columns:minmax(0,1fr)}}
 .trace-list{max-height:720px;overflow:auto}
 .trace-item{display:block;padding:.75rem;border-bottom:1px solid var(--border);color:var(--text);text-decoration:none}
 .trace-item:hover{background:var(--row-hover);text-decoration:none}
 .trace-item.active{background:var(--blue-light)}
 .trace-q{font-size:var(--font-sm);font-weight:var(--weight-bold);line-height:1.35}
 .trace-meta{font-size:var(--font-xs);color:var(--text-muted);margin-top:4px}
-.trace-kv{display:grid;grid-template-columns:150px 1fr;gap:.45rem .75rem;font-size:var(--font-sm)}
+.trace-kv{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr);overflow-wrap:anywhere;gap:.45rem .75rem;font-size:var(--font-sm)}
 .trace-kv div:nth-child(odd){color:var(--text-muted);font-weight:var(--weight-bold)}
 .trace-pre{white-space:pre-wrap;word-break:break-word;background:var(--code-bg);color:var(--code-text);padding:.75rem;border-radius:var(--radius-sm);font-size:var(--font-sm);max-height:280px;overflow:auto}
 .step{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem;margin-bottom:.55rem;background:var(--surface-2)}

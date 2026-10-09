@@ -114,6 +114,24 @@ templates.env.filters["from_json"] = _jinja_from_json
 templates.env.globals["asset"] = asset_url
 templates.env.globals["product_version"] = product_version
 
+
+def _admin_workspaces(current: str = "", limit: int = 8) -> dict:
+    """The workspaces the sidebar lists: by name, the first few and the one open now, and how many there are."""
+    try:
+        rows = store.list_clients()
+    except Exception as exc:  # noqa: BLE001 - the sidebar still draws; the page says what failed elsewhere
+        log.warning("admin: the sidebar's workspaces could not be read: %s", exc)
+        rows = []
+    every = sorted(({"account_id": r["account_id"], "name": r.get("client_name") or r["account_id"]} for r in rows),
+                   key=lambda w: w["name"].casefold())
+    shown = every[:limit]
+    if current and not any(w["account_id"] == current for w in shown):
+        shown += [w for w in every if w["account_id"] == current]
+    return {"items": shown, "total": len(every)}
+
+
+templates.env.globals["admin_workspaces"] = _admin_workspaces
+
 _COOKIE = "querybot_session"
 
 # ── LLM choices shown in dropdowns ───────────────────────────────────────────

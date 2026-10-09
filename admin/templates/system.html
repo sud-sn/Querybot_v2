@@ -160,7 +160,7 @@
 {% if saved %}
   {% set saved_messages = {
       'defaults': "Default provider saved. Continue with the matching credentials below.",
-      'credentials': "Credentials saved. Verify the saved connection before using it for client workloads.",
+      'credentials': "Credentials saved. Verify the saved connection before a workspace uses it.",
       'database': "Database settings saved.",
       'password': "Admin password changed. Every other admin session is signed out.",
       'prices': "Price saved. New AI calls are costed at it." ~ ((" " ~ costed ~ " call" ~ ("" if costed == "1" else "s") ~ " made before the price was set " ~ ("is" if costed == "1" else "are") ~ " now costed too.") if costed and costed != "0" else ""),
@@ -173,7 +173,7 @@
 {% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
 
 {{ alert(
-    message="Changing API keys or LLM models only affects new queries — existing KB files, database connections, and history are never touched. Per-client overrides always take priority over these defaults.",
+    message="Changing API keys or LLM models only affects new queries — existing KB files, database connections, and history are never touched. A workspace’s own settings always take priority over these defaults.",
     type="info",
     icon_name="info",
     title="Safe to update at any time"
@@ -210,7 +210,7 @@
         <span class="llm-stage-number">1</span>
         <div>
           <div class="llm-stage-title">Choose the platform default</div>
-          <div class="llm-stage-description">This provider handles new queries unless a client has an explicit override.</div>
+          <div class="llm-stage-description">This provider handles new queries unless a workspace has its own.</div>
         </div>
         <span class="llm-stage-status configured" id="default-provider-status">{{ ic("check-circle", 12) }} Saved</span>
       </div>
@@ -251,7 +251,7 @@
       </div>
       <div class="llm-save-row">
         <button type="submit" class="btn btn-primary" name="save_section" value="defaults">{{ ic("chevron-right", 14) }} Save selection and continue</button>
-        <span class="form-note">Per-client model overrides continue to take priority.</span>
+        <span class="form-note">A workspace’s own model still takes priority.</span>
       </div>
     </div>
   </div>

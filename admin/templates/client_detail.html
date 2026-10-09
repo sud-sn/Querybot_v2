@@ -5,7 +5,7 @@
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
-    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": "Workspaces", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": ""},
 ]) }}
 {% endblock %}
@@ -244,7 +244,7 @@
     <!-- ── Client readiness widget (full-width) ── -->
     <div class="overview-card health-score-card">
       <h2 style="display:flex;align-items:center;gap:.5rem">
-        Client readiness
+        Workspace readiness
         {% if health_score.grade == 'A' or health_score.grade == 'B' %}
           <span class="badge badge-green">{{ health_score.grade }}</span>
         {% elif health_score.grade == 'C' %}
@@ -293,12 +293,12 @@
 <!-- SETTINGS TAB -->
 <div id="tab-settings" class="tab-pane{% if active_tab == 'settings' %} active{% endif %}">
   <div class="card">
-    <div class="card-header"><h2>Client configuration</h2></div>
+    <div class="card-header"><h2>Workspace settings</h2></div>
     <div class="card-body">
       <form method="post" action="/admin/clients/{{ client.account_id }}/update">
         <div class="form-grid">
           <div class="form-group">
-            <label>Client name</label>
+            <label>Workspace name</label>
             <input type="text" name="client_name" value="{{ client.client_name }}" placeholder="e.g. Acme Pharmacy">
           </div>
           <div class="form-group">
@@ -309,7 +309,7 @@
               <option value="{{ db.id }}" {% if db.id == client.db_config_id %}selected{% endif %}>{{ db.name }} ({{ db.label }})</option>
               {% endfor %}
             </select>
-            <p class="form-note">Each client queries its own database independently. Changing this does not affect other clients.</p>
+            <p class="form-note">Each workspace queries its own database. Changing this does not affect other workspaces.</p>
           </div>
         </div>
         <div class="form-grid">
@@ -331,7 +331,7 @@
               <option value="{{ model }}" {% if model == client.llm_model %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
-            <p class="form-note">Overrides the system default for this client only. All other clients are unaffected.</p>
+            <p class="form-note">Overrides the system default for this workspace only. Other workspaces are unaffected.</p>
           </div>
         </div>
         {% if erp_packs_available %}
@@ -922,7 +922,7 @@
     <div class="card-body">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1.25rem">
         <div style="max-width:520px">
-          <p class="font-bold" style="margin-bottom:4px">Reset this client</p>
+          <p class="font-bold" style="margin-bottom:4px">Reset this workspace</p>
           <p class="text-sm text-muted">
             Permanently deletes all schema files, KB files, ChromaDB vector index, and the client row.
             You will need to re-register the client from the Clients page. <strong>This cannot be undone.</strong>
@@ -939,7 +939,7 @@
         </div>
         <form method="post" action="/admin/clients/{{ client.account_id }}/reset" id="resetClientForm">
           <button type="button" class="btn btn-danger" id="dangerResetBtn" disabled
-            onclick="qbConfirm({title:'Reset this client?',body:'Permanently deletes all schema files, KB files, vector index, and the client row. Cannot be undone.',confirm:'Reset client',onConfirm:()=>document.getElementById('resetClientForm').submit()})">
+            onclick="qbConfirm({title:'Reset this workspace?',body:'Permanently deletes all schema files, KB files, vector index, and the workspace record. Cannot be undone.',confirm:'Reset workspace',onConfirm:()=>document.getElementById('resetClientForm').submit()})">
             {{ ic("trash", 14) }} Reset client
           </button>
         </form>

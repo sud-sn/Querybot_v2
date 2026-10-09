@@ -5,7 +5,7 @@
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
-    {"label": "Clients", "href": "/admin/clients"},
+    {"label": "Workspaces", "href": "/admin/clients"},
     {"label": "Register Client", "href": ""},
 ]) }}
 {% endblock %}
@@ -13,11 +13,11 @@
 
 <div class="page-header">
   <div class="page-header-body">
-    <h1>Register a new client</h1>
+    <h1>Add a workspace</h1>
     <p>Create the workspace and prepare its business vocabulary for the first Knowledge Base build.</p>
   </div>
   <div class="page-header-actions">
-    <a href="/admin/clients" class="btn btn-secondary btn-sm">&larr; Back to clients</a>
+    <a href="/admin/clients" class="btn btn-secondary btn-sm">&larr; Back to workspaces</a>
   </div>
 </div>
 
@@ -27,14 +27,14 @@
   <div class="card-header">
     <div>
       <h2>Workspace profile</h2>
-      <p class="text-sm text-muted" style="margin:.25rem 0 0">Set the client identity, access channel, and source-system vocabulary.</p>
+      <p class="text-sm text-muted" style="margin:.25rem 0 0">Set the workspace’s name, how readers reach it, and its source system’s vocabulary.</p>
     </div>
   </div>
   <div class="card-body">
     <form method="post" action="/admin/clients/create">
       <div class="form-grid">
         <div class="form-group">
-          <label for="f_client_name">Client name <span class="text-danger">*</span></label>
+          <label for="f_client_name">Workspace name <span class="text-danger">*</span></label>
           <input type="text" id="f_client_name" name="client_name" required autofocus placeholder="e.g. Acme Pharmacy">
           <p class="form-note">The workspace name shown to administrators and users.</p>
         </div>
@@ -84,7 +84,7 @@
       <section class="onboarding-section" aria-labelledby="context-heading">
         <div class="onboarding-section-heading">
           <span class="onboarding-step">2</span>
-          <div><strong id="context-heading">Business context</strong><span>Ground schema interpretation in the client's operating model.</span></div>
+          <div><strong id="context-heading">Business context</strong><span>Ground schema interpretation in the business’s operating model.</span></div>
         </div>
         <div class="form-group" style="margin-bottom:0">
           <label for="f_desc">Business description</label>
@@ -118,7 +118,7 @@
       {% endif %}
 
       <div class="form-actions" style="margin-top:1.2rem">
-        <button type="submit" class="btn btn-primary">Register client</button>
+        <button type="submit" class="btn btn-primary">Add workspace</button>
         <a href="/admin/clients" class="btn btn-secondary">Cancel</a>
       </div>
     </form>

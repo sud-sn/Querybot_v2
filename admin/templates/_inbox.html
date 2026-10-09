@@ -17,7 +17,7 @@
     {% if items %}
     <span class="inbox-tally">
       {{ summary.action }} blocked{% if summary.warn %} · {{ summary.warn }} degrading{% endif %}
-      · across {{ summary.clients }} client{{ "s" if summary.clients != 1 }}
+      · across {{ summary.clients }} workspace{{ "s" if summary.clients != 1 }}
     </span>
     {% endif %}
   </div>
@@ -29,7 +29,7 @@
       <div class="inbox-clear-title">Nothing waiting</div>
       <div class="inbox-clear-body">
         No access requests, unreviewed answers, unresolved conflicts or unfinished
-        setups across any client.
+        setups in any workspace.
       </div>
     </div>
   </div>
@@ -44,7 +44,7 @@
           <strong>{{ item.total if item.counted else item.client_count }}</strong>
           {{ item.label }}
           {% if item.counted and item.client_count > 1 %}
-          <span class="inbox-spread">in {{ item.client_count }} clients</span>
+          <span class="inbox-spread">in {{ item.client_count }} workspaces</span>
           {% endif %}
         </div>
         <p class="inbox-detail">{{ item.detail }}</p>

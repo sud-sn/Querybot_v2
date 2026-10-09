@@ -70,7 +70,7 @@ def test_six_areas():
 
 def test_data_keeps_the_semantic_layer_an_admin_corrects():
     assert _labels(_nav("setup"), "secondary") == [
-        "Setup", "What QueryBot Learned", "Knowledge Base", "Relationships", "Dates", "Metrics"]
+        "Setup", "What QueryBot learned", "Knowledge base", "Relationships", "Dates", "Metrics"]
 
 
 @pytest.mark.parametrize("segment", DAY_TO_DAY)
@@ -80,7 +80,7 @@ def test_no_day_to_day_page_links_to_a_diagnostics_page(segment):
 
 
 def test_the_egress_log_sits_with_its_policy():
-    assert _labels(_nav("egress"), "secondary") == ["Compliance", "AI Egress Log"]
+    assert _labels(_nav("egress"), "secondary") == ["Compliance", "AI egress log"]
 
 
 def test_settings_is_one_page():

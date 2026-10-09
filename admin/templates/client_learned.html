@@ -4,7 +4,7 @@
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard",  "href": "/admin"},
-    {"label": "Clients",    "href": "/admin/clients"},
+    {"label": "Workspaces", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
     {"label": "What QueryBot learned", "href": ""},
 ]) }}

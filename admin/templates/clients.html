@@ -1,22 +1,22 @@
 {% extends "base.html" %}
 {% from "macros.html" import breadcrumb, status_badge, empty_state %}
 {% from "icons.html" import ic %}
-{% block title %}Clients — QueryBot Admin{% endblock %}
+{% block title %}Workspaces — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
-    {"label": "Clients",   "href": ""},
+    {"label": "Workspaces", "href": ""},
 ]) }}
 {% endblock %}
 {% block content %}
 
 <div class="page-header">
   <div class="page-header-body">
-    <h1>Registered clients</h1>
+    <h1>Workspaces</h1>
     <p>Every workspace registered with QueryBot.</p>
   </div>
   <div class="page-header-actions">
-    <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} Register client</a>
+    <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} New workspace</a>
   </div>
 </div>
 
@@ -25,7 +25,7 @@
   <div class="clients-search-bar">
     <div class="clients-search-input-wrap input-icon-wrap">
       {{ ic("search", 16) }}
-      <input aria-label="Search clients" type="text" class="form-input" name="q" id="clientSearch" value="{{ search }}"
+      <input aria-label="Search workspaces" type="text" class="form-input" name="q" id="clientSearch" value="{{ search }}"
              placeholder="Search by name or account ID…"
              autocomplete="off" spellcheck="false">
       {% if search %}
@@ -63,18 +63,18 @@
     {% if search %}
     {{ empty_state(
         icon_name="search",
-        title='No clients matching "' ~ search ~ '"',
-        body="Try a different name or account ID, or clear the search to see all clients.",
+        title='No workspaces matching "' ~ search ~ '"',
+        body="Try a different name or account ID, or clear the search to see them all.",
         sec_href="/admin/clients",
         sec_label="Clear search"
     ) }}
     {% else %}
     {{ empty_state(
         icon_name="users",
-        title="No clients registered yet",
+        title="No workspaces yet",
         body="Register your first workspace to get started. You can also wait for users to message your connected bot.",
         action_href="/admin/clients/new",
-        action_label="Register first client",
+        action_label="Add the first workspace",
         sec_href="/admin/platforms",
         sec_label="Set up platform"
     ) }}
@@ -85,7 +85,7 @@
 <div class="card">
   <div class="card-header">
     <h2>
-      {{ clients|length }} client{{ 's' if clients|length != 1 }}
+      {{ clients|length }} workspace{{ 's' if clients|length != 1 }}
       {% if search %}<span class="text-muted" style="font-weight:var(--weight-medium)"> — matching "{{ search }}"</span>{% endif %}
     </h2>
     <span class="text-xs text-muted">{{ clients|selectattr("state","equalto","READY")|list|length }} ready</span>
@@ -94,7 +94,7 @@
     <table class="qb-table" id="clientsTable">
       <thead>
         <tr>
-          <th>Client</th>
+          <th>Workspace</th>
           <th>Platform</th>
           <th>State</th>
           <th>Health</th>

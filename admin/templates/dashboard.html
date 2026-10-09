@@ -13,7 +13,7 @@
     <p>What needs you, then the numbers.</p>
   </div>
   <div class="page-header-actions">
-    <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} New client</a>
+    <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} New workspace</a>
   </div>
 </div>
 
@@ -63,7 +63,7 @@
 {% set ready_count = clients|selectattr("state","equalto","READY")|list|length %}
 {% set total_clients = clients|length %}
 <div class="metrics">
-  {{ metric_card("Total clients",   total_clients,
+  {{ metric_card("Workspaces",   total_clients,
       delta=(ready_count|string ~ " ready") if total_clients else "",
       delta_dir="up" if ready_count == total_clients and total_clients > 0 else ("flat" if ready_count == 0 else ""),
       color_var="") }}
@@ -82,7 +82,7 @@
 {# ── Clients table ── #}
 <div class="card">
   <div class="card-header">
-    <h2>Recent clients</h2>
+    <h2>Recent workspaces</h2>
     <a href="/admin/clients" class="btn btn-secondary btn-sm">View all &rarr;</a>
   </div>
 
@@ -90,10 +90,10 @@
   <div class="card-body">
     {{ empty_state(
         icon_name="users",
-        title="No clients yet",
+        title="No workspaces yet",
         body="Once a workspace messages your bot, or you register one manually, it will appear here.",
         action_href="/admin/clients/new",
-        action_label="Register first client"
+        action_label="Add the first workspace"
     ) }}
   </div>
   {% else %}
@@ -101,7 +101,7 @@
     <table class="qb-table">
       <thead>
         <tr>
-          <th>Client</th>
+          <th>Workspace</th>
           <th>Platform</th>
           <th>State</th>
           <th>Database</th>

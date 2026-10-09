@@ -5,7 +5,7 @@
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
-    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": "Workspaces", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
     {"label": "Metrics", "href": ""},
 ]) }}
@@ -53,6 +53,7 @@ table.ms-l .act{width:48px;text-align:right}
   table.ms-l,table.ms-l tbody{display:block;width:100%}
   table.ms-l tr{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;padding:12px 14px;border-bottom:1px solid var(--grid-line)}
   table.ms-l td{display:block;padding:0;border:0}
+  table.ms-l tr[hidden]{display:none}
   table.ms-l td:first-child,table.ms-l td.how{grid-column:1/-1}
   table.ms-l td[data-label]::before{content:attr(data-label);display:block;font-size:var(--font-xs);color:var(--text-muted);
     text-transform:uppercase;letter-spacing:.05em}

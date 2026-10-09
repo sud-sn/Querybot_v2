@@ -4,7 +4,7 @@
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard",     "href": "/admin"},
-    {"label": "Clients",       "href": "/admin/clients"},
+    {"label": "Workspaces", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
     {"label": "Model Health",  "href": ""},
 ]) }}
@@ -414,7 +414,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         Suggested terminology pack:
         <strong>{{ naming.pack_recommendations[0].erp_name }}</strong>
         ({{ naming.pack_recommendations[0].confidence }}% match confidence).
-        Review it in <a href="/admin/clients/{{ client.account_id }}#settings">client settings</a> before rebuilding.
+        Review it in <a href="/admin/clients/{{ client.account_id }}#settings">workspace settings</a> before rebuilding.
       </div>
       {% endif %}
       {% if naming.pack_recommendations %}

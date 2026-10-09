@@ -2,13 +2,15 @@
 {% set _p = request.url.path %}
 {% set _b = "/admin/clients/" ~ client.account_id %}
 
-{# Six areas: Overview · Data · Questions · People · Compliance · Settings,
-   with one level of tabs under each (the clean-up approved in October 2026).
-   Data holds the semantic layer an admin corrects: Setup, what QueryBot
-   learned, the knowledge base, relationships, dates and metrics. Questions is
-   the log, the answers readers flagged and usage. The AI egress log sits with
-   its policy under Compliance. Settings is one page with the danger zone at
-   its foot.
+{# The workspace header, as the approved shell draws it: where you are (Workspaces /
+   the workspace / the area), the workspace's name and whether it answers, the way
+   into its reader chat, the six areas (Overview · Data · Questions · People ·
+   Compliance · Settings) and the open area's own menu on a band beneath.
+
+   Data holds the semantic layer an admin corrects: Setup, what QueryBot learned,
+   the knowledge base, relationships, dates and metrics. Questions is the log, the
+   answers readers flagged and usage. The AI egress log sits with its policy under
+   Compliance. Settings is one page with the danger zone at its foot.
 
    Matching is on the path segment AFTER the account id, not a substring of the
    whole path. The account id sits directly after a slash, so a substring test
@@ -31,20 +33,51 @@
                                   'mapping', 'glossary', 'meanings', 'domains', 'reports'] %}
 {% set _is_settings   = _seg in ['settings', 'advanced'] or _is_diagnostics %}
 
-<section class="client-workspace-nav" aria-label="Client workspace">
-  <div class="client-workspace-summary">
-    <div class="client-workspace-identity">
-      <a href="/admin/clients" class="client-workspace-back" aria-label="Back to all clients">&larr;</a>
-      <div>
-        <div class="client-workspace-name">{{ client.client_name or client.account_id }}</div>
-        <div class="client-workspace-id">{{ client.account_id }}</div>
-      </div>
-    </div>
-    <span class="badge {% if client.state == 'READY' %}badge-green{% elif client.state in ['KB_BUILDING','SCHEMA_BUILDING'] %}badge-amber{% elif client.state == 'SCHEMA_READY' %}badge-blue{% else %}badge-gray{% endif %}">{{ client.state }}</span>
-  </div>
+{% set _area = 'Overview' if _is_overview else 'Data' if _is_data else 'Questions' if _is_questions else 'People' if _is_people
+               else 'Compliance' if _is_compliance else 'Settings' if _is_settings else '' %}
+{% set _area_href = {'Overview': _b, 'Data': _b ~ '/setup', 'Questions': _b ~ '/queries', 'People': _b ~ '/users',
+                     'Compliance': _b ~ '/compliance', 'Settings': _b ~ '/settings'}.get(_area, _b) %}
 
-  {# Six areas, one level of tabs under each. #}
-  <nav class="client-workspace-primary" aria-label="Client workspace areas">
+{# The open area's menu: (path segment, label). #}
+{% if _is_data %}
+  {% set _menu = [('setup', 'Setup'), ('learned', 'What QueryBot learned'), ('kb', 'Knowledge base'),
+                  ('relationships', 'Relationships'), ('date-roles', 'Dates'), ('measures', 'Metrics')] %}
+{% elif _is_questions %}
+  {% set _menu = [('queries', 'Questions'), ('learning-queue', 'Flagged answers'), ('billing', 'Usage & billing')] %}
+{% elif _is_people %}
+  {% set _menu = [('users', 'Users'), ('groups', 'Groups'), ('pending-users', 'Access requests')] %}
+{% elif _is_compliance %}
+  {% set _menu = [('compliance', 'Compliance'), ('egress', 'AI egress log')] %}
+{% elif _is_diagnostics %}
+  {# The way back to the list, and the page open now: the list itself is the menu, so eleven tabs would only overflow. #}
+  {% set _menu = [('diagnostics', 'Diagnostics')] + [
+       ('graph', 'Entity graph'), ('metrics', 'Metric registry'), ('model-health', 'Model health'), ('evals', 'Evaluations'),
+       ('traces', 'Timing'), ('readiness', 'What to model next'), ('drafts', 'Drafted for review'), ('mapping', 'Source mapping'),
+       ('glossary', 'Glossary'), ('meanings', 'Business meanings'), ('domains', 'Subject areas'), ('reports', 'Reports')
+     ] | selectattr(0, 'equalto', _seg) | list %}
+{% else %}
+  {% set _menu = [] %}
+{% endif %}
+{% set _here = (_menu | selectattr(0, 'equalto', _seg) | list | first) if _menu else none %}
+
+{% set _status = {'READY': ('Answering', 'ok'), 'SCHEMA_READY': ('Ready to learn', 'info'), 'SCHEMA_BUILDING': ('Reading the database', 'busy'),
+                  'KB_BUILDING': ('Building the knowledge base', 'busy'), 'ERROR': ('Needs attention', 'bad')}.get(client.state, ('Being set up', 'off')) %}
+
+<section class="client-workspace-nav ws-head" aria-label="Workspace">
+  <nav class="ws-crumb" aria-label="You are in">
+    <a href="/admin/clients">Workspaces</a><span aria-hidden="true">/</span>
+    <a href="{{ _b }}">{{ client.client_name or client.account_id }}</a>
+    {% if _area and not _is_overview %}<span aria-hidden="true">/</span><a href="{{ _area_href }}">{{ _area }}</a>{% endif %}
+    {% if _here and _tail.count('/') >= 1 %}<span aria-hidden="true">/</span><a href="{{ _b }}/{{ _here[0] }}">{{ _here[1] }}</a>{% endif %}
+  </nav>
+  <div class="ws-title">
+    <span class="ws-name" title="{{ client.account_id }}">{{ client.client_name or client.account_id }}</span>
+    <span class="ws-status {{ _status[1] }}">{{ _status[0] }}</span>
+    <span class="ws-grow"></span>
+    <a class="btn btn-secondary btn-sm ws-reader" href="/portal/login?workspace={{ client.account_id | urlencode }}" target="_blank"
+       rel="noopener" title="This workspace's reader sign-in, in a new tab">{{ ic("chat", 16) }} Open the reader chat</a>
+  </div>
+  <nav class="client-workspace-primary" aria-label="Workspace areas">
     <a href="{{ _b }}" class="{% if _is_overview %}active{% endif %}" {% if _is_overview %}aria-current="page"{% endif %}>Overview</a>
     <a href="{{ _b }}/setup" class="{% if _is_data %}active{% endif %}" {% if _is_data %}aria-current="true"{% endif %}>Data</a>
     <a href="{{ _b }}/queries" class="{% if _is_questions %}active{% endif %}" {% if _is_questions %}aria-current="true"{% endif %}>Questions</a>
@@ -52,44 +85,12 @@
     <a href="{{ _b }}/compliance" class="{% if _is_compliance %}active{% endif %}" {% if _is_compliance %}aria-current="true"{% endif %}>Compliance</a>
     <a href="{{ _b }}/settings" class="{% if _is_settings %}active{% endif %}" {% if _is_settings %}aria-current="true"{% endif %}>Settings</a>
   </nav>
-
-  {% if _is_data %}
-  <nav class="client-workspace-secondary" aria-label="Data">
-    <a href="{{ _b }}/setup" class="{% if _seg == 'setup' %}active{% endif %}" {% if _seg == 'setup' %}aria-current="page"{% endif %}>Setup</a>
-    <a href="{{ _b }}/learned" class="{% if _seg == 'learned' %}active{% endif %}" {% if _seg == 'learned' %}aria-current="page"{% endif %}>What QueryBot Learned</a>
-    <a href="{{ _b }}/kb" class="{% if _seg == 'kb' %}active{% endif %}" {% if _seg == 'kb' %}aria-current="page"{% endif %}>Knowledge Base</a>
-    <a href="{{ _b }}/relationships" class="{% if _seg == 'relationships' %}active{% endif %}" {% if _seg == 'relationships' %}aria-current="page"{% endif %}>Relationships</a>
-    <a href="{{ _b }}/date-roles" class="{% if _seg == 'date-roles' %}active{% endif %}" {% if _seg == 'date-roles' %}aria-current="page"{% endif %}>Dates</a>
-    <a href="{{ _b }}/measures" class="{% if _seg == 'measures' %}active{% endif %}" {% if _seg == 'measures' %}aria-current="page"{% endif %}>Metrics</a>
-  </nav>
-  {% elif _is_questions %}
-  <nav class="client-workspace-secondary" aria-label="Questions">
-    <a href="{{ _b }}/queries" class="{% if _seg == 'queries' %}active{% endif %}" {% if _seg == 'queries' %}aria-current="page"{% endif %}>Questions</a>
-    <a href="{{ _b }}/learning-queue" class="{% if _seg == 'learning-queue' %}active{% endif %}" {% if _seg == 'learning-queue' %}aria-current="page"{% endif %}>Flagged Answers</a>
-    <a href="{{ _b }}/billing" class="{% if _seg == 'billing' %}active{% endif %}" {% if _seg == 'billing' %}aria-current="page"{% endif %}>Usage &amp; Billing</a>
-  </nav>
-  {% elif _is_people %}
-  <nav class="client-workspace-secondary" aria-label="People">
-    <a href="{{ _b }}/users" class="{% if _seg == 'users' %}active{% endif %}" {% if _seg == 'users' %}aria-current="page"{% endif %}>Users</a>
-    <a href="{{ _b }}/groups" class="{% if _seg == 'groups' %}active{% endif %}" {% if _seg == 'groups' %}aria-current="page"{% endif %}>Groups</a>
-    <a href="{{ _b }}/pending-users" class="{% if _seg == 'pending-users' %}active{% endif %}" {% if _seg == 'pending-users' %}aria-current="page"{% endif %}>Access Requests{% if pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
-  </nav>
-  {% elif _is_compliance %}
-  <nav class="client-workspace-secondary" aria-label="Compliance">
-    <a href="{{ _b }}/compliance" class="{% if _seg == 'compliance' %}active{% endif %}" {% if _seg == 'compliance' %}aria-current="page"{% endif %}>Compliance</a>
-    <a href="{{ _b }}/egress" class="{% if _seg == 'egress' %}active{% endif %}" {% if _seg == 'egress' %}aria-current="page"{% endif %}>AI Egress Log</a>
-  </nav>
-  {% elif _is_diagnostics %}
-  {# The way back to the list, and the page open now: the list itself is the
-     menu, so eleven tabs would only overflow. #}
-  <nav class="client-workspace-secondary" aria-label="Diagnostics, for support">
-    <a href="{{ _b }}/diagnostics" class="{% if _seg == 'diagnostics' %}active{% endif %}" {% if _seg == 'diagnostics' %}aria-current="page"{% endif %}>Diagnostics</a>
-    {% for seg, label in [('graph', 'Entity Graph'), ('metrics', 'Metric Registry'), ('model-health', 'Model Health'), ('evals', 'Evaluations'), ('traces', 'Timing'),
-                          ('readiness', 'What To Model Next'), ('drafts', 'Drafted For Review'),
-                          ('mapping', 'Source Mapping'), ('glossary', 'Glossary'), ('meanings', 'Business Meanings'),
-                          ('domains', 'Subject Areas'), ('reports', 'Reports')] if seg == _seg %}
-    <a href="{{ _b }}/{{ seg }}" class="active" aria-current="page">{{ label }}</a>
-    {% endfor %}
-  </nav>
-  {% endif %}
 </section>
+{% if _menu %}
+<nav class="client-workspace-secondary ws-menu" aria-label="{{ 'Diagnostics, for support' if _is_diagnostics else _area }}">
+  {% for seg, label in _menu %}
+  <a href="{{ _b }}/{{ seg }}" class="{% if seg == _seg %}active{% endif %}" {% if seg == _seg %}aria-current="page"{% endif %}>{{ label | e }}
+    {%- if seg == 'pending-users' and pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
+  {% endfor %}
+</nav>
+{% endif %}

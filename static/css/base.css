@@ -348,6 +348,7 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 }
 .input-reveal-btn:hover { color: var(--text); background: var(--hover-on-surface); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+@media (max-width: 640px) { .form-grid { grid-template-columns: minmax(0, 1fr); } }
 .form-note  { font-size: var(--font-xs); color: var(--text-muted); margin-top: 3px; }
 
 /* Choice controls must not inherit the full-width text-input treatment above. */
@@ -1027,8 +1028,10 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 
 /* ── Visibility ── */
 .hidden { display: none !important; }
+/* Pinned to the left of its box: left where it falls, a label in the last column of a wide table that scrolls
+   sits outside the scroller (which positions nothing) and stretches the whole page sideways on a phone. */
 .sr-only {
-  position: absolute; width: 1px; height: 1px;
+  position: absolute; left: 0; width: 1px; height: 1px;
   padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }

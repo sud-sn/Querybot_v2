@@ -107,10 +107,23 @@ def test_the_count_endpoint_the_poller_calls_exists():
     )
 
 
+def _render_nav(segment: str, **context) -> str:
+    from jinja2 import Environment, FileSystemLoader
+
+    from core.static_assets import asset_url
+
+    env = Environment(loader=FileSystemLoader(str(ROOT / "admin" / "templates")), autoescape=True)
+    env.globals["asset"] = asset_url
+    request = type("R", (), {"url": type("U", (), {"path": f"/admin/clients/demo/{segment}"})()})()
+    return env.get_template("_client_workspace_nav.html").render(
+        request=request, client={"account_id": "demo", "client_name": "Demo", "state": "READY"}, **context)
+
+
 def test_the_nav_renders_a_badge_when_the_count_is_positive():
-    nav = _read("admin/templates/_client_workspace_nav.html")
-    access_link = next(
-        line for line in nav.splitlines() if "/pending-users" in line and "<a " in line
-    )
-    assert "pending_count" in access_link, "the Access link renders no count"
-    assert "client-nav-count" in access_link, "the count has no badge styling"
+    for segment in ("users", "groups", "pending-users"):
+        html = _render_nav(segment, pending_count=3)
+        link = re.search(r'<a href="/admin/clients/demo/pending-users"[^>]*>(.*?)</a>', html, re.S)
+        assert link, f"/{segment}: the People menu has no Access requests link"
+        assert '<span class="client-nav-count">3</span>' in link.group(1), f"/{segment}: the count is not drawn"
+    quiet = re.search(r'<a href="/admin/clients/demo/pending-users"[^>]*>(.*?)</a>', _render_nav("users", pending_count=0), re.S)
+    assert "client-nav-count" not in quiet.group(1), "a zero count draws a badge"

@@ -774,7 +774,7 @@ class TestTheReviewSurface(RealWorkspace):
         from tests.test_admin_keeps_what_runs_a_workspace import _labels, _nav
 
         self.assertIn("drafts", [seg for seg, _name, _what in admin_routes._DIAGNOSTIC_PAGES])
-        self.assertEqual(_labels(_nav("drafts"), "secondary"), ["Diagnostics", "Drafted For Review"])
+        self.assertEqual(_labels(_nav("drafts"), "secondary"), ["Diagnostics", "Drafted for review"])
 
     def test_signed_out_is_redirected_not_served(self):
         import admin.routes as routes

@@ -46,6 +46,6 @@ class ClientResetTemplateTests(unittest.TestCase):
         template = Path("admin/templates/client_detail.html").read_text(encoding="utf-8")
 
         self.assertIn("id=\"resetClientForm\"", template)
-        self.assertIn("qbConfirm({title:'Reset this client?'", template)
+        self.assertIn("qbConfirm({title:'Reset this workspace?'", template)
         self.assertIn("document.getElementById('resetClientForm').submit()", template)
         self.assertNotIn("document.getElementById(\\'resetClientForm\\')", template)

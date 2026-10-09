@@ -42,6 +42,10 @@
 
   {# ──────── Sidebar ──────── #}
   {% block sidebar %}
+  {# One sidebar for every admin page, as the approved shell draws it: the places, the workspaces, who is signed in. #}
+  {% set _path = request.url.path.rstrip('/') %}
+  {% set _ws_id = client.account_id if (client is defined and client) else '' %}
+  {% set _ws = admin_workspaces(_ws_id) if admin_workspaces is defined else {'items': [], 'total': 0} %}
   <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
 
     <div class="sidebar-brand">
@@ -50,44 +54,35 @@
       <span class="sidebar-brand-tag">Admin</span>
     </div>
 
-    <nav class="sidebar-section" role="navigation">
-
-      <span class="sidebar-group-label">Overview</span>
-      <a href="/admin"
-         class="sidebar-link {% if request.url.path in ['/admin','/admin/'] %}active{% endif %}" {% if request.url.path in ['/admin','/admin/'] %}aria-current="page"{% endif %}>
-        <span class="sidebar-link-icon">{{ ic("dashboard") }}</span> Dashboard
+    <nav class="sidebar-section" role="navigation" aria-label="Admin">
+      {% for href, icon, label, on in [
+           ('/admin', 'dashboard', 'Dashboard', _path == '/admin'),
+           ('/admin/clients', 'users', 'Workspaces', _path.startswith('/admin/clients')),
+           ('/admin/databases', 'database', 'Databases', _path.startswith('/admin/databases')),
+           ('/admin/platforms', 'chat', 'Chat platforms', _path.startswith('/admin/platforms')),
+           ('/admin/system', 'settings', 'System', _path.startswith('/admin/system'))] %}
+      <a href="{{ href }}" class="sidebar-link {% if on %}active{% endif %}" {% if on %}aria-current="{{ 'page' if _path == href else 'true' }}"{% endif %}>
+        <span class="sidebar-link-icon">{{ ic(icon) }}</span> {{ label }}
+        {%- if href == '/admin/clients' %}<span class="admin-live-badge semantic-review-chip" id="semanticPendingBadge" title="">0</span>{% endif %}
       </a>
+      {% endfor %}
 
-      <span class="sidebar-group-label">Infrastructure</span>
-      <a href="/admin/platforms"
-         class="sidebar-link {% if 'platforms' in request.url.path %}active{% endif %}" {% if 'platforms' in request.url.path %}aria-current="page"{% endif %}>
-        <span class="sidebar-link-icon">{{ ic("plug") }}</span> Platforms
-      </a>
-
-      <a href="/admin/databases"
-         class="sidebar-link {% if 'databases' in request.url.path %}active{% endif %}" {% if 'databases' in request.url.path %}aria-current="page"{% endif %}>
-        <span class="sidebar-link-icon">{{ ic("database") }}</span> Databases
-      </a>
-
+      {% if _ws['items'] %}
       <span class="sidebar-group-label">Workspaces</span>
-      <a href="/admin/clients"
-         class="sidebar-link {% if 'clients' in request.url.path %}active{% endif %}" {% if 'clients' in request.url.path %}aria-current="{{ 'page' if request.url.path.rstrip('/') == '/admin/clients' else 'true' }}"{% endif %}>
-        <span class="sidebar-link-icon">{{ ic("users") }}</span>
-        Clients
-        <span class="admin-live-badge semantic-review-chip" id="semanticPendingBadge" title="">0</span>
-      </a>
-
-      <span class="sidebar-group-label">System</span>
-      <a href="/admin/system"
-         class="sidebar-link {% if 'system' in request.url.path %}active{% endif %}" {% if 'system' in request.url.path %}aria-current="page"{% endif %}>
-        <span class="sidebar-link-icon">{{ ic("settings") }}</span> System
-      </a>
-
+      <div class="sidebar-workspaces">
+        {% for w in _ws['items'] %}
+        <a href="/admin/clients/{{ w.account_id }}" class="sidebar-workspace {% if w.account_id == _ws_id %}active{% endif %}"
+           {% if w.account_id == _ws_id %}aria-current="true"{% endif %} title="{{ w.name }}">{{ w.name }}</a>
+        {% endfor %}
+        {% if _ws['total'] > _ws['items'] | length %}<a href="/admin/clients" class="sidebar-workspace more">All {{ _ws['total'] }} workspaces</a>{% endif %}
+      </div>
+      {% endif %}
     </nav>
 
     <div class="sidebar-foot">
-      <a href="/admin/logout" class="btn btn-shell btn-sm">Logout</a>
-      {% if product_version is defined %}<span class="sidebar-version">Version {{ product_version() }}</span>{% endif %}
+      <span class="sidebar-avatar" aria-hidden="true">AD</span>
+      <span class="sidebar-me">Administrator{% if product_version is defined %}<small class="sidebar-version">Version {{ product_version() }}</small>{% endif %}</span>
+      <a href="/admin/logout" class="sidebar-out" aria-label="Sign out" title="Sign out">{{ ic("log-out", 18) }}</a>
     </div>
 
   </aside>
@@ -103,11 +98,12 @@
       <span class="admin-topbar-brand">Query<span>Bot</span> Admin</span>
     </header>
 
+    {% if client is defined and client %}
+    {% include "_client_workspace_nav.html" %}
+    {% endif %}
     <main class="page" id="main-content" tabindex="-1">
-      {% if client is defined and client %}
-      {% include "_client_workspace_nav.html" %}
-      {% endif %}
-      {% block breadcrumb %}{% endblock %}
+      {# A workspace page says where it is in its header; the other pages keep their trail. #}
+      {% if not (client is defined and client) %}{% block breadcrumb %}{% endblock %}{% endif %}
       {% block content %}{% endblock %}
     </main>
 

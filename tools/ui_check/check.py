@@ -269,7 +269,8 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                          workspace + "/relationships", workspace + "/graph", workspace + "/date-roles", workspace + "/metrics", workspace + "/measures",
                          workspace + "/measures/edit", workspace + "/users",
                          workspace + "/settings", workspace + "/compliance", workspace + "/diagnostics",
-                         workspace + "/billing", workspace + "/queries", "/admin/system"):
+                         workspace + "/billing", workspace + "/queries", "/admin/system", "/admin/clients",
+                         "/admin/clients/new", "/admin/databases", "/admin/platforms"):
                 a.page.goto(base + path, wait_until="networkidle")
                 a.page.wait_for_timeout(800)
                 if path.endswith("/graph") and not a.page.evaluate(

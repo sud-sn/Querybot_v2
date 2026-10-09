@@ -265,7 +265,7 @@ GRANT CREATE SCHEMA ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;</pre>
 {% if dbs %}
 <div class="card">
   <div class="card-header"><h2>Configured databases ({{ dbs|length }})</h2></div>
-  <table class="table">
+  <div class="qb-table-wrap"><table class="table">
     <tr><th>Name</th><th>Type</th><th>Connection</th><th>KB scope</th><th>Log export</th><th>Created</th><th><span class="sr-only">Actions</span></th></tr>
     {% for d in dbs %}
     <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds='{{ d.edit_creds|tojson }}' data-db-log='{{ d.edit_log|tojson }}' data-db-scope='{{ d.selected_schema_tables|tojson }}'>
@@ -346,13 +346,13 @@ GRANT CREATE SCHEMA ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;</pre>
           <form method="post" action="/admin/databases/delete" style="display:inline">
             <input type="hidden" name="db_id" value="{{ d.id }}">
             <button type="submit" class="btn btn-danger btn-sm"
-              data-confirm-title="Delete database?" data-confirm="Delete {{ d.name }}? Clients using this will lose their DB connection." data-confirm-label="Delete">Delete</button>
+              data-confirm-title="Delete database?" data-confirm="Delete {{ d.name }}? Workspaces using it lose their connection." data-confirm-label="Delete">Delete</button>
           </form>
         </div>
       </td>
     </tr>
     {% endfor %}
-  </table>
+  </table></div>
 </div>
 {% endif %}
 
