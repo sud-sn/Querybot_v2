@@ -268,7 +268,7 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
             for path in ("/admin", workspace, workspace + "/setup", workspace + "/learned", workspace + "/kb",
                          workspace + "/graph", workspace + "/date-roles", workspace + "/metrics", workspace + "/users",
                          workspace + "/settings", workspace + "/compliance", workspace + "/diagnostics",
-                         "/admin/system"):
+                         workspace + "/billing", workspace + "/queries", "/admin/system"):
                 a.page.goto(base + path, wait_until="networkidle")
                 a.page.wait_for_timeout(800)
                 if path.endswith("/graph") and not a.page.evaluate(
@@ -279,6 +279,12 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                     # A closed side panel once lay over the Tables list.
                     problems.append({"where": f"{view} {path}", "problem": "tables list covered",
                                      "detail": "something sits over the Tables list"})
+                # Open what a click opens: a question's cost, and the price form filled from a row.
+                opener = {"/queries": "[popovertarget^=q-cost-]", "/admin/system": "#ai-prices [data-price-fill]"}
+                target = next((sel for end, sel in opener.items() if path.endswith(end)), None)
+                if target and a.page.locator(target).count():
+                    a.page.locator(target).first.click()
+                    a.page.wait_for_timeout(500)
                 report.append({"page": path, "view": view, **a.shot("51" + path.replace("/", "_"), full=True)})
         browser.close()
     return report, problems

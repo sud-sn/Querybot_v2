@@ -118,6 +118,17 @@ if fresh:
     store.create_user(RETAIL, "Riley Reader", READER[0], group_id=sales, role="analyst", password=READER[1])
     store.create_user(inv_account, "Ines Inventory", "ines@example.com", role="admin", password=READER[1])
     store.create_user(RETAIL, "Adi Admin", "adi@example.com", role="admin", password=READER[1])
+    # An Azure deployment with no model or price on file yet: System asks for its price.
+    from core import llm
+    from core.llm_audit import llm_audit_scope
+    from core.llm_prices import Usage
+
+    store.log_query(inv_account, "stock on hand by warehouse", "SELECT 1", row_count=4, question_id="ui-check-azure",
+                    llm_provider="azure_openai", llm_model="prod-4o")
+    for component in ("sql_generation", "analysis"):
+        with llm_audit_scope(account_id=inv_account, question="stock on hand by warehouse", enabled=False,
+                             question_id="ui-check-azure", component=component):
+            llm._record_usage("azure_openai", "prod-4o", Usage(input=2400, cached_input=6144, output=420), "success")
     STATE.write_text(json.dumps({"inventory": inv_account, "retail": RETAIL}))
 
 # ── scripted plans in place of the AI ─────────────────────────────────────────
@@ -174,11 +185,20 @@ def _scripted(question_text: str) -> str:
 import core2.bootstrap.ai as ai  # noqa: E402
 
 
-def workspace_planner(account_id, client, *, question=""):
+def workspace_planner(account_id, client, *, question="", question_id=""):
+    from core import llm
+    from core.llm_audit import llm_audit_scope
+    from core.llm_prices import Usage
+
     def complete(stable, tail):
         lines = [ln for ln in tail.splitlines() if ln.strip()]
         asked = next((ln for ln in reversed(lines) if re.search("[A-Za-z]", ln) and ln.lower().strip(" :").startswith(
             ("question", "user", "q"))), "") or tail
+        # Recorded and priced as a real planner call is: only the provider's token counts are invented.
+        with llm_audit_scope(account_id=account_id, question=question, enabled=False,
+                             question_id=question_id, component="core2_planner"):
+            llm._record_usage("anthropic", "claude-sonnet-4-6",
+                              Usage(input=len(tail) // 4, cached_input=len(stable) // 4, output=180), "success")
         return _scripted(question or asked or tail)
     return complete
 

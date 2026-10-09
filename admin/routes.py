@@ -752,6 +752,7 @@ async def system_page(request: Request):
         "query_models":   QUERY_MODELS,
         "kb_models":      KB_MODELS,
         "saved":          request.query_params.get("saved"),
+        "costed":         request.query_params.get("costed", ""),
         "error":          request.query_params.get("error"),
         # database backend
         "active_backend":  active_backend,
@@ -759,7 +760,145 @@ async def system_page(request: Request):
         "saved_pg_url":    store.mask(saved_pg_url) if saved_pg_url else "",
         "active_pg_host":  _pg_host(active_pg_url) if active_pg_url else "",
         "restart_needed":  restart_needed,
+        **_ai_prices_context(cfg),
     })
+
+
+# ── AI prices ─────────────────────────────────────────────────────────────────
+# One price table for every workspace (core/llm_prices.py): the built-in list prices
+# and the admin's own rows over them. Every AI call is costed from it when it is made.
+
+_PRICE_PROVIDERS = {"anthropic": "Anthropic", "azure_openai": "Azure OpenAI", "openai": "OpenAI"}
+_DEPLOYMENT_TYPE_LABELS = {"global": "Global", "data_zone": "Data Zone", "regional": "Regional"}
+
+
+def _azure_deployment_models() -> dict[str, str]:
+    try:
+        mapping = json.loads(store.get_system("azure_deployment_models", "") or "{}")
+    except ValueError:
+        mapping = {}
+    if not isinstance(mapping, dict):
+        return {}
+    return {str(k): str(v) for k, v in mapping.items() if k and v}
+
+
+def _plain_name(value: str) -> str:
+    value = (value or "").strip()
+    return value if 0 < len(value) <= 128 and value.isprintable() else ""
+
+
+def _save_azure_deployment_models(found: dict[str, str], *, replace: bool = False) -> None:
+    """Which model each Azure deployment runs: merged with what is on file unless ``replace``."""
+    from core.llm_prices import forget_cached_prices
+
+    mapping = {} if replace else _azure_deployment_models()
+    for name, model in found.items():
+        name, model = _plain_name(name), _plain_name(model)
+        if name and model:
+            mapping[name] = model
+        elif name:
+            mapping.pop(name, None)
+    store.set_system("azure_deployment_models", json.dumps(dict(sorted(mapping.items()))))
+    forget_cached_prices()
+    store.reprice_unpriced()
+
+
+def _ai_prices_context(cfg: dict) -> dict:
+    from core import llm_prices
+
+    mapping = _azure_deployment_models()
+    names = set(mapping) | set(store.deployments_used("azure_openai"))
+    names |= {cfg.get(k) for k in ("azure_query_deployment_name", "azure_kb_deployment_name") if cfg.get(k)}
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+    unpriced = store.unpriced_models(since)
+    for m in unpriced:
+        # Priced under the deployment's own name: no model is on file for it.
+        m["needs_model"] = m["provider"] == "azure_openai" and m["priced_model"] in names and m["priced_model"] not in mapping
+    return {
+        "prices": llm_prices.all_prices(),
+        "unpriced_models": unpriced,
+        "azure_deployments": [{"name": n, "model": mapping.get(n, "")} for n in sorted(names)],
+        "azure_deployment_type": llm_prices.azure_deployment_type(),
+        "deployment_type_labels": _DEPLOYMENT_TYPE_LABELS,
+        "price_providers": _PRICE_PROVIDERS,
+    }
+
+
+def _rate(value: str, *, required: bool) -> float | None:
+    value = (value or "").strip()
+    if not value:
+        if required:
+            raise ValueError("required")
+        return None
+    rate = float(value)
+    if not (0 <= rate <= 10_000):  # USD per million tokens; also refuses nan and inf
+        raise ValueError("out of range")
+    return rate
+
+
+def _prices_redirect(**query: str) -> RedirectResponse:
+    from urllib.parse import urlencode
+
+    return RedirectResponse(f"/admin/system?{urlencode(query)}#ai-prices", status_code=303)
+
+
+@router.post("/system/prices/save")
+async def system_price_save(request: Request, provider: str = Form(""), model: str = Form(""),
+                            deployment_type: str = Form(""), input_rate: str = Form(""),
+                            cached_rate: str = Form(""), write_5m_rate: str = Form(""),
+                            write_1h_rate: str = Form(""), output_rate: str = Form("")):
+    """Set one model's price, in USD per million tokens, for every workspace."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from core.llm_prices import AZURE_DEPLOYMENT_TYPES
+
+    model = _plain_name(model)
+    if provider not in _PRICE_PROVIDERS or not model:
+        return _prices_redirect(error="Choose a provider and type the model's name.")
+    deployment_type = deployment_type if provider == "azure_openai" and deployment_type in AZURE_DEPLOYMENT_TYPES else ""
+    try:
+        rates = {"input": _rate(input_rate, required=True), "output": _rate(output_rate, required=True),
+                 "cached_input": _rate(cached_rate, required=False)}
+        if provider == "anthropic":
+            rates["cache_write_5m"] = _rate(write_5m_rate, required=False)
+            rates["cache_write_1h"] = _rate(write_1h_rate, required=False)
+    except ValueError:
+        return _prices_redirect(error="Prices are US dollars per million tokens: input and output are needed, "
+                                      "each a number from 0 to 10000.")
+    store.save_llm_price(provider=provider, model=model, deployment_type=deployment_type, **rates)
+    costed = store.reprice_unpriced()
+    return _prices_redirect(saved="prices", costed=str(costed))
+
+
+@router.post("/system/prices/delete")
+async def system_price_delete(request: Request, provider: str = Form(""), model: str = Form(""),
+                              deployment_type: str = Form("")):
+    """Remove the admin's own price; a model with a built-in price goes back to it."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    store.delete_llm_price(provider, model, deployment_type)
+    return _prices_redirect(saved="price-removed")
+
+
+@router.post("/system/azure-pricing")
+async def system_azure_pricing(request: Request):
+    """How the Azure resource is deployed, and which model each deployment runs."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from core.llm_prices import AZURE_DEPLOYMENT_TYPES
+
+    form = await request.form()
+    deployment_type = str(form.get("deployment_type") or "")
+    if deployment_type in AZURE_DEPLOYMENT_TYPES:
+        store.set_system("azure_deployment_type", deployment_type)
+    names = [str(v) for v in form.getlist("deployment")]
+    models = [str(v) for v in form.getlist("deployment_model")]
+    new_name, new_model = _plain_name(str(form.get("new_deployment") or "")), str(form.get("new_deployment_model") or "")
+    found = dict(zip(names, models))
+    if new_name:
+        found[new_name] = new_model
+    _save_azure_deployment_models(found)
+    return _prices_redirect(saved="azure-pricing")
 
 @router.get("/system/azure-deployments")
 async def azure_deployments_api(request: Request):
@@ -867,6 +1006,7 @@ async def azure_deployments_api(request: Request):
                 ],
                 key=lambda d: d["name"],
             )
+            _save_azure_deployment_models({d["name"]: d["model"] for d in deployments if d["model"]})
             return JSONResponse({
                 "ok": True,
                 "deployments": deployments,
@@ -2179,7 +2319,6 @@ async def client_detail(request: Request, account_id: str, active_tab: str = "ov
         "all_dbs":         all_dbs,
         "query_models":    QUERY_MODELS,
         "saved":           request.query_params.get("saved"),
-        "cost_rates":      store.LLM_COST_RATES,
         "monthly_count":   monthly_count,
         "limit_pct":       limit_pct,
         "token_status":    token_status,
@@ -3103,96 +3242,10 @@ async def billing_page(request: Request, account_id: str):
     month     = request.query_params.get("month", "")
     stats     = store.get_query_stats(account_id, month or None)
     breakdown = store.get_monthly_breakdown(account_id)
-    pricing_rows = store.get_all_pricing()
     return _resp(request, "billing.html", {
         "client": client, "stats": stats,
         "breakdown": breakdown, "month": month,
-        "pricing_rows": pricing_rows,
-        "saved_pricing": request.query_params.get("saved_pricing"),
-        "error_pricing": request.query_params.get("error_pricing"),
     })
-
-
-@router.post("/clients/{account_id}/billing/pricing/save")
-async def billing_pricing_save(
-    request: Request,
-    account_id: str,
-    model:      str   = Form(""),
-    tokens_in:  str   = Form(""),
-    tokens_out: str   = Form(""),
-):
-    """Save or update a single model pricing rate (USD per 1M tokens)."""
-    if not _is_auth(request):
-        raise HTTPException(status_code=401)
-    model = model.strip()
-    if not model:
-        return RedirectResponse(
-            f"/admin/clients/{account_id}/billing?error_pricing=Model+name+required",
-            status_code=303,
-        )
-    try:
-        t_in  = float(tokens_in)
-        t_out = float(tokens_out)
-        if t_in < 0 or t_out < 0:
-            raise ValueError("Rates must be non-negative")
-    except (ValueError, TypeError):
-        return RedirectResponse(
-            f"/admin/clients/{account_id}/billing?error_pricing=Invalid+rate+values",
-            status_code=303,
-        )
-    store.save_pricing(model, t_in, t_out)
-    return RedirectResponse(
-        f"/admin/clients/{account_id}/billing?saved_pricing=1",
-        status_code=303,
-    )
-
-
-@router.get("/clients/{account_id}/billing/known-prices")
-async def billing_known_prices(request: Request, account_id: str):
-    """Return a static lookup of current model pricing (USD per 1M tokens).
-
-    Sources: OpenAI pricing page, Anthropic pricing page, Google pricing page.
-    Updated 2026-06. All prices are public list prices — no discount/commitment tiers.
-    """
-    if not _is_auth(request):
-        raise HTTPException(status_code=401)
-
-    PRICES = [
-        # ── OpenAI ──────────────────────────────────────────────────────────
-        {"model": "gpt-4o",                  "provider": "OpenAI",    "tokens_in": 2.50,  "tokens_out": 10.00},
-        {"model": "gpt-4o-2024-11-20",       "provider": "OpenAI",    "tokens_in": 2.50,  "tokens_out": 10.00},
-        {"model": "gpt-4o-mini",             "provider": "OpenAI",    "tokens_in": 0.15,  "tokens_out": 0.60},
-        {"model": "gpt-4o-mini-2024-07-18",  "provider": "OpenAI",    "tokens_in": 0.15,  "tokens_out": 0.60},
-        {"model": "gpt-4-turbo",             "provider": "OpenAI",    "tokens_in": 10.00, "tokens_out": 30.00},
-        {"model": "gpt-4",                   "provider": "OpenAI",    "tokens_in": 30.00, "tokens_out": 60.00},
-        {"model": "gpt-3.5-turbo",           "provider": "OpenAI",    "tokens_in": 0.50,  "tokens_out": 1.50},
-        {"model": "o1",                      "provider": "OpenAI",    "tokens_in": 15.00, "tokens_out": 60.00},
-        {"model": "o1-mini",                 "provider": "OpenAI",    "tokens_in": 1.10,  "tokens_out": 4.40},
-        {"model": "o3",                      "provider": "OpenAI",    "tokens_in": 10.00, "tokens_out": 40.00},
-        {"model": "o3-mini",                 "provider": "OpenAI",    "tokens_in": 1.10,  "tokens_out": 4.40},
-        {"model": "o4-mini",                 "provider": "OpenAI",    "tokens_in": 1.10,  "tokens_out": 4.40},
-        # ── Anthropic ───────────────────────────────────────────────────────
-        {"model": "claude-opus-4-8",         "provider": "Anthropic", "tokens_in": 15.00, "tokens_out": 75.00},
-        {"model": "claude-sonnet-4-6",       "provider": "Anthropic", "tokens_in": 3.00,  "tokens_out": 15.00},
-        {"model": "claude-haiku-4-5",        "provider": "Anthropic", "tokens_in": 0.80,  "tokens_out": 4.00},
-        {"model": "claude-3-5-sonnet-20241022","provider":"Anthropic", "tokens_in": 3.00,  "tokens_out": 15.00},
-        {"model": "claude-3-5-haiku-20241022","provider": "Anthropic", "tokens_in": 0.80,  "tokens_out": 4.00},
-        {"model": "claude-3-opus-20240229",  "provider": "Anthropic", "tokens_in": 15.00, "tokens_out": 75.00},
-        {"model": "claude-3-sonnet-20240229","provider": "Anthropic", "tokens_in": 3.00,  "tokens_out": 15.00},
-        {"model": "claude-3-haiku-20240307", "provider": "Anthropic", "tokens_in": 0.25,  "tokens_out": 1.25},
-        # ── Google ──────────────────────────────────────────────────────────
-        {"model": "gemini-2.5-pro",          "provider": "Google",    "tokens_in": 1.25,  "tokens_out": 10.00},
-        {"model": "gemini-2.5-flash",        "provider": "Google",    "tokens_in": 0.15,  "tokens_out": 0.60},
-        {"model": "gemini-1.5-pro",          "provider": "Google",    "tokens_in": 1.25,  "tokens_out": 5.00},
-        {"model": "gemini-1.5-flash",        "provider": "Google",    "tokens_in": 0.075, "tokens_out": 0.30},
-    ]
-
-    # Mark which models are already in the DB
-    existing = {r["model"] for r in store.get_all_pricing()}
-    for p in PRICES:
-        p["exists"] = p["model"] in existing
-
-    return JSONResponse({"ok": True, "prices": PRICES})
 
 
 @router.get("/clients/{account_id}/billing/export.csv")

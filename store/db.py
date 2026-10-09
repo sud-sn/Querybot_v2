@@ -1373,6 +1373,10 @@ def _run_migrations() -> None:
         # business-readable translate_failure() message chat gets instead of
         # a raw technical string, and tag the failure with its exact scenario.
         ("query_log", "error_code", "TEXT NOT NULL DEFAULT ''"),
+        # Where a row's cost comes from: 'estimate' (one rate pair times the first
+        # call's tokens, rows written before llm_usage existed) or 'usage' (the sum of
+        # the question's calls in llm_usage). Totals add the two without double counting.
+        ("query_log", "cost_source", "TEXT NOT NULL DEFAULT 'estimate'"),
         # v36: session boundary tracking for personalized greeting.
         # NULL = user has never sent a message; updated to now() on every active
         # message. touch_user_activity() compares this to detect a new session.
@@ -1455,6 +1459,7 @@ def _run_migrations() -> None:
         _ensure_sign_in_attempt_table(conn)
         _ensure_join_types_are_sql(conn)
         _ensure_core2_tables(conn)
+        _ensure_llm_usage_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1480,18 +1485,6 @@ def _run_migrations() -> None:
         _post_migration_indexes(conn)
         _backfill_temporary_password_expiry(conn)
         _retire_platform_placeholder_passwords(conn)
-        # Seed llm_pricing from hardcoded defaults — only inserts rows that
-        # don't already exist so admin edits are never overwritten on restart.
-        try:
-            from store.config_store import LLM_COST_RATES
-            for model, rates in LLM_COST_RATES.items():
-                conn.execute(
-                    """INSERT OR IGNORE INTO llm_pricing (model, tokens_in, tokens_out)
-                       VALUES (?, ?, ?)""",
-                    (model, rates["in"], rates["out"]),
-                )
-        except Exception as e:
-            log.debug("llm_pricing seed skipped: %s", e)
 
 
 def _retire_platform_placeholder_passwords(conn) -> None:
@@ -1575,6 +1568,50 @@ def _ensure_graph_change_proposal_table(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
             ON graph_change_proposal(account_id, status, created_at);
+        """
+    )
+
+
+def _ensure_llm_usage_tables(conn: sqlite3.Connection) -> None:
+    """Every AI call's tokens and cost, and the admin's own prices (store/llm_usage_store.py)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS llm_usage (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id             TEXT    NOT NULL DEFAULT '',
+            question_id            TEXT    NOT NULL DEFAULT '',
+            component              TEXT    NOT NULL DEFAULT '',
+            provider               TEXT    NOT NULL DEFAULT '',
+            model                  TEXT    NOT NULL DEFAULT '',
+            priced_model           TEXT    NOT NULL DEFAULT '',
+            deployment_type        TEXT    NOT NULL DEFAULT '',
+            input_tokens           INTEGER NOT NULL DEFAULT 0,
+            cached_input_tokens    INTEGER NOT NULL DEFAULT 0,
+            cache_write_5m_tokens  INTEGER NOT NULL DEFAULT 0,
+            cache_write_1h_tokens  INTEGER NOT NULL DEFAULT 0,
+            output_tokens          INTEGER NOT NULL DEFAULT 0,
+            reasoning_tokens       INTEGER NOT NULL DEFAULT 0,
+            cost_usd               REAL    NOT NULL DEFAULT 0.0,
+            priced                 INTEGER NOT NULL DEFAULT 1,
+            status                 TEXT    NOT NULL DEFAULT 'success',
+            created_at             TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_account ON llm_usage (account_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_question ON llm_usage (question_id);
+
+        CREATE TABLE IF NOT EXISTS llm_price (
+            provider        TEXT NOT NULL,
+            model           TEXT NOT NULL,
+            deployment_type TEXT NOT NULL DEFAULT '',
+            input           REAL NOT NULL,
+            cached_input    REAL,
+            cache_write_5m  REAL,
+            cache_write_1h  REAL,
+            output          REAL NOT NULL,
+            source          TEXT NOT NULL DEFAULT 'Set by an admin',
+            updated_at      TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (provider, model, deployment_type)
+        );
         """
     )
 

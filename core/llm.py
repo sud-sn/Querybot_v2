@@ -15,6 +15,7 @@ v8 prompt changes:
     All 3 DB types updated.
 """
 
+import contextvars
 import json
 import logging
 import os
@@ -26,6 +27,13 @@ from core.llm_audit import (
     audit_scope_account_id as _audit_scope_account_id,
     record_llm_blocked,
     record_llm_call,
+)
+from core.llm_prices import (
+    Usage,
+    cost_of,
+    price_for,
+    usage_from_anthropic,
+    usage_from_openai,
 )
 from core.prompt_cache import (
     CachedPrompt,
@@ -1963,6 +1971,8 @@ def _read_chat_completion(provider: str, model: str, max_tokens: int, resp):
     usage = getattr(resp, "usage", None)
     tok_in = int(getattr(usage, "prompt_tokens", 0) or 0)
     tok_out = int(getattr(usage, "completion_tokens", 0) or 0)
+    # Noted before the truncation and filter checks: a cut-off answer was still billed.
+    _note_usage(usage_from_openai(usage))
 
     reason = getattr(choice, "finish_reason", "") or ""
     if reason == "length":
@@ -2153,7 +2163,81 @@ class EgressPostureError(RuntimeError):
     """
 
 
+# Where a provider call leaves its full usage (cached tokens, cache writes, reasoning)
+# for llm_complete to record. A holder rather than a return value: the provider
+# functions keep their (text, tokens in, tokens out) shape, which callers and tests rely on.
+_USAGE_SINK: contextvars.ContextVar[dict | None] = contextvars.ContextVar("querybot_llm_usage_sink", default=None)
+
+
+def _note_usage(usage: Usage) -> None:
+    sink = _USAGE_SINK.get()
+    if sink is not None:
+        sink["usage"] = usage
+
+
+def _record_usage(provider: str, model: str, usage: Usage, status: str) -> None:
+    """One row per call in llm_usage, priced, tied to the question the audit scope names.
+
+    Written whatever the audit setting: the audit log is the tenant's choice, the cost
+    is not. Never fails the call; says so loudly when it cannot write.
+    """
+    try:
+        import store
+        from core.llm_audit import get_current_llm_audit_scope
+
+        scope = get_current_llm_audit_scope() or {}
+        priced = price_for(provider, model)
+        store.record_llm_usage(
+            account_id=str(scope.get("account_id") or ""),
+            question_id=str(scope.get("question_id") or scope.get("request_id") or ""),
+            component=str(scope.get("component") or "general"), provider=provider, model=model,
+            priced_model=priced.model, deployment_type=priced.deployment_type, usage=usage,
+            cost_usd=cost_of(usage, priced.price), status=status)
+    except Exception as exc:  # noqa: BLE001 - recording the cost must never cost the answer
+        log.warning("Could not record the tokens and cost of a %s call to %s: %s", provider, model, exc)
+
+
 async def llm_complete(
+    system: str | CachedPrompt,
+    user: str,
+    provider: Provider,
+    model: str,
+    api_key: str,
+    max_tokens: int = 1024,
+    azure_endpoint: str = "",
+    azure_api_version: str = "2024-02-01",
+    temperature: float = 0.0,
+    allow_truncated: bool = False,
+) -> tuple[str, int, int]:
+    """Complete against the configured provider, and record what the call cost.
+
+    Every call is one row in llm_usage with its tokens as the provider billed them
+    (cached reads and cache writes apart) and its cost at the model's price; see
+    :func:`_llm_complete_once` for the call itself.
+    """
+    sink: dict = {}
+    token = _USAGE_SINK.set(sink)
+    outcome = "error"
+    try:
+        result = await _llm_complete_once(
+            system, user, provider, model, api_key, max_tokens=max_tokens, azure_endpoint=azure_endpoint,
+            azure_api_version=azure_api_version, temperature=temperature, allow_truncated=allow_truncated)
+        outcome = "truncated" if sink.get("truncated") else "success"
+        return result
+    except LLMTruncatedError:
+        outcome = "truncated"
+        raise
+    except LLMContentFilteredError:
+        outcome = "content_filtered"
+        raise
+    finally:
+        _USAGE_SINK.reset(token)
+        usage = sink.get("usage")
+        if usage is not None and usage.total:
+            _record_usage(provider, model, usage, outcome)
+
+
+async def _llm_complete_once(
     system: str | CachedPrompt,
     user: str,
     provider: Provider,
@@ -2235,6 +2319,7 @@ async def llm_complete(
             )
             raise
         truncated = True
+        (_USAGE_SINK.get() or {})["truncated"] = True
         result = (exc.text, exc.input_tokens, exc.output_tokens)
     except LLMContentFilteredError as exc:
         # Its own audit status, and always re-raised. "The filter cut this one
@@ -2596,6 +2681,10 @@ async def _anthropic_complete(system, user, model, api_key, max_tokens, temperat
         getattr(block, "text", "") or "" for block in (resp.content or [])
     ).strip()
     tok_in, tok_out = resp.usage.input_tokens, resp.usage.output_tokens
+    # The breakpoint asks for the 1-hour TTL (core/prompt_cache.py), billed at 2x input
+    # when the response does not split its writes by TTL.
+    _note_usage(usage_from_anthropic(resp.usage,
+                                     default_ttl="1h" if isinstance(kwargs.get("system"), list) else "5m"))
     if getattr(resp, "stop_reason", "") == "max_tokens":
         raise _truncated("Anthropic", model, max_tokens, text, tok_in, tok_out)
     return text, tok_in, tok_out

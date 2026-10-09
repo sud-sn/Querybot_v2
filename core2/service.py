@@ -579,8 +579,8 @@ def question_scrubber(account_id: str) -> Callable[[str], str] | None:
     return lambda text: scrub_question_pii(text, industry)[0]
 
 
-def _portal_services(account_id: str, question: str,
-                     portal_user: dict[str, Any] | None) -> tuple[Services | None, dict[str, Any] | None]:
+def _portal_services(account_id: str, question: str, portal_user: dict[str, Any] | None,
+                     question_id: str = "") -> tuple[Services | None, dict[str, Any] | None]:
     """The services a portal answer runs on, or the frame that says why there are none."""
     import store
     from core.schema import load_known_tables
@@ -609,7 +609,8 @@ def _portal_services(account_id: str, question: str,
     # name is read from the warehouse or put before the AI.
     indexing = value_index_enabled(state)
     return Services(
-        model=model, warehouse=warehouse, complete=workspace_planner(account_id, client, question=question),
+        model=model, warehouse=warehouse,
+        complete=workspace_planner(account_id, client, question=question, question_id=question_id),
         index=_member_index(account_id, model, db_config, read=indexing), today=dt.date.today(),
         values_allowed=scrub is None and indexing, allowed_tables=_allowed_model_tables(model, allowed),
         data_source=str(db_config.get("db_type") or ""), scrub=scrub), None
@@ -618,7 +619,7 @@ def _portal_services(account_id: str, question: str,
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,
                   question_id: str = "") -> dict[str, Any]:
     """The new core's answer in the web portal (compare mode, or core2 mode)."""
-    services, refused = _portal_services(account_id, question, portal_user)
+    services, refused = _portal_services(account_id, question, portal_user, question_id)
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
     return answer_question(question, services, _session(session_key), question_id=question_id)

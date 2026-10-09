@@ -78,6 +78,12 @@
           {% elif interrupted %}The last attempt was interrupted: the service restarted while QueryBot was learning. Learn again.
           {% elif build.status == 'failed' %}The last attempt failed: {{ build.message }}
           {% endif %}
+          {% if learn_cost and learn_cost.calls %}
+          <span class="lq-cost">{{ "So far it has made" if building else ("That attempt made" if interrupted or build.status == 'failed' else "Learning it made") }}
+            {{ learn_cost.calls }} AI call{{ "" if learn_cost.calls == 1 else "s" }}
+            ({{ "{:,}".format(learn_cost.total_tokens) }} tokens), costing ${{ "%.4f"|format(learn_cost.cost_usd) }}{% if learn_cost.unpriced_calls %},
+            not counting {{ learn_cost.unpriced_calls }} with no price set (<a href="/admin/system#ai-prices">set it</a>){% endif %}.</span>
+          {% endif %}
         {% endif %}
       </div>
     </div>

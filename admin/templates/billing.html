@@ -1,438 +1,68 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb %}
-{% block title %}Billing — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% from "macros.html" import breadcrumb, page_header, metric_card, empty_state, alert %}
+{% block title %}Usage &amp; Billing — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
     {"label": "Clients",   "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
-    {"label": "Billing",   "href": ""},
+    {"label": "Usage & Billing", "href": ""},
 ]) }}
 {% endblock %}
 {% block content %}
+{% call page_header("Usage & Billing", "Every AI call this workspace made — questions, Learn and admin tools — with its tokens and what it cost at the model's price.") %}
+  <a href="/admin/clients/{{ client.account_id }}/billing/export.csv" class="btn btn-secondary btn-sm">Download CSV report</a>
+{% endcall %}
 
+<form method="get" class="billing-filter">
+  <label for="billing-month">Month</label>
+  <input type="month" id="billing-month" name="month" value="{{ month }}" class="form-input">
+  <button type="submit" class="btn btn-secondary btn-sm">Show</button>
+  {% if month %}<a href="?" class="btn btn-ghost btn-sm">All time</a>{% endif %}
+</form>
 
-<div class="page-header">
-  <h1>Billing &amp; Usage</h1>
-</div>
-
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
-  <form method="get" style="display:flex;gap:.5rem;align-items:center">
-    <label style="font-size:var(--font-base);font-weight:var(--weight-semibold);color:var(--gray-700)">Month:</label>
-    <input type="month" name="month" value="{{ month }}"
-      style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;font-size:var(--font-base)">
-    <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
-    {% if month %}<a href="?" class="btn btn-secondary btn-sm">Current month</a>{% endif %}
-  </form>
-  <a href="/admin/clients/{{ client.account_id }}/billing/export.csv"
-     class="btn btn-success btn-sm">
-    Download CSV report
-  </a>
-</div>
-
-<!-- Summary metrics -->
-<div class="metrics">
-  <div class="metric">
-    <div class="metric-label">Total queries</div>
-    <div class="metric-value">{{ stats.total or 0 }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Successful</div>
-    <div class="metric-value" style="color:var(--green)">{{ stats.succeeded or 0 }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Failed</div>
-    <div class="metric-value" style="color:var(--red)">{{ (stats.total or 0) - (stats.succeeded or 0) }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Tokens in</div>
-    <div class="metric-value" style="font-size:var(--font-lg)">{{ "{:,}".format(stats.total_tokens_in or 0) }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Tokens out</div>
-    <div class="metric-value" style="font-size:var(--font-lg)">{{ "{:,}".format(stats.total_tokens_out or 0) }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Total cost (USD)</div>
-    <div class="metric-value" style="color:var(--blue)">${{ "%.4f"|format(stats.total_cost_usd or 0) }}</div>
-  </div>
-</div>
-
-<!-- ── LLM cost rates — editable ──────────────────────────────────────────── -->
-<div class="card" style="margin-bottom:1.5rem">
-  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
-    <div>
-      <h2 style="margin:0">LLM cost rates <span style="font-size:var(--font-sm);font-weight:var(--weight-regular);color:var(--text-muted)">(USD per 1M tokens)</span></h2>
-      <p style="font-size:var(--font-sm);color:var(--text-muted);margin:.2rem 0 0">
-        Rates are stored in the database. Editing a row updates all future cost calculations immediately — no restart needed.
-        Historical rows keep the cost that was active at call time.
-      </p>
-    </div>
-    <div style="display:flex;gap:.5rem">
-      <button type="button" class="btn btn-secondary btn-sm" id="syncPricesBtn">⟳ Sync from provider prices</button>
-      <button type="button" class="btn btn-secondary btn-sm" id="addModelBtn">+ Add custom model</button>
-    </div>
-  </div>
-
-  {% if saved_pricing %}
-  <div class="alert alert-success" style="margin:.75rem 1rem 0;border-radius:6px">
-    Pricing updated successfully.
-  </div>
-  {% endif %}
-  {% if error_pricing %}
-  <div class="alert alert-error" style="margin:.75rem 1rem 0;border-radius:6px">
-    {{ error_pricing }}
-  </div>
-  {% endif %}
-
-  <table class="table" id="pricingTable">
-    <thead>
-      <tr>
-        <th>Model</th>
-        <th>Input (per 1M tokens)</th>
-        <th>Output (per 1M tokens)</th>
-        <th>Last updated</th>
-        <th style="width:90px"><span class="sr-only">Actions</span></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in pricing_rows %}
-      <tr id="pr-{{ loop.index }}">
-        <td>
-          <code style="font-size:var(--font-sm)">{{ row.model }}</code>
-          {% if row.source == 'default' %}
-          <span style="font-size:var(--font-2xs);color:var(--text-muted);margin-left:6px">(default)</span>
-          {% endif %}
-        </td>
-        <td>
-          <span class="pr-display-in">${{ "%.2f"|format(row.tokens_in) }}</span>
-          <input class="pr-input-in" aria-label="Input price for {{ row.model }}" type="number" step="0.01" min="0" value="{{ row.tokens_in }}"
-            style="display:none;width:90px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base)">
-        </td>
-        <td>
-          <span class="pr-display-out">${{ "%.2f"|format(row.tokens_out) }}</span>
-          <input class="pr-input-out" aria-label="Output price for {{ row.model }}" type="number" step="0.01" min="0" value="{{ row.tokens_out }}"
-            style="display:none;width:90px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base)">
-        </td>
-        <td style="font-size:var(--font-sm);color:var(--text-muted)">
-          {{ row.updated_at[:16] if row.updated_at else '—' }}
-        </td>
-        <td>
-          <button type="button" class="btn btn-xs btn-secondary pr-edit-btn"
-            data-model="{{ row.model }}" onclick="editPricingRow(this, this.dataset.model)">Edit</button>
-          <button type="button" class="btn btn-xs btn-primary pr-save-btn"
-            style="display:none"
-            data-model="{{ row.model }}" data-account="{{ client.account_id }}" onclick="savePricingRow(this, this.dataset.model, this.dataset.account)">Save</button>
-          <button type="button" class="btn btn-xs btn-secondary pr-cancel-btn"
-            style="display:none"
-            onclick="cancelPricingRow(this)">Cancel</button>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  <!-- Add new model row (hidden by default) -->
-  <div id="addModelForm" style="display:none;padding:.75rem 1rem;border-top:1px solid var(--border);background:var(--surface-2)">
-    <form method="post" action="/admin/clients/{{ client.account_id }}/billing/pricing/save"
-          style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
-      <div>
-        <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);display:block;margin-bottom:3px">Model name</label>
-        <input type="text" name="model" placeholder="e.g. gpt-4o-2025" required
-          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base);font-family:var(--font-mono);width:200px">
-      </div>
-      <div>
-        <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);display:block;margin-bottom:3px">Input (per 1M)</label>
-        <input type="number" name="tokens_in" placeholder="5.00" step="0.01" min="0" required
-          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base);width:100px">
-      </div>
-      <div>
-        <label style="font-size:var(--font-sm);font-weight:var(--weight-semibold);display:block;margin-bottom:3px">Output (per 1M)</label>
-        <input type="number" name="tokens_out" placeholder="15.00" step="0.01" min="0" required
-          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:var(--font-base);width:100px">
-      </div>
-      <button type="submit" class="btn btn-primary btn-sm">Add model</button>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('addModelForm').style.display='none'">Cancel</button>
-    </form>
-  </div>
-</div>
-
-<!-- Daily breakdown -->
-{% if breakdown %}
-<div class="card">
-  <div class="card-header"><h2>Daily breakdown (current month)</h2></div>
-  <table class="table">
-    <tr><th>Date</th><th>Queries</th><th>Successful</th><th>Tokens in</th><th>Tokens out</th><th>Cost (USD)</th></tr>
-    {% for row in breakdown %}
-    <tr>
-      <td style="font-weight:var(--weight-semibold)">{{ row.date }}</td>
-      <td>{{ row.total_queries }}</td>
-      <td style="color:var(--green)">{{ row.successful }}</td>
-      <td style="font-size:var(--font-sm)">{{ "{:,}".format(row.tokens_in or 0) }}</td>
-      <td style="font-size:var(--font-sm)">{{ "{:,}".format(row.tokens_out or 0) }}</td>
-      <td style="color:var(--blue)">${{ "%.4f"|format(row.cost_usd or 0) }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-</div>
-{% else %}
-<div class="card">
-  <div class="card-body" style="color:var(--text-muted);text-align:center;padding:2rem">
-    No queries recorded for this period.
-  </div>
-</div>
+{% if stats.unpriced_calls %}
+{{ alert(message=(stats.unpriced_calls ~ (" AI call was" if stats.unpriced_calls == 1 else " AI calls were") ~ " made with a model that has no price set, so " ~ ("its" if stats.unpriced_calls == 1 else "their") ~ " cost is not counted below."),
+         type="amber", icon_name="alert-triangle", action_href="/admin/system#ai-prices", action_label="Set the price") }}
 {% endif %}
 
-<!-- ── Sync prices modal ───────────────────────────────────────────────────── -->
-<div id="syncModal" style="display:none;position:fixed;inset:0;z-index:1000;background:color-mix(in srgb, var(--shadow-tint) 55%, transparent);align-items:center;justify-content:center">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(680px,95vw);max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 32px color-mix(in srgb, var(--shadow-tint) 40%, transparent)">
-    <!-- header -->
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:.9rem 1.1rem;border-bottom:1px solid var(--border)">
-      <div>
-        <strong style="font-size:var(--font-md)">Sync from provider prices</strong>
-        <span style="font-size:var(--font-xs);color:var(--text-muted);margin-left:.5rem">Public list prices · USD per 1M tokens</span>
-      </div>
-      <button type="button" onclick="closeSyncModal()" style="background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted);line-height:1">✕</button>
-    </div>
-    <!-- filter bar -->
-    <div style="padding:.6rem 1.1rem;border-bottom:1px solid var(--border);display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
-      <input id="syncSearch" aria-label="Filter models" type="text" placeholder="Filter models…"
-        oninput="filterSyncRows()"
-        style="padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:var(--font-base);flex:1;min-width:140px;background:var(--surface-2);color:var(--text)">
-      <div id="syncProviderBtns" style="display:flex;gap:.3rem;flex-wrap:wrap"></div>
-    </div>
-    <!-- body -->
-    <div id="syncBody" style="overflow-y:auto;flex:1;padding:.5rem 1.1rem">
-      <div id="syncLoading" style="text-align:center;padding:2rem;color:var(--text-muted)">Loading prices…</div>
-      <table id="syncTable" class="table" style="display:none">
-        <thead><tr>
-          <th style="width:32px"><input type="checkbox" id="syncCheckAll" aria-label="Select every model" onchange="toggleAllSync(this)"></th>
-          <th>Model</th>
-          <th>Provider</th>
-          <th>Input / 1M</th>
-          <th>Output / 1M</th>
-          <th style="width:80px">Status</th>
-        </tr></thead>
-        <tbody id="syncRows"></tbody>
-      </table>
-      <div id="syncError" style="display:none;color:var(--red);padding:1rem"></div>
-    </div>
-    <!-- footer -->
-    <div style="padding:.75rem 1.1rem;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap">
-      <span id="syncSelCount" style="font-size:var(--font-sm);color:var(--text-muted)">0 selected</span>
-      <div style="display:flex;gap:.5rem">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="closeSyncModal()">Cancel</button>
-        <button type="button" class="btn btn-primary btn-sm" id="syncSaveBtn" onclick="saveSyncedPrices()" disabled>Save selected</button>
-      </div>
-    </div>
-  </div>
+<div class="metrics">
+  {{ metric_card("Questions", stats.total or 0) }}
+  {{ metric_card("Answered", stats.succeeded or 0) }}
+  {{ metric_card("Tokens sent", "{:,}".format(stats.total_tokens_in or 0)) }}
+  {{ metric_card("Tokens generated", "{:,}".format(stats.total_tokens_out or 0)) }}
+  {{ metric_card("Cost (USD)", "$%.4f"|format(stats.total_cost_usd or 0)) }}
 </div>
 
-<script>
-document.getElementById('addModelBtn').addEventListener('click', function() {
-  var f = document.getElementById('addModelForm');
-  f.style.display = f.style.display === 'none' ? 'block' : 'none';
-});
+{% if breakdown %}
+<div class="card">
+  <div class="card-header"><h2>By day, this month</h2></div>
+  <div class="qb-table-wrap"><table class="qb-table">
+    <thead><tr><th>Date</th><th class="num">Questions</th><th class="num">Answered</th><th class="num">Tokens sent</th><th class="num">Tokens generated</th><th class="num">Cost (USD)</th></tr></thead>
+    <tbody>
+    {% for row in breakdown %}
+    <tr>
+      <td>{{ row.date }}</td>
+      <td class="num">{{ row.total_queries or 0 }}</td>
+      <td class="num">{{ row.successful or 0 }}</td>
+      <td class="num">{{ "{:,}".format(row.tokens_in or 0) }}</td>
+      <td class="num">{{ "{:,}".format(row.tokens_out or 0) }}</td>
+      <td class="num">${{ "%.4f"|format(row.cost_usd or 0) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% else %}
+<div class="card">{{ empty_state("chart-bar", "No questions this month yet", "Usage appears here once people ask questions in the chat.") }}</div>
+{% endif %}
 
-function editPricingRow(btn, model) {
-  var tr = btn.closest('tr');
-  tr.querySelector('.pr-display-in').style.display  = 'none';
-  tr.querySelector('.pr-display-out').style.display = 'none';
-  tr.querySelector('.pr-input-in').style.display    = 'inline-block';
-  tr.querySelector('.pr-input-out').style.display   = 'inline-block';
-  tr.querySelector('.pr-edit-btn').style.display    = 'none';
-  tr.querySelector('.pr-save-btn').style.display    = 'inline-block';
-  tr.querySelector('.pr-cancel-btn').style.display  = 'inline-block';
-  tr.querySelector('.pr-input-in').focus();
-}
+<p class="form-note billing-prices-note">Prices per model are set once for every workspace, on <a href="/admin/system#ai-prices">System → AI prices</a>.</p>
 
-function cancelPricingRow(btn) {
-  var tr = btn.closest('tr');
-  tr.querySelector('.pr-display-in').style.display  = 'inline';
-  tr.querySelector('.pr-display-out').style.display = 'inline';
-  tr.querySelector('.pr-input-in').style.display    = 'none';
-  tr.querySelector('.pr-input-out').style.display   = 'none';
-  tr.querySelector('.pr-edit-btn').style.display    = 'inline-block';
-  tr.querySelector('.pr-save-btn').style.display    = 'none';
-  tr.querySelector('.pr-cancel-btn').style.display  = 'none';
-}
-
-function savePricingRow(btn, model, accountId) {
-  var tr     = btn.closest('tr');
-  var tIn    = tr.querySelector('.pr-input-in').value;
-  var tOut   = tr.querySelector('.pr-input-out').value;
-  if (!tIn || !tOut || isNaN(parseFloat(tIn)) || isNaN(parseFloat(tOut))) {
-    qbToast.warning('Please enter valid numeric rates.');
-    return;
-  }
-  var form = document.createElement('form');
-  form.method = 'post';
-  form.action = '/admin/clients/' + accountId + '/billing/pricing/save';
-  [['model', model], ['tokens_in', tIn], ['tokens_out', tOut]].forEach(function(pair) {
-    var inp = document.createElement('input');
-    inp.type = 'hidden'; inp.name = pair[0]; inp.value = pair[1];
-    form.appendChild(inp);
-  });
-  document.body.appendChild(form);
-  form.submit();
-}
-
-/* ── Sync prices modal ─────────────────────────────────────────────────── */
-var _syncPrices   = [];
-var _syncFilter   = '';
-var _syncProvider = '';
-var _accountId    = {{ (client.account_id or '')|tojson }};
-
-document.getElementById('syncPricesBtn').addEventListener('click', openSyncModal);
-
-function openSyncModal() {
-  var modal = document.getElementById('syncModal');
-  modal.style.display = 'flex';
-  if (_syncPrices.length === 0) loadSyncPrices();
-}
-
-function closeSyncModal() {
-  document.getElementById('syncModal').style.display = 'none';
-}
-// Close on backdrop click
-document.getElementById('syncModal').addEventListener('click', function(e) {
-  if (e.target === this) closeSyncModal();
-});
-
-function loadSyncPrices() {
-  document.getElementById('syncLoading').style.display = 'block';
-  document.getElementById('syncTable').style.display   = 'none';
-  document.getElementById('syncError').style.display   = 'none';
-
-  fetch('/admin/clients/' + _accountId + '/billing/known-prices')
-    .then(function(r){ return r.json(); })
-    .then(function(data) {
-      document.getElementById('syncLoading').style.display = 'none';
-      if (!data.ok) {
-        document.getElementById('syncError').textContent = data.error || 'Failed to load prices.';
-        document.getElementById('syncError').style.display = 'block';
-        return;
-      }
-      _syncPrices = data.prices || [];
-      buildProviderBtns();
-      renderSyncRows();
-      document.getElementById('syncTable').style.display = 'table';
-    })
-    .catch(function(err) {
-      document.getElementById('syncLoading').style.display = 'none';
-      document.getElementById('syncError').textContent = 'Request failed: ' + err;
-      document.getElementById('syncError').style.display = 'block';
-    });
-}
-
-function buildProviderBtns() {
-  var providers = [...new Set(_syncPrices.map(function(p){ return p.provider; }))];
-  var container = document.getElementById('syncProviderBtns');
-  container.innerHTML = '';
-  // "All" pill
-  var all = document.createElement('button');
-  all.type = 'button';
-  all.textContent = 'All';
-  all.className = 'btn btn-xs btn-primary';
-  all.dataset.provider = '';
-  all.onclick = function(){ _syncProvider = ''; updateProviderBtns(this); filterSyncRows(); };
-  container.appendChild(all);
-  providers.forEach(function(prov) {
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.textContent = prov;
-    b.className = 'btn btn-xs btn-secondary';
-    b.dataset.provider = prov;
-    b.onclick = function(){ _syncProvider = prov; updateProviderBtns(this); filterSyncRows(); };
-    container.appendChild(b);
-  });
-}
-
-function updateProviderBtns(active) {
-  document.querySelectorAll('#syncProviderBtns button').forEach(function(b) {
-    b.className = b === active ? 'btn btn-xs btn-primary' : 'btn btn-xs btn-secondary';
-  });
-}
-
-function filterSyncRows() {
-  _syncFilter = (document.getElementById('syncSearch').value || '').toLowerCase();
-  renderSyncRows();
-}
-
-function renderSyncRows() {
-  var tbody = document.getElementById('syncRows');
-  tbody.innerHTML = '';
-  var visible = _syncPrices.filter(function(p) {
-    if (_syncProvider && p.provider !== _syncProvider) return false;
-    if (_syncFilter && p.model.toLowerCase().indexOf(_syncFilter) === -1) return false;
-    return true;
-  });
-  visible.forEach(function(p, i) {
-    var tr = document.createElement('tr');
-    tr.dataset.model    = p.model;
-    tr.dataset.tokensIn  = p.tokens_in;
-    tr.dataset.tokensOut = p.tokens_out;
-    var badge = p.exists
-      ? '<span style="font-size:var(--font-2xs);background:var(--blue);color:var(--on-primary);padding:1px 5px;border-radius:3px">saved</span>'
-      : '<span style="font-size:var(--font-2xs);background:var(--green);color:var(--on-primary);padding:1px 5px;border-radius:3px">new</span>';
-    tr.innerHTML =
-      '<td><input type="checkbox" class="sync-chk" onchange="updateSyncCount()" ' + (p.exists ? '' : 'checked') + '></td>' +
-      '<td><code style="font-size:var(--font-sm)">' + p.model + '</code></td>' +
-      '<td style="font-size:var(--font-sm);color:var(--text-muted)">' + p.provider + '</td>' +
-      '<td style="font-size:var(--font-base)">$' + p.tokens_in.toFixed(2) + '</td>' +
-      '<td style="font-size:var(--font-base)">$' + p.tokens_out.toFixed(2) + '</td>' +
-      '<td>' + badge + '</td>';
-    tbody.appendChild(tr);
-  });
-  updateSyncCount();
-}
-
-function toggleAllSync(master) {
-  document.querySelectorAll('#syncRows .sync-chk').forEach(function(c){ c.checked = master.checked; });
-  updateSyncCount();
-}
-
-function updateSyncCount() {
-  var n = document.querySelectorAll('#syncRows .sync-chk:checked').length;
-  document.getElementById('syncSelCount').textContent = n + ' selected';
-  document.getElementById('syncSaveBtn').disabled = n === 0;
-  document.getElementById('syncCheckAll').checked =
-    n > 0 && n === document.querySelectorAll('#syncRows .sync-chk').length;
-}
-
-function saveSyncedPrices() {
-  var rows = document.querySelectorAll('#syncRows tr');
-  var toSave = [];
-  rows.forEach(function(tr) {
-    var chk = tr.querySelector('.sync-chk');
-    if (chk && chk.checked) {
-      toSave.push({ model: tr.dataset.model, tokens_in: tr.dataset.tokensIn, tokens_out: tr.dataset.tokensOut });
-    }
-  });
-  if (toSave.length === 0) return;
-
-  var btn = document.getElementById('syncSaveBtn');
-  btn.disabled = true;
-  btn.textContent = 'Saving…';
-
-  // Save sequentially via fetch POSTs so we don't spam form submits
-  var saved = 0;
-  function saveNext() {
-    if (saved >= toSave.length) {
-      // All done — reload page to show updated table
-      window.location.href = '/admin/clients/' + _accountId + '/billing?saved_pricing=1';
-      return;
-    }
-    var item = toSave[saved++];
-    var fd = new FormData();
-    fd.append('model', item.model);
-    fd.append('tokens_in', item.tokens_in);
-    fd.append('tokens_out', item.tokens_out);
-    fetch('/admin/clients/' + _accountId + '/billing/pricing/save', { method: 'POST', body: fd })
-      .then(saveNext)
-      .catch(saveNext);
-  }
-  saveNext();
-}
-</script>
+<style>
+.billing-filter { display:flex; gap:.5rem; align-items:center; margin-bottom:1rem; flex-wrap:wrap; }
+.billing-filter label { font-weight: var(--weight-semibold); }
+.billing-filter .form-input { width:auto; }
+.billing-prices-note { margin-top:1rem; }
+</style>
 {% endblock %}

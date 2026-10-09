@@ -37,11 +37,13 @@ def workspace_labeler(account_id: str, client: dict[str, Any], *, tables: list[s
     return complete
 
 
-def workspace_planner(account_id: str, client: dict[str, Any], *, question: str) -> Callable[[str, str], str]:
+def workspace_planner(account_id: str, client: dict[str, Any], *, question: str,
+                      question_id: str = "") -> Callable[[str, str], str]:
     """The workspace's AI as core2's planner: the question's provider, temperature 0, audited.
 
     The stable half (rules, schema, catalog) is marked as the cached prefix; only
-    the question and its tail change from call to call.
+    the question and its tail change from call to call. The calls carry the question's
+    own id (the one its query_log row has), so what they cost is that question's cost.
     """
     from core.llm import Provider, llm_complete, resolve_provider
     from core.llm_audit import llm_audit_scope
@@ -55,7 +57,8 @@ def workspace_planner(account_id: str, client: dict[str, Any], *, question: str)
         async def call() -> str:
             with llm_audit_scope(account_id=account_id, question=question,
                                  enabled=bool(client.get("enable_llm_audit")), request_id=request_id,
-                                 question_id=request_id, component="core2_planner", egress={"question": question}):
+                                 question_id=question_id or request_id, component="core2_planner",
+                                 egress={"question": question}):
                 text, _, _ = await llm_complete(CachedPrompt(stable=stable, volatile="Answer with one JSON object."),
                                                 tail, provider, model, api_key, max_tokens=1500, temperature=0.0,
                                                 **extra)

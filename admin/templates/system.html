@@ -128,6 +128,25 @@
 .restart-strip.error{background:var(--paper-sunken);border:1px solid var(--danger-line);color:var(--danger-strong)}
 @keyframes restart-spin{to{transform:rotate(360deg)}}
 .restart-spin{display:inline-block;animation:restart-spin .8s linear infinite;font-size:var(--font-md)}
+/* ── AI prices ── */
+.ai-prices-intro{max-width:72ch;margin-bottom:1rem}
+.ai-prices-unpriced ul{list-style:none;margin:.5rem 0;padding:0;display:grid;gap:.35rem}
+.ai-prices-unpriced li{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.ai-prices-table td{vertical-align:top}
+.ai-prices-actions{display:flex;gap:.35rem;align-items:flex-start}
+.ai-prices-actions .inline-form{display:inline}
+.ai-price-form{margin-top:1rem}
+.ai-price-form>summary{list-style:none;display:inline-flex}
+.ai-price-form>summary::-webkit-details-marker{display:none}
+.ai-price-form[open]>summary{margin-bottom:.75rem}
+.ai-price-form form{border:1px solid var(--border);border-radius:8px;padding:1rem;background:var(--surface-2)}
+.ai-price-rates{grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))}
+.ai-azure-prices{margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border)}
+.ai-azure-prices h3{font-size:var(--font-md);margin:0 0 .35rem}
+.ai-azure-type{max-width:22rem}
+.ai-azure-prices td input{width:100%}
+.ai-azure-name{vertical-align:middle}
+[data-price-for][hidden]{display:none}
 </style>
 {% endblock %}
 {% block content %}
@@ -139,7 +158,16 @@
 </div>
 
 {% if saved %}
-  {% set saved_message = "Default provider saved. Continue with the matching credentials below." if saved == 'defaults' else ("Credentials saved. Verify the saved connection before using it for client workloads." if saved == 'credentials' else ("Database settings saved." if saved == 'database' else ("Admin password changed. Every other admin session is signed out." if saved == 'password' else "Settings saved successfully."))) %}
+  {% set saved_messages = {
+      'defaults': "Default provider saved. Continue with the matching credentials below.",
+      'credentials': "Credentials saved. Verify the saved connection before using it for client workloads.",
+      'database': "Database settings saved.",
+      'password': "Admin password changed. Every other admin session is signed out.",
+      'prices': "Price saved. New AI calls are costed at it." ~ ((" " ~ costed ~ " call" ~ ("" if costed == "1" else "s") ~ " made before the price was set " ~ ("is" if costed == "1" else "are") ~ " now costed too.") if costed and costed != "0" else ""),
+      'price-removed': "Price removed.",
+      'azure-pricing': "Azure deployments saved. Their calls are priced as the models they run.",
+  } %}
+  {% set saved_message = saved_messages.get(saved, "Settings saved successfully.") %}
   {{ alert(message=saved_message, type="success", icon_name="check-circle") }}
 {% endif %}
 {% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
@@ -525,6 +553,178 @@
   </div>
 
 </form>
+
+<!-- ── AI prices ────────────────────────────────────────────────────────── -->
+{% macro usd(x) -%}
+{%- if x is none -%}<span class="text-muted">as input</span>
+{%- elif (x * 100) | round(6) == (x * 100) | round(0) -%}${{ "%.2f" | format(x) }}
+{%- else -%}${{ ("%.4f" | format(x)).rstrip("0") }}
+{%- endif -%}
+{%- endmacro %}
+{% set show_azure_prices = saved_provider == 'azure_openai' or azure_configured or azure_deployments %}
+<div class="card" id="ai-prices">
+  <div class="card-header">
+    <h2>AI prices</h2>
+    <span class="text-xs text-muted">US dollars per million tokens, for every workspace</span>
+  </div>
+  <div class="card-body">
+    <p class="form-note ai-prices-intro">Every AI call (questions, Learn, admin tools) is costed when it is made, from the
+      tokens the provider reports: plain input, input read from the cache, input written to it, and output.
+      A call keeps the cost it was made at, so a new price counts from now on. A model with no price shows no
+      cost rather than a guess; set its price and the calls it already made are costed too.</p>
+
+    {% if unpriced_models %}
+    <div class="alert alert-amber ai-prices-unpriced" role="alert">
+      <span class="alert-icon" aria-hidden="true">{{ ic("alert-triangle", 16) }}</span>
+      <div class="alert-body">
+        <strong class="alert-title">No price set for {{ unpriced_models | length }} model{{ "" if unpriced_models | length == 1 else "s" }} used in the last 30 days</strong>
+        <ul>
+          {% for m in unpriced_models %}
+          <li>
+            <span><b>{{ m.priced_model or "(no model name)" }}</b> · {{ price_providers.get(m.provider, m.provider) }}{% if m.deployment_type %} · {{ deployment_type_labels.get(m.deployment_type, m.deployment_type) }}{% endif %}
+              — {{ m.calls }} call{{ "" if m.calls == 1 else "s" }}</span>
+            {% if m.needs_model %}
+            <button type="button" class="btn btn-warning btn-xs" data-azure-model="{{ m.priced_model }}">Name the model it runs</button>
+            {% endif %}
+            <button type="button" class="btn {{ 'btn-secondary' if m.needs_model else 'btn-warning' }} btn-xs" data-price-fill
+                    data-provider="{{ m.provider }}" data-model="{{ m.priced_model }}" data-deployment-type="{{ m.deployment_type }}">Set the price</button>
+          </li>
+          {% endfor %}
+        </ul>
+        {% if unpriced_models | selectattr("needs_model") | list %}<span class="alert-text">An Azure deployment shown under its own name has no model on file: name the model it runs, then set that model's price (unless the deployment is named after its model).</span>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="qb-table-wrap">
+    <table class="qb-table ai-prices-table">
+      <thead><tr>
+        <th>Model</th><th class="num">Input</th><th class="num">Cached input</th>
+        <th class="num">Cache write, 5 min</th><th class="num">Cache write, 1 hour</th><th class="num">Output</th>
+        <th>Where the price came from</th><th><span class="sr-only">Actions</span></th>
+      </tr></thead>
+      <tbody>
+      {% for p in prices %}
+      <tr>
+        <td>
+          <b>{{ p.model }}</b>
+          <div class="text-xs text-muted">{{ price_providers.get(p.provider, p.provider) }}{% if p.provider == 'azure_openai' %} · {{ deployment_type_labels.get(p.deployment_type, "any deployment type") }}{% endif %}</div>
+          {% if p.long_prompt_over %}<div class="text-xs text-muted">Prompts over {{ "{:,}".format(p.long_prompt_over) }} tokens: {{ usd(p.long_input) }} in, {{ usd(p.long_output) }} out</div>{% endif %}
+        </td>
+        <td class="num">{{ usd(p.input) }}</td>
+        <td class="num">{{ usd(p.cached_input) }}</td>
+        {% if p.provider == 'anthropic' %}
+        <td class="num">{{ usd(p.cache_write_5m) }}</td>
+        <td class="num">{{ usd(p.cache_write_1h) }}</td>
+        {% else %}
+        <td class="num text-muted" title="This provider does not bill cache writes">—</td>
+        <td class="num text-muted" title="This provider does not bill cache writes">—</td>
+        {% endif %}
+        <td class="num">{{ usd(p.output) }}</td>
+        <td class="text-xs">{{ p.source }}{% if p.checked %}<div class="text-muted">{{ "set" if p.own else "checked" }} {{ p.checked }}</div>{% endif %}</td>
+        <td class="nowrap"><div class="ai-prices-actions">
+          <button type="button" class="btn btn-secondary btn-xs" data-price-fill
+                  data-provider="{{ p.provider }}" data-model="{{ p.model }}" data-deployment-type="{{ p.deployment_type }}"
+                  data-input="{{ p.input }}" data-cached="{{ '' if p.cached_input is none else p.cached_input }}"
+                  data-write5m="{{ '' if p.cache_write_5m is none else p.cache_write_5m }}"
+                  data-write1h="{{ '' if p.cache_write_1h is none else p.cache_write_1h }}"
+                  data-output="{{ p.output }}">{{ "Edit" if p.own else "Change" }}</button>
+          {% if p.own %}
+          <form method="post" action="/admin/system/prices/delete" class="inline-form">
+            <input type="hidden" name="provider" value="{{ p.provider }}">
+            <input type="hidden" name="model" value="{{ p.model }}">
+            <input type="hidden" name="deployment_type" value="{{ p.deployment_type }}">
+            <button type="submit" class="btn btn-ghost btn-xs"
+                    data-confirm="{{ 'Remove your price for ' ~ p.model ~ '? ' ~ ('It goes back to the list price.' if p.over_built_in else 'Its new calls will show no cost until a price is set.') }}"
+                    data-confirm-label="{{ 'Back to list price' if p.over_built_in else 'Remove' }}">{{ "Back to list price" if p.over_built_in else "Remove" }}</button>
+          </form>
+          {% endif %}
+        </div></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+
+    <details class="ai-price-form" id="ai-price-form">
+      <summary class="btn btn-secondary btn-sm">{{ ic("plus", 13) }} Add a price</summary>
+      <form method="post" action="/admin/system/prices/save">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="price-provider">Provider</label>
+            <select id="price-provider" name="provider">
+              {% for key, label in price_providers.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="price-model">Model</label>
+            <input type="text" id="price-model" name="model" required maxlength="128" placeholder="e.g. gpt-4o">
+            <p class="form-note" data-price-for="azure_openai">The model the deployment runs (gpt-4o), not the deployment's name.</p>
+          </div>
+          <div class="form-group" data-price-for="azure_openai">
+            <label for="price-deployment-type">Deployment type</label>
+            <select id="price-deployment-type" name="deployment_type">
+              <option value="">Any</option>
+              {% for key, label in deployment_type_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-grid ai-price-rates">
+          <div class="form-group"><label for="price-input">Input</label>
+            <input type="number" id="price-input" name="input_rate" required min="0" max="10000" step="any" inputmode="decimal"></div>
+          <div class="form-group"><label for="price-cached">Cached input</label>
+            <input type="number" id="price-cached" name="cached_rate" min="0" max="10000" step="any" inputmode="decimal" placeholder="same as input"></div>
+          <div class="form-group" data-price-for="anthropic"><label for="price-write-5m">Cache write, 5 min</label>
+            <input type="number" id="price-write-5m" name="write_5m_rate" min="0" max="10000" step="any" inputmode="decimal" placeholder="same as input"></div>
+          <div class="form-group" data-price-for="anthropic"><label for="price-write-1h">Cache write, 1 hour</label>
+            <input type="number" id="price-write-1h" name="write_1h_rate" min="0" max="10000" step="any" inputmode="decimal" placeholder="same as input"></div>
+          <div class="form-group"><label for="price-output">Output</label>
+            <input type="number" id="price-output" name="output_rate" required min="0" max="10000" step="any" inputmode="decimal"></div>
+        </div>
+        <p class="form-note">US dollars per million tokens, from your provider's price page or your agreement with it.
+          A part left empty is charged at the input price.</p>
+        <div class="llm-save-row"><button type="submit" class="btn btn-primary">{{ ic("check", 14) }} Save price</button></div>
+      </form>
+    </details>
+
+    {% if show_azure_prices %}
+    <div class="ai-azure-prices" id="ai-azure-prices">
+      <h3>Azure OpenAI deployments</h3>
+      <p class="form-note">Calls go to a deployment by its name; the price is the model it runs, at your resource's
+        deployment type. Fetching deployments in the Azure step above fills the models in.</p>
+      <form method="post" action="/admin/system/azure-pricing">
+        <div class="form-group ai-azure-type">
+          <label for="azure-deployment-type">Deployment type</label>
+          <select id="azure-deployment-type" name="deployment_type">
+            {% for key, label in deployment_type_labels.items() %}<option value="{{ key }}" {% if key == azure_deployment_type %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          <p class="form-note">As shown on the deployment in Azure AI Foundry. Data Zone and Regional cost more than Global.</p>
+        </div>
+        <div class="qb-table-wrap">
+        <table class="qb-table">
+          <thead><tr><th>Deployment</th><th>Model it runs</th></tr></thead>
+          <tbody>
+          {% for d in azure_deployments %}
+          <tr>
+            <td class="ai-azure-name"><b>{{ d.name }}</b><input type="hidden" name="deployment" value="{{ d.name }}"></td>
+            <td><input type="text" class="form-input" name="deployment_model" value="{{ d.model }}" maxlength="128"
+                       id="azure-model-{{ loop.index }}" data-deployment="{{ d.name }}"
+                       aria-label="Model the deployment {{ d.name }} runs" placeholder="e.g. gpt-4o"></td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td><input type="text" class="form-input" name="new_deployment" maxlength="128" aria-label="Another deployment's name" placeholder="Another deployment"></td>
+            <td><input type="text" class="form-input" name="new_deployment_model" maxlength="128" aria-label="Model it runs" placeholder="e.g. gpt-4o-mini"></td>
+          </tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="llm-save-row"><button type="submit" class="btn btn-primary">{{ ic("check", 14) }} Save deployments</button></div>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
 
 <!-- ── Services ─────────────────────────────────────────────────────────── -->
 <div class="card">
@@ -1038,5 +1238,44 @@ function triggerRestart(confirmed) {
       }, 1000);
     });
 }
+
+  /* ── AI prices: one form, filled from a row's Change/Edit or an unpriced model ── */
+  (function(){
+    const box = document.getElementById('ai-price-form');
+    if(!box) return;
+    const provider = document.getElementById('price-provider');
+    const fields = {model:'price-model', deploymentType:'price-deployment-type', input:'price-input',
+                    cached:'price-cached', write5m:'price-write-5m', write1h:'price-write-1h', output:'price-output'};
+    function showFor(){
+      box.querySelectorAll('[data-price-for]').forEach(function(el){
+        el.hidden = el.getAttribute('data-price-for') !== provider.value;
+      });
+    }
+    provider.addEventListener('change', showFor);
+    showFor();
+    document.querySelectorAll('[data-azure-model]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        const input = Array.prototype.find.call(document.querySelectorAll('#ai-azure-prices [data-deployment]'),
+          function(el){ return el.getAttribute('data-deployment') === btn.getAttribute('data-azure-model'); });
+        if(!input) return;
+        input.scrollIntoView({block:'center', behavior:'smooth'});
+        input.focus({preventScroll:true});
+      });
+    });
+    document.querySelectorAll('[data-price-fill]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        const d = btn.dataset;
+        provider.value = d.provider || 'anthropic';
+        Object.keys(fields).forEach(function(key){
+          const el = document.getElementById(fields[key]);
+          if(el) el.value = d[key] !== undefined ? d[key] : '';
+        });
+        showFor();
+        box.open = true;
+        box.scrollIntoView({block:'nearest', behavior:'smooth'});
+        document.getElementById(d.model ? 'price-input' : 'price-model').focus({preventScroll:true});
+      });
+    });
+  })();
 </script>
 {% endblock %}

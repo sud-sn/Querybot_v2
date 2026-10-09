@@ -114,6 +114,9 @@ async def learned_page(request: Request, account_id: str):
         "error": request.query_params.get("error"),
         "engine": store.get_query_engine(account_id),
         "answers": store.list_core2_answers(account_id, 20),
+        # What the last Learn cost: its calls naming the tables (core2/bootstrap/ai.py).
+        "learn_cost": store.usage_totals(account_id, component_prefix="core2_labels", since=build["started_at"],
+                                         until=build.get("finished_at") or "") if build else None,
     })
 
 

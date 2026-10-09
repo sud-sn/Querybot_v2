@@ -34,7 +34,7 @@ from store.config_store import (
     load_schema_tables,
     set_system, get_system, get_all_system, SYSTEM_KEYS,
     system_key_is_set, claim_system_key,
-    LLM_COST_RATES, calculate_cost, get_all_pricing, save_pricing,
+    calculate_cost,
     log_kb_egress, list_kb_egress, get_kb_egress_summary, update_egress_masking,
     confirm_entity_property, reject_entity_property, sync_property_term,
     save_entity, list_entities, get_entity, delete_entity, prune_entity_graph_to_tables,
@@ -178,6 +178,10 @@ from store.core2_store import (
     start_core2_build, finish_core2_build, latest_core2_build, add_core2_build_line, core2_runner,
     get_query_engine, set_query_engine, log_core2_answer, list_core2_answers, set_core2_import_report,
 )
+from store.llm_usage_store import (
+    record_llm_usage, question_usage, usage_by_question, usage_totals, usage_daily, user_usage_this_month,
+    list_llm_prices, save_llm_price, delete_llm_price, unpriced_models, deployments_used, reprice_unpriced,
+)
 
 __all__ = [
     "init_db","get_db","encrypt","decrypt","decrypt_json","mask",
@@ -186,7 +190,7 @@ __all__ = [
     "set_default_source","delete_client_source","source_for_domain",
     "default_source","resolve_db_config_id","db_config_for_domain_name",
     "set_system","get_system","get_all_system","SYSTEM_KEYS",
-    "LLM_COST_RATES","calculate_cost","get_all_pricing","save_pricing",
+    "calculate_cost",
     "log_kb_egress","list_kb_egress","get_kb_egress_summary","update_egress_masking",
     "confirm_entity_property","reject_entity_property","sync_property_term",
     "save_entity","list_entities","get_entity","delete_entity","prune_entity_graph_to_tables",
@@ -310,4 +314,7 @@ __all__ = [
     "set_core2_override","delete_core2_override","list_core2_overrides",
     "start_core2_build","finish_core2_build","latest_core2_build","add_core2_build_line","core2_runner",
     "get_query_engine","set_query_engine","log_core2_answer","list_core2_answers","set_core2_import_report",
+    "record_llm_usage","question_usage","usage_by_question","usage_totals","usage_daily","user_usage_this_month",
+    "list_llm_prices","save_llm_price","delete_llm_price","unpriced_models","deployments_used",
+    "reprice_unpriced",
 ]

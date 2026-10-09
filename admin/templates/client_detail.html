@@ -83,6 +83,16 @@
 .health-comp-pts{font-size:var(--font-2xs);color:var(--text-muted);margin-top:1px}
 @media(max-width:900px){.health-score-layout{grid-template-columns:1fr}.health-donut-wrap{margin:0 auto}}
 @media(max-width:640px){.agent-analysis-grid{grid-template-columns:1fr}}
+.q-cost-pop{position:fixed;inset:0;margin:auto;height:fit-content;width:min(26rem,calc(100vw - 2rem));padding:1rem 1.1rem;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--text);box-shadow:var(--shadow-lg)}
+.q-cost-pop::backdrop{background:color-mix(in srgb, var(--shadow-tint) 18%, transparent)}
+.q-cost-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.q-cost-q{margin:.35rem 0 .5rem;color:var(--text-muted);font-size:var(--font-sm)}
+.q-cost-total{font-size:var(--font-xl, 1.5rem);font-weight:var(--weight-bold);margin-bottom:.4rem}
+.q-cost-body{display:grid;gap:.25rem;color:var(--text-muted);font-size:var(--font-sm);line-height:1.45}
+.q-cost-body ul{margin:.2rem 0 0;padding-left:1.1rem}
+.q-cost-warn{color:var(--warning-strong, var(--warning))}
+.q-cost-note{margin-top:.35rem;font-size:var(--font-xs)}
+.q-cost-estimate{color:var(--text-muted)}
 </style>
 {% endblock %}
 {% block content %}
@@ -498,6 +508,14 @@
    /clients/{id}/schema now redirects to Setup's step 2 anchor, so the tab's
    URL and its old #schema-browser bookmark both still land somewhere useful. #}
 
+{% set cost_step_labels = {
+    'core2_planner': 'Reading the question', 'sql_generation': 'Writing the query', 'sql_candidate': 'Writing the query',
+    'sql_repair': 'Fixing the query', 'sql_repair_progressive': 'Fixing the query', 'sql_shape_correction': 'Fixing the query',
+    'kb_query_repair': 'Fixing the query', 'sql_cannot_generate_recovery': 'Fixing the query',
+    'analysis': 'Writing the answer', 'conversational_analyst': 'Writing the answer', 'corroboration': 'Checking the answer',
+    'result_metadata_planner': 'Choosing the chart', 'followup_suggestions': 'Suggesting follow-ups',
+    'clarification': 'Asking what was meant', 'failure_phraser': 'Explaining a failure', 'general': 'Other',
+} %}
 <!-- QUERIES TAB -->
 <div id="tab-queries" class="tab-pane{% if active_tab == 'queries' %} active{% endif %}">
   <div class="card">
@@ -533,7 +551,8 @@
           {% endif %}
           {{ q.question }}
         </td>
-        <td class="text-xs text-muted">{{ q.llm_model or "—" }}</td>
+        {% set q_models = (q.usage.steps | map(attribute="model") | unique | list) if q.usage and q.usage.steps else [] %}
+        <td class="text-xs text-muted nowrap">{{ q_models | join(", ") if q_models else (q.llm_model or "—") }}</td>
         <td>
           {% if q.sql_generated %}
           <div class="sql-cell">
@@ -547,7 +566,37 @@
           {% endif %}
         </td>
         <td class="text-sm">{{ q.row_count }}</td>
-        <td class="text-xs">${{ "%.4f"|format(q.cost_usd or 0) }}</td>
+        <td class="text-xs nowrap">
+          {% if q.usage and not q.usage.calls %}
+          <span title="Answered without asking the model, so it cost nothing">$0.0000</span>
+          {% elif q.usage %}
+          {% set u = q.usage %}
+          <button type="button" class="btn btn-link btn-xs" popovertarget="q-cost-{{ loop.index }}">${{ "%.4f"|format(q.cost_usd or 0) }}{% if u.unpriced_calls %} <span class="badge badge-amber">no price</span>{% endif %}</button>
+          <div id="q-cost-{{ loop.index }}" popover class="q-cost-pop" aria-label="What this question cost">
+            <div class="q-cost-head">
+              <b>What this question cost</b>
+              <button type="button" class="btn btn-ghost btn-xs" popovertarget="q-cost-{{ loop.index }}" popovertargetaction="hide" aria-label="Close">{{ ic("x", 14) }}</button>
+            </div>
+            <p class="q-cost-q">{{ q.question }}</p>
+            <div class="q-cost-total">${{ "%.4f"|format(q.cost_usd or 0) }}</div>
+            <div class="q-cost-body">
+              <div><b>{{ u.calls }}</b> AI call{{ "" if u.calls == 1 else "s" }}</div>
+              <div>Sent {{ "{:,}".format(u.prompt_tokens) }} tokens{% if u.cached_input_tokens or u.cache_write_5m_tokens or u.cache_write_1h_tokens %}:
+                {{ "{:,}".format(u.input_tokens) }} new{% if u.cached_input_tokens %}, {{ "{:,}".format(u.cached_input_tokens) }} read from the cache{% endif %}{% if u.cache_write_5m_tokens or u.cache_write_1h_tokens %}, {{ "{:,}".format(u.cache_write_5m_tokens + u.cache_write_1h_tokens) }} written to it{% endif %}{% endif %}</div>
+              <div>Generated {{ "{:,}".format(u.output_tokens) }} tokens{% if u.reasoning_tokens %}, {{ "{:,}".format(u.reasoning_tokens) }} of them reasoning{% endif %}</div>
+              {% if u.steps %}
+              <ul>
+                {% for st in u.steps %}<li>{{ cost_step_labels.get(st.component, st.component.replace('_', ' ') | capitalize) }} · {{ st.model }}{% if st.calls > 1 %} × {{ st.calls }}{% endif %}</li>{% endfor %}
+              </ul>
+              {% endif %}
+              {% if u.unpriced_calls %}<div class="q-cost-warn">{{ u.unpriced_calls }} call{{ " was" if u.unpriced_calls == 1 else "s were" }} made with a model that has no price, so {{ "it is" if u.unpriced_calls == 1 else "they are" }} not in this cost. <a href="/admin/system#ai-prices">Set the price</a></div>{% endif %}
+              <div class="q-cost-note">Priced on <a href="/admin/system#ai-prices">System → AI prices</a>.</div>
+            </div>
+          </div>
+          {% else %}
+          <span class="q-cost-estimate" title="An estimate from the question's first AI call: it was asked before every call was recorded">~${{ "%.4f"|format(q.cost_usd or 0) }}</span>
+          {% endif %}
+        </td>
         <td class="text-xs text-muted">
           {% if q.question_id %}
           <a href="/admin/clients/{{ client.account_id }}/traces?question_id={{ q.question_id }}" title="View query duration breakdown">{{ q.duration_ms }}</a>

@@ -15,110 +15,18 @@ from store.crypto import encrypt, decrypt, decrypt_json
 
 log = logging.getLogger("querybot.store")
 
-# ── LLM cost rates (USD per 1M tokens) ───────────────────────────────────────
-# These are the FALLBACK defaults used when a model is not yet in the
-# llm_pricing SQLite table.  calculate_cost() reads the DB first — so admins
-# can update rates live from the billing page without touching code or
-# restarting the service.  Only add new models here; the DB rows take
-# precedence once seeded.
-LLM_COST_RATES: dict[str, dict] = {
-    "claude-sonnet-4-6":  {"in": 3.00,  "out": 15.00},
-    "claude-opus-4-5":    {"in": 15.00, "out": 75.00},
-    "claude-haiku-4-5":   {"in": 0.80,  "out": 4.00},
-    "gpt-4o":             {"in": 5.00,  "out": 15.00},
-    "gpt-4o-mini":        {"in": 0.15,  "out": 0.60},
-}
+def calculate_cost(model: str, tokens_in: int, tokens_out: int, provider: str = "anthropic") -> float:
+    """An estimate from two token counts, for a row that has no recorded calls.
 
-# In-process cache so every LLM call doesn't hit SQLite for pricing.
-# Invalidated whenever save_pricing() writes a new rate.
-_pricing_cache: dict[str, dict] | None = None
-
-
-def _load_pricing_cache() -> dict[str, dict]:
-    """Read all rows from llm_pricing into a model→rates dict."""
-    result: dict[str, dict] = {}
-    try:
-        with get_db() as conn:
-            for row in conn.execute(
-                "SELECT model, tokens_in, tokens_out FROM llm_pricing"
-            ).fetchall():
-                result[row[0]] = {"in": float(row[1]), "out": float(row[2])}
-    except Exception:
-        pass  # table may not exist yet on very first startup before init_db
-    return result
-
-
-def get_all_pricing() -> list[dict]:
+    The real cost of a call is recorded when it is made (core/llm_prices.py, llm_usage).
+    This prices plain input and output at the model's price, and a model with no price
+    at nothing: it used to charge gpt-4o's rates for every model it did not know, which
+    put a cost on Azure deployments and local models nobody had priced.
     """
-    Return all known models with their current effective rates and source.
-    Merges DB rows (source='db') with any hardcoded defaults not yet in DB
-    (source='default').  Used by the billing page to show the editable table.
-    """
-    db_rates = _load_pricing_cache()
-    rows: list[dict] = []
-    seen: set[str] = set()
-    # DB rows first — these are the authoritative rates
-    try:
-        with get_db() as conn:
-            for row in conn.execute(
-                "SELECT model, tokens_in, tokens_out, updated_at FROM llm_pricing ORDER BY model"
-            ).fetchall():
-                rows.append({
-                    "model":      row[0],
-                    "tokens_in":  float(row[1]),
-                    "tokens_out": float(row[2]),
-                    "updated_at": row[3] or "",
-                    "source":     "db",
-                })
-                seen.add(row[0])
-    except Exception:
-        pass
-    # Fallback defaults for any model not yet in DB
-    for model, rates in sorted(LLM_COST_RATES.items()):
-        if model not in seen:
-            rows.append({
-                "model":      model,
-                "tokens_in":  rates["in"],
-                "tokens_out": rates["out"],
-                "updated_at": "",
-                "source":     "default",
-            })
-    return rows
+    from core.llm_prices import Usage, cost_of, price_for
 
-
-def save_pricing(model: str, tokens_in: float, tokens_out: float) -> None:
-    """Upsert a model's rates into llm_pricing and invalidate the cache."""
-    global _pricing_cache
-    with get_db() as conn:
-        conn.execute(
-            """INSERT INTO llm_pricing (model, tokens_in, tokens_out, updated_at)
-               VALUES (?, ?, ?, datetime('now'))
-               ON CONFLICT(model) DO UPDATE SET
-                   tokens_in  = excluded.tokens_in,
-                   tokens_out = excluded.tokens_out,
-                   updated_at = excluded.updated_at""",
-            (model.strip(), float(tokens_in), float(tokens_out)),
-        )
-    _pricing_cache = None  # force reload on next calculate_cost call
-    log.info("llm_pricing updated: model=%s in=%.4f out=%.4f", model, tokens_in, tokens_out)
-
-
-def calculate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
-    """
-    Compute USD cost for an LLM call.
-    Reads rates from llm_pricing SQLite table (admin-editable) first;
-    falls back to LLM_COST_RATES hardcoded defaults for unknown models.
-    Falls back to gpt-4o rates if the model is completely unknown.
-    """
-    global _pricing_cache
-    if _pricing_cache is None:
-        _pricing_cache = _load_pricing_cache()
-    rates = (
-        _pricing_cache.get(model)
-        or LLM_COST_RATES.get(model)
-        or {"in": 5.00, "out": 15.00}   # safe fallback: gpt-4o price
-    )
-    return (tokens_in * rates["in"] + tokens_out * rates["out"]) / 1_000_000
+    cost = cost_of(Usage(input=int(tokens_in or 0), output=int(tokens_out or 0)), price_for(provider, model).price)
+    return float(cost or 0.0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -134,6 +42,12 @@ SYSTEM_KEYS = {
     "azure_openai_api_version",    # e.g. 2024-02-01
     "azure_query_deployment_name", # custom Azure deployment name for queries
     "azure_kb_deployment_name",    # custom Azure deployment name for KB generation
+    # What a call through each deployment is priced as (core/llm_prices.py): the model
+    # behind each deployment, saved when the deployments are fetched, as JSON
+    # {"deployment": "model"}; and the resource's deployment type, which Azure prices
+    # differently ("global" | "data_zone" | "regional").
+    "azure_deployment_models",
+    "azure_deployment_type",
     # Local model (self-hosted): an OpenAI-compatible server on the tenant's
     # own hardware -- Ollama, vLLM, llama.cpp, LM Studio. The only provider
     # an air-gapped egress posture permits (core/compliance/egress.py).
@@ -696,21 +610,27 @@ def get_monthly_token_usage(
         row = conn.execute(f"""
             SELECT
                 COUNT(*)                       AS query_count,
-                COALESCE(SUM(tokens_in), 0)    AS tokens_in,
-                COALESCE(SUM(tokens_out), 0)   AS tokens_out,
-                COALESCE(SUM(cost_usd), 0.0)   AS cost_usd
+                COALESCE(SUM(CASE WHEN cost_source='estimate' THEN tokens_in ELSE 0 END), 0)  AS tokens_in,
+                COALESCE(SUM(CASE WHEN cost_source='estimate' THEN tokens_out ELSE 0 END), 0) AS tokens_out,
+                COALESCE(SUM(CASE WHEN cost_source='estimate' THEN cost_usd ELSE 0 END), 0.0) AS cost_usd
             FROM query_log
             WHERE {' AND '.join(where)}
         """, tuple(params)).fetchone()
 
     data = dict(row) if row else {}
-    tokens_in = int(data.get("tokens_in") or 0)
-    tokens_out = int(data.get("tokens_out") or 0)
+    # Recorded calls (llm_usage) on top of the old estimates: the workspace's, or the
+    # ones made for this reader's questions.
+    from store.llm_usage_store import usage_totals, user_usage_this_month
+
+    used = (user_usage_this_month(account_id, portal_user_id) if portal_user_id is not None
+            else usage_totals(account_id, current_month))
+    tokens_in = int(data.get("tokens_in") or 0) + used["prompt_tokens"]
+    tokens_out = int(data.get("tokens_out") or 0) + used["output_tokens"]
+    data["cost_usd"] = float(data.get("cost_usd") or 0.0) + used["cost_usd"]
     data["tokens_in"] = tokens_in
     data["tokens_out"] = tokens_out
     data["total_tokens"] = tokens_in + tokens_out
     data["query_count"] = int(data.get("query_count") or 0)
-    data["cost_usd"] = float(data.get("cost_usd") or 0.0)
     return data
 
 
@@ -751,7 +671,17 @@ def log_query(
     parent_question_id: str = "",
     error_code: str = "",
 ) -> None:
-    cost = calculate_cost(llm_model, tokens_in, tokens_out)
+    # A question's calls are recorded as they are made (llm_usage): its tokens and cost
+    # here are their sum so far, and totals read llm_usage for it rather than this row.
+    # A row with no question id keeps the old estimate, marked as one.
+    from store.llm_usage_store import question_usage
+
+    if question_id:
+        used = question_usage(question_id)
+        tokens_in, tokens_out = used["prompt_tokens"], used["output_tokens"]
+        cost, source = used["cost_usd"], "usage"
+    else:
+        cost, source = calculate_cost(llm_model, tokens_in, tokens_out, llm_provider or "anthropic"), "estimate"
     with get_db() as conn:
         conn.execute("""
             INSERT INTO query_log
@@ -759,13 +689,13 @@ def log_query(
                  question, sql_generated, row_count,
                  success, error_msg, llm_provider, llm_model,
                  tokens_in, tokens_out, cost_usd, duration_ms,
-                 question_id, parent_question_id, error_code)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 question_id, parent_question_id, error_code, cost_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (account_id, portal_user_id, zoom_user_id or "",
               question, sql_generated, row_count,
               1 if success else 0, error_msg, llm_provider, llm_model,
               tokens_in, tokens_out, cost, duration_ms,
-              question_id or "", parent_question_id or "", error_code or ""))
+              question_id or "", parent_question_id or "", error_code or "", source))
 
 
 def get_query_stats(account_id: Optional[str] = None, month: Optional[str] = None) -> dict:
@@ -785,13 +715,23 @@ def get_query_stats(account_id: Optional[str] = None, month: Optional[str] = Non
             SELECT
                 COUNT(*)                              AS total,
                 SUM(CASE WHEN success=1 THEN 1 END)  AS succeeded,
-                SUM(tokens_in)                        AS total_tokens_in,
-                SUM(tokens_out)                       AS total_tokens_out,
-                SUM(cost_usd)                         AS total_cost_usd,
+                SUM(CASE WHEN cost_source='estimate' THEN tokens_in ELSE 0 END)  AS total_tokens_in,
+                SUM(CASE WHEN cost_source='estimate' THEN tokens_out ELSE 0 END) AS total_tokens_out,
+                SUM(CASE WHEN cost_source='estimate' THEN cost_usd ELSE 0 END)   AS total_cost_usd,
                 AVG(duration_ms)                      AS avg_duration_ms
             FROM query_log {where}
         """, params).fetchone()
-    return dict(row) if row else {}
+    data = dict(row) if row else {}
+    # Rows marked 'usage' have their calls in llm_usage, which also holds the calls no
+    # question row carries (Learn, narratives after the answer, admin tools).
+    from store.llm_usage_store import usage_totals
+
+    used = usage_totals(account_id, month)
+    data["total_tokens_in"] = int(data.get("total_tokens_in") or 0) + used["prompt_tokens"]
+    data["total_tokens_out"] = int(data.get("total_tokens_out") or 0) + used["output_tokens"]
+    data["total_cost_usd"] = float(data.get("total_cost_usd") or 0.0) + used["cost_usd"]
+    data["unpriced_calls"] = used["unpriced_calls"]
+    return data
 
 
 def get_suggestions(account_id: str, q: str, limit: int = 8) -> list[dict]:
@@ -935,7 +875,20 @@ def get_recent_queries(account_id: str, limit: int = 50) -> list[dict]:
              ORDER BY q.created_at DESC
              LIMIT ?
         """, (account_id, limit)).fetchall()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    # A question's cost is every call made for it, including those after its row was
+    # written (narratives, follow-up checks): read live from llm_usage.
+    from store.llm_usage_store import question_usage, usage_by_question
+
+    used = usage_by_question(r.get("question_id") or "" for r in out if r.get("cost_source") == "usage")
+    for r in out:
+        if r.get("cost_source") != "usage":
+            continue
+        # A question answered without the model (a cached answer) made no calls: it cost nothing.
+        u = used.get(r.get("question_id") or "") or question_usage("")
+        r["usage"] = u
+        r["cost_usd"], r["tokens_in"], r["tokens_out"] = u["cost_usd"], u["prompt_tokens"], u["output_tokens"]
+    return out
 
 
 def log_llm_call(
@@ -1244,7 +1197,31 @@ def get_monthly_breakdown(account_id: str) -> list[dict]:
               AND SUBSTRING(created_at, 1, 7) = ?
             GROUP BY date ORDER BY date
         """, (account_id, current_month)).fetchall()
-    return [dict(r) for r in rows]
+    out = {str(dict(r)["date"]): dict(r) for r in rows}
+    for r in out.values():
+        r["tokens_in"] = r["tokens_out"] = 0
+        r["cost_usd"] = 0.0
+    with get_db() as conn:
+        for r in conn.execute("""
+            SELECT SUBSTRING(created_at, 1, 10) AS date, SUM(tokens_in) AS tokens_in,
+                   SUM(tokens_out) AS tokens_out, SUM(cost_usd) AS cost_usd
+              FROM query_log WHERE account_id = ? AND SUBSTRING(created_at, 1, 7) = ?
+               AND cost_source = 'estimate' GROUP BY date
+        """, (account_id, current_month)).fetchall():
+            d = dict(r)
+            row = out.setdefault(str(d["date"]), {"date": d["date"], "total_queries": 0, "successful": 0})
+            row["tokens_in"] = int(d["tokens_in"] or 0)
+            row["tokens_out"] = int(d["tokens_out"] or 0)
+            row["cost_usd"] = float(d["cost_usd"] or 0.0)
+    from store.llm_usage_store import usage_daily
+
+    for day, u in usage_daily(account_id, current_month).items():
+        row = out.setdefault(day, {"date": day, "total_queries": 0, "successful": 0,
+                                   "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0})
+        row["tokens_in"] = int(row.get("tokens_in") or 0) + u["prompt_tokens"]
+        row["tokens_out"] = int(row.get("tokens_out") or 0) + u["output_tokens"]
+        row["cost_usd"] = float(row.get("cost_usd") or 0.0) + u["cost_usd"]
+    return [out[d] for d in sorted(out)]
 
 
 # ── Internal helper ───────────────────────────────────────────────────────────

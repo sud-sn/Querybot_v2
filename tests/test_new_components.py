@@ -45,10 +45,9 @@ F. Formula editor
    F3. Syntax validator rules
    F4. Duplicate column disambiguation (bare insert)
 
-G. Dynamic pricing
-   G1. llm_pricing table seeded with defaults
-   G2. calculate_cost() DB-first fallback
-   G3. save_pricing() upsert + cache invalidation
+G. Pricing
+   G1. llm_pricing table still created (old rows are no longer read)
+   G2. calculate_cost() estimates a row with no recorded calls
 """
 
 import os
@@ -849,7 +848,7 @@ class TestDuplicateColumnDisambiguation(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestDynamicPricing(unittest.TestCase):
-    """G1-G3 — llm_pricing table, calculate_cost, save_pricing."""
+    """G1-G2 — the estimate for a row with no recorded calls (prices: test_ai_prices_are_set_once_on_system)."""
 
     def test_table_exists(self):
         with _db.get_db() as conn:
@@ -871,26 +870,6 @@ class TestDynamicPricing(unittest.TestCase):
         # Unknown model should fall back without raising
         result = store.calculate_cost("totally-unknown-model-xyz", 100, 100)
         self.assertIsInstance(result, float)
-
-    def test_save_pricing_persists(self):
-        store.save_pricing("test-model-g3", 1.0, 2.0)
-        all_rates = store.get_all_pricing()
-        found = next((r for r in all_rates if r["model"] == "test-model-g3"), None)
-        self.assertIsNotNone(found)
-        self.assertAlmostEqual(found["tokens_in"],  1.0)
-        self.assertAlmostEqual(found["tokens_out"], 2.0)
-
-    def test_get_all_pricing_returns_list(self):
-        rates = store.get_all_pricing()
-        self.assertIsInstance(rates, list)
-        self.assertGreater(len(rates), 0)
-
-    def test_pricing_rows_have_model_key(self):
-        rates = store.get_all_pricing()
-        for r in rates:
-            self.assertIn("model", r)
-            self.assertIn("tokens_in", r)
-            self.assertIn("tokens_out", r)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1000,12 +979,6 @@ class TestStoreExports(unittest.TestCase):
 
     def test_calculate_cost_exported(self):
         self.assertTrue(callable(store.calculate_cost))
-
-    def test_save_pricing_exported(self):
-        self.assertTrue(callable(store.save_pricing))
-
-    def test_get_all_pricing_exported(self):
-        self.assertTrue(callable(store.get_all_pricing))
 
     def test_store_init_references_egress(self):
         src = _src(STORE_INIT)
