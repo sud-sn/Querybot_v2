@@ -238,7 +238,9 @@ def _slugs(model: SemanticModel, kind: str) -> list[str]:
         return sorted(m.slug for m in model.measures.values() if not m.hidden)
     if kind == "date":
         return sorted(r.slug for r in model.date_roles.values() if r.kind != "audit")
-    return sorted([*model.entities, *model.attributes, *TIME_ATTRIBUTES])
+    shown = [a.slug for a in model.attributes.values()
+             if not model.columns[a.column].hidden and model.columns[a.column].sensitivity == "none"]
+    return sorted([*model.entities, *shown, *TIME_ATTRIBUTES])
 
 
 def _closest(name: str, candidates: list[str], n: int = 6) -> list[str]:
@@ -293,6 +295,24 @@ def _entity_label(model: SemanticModel, slug: str) -> Attribute:
         if a.column == column:
             return a
     raise ResolveError("unknown", f"{entity.business_name} has no name to show")
+
+
+def _shown(model: SemanticModel, attribute: Attribute, slug: str, *, entity: bool = False) -> Attribute:
+    """``attribute``, if an answer may group, list or filter by it.
+
+    A column an admin hid is not offered at all: it reads as unknown (an entity is still
+    grouped by, named as before by its own name column). One marked sensitive is known
+    but never shown, listed or filtered on (its values would reach the reader, or the AI
+    as the filter's words); it may still be counted inside a metric the admin defined.
+    """
+    column = model.columns[attribute.column]
+    if column.hidden and not entity:
+        raise ResolveError("unknown", f"nothing to group or filter by called {slug}",
+                           _closest(slug, _slugs(model, "group")))
+    if column.sensitivity != "none":
+        raise ResolveError("sensitive", f"{attribute.business_name or column.business_name} is marked sensitive, "
+                           "so answers never show it or filter by it")
+    return attribute
 
 
 class _PartBuilder:
@@ -764,7 +784,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             raise ResolveError("unknown", f"nothing to group by called {slug}", _closest(slug, _slugs(model, "group")))
         attribute = _entity_label(model, slug) if found[0] == "entity" else found[1]
         assert isinstance(attribute, Attribute)
-        wanted.append((slug, attribute, None))
+        wanted.append((slug, _shown(model, attribute, slug, entity=found[0] == "entity"), None))
 
     intent = plan.intent or ("trend" if plan.time.grain else ("breakdown" if wanted else "value"))
     if not chosen:
@@ -976,6 +996,11 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             having.append(Pred("", target.name, f.op, list(f.values), f"{m.business_name} {_op_words(f)}"))
             conditions.append(Condition("total", m.business_name.lower(), f.op, list(f.values), format=m.format))
             continue
+        stored: list | None = None
+        if kind in ("attribute", "entity"):
+            named = _entity_label(model, f.field) if kind == "entity" else obj
+            assert isinstance(named, Attribute)
+            f, stored = _named_filter(model.columns[named.column], f)
         # Each measure table takes the filters it can reach; in a question about two
         # tables, a filter on one table's own column limits that table's measures only.
         took: list[Part] = []
@@ -999,6 +1024,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 continue
             attribute = _entity_label(model, f.field) if kind == "entity" else obj
             assert isinstance(attribute, Attribute)
+            _shown(model, attribute, f.field, entity=kind == "entity")
             column = model.columns[attribute.column]
             through, link_role = _via(model, plan, f.field)
             try:
@@ -1009,7 +1035,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 unreachable = exc
                 missed.append(part)
                 continue
-            part.preds.append(Pred(alias, column.key, f.op, list(f.values),
+            part.preds.append(Pred(alias, column.key, f.op, list(f.values if stored is None else stored),
                                    f"{attribute.business_name} {_op_words(f)}"))
             took.append(part)
         if not took:
@@ -1307,8 +1333,10 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
             raise ResolveError("unsupported", f"listing cannot filter on {f.field}")
         attr = _entity_label(model, f.field) if found[0] == "entity" else found[1]
         assert isinstance(attr, Attribute)
+        _shown(model, attr, f.field, entity=found[0] == "entity")
         col = model.columns[attr.column]
-        part.preds.append(Pred(builder.reach(col.table), col.key, f.op, list(f.values)))
+        f, stored = _named_filter(col, f)
+        part.preds.append(Pred(builder.reach(col.table), col.key, f.op, stored))
         conditions.append(Condition("member", _member_label(model, found[0], f.field, attr), f.op, list(f.values)))
     return Logical(intent="list", parts=[part], groups=groups, measures=[], window=Range(None, None),
                    sort=[(groups[0].name, False)], limit=plan.limit, max_rows=ctx.max_rows, conditions=conditions,
@@ -1326,6 +1354,23 @@ def _date_filter_range(f: Filter, values: list[dt.date]) -> Range:
     if f.op in ("lte", "lt") and values:
         return Range(None, values[0] + (one if f.op == "lte" else dt.timedelta(0)))
     raise ResolveError("unsupported", f"a date filter with {f.op} is not supported")
+
+
+def _named_filter(column: Column, f: Filter) -> tuple[Filter, list]:
+    """``f`` as readers say it (the names an admin gave the column's codes), and the values as stored.
+
+    "Cancelled" filters on the code "C" and is told as Cancelled; a code written as stored is told by its
+    name too. A value that is neither is kept as written.
+    """
+    if not column.value_names or f.op not in ("eq", "in", "ne", "not_in"):
+        return f, list(f.values)
+    from core2.plan.values import normalise
+
+    by_name = {normalise(name): code for code, name in column.value_names.items()}
+    stored = [v if not isinstance(v, str) or v in column.value_names else by_name.get(normalise(v), v)
+              for v in f.values]
+    said = [column.value_names.get(v, v) if isinstance(v, str) else v for v in stored]
+    return f.model_copy(update={"values": said}), stored
 
 
 def _op_words(f: Filter | ColumnFilter) -> str:

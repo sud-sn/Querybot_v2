@@ -7,8 +7,8 @@
    into its reader chat, the six areas (Overview · Data · Questions · People ·
    Compliance · Settings) and the open area's own menu on a band beneath.
 
-   Data holds the semantic layer an admin corrects: Setup, what QueryBot learned,
-   the knowledge base, relationships, dates and metrics. Questions is the log, the
+   Data holds the new core's semantic layer an admin corrects: Setup, what QueryBot
+   learned, the knowledge base, relationships, dates and metrics. Questions is the log, the
    answers readers flagged and usage. The AI egress log sits with its policy under
    Compliance. Settings is one page with the danger zone at its foot.
 
@@ -21,7 +21,7 @@
 {% set _seg  = _tail.split('/')[0] if _tail else '' %}
 
 {% set _is_overview   = (_seg == '') %}
-{% set _is_data       = _seg in ['setup', 'learned', 'kb', 'relationships', 'date-roles', 'measures'] %}
+{% set _is_data       = _seg in ['setup', 'learned', 'knowledge', 'relationships', 'dates', 'measures'] %}
 {% set _is_questions  = _seg in ['queries', 'learning-queue', 'billing'] %}
 {% set _is_people     = _seg in ['users', 'groups', 'pending-users'] %}
 {% set _is_compliance = _seg in ['compliance', 'egress'] %}
@@ -29,8 +29,8 @@
    editors and the developer tooling for its compiler. Nothing here is in the
    workspace's day-to-day navigation; the pages are deleted once every
    workspace answers with the new core. #}
-{% set _is_diagnostics = _seg in ['diagnostics', 'graph', 'metrics', 'model-health', 'evals', 'traces', 'readiness', 'drafts',
-                                  'mapping', 'glossary', 'meanings', 'domains', 'reports'] %}
+{% set _is_diagnostics = _seg in ['diagnostics', 'kb', 'date-roles', 'graph', 'metrics', 'model-health', 'evals', 'traces',
+                                  'readiness', 'drafts', 'mapping', 'glossary', 'meanings', 'domains', 'reports'] %}
 {% set _is_settings   = _seg in ['settings', 'advanced'] or _is_diagnostics %}
 
 {% set _area = 'Overview' if _is_overview else 'Data' if _is_data else 'Questions' if _is_questions else 'People' if _is_people
@@ -40,8 +40,8 @@
 
 {# The open area's menu: (path segment, label). #}
 {% if _is_data %}
-  {% set _menu = [('setup', 'Setup'), ('learned', 'What QueryBot learned'), ('kb', 'Knowledge base'),
-                  ('relationships', 'Relationships'), ('date-roles', 'Dates'), ('measures', 'Metrics')] %}
+  {% set _menu = [('setup', 'Setup'), ('learned', 'What QueryBot learned'), ('knowledge', 'Knowledge base'),
+                  ('relationships', 'Relationships'), ('dates', 'Dates'), ('measures', 'Metrics')] %}
 {% elif _is_questions %}
   {% set _menu = [('queries', 'Questions'), ('learning-queue', 'Flagged answers'), ('billing', 'Usage & billing')] %}
 {% elif _is_people %}
@@ -51,7 +51,7 @@
 {% elif _is_diagnostics %}
   {# The way back to the list, and the page open now: the list itself is the menu, so eleven tabs would only overflow. #}
   {% set _menu = [('diagnostics', 'Diagnostics')] + [
-       ('graph', 'Entity graph'), ('metrics', 'Metric registry'), ('model-health', 'Model health'), ('evals', 'Evaluations'),
+       ('kb', 'Knowledge base files'), ('date-roles', 'Date roles'), ('graph', 'Entity graph'), ('metrics', 'Metric registry'), ('model-health', 'Model health'), ('evals', 'Evaluations'),
        ('traces', 'Timing'), ('readiness', 'What to model next'), ('drafts', 'Drafted for review'), ('mapping', 'Source mapping'),
        ('glossary', 'Glossary'), ('meanings', 'Business meanings'), ('domains', 'Subject areas'), ('reports', 'Reports')
      ] | selectattr(0, 'equalto', _seg) | list %}

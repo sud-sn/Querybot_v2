@@ -252,7 +252,17 @@ class _Compiler:
             return self.time_attribute(g.date, g.time_attr)
         if g.column is None:
             raise CompileError(f"{g.name} has no column")
-        return self.col(g.alias, g.column)
+        return self.named_values(self.col(g.alias, g.column), g.column)
+
+    def named_values(self, value: exp.Expression, column_key: str) -> exp.Expression:
+        """A text column's values as readers see them: the names an admin gave its codes ("C" -> "Cancelled"),
+        any other value as stored."""
+        column = self.model.columns[column_key]
+        if column.data_type != "text" or not column.value_names:
+            return value
+        return exp.Case(ifs=[exp.If(this=exp.EQ(this=value.copy(), expression=exp.Literal.string(code)),
+                                    true=exp.Literal.string(name))
+                             for code, name in sorted(column.value_names.items())], default=value.copy())
 
     # ── measures ───────────────────────────────────────────────────────────
     def aggregate(self, expr: MeasureExpr | DaysBetween, part: Part,

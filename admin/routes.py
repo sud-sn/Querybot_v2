@@ -2404,6 +2404,8 @@ async def client_advanced_page(request: Request, account_id: str):
 # editors and the developer tooling for its compiler, kept reachable but out of
 # the workspace's navigation until every workspace answers with the new core.
 _DIAGNOSTIC_PAGES = (
+    ("kb", "Knowledge Base Files", "The knowledge-base files and field notes the earlier pipeline reads."),
+    ("date-roles", "Date Roles", "Dates and their defaults as the earlier pipeline reads them."),
     ("graph", "Entity Graph", "Joins and entities as the earlier pipeline reads them."),
     ("metrics", "Metric Registry", "The metrics the earlier pipeline answers with."),
     ("model-health", "Model Health", "The semantic compiler's warnings, conflict inbox and versions."),
@@ -12879,3 +12881,4 @@ async def mapping_download_terms(request: Request, account_id: str):
 from admin import core2_routes as _core2_routes  # noqa: E402,F401
 from admin import core2_relationships as _core2_relationships  # noqa: E402,F401
 from admin import core2_metrics as _core2_metrics  # noqa: E402,F401
+from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401

@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from core2.model.schema import SemanticModel
 
@@ -62,6 +62,28 @@ class MemberIndex:
     names: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     longest: int = 1
     attributes: set[str] = field(default_factory=set)     # the attributes whose members were all read
+    aliases: dict[str, list[tuple[str, str]]] = field(default_factory=dict)   # names an admin gave codes
+
+    def _entries(self, key: str) -> list[tuple[str, str]]:
+        return [*self.names.get(key, []), *self.aliases.get(key, [])]
+
+    def named(self, model: SemanticModel) -> MemberIndex:
+        """This index with the names an admin gave the codes of its attributes ("cancelled" finds "C").
+
+        Taken from the model on every question, not read with the members, so a name given
+        since the members were read is found at once.
+        """
+        aliases: dict[str, list[tuple[str, str]]] = {}
+        longest = self.longest
+        for slug in self.attributes:
+            attribute = model.attributes.get(slug)
+            column = model.columns.get(attribute.column) if attribute is not None else None
+            for code, name in (column.value_names.items() if column is not None else ()):
+                key = normalise(name)
+                if len(key) >= 2 and (slug, code) not in aliases.get(key, []):
+                    aliases.setdefault(key, []).append((slug, code))
+                    longest = max(longest, min(MAX_TOKENS, len(key.split())))
+        return replace(self, aliases=aliases, longest=longest) if aliases else self
 
     def add(self, attribute: str, values: Iterable[object]) -> None:
         self.attributes.add(attribute)
@@ -80,11 +102,12 @@ class MemberIndex:
     def only(self, attributes: set[str] | frozenset[str]) -> MemberIndex:
         """This index with the members of ``attributes`` alone (one hidden or marked sensitive since is dropped)."""
         out = MemberIndex(attributes=self.attributes & set(attributes))
-        for key, entries in self.names.items():
-            kept = [entry for entry in entries if entry[0] in attributes]
-            if kept:
-                out.names[key] = kept
-                out.longest = max(out.longest, min(MAX_TOKENS, len(key.split())))
+        for own, theirs in ((out.names, self.names), (out.aliases, self.aliases)):
+            for key, entries in theirs.items():
+                kept = [entry for entry in entries if entry[0] in attributes]
+                if kept:
+                    own[key] = kept
+                    out.longest = max(out.longest, min(MAX_TOKENS, len(key.split())))
         return out
 
     def stored(self, attribute: str, value: object) -> str | None:
@@ -92,7 +115,7 @@ class MemberIndex:
 
         Only for an attribute whose members were read: elsewhere nothing can be said.
         """
-        return next((v for a, v in self.names.get(normalise(str(value)), []) if a == attribute), None)
+        return next((v for a, v in self._entries(normalise(str(value))) if a == attribute), None)
 
     def match(self, question: str) -> list[ValueMatch]:
         """Whole member names written in the question, longest first, never overlapping."""
@@ -107,9 +130,10 @@ class MemberIndex:
                 key = normalise(question[start:end])
                 if key.isdigit() and len(key) < 3:
                     continue   # "top 5" is not member "5"
-                for attribute, value in self.names.get(key, []):
+                entries = self._entries(key)
+                for attribute, value in entries:
                     found.append(ValueMatch(question[start:end], start, end, attribute, value))
-                if key in self.names:
+                if entries:
                     taken.update(range(i, i + size))
         return sorted(found, key=lambda m: (m.start, m.attribute))
 

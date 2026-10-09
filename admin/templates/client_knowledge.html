@@ -1,0 +1,323 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% from "icons.html" import ic %}
+{% block title %}Knowledge base — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Knowledge base", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* The approved Knowledge base screen: what each table and field means, in the admin's words. */
+.kb-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.kb-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.kb-head p{margin:0;color:var(--text-muted);max-width:600px;font-size:var(--font-base)}
+.kb{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
+.kb-card{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm)}
+.kb-tables{padding:8px;position:sticky;top:12px}
+.kb-tables .input-icon-wrap{display:flex;margin-bottom:6px}
+.kb-grp{font-size:var(--font-xs);font-weight:var(--weight-semibold);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);
+  padding:10px 10px 4px}
+.kb-tables a{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;color:var(--text);text-decoration:none;
+  font-size:var(--font-sm)}
+.kb-tables a:hover{background:var(--surface-2)}
+.kb-tables a[aria-current="page"]{background:var(--primary-soft);color:var(--primary-ink);font-weight:var(--weight-semibold)}
+.kb-tables a small{margin-left:auto;color:var(--text-muted);font-size:var(--font-xs)}
+.kb-tables a.off{color:var(--text-muted)}
+.kb-main{display:grid;gap:12px;min-width:0}
+.kb-table{padding:14px 16px;display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px}
+.kb-label{display:block;font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-strong);margin-bottom:6px}
+.kb-phys{font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-muted)}
+.kb-row-status{display:block;min-height:18px;margin-top:4px;font-size:var(--font-xs);color:var(--text-muted)}
+.kb-row-status.bad{color:var(--danger)}
+.kb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.kb-search{min-width:260px}
+.kb-shows{display:inline-flex;gap:4px;flex-wrap:wrap}
+.kb-show{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--grid-line);background:var(--surface);display:inline-flex;
+  align-items:center;gap:6px;font-family:var(--font-ui);font-size:var(--font-sm);font-weight:var(--weight-medium);
+  color:var(--text-secondary);cursor:pointer}
+.kb-show[aria-pressed="true"]{background:var(--primary-soft);border-color:transparent;color:var(--primary-ink);font-weight:var(--weight-semibold)}
+.kb-list{overflow:hidden}
+table.kb-l{width:100%;border-collapse:collapse;table-layout:fixed}
+table.kb-l td{overflow-wrap:anywhere}
+table.kb-l .form-input{width:100%;min-width:0}
+table.kb-l th{text-align:left;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted);padding:10px 14px;
+  border-bottom:1px solid var(--grid-line);background:var(--surface-2)}
+table.kb-l td{padding:12px 14px;border-bottom:1px solid var(--grid-line);vertical-align:top;font-size:var(--font-sm);color:var(--text)}
+table.kb-l tr:last-child td{border-bottom:0}
+table.kb-l .c-field{width:150px}
+table.kb-l .c-words{width:150px}
+table.kb-l .c-values{width:180px}
+table.kb-l .c-shown{width:110px}
+table.kb-l .nm{display:block;font-weight:var(--weight-bold);color:var(--text-strong)}
+table.kb-l .nm.off{color:var(--text-muted)}
+table.kb-l .act{width:48px;text-align:right;padding-left:0;padding-right:8px}
+table.kb-l tr.kb-editing td{background:var(--primary-soft)}
+.kb-muted{color:var(--text-muted)}
+.kb-word{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border-radius:999px;background:var(--surface-2);
+  border:1px solid var(--grid-line);font-size:var(--font-xs);color:var(--text);margin:0 4px 4px 0}
+.kb-vals{display:flex;flex-wrap:wrap;gap:4px}
+.kb-val{font-size:var(--font-xs);padding:2px 7px;border-radius:6px;background:var(--surface-2);border:1px solid var(--grid-line)}
+.kb-val b{font-family:var(--font-mono);font-weight:var(--weight-semibold);color:var(--text-muted);margin-right:4px}
+.kb-vis{display:inline-flex;align-items:center;gap:4px;font-size:var(--font-xs);color:var(--text-secondary)}
+.kb-tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:var(--font-xs);
+  font-weight:var(--weight-semibold);white-space:nowrap}
+.kb-tag.sensitive{background:var(--warning-soft);color:var(--warning-strong)}
+.kb-tag.hidden{background:var(--surface-3);color:var(--text-secondary)}
+.kb-edit{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:6px;border:0;background:transparent;
+  color:var(--text-secondary);cursor:pointer}
+.kb-edit:hover{background:var(--surface-3);color:var(--text-strong)}
+.kb-names{display:grid;gap:6px}
+.kb-names label{display:grid;grid-template-columns:minmax(36px,auto) minmax(0,1fr);gap:6px;align-items:center}
+.kb-names b{font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-muted)}
+.kb-link{border:0;background:transparent;padding:0;margin-top:6px;font-family:var(--font-ui);font-size:var(--font-sm);
+  font-weight:var(--weight-semibold);color:var(--primary);cursor:pointer}
+.kb-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.kb-hint{font-size:var(--font-xs);color:var(--text-muted)}
+.kb-error{font-size:var(--font-sm);color:var(--danger)}
+.kb-note{margin:0;font-size:var(--font-xs);color:var(--text-muted)}
+@media (max-width: 900px){
+  .kb{grid-template-columns:minmax(0,1fr)}
+  .kb-tables{position:static}
+  .kb-table{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width: 760px){
+  .kb-search{min-width:0;flex:1 1 100%}
+  .kb-show,.kb-tables a,.kb-link{min-height:44px}
+  .kb-edit{width:44px;height:44px}
+  table.kb-l thead{display:none}
+  table.kb-l,table.kb-l tbody{display:block;width:100%;table-layout:auto}
+  table.kb-l tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;padding:12px 14px;border-bottom:1px solid var(--grid-line)}
+  table.kb-l tr[hidden]{display:none}
+  table.kb-l td{display:block;padding:0;border:0}
+  table.kb-l td.wide{grid-column:1/-1}
+  table.kb-l td[data-label]::before{content:attr(data-label);display:block;font-size:var(--font-xs);color:var(--text-muted);
+    text-transform:uppercase;letter-spacing:.05em}
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="kb-head">
+  <div>
+    <h1>Knowledge base</h1>
+    <p>What each table and field means, in your words. QueryBot reads this to understand questions, and answers use your
+      names for fields and their values.</p>
+  </div>
+</div>
+
+{% if not data %}
+<div class="card">{{ empty_state("book", "QueryBot has not learned this database yet",
+    "Learn it first: its tables and fields are read from the data, then you can say what they mean here.",
+    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
+{% else %}
+{% set t = data.table %}
+<div class="kb">
+  <nav class="kb-card kb-tables" aria-label="Tables">
+    <label class="input-icon-wrap">{{ ic("filter", 16) }}<input type="search" class="form-input form-input-sm" id="kb-find-table"
+      placeholder="Find a table" aria-label="Find a table"></label>
+    {% for item in data.tables %}
+    {% if loop.first or item.group != data.tables[loop.index0 - 1].group %}<div class="kb-grp">{{ item.group }}</div>{% endif %}
+    <a href="/admin/clients/{{ client.account_id }}/knowledge?table={{ item.key | urlencode }}" data-table-link
+       data-words="{{ (item.name ~ ' ' ~ item.physical) | lower }}" class="{{ 'off' if item.hidden else '' }}"
+       {% if item.key == t.key %}aria-current="page"{% endif %}>{{ item.name }}<small>{{ item.fields }}</small></a>
+    {% endfor %}
+  </nav>
+
+  <div class="kb-main">
+    <div class="kb-card kb-table">
+      <div><span class="kb-label">{{ t.name }}</span>
+        <span class="kb-phys">{{ t.physical }} · {{ "{:,}".format(t.rows) }} rows · {{ t.kind_words }}</span></div>
+      <div><label class="kb-label" for="kb-grain">What one row is</label>
+        <input type="text" class="form-input" id="kb-grain" value="{{ t.grain }}" maxlength="200"
+          placeholder="For example: one product on one customer order">
+        <span class="kb-row-status" id="kb-grain-status" role="status"></span></div>
+    </div>
+
+    <div class="kb-toolbar">
+      <label class="input-icon-wrap kb-search">{{ ic("filter", 16) }}<input type="search" class="form-input form-input-sm" id="kb-search"
+        placeholder="Search fields" aria-label="Search fields"></label>
+      <span class="kb-shows" role="group" aria-label="Show" id="kb-shows"></span>
+    </div>
+    <div id="kb-saved" role="status" class="kb-row-status"></div>
+
+    <div class="kb-card kb-list"><table class="kb-l">
+      <thead><tr><th class="c-field">Field</th><th>What it means</th><th class="c-words">People also say</th>
+        <th class="c-values">Values</th><th class="c-shown">Shown</th><th class="act"><span class="sr-only">Edit</span></th></tr></thead>
+      <tbody id="kb-rows"></tbody>
+    </table></div>
+    <p class="kb-note">Sensitive: never shown to readers, never grouped or filtered by, and its values are never sent to the AI.
+      Hidden: not offered at all. Changes apply from the next answer, and are kept when QueryBot learns again.</p>
+  </div>
+</div>
+
+<script type="application/json" id="kb-data">{{ {"table": t, "account": client.account_id} | tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var data = JSON.parse(document.getElementById('kb-data').textContent);
+  var BASE = '/admin/clients/' + encodeURIComponent(data.account) + '/knowledge';
+  var fields = data.table.fields;
+  var state = {show: 'all', search: '', editing: null, naming: false, error: ''};
+  var SHOWN = [['shown', 'Shown'], ['hidden', 'Hidden'], ['sensitive', 'Sensitive']];
+  var rows = document.getElementById('kb-rows');
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+  }
+  function icon(name, size) { return window.qbIcon ? window.qbIcon(name, size || 16) : ''; }
+  function post(path, body) {
+    return fetch(BASE + '/api/' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)}).then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
+      .catch(function () { return {ok: false, error: 'The server could not be reached.'}; });
+  }
+  function needs(f) { return !f.description && f.shown !== 'hidden'; }
+  function matches(f) {
+    if (state.show === 'needs' && !needs(f)) return false;
+    if (state.show === 'off' && f.shown === 'shown') return false;
+    if (!state.search) return true;
+    return [f.name, f.physical, f.description, f.synonyms.join(' ')].join(' ').toLowerCase().indexOf(state.search) >= 0;
+  }
+
+  function shows() {
+    var counts = {all: fields.length, needs: fields.filter(needs).length,
+                  off: fields.filter(function (f) { return f.shown !== 'shown'; }).length};
+    document.getElementById('kb-shows').innerHTML = [['all', 'All'], ['needs', 'Needs a meaning'], ['off', 'Hidden or sensitive']]
+      .map(function (s) {
+        return '<button type="button" class="kb-show" data-show="' + s[0] + '" aria-pressed="' + (state.show === s[0]) + '">' +
+          esc(s[1]) + ' ' + counts[s[0]] + '</button>'; }).join('');
+  }
+
+  function values(f) {
+    if (f.namable) {
+      var listed = f.values.slice(0, 6).map(function (v) {
+        return '<span class="kb-val"><b>' + esc(v.code) + '</b>' + esc(v.name || '') + '</span>'; }).join('');
+      var more = f.values.length > 6 ? '<span class="kb-muted">+' + (f.values.length - 6) + ' more</span>' : '';
+      return '<div class="kb-vals">' + listed + more + '</div>';
+    }
+    return f.kind === 'date' ? '<span class="kb-muted">Date</span>' : '<span class="kb-muted">—</span>';
+  }
+  function shownCell(f) {
+    if (f.shown === 'sensitive') return '<span class="kb-tag sensitive">Sensitive</span>';
+    if (f.shown === 'hidden') return '<span class="kb-tag hidden">Hidden</span>';
+    return '<span class="kb-vis">' + icon('eye', 14) + ' Shown</span>';
+  }
+
+  function plainRow(f) {
+    return '<tr data-field="' + esc(f.key) + '">' +
+      '<td class="wide"><span class="nm' + (f.shown === 'hidden' ? ' off' : '') + '">' + esc(f.name) + '</span><span class="kb-phys">' +
+        esc(f.physical) + '</span></td>' +
+      '<td class="wide" data-label="What it means">' + (f.description ? esc(f.description) : '<span class="kb-muted">No meaning yet</span>') + '</td>' +
+      '<td data-label="People also say">' + (f.synonyms.length ? f.synonyms.map(function (w) {
+        return '<span class="kb-word">' + esc(w) + '</span>'; }).join('') : '<span class="kb-muted">—</span>') + '</td>' +
+      '<td data-label="Values">' + values(f) + '</td>' +
+      '<td data-label="Shown">' + shownCell(f) + '</td>' +
+      '<td class="act"><button type="button" class="kb-edit" data-edit="' + esc(f.key) + '" aria-label="Edit ' + esc(f.name) + '">' +
+        icon('pencil', 16) + '</button></td></tr>';
+  }
+
+  function editRows(f) {
+    var naming = state.naming && f.namable;
+    var vals = f.namable ? (naming
+      ? '<div class="kb-names">' + f.values.map(function (v, i) {
+          return '<label><b>' + esc(v.code) + '</b><input type="text" class="form-input form-input-sm" maxlength="60" data-code="' +
+            esc(v.code) + '" value="' + esc(v.name || '') + '" placeholder="Name" aria-label="Name for ' + esc(v.code) + '"></label>'; }).join('') +
+        '</div>'
+      : values(f) + '<button type="button" class="kb-link" id="kb-name-values">Name the values</button>') : values(f);
+    var named = f.values.filter(function (v) { return v.name; })[0];
+    var hint = named ? 'Readers see “' + esc(named.name) + '”, not “' + esc(named.code) + '”, in answers, filters and charts.'
+                     : 'Changes apply from the next answer.';
+    return '<tr class="kb-editing" data-field="' + esc(f.key) + '">' +
+      '<td class="wide"><input type="text" class="form-input form-input-sm" id="kb-e-name" maxlength="60" value="' + esc(f.name) +
+        '" aria-label="Field name"><span class="kb-phys">' + esc(f.physical) + '</span></td>' +
+      '<td class="wide" data-label="What it means"><textarea class="form-input" id="kb-e-desc" rows="2" maxlength="300" ' +
+        'aria-label="What ' + esc(f.name) + ' means">' + esc(f.description) + '</textarea></td>' +
+      '<td data-label="People also say"><input type="text" class="form-input form-input-sm" id="kb-e-words" value="' +
+        esc(f.synonyms.join(', ')) + '" placeholder="Words, separated by commas" aria-label="Words people also say"></td>' +
+      '<td data-label="Values">' + vals + '</td>' +
+      '<td data-label="Shown"><select class="form-input form-input-sm" id="kb-e-shown" aria-label="Shown, hidden or sensitive">' +
+        SHOWN.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === f.shown ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
+        '</select></td><td class="act"></td></tr>' +
+      '<tr class="kb-editing"><td colspan="6" class="wide"><div class="kb-actions">' +
+        '<button type="button" class="btn btn-primary btn-sm" id="kb-save">Save</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="kb-cancel">Cancel</button>' +
+        '<span class="kb-hint">' + hint + '</span>' +
+        (state.error ? '<span class="kb-error" role="alert">' + esc(state.error) + '</span>' : '') +
+      '</div></td></tr>';
+  }
+
+  function render() {
+    shows();
+    var shown = fields.filter(matches);
+    rows.innerHTML = shown.length ? shown.map(function (f) { return f.key === state.editing ? editRows(f) : plainRow(f); }).join('')
+      : '<tr><td colspan="6" class="kb-muted">No field matches.</td></tr>';
+    var name = document.getElementById('kb-e-name');
+    if (name && !state.focused) { name.focus(); state.focused = true; }
+  }
+
+  function save() {
+    var f = fields.filter(function (x) { return x.key === state.editing; })[0];
+    var body = {column: f.key, name: document.getElementById('kb-e-name').value,
+                description: document.getElementById('kb-e-desc').value,
+                synonyms: document.getElementById('kb-e-words').value.split(',').map(function (w) { return w.trim(); }).filter(Boolean),
+                shown: document.getElementById('kb-e-shown').value};
+    var named = rows.querySelectorAll('[data-code]');
+    if (named.length) {
+      body.value_names = {};
+      named.forEach(function (input) { if (input.value.trim()) body.value_names[input.getAttribute('data-code')] = input.value.trim(); });
+    }
+    var button = document.getElementById('kb-save');
+    button.disabled = true;
+    post('field', body).then(function (r) {
+      if (!r.ok) { state.error = r.error || 'Not saved.'; button.disabled = false; render(); return; }
+      fields = fields.map(function (x) { return x.key === r.field.key ? r.field : x; });
+      state.editing = null; state.error = ''; state.naming = false;
+      document.getElementById('kb-saved').textContent = r.changed.length
+        ? r.field.name + ' saved. It applies from the next answer.' : 'Nothing changed.';
+      render();
+    });
+  }
+
+  rows.addEventListener('click', function (e) {
+    var edit = e.target.closest('[data-edit]');
+    if (edit) { state.editing = edit.getAttribute('data-edit'); state.naming = false; state.error = ''; state.focused = false; render(); return; }
+    if (e.target.closest('#kb-name-values')) { state.naming = true; render(); var first = rows.querySelector('[data-code]'); if (first) first.focus(); return; }
+    if (e.target.closest('#kb-cancel')) { state.editing = null; state.error = ''; render(); return; }
+    if (e.target.closest('#kb-save')) save();
+  });
+  rows.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && state.editing) { state.editing = null; state.error = ''; render(); }
+  });
+  document.getElementById('kb-shows').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-show]');
+    if (b) { state.show = b.getAttribute('data-show'); render(); }
+  });
+  document.getElementById('kb-search').addEventListener('input', function () { state.search = this.value.trim().toLowerCase(); render(); });
+  document.getElementById('kb-find-table').addEventListener('input', function () {
+    var q = this.value.trim().toLowerCase();
+    document.querySelectorAll('[data-table-link]').forEach(function (a) { a.hidden = q && a.getAttribute('data-words').indexOf(q) < 0; });
+  });
+
+  // What one row is: saved when the admin leaves the field or presses Enter.
+  var grain = document.getElementById('kb-grain');
+  var said = grain.value;
+  function saveGrain() {
+    if (grain.value.trim() === said.trim()) return;
+    var status = document.getElementById('kb-grain-status');
+    status.className = 'kb-row-status'; status.textContent = 'Saving…';
+    post('table', {table: data.table.key, grain: grain.value}).then(function (r) {
+      if (!r.ok) { status.className = 'kb-row-status bad'; status.textContent = r.error || 'Not saved.'; return; }
+      said = grain.value = r.grain; status.textContent = 'Saved. Answers and the AI read it from the next question.';
+    });
+  }
+  grain.addEventListener('change', saveGrain);
+  grain.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); saveGrain(); } });
+  render();
+})();
+</script>
+{% endif %}
+{% endblock %}

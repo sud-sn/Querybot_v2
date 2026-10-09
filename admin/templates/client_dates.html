@@ -1,0 +1,283 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% from "icons.html" import ic %}
+{% block title %}Dates — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Dates", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* The approved Dates screen: which date each table is counted by, its names, and the fiscal year. */
+.dt-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.dt-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.dt-head p{margin:0;color:var(--text-muted);max-width:620px;font-size:var(--font-base)}
+.dt-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+.dt-side{display:grid;gap:12px}
+.dt-card{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm);overflow:hidden}
+.dt-pad{padding:14px 16px}
+.dt-table{padding:14px 16px;border-bottom:1px solid var(--grid-line)}
+.dt-table:last-child{border-bottom:0}
+.dt-th{display:flex;align-items:baseline;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.dt-th h2{margin:0;font-size:var(--font-md);color:var(--text-strong)}
+.dt-grow{flex:1}
+.dt-muted{color:var(--text-muted);font-size:var(--font-sm)}
+.dt-add{border:0;background:transparent;padding:0;display:inline-flex;align-items:center;gap:4px;font-family:var(--font-ui);
+  font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--primary);cursor:pointer}
+.dt-opt{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:10px 12px;margin-top:6px;
+  border:1px solid var(--grid-line);border-radius:10px;background:var(--surface)}
+.dt-opt.on{border-color:var(--primary);background:var(--primary-soft)}
+.dt-opt input[type=radio]{width:18px;height:18px;accent-color:var(--primary);margin:0}
+.dt-opt b{color:var(--text-strong);font-weight:var(--weight-semibold)}
+.dt-phys{font-family:var(--font-mono);font-size:var(--font-xs);color:var(--text-muted)}
+.dt-tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:var(--font-xs);
+  font-weight:var(--weight-semibold);background:var(--success-soft);color:var(--success);margin-left:6px}
+.dt-says{font-size:var(--font-sm);color:var(--text-muted);margin-top:2px}
+.dt-cov{font-size:var(--font-sm);color:var(--text-muted);white-space:nowrap}
+.dt-edit{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:6px;border:0;background:transparent;
+  color:var(--text-secondary);cursor:pointer}
+.dt-edit:hover{background:var(--surface-3);color:var(--text-strong)}
+.dt-form{display:grid;gap:8px}
+.dt-three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.dt-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.dt-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dt-newdate{margin-top:10px;padding:12px;border-radius:10px;background:var(--surface-2);border:1px solid var(--grid-line)}
+.dt-label{display:block;font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-strong);margin-bottom:6px}
+.dt-check{display:flex;gap:6px;align-items:flex-start;font-size:var(--font-sm);min-height:20px}
+.dt-check.ok{color:var(--success)}
+.dt-check.bad{color:var(--danger)}
+.dt-status{display:block;min-height:18px;margin-top:6px;font-size:var(--font-xs);color:var(--text-muted)}
+.dt-status.bad{color:var(--danger)}
+.dt-status:empty{display:none}
+.dt-help{margin-top:6px;font-size:var(--font-sm);color:var(--text-muted)}
+.dt-value{font-size:var(--font-base);color:var(--text)}
+@media (max-width: 980px){
+  .dt-grid{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width: 640px){
+  .dt-three,.dt-two{grid-template-columns:minmax(0,1fr)}
+  .dt-opt{grid-template-columns:auto minmax(0,1fr) auto}
+  .dt-cov{grid-column:2/3}
+  .dt-add{min-height:44px}
+  .dt-edit{width:44px;height:44px}
+  .dt-opt{min-height:44px}
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="dt-head">
+  <div>
+    <h1>Dates</h1>
+    <p>Which date each table is counted by, unless a question names another. “Sales by ship date” always uses the ship date.</p>
+  </div>
+</div>
+
+{% if not data %}
+<div class="card">{{ empty_state("calendar", "QueryBot has not learned this database yet",
+    "Learn it first: each table's dates are found from the data, then you can choose and name them here.",
+    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
+{% else %}
+{% if saved == "date" %}<div class="alert alert-success" role="status">Date added. Questions can use it from the next answer.</div>{% endif %}
+<div class="dt-grid">
+  <div class="dt-card">
+    {% for t in data.tables %}
+    {% set real = t.roles | rejectattr("kind", "equalto", "audit") | list %}
+    {% set group = "default-" ~ loop.index %}
+    <section class="dt-table" data-table="{{ t.key }}" aria-labelledby="dt-h-{{ loop.index }}">
+      <div class="dt-th">
+        <h2 id="dt-h-{{ loop.index }}">{{ t.name }}</h2>
+        <span class="dt-muted">{% if t.monthly %}by month{% else %}{{ real | length }} date{{ "" if real | length == 1 else "s" }}{% endif %}</span>
+        <span class="dt-grow"></span>
+        {% if t.candidates %}<button type="button" class="dt-add" data-add="{{ t.key }}" aria-expanded="false">{{ ic("plus", 14) }} Add a date</button>{% endif %}
+      </div>
+      <div role="radiogroup" aria-label="The date {{ t.name }} is counted by">
+      {% for r in t.roles %}
+      <div class="dt-opt{{ ' on' if r.default else '' }}" data-date="{{ r.key }}">
+        <input type="radio" name="{{ group }}" value="{{ r.key }}" id="dt-r-{{ r.key }}"
+          {% if r.default %}checked{% endif %} {% if not r.may_default %}disabled{% endif %}
+          aria-label="Count {{ t.name }} by {{ r.name }}">
+        <div data-show>
+          <label for="dt-r-{{ r.key }}"><b>{{ r.name }}</b></label> <span class="dt-phys">{{ r.physical }}</span>
+          {% if r.default %}<span class="dt-tag">Default</span>{% endif %}
+          <div class="dt-says">{% if r.synonyms %}People say: {{ r.synonyms | join(", ") }}{% elif r.kind_words %}{{ r.kind_words | capitalize }}{% else %}No other words yet{% endif %}{% if r.synonyms and r.kind_words %} · {{ r.kind_words }}{% endif %}</div>
+        </div>
+        <span class="dt-cov">{{ r.coverage }}</span>
+        <button type="button" class="dt-edit" data-edit="{{ r.key }}" data-name="{{ r.name }}" data-words="{{ r.synonyms | join(', ') }}"
+          aria-label="Rename {{ r.name }}">{{ ic("pencil", 16) }}</button>
+      </div>
+      {% endfor %}
+      {% if not t.roles %}<p class="dt-muted">No date was found on this table. Add one if a column holds its date.</p>{% endif %}
+      </div>
+      <span class="dt-status" role="status" data-status></span>
+      {% if t.candidates %}
+      <div class="dt-newdate" data-new hidden>
+        <span class="dt-label">Add a date to {{ t.name }}</span>
+        <div class="dt-form">
+          <div class="dt-three">
+            <select class="form-input" data-column aria-label="The column that holds the date">
+              <option value="">Column…</option>
+              {% for c in t.candidates %}<option value="{{ c.key }}">{{ c.physical }}</option>{% endfor %}
+            </select>
+            <input type="text" class="form-input" data-name maxlength="60" placeholder="Name, for example Invoice date" aria-label="Name">
+            <input type="text" class="form-input" data-words placeholder="People say, for example invoiced, billed" aria-label="Words people use">
+          </div>
+          <div class="dt-check" data-check role="status"></div>
+          <div class="dt-actions">
+            <button type="button" class="btn btn-primary btn-sm" data-save-new disabled>Add date</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-cancel-new>Cancel</button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </section>
+    {% endfor %}
+    {% if not data.tables %}<div class="dt-pad dt-muted">No table here is counted by a date.</div>{% endif %}
+  </div>
+
+  <div class="dt-side">
+    <div class="dt-card dt-pad">
+      <label class="dt-label" for="dt-fiscal">Fiscal year starts in</label>
+      <select class="form-input" id="dt-fiscal">
+        {% for m in data.months %}<option value="{{ loop.index }}" {% if loop.index == data.fiscal %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      </select>
+      <div class="dt-help" id="dt-fiscal-help">{{ data.fiscal_words[data.fiscal] }}</div>
+      <span class="dt-status" id="dt-fiscal-status" role="status"></span>
+    </div>
+    <div class="dt-card dt-pad">
+      <span class="dt-label">Calendar</span>
+      {% for c in data.calendars %}
+      <div class="dt-value">{{ c.name }} <span class="dt-phys">{{ c.physical }}</span></div>
+      <div class="dt-help">{% if c.days %}{{ "{:,}".format(c.days) }} {{ "months" if c.grain == "month" else "days" }}, {{ c.first }} to {{ c.last }} · {% endif %}weeks start on {{ c.week_start }}</div>
+      {% else %}
+      <div class="dt-help">No calendar table: dates are read from the date columns themselves. Weeks start on Monday.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script type="application/json" id="dt-data">{{ {"account": client.account_id, "fiscal": data.fiscal_words} | tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var data = JSON.parse(document.getElementById('dt-data').textContent);
+  var BASE = '/admin/clients/' + encodeURIComponent(data.account) + '/dates';
+  function post(path, body) {
+    return fetch(BASE + '/api/' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)}).then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
+      .catch(function () { return {ok: false, error: 'The server could not be reached.'}; });
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+  }
+  function words(text) { return text.split(',').map(function (w) { return w.trim(); }).filter(Boolean); }
+  function say(el, text, bad) { el.className = 'dt-status' + (bad ? ' bad' : ''); el.textContent = text; }
+
+  document.querySelectorAll('[data-table]').forEach(function (section) {
+    var table = section.getAttribute('data-table');
+    var status = section.querySelector('[data-status]');
+    var name = section.querySelector('h2').textContent;
+
+    // The default date: saved as soon as it is picked.
+    section.querySelectorAll('input[type=radio]').forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        var before = section.querySelector('.dt-opt.on');
+        post('default', {table: table, date: radio.value}).then(function (r) {
+          if (!r.ok) {
+            say(status, r.error || 'Not saved.', true);
+            if (before) before.querySelector('input[type=radio]').checked = true;
+            return;
+          }
+          section.querySelectorAll('.dt-opt').forEach(function (o) { o.classList.toggle('on', o.contains(radio)); });
+          section.querySelectorAll('.dt-tag').forEach(function (t) { t.remove(); });
+          var label = radio.closest('.dt-opt').querySelector('label');
+          label.insertAdjacentHTML('afterend', ' <span class="dt-tag">Default</span>');
+          say(status, name + ' is counted by ' + label.textContent + ' from the next answer.');
+        });
+      });
+    });
+
+    // A date's name and words, edited in place.
+    section.addEventListener('click', function (e) {
+      var edit = e.target.closest('[data-edit]');
+      if (!edit) return;
+      var opt = edit.closest('.dt-opt');
+      var shown = opt.querySelector('[data-show]');
+      var key = edit.getAttribute('data-edit');
+      var kept = shown.innerHTML;
+      shown.innerHTML = '<div class="dt-form"><div class="dt-two">' +
+        '<input type="text" class="form-input form-input-sm" data-e-name maxlength="60" value="' + esc(edit.getAttribute('data-name')) + '" aria-label="Name">' +
+        '<input type="text" class="form-input form-input-sm" data-e-words value="' + esc(edit.getAttribute('data-words')) +
+          '" placeholder="People say, separated by commas" aria-label="Words people use"></div>' +
+        '<div class="dt-actions"><button type="button" class="btn btn-primary btn-sm" data-e-save>Save</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" data-e-cancel>Cancel</button></div></div>';
+      edit.hidden = true;
+      shown.querySelector('[data-e-name]').focus();
+      shown.querySelector('[data-e-cancel]').addEventListener('click', function () { shown.innerHTML = kept; edit.hidden = false; });
+      shown.querySelector('[data-e-save]').addEventListener('click', function () {
+        var newName = shown.querySelector('[data-e-name]').value;
+        var newWords = shown.querySelector('[data-e-words]').value;
+        post('date', {date: key, name: newName, synonyms: words(newWords)}).then(function (r) {
+          if (!r.ok) { say(status, r.error || 'Not saved.', true); return; }
+          window.location.reload();
+        });
+      });
+    });
+
+    // Add a date: checked against the data as soon as a column is chosen.
+    var add = section.querySelector('[data-add]');
+    var panel = section.querySelector('[data-new]');
+    if (!add || !panel) return;
+    var column = panel.querySelector('[data-column]');
+    var check = panel.querySelector('[data-check]');
+    var save = panel.querySelector('[data-save-new]');
+    add.addEventListener('click', function () {
+      panel.hidden = !panel.hidden; add.setAttribute('aria-expanded', String(!panel.hidden));
+      if (!panel.hidden) column.focus();
+    });
+    panel.querySelector('[data-cancel-new]').addEventListener('click', function () {
+      panel.hidden = true; add.setAttribute('aria-expanded', 'false'); add.focus();
+    });
+    column.addEventListener('change', function () {
+      save.disabled = true;
+      check.className = 'dt-check'; check.textContent = column.value ? 'Checking against the data…' : '';
+      if (!column.value) return;
+      var asked = column.value;
+      post('check', {column: asked}).then(function (r) {
+        if (column.value !== asked) return;
+        if (r.ok && r.words) {
+          check.className = 'dt-check ok';
+          check.innerHTML = (window.qbIcon ? window.qbIcon('check', 14) : '') + '<span>' + esc(r.words) + '</span>';
+          save.disabled = false;
+        } else {
+          check.className = 'dt-check bad'; check.textContent = r.problem || r.error || 'This column cannot be a date.';
+        }
+      });
+    });
+    save.addEventListener('click', function () {
+      save.disabled = true;
+      post('add', {column: column.value, name: panel.querySelector('[data-name]').value,
+                   synonyms: words(panel.querySelector('[data-words]').value)}).then(function (r) {
+        if (!r.ok) { check.className = 'dt-check bad'; check.textContent = r.error || 'Not added.'; save.disabled = false; return; }
+        window.location.href = BASE + '?saved=date';
+      });
+    });
+  });
+
+  var fiscal = document.getElementById('dt-fiscal');
+  fiscal.addEventListener('change', function () {
+    var status = document.getElementById('dt-fiscal-status');
+    post('fiscal', {month: Number(fiscal.value)}).then(function (r) {
+      if (!r.ok) { say(status, r.error || 'Not saved.', true); return; }
+      document.getElementById('dt-fiscal-help').textContent = data.fiscal[String(r.month)];
+      say(status, 'Saved. Fiscal years and quarters follow it from the next answer.');
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

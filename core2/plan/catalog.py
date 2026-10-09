@@ -87,15 +87,25 @@ def _synonyms(values: dict[str, list[str]]) -> str:
     return f" | also called: {', '.join(words)}" if words else ""
 
 
+def _meaning(model: SemanticModel, attribute: Attribute) -> str:
+    """What an admin wrote a field means (the Knowledge base page); the build's own guesses are left out."""
+    column = model.columns[attribute.column]
+    text = " ".join(column.description.split())
+    return f" ({text[:160]})" if column.provenance == "admin" and text else ""
+
+
 def _members(model: SemanticModel, attribute: Attribute, values_allowed: bool, limit: int) -> str:
     column = model.columns[attribute.column]
     p = column.profile
     count = attribute.members or (p.distinct if p else 0)
-    if not values_allowed or column.sensitivity != "none" or not column.values_allowed or not p or not p.top \
+    if column.sensitivity != "none":
+        return "sensitive: never shown or filtered on"
+    if not values_allowed or not column.values_allowed or not p or not p.top \
             or count > limit:
         return f"{count:,} values" if count else ""
     shown = sorted(str(t.value) for t in p.top if t.value is not None)[:limit]
-    return f"{count} values: {', '.join(shown)}"
+    names = column.value_names
+    return f"{count} values: {', '.join(f'{names[v]} ({v})' if v in names else v for v in shown)}"
 
 
 def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_values_up_to: int = 12) -> str:
@@ -157,14 +167,14 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
             if a.column == e.label_column:
                 continue
             values = _members(model, a, values_allowed, list_values_up_to)
-            lines.append(f"  - {a.slug} | {a.business_name} | {values}{_synonyms(a.synonyms)}")
+            lines.append(f"  - {a.slug} | {a.business_name}{_meaning(model, a)} | {values}{_synonyms(a.synonyms)}")
     for table_key in measure_tables:
         own = sorted(by_owner.get(table_key, []), key=lambda a: a.slug)
         if own and not any(e.table == table_key for e in model.entities.values()):
             lines.append(f"- on {model.tables[table_key].business_name} itself:")
             for a in own:
                 values = _members(model, a, values_allowed, list_values_up_to)
-                lines.append(f"  - {a.slug} | {a.business_name} | {values}{_synonyms(a.synonyms)}")
+                lines.append(f"  - {a.slug} | {a.business_name}{_meaning(model, a)} | {values}{_synonyms(a.synonyms)}")
     lines.append("")
 
     lines.append(f"TIME ATTRIBUTES: {', '.join(TIME_ATTRIBUTES)} (from the date a question uses)")

@@ -132,6 +132,7 @@ class Column(Belief):
     values_allowed: bool = False    # may common values be shown to the AI and in the catalog
     profile: ColumnProfile | None = None
     hidden: bool = False            # an admin hid it from questions
+    value_names: dict[str, str] = Field(default_factory=dict)   # stored value -> what readers see ("C" -> "Cancelled")
 
 
 class ColumnFilter(_Data):

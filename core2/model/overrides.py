@@ -11,13 +11,14 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from core2.model.schema import AggExpr, Join, Measure, RefExpr, SemanticModel, SqlExpr
+from core2.model.schema import AggExpr, DateRole, Join, Measure, RefExpr, SemanticModel, SqlExpr
 
 # What an admin may change, per kind of object. Everything else is the data's call.
 ALLOWED = {
     "table": {"business_name", "description", "kind", "default_date", "hidden", "default_filters",
-              "readers_may_include"},
-    "column": {"business_name", "description", "role", "format", "unit", "synonyms", "hidden", "sensitivity"},
+              "readers_may_include", "grain_text"},
+    "column": {"business_name", "description", "role", "format", "unit", "synonyms", "hidden", "sensitivity",
+               "value_names"},
     "join": {"trust", "role", "conditions", "keep_unmatched", "cardinality"},
     "date_role": {"name", "kind", "is_default", "synonyms"},
     "measure": {"business_name", "description", "synonyms", "additivity", "time_aggregation", "format", "hidden",
@@ -26,9 +27,10 @@ ALLOWED = {
     "attribute": {"business_name", "synonyms"},
     "settings": {"fiscal_year_start_month"},      # one object: settings:workspace
 }
-# A metric or a link that today's setup has and the build did not find is added
-# whole ("define"), then decided on like any other object.
-DEFINABLE: dict[str, type[Measure] | type[Join]] = {"measure": Measure, "join": Join}
+# A metric, a link or a date that today's setup or an admin has and the build did
+# not find is added whole ("define"), then decided on like any other object.
+DEFINABLE: dict[str, type[Measure] | type[Join] | type[DateRole]] = {
+    "measure": Measure, "join": Join, "date_role": DateRole}
 
 
 def target(kind: str, key: str) -> str:
@@ -51,13 +53,13 @@ def _find(model: SemanticModel, object_key: str) -> tuple[str, BaseModel] | None
 
 
 def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str]) -> None:
-    """Add a metric or a link today's setup has; one the build found since is kept as found (and trusted)."""
+    """Add a metric, a link or a date the build did not find; one the build found since is kept as found."""
     kind, _, key = object_key.partition(":")
     kind_type = DEFINABLE.get(kind)
     if kind_type is None:
         notes.append(f"A decision defines {object_key}, which cannot be added by hand.")
         return
-    collection: dict[str, Any] = model.measures if kind == "measure" else model.joins
+    collection: dict[str, Any] = {"measure": model.measures, "join": model.joins, "date_role": model.date_roles}[kind]
     if key in collection:
         if kind == "join":
             collection[key].trust = "admin"
@@ -67,7 +69,16 @@ def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str])
     except ValidationError:
         notes.append(f"A decision adds {key}, but its definition cannot be read.")
         return
-    if isinstance(obj, Join):
+    if isinstance(obj, DateRole):
+        known = obj.table in model.tables and obj.column in model.columns \
+            and model.columns[obj.column].table == obj.table \
+            and (obj.calendar is None or (obj.calendar in model.calendars and obj.calendar_join in model.joins))
+        obj.is_default = False      # a default is its own decision
+        from core2 import ids
+
+        taken = {r.slug for r in model.date_roles.values()}
+        obj.slug = ids.unique_slug(ids.slug(obj.slug or obj.name or obj.key), taken)
+    elif isinstance(obj, Join):
         known = obj.from_table in model.tables and obj.to_table in model.tables and all(
             c in model.columns for c in [*obj.from_columns, *obj.to_columns]) and not _stray_conditions(model, obj)
     else:
@@ -119,9 +130,13 @@ def _stray_conditions(model: SemanticModel, join: Join) -> list[str]:
 def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> list[str]:
     """Apply admin decisions in place; returns plain-language notes on any that could not apply."""
     notes: list[str] = []
-    for item in overrides:            # what is added comes first: decisions about it follow
-        if item["field"] == "define":
-            _define(model, item["object_key"], item["value"], notes)
+    # What is added comes first, decisions about it follow; a date is added after the link to its calendar.
+    # Metrics whose own date an admin chose keep it when their table's default changes.
+    pinned = {item["object_key"].partition(":")[2] for item in overrides
+              if item["field"] == "default_date" and item["object_key"].startswith("measure:")}
+    defines = [item for item in overrides if item["field"] == "define"]
+    for item in sorted(defines, key=lambda item: item["object_key"].startswith("date_role:")):
+        _define(model, item["object_key"], item["value"], notes)
     for item in overrides:
         if item["field"] == "define":
             continue
@@ -137,20 +152,10 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
             continue
         if kind == "date_role" and field == "is_default" and value:
             # One default per table: choosing one clears the others.
-            owner = model.date_roles[key].table
-            for role in model.date_roles.values():
-                if role.table == owner:
-                    role.is_default = role.key == key
-            model.tables[owner].default_date = key
-            for measure in model.measures.values():
-                if measure.table == owner and measure.provenance != "admin":
-                    measure.default_date = key
+            _default_date(model, model.date_roles[key].table, key, pinned)
         elif kind == "table" and field == "default_date":
             if value in model.date_roles and model.date_roles[value].table == key:
-                for role in model.date_roles.values():
-                    if role.table == key:
-                        role.is_default = role.key == value
-                model.tables[key].default_date = value
+                _default_date(model, key, value, pinned)
         else:
             # Validated through the object's own type, so a bad value is refused
             # and nested values (filters) become the model's objects.
@@ -168,6 +173,11 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
                              "not in the data any more.")
                 continue
             setattr(obj, field, getattr(validated, field))
+            if kind == "column" and field in ("business_name", "synonyms"):
+                # A field is grouped and filtered by under its own name and words (the Knowledge base page).
+                for attribute in model.attributes.values():
+                    if attribute.column == key:
+                        setattr(attribute, field, getattr(validated, field))
             if kind == "measure" and field == "additivity":
                 assert isinstance(obj, Measure)
                 _aggregate_as(obj, str(value))
@@ -180,6 +190,21 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
             obj.trust = value  # type: ignore[attr-defined]
     model.notes = [n for n in model.notes if not n.startswith("A decision")] + notes
     return notes
+
+
+def _default_date(model: SemanticModel, table: str, key: str, pinned: set[str]) -> None:
+    """``key`` becomes ``table``'s default date, and the date of the metrics that were on the old one.
+
+    A metric with no date of its own (None) follows its table's default when it is answered, and is left so.
+    """
+    before = model.tables[table].default_date
+    for role in model.date_roles.values():
+        if role.table == table:
+            role.is_default = role.key == key
+    model.tables[table].default_date = key
+    for measure in model.measures.values():
+        if measure.table == table and measure.key not in pinned and measure.default_date == before:
+            measure.default_date = key
 
 
 def _aggregate_as(measure: Measure, additivity: str) -> None:

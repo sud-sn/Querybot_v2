@@ -289,7 +289,7 @@ def _group(reader: _Reader, thing: Entity | Attribute) -> Described:
         head += f", each named by its {label}." if label and label != word else "."
         own = sorted(a.business_name.lower() for a in model.attributes.values()
                      if model.columns[a.column].table == table and a.column != thing.label_column
-                     and not model.columns[a.column].hidden)
+                     and not model.columns[a.column].hidden and model.columns[a.column].sensitivity == "none")
         if own:
             bullets.append(f"They can be grouped and filtered by {_listed(own)}.")
     else:
@@ -297,7 +297,7 @@ def _group(reader: _Reader, thing: Entity | Attribute) -> Described:
         table, word = column.table, thing.business_name.lower()
         count = thing.members or (column.profile.distinct if column.profile else 0)
         p = column.profile
-        shown = sorted(str(t.value) for t in p.top if t.value is not None) if (
+        shown = sorted(column.value_names.get(str(t.value), str(t.value)) for t in p.top if t.value is not None) if (
             reader.values and column.values_allowed and column.sensitivity == "none" and p and p.top
             and 0 < count <= 12) else []
         head = (f"{thing.business_name} has {count:,} values: {_listed(shown)}." if shown

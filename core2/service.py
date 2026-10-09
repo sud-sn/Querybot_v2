@@ -228,6 +228,7 @@ _REFUSALS = {
     "unsupported": "I cannot answer that from this data: {message}.",
     "unknown": "I could not find that in this data: {message}.",
     "empty": "{message}.",
+    "sensitive": "{message}.",
 }
 
 
@@ -486,7 +487,7 @@ def _member_index(account_id: str, model: SemanticModel, db_config: dict[str, An
     elif stale:
         threading.Thread(target=_read_again, args=(key, model, db_config, may), daemon=True,
                          name=f"core2-members-{account_id}").start()
-    return kept.index if may == kept.listable else kept.index.only(may)
+    return (kept.index if may == kept.listable else kept.index.only(may)).named(model)
 
 
 def _read_members(key: tuple[str, int], model: SemanticModel, db_config: dict[str, Any],
