@@ -1,0 +1,28 @@
+# Held out: written after the rules in core2/plan/followup.py, never used to tune them.
+domain: networking
+today: 2026-06-15
+threads:
+  - id: hn01
+    turns:
+      - {q: "number of tickets per category this month"}
+      - {q: "P1 and P2 only", label: refine, kind: filter}
+      - {q: "by site instead", label: refine, kind: regroup}
+      - {q: "the top one, by day", label: refine, kind: reference}
+      - {q: "Show the alarms raised per device role yesterday", label: new, kind: switch}
+      - {q: "critical ones", label: refine, kind: filter}
+  - id: hn02
+    turns:
+      - {q: "Billed amount per service type in 2025"}
+      - {q: "and data usage too", label: refine, kind: add_measure}
+      - {q: "SD-WAN only, monthly", label: refine, kind: filter}
+      - {q: "forecast it for the next quarter", label: refine, kind: forecast}
+      - {q: "Which sites have the most devices?", label: new, kind: switch}
+      - {q: "how many alarms", label: unclear, kind: bare}
+  - id: hn03
+    turns:
+      - {q: "average utilization per site over the past week"}
+      - {q: "alberta sites", label: refine, kind: filter}
+      - {q: "highest first", label: refine, kind: sort}
+      - {q: "What's the average time to resolve tickets by priority this year?", label: new, kind: switch}
+      - {q: "excluding P4", label: refine, kind: exclude}
+      - {q: "Tickets opened per week for the last 3 months", label: new, kind: restate}

@@ -1,0 +1,28 @@
+# Held out: written after the rules in core2/plan/followup.py, never used to tune them.
+domain: hr
+today: 2026-06-15
+threads:
+  - id: hh01
+    turns:
+      - {q: "headcount per department end of last month"}
+      - {q: "only full time staff", label: refine, kind: filter}
+      - {q: "how about vancouver", label: refine, kind: filter}
+      - {q: "show the last 12 months as a trend", label: refine, kind: grain}
+      - {q: "What is the total overtime hours by location for 2025?", label: new, kind: switch}
+      - {q: "top 2", label: refine, kind: topn}
+  - id: hh02
+    turns:
+      - {q: "Net pay by month in 2026"}
+      - {q: "and gross pay next to it", label: refine, kind: add_measure}
+      - {q: "for the finance department", label: refine, kind: filter}
+      - {q: "Which locations hired the most people in 2025?", label: new, kind: switch}
+      - {q: "and the fewest?", label: refine, kind: sort}
+      - {q: "headcount?", label: unclear, kind: bare}
+  - id: hh03
+    turns:
+      - {q: "FTE by job level at the end of May 2026"}
+      - {q: "same for May 2025", label: refine, kind: period}
+      - {q: "as a percentage of the total", label: refine, kind: share}
+      - {q: "Show tax withheld per department over the last 6 months", label: new, kind: switch}
+      - {q: "why did it go up in April?", label: refine, kind: why}
+      - {q: "Who was terminated in March 2026?", label: new, kind: switch}

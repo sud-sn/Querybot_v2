@@ -1,0 +1,36 @@
+# Held out: written after the rules in core2/plan/followup.py, never used to tune them.
+domain: retail
+today: 2026-06-15
+threads:
+  - id: hr01
+    turns:
+      - {q: "can you show me net sales for each region in may"}
+      - {q: "what about just the west", label: refine, kind: filter}
+      - {q: "ok and april?", label: refine, kind: period}
+      - {q: "pls break it down by category", label: refine, kind: drill}
+      - {q: "Give me the number of returns by reason for the whole of 2025", label: new, kind: switch}
+      - {q: "how many returns", label: unclear, kind: bare}
+  - id: hr02
+    turns:
+      - {q: "Top 10 customers by gross sales last quarter"}
+      - {q: "only wholesale ones", label: refine, kind: filter}
+      - {q: "make it top 3", label: refine, kind: topn}
+      - {q: "how did the 2nd one trend over the past year?", label: refine, kind: reference}
+      - {q: "I'd like to see discounts given per store this year", label: new, kind: switch}
+      - {q: "highest first pls", label: refine, kind: sort}
+  - id: hr03
+    turns:
+      - {q: "Monthly quantity sold for 2026 so far"}
+      - {q: "can u split that by product category", label: refine, kind: drill}
+      - {q: "show as a line chart", label: refine, kind: chart}
+      - {q: "why the dip in february?", label: refine, kind: why}
+      - {q: "List the stores that opened in 2025", label: new, kind: switch}
+      - {q: "and their net sales this year", label: refine, kind: add_measure}
+  - id: hr04
+    turns:
+      - {q: "Margin % by category last month"}
+      - {q: "excluding beverages", label: refine, kind: exclude}
+      - {q: "versus the month before", label: refine, kind: compare}
+      - {q: "What were total refunds in Q1 2026 by region?", label: new, kind: switch}
+      - {q: "sort ascending", label: refine, kind: sort}
+      - {q: "Show me cost of goods for each store in 2025", label: new, kind: restate}

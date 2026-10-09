@@ -1,0 +1,28 @@
+# Held out: written after the rules in core2/plan/followup.py, never used to tune them.
+domain: inventory
+today: 2026-06-15
+threads:
+  - id: hi01
+    turns:
+      - {q: "whats the on hand value per warehouse right now"}
+      - {q: "just the depots", label: refine, kind: filter}
+      - {q: "split by item group too", label: refine, kind: drill}
+      - {q: "which group is biggest?", label: refine, kind: sort}
+      - {q: "Show the closing quantity for every item group at the end of March 2026", label: new, kind: switch}
+      - {q: "what's the closing value?", label: unclear, kind: bare}
+  - id: hi02
+    turns:
+      - {q: "Issued quantity by week over the last 8 weeks"}
+      - {q: "for Bayview Depot", label: refine, kind: filter}
+      - {q: "what drove the jump?", label: refine, kind: why}
+      - {q: "How many movements were adjustments in May 2026?", label: new, kind: switch}
+      - {q: "by warehouse", label: refine, kind: drill}
+      - {q: "make it a bar chart", label: refine, kind: chart}
+  - id: hi03
+    turns:
+      - {q: "Received quantity from each supplier country in 2025"}
+      - {q: "mexico only, by supplier", label: refine, kind: filter}
+      - {q: "compare to 2024", label: refine, kind: compare}
+      - {q: "Average unit cost for Electrical items last quarter", label: new, kind: switch}
+      - {q: "and Paint", label: refine, kind: filter}
+      - {q: "average unit cost?", label: unclear, kind: bare}

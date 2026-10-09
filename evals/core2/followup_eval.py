@@ -60,13 +60,13 @@ PARTS = ("measures", "group_by", "filters", "window")
 TARGETS = {"right": 0.90, "asked": 0.10}
 
 
-def conversations(domain: str) -> dict[str, Any]:
-    path = CONVERSATIONS / f"{domain}.yaml"
+def conversations(domain: str, folder: Path | None = None) -> dict[str, Any]:
+    path = (folder or CONVERSATIONS) / f"{domain}.yaml"
     return yaml.safe_load(path.read_text()) if path.exists() else {}
 
 
-def available() -> list[str]:
-    return sorted(p.stem for p in CONVERSATIONS.glob("*.yaml"))
+def available(folder: Path | None = None) -> list[str]:
+    return sorted(p.stem for p in (folder or CONVERSATIONS).glob("*.yaml"))
 
 
 def _part(plan: Plan, part: str) -> list[str]:
@@ -134,8 +134,9 @@ def _planned(into: list[Plan]) -> Iterator[None]:
         service.plan_question = original
 
 
-def evaluate(domain_name: str, complete: Recorder, *, style: str = "descriptive") -> list[dict[str, Any]]:
-    spec = conversations(domain_name)
+def evaluate(domain_name: str, complete: Recorder, *, style: str = "descriptive",
+             folder: Path | None = None) -> list[dict[str, Any]]:
+    spec = conversations(domain_name, folder)
     domain = domains.build(domain_name)
     built, model = learn(domain, style)
     warehouse = DuckDBWarehouse(built.con)
@@ -178,6 +179,45 @@ def evaluate(domain_name: str, complete: Recorder, *, style: str = "descriptive"
             if plan is not None and plan.kind == "query" and not asked:
                 previous = plan
     return results
+
+
+def signals(domain_name: str, *, style: str = "descriptive", folder: Path | None = None) -> list[dict[str, Any]]:
+    """The readings decided in code (core2/plan/followup.py), with no AI: which turns they decide, and how right.
+
+    The answer before each turn is stood in for by its question: the measures it names, and whether it set a
+    period, a grouping or a member (what a narrowed answer carries).
+    """
+    from core2.plan.followup import measures_named, read_turn, scoped
+
+    spec = conversations(domain_name, folder)
+    built, model = learn(domains.build(domain_name), style)
+    warehouse = DuckDBWarehouse(built.con)
+
+    def fetch(slug: str) -> list[object]:
+        column = model.columns[model.attributes[slug].column]
+        table = model.tables[column.table]
+        return [r[0] for r in warehouse.query(f'SELECT DISTINCT "{column.name}" FROM "{table.name}"').rows]
+
+    index = build_index(model, fetch)
+    out = []
+    for thread in spec.get("threads", []):
+        previous: str | None = None
+        for n, turn in enumerate(thread["turns"]):
+            q = turn["q"]
+            if n and "label" in turn:
+                stand_in = None if previous is None else Plan(intent="value", measures=sorted(
+                    measures_named(model, previous)))
+                reading = read_turn(q, previous=stand_in, model=model, members=[m.text for m in index.match(q)],
+                                    previous_narrowed=previous is not None and scoped(previous,
+                                                                                     len(index.match(previous))))
+                want = {"refine": "refine", "new": "new", "unclear": "unsure"}[turn["label"]]
+                status = "open" if reading.kind == "open" else ("right" if reading.kind == want else "wrong")
+                out.append({"domain": domain_name, "thread": thread["id"], "turn": n, "question": q,
+                            "label": turn["label"], "kind": turn.get("kind", ""), "reading": reading.kind,
+                            "why": reading.why, "status": status})
+            if turn.get("kind") != "describe":
+                previous = q
+    return out
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -227,7 +267,28 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--api-version", default="2024-10-21")
     parser.add_argument("--record", default="")
     parser.add_argument("--replay", default="")
+    parser.add_argument("--signals", action="store_true", help="only the readings decided in code; no AI")
+    parser.add_argument("--set", default="", help="a set of conversations under conversations/ (heldout: never "
+                        "used to tune the rules)")
     args = parser.parse_args(argv)
+    folder = CONVERSATIONS / args.set if args.set else CONVERSATIONS
+    if args.signals:
+        rows = [r for name in (args.domains or available(folder)) for r in signals(name, style=args.style,
+                                                                                   folder=folder)]
+        decided = [r for r in rows if r["status"] != "open"]
+        right = sum(r["status"] == "right" for r in decided)
+        asked = sum(r["reading"] == "unsure" for r in rows)
+        print(f"decided in code: {len(decided)}/{len(rows)} ({len(decided) / len(rows):.0%}); right {right}/"
+              f"{len(decided)} ({right / max(1, len(decided)):.0%}); asked {asked} ({asked / len(rows):.0%}); "
+              f"left to the AI {len(rows) - len(decided)}")
+        for r in rows:
+            if r["status"] == "wrong":
+                print(f"  wrong [{r['domain']} {r['thread']}.{r['turn']} {r['label']}:{r['kind']}] read as "
+                      f"{r['reading']}: {r['question']} -- {r['why']}")
+        for r in rows:
+            if r["status"] == "open":
+                print(f"  open  [{r['domain']} {r['thread']}.{r['turn']} {r['label']}:{r['kind']}] {r['question']}")
+        return 0
     if args.replay:
         recorder = Recorder(None, json.loads(Path(args.replay).read_text())["answers"])
     else:
@@ -237,8 +298,8 @@ def main(argv: list[str]) -> int:
         recorder = Recorder(provider_complete(args.provider, args.model, key, endpoint=args.endpoint,
                                               api_version=args.api_version))
     results = []
-    for name in args.domains or available():
-        results += evaluate(name, recorder, style=args.style)
+    for name in args.domains or available(folder):
+        results += evaluate(name, recorder, style=args.style, folder=folder)
     summary = summarize(results)
     print(report(results, summary))
     if not args.replay:

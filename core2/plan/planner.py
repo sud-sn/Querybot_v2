@@ -105,6 +105,9 @@ How to plan:
    such words themselves ("lowest", "that division") in a filter; when they are not matched, ask (clarify). To follow them into another period ("how did those
    same customers do in 2025?"), keep the previous plan's group_by, sort, limit and time.window, and put the
    other period in time.compare, with intent "compare".
+   When it could be either (a short, complete question after an answer narrowed to a member or a period,
+   as "how many orders?" after net sales for North in March), plan it as a new question with follow_up
+   "unsure": the reader is asked which they meant. When READING says how the question was read, follow it.
 12. notes: one short line for each assumption the user did not state.
 13. chart: only when the question says how to show it ("as a pie", "as a donut" or "ring" -> "donut",
    "bar chart", "just the table" -> "table");
@@ -212,11 +215,12 @@ def stable_prompt(model: SemanticModel, *, values_allowed: bool = True) -> str:
 
 def question_tail(question: str, *, today: dt.date, history: list[Turn], matches: list[ValueMatch],
                   masked: Masked | None = None, scrub: Callable[[str], str] | None = None,
-                  model: SemanticModel | None = None) -> str:
+                  model: SemanticModel | None = None, reading: str | None = None) -> str:
     """Today, the conversation, the member matches and the question (each question scrubbed when asked to).
 
     With member values withheld (``masked``), the previous turn is shown as the AI saw
     it: its question with placeholders, and its plan's member values as placeholders too.
+    ``reading`` "refine": the words of the question already say it changes the answer above.
     """
     clean = scrub or (lambda text: text)
     lines = [f"TODAY: {today.isoformat()} ({today:%A})"]
@@ -227,6 +231,9 @@ def question_tail(question: str, *, today: dt.date, history: list[Turn], matches
             lines.append(f"PREVIOUS QUESTION: {clean(asked)}")
         if last.plan is not None:
             lines.append("PREVIOUS PLAN: " + _plan_shown(last.plan, model, masked))
+        if reading == "refine" and last.plan is not None:
+            lines.append('READING: this question changes the answer above: return the previous plan with what '
+                         'the question changes, and follow_up "refine".')
     if matches:
         lines.append("VALUE MATCHES (member names found in the question; use these exact values):")
         for m in matches:
@@ -343,15 +350,20 @@ def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
 
 def plan_question(model: SemanticModel, question: str, complete: Complete, *, today: dt.date,
                   history: list[Turn] | None = None, matches: list[ValueMatch] | None = None,
-                  values_allowed: bool = True, scrub: Callable[[str], str] | None = None) -> Outcome:
-    """The question's plan, checked against the model; at most two calls to the AI."""
+                  values_allowed: bool = True, scrub: Callable[[str], str] | None = None,
+                  reading: str | None = None) -> Outcome:
+    """The question's plan, checked against the model; at most two calls to the AI.
+
+    ``reading``: "refine" or "new" when the question's words already say which (core2/plan/followup.py);
+    the plan is marked so, whatever the AI said. None: the AI reads it, and may say "unsure".
+    """
     matches = matches or []
     history = history or []
     known = history[-1].masked.values if history and history[-1].masked is not None else None
     masked = None if values_allowed else mask(question, matches, known=known)
     stable = stable_prompt(model, values_allowed=values_allowed)
     tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
-                         scrub=scrub, model=model)
+                         scrub=scrub, model=model, reading=reading)
     raw: list[str] = []
     problems: list[str] = []
     hint = ""
@@ -372,6 +384,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             continue
         problems, hint = check(plan, model, today, shown)
         if not problems:
+            if reading in ("refine", "new") and plan.kind == "query":
+                plan = plan.model_copy(update={"follow_up": reading})
             return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
         tried = plan
     return Outcome(Plan(kind="clarify", clarify=Clarify(

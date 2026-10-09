@@ -5069,6 +5069,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.own.failed": {"en": "It could not be done: {error}", "fr": "Cela n'a pas pu être fait : {error}"},
     "ui.chat.own.counted_with": {"en": "Counted with your own metric: {names}",
                                  "fr": "Compté avec votre propre indicateur : {names}"},
+    # A follow-up answer says which answer it changed, and offers the same question asked on its own.
+    "ui.chat.following": {"en": "Following: {question}", "fr": "Suite de : {question}"},
+    "ui.chat.following.ask_new": {"en": "Ask as a new question", "fr": "Poser comme nouvelle question"},
     # ── The Data guide: suggestions to the admin (the new core) ──────────────
     "ui.ask.intro": {
         "en": "What your data covers and exactly how each number is counted. If something is wrong or missing, "

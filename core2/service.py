@@ -34,6 +34,7 @@ from core2.answer.snapshots import complete_snapshots
 from core2.answer.suggestions import drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query
 from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
+from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
 from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable, placed
@@ -43,6 +44,8 @@ from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 log = logging.getLogger("querybot.core2")
 
 HISTORY = 3          # turns of the conversation the planner sees
+FOLLOW_UP = "follow_up"                                   # Pending.field: is it about the answer above, or new?
+ABOVE, AFRESH = "About the answer above", "A new question"
 MAX_ROWS = 5000
 
 
@@ -67,9 +70,10 @@ class Pending:
     """A question back that code completes: the plan waiting for the link the reader names."""
 
     plan: Plan
-    field: str                       # the slug whose link the reply names (plan.via), or "time.date"
+    field: str                       # the slug whose link the reply names (plan.via), "time.date", or FOLLOW_UP
     options: list[str]
     masked: Masked | None = None
+    question: str = ""               # FOLLOW_UP: the question waiting to be read one way or the other
 
 
 @dataclass
@@ -111,6 +115,31 @@ def choose(reply: str, options: list[str]) -> str | None:
     return inside[0] if len(inside) == 1 else None
 
 
+_AFRESH_WORDS = {"new", "fresh", "afresh", "separate", "different", "another", "scratch", "own"}
+_ABOVE_WORDS = {"above", "same", "previous", "follow", "follows", "following", "continue", "continues", "keep",
+                "refine", "earlier"}
+# A reply made only of these says which way; any other word ("same for South", "last year") is a question.
+_REPLY_WORDS = _AFRESH_WORDS | _ABOVE_WORDS | _FILLER | {
+    "about", "answer", "question", "one", "as", "to", "of", "on", "from", "start", "over", "that", "this",
+    "please", "yes", "ask", "its", "s", "so", "just", "with", "for"}
+
+
+def which_way(reply: str, options: list[str]) -> str | None:
+    """"refine" or "new": what a reply to "about the answer above, or a new question?" says. None: neither
+    (a question of its own, read as it is)."""
+    picked = choose(reply, options)
+    if picked is not None:
+        return "refine" if picked == options[0] else "new"
+    words = _plain(reply).split()
+    if not words or any(w not in _REPLY_WORDS for w in words):
+        return None
+    afresh = any(w in _AFRESH_WORDS for w in words) or "start" in words
+    above = any(w in _ABOVE_WORDS for w in words)
+    if afresh == above:
+        return None
+    return "new" if afresh else "refine"
+
+
 def _frame(question: str, text: str, **extra: Any) -> dict[str, Any]:
     answer = {"headline": text, "short_value": "", "comparison": "", "scope_badge": "", "scope_note": ""}
     return {"type": "assistant_response", "engine": "core2", "question": question, "answer": answer, "chart": None,
@@ -129,6 +158,22 @@ def _clarification(question: str, clarify: Clarify) -> dict[str, Any]:
         text = clarify.question
     return _frame(question, text, clarify={"about": clarify.about, "question": clarify.question, "options": options},
                   follow_up_suggestions=[{"label": o, "question": o} for o in options])
+
+
+def _which_question(question: str, last: Turn) -> dict[str, Any]:
+    """Asked when a question could go either way: two buttons, each answering it."""
+    text = f'Is "{question}" about the answer above ("{last.question}"), or a new question?'
+    return _frame(question, text, kind="follow_up_or_new",
+                  clarify={"about": FOLLOW_UP, "question": text, "options": [ABOVE, AFRESH]},
+                  follow_up_suggestions=[{"label": o, "question": o} for o in (ABOVE, AFRESH)])
+
+
+def _read(question: str, last: Turn | None, model: SemanticModel, found: list[ValueMatch]) -> Reading:
+    """How the question relates to the answer on screen, by its words (core2/plan/followup.py)."""
+    if last is not None and last.plan is not None and last.plan.kind == "clarify":
+        return Reading("open", "it may answer the question asked back")
+    return read_turn(question, previous=last.plan if last is not None else None, model=model,
+                     members=[m.text for m in found])
 
 
 def _describe(question: str, plan: Plan, services: Services) -> dict[str, Any]:
@@ -275,10 +320,21 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     return payload
 
 
-def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "") -> dict[str, Any]:
+def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
+                     forced: str | None = None) -> dict[str, Any]:
+    """``forced``: "refine" or "new" when the reader said which ("Ask as a new question", or a button)."""
     start = time.perf_counter()
     model = services.model
     pending, session.pending = session.pending, None
+    if pending is not None and pending.field == FOLLOW_UP:
+        way = which_way(question, pending.options)
+        if way is not None:      # the reader said which they meant: their question, read that way
+            return _answer_question(pending.question, services, session, question_id=question_id, forced=way)
+        pending = None           # a question of its own instead
+    if forced is None and NEW_PREFIX.match(question) and NEW_PREFIX.sub("", question, count=1).strip():
+        question, forced = NEW_PREFIX.sub("", question, count=1).strip(), "new"
+    last = session.turns[-1] if session.turns else None
+    following = False
     picked = choose(question, pending.options) if pending is not None else None
     if pending is not None and picked is not None:
         # The reply names one of the links or dates offered: the waiting plan, completed by code.
@@ -292,14 +348,27 @@ def _answer_question(question: str, services: Services, session: Session, *, que
             update = {"via": {**pending.plan.via, pending.field: picked}}
         outcome = Outcome(pending.plan.model_copy(update={**update, "follow_up": "refine"}), masked=pending.masked)
     else:
-        matches = services.index.match(question)
-        if session.turns and session.turns[-1].shown:
+        found = _visible(services.index.match(question), model, services.allowed_tables)
+        reading = Reading(forced, "the reader said so") if forced else _read(question, last, model, found)
+        if reading.kind == "unsure" and last is not None and last.plan is not None:
+            session.pending = Pending(last.plan, FOLLOW_UP, [ABOVE, AFRESH], question=question)
+            return _which_question(question, last)
+        matches = found
+        if reading.kind != "new" and last is not None and last.shown:
             # "Break the first one down": the member in that place of the answer on screen.
-            matches = sorted([*matches, *placed(question, session.turns[-1].shown, matches)], key=lambda m: m.start)
-        matches = _visible(matches, model, services.allowed_tables)
+            matches = sorted([*found, *_visible(placed(question, last.shown, found), model, services.allowed_tables)],
+                             key=lambda m: m.start)
+        # A new question is planned on its own: nothing of the answer before it can leak in.
         outcome = plan_question(model, question, services.complete, today=services.today,
-                                history=session.turns[-HISTORY:], matches=matches,
-                                values_allowed=services.values_allowed, scrub=services.scrub)
+                                history=[] if reading.kind == "new" else session.turns[-HISTORY:], matches=matches,
+                                values_allowed=services.values_allowed, scrub=services.scrub,
+                                reading=reading.kind if reading.kind in ("refine", "new") else None)
+        if outcome.plan.kind == "query" and outcome.plan.follow_up == "unsure":
+            if last is not None and last.plan is not None and last.plan.kind == "query":
+                session.pending = Pending(last.plan, FOLLOW_UP, [ABOVE, AFRESH], question=question)
+                return _which_question(question, last)
+            outcome.plan = outcome.plan.model_copy(update={"follow_up": "new"})
+        following = last is not None and last.plan is not None and last.plan.kind == "query"
     plan = outcome.plan
     if plan.kind == "smalltalk":
         return _frame(question, "Hello! Ask me about your data, for example a total, a trend or a ranking.",
@@ -372,6 +441,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
+    if following and plan.follow_up == "refine" and last is not None:
+        # Said on the answer: what it changed, and the same question asked on its own, one click away.
+        payload["following"] = {"question": last.question, "ask_new": f"New question: {question}"}
     session.turns.append(Turn(question, plan, outcome.masked, shown))
     del session.turns[:-HISTORY]
     return payload

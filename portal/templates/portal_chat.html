@@ -617,6 +617,13 @@ body:has(.chat-page) .main { background: var(--bg); }
 .own-metric-only, .own-metric-note, .own-metric-done { font-size: var(--font-sm); color: var(--text-muted); margin: 0; }
 .own-metric-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .own-metric-used { font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
+/* A follow-up answer: the answer it changed, and the same question asked on its own. */
+.answer-following { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
+.answer-following-text { min-width: 0; overflow-wrap: anywhere; }
+.answer-following .follow-up-chip { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border-radius: var(--radius-pill);
+  border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: var(--font-xs); font-weight: var(--weight-medium); cursor: pointer; }
+.answer-following .follow-up-chip:hover { border-color: var(--primary); color: var(--primary-ink); }
+@media (pointer: coarse) { .answer-following .follow-up-chip { min-height: 44px; } }
 .answer-visual { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px 8px; box-shadow: var(--shadow-sm); min-width: 0; }
 .answer-visual { position: relative; }
 .answer-visual-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
@@ -687,7 +694,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 #memoryBadge { display: none !important; }
 @media (max-width: 600px) {
   .answer-card .btn-icon { width: 44px; }
-  .answer-card .btn, .answer-next .follow-up-chip, .artifact-head .btn { min-height: 44px; }
+  .answer-card .btn, .answer-next .follow-up-chip, .answer-following .follow-up-chip, .artifact-head .btn { min-height: 44px; }
   /* A number is never broken across lines: on a phone each tile has the width. */
   .answer-tiles, .answer-tiles[data-count="1"] { grid-template-columns: 1fr; }
   .kpi-value { font-size: var(--font-2xl); }
@@ -3355,6 +3362,15 @@ function _wireOwnMetric(root) {
   }));
 }
 
+// A follow-up answer says which answer it changed; asking it on its own is one click (sent as "New question: ...").
+function _followingHtml(msg) {
+  const following = msg.following;
+  if (!following || !following.question) return '';
+  return `<p class="answer-following"><span class="answer-following-text">${escHtml(t('ui.chat.following', {question: following.question}))}</span>`
+    + (following.ask_new ? `<button type="button" class="follow-up-chip" data-question="${escHtml(following.ask_new)}">${escHtml(t('ui.chat.following.ask_new'))}</button>` : '')
+    + `</p>`;
+}
+
 function answerCardHtml(msg, ids, env) {
   env = env || {};
   const answer = msg.answer || {};
@@ -3474,6 +3490,7 @@ function answerCardHtml(msg, ids, env) {
     : '';
 
   return `<article class="answer-card" aria-label="${escHtml(t('ui.chat.card.answer'))}">`
+    + _followingHtml(msg)
     + _ownMetricHtml(msg)
     + _answerBadgesHtml(msg)
     + leadHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml

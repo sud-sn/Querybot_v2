@@ -84,7 +84,7 @@ class Duration(_Strict):
 
 
 class Clarify(_Strict):
-    about: Literal["measure", "date", "member", "path", "other"]
+    about: Literal["measure", "date", "member", "path", "follow_up", "other"]
     question: str
     options: list[str] = Field(default_factory=list)
 
@@ -114,7 +114,8 @@ class Plan(_Strict):
     clarify: Clarify | None = None
     about: list[str] = Field(default_factory=list)          # describe_data: what the question asks about
     chart: Literal["bar", "line", "area", "pie", "donut", "table"] | None = None   # "as a pie", "a donut", "just the table"
-    follow_up: Literal["new", "refine"] = "new"
+    # "unsure": it could change the answer on screen or ask afresh; the reader is asked which (core2/plan/followup.py)
+    follow_up: Literal["new", "refine", "unsure"] = "new"
     include_left_out: bool = False      # "including cancelled orders": the rows tables leave out by default
     notes: list[str] = Field(default_factory=list)
 
